@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from modex_agent.agents.summarizer.abc import ArchiveGenerator
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.archive_models import ArchiveDocuments, ArchiveGenerationResult
 from modex_agent.memory.cleanup import (
@@ -18,8 +19,14 @@ from modex_agent.memory.cleanup import (
     cleanup_session,
 )
 from modex_agent.memory.core.layers import MemoryLayerSet, SessionMemoryManager
-from modex_agent.memory.core.models import CompressionReason
+from modex_agent.memory.core.models import CompressionReason, StorageRevision
 from modex_agent.memory.core.split_stores import MemoryStoreBundle
+from modex_agent.memory.hooks import (
+    CleanupFinishedHook,
+    CleanupTriggeredHook,
+    MemoryHookContext,
+    MemoryHookRunner,
+)
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.layers.session import ScopedSessionMemoryManager
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry, MemoryStoreRegistry
@@ -83,6 +90,38 @@ class _FixedEstimator(TokenEstimator):
 
 def _sum_tokens_for(msgs: list[dict[str, Any]]) -> int:
     return sum(m.get("token_count", 0) for m in msgs)
+
+
+class _RecordingHook(CleanupTriggeredHook, CleanupFinishedHook):
+    """Recording hook that captures every CLEANUP_TRIGGERED and CLEANUP_FINISHED dispatch."""
+
+    def __init__(self) -> None:
+        self.triggered_calls: list[MemoryHookContext] = []
+        self.finished_calls: list[MemoryHookContext] = []
+
+    async def on_cleanup_triggered(self, ctx: MemoryHookContext) -> None:
+        self.triggered_calls.append(ctx)
+
+    async def on_cleanup_finished(self, ctx: MemoryHookContext) -> None:
+        self.finished_calls.append(ctx)
+
+
+class _RevisionConflictSession(ScopedSessionMemoryManager):
+    """ScopedSessionMemoryManager whose retain_messages always returns None.
+
+    Simulates a revision conflict (concurrent modification) so the cleanup
+    orchestrator hits the revision-conflict early return path. All other
+    methods (get_revision, get_all_messages, add_messages, ...) are inherited
+    from the real ScopedSessionMemoryManager.
+    """
+
+    async def retain_messages(
+        self,
+        context: MemoryContext,
+        keep_messages: Sequence[ChatMessage | dict[str, object]],
+        expected_revision: StorageRevision,
+    ) -> StorageRevision | None:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -232,8 +271,8 @@ class TestNoTrigger:
         assert result.triggered is False
 
 
-class TestOnTriggeredCallback:
-    """on_triggered fires once when a cleanup triggers, and not when under limit.
+class TestCleanupHookTriggered:
+    """CLEANUP_TRIGGERED fires once when a cleanup triggers, and not when under limit.
 
     It must fire AFTER trigger confirmation and BEFORE archive generation (the
     blocking LLM call) so an observer can warn the user about the pause.
@@ -246,10 +285,9 @@ class TestOnTriggeredCallback:
         session = layer_set.session
         await _add_messages(session, context, [_user_msg("x" * 500)] * 20)
 
-        calls: list[tuple[str, CompressionReason]] = []
-
-        async def _on_triggered(ctx: MemoryContext, reason: CompressionReason) -> None:
-            calls.append((ctx.session_id, reason))
+        hook = _RecordingHook()
+        runner = MemoryHookRunner()
+        runner.add(hook)
 
         result = await cleanup_session(
             session=session,
@@ -259,12 +297,14 @@ class TestOnTriggeredCallback:
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
-            on_triggered=_on_triggered,
+            hook_runner=runner,
         )
 
         assert result.triggered is True
-        assert len(calls) == 1
-        assert calls[0] == ("test-session", CompressionReason.TOKEN_PRESSURE)
+        assert len(hook.triggered_calls) == 1
+        assert hook.triggered_calls[0].memory_context is not None
+        assert hook.triggered_calls[0].memory_context.session_id == "test-session"
+        assert hook.triggered_calls[0].compression_reason == CompressionReason.TOKEN_PRESSURE
 
     @pytest.mark.asyncio
     async def test_does_not_fire_when_under_limit(self, registry: MemoryStoreRegistry) -> None:
@@ -273,10 +313,9 @@ class TestOnTriggeredCallback:
         session = layer_set.session
         await _add_messages(session, context, [_user_msg("a"), _assistant_msg("b")])
 
-        calls: list[tuple[str, CompressionReason]] = []
-
-        async def _on_triggered(ctx: MemoryContext, reason: CompressionReason) -> None:
-            calls.append((ctx.session_id, reason))
+        hook = _RecordingHook()
+        runner = MemoryHookRunner()
+        runner.add(hook)
 
         result = await cleanup_session(
             session=session,
@@ -286,17 +325,18 @@ class TestOnTriggeredCallback:
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
-            on_triggered=_on_triggered,
+            hook_runner=runner,
         )
 
         assert result.triggered is False
-        assert calls == []
+        assert hook.triggered_calls == []
+        assert hook.finished_calls == []
 
     @pytest.mark.asyncio
     async def test_fires_before_archive_generation(
         self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
-        """on_triggered must run before the archive agent is invoked."""
+        """CLEANUP_TRIGGERED must run before the archive agent is invoked."""
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
@@ -304,8 +344,9 @@ class TestOnTriggeredCallback:
 
         order: list[str] = []
 
-        async def _on_triggered(ctx: MemoryContext, reason: CompressionReason) -> None:
-            order.append("triggered")
+        class _OrderingHook(CleanupTriggeredHook):
+            async def on_cleanup_triggered(self, ctx: MemoryHookContext) -> None:
+                order.append("triggered")
 
         class _OrderArchiveAgent(_MockArchiveAgent):
             async def generate(
@@ -314,6 +355,9 @@ class TestOnTriggeredCallback:
             ) -> ArchiveGenerationResult:
                 order.append("archive")
                 return await super().generate(pruned_messages)
+
+        runner = MemoryHookRunner()
+        runner.add(_OrderingHook())
 
         storage = _DirArchiveStorageFactory.create(tmp_path)
 
@@ -325,12 +369,286 @@ class TestOnTriggeredCallback:
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
-            on_triggered=_on_triggered,
+            hook_runner=runner,
             archive_agent=_OrderArchiveAgent(),
             archive_storage=storage,
         )
 
         assert order == ["triggered", "archive"]
+
+    @pytest.mark.asyncio
+    async def test_finished_dispatches_on_triggered_path(
+        self, registry: MemoryStoreRegistry,
+    ) -> None:
+        """CLEANUP_FINISHED fires exactly once on the normal (triggered) path."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+        await _add_messages(session, context, [_user_msg("x" * 500)] * 20)
+
+        hook = _RecordingHook()
+        runner = MemoryHookRunner()
+        runner.add(hook)
+
+        result = await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_context_tokens=100,
+            max_token_ratio=0.8,
+            keep_ratio=0.5,
+            token_estimator=_FixedEstimator(10),
+            hook_runner=runner,
+        )
+
+        assert result.triggered is True
+        assert len(hook.triggered_calls) == 1
+        assert len(hook.finished_calls) == 1
+        assert hook.finished_calls[0].cleanup_result is result
+        assert hook.finished_calls[0].compression_reason == CompressionReason.TOKEN_PRESSURE
+
+
+class TestCleanupHookTruthTable:
+    """Parametrized truth-table tests proving exact TRIGGERED/FINISHED counts.
+
+    | path              | triggered | pruned      | TRIGGERED | FINISHED |
+    |-------------------|-----------|-------------|-----------|----------|
+    | under_threshold   | False     | 0           | 0         | 0        |
+    | all_invalid       | True      | total       | 0         | 1        |
+    | no_safe_boundary  | True      | 0           | 0         | 1        |
+    | revision_conflict | True      | 0           | 1         | 1        |
+    | normal            | True      | prune_count | 1         | 1        |
+
+    All paths use real ScopedSessionMemoryManager + real cleanup_session() +
+    recording MemoryHook subclass. The revision_conflict path uses a real
+    subclass whose retain_messages returns None (simulating concurrent
+    modification). Fake only at external boundaries (archive agent, storage).
+    """
+
+    @pytest.mark.parametrize(
+        "scenario",
+        [
+            "under_threshold",
+            "all_invalid",
+            "no_safe_boundary",
+            "revision_conflict",
+            "normal",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_truth_table(
+        self,
+        registry: MemoryStoreRegistry,
+        scenario: str,
+    ) -> None:
+        hook = _RecordingHook()
+        runner = MemoryHookRunner()
+        runner.add(hook)
+
+        context = _ctx(f"truth-{scenario}")
+        common: dict[str, Any] = {
+            "context": context,
+            "token_estimator": _FixedEstimator(10),
+            "hook_runner": runner,
+        }
+
+        if scenario == "under_threshold":
+            layer_set = _make_layer_set(registry)
+            session = layer_set.session
+            await _add_messages(session, context, [
+                _user_msg("a"), _assistant_msg("b"), _user_msg("c"),
+            ])
+            result = await cleanup_session(
+                session=session,
+                archive=layer_set.archive,
+                max_context_tokens=8000,
+                max_token_ratio=0.8,
+                keep_ratio=0.5,
+                **common,
+            )
+            assert result.triggered is False
+            assert result.messages_pruned == 0
+            assert len(hook.triggered_calls) == 0
+            assert len(hook.finished_calls) == 0
+            return
+
+        if scenario == "all_invalid":
+            layer_set = _make_layer_set(registry)
+            session = layer_set.session
+            await _add_messages(session, context, [
+                _tool_result_msg("orphan_1", "r1"),
+                _tool_result_msg("orphan_2", "r2"),
+                _tool_result_msg("orphan_3", "r3"),
+            ] * 7)
+            result = await cleanup_session(
+                session=session,
+                archive=None,
+                max_context_tokens=100,
+                max_token_ratio=0.8,
+                keep_ratio=0.5,
+                **common,
+            )
+            assert result.triggered is True
+            assert result.messages_pruned == 21
+            assert result.messages_kept == 0
+            assert len(hook.triggered_calls) == 0
+            assert len(hook.finished_calls) == 1
+            assert hook.finished_calls[0].cleanup_result is result
+            return
+
+        if scenario == "no_safe_boundary":
+            layer_set = _make_layer_set(registry)
+            session = layer_set.session
+            await _add_messages(session, context, [
+                _user_msg("question"),
+                _tool_call_msg("c1", "tool_a"),
+                _tool_result_msg("c1", "result"),
+            ])
+            result = await cleanup_session(
+                session=session,
+                archive=None,
+                max_context_tokens=10,
+                max_token_ratio=0.8,
+                keep_ratio=0.05,
+                **common,
+            )
+            assert result.triggered is True
+            assert result.messages_pruned == 0
+            assert len(hook.triggered_calls) == 0
+            assert len(hook.finished_calls) == 1
+            assert hook.finished_calls[0].cleanup_result is result
+            return
+
+        if scenario == "revision_conflict":
+            layer_set = _make_layer_set(registry)
+            real_session = layer_set.session
+            assert isinstance(real_session, ScopedSessionMemoryManager)
+            conflict_session = _RevisionConflictSession(real_session._storage_factory)
+            await _add_messages(conflict_session, context, [
+                _user_msg(f"u-{i}") for i in range(10)
+            ])
+            result = await cleanup_session(
+                session=conflict_session,
+                archive=None,
+                max_context_tokens=50,
+                max_token_ratio=0.8,
+                keep_ratio=0.5,
+                **common,
+            )
+            assert result.triggered is True
+            assert result.messages_pruned == 0
+            assert len(hook.triggered_calls) == 1
+            assert len(hook.finished_calls) == 1
+            assert hook.finished_calls[0].cleanup_result is result
+            return
+
+        if scenario == "normal":
+            layer_set = _make_layer_set(registry)
+            session = layer_set.session
+            await _add_messages(session, context, [
+                _user_msg(f"u-{i}") for i in range(10)
+            ])
+            result = await cleanup_session(
+                session=session,
+                archive=None,
+                max_context_tokens=50,
+                max_token_ratio=0.8,
+                keep_ratio=0.5,
+                **common,
+            )
+            assert result.triggered is True
+            assert result.messages_pruned > 0
+            assert len(hook.triggered_calls) == 1
+            assert len(hook.finished_calls) == 1
+            assert hook.finished_calls[0].cleanup_result is result
+            return
+
+        pytest.fail(f"Unknown scenario: {scenario}")
+
+
+class TestCleanupHookResilience:
+    """Cleanup continues after a hook error or timeout."""
+
+    @pytest.mark.asyncio
+    async def test_cleanup_continues_after_triggered_hook_error(
+        self, registry: MemoryStoreRegistry,
+    ) -> None:
+        """A failing CLEANUP_TRIGGERED hook does not abort cleanup."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+        await _add_messages(session, context, [_user_msg("x" * 500)] * 20)
+
+        good_hook = _RecordingHook()
+
+        class _FailingTriggeredHook(CleanupTriggeredHook):
+            async def on_cleanup_triggered(self, ctx: MemoryHookContext) -> None:
+                raise RuntimeError("hook boom")
+
+        runner = MemoryHookRunner()
+        runner.add(_FailingTriggeredHook())
+        runner.add(good_hook)
+
+        result = await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_context_tokens=100,
+            max_token_ratio=0.8,
+            keep_ratio=0.5,
+            token_estimator=_FixedEstimator(10),
+            hook_runner=runner,
+        )
+
+        assert result.triggered is True
+        assert len(good_hook.triggered_calls) == 1
+        assert len(good_hook.finished_calls) == 1
+
+
+class TestCleanupHookLateRegistration:
+    """Late registration: a hook added after history creation receives events."""
+
+    @pytest.mark.asyncio
+    async def test_late_hook_receives_subsequent_events(
+        self, registry: MemoryStoreRegistry,
+    ) -> None:
+        """A hook added to the runner after a history is created still receives events.
+
+        This works because DefaultMemorySystem passes the SAME MemoryHookRunner
+        object by reference to every ScopedMessageHistory. Adding a hook to the
+        runner after history creation means the next cleanup_session dispatch
+        sees it.
+        """
+        from modex_agent.memory.default_system import DefaultMemorySystem, ScopedMessageHistory
+
+        layer_set = _make_layer_set(registry)
+        system = DefaultMemorySystem(
+            layer_set=layer_set,
+            store_registry=registry,
+            cleanup_config={"max_context_tokens": 50, "max_token_ratio": 0.8, "keep_ratio": 0.5},
+            token_estimator=_FixedEstimator(10),
+        )
+
+        context = _ctx("late-reg")
+        history = system.create_message_history(context)
+        assert isinstance(history, ScopedMessageHistory)
+
+        late_hook = _RecordingHook()
+        system.add_cleanup_hook(late_hook)
+
+        await history.append(_user_msg("a"))
+        await history.append(_user_msg("b"))
+        await history.append(_user_msg("c"))
+        await history.append(_user_msg("d"))
+        await history.append(_user_msg("e"))
+        await history.append(_user_msg("f"))
+        await history.append(_user_msg("g"))
+        await history.append(_user_msg("h"))
+        await history.append(_user_msg("i"))
+        await history.append(_user_msg("j"))
+
+        assert len(late_hook.triggered_calls) >= 1
+        assert len(late_hook.finished_calls) >= 1
 
 
 class TestTriggerAndCleanup:

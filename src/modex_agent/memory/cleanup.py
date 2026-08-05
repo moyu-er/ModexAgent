@@ -1,20 +1,22 @@
 """Session cleanup function — prunes old messages, generates compact summary,
 and optionally archives them.
 
-This is a standalone async function that handles:
-1. Trigger check (token pressure: non-system session tokens exceed threshold)
-2. Boundary computation (sanitize tool chains, compute keep/prune split)
-3. Compact generation (LLM single-call summary of pruned messages)
-4. Session commit (replace messages with [compact_summary] + [tail])
-5. Pruned catalog write (raw transcripts + topic from compact summary)
-6. Archive generation (optional, default off — context.md + knowledge.md)
+This is a standalone async function that handles 5 phases:
+1. Prepare (trigger check on non-system session token pressure; backup;
+   sanitize tool chains; compute keep/prune boundary)
+2. Compact generation (LLM single-call summary of pruned messages)
+3. Session commit (replace messages with [compact_summary] + [tail])
+4. Pruned catalog write (raw transcripts + topic from compact summary)
+5. Archive generation (optional, default off — context.md + knowledge.md;
+   archive state advanced atomically inside this phase; DreamEngine polling
+   is the only archive-consolidation trigger)
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -29,6 +31,11 @@ from modex_agent.memory.core.layers import (
     SessionMemoryManager,
 )
 from modex_agent.memory.core.models import CompressionReason
+from modex_agent.memory.hooks import (
+    MemoryHookContext,
+    MemoryHookPoint,
+    MemoryHookRunner,
+)
 from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,
@@ -322,6 +329,12 @@ async def _generate_archive_phase(
     """Phase 5: generate typed archive content (optional, default off).
 
     Generates ``context.md`` + ``knowledge.md`` from pruned messages.
+
+    Archive state (``next_archive_id``) is advanced atomically inside this
+    phase via ``archive.append_bundle`` / ``archive.append_generation``;
+    there is no separate trigger phase. DreamEngine consolidation runs on
+    its own polling loop (``background.py``) and is the only archive-
+    consolidation trigger.
     """
     if archive is None:
         logger.debug(
@@ -401,34 +414,37 @@ async def _generate_archive_phase(
     )
 
 
-async def _advance_archive_phase(
-    archive_agent: ArchiveGenerator | None,
-    archive_storage: DirArchiveStorage | None,
-    archive_generated: bool,
-    next_archive_id: int,
-    context: MemoryContext,
-    on_archive_generated: Callable[[], Awaitable[None]] | None,
-) -> None:
-    """Phase 6: fire post-archive trigger.
-
-    Archive state (next_archive_id) is already advanced atomically in
-    Phase 5 (_generate_archive_phase) so no state write is needed here.
-    """
-    if archive_agent is not None and archive_storage is not None and archive_generated:
-        logger.info(
-            "Archive state already advanced: next_archive_id=%d session=%s",
-            next_archive_id + 1,
-            context.session_id,
-        )
-
-    if archive_generated and on_archive_generated is not None:
-        try:
-            await on_archive_generated()
-        except Exception:
-            logger.debug("Post-cleanup archive trigger failed", exc_info=True)
-
-
 # ── Cleanup orchestrator ───────────────────────────────────────────────────────
+
+
+async def _dispatch_cleanup_finished(
+    hook_runner: MemoryHookRunner | None,
+    *,
+    session: SessionMemoryManager,
+    archive: ArchiveMemoryManager | None,
+    context: MemoryContext,
+    pruned_manager: PrunedManager | None,
+    result: CleanupResult,
+) -> None:
+    """Dispatch CLEANUP_FINISHED to the hook runner before a triggered return.
+
+    Called before every ``triggered=True`` return in :func:`cleanup_session`.
+    No-op when ``hook_runner`` is ``None``. Note that ``triggered=True`` does
+    NOT guarantee pruning — the all-invalid, no-safe-boundary, and
+    revision-conflict paths all return ``triggered=True`` with
+    ``messages_pruned=0``.
+    """
+    if hook_runner is None:
+        return
+    finished_ctx = MemoryHookContext(
+        session_manager=session,
+        memory_context=context,
+        cleanup_result=result,
+        compression_reason=result.reason,
+        archive_manager=archive,
+        pruned_manager=pruned_manager,
+    )
+    await hook_runner.dispatch(MemoryHookPoint.CLEANUP_FINISHED, finished_ctx)
 
 
 async def cleanup_session(
@@ -445,19 +461,32 @@ async def cleanup_session(
     pruned_manager: PrunedManager | None = None,
     archive_agent: ArchiveGenerator | None = None,
     archive_storage: DirArchiveStorage | None = None,
-    on_archive_generated: Callable[[], Awaitable[None]] | None = None,
-    on_triggered: Callable[[MemoryContext, CompressionReason], Awaitable[None]] | None = None,
+    hook_runner: MemoryHookRunner | None = None,
     token_estimator: TokenEstimator | None = None,
 ) -> CleanupResult:
     """Clean up a session by pruning old messages and generating a compact summary.
 
-    Orchestrates 6 phases:
+    Orchestrates 5 phases:
         1. Prepare (trigger, backup, sanitize, boundary)
         2. Compact generation (LLM summary of pruned messages)
         3. Session commit ([compact_summary] + [tail])
         4. Pruned catalog write (topic from compact summary)
-        5. Archive generation (optional, default off)
-        6. Archive state advance + trigger
+        5. Archive generation (optional, default off — context.md + knowledge.md;
+           archive state advanced atomically inside this phase; DreamEngine
+           polling is the only archive-consolidation trigger)
+
+    Lifecycle hook dispatch (when ``hook_runner`` is provided):
+        - ``CLEANUP_TRIGGERED`` fires once after trigger is confirmed and a
+          real cleanup is about to run — AFTER the three early returns
+          (under-threshold, all-invalid, no-safe-boundary) and BEFORE phase 2
+          (compact generation). Only the revision-conflict and normal paths
+          reach this dispatch point.
+        - ``CLEANUP_FINISHED`` fires before every ``triggered=True`` return
+          (4 return points: all-invalid, no-safe-boundary, revision-conflict,
+          normal). Note that ``triggered=True`` does NOT guarantee pruning.
+
+    An unhandled cleanup exception does NOT synthesize a finished event —
+    only the four explicit ``triggered=True`` returns dispatch FINISHED.
     """
     # Phase 1: prepare
     estimator = token_estimator or CharTokenEstimator()
@@ -474,36 +503,61 @@ async def cleanup_session(
     if plan is None:
         return CleanupResult(triggered=False)
 
-    # Edge case: all messages invalid -> clear session
+    # Edge case: all messages invalid -> clear session.
+    # triggered=True but pruned=total; FINISHED dispatches, TRIGGERED does not.
     if not plan.sanitized:
         revision = await session.get_revision(context)
         await session.replace_messages_if_revision(context, [], revision)
-        return CleanupResult(
+        result = CleanupResult(
             triggered=True,
             messages_kept=0,
             messages_pruned=plan.total_count,
             archive_skipped=True,
             reason=plan.trigger_reason,
         )
+        await _dispatch_cleanup_finished(
+            hook_runner,
+            session=session,
+            archive=archive,
+            context=context,
+            pruned_manager=pruned_manager,
+            result=result,
+        )
+        return result
 
-    # Edge case: no safe boundary
+    # Edge case: no safe boundary.
+    # triggered=True but pruned=0; FINISHED dispatches, TRIGGERED does not.
     if not plan.keep_messages:
-        return CleanupResult(
+        result = CleanupResult(
             triggered=True,
             messages_kept=plan.total_count,
             messages_pruned=0,
             archive_skipped=True,
             reason=plan.trigger_reason,
         )
+        await _dispatch_cleanup_finished(
+            hook_runner,
+            session=session,
+            archive=archive,
+            context=context,
+            pruned_manager=pruned_manager,
+            result=result,
+        )
+        return result
 
-    # Trigger confirmed and a real cleanup is about to run — notify listeners
-    # BEFORE the (potentially slow) compact/archive LLM call so an observer
-    # can tell the user "consolidating memory, please wait".
-    if on_triggered is not None:
-        try:
-            await on_triggered(context, plan.trigger_reason)
-        except Exception:
-            logger.warning("on_triggered callback failed: session=%s", context.session_id)
+    # Trigger confirmed and a real cleanup is about to run — dispatch
+    # CLEANUP_TRIGGERED BEFORE the (potentially slow) compact/archive LLM
+    # call so an observer can tell the user "consolidating memory, please
+    # wait". Only the revision-conflict and normal paths reach this point.
+    if hook_runner is not None:
+        triggered_ctx = MemoryHookContext(
+            session_manager=session,
+            memory_context=context,
+            compression_reason=plan.trigger_reason,
+            archive_manager=archive,
+            pruned_manager=pruned_manager,
+        )
+        await hook_runner.dispatch(MemoryHookPoint.CLEANUP_TRIGGERED, triggered_ctx)
 
     # Phase 2: compact generation
     compact_outcome = await _compact_generation_phase(
@@ -521,8 +575,9 @@ async def cleanup_session(
         compact_outcome,
     )
     if commit_result is None:
-        # Revision conflict
-        return CleanupResult(
+        # Revision conflict.
+        # triggered=True, pruned=0; both TRIGGERED (above) and FINISHED dispatch.
+        result = CleanupResult(
             triggered=True,
             messages_kept=plan.total_count,
             messages_pruned=0,
@@ -530,6 +585,15 @@ async def cleanup_session(
             compact_generated=compact_outcome.generated,
             reason=plan.trigger_reason,
         )
+        await _dispatch_cleanup_finished(
+            hook_runner,
+            session=session,
+            archive=archive,
+            context=context,
+            pruned_manager=pruned_manager,
+            result=result,
+        )
+        return result
     keep_count, prune_count = commit_result
 
     # Phase 4: pruned catalog write
@@ -549,17 +613,9 @@ async def cleanup_session(
         context,
     )
 
-    # Phase 6: advance archive state + trigger
-    await _advance_archive_phase(
-        archive_agent,
-        archive_storage,
-        archive_outcome.generated,
-        archive_outcome.next_archive_id,
-        context,
-        on_archive_generated,
-    )
-
-    return CleanupResult(
+    # Normal completion.
+    # triggered=True, pruned=prune_count; both TRIGGERED (above) and FINISHED dispatch.
+    result = CleanupResult(
         triggered=True,
         messages_kept=keep_count,
         messages_pruned=prune_count,
@@ -567,6 +623,15 @@ async def cleanup_session(
         compact_generated=compact_outcome.generated,
         reason=plan.trigger_reason,
     )
+    await _dispatch_cleanup_finished(
+        hook_runner,
+        session=session,
+        archive=archive,
+        context=context,
+        pruned_manager=pruned_manager,
+        result=result,
+    )
+    return result
 
 
 _MessageLike = Union[dict[str, Any], ChatMessage]
