@@ -10,6 +10,23 @@ Phase c prerequisite refinements (formerly ADR-0034, now archived at
 Engine)** — `LinearScheduler` (Phase a behavior) remains the default;
 `ParallelScheduler` is opt-in via `Graph.compile(scheduler="parallel")`.
 
+**Persistence contract refinement (2026-08-05):** The Node contract,
+state model, and persistence layer described in D2/D4/D5/D6/D7 below
+were refined after initial implementation. Channels (`LastValue` /
+`ReducerChannel`), `NodeResult` / `Command` / `Task`, declarative
+deltas, fork/merge, and `SUPERSEDED` / `PENDING` invocation statuses
+were removed. The current contract: `execute()` is `async ...
+-> None` (void, no `NodeResult`); state is a plain `BaseModel` shared
+across nodes with `checkpoint()` = `model_dump(mode="json")`;
+`after_node(ctx, node_name)` is a two-arg signature (no result
+parameter); routing is via `deliver()` / `submit()` +
+`ctx.dispatch(target, state_update=...)`. Persistence uses three stores
+(`GraphInstanceStore` / `NodeStateStore` / `DeliverStore`) with full
+state snapshots. The authoritative description lives in
+`docs/design/graph-orchestration/distributed-persistence.md`. The
+decision sections below are updated to reflect the current contract;
+historical context is preserved.
+
 ## Historical context
 
 Prior to this ADR, the graph engine was a god-module embedded in
@@ -138,15 +155,23 @@ The graph engine has three structural defects that block generalization:
    The decision: keep sequential as default, parallel as opt-in via
    `Graph.compile(scheduler="parallel")`.
 
-### D2 — Node interface: single-method `execute` with structured `NodeResult`
+### D2 — Node interface: single async method `execute` (void return)
 
 ```python
 class Node[S](ABC):
     @abstractmethod
-    def execute(self, ctx: "GraphContext[S]") -> NodeResult: ...
-    # Note: declared as `def`, subclasses may override with `async def`.
-    # Engine unifies via `inspect.isawaitable`.
+    async def execute(
+        self,
+        ctx: "GraphContext[S]",
+        integrated_input: "IntegratedInput",
+    ) -> None: ...
 ```
+
+`execute` is `async` and returns `None`. Nodes accumulate downstream
+delivers via `self.deliver(content, next_node, ctx)` during `execute`;
+the engine's `Node.run()` wrapper handles `submit` (dispatch) and
+lifecycle persistence after `execute` returns. There is no
+`NodeResult`, no `Command`, no `Task` return type.
 
 Rationale:
 
@@ -161,14 +186,12 @@ Rationale:
   runtime services. A pure functional signature would force a ReAct
   rewrite that violates the "approval/snapshot may be refactored but
   must improve" constraint.
-- **Single-method with structured return.** Admits imperative behavior
-  (events, hook calls, state mutation) while keeping the contract crisp
-  via `NodeResult`. The `GraphRuntime` ABC (D5) absorbs AOP concerns out
-  of the node body, so nodes stop being god nodes by construction.
-- **Single-method with structured return.** Admits imperative behavior
-  (events, hook calls, state mutation) while keeping the contract crisp
-  via `NodeResult`. The `GraphRuntime` ABC (D5) absorbs AOP concerns out
-  of the node body, so nodes stop being god nodes by construction.
+- **Void return with deliver/submit.** Admits imperative behavior
+  (events, hook calls, state mutation) while keeping the contract
+  crisp. Downstream routing is explicit: nodes call `deliver()` to
+  accumulate payloads, the framework's `submit` step dispatches them.
+  The `GraphRuntime` ABC (D5) absorbs AOP concerns out of the node
+  body, so nodes stop being god nodes by construction.
 
 ### D3 — Sync/async dual mode: `def execute` + engine `run` / `run_async`
 
@@ -199,76 +222,73 @@ the engine loop, splits the node library, forces adapters at every
 sync↔async boundary. The unified-ABC cost is one `inspect.isawaitable`
 call per node execution (negligible).
 
-### D4 — State model: Pydantic + Annotated channel bag (Z-style dual-mode)
+### D4 — State model: shared Pydantic `BaseModel` (imperative mutate + full snapshot)
 
-State is a `GraphState(BaseModel)` subclass. Each field is annotated with
-`Annotated[T, ChannelSpec]`; the spec selects the channel type. Fields
-without annotation default to `LastValue`.
+**Current contract (2026-08-05 refinement):** State is a plain
+`GraphState(BaseModel)` subclass. Fields are ordinary Pydantic fields —
+no `Annotated[T, ChannelSpec]`, no `LastValue` / `ReducerChannel`, no
+per-field channel machinery. All nodes share the same `ctx.state`
+reference and mutate it imperatively.
 
 ```python
 class ReActTurnState(GraphState):
-    current_node: Annotated[ReActNode, LastValue] = ReActNode.START
-    iteration: Annotated[int, LastValue] = 0
-    llm_response: Annotated[LLMResponse | None, LastValue] = None
-    tool_batches: Annotated[list[ToolBatchState], LastValue] = Field(default_factory=list)
-    approval: Annotated[ApprovalTransaction | None, LastValue] = None
-    messages: Annotated[list[ChatMessage], ReducerChannel(reducer=operator.add)] = Field(default_factory=list)
+    current_node: ReActNode = ReActNode.START
+    iteration: int = 0
+    llm_response: LLMResponse | None = None
+    tool_batches: list[ToolBatchState] = Field(default_factory=list)
+    approval: ApprovalTransaction | None = None
+    messages: list[ChatMessage] = Field(default_factory=list)
+    result: AgentResult | None = None
+    resume_target: str | None = None
 ```
 
-**Dual-mode state access:**
+**Imperative-only state access:** `ctx.state.iteration += 1` mutates
+the Pydantic field directly. There is no declarative
+`return NodeResult(state_update=...)` path — `execute` is async void.
+Downstream data flows through `deliver()` / `submit()` + the
+`DeliverStore` consumption state machine, not through state deltas.
 
-- **Imperative:** `ctx.state.iteration += 1` mutates the Pydantic field
-  directly. Bypasses `channel.update`. Snapshot syncs Pydantic fields →
-  channels before checkpoint.
-- **Declarative:** `return NodeResult(state_update={"x": v})` — engine
-  calls `channel.update([v])`, then syncs back to the Pydantic field.
-
-Both modes coexist. ReAct uses imperative (near-zero change from current
-`ctx.runtime.state.x = y`, just renamed to `ctx.state.x = y` — ~30
-mechanical rename sites). Future workflows may use declarative for
-reducer-aware fan-in.
-
-**Snapshot automation:**
+**Snapshot automation (full state, per-channel removed):**
 
 ```python
 class GraphState(BaseModel):
-    def checkpoint(self) -> dict[str, JsonValue]:
-        self._sync_fields_to_channels()
-        return {key: ch.checkpoint() for key, ch in self.__channels__.items()}
+    def checkpoint(self) -> dict[str, Any]:
+        return self.model_dump(mode="json")
 
     @classmethod
-    def from_checkpoint(cls, data: dict[str, JsonValue]) -> Self: ...
+    def from_checkpoint(cls, data: dict[str, Any]) -> Self:
+        return cls.model_validate(data)
 ```
 
 `ReActSnapshotPolicy._build_payload` (230 lines) +
-`state_from_snapshot` (~80 lines) collapse to ~10 lines calling
+`state_from_snapshot` (~80 lines) collapsed to ~10 lines calling
 `state.checkpoint()` / `state.from_checkpoint()`. Net code reduction.
+The persistence layer stores the full snapshot in
+`node_states.state_json` on `complete_invocation` /
+`suspend_invocation`; recovery rebuilds via `model_validate()`.
 
-**Channels shipped (exactly 2):**
+**Channels, multi-write detection, fork/merge — removed.** The
+`BaseChannel` / `LastValue` / `ReducerChannel` ABC + implementations,
+the `WriteConflictDetector` / `GenerationWriteTracker`, the
+`InvalidUpdateError` multi-write guard, and `ctx.fork()`-based state
+isolation were removed after implementation. ParallelScheduler
+(ADR-0034) uses per-task context shells that share `ctx.state` rather
+than forking. See `distributed-persistence.md` §15 (removed concepts)
+for the full list. The historical channel-based design that this ADR
+originally specified is preserved in the rejected-alternatives and
+open-questions sections below for traceability.
 
-- `LastValue` — single-writer semantics, default. Phase a does not enforce
-  single-writer (no parallel execution); Phase c enforces.
-- `ReducerChannel(reducer: Callable[[Any, Any], Any])` — binary operator
-  fan-in. Reducers are **not required to be commutative**; documentation
-  states that order-sensitive reducers used with parallel fan-out
-  produce order-dependent results.
-
-`BaseChannel` ABC is the extension seam. Additional channels (Topic /
-Ephemeral / Barrier / etc.) deferred to Phase c per ADR-0007.
-
-**Persistence path unchanged:**
+**Persistence path:**
 
 - `TurnSnapshot.state_payload: dict[str, JsonValue]` — unchanged
-- `TurnStateStore.save_turn()` — unchanged
-- `ReActRuntimeStateCodec.encode_turn/decode_turn` — unchanged (payload
-  dict ↔ JSON bytes)
-- SQLite schema — unchanged
-
-**Multi-write detection: realized in Phase c (ADR-0034).** Sequential
-execution in Phase a has no multi-write scenarios. ADR-0034 adds
-generation-based `WriteConflictDetector` — `LastValue` raises
-`InvalidUpdateError` when two same-generation instances write the same
-field; `ReducerChannel` folds all concurrent writes.
+  (ReAct turn state).
+- `TurnStateStore.save_turn()` — unchanged.
+- `ReActRuntimeStateCodec.encode_turn/decode_turn` — unchanged.
+- SQLite schema for `TurnSnapshot` — unchanged.
+- Graph-level state persistence: three stores
+  (`GraphInstanceStore` / `NodeStateStore` / `DeliverStore`) with
+  full snapshots in `node_states.state_json`. See
+  `distributed-persistence.md` for the authoritative description.
 
 ### D5 — `GraphRuntime` ABC: AOP concerns out of the node body
 
@@ -291,7 +311,7 @@ class GraphRuntime(ABC):
 
     # Engine-auto-invoked (2, node-level universal):
     async def before_node(self, ctx: "GraphContext", node_name: str) -> None: pass
-    async def after_node(self, ctx: "GraphContext", node_name: str, result: "NodeResult") -> None: pass
+    async def after_node(self, ctx: "GraphContext", node_name: str) -> None: pass
 
     # Node-explicit (6, business-specific):
     async def dispatch_hook(
@@ -425,74 +445,45 @@ fan-out. Three layers of sharing:
 
 This three-layer semantics is the contract for `Task`-based fan-out.
 
-### D6 — Routing: four coexisting mechanisms with strict priority
+### D6 — Routing: deliver / submit (current contract)
 
-Four routing mechanisms coexist, resolved in strict priority order:
-
-| Priority | Mechanism | Declare site | Use case |
-|---|---|---|---|
-| 1 (highest) | `Command(goto=...)` | Runtime | Dynamic routing / dynamic fan-out |
-| 2 | `transition: str` (static edge lookup) | Build time | Fixed control flow (ReAct's `has_tools` → TOOL) |
-| 3 | `add_conditional_edges(src, route_fn, destinations)` | Build time | Multi-candidate path selection (Workflow's `decide → {a, b, c}`) |
-| 4 (lowest) | Default edge (`reason=None`) | Build time | Fallback when nothing else matches |
-
-**`Command.goto` has three forms:**
-
-| Form | Semantics | Phase-a behavior | Phase-c behavior |
-|---|---|---|---|
-| `str` | Dynamic routing to one node | Jump to that node | Same |
-| `list[str]` | Sequential multi-target | Execute all nodes in order | Same (or parallel, TBD) |
-| `list[Task]` | Dynamic fan-out (map-reduce) | Execute all Tasks sequentially, each with independent state | Execute all Tasks in parallel, each with independent state |
-
-`Task` — a single fan-out task ("execute this node with this state"):
+**Current contract (2026-08-05 refinement):** Routing is deliver-only.
+Nodes call `self.deliver(content, next_node, ctx)` during `execute()`
+to accumulate payloads; the engine's `Node.run()` wrapper calls
+`self.submit(ctx)` after `execute()` returns, which groups delivers by
+`next_node` and calls `ctx.dispatch(target, state_update={"delivered":
+payload, ...})` for each group. The scheduler's dispatch handler
+records the target and routes the deliver to the target node's
+`DeliverStore` via `coordinator.route_deliver(...)`.
 
 ```python
-class Task(BaseModel):
-    """A single fan-out task. Phase-a: sequential. Phase-c: parallel.
-    
-    Phase-c upgrade is engine-only — node code returning
-    `Command(goto=[Task(...)])` runs in parallel automatically.
-    """
-    node: str
-    state: Any | None = None   # independent state; None = share parent state
+class Node[S](ABC):
+    def deliver(self, content: Any, next_node: str | None, ctx: "GraphContext[S]") -> None: ...
+    def submit(self, ctx: "GraphContext[S]") -> None: ...   # default delegates to _submit
+    def _submit(self, ctx: "GraphContext[S]") -> None: ...
 ```
 
-**`add_conditional_edges` design:**
+- `next_node=None` resolves via graph topology (default edge / single
+  downstream / END) in `_resolve_default_target`.
+- `next_node=GraphNode.END` skips `route_deliver` (END has no
+  `DeliverStore`).
+- A node that produces no delivers and has no default downstream edge
+  raises `RoutingError` ("Node X did not deliver").
 
-```python
-class Graph[S]:
-    def add_conditional_edges(
-        self,
-        source: str,
-        route_fn: Callable[[S], str],
-        destinations: dict[str, str] | None = None,
-    ) -> None:
-        """Conditional edge. route_fn(state) returns a string.
-        
-        destinations=None: route_fn return value is used directly as node name.
-        destinations provided: route_fn return value is a key in destinations,
-        the mapped node name is used. This decouples routing logic from
-        concrete node names.
-        """
-```
-
-**Resolution algorithm** (in `GraphEngine._resolve_next`):
-
-1. If `result.command` is not None and `command.goto` is not None → use `goto` (any of the three forms). Done.
-2. If `result.transition` is not None → look up static edge by `(current, transition)`. Done.
-3. If `current` has a conditional edge and `result.transition is None` → call `route_fn(state)`, look up `destinations`. Done.
-4. If `current` has a default edge (`reason=None`) → use it. Done.
-5. Raise `RoutingError`.
-
-**ReAct example:** the existing 4-node graph uses only static edges
-(`add_edge` with `reason=`). The `add_conditional_edges` and
-`Command(goto=...)` mechanisms are available for new workflows
-(Plan-Execute, Workflow, MapReduce) without changing ReAct.
-
-This fixes D1-defect-1 (`NodeTransition.target`/`reason` dual routing) by
-collapsing to one mechanism per layer: `transition` for static, `command.goto`
-for dynamic, `route_fn` for conditional, default edge for fallback. No `target`
-field on `NodeResult`.
+**Historical context (preserved for traceability):** The original
+Phase-a design specified four coexisting routing mechanisms with
+strict priority — `Command(goto=...)`, `transition: str` static-edge
+lookup, `add_conditional_edges(route_fn)`, and the default edge. Plus
+`NodeResult` (structured return carrying `transition` /
+`state_update` / `command`) and `Task` (fan-out unit with isolated
+state). These were removed during the persistence-contract
+refinement: `execute` became async void, `NodeResult` / `Command` /
+`Task` were deleted, and `add_conditional_edges` / `route_fn` were
+dropped (no internal caller). Conditional routing is now expressed
+via `deliver(next_node=...)` choosing the branch, or via
+`state.resume_target` for resume re-entry. The deliver/submit model
+is the single routing path; see `distributed-persistence.md` §9
+(Deliver routing and consumption) for the authoritative description.
 
 ### D7 — `GraphBubbleUp` exception family
 
@@ -526,17 +517,18 @@ existing behavior, preserved through the migration.
 
 **Resume-target routing (D7 refinement — delivered):** The "resume
 logic is carried by graph topology" promise is delivered via a
-`resume_target` channel on `GraphState` + `Command.goto` dynamic
-routing, not via entry-node `if state.phase == SUSPENDED` hardcoding.
-A node that wants to suspend sets `state.resume_target = "NODE_NAME"`
-before capturing its snapshot, then calls `ctx.interrupt(value)`. On
-re-entry, the entry node reads `state.resume_target` and routes via
-`NodeResult(command=Command(goto=state.resume_target))` (priority-1
-dynamic routing per D6), then clears the field. Any node can suspend
-this way and the entry node routes to it generically — approval is no
-longer the only expressible suspend source. The `phase` field remains
-the node's own lifecycle marker (node-internal resume detection, e.g.
-`ToolNode` checking `state.phase == SUSPENDED` to call
+`resume_target` field on `GraphState` (a plain `str | None` field, not
+a channel) consumed by the entry node, not via entry-node
+`if state.phase == SUSPENDED` hardcoding. A node that wants to suspend
+sets `state.resume_target = "NODE_NAME"` before capturing its
+snapshot, then calls `ctx.interrupt(value)`. On re-entry, the entry
+node reads `state.resume_target` and routes via
+`deliver(content, next_node=state.resume_target, ctx)` (deliver/submit
+per D6), then clears the field. Any node can suspend this way and the
+entry node routes to it generically — approval is no longer the only
+expressible suspend source. The `phase` field remains the node's own
+lifecycle marker (node-internal resume detection, e.g. `ToolNode`
+checking `state.phase == SUSPENDED` to call
 `_resume_suspended_batch`), distinct from `resume_target` (graph-level
 routing signal consumed by the entry node).
 
@@ -698,10 +690,10 @@ Node authors write linear code; already-applied state updates persist
 across the interrupt boundary; resume re-enters at the next iteration,
 NOT by re-running the node body. This is the existing ModexAgent
 behavior and is kept verbatim. Re-entry routing is driven by
-`state.resume_target` (set by `ctx.interrupt(value, resume_to=...)`
-per the D7 refinement): the entry node reads it and routes via
-`Command(goto=...)`, replacing the earlier `if state.phase == SUSPENDED`
-hardcoding.
+`state.resume_target` (a plain `str | None` field on `GraphState`,
+set before `ctx.interrupt(value)` per the D7 refinement): the entry
+node reads it and routes via `deliver(next_node=state.resume_target)`,
+replacing the earlier `if state.phase == SUSPENDED` hardcoding.
 
 **Graph result return:**
 
@@ -719,25 +711,26 @@ class GraphEngine[S]:
         return asyncio.run(self.run_async(ctx))
 ```
 
-**ReAct migration:** `ReActTurnState` gains an explicit
-`result: Annotated[AgentResult | None, LastValue] = None` field,
-replacing the current `custom[TurnCustomKey.GRAPH_RESULT]` pattern. The
-`EndNode` writes `ctx.state.result = assembled_agent_result`. The
-`ReActAgent.run()` reads `state.result` after `engine.run_async()`
-returns. This is more type-safe than the `custom` dict escape hatch
-and is checkpoint-friendly (the result is a regular channel).
+**ReAct migration:** `ReActTurnState` carries an explicit
+`result: AgentResult | None = None` field (plain Pydantic field, no
+`Annotated` / `LastValue`), replacing the current
+`custom[TurnCustomKey.GRAPH_RESULT]` pattern. The `EndNode` writes
+`ctx.state.result = assembled_agent_result`. The `ReActAgent.run()`
+reads `state.result` after `engine.run_async()` returns. This is more
+type-safe than the `custom` dict escape hatch and is checkpoint-friendly
+(the result is a regular Pydantic field serialized via `model_dump()`).
 
 ```python
 class ReActTurnState(GraphState):
     # ... existing fields ...
-    result: Annotated[AgentResult | None, LastValue] = None  # new, replaces custom[GRAPH_RESULT]
+    result: AgentResult | None = None  # replaces custom[GRAPH_RESULT]
 
 class EndNode(Node[ReActTurnState]):
-    async def execute(self, ctx: GraphContext[ReActTurnState]) -> NodeResult:
+    async def execute(self, ctx: GraphContext[ReActTurnState], integrated_input: IntegratedInput) -> None:
         result = self._assemble_result(ctx)
         ctx.state.result = result  # ← written to state
         await ctx.runtime.emit(ReActEvent.FINAL_OUTPUT, result, ctx)
-        return NodeResult(transition=None)  # END sentinel
+        self.deliver(result, GraphNode.END, ctx)  # END sentinel via deliver
 
 # ReActAgent.run()
 state = await engine.run_async(graph_ctx)
@@ -920,21 +913,27 @@ together; Stage 5 is independent.
 - Delete any dead code uncovered by the migration.
 - Validation: full test suite green.
 
-### D14 — Channel codec: per-channel checkpoint (delivered)
+### D14 — State serialization: Pydantic `model_dump()` (delivered, simplified)
 
-State field types that are not plain primitives (`int`/`str`/`list`/
-`dict`) must serialize through a channel codec for
-`GraphState.checkpoint()` / `from_checkpoint()`.
+**Current contract (2026-08-05 refinement):** `GraphState` is a plain
+`BaseModel` — no per-field channels, no `__channels__` registry, no
+per-channel codec. The single serialization path is
+`model_dump(mode="json")` for `checkpoint()` and `model_validate()` for
+`from_checkpoint()`. Non-primitive state field types are Pydantic
+`BaseModel` subclasses and round-trip automatically.
 
-**Decision:** use Pydantic's built-in `model_dump()` / `model_validate()`
-as the universal channel codec. Any state field type that is a Pydantic
-`BaseModel` subclass automatically round-trips through
-`model_dump()` → JSON-compatible dict → `model_validate()`.
+```python
+class GraphState(BaseModel):
+    def checkpoint(self) -> dict[str, Any]:
+        return self.model_dump(mode="json")
 
-**Delivered state:** the per-channel path is the **single serialization
-path** — `ReActTurnState` no longer overrides `checkpoint()` /
-`from_checkpoint()`. All non-primitive ReAct state types were migrated
-to Pydantic `BaseModel` (9 types total: `ApprovalTransaction`,
+    @classmethod
+    def from_checkpoint(cls, data: dict[str, Any]) -> Self:
+        return cls.model_validate(data)
+```
+
+All non-primitive ReAct state types were migrated to Pydantic
+`BaseModel` (9 types total: `ApprovalTransaction`,
 `ApprovalRequestState`, `ToolBatchState`, `ToolCallState`,
 `ToolArguments`, plus `CancellationState`, `OperationState`,
 `MessageDelta`, `LLMResponse`, `AgentResult`, `TurnIdentity`,
@@ -963,13 +962,18 @@ state objects that participate in mutable transitions fall under the
 `GraphState(BaseModel)` subclasses. `TurnSnapshot` remains a `@dataclass`
 (runtime-object container, not a state field).
 
-**TypeAdapter bridge:** `modex_graph`'s `encode_value` / `decode_value`
-retain a `TypeAdapter` branch for stdlib `@dataclass` types — framework
-code uses the `BaseModel` branch exclusively, but third-party consumers
-may pass stdlib dataclasses and the `TypeAdapter` branch handles them.
-The `react/codec.py` file with its five dead `register_codec` calls was
-deleted (the registrations were unreachable because `encode_value`
-checks `isinstance(value, BaseModel)` before consulting `_find_codec`).
+**Historical context (preserved for traceability):** The original
+Phase-a design specified a per-channel codec — `BaseChannel.checkpoint()`
+per field, with `register_codec(MyType, ...)` registration and a
+`TypeAdapter` bridge for stdlib dataclasses. The `react/codec.py` file
+with its five `register_codec` calls was dead on arrival
+(`encode_value` checked `isinstance(value, BaseModel)` before
+`_find_codec`) and was deleted. The channel layer itself
+(`BaseChannel` / `LastValue` / `ReducerChannel` / `__channels__`) was
+subsequently removed in the persistence-contract refinement; the
+per-channel codec collapsed to the single `model_dump()` /
+`model_validate()` path that the channel layer had already converged
+to internally.
 
 **Why Pydantic and not hand-written codecs:** Pydantic v2's
 `model_dump(mode="json")` produces JSON-compatible dicts with enum

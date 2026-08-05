@@ -146,7 +146,7 @@ agent file-tool access) are incompatible with DB storage.
 
 ### D5 — Session message state machine + TTL
 
-Session messages use a three-state lifecycle:
+Session messages use a four-state lifecycle:
 
 ```
 normal ──pin()──► pinned
@@ -155,9 +155,9 @@ normal ──pin()──► pinned
    ▼                │
 normal ◄─unpin()───┘
    │
-   │ prune / explicit delete
-   ▼
-soft_deleted ──TTL──► physical DELETE
+   │ prune / explicit delete          ┌─ retain: kept rows' stale copies
+   ▼                                  ▼
+soft_deleted ──TTL──► physical DELETE ◄── superseded
 ```
 
 - `normal` + `pinned` are visible in active queries.
@@ -165,13 +165,19 @@ soft_deleted ──TTL──► physical DELETE
 - `soft_deleted` is invisible to active queries but retained until TTL expiry.
   The soft-delete timestamp is carried by `updated_at` (auto-bumped by the
   ADR-0029 trigger on the `state` UPDATE) — no separate `deleted_at` column
-  is needed. `cleanup_expired` filters `WHERE state = 'soft_deleted' AND
-  updated_at < ?`.
-- A background job physically deletes `soft_deleted` rows past their retention
-  window.
+  is needed. `cleanup_expired` filters both deleted states
+  (`soft_deleted`, `superseded`) past their retention window.
+- `superseded` marks the stale physical copy of a message that was retained
+  by `retain_messages`: retain replaces the active set with the given keep
+  list (re-inserting it with fresh seqs, so a new head entry — e.g. a
+  `compact` summary from session cleanup — lands on top with no read-path
+  adjustment). The stale copies are invisible to every read path, including
+  `load_all_messages`, to avoid duplicates in the history view.
+- A background job physically deletes rows in both deleted states past their
+  retention window.
 
 Prune operation returns the pruned message content to the caller (archive
-generator, pruned catalog writer, URB) in the same transaction as the
+generator, pruned catalog writer) in the same transaction as the
 soft-delete — the existing file implementation achieved this implicitly by
 discarding messages during overwrite; the DB implementation must do it
 explicitly.
