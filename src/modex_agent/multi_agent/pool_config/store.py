@@ -112,7 +112,7 @@ _SUBAGENT_DEFAULTS: dict[str, object] = {
 # Fields written into the main-agent entry of pool.yml's `agents:` block.
 # `name` and `role` are added explicitly by the writer. ``skills`` is NOT here:
 # skill assignment is disk-only (symlinks under skills/<pool>/<agent>/), never
-# persisted in pool.yml. ``memory`` / ``experience`` are baked, also not here.
+# persisted in pool.yml. ``experience`` is baked, not here.
 _MAIN_AGENT_EDITABLE_FIELDS: tuple[str, ...] = (
     "description",
     "max_steps",
@@ -124,6 +124,7 @@ _MAIN_AGENT_EDITABLE_FIELDS: tuple[str, ...] = (
     "mcp",
     "roles",
     "prompt_name",
+    "memory",
 )
 
 # Per-field defaults for the main-agent editable fields. Values equal to their
@@ -136,6 +137,7 @@ _MAIN_AGENT_DEFAULTS: dict[str, object] = {
     "mcp": [],
     "roles": [],
     "prompt_name": None,
+    "memory": {"archive_enabled": False, "core_enabled": False},
 }
 
 
