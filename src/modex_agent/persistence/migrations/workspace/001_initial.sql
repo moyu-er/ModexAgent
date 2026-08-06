@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS memory_session_messages (
     scope_key       TEXT    NOT NULL,
     seq             INTEGER NOT NULL,
     message_id      TEXT,
-    role            TEXT    NOT NULL CHECK (role IN ('user', 'assistant', 'system', 'tool', 'agent', 'compact', 'pending')),
+    role            TEXT    NOT NULL,
     content         TEXT,
     is_content_json INTEGER NOT NULL DEFAULT 0 CHECK (is_content_json IN (0, 1)),
     token_count     INTEGER,

@@ -520,18 +520,20 @@ async def test_no_pool_indexes_remain(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_memory_session_messages_role_check(tmp_path: Path) -> None:
+    """The role column must carry NO CHECK constraint.
+
+    The role domain is owned by the app-layer ``MessageRole`` enum; a mirrored
+    SQL CHECK drifts when the enum grows (the ``system_reminder`` intake
+    outage). This pins the absence of that constraint.
+    """
     manager = await _open_workspace(tmp_path)
     scope_key = _scope_key(session_id="s1")
-    base_insert = (
+    await manager.execute(
         "INSERT INTO memory_session_messages "
         "(scope_key, seq, message_id, role, content, message_json) "
-        "VALUES (?, ?, ?, ?, ?, ?)"
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (scope_key, 1, "m1", "system_reminder", "hi", "{}"),
     )
-
-    with pytest.raises(sqlite3.IntegrityError):
-        await manager.execute(base_insert, (scope_key, 1, "m1", "developer", "hi", "{}"))
-
-    await manager.execute(base_insert, (scope_key, 1, "m1", "user", "hi", "{}"))
     await manager.close()
 
 

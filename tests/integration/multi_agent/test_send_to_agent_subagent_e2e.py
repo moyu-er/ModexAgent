@@ -33,13 +33,14 @@ import pytest
 
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.context import InMemoryContextManager
+from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import StreamingLLMProvider
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.session_registry import InMemorySessionRegistry
 from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent import SessionRetentionPolicy
+from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication import AgentCommunicationService
@@ -275,6 +276,8 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         pool=pool,
         session_factory=session_factory,
         broker=broker,
+        # Must mirror production wiring (bot resources.py) — TurnRunner reads safety.turn.
+        safety=RuntimeSafetyPolicy(),
         project_dir=project,
         agent_bus=bus,
         context_fork_builder=context_fork_builder,

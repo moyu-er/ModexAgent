@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from modex_agent.core.scope import MemoryLayerName, RecordScope
+from modex_agent.core.types import MessageRole
 from modex_agent.memory.core.split_stores import MessageStore
 from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
 from modex_agent.persistence import ConnectionManager, DatabaseKind
@@ -72,6 +73,19 @@ class TestMessageStoreConformance:
         await message_store.append_message(msg("m2"))
         loaded = await message_store.load_messages()
         assert [m["id"] for m in loaded] == ["m1", "m2"]
+
+    async def test_append_accepts_every_message_role(self, message_store: MessageStore) -> None:
+        """Every ``MessageRole`` member round-trips on both backends.
+
+        Pins the SQLite ``memory_session_messages.role`` CHECK constraint
+        against the canonical enum: the intake writer persists
+        ``system_reminder`` records, and a role missing from the CHECK fails
+        with ``sqlite3.IntegrityError`` at append time.
+        """
+        for index, role in enumerate(MessageRole):
+            await message_store.append_message(msg(f"r{index}", role=str(role)))
+        loaded = await message_store.load_messages()
+        assert [m["role"] for m in loaded] == [str(role) for role in MessageRole]
 
     async def test_get_revision_empty(self, message_store: MessageStore) -> None:
         rev = await message_store.get_revision()
