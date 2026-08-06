@@ -214,6 +214,7 @@ describe("applyServerEvent streaming stability", () => {
         tool: "read",
         args: { path: "x" },
         turn_id: "turn_1",
+        call_id: "call_1",
       },
       "conv.main",
       ref,
@@ -229,6 +230,7 @@ describe("applyServerEvent streaming stability", () => {
         tool: "read",
         result_summary: "ok",
         turn_id: "turn_1",
+        call_id: "call_1",
       },
       "conv.main",
       ref,
@@ -236,6 +238,106 @@ describe("applyServerEvent streaming stability", () => {
     // Tool finished but the turn continues — must stay busy so the
     // send/pause toggle doesn't flicker mid-turn.
     expect(state.isStreaming).toBe(true);
+  });
+
+  it("pairs parallel same-name tool results by call_id, not by tool name", () => {
+    // Regression: name-based matching stamped the FIRST end's result onto
+    // EVERY unresolved same-name block and silently dropped the second
+    // result; pairing must follow call_id even when ends arrive in order.
+    const ref = { current: null as string | null };
+    const start = (call_id: string, path: string) => ({
+      event: "tool_call_start" as const,
+      session_id: "conv.main",
+      agent_name: "main",
+      tool: "read",
+      args: { path },
+      turn_id: "turn_1",
+      call_id,
+    });
+    const end = (call_id: string, result_summary: string) => ({
+      event: "tool_call_end" as const,
+      session_id: "conv.main",
+      agent_name: "main",
+      tool: "read",
+      result_summary,
+      turn_id: "turn_1",
+      call_id,
+    });
+
+    let state = applyServerEvent(emptyState(), start("call_1", "a.md"), "conv.main", ref);
+    state = applyServerEvent(state, start("call_2", "b.md"), "conv.main", ref);
+    state = applyServerEvent(state, end("call_1", "content of a"), "conv.main", ref);
+    state = applyServerEvent(state, end("call_2", "content of b"), "conv.main", ref);
+
+    const tools = (state.messages[0]?.blocks ?? [])
+      .filter((b) => b.kind === "tool")
+      .map((b) => (b.kind === "tool" ? b.tool : null));
+    expect(tools).toHaveLength(2);
+    expect(tools[0]?.result).toBe("content of a");
+    expect(tools[1]?.result).toBe("content of b");
+  });
+
+  it("appends a result-only block when tool_call_end has no matching start", () => {
+    // Page refreshed while the turn was suspended for approval: the resume
+    // re-emits END without START, and no streamed block carries the call_id.
+    // The result must still render instead of being dropped.
+    const ref = { current: null as string | null };
+    const state = applyServerEvent(
+      emptyState(),
+      {
+        event: "tool_call_end",
+        session_id: "conv.main",
+        agent_name: "main",
+        tool: "read",
+        result_summary: "resumed result",
+        turn_id: "turn_1",
+        call_id: "call_9",
+      },
+      "conv.main",
+      ref,
+    );
+    const tools = (state.messages[0]?.blocks ?? [])
+      .filter((b) => b.kind === "tool")
+      .map((b) => (b.kind === "tool" ? b.tool : null));
+    expect(tools).toHaveLength(1);
+    expect(tools[0]?.tool).toBe("read");
+    expect(tools[0]?.result).toBe("resumed result");
+    expect(state.isStreaming).toBe(true);
+  });
+
+  it("pairs out-of-order same-name tool results by call_id", () => {
+    const ref = { current: null as string | null };
+    const start = (call_id: string) => ({
+      event: "tool_call_start" as const,
+      session_id: "conv.main",
+      agent_name: "main",
+      tool: "read",
+      args: {},
+      turn_id: "turn_1",
+      call_id,
+    });
+    const end = (call_id: string, result_summary: string) => ({
+      event: "tool_call_end" as const,
+      session_id: "conv.main",
+      agent_name: "main",
+      tool: "read",
+      result_summary,
+      turn_id: "turn_1",
+      call_id,
+    });
+
+    let state = applyServerEvent(emptyState(), start("call_1"), "conv.main", ref);
+    state = applyServerEvent(state, start("call_2"), "conv.main", ref);
+    // Second call finishes first.
+    state = applyServerEvent(state, end("call_2", "result 2"), "conv.main", ref);
+    state = applyServerEvent(state, end("call_1", "result 1"), "conv.main", ref);
+
+    const tools = (state.messages[0]?.blocks ?? [])
+      .filter((b) => b.kind === "tool")
+      .map((b) => (b.kind === "tool" ? b.tool : null));
+    expect(tools).toHaveLength(2);
+    expect(tools[0]?.result).toBe("result 1");
+    expect(tools[1]?.result).toBe("result 2");
   });
 
   it("mirrors the selected session's streaming flag into sessionStreaming", () => {

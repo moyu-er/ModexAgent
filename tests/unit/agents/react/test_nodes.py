@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from modex_agent import ToolCall
+from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.context import ReActGraphContext
 from modex_agent.agents.react.injection_drainer import InjectionDrainer
@@ -24,6 +25,7 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager, ToolResult
+from modex_agent.core.types import LLMResponse
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
@@ -365,6 +367,59 @@ class TestToolNode:
         assert ReActNode.LLM in node._submit_result
         assert len(executed) == 2
         assert len(history.msgs) == 2
+
+    @pytest.mark.asyncio
+    async def test_missing_call_id_canonicalized_before_events(self):
+        """Providers may omit ``call_id``. The node assigns ONE id up front so
+        TOOL_CALL_START/END event payloads, the executed call, and the history
+        tool message all carry the same id — streamed start/end pairs and
+        persisted call/result records can then be matched by id."""
+        captured: dict[str, str | None] = {}
+
+        tool_executor = ToolExecutor()
+
+        async def _mock_execute(tc, ctx):
+            captured["call_id"] = tc.call_id
+            return ToolResult.from_text(tc.tool_name, "ok")
+
+        tool_executor.execute = _mock_execute  # type: ignore[method-assign]
+        node = ToolNode(tool_executor)
+
+        history = _MockHistory()
+        tc = ToolCall(tool_name="read", arguments={})  # provider omitted call_id
+        response = LLMResponse(content="", tool_calls=[tc])
+
+        runtime = _make_runtime()
+        runtime.state.llm_response = response  # type: ignore[assignment]
+        runtime.state.iteration = 1
+        emitter = _MockEmitter()
+        agent_ctx = AgentContext(
+            system_prompt="test",
+            history=ListMessageHistory(),
+            tool_manager=InMemoryToolManager(),
+            identity=runtime.state.identity,
+            runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
+        )
+        ctx = ReActGraphContext(
+            state=runtime.state,  # type: ignore[arg-type]
+            runtime=ReactGraphRuntime(emitter=emitter),
+            user_data=agent_ctx,
+            coordinator=_make_test_coordinator(),
+        )
+        ctx.agent_ctx.history = history  # type: ignore[assignment]
+
+        await node.run(ctx)
+
+        call_id = captured["call_id"]
+        assert call_id  # assigned, non-empty
+        starts = [d for e, d in emitter.events if e == ReActEvent.TOOL_CALL_START]
+        ends = [d for e, d in emitter.events if e == ReActEvent.TOOL_CALL_END]
+        assert len(starts) == 1
+        assert len(ends) == 1
+        assert starts[0].call_id == call_id
+        assert ends[0][0].call_id == call_id
+        assert history.msgs[0].tool_call_id == call_id
 
     @pytest.mark.asyncio
     async def test_denied_tool_cascades_and_cancels(self):

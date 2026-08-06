@@ -77,6 +77,16 @@ class ToolNode(Node[ReActTurnState]):
         state.llm_response = None
         state.current_node = ReActNode.TOOL
 
+        # Canonicalize call_id once, up front: providers may omit it, and
+        # every downstream consumer (TOOL_CALL_START/END events,
+        # ToolCallState, approval requests, history tool messages) must see
+        # the SAME id for a call — otherwise streamed start/end pairs and
+        # persisted call/result records cannot be matched by id.
+        tool_calls = [
+            tc if tc.call_id else tc.model_copy(update={"call_id": uuid4().hex})
+            for tc in tool_calls
+        ]
+
         agent_ctx = get_agent_ctx(ctx)
         max_tools = (
             agent_ctx.runtime.state.custom.get(TurnCustomKey.MAX_TOOLS_PER_TURN)
@@ -100,6 +110,8 @@ class ToolNode(Node[ReActTurnState]):
         await self._emit_batch(ctx, GraphReActEvent.TOOL_CALL_START, tool_calls)
         call_states = [
             ToolCallState(
+                # Canonicalized above; the fallback only guards against future
+                # refactors breaking that invariant — it must never crash a turn.
                 call_id=tc.call_id or uuid4().hex,
                 tool_name=tc.tool_name,
                 arguments=ToolArguments(values=tc.arguments or {}),

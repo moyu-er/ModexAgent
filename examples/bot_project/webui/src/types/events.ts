@@ -59,6 +59,9 @@ export interface ToolCallStartEvent extends ServerEvent {
   tool: string;
   args: Record<string, unknown>;
   turn_id: string;
+  /** Pairs this start with exactly one tool_call_end (name alone is
+   *  ambiguous when the same tool runs multiple times in one turn). */
+  call_id: string;
 }
 
 export interface ToolCallEndEvent extends ServerEvent {
@@ -66,6 +69,7 @@ export interface ToolCallEndEvent extends ServerEvent {
   tool: string;
   result_summary: string;
   turn_id: string;
+  call_id: string;
 }
 
 export interface TurnEndEvent extends ServerEvent {
@@ -264,6 +268,9 @@ export interface ToolTrace {
   tool: string;
   args: Record<string, unknown>;
   result?: string;
+  /** Present on streaming blocks (from tool_call_start); history blocks
+   *  materialized from the transcript don't carry it. */
+  call_id?: string;
 }
 
 // ── Ordered content blocks (preserves streaming interleaving) ────────────

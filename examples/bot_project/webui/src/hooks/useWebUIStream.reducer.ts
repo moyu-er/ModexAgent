@@ -161,7 +161,7 @@ function _applyEventToMessages(
     case "tool_call_start": {
       const start = event as ToolCallStartEvent;
       const msgs = _upsertStreamingBlock(messages, start.agent_name,
-        { kind: "tool", tool: { tool: start.tool, args: start.args } },
+        { kind: "tool", tool: { tool: start.tool, args: start.args, call_id: start.call_id } },
       );
       return { messages: msgs, isStreaming: true };
     }
@@ -186,24 +186,46 @@ function _applyEventToMessages(
     }
     case "tool_call_end": {
       const end = event as ToolCallEndEvent;
-      const msgs = [...messages];
-      const lastIdx = msgs.findLastIndex(
-        (m: UIMessage) => m.role === "assistant" && m.agent_name === end.agent_name,
-      );
-      if (lastIdx < 0 || !msgs[lastIdx]) return { messages: msgs, isStreaming: false };
-      const last = msgs[lastIdx]!;
-      msgs[lastIdx] = {
-        ...last,
-        blocks: last.blocks.map((b) => {
-          if (b.kind === "tool" && b.tool.tool === end.tool && b.tool.result === undefined) {
+      // Pair by call_id, filling exactly one block: matching by tool name
+      // would stamp one result onto every unresolved same-name block (and
+      // drop the later results) when a turn runs parallel identical tools.
+      // Search ALL of this agent's messages, not just the latest — the
+      // block may sit in an earlier message when turns interleave.
+      let matched = false;
+      const msgs = messages.map((m) => {
+        if (matched || m.role !== "assistant" || m.agent_name !== end.agent_name) {
+          return m;
+        }
+        let changed = false;
+        const blocks = m.blocks.map((b) => {
+          if (
+            !matched &&
+            b.kind === "tool" &&
+            b.tool.call_id === end.call_id &&
+            b.tool.result === undefined
+          ) {
+            matched = true;
+            changed = true;
             return { ...b, tool: { ...b.tool, result: end.result_summary } };
           }
           return b;
-        }),
-      };
-      // A tool call completing does NOT end the turn — the model may reason
-      // about the result and keep emitting. Keep streaming until ``turn_end``.
-      return { messages: msgs, isStreaming: true };
+        });
+        return changed ? { ...m, blocks } : m;
+      });
+      if (matched) {
+        // A tool call completing does NOT end the turn — the model may reason
+        // about the result and keep emitting. Keep streaming until ``turn_end``.
+        return { messages: msgs, isStreaming: true };
+      }
+      // No matching block: the START never reached this client (e.g. the page
+      // was refreshed while the turn was suspended for approval — the call is
+      // only persisted at END, and resume re-emits END without START). Append
+      // a result-only block so the result renders without a second refresh.
+      const appended = _upsertStreamingBlock(messages, end.agent_name, {
+        kind: "tool",
+        tool: { tool: end.tool, args: {}, result: end.result_summary, call_id: end.call_id },
+      });
+      return { messages: appended, isStreaming: true };
     }
     case "turn_end": {
       const msgs = [...messages];

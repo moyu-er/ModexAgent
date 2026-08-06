@@ -209,19 +209,26 @@ class ModelReasoningDelta(ServerEvent):
 
 @dataclass
 class ToolCallStartEvent(ServerEvent):
-    """A tool call has started."""
+    """A tool call has started.
+
+    ``call_id`` pairs this start with exactly one ``tool_call_end`` —
+    the frontend matches by id, not by tool name, so parallel same-name
+    calls stay distinct.
+    """
     tool: str = ""
     args: dict[str, object] = field(default_factory=dict)
     turn_id: str = ""
+    call_id: str = ""
     event: str = field(default=WebUIEventType.TOOL_CALL_START.value, init=False)
 
 
 @dataclass
 class ToolCallEndEvent(ServerEvent):
-    """A tool call has completed."""
+    """A tool call has completed. ``call_id`` matches its ``tool_call_start``."""
     tool: str = ""
     result_summary: str = ""
     turn_id: str = ""
+    call_id: str = ""
     event: str = field(default=WebUIEventType.TOOL_CALL_END.value, init=False)
 
 

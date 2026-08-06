@@ -194,6 +194,31 @@ async def test_tool_call_events_persisted_incrementally() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_call_events_stream_matching_call_id() -> None:
+    """Streamed tool_call_start/end carry the SAME call_id.
+
+    The frontend pairs a result with exactly one tool block by call_id —
+    matching by tool name breaks when a turn runs parallel same-name calls.
+    """
+    input_adapter = WebSocketInputAdapter()
+    output_adapter = WebSocketOutputAdapter(input_adapter)
+    emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig())
+    input_adapter.register_connection("conv1.main", None)
+    tc = ToolCall(tool_name="read_file", arguments={"path": "/x"}, call_id="call_0")
+    result = ToolResult.from_text("read_file", "content")
+    await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
+    await emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
+    q = input_adapter._delta_queues.get("conv1.main")
+    assert q is not None
+    start_env = q.get_nowait()
+    end_env = q.get_nowait()
+    assert start_env.event_type == WebUIEventType.TOOL_CALL_START.value
+    assert start_env.payload["call_id"] == "call_0"
+    assert end_env.event_type == WebUIEventType.TOOL_CALL_END.value
+    assert end_env.payload["call_id"] == "call_0"
+
+
+@pytest.mark.asyncio
 async def test_reasoning_not_persisted_to_transcript() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         input_adapter = WebSocketInputAdapter()

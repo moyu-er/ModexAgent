@@ -125,7 +125,6 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         self._segment_order: list[str] = []
         self._current_turn_id: str = ""
         self._turn_active: bool = False
-        self._tool_seq: int = 0
         self._turn_started_at: float = time.time()
         self._pending_external_tools: dict[str, tuple[str, dict[str, object]]] = {}
 
@@ -203,13 +202,6 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                 "partial clear failed for session %s: %s", self._session_id, exc
             )
 
-    def _resolve_call_id(self, raw_call_id: str | None, tool_name: str) -> str:
-        """Return a stable call_id, falling back to monotonic counter when None."""
-        if raw_call_id is not None:
-            return raw_call_id
-        self._tool_seq += 1
-        return f"{tool_name}_{self._tool_seq}"
-
     def _ensure_turn_started(self) -> None:
         """Lazily start a new turn with UUID turn_id.
 
@@ -221,7 +213,6 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
             return
         self._current_turn_id = uuid.uuid4().hex[:12]
         self._turn_active = True
-        self._tool_seq = 0
         self._turn_started_at = time.time()
 
     # ------------------------------------------------------------------
@@ -324,6 +315,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                         tool=tool_name,
                         args=_truncate_tool_args(full_args),
                         turn_id=self._current_turn_id,
+                        call_id=call_id,
                     )
                 )
             case TurnToolResultEvent(
@@ -367,6 +359,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                         tool=tool_name,
                         result_summary=result_summary,
                         turn_id=self._current_turn_id,
+                        call_id=call_id,
                     )
                 )
 
@@ -395,6 +388,10 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         elif event_value == _TOOL_CALL_START:
             tool_name: str = data.tool_name
             full_args: dict[str, object] = data.arguments or {}
+            # The tool node canonicalizes call_id before emitting (assigning
+            # one when the provider omits it), so the id here is the SAME id
+            # the later END will carry — pass it through verbatim.
+            call_id: str = data.call_id
 
             await self._flush_active_segment()
             self._ensure_turn_started()
@@ -412,6 +409,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                 tool=tool_name,
                 args=_truncate_tool_args(full_args),
                 turn_id=self._current_turn_id,
+                call_id=call_id,
             )
             await self._send_event(evt)
 
@@ -421,10 +419,12 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
             tool_name: str = tc.tool_name
             raw_error: str | None = tool_result.error
             full_result: str = tool_result.message_content()
+            # The canonical id assigned by the tool node — shared by the
+            # persisted pair AND the streamed END, equal to the START's id.
+            call_id: str = tc.call_id
 
             if self._transcript_store is not None:
                 self._ensure_turn_started()
-                call_id: str = self._resolve_call_id(tc.call_id, tool_name)
                 full_args = tc.arguments or {}
                 # Persist call + result TOGETHER so they share a turn_id and
                 # the materializer pairs them into one complete tool block.
@@ -462,6 +462,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                 tool=tool_name,
                 result_summary=result_summary,
                 turn_id=self._current_turn_id,
+                call_id=call_id,
             )
             await self._send_event(evt)
 
