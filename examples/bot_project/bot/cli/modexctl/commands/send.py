@@ -14,7 +14,8 @@ from typing import Annotated
 
 import typer
 
-from bot.cli.modexctl.app import EXIT_ROUTING, EXIT_USAGE, _format_send_ack
+from bot.cli.modexctl.ack_adapter import to_agent_send_result
+from bot.cli.modexctl.app import EXIT_ROUTING, EXIT_USAGE
 from bot.cli.modexctl.context import (
     ModexCtlContext,
     _decode_stdin_bytes,
@@ -24,6 +25,7 @@ from bot.cli.modexctl.context import (
 )
 from bot.cli.modexctl.http_client import ControlClientError, fetch_send
 from bot.control.models import AgentSessionRef, SendRequest
+from modex_agent.multi_agent.communication.result import format_send_ack
 
 
 def build_send_command(ctx: ModexCtlContext) -> Callable[..., None]:
@@ -161,6 +163,6 @@ def build_send_command(ctx: ModexCtlContext) -> Callable[..., None]:
             typer.echo(f"error: {exc}", err=True)
             raise typer.Exit(code=EXIT_ROUTING) from exc
 
-        typer.echo(_format_send_ack(result))
+        typer.echo(format_send_ack(to_agent_send_result(result)))
 
     return _send

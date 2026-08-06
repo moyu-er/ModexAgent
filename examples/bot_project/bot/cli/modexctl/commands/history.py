@@ -3,10 +3,6 @@
 Split verbatim from the former ``main.py``; the closure body is unchanged.
 The factory wraps it so :class:`~bot.cli.modexctl.context.ModexCtlContext`
 is captured exactly as it was when the closure lived inside ``build_app``.
-
-``_format_send_ack`` (previously co-located here) moved to
-:mod:`bot.cli.modexctl.app` — it is shared by both ``send`` and
-``history`` commands and belongs in the common app module.
 """
 
 from __future__ import annotations

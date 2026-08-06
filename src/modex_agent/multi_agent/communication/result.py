@@ -49,12 +49,17 @@ def format_send_ack(result: AgentSendResult) -> str:
         return f"Error: {result.error}"
 
     if result.is_peer_send:
-        return _format_peer_ack(result)
+        ack = _format_peer_ack(result)
+    elif result.target_kind == AgentCommKind.NORMAL and not result.is_peer_send:
+        ack = _format_parent_reply_ack(result)
+    elif result.trace_dir is None and result.output_path is None:
+        ack = _format_external_subagent_ack(result)
+    else:
+        ack = _format_native_subagent_ack(result)
 
-    if result.trace_dir is None and result.output_path is None:
-        return _format_external_subagent_ack(result)
-
-    return _format_native_subagent_ack(result)
+    if result.warning:
+        return f"{ack}\n\nNote: {result.warning}"
+    return ack
 
 
 def _format_peer_ack(result: AgentSendResult) -> str:
@@ -65,6 +70,16 @@ def _format_peer_ack(result: AgentSendResult) -> str:
             "The peer agent will process your message asynchronously. If a "
             "reply is needed, the peer agent will send it back via "
             "send_to_agent.",
+        ]
+    )
+
+
+def _format_parent_reply_ack(result: AgentSendResult) -> str:
+    return "\n".join(
+        [
+            f"Reply delivered to '{result.target_agent}'.",
+            "",
+            "The parent agent will process your reply asynchronously.",
         ]
     )
 

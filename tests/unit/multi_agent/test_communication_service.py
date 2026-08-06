@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import pytest
 
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.messaging.broker import BrokerMessage, MessageBroker
+from modex_agent.messaging.broker import Address, AddressKind, BrokerMessage, MessageBroker
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.multi_agent.registry import AgentProfile
-from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.tools import CommunicationTarget
 
 
@@ -70,13 +72,16 @@ class _FakeBroker(MessageBroker):
     async def consume(self, address: object) -> BrokerMessage | None:
         return None
 
-    def consume_stream(self, address: object):  # type: ignore[no-untyped-def]
+    def consume_stream(self, address: Address) -> AsyncIterator[BrokerMessage]:
         import asyncio
 
-        async def _gen():
+        async def _gen() -> AsyncIterator[BrokerMessage]:
             while True:
                 await asyncio.sleep(0.1)
-                yield BrokerMessage(payload={}, sender=object())  # type: ignore[call-arg]
+                yield BrokerMessage(
+                    payload={},
+                    sender=Address(kind=AddressKind.AGENT, name="source"),
+                )
 
         return _gen()
 
@@ -174,7 +179,7 @@ class TestCommunicationService:
             invocation_id="",
             context=ctx,
         )
-        assert "Task dispatched to 'reviewer'" in result
+        assert "Reply delivered to 'reviewer'." in result
 
     @pytest.mark.asyncio
     async def test_normal_target_with_concrete_uuid_errors(self) -> None:
@@ -189,7 +194,7 @@ class TestCommunicationService:
             invocation_id="abc123",
             context=ctx,
         )
-        assert "Task dispatched to 'reviewer'" in result
+        assert "Reply delivered to 'reviewer'." in result
 
     @pytest.mark.asyncio
     async def test_subagent_empty_uuid_creates_task(self) -> None:

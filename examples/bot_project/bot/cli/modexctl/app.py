@@ -1,12 +1,10 @@
 """``modexctl`` app factory + entry point + shared formatting helpers.
 
 Holds :func:`build_app` (which wires the three command closures from
-:mod:`bot.cli.modexctl.commands` into a Typer app), :func:`main` (the
-console-script entry point re-exported by ``__init__``), and
-:func:`_format_send_ack` (shared by ``send`` + ``history`` commands).
-Split verbatim from the former ``main.py``; no logic changes — the command
-closure bodies moved to ``commands/`` unchanged, only the registration
-calls now use the factory wrappers.
+:mod:`bot.cli.modexctl.commands` into a Typer app) and :func:`main` (the
+console-script entry point re-exported by ``__init__``). Send-ack formatting
+is handled by the framework's :func:`format_send_ack` via the adapter in
+:mod:`bot.cli.modexctl.ack_adapter`.
 """
 
 from __future__ import annotations
@@ -28,45 +26,6 @@ from bot.cli.modexctl.context import (
 EXIT_OK: int = 0
 EXIT_USAGE: int = 1
 EXIT_ROUTING: int = 2
-
-
-# ---------------------------------------------------------------------------
-# Send ack formatting (shared by send + history commands)
-# ---------------------------------------------------------------------------
-
-from bot.control.models import (  # noqa: E402
-    DispatchOutcome,
-    SendResult,
-)
-
-
-def _format_send_ack(result: SendResult) -> str:
-    if result.dispatch_outcome == DispatchOutcome.NOT_APPLICABLE:
-        if result.is_peer_send:
-            return (
-                f"Message delivered to '{result.target_agent}'.\n"
-                "The agent will process your message asynchronously."
-            )
-        return (
-            "Reply delivered.\n"
-            "The agent will continue processing."
-        )
-
-    if result.dispatch_outcome == DispatchOutcome.REQUESTED_INVOCATION_NOT_FOUND:
-        status = (
-            f"new_task (requested '{result.requested_invocation_id}' "
-            "not found, created new)"
-        )
-    else:
-        status = result.dispatch_outcome.value
-
-    return (
-        f"Task dispatched to '{result.target_agent}'.\n"
-        f"invocation_id: {result.invocation_id}\n"
-        f"status: {status}\n"
-        "\n"
-        "Wait for the <replied> block. Do not poll."
-    )
 
 
 # ---------------------------------------------------------------------------
