@@ -43,6 +43,7 @@ def to_agent_send_result(send_result: SendResult) -> AgentSendResult:
         invocation_id=send_result.invocation_id,
         created_new_task=send_result.dispatch_outcome == DispatchOutcome.NEW_TASK,
         is_peer_send=send_result.is_peer_send,
+        is_external=send_result.is_external_target,
         error=None,
         warning=warning,
         trace_dir=send_result.trace_dir,
