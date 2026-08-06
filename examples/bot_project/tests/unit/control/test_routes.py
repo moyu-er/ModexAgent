@@ -366,7 +366,7 @@ def _sample_send_result() -> SendResult:
         dispatch_outcome=DispatchOutcome.NEW_TASK,
         is_peer_send=False,
         is_external_target=False,
-        output_path=Path("/data/output.md"),
+        output_path=None,
         trace_dir=Path("/data/trace"),
     )
 
@@ -455,7 +455,7 @@ class TestSendHappyPath:
             assert body["dispatch_outcome"] == "new_task"
             assert body["is_peer_send"] is False
             assert body["is_external_target"] is False
-            assert body["output_path"] == str(Path("/data/output.md"))
+            assert "output_path" not in body
             assert body["trace_dir"] == str(Path("/data/trace"))
         finally:
             await client.close()

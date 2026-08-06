@@ -60,7 +60,6 @@ def test_parent_reply_ack_is_distinct_from_subagent_dispatch() -> None:
             invocation_id="task-1",
             created_new_task=True,
             trace_dir=Path("/tmp/trace"),
-            output_path=Path("/tmp/output.md"),
             warning="delivery warning",
         ),
     ],
@@ -84,3 +83,24 @@ def test_error_ack_does_not_render_warning() -> None:
     )
 
     assert format_send_ack(result) == "Error: send failed"
+
+
+def test_native_subagent_ack_omits_output_and_tail_wording() -> None:
+    result = AgentSendResult(
+        target_agent="worker",
+        target_kind=AgentCommKind.SUBAGENT,
+        session_id="task-1.worker",
+        invocation_id="task-1",
+        created_new_task=True,
+        trace_dir=Path("/tmp/trace"),
+    )
+
+    ack = format_send_ack(result)
+
+    assert "Output:" not in ack
+    assert "tail the Trace" not in ack
+    assert "Wait for the inbox notification" in ack
+    assert result.trace_dir is not None
+    assert str(result.trace_dir) in ack
+    assert result.invocation_id is not None
+    assert result.invocation_id in ack

@@ -2,8 +2,9 @@
 
 Exposes the workspace-rooted base dirs (runtime_dir / memory_dir /
 pruned_manager) consumed by AgentTemplate.materialize and the communication
-service ack. Per-session file paths (output/<sid>/OUTPUT.md, trace/<sid>)
-are assembled by their callers — they carry mkdir side-effects or
+service ack. Per-session file paths (output/<sid>/OUTPUT_<n>.md, trace/<sid>)
+are assembled by their callers — OUTPUT_<n>.md is hook-owned (numbered
+via max+1 scan); the trace dir is strategy-owned. Both carry mkdir
 dir-vs-file distinctions that do not belong here. Resolution prefers the
 active workspace's pool_data; ctor args are fallbacks (tests / non-workspace
 wiring). None of these methods ever synthesizes a process-CWD path, which

@@ -71,7 +71,7 @@ class SubagentDispatchStrategy(SendStrategy):
     def build_result(
         self, req: SendRequest, session: SessionInfo, invocation_id: str
     ) -> AgentSendResult:
-        """Add trace/output paths for subagent ack."""
+        """Add trace_dir for subagent ack (output_path is owned by the hook)."""
         from modex_agent.core.constants import ExecutionStrategyKind
 
         if req.target.execution_strategy == ExecutionStrategyKind.EXTERNAL:
@@ -88,7 +88,6 @@ class SubagentDispatchStrategy(SendStrategy):
             session_id=str(session),
             invocation_id=invocation_id,
             created_new_task=created_new_task,
-            output_path=self._subagent_output_path(req.target.kind, str(session)),
             trace_dir=self._subagent_trace_dir(req.target.kind, str(session)),
         )
 

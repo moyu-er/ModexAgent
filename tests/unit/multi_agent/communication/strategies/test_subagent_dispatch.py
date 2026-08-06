@@ -242,6 +242,75 @@ class TestBuildResultExecutionStrategyBranch:
         assert result.trace_dir is None
         assert result.output_path is None
 
+    def test_native_subagent_result_has_trace_but_no_output(self, tmp_path: Path) -> None:
+        """T4: native _build_native_result sets trace_dir only.
+
+        The strategy owns routing (trace_dir); the hook (T2) owns file
+        writes (output_path). So output_path stays None and the output dir
+        is NOT pre-created at dispatch time.
+        """
+        from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
+
+        resolver = WorkspacePathResolver(
+            workspace_manager=None,
+            pool_name="main",
+            fallback_runtime_dir=tmp_path,
+        )
+        deps = SendDeps(
+            source=AgentAddress(name="main"),
+            broker=_FakeBroker(),
+            session_factory=SessionIdFactory(),
+            agent_bus=_FakeBus(),
+            workspace_path_resolver=resolver,
+        )
+        strategy = SubagentDispatchStrategy(deps)
+        req = _make_request(invocation_id="task-1")
+        session = strategy.build_session(req, "task-1")
+
+        result = strategy.build_result(req, session, "task-1")
+
+        assert result.output_path is None
+        assert result.trace_dir is not None
+        assert result.trace_dir == tmp_path / "trace" / str(session)
+        assert not (tmp_path / "output").exists()
+
+    def test_native_subagent_ack_omits_output_line(self, tmp_path: Path) -> None:
+        """T4: native ack shows Trace but not Output (output_path is None)."""
+        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.multi_agent.communication.result import format_send_ack
+        from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
+
+        resolver = WorkspacePathResolver(
+            workspace_manager=None,
+            pool_name="main",
+            fallback_runtime_dir=tmp_path,
+        )
+        deps = SendDeps(
+            source=AgentAddress(name="main"),
+            broker=_FakeBroker(),
+            session_factory=SessionIdFactory(),
+            agent_bus=_FakeBus(),
+            workspace_path_resolver=resolver,
+        )
+        strategy = SubagentDispatchStrategy(deps)
+        req = SendRequest(
+            target=CommunicationTarget(
+                name="worker",
+                kind=AgentCommKind.SUBAGENT,
+                execution_strategy=ExecutionStrategyKind.REACT,
+            ),
+            content="do work",
+            invocation_id="task-1",
+            context=_make_context(),
+        )
+        session = strategy.build_session(req, "task-1")
+
+        result = strategy.build_result(req, session, "task-1")
+        ack = format_send_ack(result)
+
+        assert "Trace" in ack
+        assert "final deliverable" not in ack
+
     def test_external_subagent_ack_uses_external_format(self) -> None:
         from modex_agent.core.constants import ExecutionStrategyKind
         from modex_agent.multi_agent.communication.result import format_send_ack

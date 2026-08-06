@@ -17,7 +17,7 @@ channel — see the separate table below.
 | `logging.py` | `RunLoggingHook` | after_llm_response, before/after_tool_execution | live | Basic execution logging |
 | `runtime_context.py` | `RuntimeContextHook` | before_turn, before/after_tool_execution | live | Tracks tool calls per session via RuntimeContextManager |
 | `inbox_flush.py` | `InboxFlushHook` | before_turn, before_iteration | live | Flushes inbox messages at turn start |
-| `subagent_auto_send.py` | `SubagentAutoSendHook` | after_turn | live | Auto-forwards to subagents when LLM forgets send_message |
+| `subagent_auto_send.py` | `SubagentAutoSendHook` | after_turn | live | On subagent turn completion, writes the numbered OUTPUT_<n>.md deliverable (hook-owned, not subagent-written) and notifies the parent via the bus (notification truncated ≤300 chars; result metadata carries only the output path) |
 | `env_injection.py` | `NativeEnvInjectionHook` | before_turn | live | Populates `MODEX_*` env contextvars for native agent subprocess tools |
 | `loop_detection.py` | `LoopDetectionHook` | after_llm_response | live | Detects ReAct tool-repeating loops and force-exits the turn (stateless) |
 | `experience_review.py` | `ExperienceReviewAgent` driver | — | live | Background conversation-review agent; spawns its own task. |

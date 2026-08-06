@@ -154,8 +154,8 @@ class CommunicationTargetStore:
       dynamically at call time from ``current_agent_context``. This is required
       because the tool instance is reused across different invokers, so any
       parent baked at materialize time would go stale. The subagent's
-      ``send_to_agent`` is for CONSULTATION only; the deliverable goes to
-      OUTPUT.md (enforced elsewhere).
+      ``send_to_agent`` is for CONSULTATION only; the deliverable is the
+      subagent's final reply text (forwarded by ``SubagentAutoSendHook``).
     """
 
     def __init__(self, *, for_subagent: bool = False) -> None:
@@ -316,9 +316,8 @@ class CommunicationTargetStore:
                 '  content: "QUESTION: ..." or "NEED_DECISION: ...".',
                 "Then stop and wait — the reply comes back to you as another system-reminder.",
                 "",
-                "This tool is for consultation, not for returning your result. Your deliverable",
-                "still goes to OUTPUT.md (write it there as instructed); nothing you send here",
-                "counts as your answer.",
+                "Your deliverable is your final reply text, forwarded automatically.",
+                "Do not use send_to_agent to report results.",
             ]
         )
         return "\n".join(lines)

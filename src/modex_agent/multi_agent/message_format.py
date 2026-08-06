@@ -23,7 +23,7 @@ Unified layout (field-absent => line omitted, no empty labels)::
     status: {status}                             # result only
     Stop reason: {reason}                        # result only, non-empty
     Issue: {issue}                               # result, failure
-    Output: {path} ({output_status})             # result, native
+    Output: {path}                                # result, native
     Trace: {path}                                # result, native
     Replied: {bool}                              # result, when set
 
@@ -64,13 +64,6 @@ class ResultStatus(StrEnum):
     FAILED = "failed"
 
 
-class OutputStatus(StrEnum):
-    """Whether the native subagent's OUTPUT.md deliverable was written."""
-
-    WRITTEN = "written"
-    MISSING = "missing"
-
-
 class ResultMeta(BaseModel):
     """Metadata for hook-generated turn results (SubagentAutoSendHook).
 
@@ -85,7 +78,6 @@ class ResultMeta(BaseModel):
     stop_reason: StopReason | None = None
     issue: str | None = None
     output_path: str | None = None
-    output_status: OutputStatus | None = None
     trace_path: str | None = None
     replied: bool | None = None
 
@@ -210,10 +202,7 @@ def build_agent_comm_message(
         if result.issue:
             lines.append(f"Issue: {result.issue}")
         if result.output_path:
-            if result.output_status:
-                lines.append(f"Output: {result.output_path} ({result.output_status})")
-            else:
-                lines.append(f"Output: {result.output_path}")
+            lines.append(f"Output: {result.output_path}")
         if result.trace_path:
             lines.append(f"Trace: {result.trace_path}")
         if result.replied is not None:

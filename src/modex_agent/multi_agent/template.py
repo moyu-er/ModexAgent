@@ -124,15 +124,13 @@ class AgentTemplate:
             guard = (
                 "\n\n---\n\n"
                 "## Read-Only Mode\n\n"
-                "You are in read-only mode for project files. Your task is to read, "
-                "search, and analyze — NOT to modify project source code.\n\n"
-                "- Your `write` and `edit` tools are restricted to the output directory "
-                "(for writing OUTPUT.md) — they will NOT work on project paths.\n"
+                "You are in read-only mode. Report your final result via your "
+                "reply text, not by writing files.\n\n"
+                "- Your `write` and `edit` tools are restricted — they will NOT "
+                "work on project paths.\n"
                 "- Your `bash` tool is for reading/searching only. Do NOT use it to "
                 "modify, delete, or create files.\n"
-                "- Do NOT use shell redirection (> / >>) or heredocs to write files.\n"
-                "- **You CAN and MUST use `write` to save OUTPUT.md** — "
-                "the path shown above is in your allowed write directory."
+                "- Do NOT use shell redirection (> / >>) or heredocs to write files."
             )
             system_prompt = system_prompt + guard
 
@@ -422,12 +420,11 @@ class AgentTemplate:
     ) -> InMemoryToolManager:
         """Build the agent tool manager from this template's tool policy.
 
-        Registers, in order: preset tools (with a scoped write dir so
-        READ_ONLY agents can still write OUTPUT.md), additive supplement
-        tools (e.g. ast_grep), per-agent MCP tools resolved from the
-        registry by this template's ``mcp`` selection, and finally a
-        ``SendToAgentTool`` wired against a subagent-scoped communication
-        service (baked default — every subagent can delegate/reply).
+        Registers, in order: preset tools, additive supplement tools (e.g.
+        ast_grep), per-agent MCP tools resolved from the registry by this
+        template's ``mcp`` selection, and finally a ``SendToAgentTool``
+        wired against a subagent-scoped communication service (baked
+        default — every subagent can delegate/reply).
         """
         from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
         from modex_agent.tools.presets import get_preset_tools, get_supplement_tools
@@ -438,16 +435,9 @@ class AgentTemplate:
         def _make_bash() -> SubprocessTool:
             return SubprocessTool(timeout=300)
 
-        # READ_ONLY agents (scout, oracle) get a scoped write dir so they can
-        # still write OUTPUT.md via the restricted write tool.
-        scoped_write_dir: Path | None = None
-        if runtime_dir is not None:
-            scoped_write_dir = runtime_dir / "output"
-
         for tool in get_preset_tools(
             self.spec.tool_preset,
             subprocess_tool_factory=_make_bash,
-            scoped_write_dir=scoped_write_dir,
             root_provider=deps.root_provider,
         ):
             tm.register(tool)
@@ -500,8 +490,9 @@ class AgentTemplate:
         different invokers, so the parent is resolved dynamically at execution
         time from ``current_agent_context`` (see ``resolve_parent_name``). The
         subagent's ``send_to_agent`` is for consultation only — the deliverable
-        goes to OUTPUT.md (enforced elsewhere). Failures are logged and
-        swallowed — a subagent must still materialize without a comm tool.
+        is the subagent's final reply text (forwarded by
+        ``SubagentAutoSendHook``). Failures are logged and swallowed — a
+        subagent must still materialize without a comm tool.
         """
         if deps.pool is None or deps.broker is None or deps.agent_bus is None:
             return

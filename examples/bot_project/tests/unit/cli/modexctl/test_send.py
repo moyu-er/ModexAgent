@@ -97,7 +97,7 @@ def _native_subagent_result() -> SendResult:
         dispatch_outcome=DispatchOutcome.NEW_TASK,
         is_peer_send=False,
         is_external_target=False,
-        output_path=Path("/data/output.md"),
+        output_path=None,
         trace_dir=Path("/data/trace"),
     )
 
@@ -123,7 +123,7 @@ def _resumed_subagent_result() -> SendResult:
         dispatch_outcome=DispatchOutcome.RESUMED,
         is_peer_send=False,
         is_external_target=False,
-        output_path=Path("/data/output.md"),
+        output_path=None,
         trace_dir=Path("/data/trace"),
     )
 
@@ -138,7 +138,7 @@ def _requested_not_found_result() -> SendResult:
         requested_invocation_id="inv456",
         is_peer_send=False,
         is_external_target=False,
-        output_path=Path("/data/output.md"),
+        output_path=None,
         trace_dir=Path("/data/trace"),
     )
 
@@ -222,6 +222,8 @@ class TestNativeSubagentAck:
         assert "invocation_id: inv456" in result.stdout
         assert "session_id" not in result.stdout
         assert "status:" not in result.stdout
+        assert "tail the Trace" not in result.stdout
+        assert "Wait for the inbox notification" in result.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -597,6 +599,8 @@ class TestResumedAck:
         assert "invocation_id: inv456" in result.stdout
         assert "session_id" not in result.stdout
         assert "status:" not in result.stdout
+        assert "tail the Trace" not in result.stdout
+        assert "Wait for the inbox notification" in result.stdout
 
 
 class TestRequestedNotFoundAck:

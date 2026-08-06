@@ -767,7 +767,7 @@ class TestSubagentDescriptionContent:
         assert "Message from agent" in desc
         assert "'main'" in desc  # the resolved parent echoed back
 
-    def test_subagent_description_mentions_output_md_and_consultation(self) -> None:
+    def test_subagent_description_mentions_consultation_not_output_md(self) -> None:
         store = _subagent_store()
         tool = SendToAgentTool(
             store=store,
@@ -782,8 +782,9 @@ class TestSubagentDescriptionContent:
             desc = tool.description
         finally:
             current_agent_context.reset(token)
-        assert "OUTPUT.md" in desc
-        assert "consultation" in desc.lower()
+        assert "OUTPUT.md" not in desc
+        assert "Your deliverable is your final reply text, forwarded automatically." in desc
+        assert "consult" in desc.lower()
 
     def test_main_description_does_not_carry_subagent_text(self) -> None:
         """The main-agent description must not contain the subagent-only

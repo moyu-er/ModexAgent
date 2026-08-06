@@ -272,13 +272,7 @@ class MemorySystemContextManager(ContextManager):
                 )
             )
 
-        # 2b. OUTPUT.md path — dynamic per-session (subagents only)
-        if self._output_base_dir is not None:
-            from modex_agent.memory.prompt_pipeline.providers import OutputMdProvider
-
-            providers.append(OutputMdProvider(self._output_base_dir, session_id))
-
-        # 2c. Todo task discipline — gated on tool presence inside the provider
+        # 2b. Todo task discipline — gated on tool presence inside the provider
         providers.append(TodoAwareSystemPromptProvider(tool_manager))
 
         providers.append(

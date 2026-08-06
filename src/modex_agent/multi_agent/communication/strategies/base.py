@@ -181,17 +181,6 @@ class SendStrategy(ABC):
             return None
         return self._deps.workspace_path_resolver.runtime_dir()
 
-    def _subagent_output_path(
-        self, target_kind: AgentCommKind | None, session_id: str
-    ) -> Path | None:
-        """Compute subagent OUTPUT.md path for the ack text."""
-        runtime_dir = self._subagent_runtime_dir(target_kind)
-        if runtime_dir is None:
-            return None
-        output_path = runtime_dir / "output" / session_id / "OUTPUT.md"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        return output_path
-
     def _subagent_trace_dir(
         self, target_kind: AgentCommKind | None, session_id: str
     ) -> Path | None:

@@ -19,7 +19,7 @@ Native (react) subagent — includes output/trace paths::
     invocation_id: 638aaa67
     status: success
     Stop reason: completed
-    Output: /path/to/OUTPUT.md (written)
+    Output: /path/to/OUTPUT_1.md
     Trace: /path/to/spans.jsonl
 
     Result:
@@ -42,7 +42,7 @@ On failure an ``Issue:`` line explains the problem and how to resume::
     status: failed
     Stop reason: error
     Issue: Subagent crashed with error: timeout. To continue, send a message with invocation_id=638aaa67.
-    Output: /path/to/OUTPUT.md (missing)
+    Output: /path/to/OUTPUT_1.md
     Trace: /path/to/spans.jsonl
 
     Result:
@@ -52,7 +52,8 @@ Design rationale (ADR-0027 evolution):
   ``ResultMeta`` carries it; ``build_agent_comm_message`` renders it in the header.
 - ``result_text`` carries the subagent's **real last output** extracted from
   ``result.messages`` (not ``result.content``, which is a placeholder on
-  non-normal exit paths).  Truncated to ``max_result_chars`` (default 6000).
+  non-normal exit paths).  Notifications are truncated to 300 characters;
+  native deliverable files preserve the full content.
 - ``issue`` merges the old ``error`` + ``hint`` and appears **only** on
   failure, keeping the success notification clean.
 - Native subagents keep ``Output:`` / ``Trace:`` lines so the parent can read
@@ -96,8 +97,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
     file artifacts.
     """
 
-    #: Default truncation limit for the result text (~1500 tokens).
-    DEFAULT_MAX_RESULT_CHARS: int = 6000
+    NOTIFY_MAX_RESULT_CHARS: int = 300
 
     @property
     def name(self) -> str:
@@ -121,7 +121,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
         runtime_dir: Path | None = None,
         trace_enabled: bool = True,
         execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
-        max_result_chars: int = DEFAULT_MAX_RESULT_CHARS,
+        max_result_chars: int = NOTIFY_MAX_RESULT_CHARS,
     ) -> None:
         self._agent_bus = agent_bus
         self._self_name = self_name
@@ -156,30 +156,39 @@ class SubagentAutoSendHook(FinallyTurnHook):
         session_id: str,
     ) -> str:
         stop_reason, error, _content = self._extract_raw_fields(result)
-        result_text = self._extract_result_text(result)
+        full_text = self._extract_full_result_text(result)
+
+        try:
+            output_path, write_error = self._write_output_file(session_id, full_text)
+        except Exception as exc:
+            output_path, write_error = None, str(exc)
 
         trace_path: Path | None = None
         if self._trace_enabled:
             trace_path = self._runtime_dir / "trace" / session_id / "spans.jsonl"
-        output_path = self._runtime_dir / "output" / session_id / "OUTPUT.md"
-        output_status = "written" if output_path.exists() else "missing"
 
         success, issue = self._classify(
             stop_reason, error, invocation_id,
             is_external=False,
-            output_status=output_status,
         )
+        if write_error is not None:
+            write_issue = (
+                f"Deliverable file write failed: {write_error}. "
+                "Full content is in this notification (truncated)."
+            )
+            issue = f"{issue} {write_issue}".strip()
+
+        notify_text = self._extract_notify_text(result)
 
         return self._build_content(
             agent_name=self._self_name,
             invocation_id=invocation_id,
             success=success,
-            result_text=result_text,
+            result_text=notify_text,
             issue=issue,
             stop_reason=stop_reason,
             trace_path=str(trace_path) if trace_path is not None else None,
-            output_path=str(output_path),
-            output_status=output_status,
+            output_path=str(output_path) if output_path is not None else None,
             replied=None,
         )
 
@@ -189,11 +198,10 @@ class SubagentAutoSendHook(FinallyTurnHook):
         invocation_id: str,
     ) -> str:
         stop_reason, error, _content = self._extract_raw_fields(result)
-        result_text = self._extract_result_text(result)
+        result_text = self._extract_notify_text(result)
         success, issue = self._classify(
             stop_reason, error, invocation_id,
             is_external=True,
-            output_status=None,
         )
         # replied is None — the Replied: line is omitted from the content.
         # A correct per-session send-tracking mechanism (e.g. modexctl
@@ -211,7 +219,6 @@ class SubagentAutoSendHook(FinallyTurnHook):
             stop_reason=stop_reason,
             trace_path=None,
             output_path=None,
-            output_status=None,
             replied=replied,
         )
 
@@ -226,7 +233,6 @@ class SubagentAutoSendHook(FinallyTurnHook):
         stop_reason: str = "",
         trace_path: str | None = None,
         output_path: str | None = None,
-        output_status: str | None = None,
         replied: bool | None = None,
     ) -> str:
         """Build the markdown result content via ``build_agent_comm_message``.
@@ -237,7 +243,6 @@ class SubagentAutoSendHook(FinallyTurnHook):
         header; ``result_text`` is the body under the ``Result:`` heading.
         """
         from modex_agent.multi_agent.message_format import (
-            OutputStatus,
             ResultMeta,
             ResultStatus,
             SourceLabel,
@@ -254,7 +259,6 @@ class SubagentAutoSendHook(FinallyTurnHook):
                 stop_reason=StopReason(stop_reason) if stop_reason else None,
                 issue=issue or None,
                 output_path=output_path,
-                output_status=OutputStatus(output_status) if output_status else None,
                 trace_path=trace_path,
                 replied=replied,
             ),
@@ -276,7 +280,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
             result.content or "",
         )
 
-    def _extract_result_text(self, result: AgentResult | None) -> str:
+    def _extract_full_result_text(self, result: AgentResult | None) -> str:
         """Extract the subagent's real last output.
 
         Prefers the last assistant message from ``result.messages`` (which is
@@ -295,7 +299,34 @@ class SubagentAutoSendHook(FinallyTurnHook):
         if not raw and result is not None:
             raw = result.content or ""
 
-        return self._truncate_content(raw, max_chars=self._max_result_chars)
+        return self._THINK_TAG_RE.sub("", self._THINK_PAIRED_RE.sub("", raw))
+
+    def _extract_notify_text(self, result: AgentResult | None) -> str:
+        return self._truncate_content(
+            self._extract_full_result_text(result),
+            max_chars=min(self._max_result_chars, self.NOTIFY_MAX_RESULT_CHARS),
+        )
+
+    def _write_output_file(
+        self,
+        session_id: str,
+        content: str,
+    ) -> tuple[Path | None, str | None]:
+        try:
+            output_dir = self._runtime_dir / "output" / session_id
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            max_number = 0
+            for path in output_dir.glob("OUTPUT_*.md"):
+                match = re.fullmatch(r"OUTPUT_(\d+)\.md", path.name)
+                if match is not None:
+                    max_number = max(max_number, int(match.group(1)))
+
+            output_path = output_dir / f"OUTPUT_{max_number + 1}.md"
+            output_path.write_text(content, encoding="utf-8")
+        except Exception as exc:
+            return None, str(exc)
+        return output_path, None
 
     @staticmethod
     def _get_role(msg: ChatMessage | dict[str, object]) -> object:
@@ -327,28 +358,21 @@ class SubagentAutoSendHook(FinallyTurnHook):
         invocation_id: str,
         *,
         is_external: bool,
-        output_status: str | None = None,
     ) -> tuple[bool, str]:
         """Classify the subagent outcome as (success, issue).
 
         Returns (True, "") on success, (False, "<issue text>") on failure.
-        On success with a caveat (e.g. native OUTPUT.md missing), returns
-        (True, "<advisory issue>") so the parent is informed.
 
         The ``is_external`` flag refers to the **subagent** (callee) type,
         which affects what failure signals are reliable:
 
         - Native subagent: ``error`` / ``max_iterations`` / ``loop_detected``
           / ``timeout`` / ``turn_cancelled`` are all real failures.
-          ``output_status="missing"`` is an advisory: OUTPUT.md is the
-          primary deliverable, so the parent should be told to read the
-          result text instead (or check the trace).
         - External subagent: the external CLI's stop_reason may be
           unreliable — it may exit cleanly without ``modexctl send``.
           Only ``error`` and ``loop_detected`` count as hard failures;
           other non-normal stops are left for the parent to judge based
-          on the result text.  ``output_status`` is always ``None`` for
-          external (no OUTPUT.md concept).
+          on the result text.
 
         The resume hint does **not** depend on the subagent type — it is
         advice to the **parent** (the agent receiving this notification).
@@ -386,23 +410,6 @@ class SubagentAutoSendHook(FinallyTurnHook):
             return False, (
                 f"Subagent stopped with {stop_reason} — task is incomplete."
                 f"{resume}"
-            )
-
-        # --- Native advisory: OUTPUT.md missing ---
-        # Not a failure (the subagent completed normally), but the primary
-        # deliverable file was not written.  The parent should rely on the
-        # result text or check the trace.
-        if (
-            not is_external
-            and output_status == "missing"
-            and stop_reason not in cls._NON_NORMAL_STOPS
-            and not error
-        ):
-            return True, (
-                "Subagent finished but OUTPUT.md was not written — "
-                "the deliverable file is missing. "
-                "Check the result text for the subagent's last output"
-                f" or read the trace for details.{resume}"
             )
 
         return True, ""
@@ -481,9 +488,24 @@ class SubagentAutoSendHook(FinallyTurnHook):
     # -- content helpers ------------------------------------------------------
 
     @classmethod
-    def _truncate_content(cls, content: str, max_chars: int = DEFAULT_MAX_RESULT_CHARS) -> str:
+    def _truncate_content(
+        cls,
+        content: str,
+        max_chars: int = NOTIFY_MAX_RESULT_CHARS,
+    ) -> str:
         content = cls._THINK_PAIRED_RE.sub("", content)
         content = cls._THINK_TAG_RE.sub("", content)
         if len(content) <= max_chars:
             return content
-        return content[:max_chars] + f"\n[...truncated, {len(content) - max_chars} more chars]"
+        if max_chars <= 0:
+            return ""
+
+        kept_chars = max_chars
+        while True:
+            omitted_chars = len(content) - kept_chars
+            marker = f"\n[...truncated, {omitted_chars} more chars]"
+            next_kept_chars = max(0, max_chars - len(marker))
+            if next_kept_chars == kept_chars:
+                break
+            kept_chars = next_kept_chars
+        return (content[:kept_chars] + marker)[:max_chars]

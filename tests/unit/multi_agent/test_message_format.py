@@ -9,7 +9,6 @@ from modex_agent.core.agent import AgentImplementation
 from modex_agent.core.constants import ExecutionStrategyKind, StopReason
 from modex_agent.multi_agent import message_format
 from modex_agent.multi_agent.message_format import (
-    OutputStatus,
     ResultMeta,
     ResultStatus,
     SourceLabel,
@@ -39,11 +38,6 @@ def test_result_status_values():
     assert ResultStatus.FAILED.value == "failed"
 
 
-def test_output_status_values():
-    assert OutputStatus.WRITTEN.value == "written"
-    assert OutputStatus.MISSING.value == "missing"
-
-
 # ---------------------------------------------------------------------------
 # ResultMeta
 # ---------------------------------------------------------------------------
@@ -65,7 +59,6 @@ def test_result_meta_defaults():
     assert meta.stop_reason is None
     assert meta.issue is None
     assert meta.output_path is None
-    assert meta.output_status is None
     assert meta.trace_path is None
     assert meta.replied is None
 
@@ -251,7 +244,6 @@ def test_subagent_result_success_native():
             status=ResultStatus.SUCCESS,
             stop_reason=StopReason.COMPLETED,
             output_path="/output/OUTPUT.md",
-            output_status=OutputStatus.WRITTEN,
             trace_path="/trace/spans.jsonl",
         ),
     )
@@ -261,7 +253,8 @@ def test_subagent_result_success_native():
     assert "Stop reason: completed" in result
     assert "Result:" in result
     assert "All tasks finished." in result
-    assert "Output: /output/OUTPUT.md (written)" in result
+    assert "Output: /output/OUTPUT.md" in result
+    assert "(written)" not in result
     assert "Trace: /trace/spans.jsonl" in result
     assert "Issue:" not in result
 
@@ -277,14 +270,13 @@ def test_subagent_result_failed_with_issue():
             stop_reason=StopReason.ERROR,
             issue="Subagent crashed with error: timeout.",
             output_path="/output/OUTPUT.md",
-            output_status=OutputStatus.MISSING,
             trace_path="/trace/spans.jsonl",
         ),
     )
     assert "status: failed" in result
     assert "Stop reason: error" in result
     assert "Issue: Subagent crashed with error: timeout." in result
-    assert "Output: /output/OUTPUT.md (missing)" in result
+    assert "Output: /output/OUTPUT.md" in result
     assert "Result:" in result
 
 
@@ -350,7 +342,7 @@ def test_subagent_result_replied_none_omitted():
     assert "Replied:" not in result
 
 
-def test_subagent_result_output_without_status():
+def test_output_path_renders_without_status_suffix():
     result = build_agent_comm_message(
         source_label=SourceLabel.SUBAGENT,
         source="worker",

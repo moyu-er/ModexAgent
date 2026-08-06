@@ -129,9 +129,11 @@ def get_preset_tools(
     Args:
         preset: The tool preset enum value.
         subprocess_tool_factory: If provided, creates a bash tool (SubprocessTool or CommandTool).
-        scoped_write_dir: If provided and the preset lacks native write capability
+        scoped_write_dir: Retained for potential future scoped-write needs;
+            currently no caller (subagent deliverable is now reply-text-based).
+            If provided and the preset lacks native write capability
             (READ_ONLY, NONE), a ScopedWriteFileTool restricted to this directory
-            is injected so the subagent can still write OUTPUT.md.
+            is injected.
         root_provider: If provided, standard tools are wrapped so their relative
             paths resolve against the workspace root instead of process CWD.
 
@@ -154,7 +156,9 @@ def get_preset_tools(
     if root_provider is not None:
         tools = wrap_standard_tools(tools, root_provider)
 
-    # Presets without native write/edit: inject scoped tools for OUTPUT.md
+    # Presets without native write/edit: inject scoped tools.
+    # Retained for potential future scoped-write needs; currently no caller
+    # (subagent deliverable is now reply-text-based).
     if scoped_write_dir is not None and preset in (ToolPreset.READ_ONLY, ToolPreset.NONE):
         from modex_agent.memory.tools.scoped_edit import ScopedEditFileTool
         from modex_agent.memory.tools.scoped_write import ScopedWriteFileTool

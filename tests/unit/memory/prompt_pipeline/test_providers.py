@@ -241,7 +241,9 @@ async def test_comm_provider_peer_target_emits_peer_contract():
 
 
 @pytest.mark.asyncio
-async def test_comm_provider_subagent_target_emits_dispatch_contract():
+async def test_comm_provider_subagent_target_does_not_emit_dispatch_contract():
+    """_SubagentDispatchSubProvider is deprecated (applies()→False). Subagent
+    targets alone do not produce any comm output without peer bus_ref targets."""
     from modex_agent.core.agent import AgentCommKind
     from modex_agent.memory.prompt_pipeline.providers import (
         AgentCommunicationSystemPromptProvider,
@@ -255,20 +257,16 @@ async def test_comm_provider_subagent_target_emits_dispatch_contract():
         _make_tool_manager(targets), AgentCommKind.NORMAL
     )
     result = await provider.get_or_refresh()
-    assert "Dispatching Subagents" in result
-    assert "`task`" in result
-    assert "`send_to_agent`" in result
-    assert "invocation_id" in result
-    assert "NEED_DECISION" in result
-    assert provider.last_version is not None
-    assert provider.last_version.startswith("comm:dispatch:")
+    assert "Dispatching Subagents" not in result
+    assert "NEED_DECISION" not in result
+    assert "PROGRESS_UPDATE" not in result
+    assert provider.last_version == "comm:none"
 
 
 @pytest.mark.asyncio
-async def test_comm_provider_dispatch_fires_for_none_comm_kind():
-    """Main agents are constructed with comm_kind=None (not NORMAL).
-    The dispatch sub-module must treat None as main/normal and fire
-    when subagent targets exist."""
+async def test_comm_provider_dispatch_does_not_fire_for_none_comm_kind():
+    """_SubagentDispatchSubProvider is deprecated (applies()→False). Even with
+    comm_kind=None (main agent) and subagent targets present, dispatch never fires."""
     from modex_agent.core.agent import AgentCommKind
     from modex_agent.memory.prompt_pipeline.providers import (
         AgentCommunicationSystemPromptProvider,
@@ -283,15 +281,14 @@ async def test_comm_provider_dispatch_fires_for_none_comm_kind():
         None,  # comm_kind=None = main agent
     )
     result = await provider.get_or_refresh()
-    assert "Dispatching Subagents" in result
-    assert provider.last_version is not None
-    assert provider.last_version.startswith("comm:dispatch:")
+    assert "Dispatching Subagents" not in result
+    assert provider.last_version == "comm:none"
 
 
 @pytest.mark.asyncio
 async def test_dispatch_provider_does_not_fire_without_task_tool():
-    """When only send_to_agent is registered (no task tool), the dispatch
-    sub-provider must NOT fire — dispatch requires the task tool."""
+    """_SubagentDispatchSubProvider is deprecated (applies()→False). Dispatch
+    never fires regardless of tool availability."""
     from modex_agent.core.agent import AgentCommKind
     from modex_agent.memory.prompt_pipeline.providers import (
         AgentCommunicationSystemPromptProvider,
@@ -320,13 +317,19 @@ async def test_comm_provider_subagent_kind_emits_consultation_contract():
     provider = AgentCommunicationSystemPromptProvider(None, AgentCommKind.SUBAGENT)
     result = await provider.get_or_refresh()
     assert "Consulting Your Parent" in result
-    assert "OUTPUT.md" in result
     assert "send_to_agent" in result
+    assert "OUTPUT" not in result
+    assert "deliverable" not in result
+    assert "QUESTION" not in result
+    assert "NEED_DECISION" not in result
+    assert "Do not use it to report results" in result
     assert provider.last_version == "comm:consult"
 
 
 @pytest.mark.asyncio
-async def test_comm_provider_peer_and_dispatch_both_emit():
+async def test_comm_provider_peer_emits_without_dispatch():
+    """_SubagentDispatchSubProvider is deprecated. Only peer contract fires
+    when both peer and subagent targets exist."""
     from modex_agent.core.agent import AgentCommKind
     from modex_agent.memory.prompt_pipeline.providers import (
         AgentCommunicationSystemPromptProvider,
@@ -349,15 +352,15 @@ async def test_comm_provider_peer_and_dispatch_both_emit():
     )
     result = await provider.get_or_refresh()
     assert "Remote Agents" in result
-    assert "Dispatching Subagents" in result
+    assert "Dispatching Subagents" not in result
     assert provider.last_version is not None
     assert "peer:" in provider.last_version
-    assert "dispatch:" in provider.last_version
-    assert "|" in provider.last_version
+    assert "dispatch:" not in provider.last_version
 
 
 @pytest.mark.asyncio
 async def test_comm_provider_version_combines_sub_modules():
+    """With dispatch deprecated, only peer contributes to the version."""
     from modex_agent.core.agent import AgentCommKind
     from modex_agent.memory.prompt_pipeline.providers import (
         AgentCommunicationSystemPromptProvider,
@@ -379,7 +382,7 @@ async def test_comm_provider_version_combines_sub_modules():
         _make_tool_manager(targets), AgentCommKind.NORMAL
     )
     await provider.get_or_refresh()
-    assert provider.last_version == "comm:peer:alpha|dispatch:beta"
+    assert provider.last_version == "comm:peer:alpha"
 
 
 @pytest.mark.asyncio

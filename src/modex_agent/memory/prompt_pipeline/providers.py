@@ -192,13 +192,19 @@ class _PeerCommSubProvider(_CommSubProvider):
 
 
 class _SubagentDispatchSubProvider(_CommSubProvider):
-    """Main-agent subagent dispatch contract.
+    """[DEPRECATED] Main-agent subagent dispatch contract.
 
-    Fires when the agent is NOT a subagent (``comm_kind`` is ``None`` or
-    ``NORMAL``) AND the agent owns the ``task`` tool AND at least one target
-    is a subagent (``kind == SUBAGENT``). Main agents are constructed with
-    ``comm_kind=None`` (the default), so the check uses ``== SUBAGENT``
-    rather than ``!= NORMAL`` to treat ``None`` as main/normal.
+    Effective information was fully covered by TaskDispatchTool.description;
+    the NEED_DECISION/PROGRESS_UPDATE prefix contract was unfulfilled
+    (subagents were never instructed to use these prefixes in final results).
+    Retained for reference.
+
+    Originally fired when the agent was NOT a subagent (``comm_kind`` is
+    ``None`` or ``NORMAL``) AND the agent owned the ``task`` tool AND at
+    least one target was a subagent (``kind == SUBAGENT``). Main agents
+    were constructed with ``comm_kind=None`` (the default), so the check
+    used ``== SUBAGENT`` rather than ``!= NORMAL`` to treat ``None`` as
+    main/normal.
     """
 
     def __init__(
@@ -222,9 +228,7 @@ class _SubagentDispatchSubProvider(_CommSubProvider):
         return sorted(t.name for t in tool.list_targets() if t.kind == AgentCommKind.SUBAGENT)
 
     def applies(self) -> bool:
-        if self._comm_kind == AgentCommKind.SUBAGENT:
-            return False
-        return bool(self._subagent_target_names())
+        return False
 
     def version_part(self) -> str:
         names = self._subagent_target_names()
@@ -272,16 +276,9 @@ class _SubagentConsultationSubProvider(_CommSubProvider):
     def content(self) -> str:
         return (
             "## Consulting Your Parent\n\n"
-            "Write your durable deliverable to OUTPUT.md (path shown elsewhere in this\n"
-            "prompt). At turn end, your parent automatically receives the final result\n"
-            "content plus the output and trace paths; OUTPUT.md itself is not embedded.\n"
-            "Use `send_to_agent` only to ask your parent a question or request a decision\n"
-            "when you cannot proceed without input.\n\n"
-            '- `content`: `"QUESTION: ..."` or `"NEED_DECISION: ..."`.\n'
-            "- After sending, stop and wait — the reply comes back as another\n"
-            "  message to you.\n\n"
-            "Do not use `send_to_agent` to report results or progress; that path\n"
-            "is covered by the automatic final notification.\n"
+            "Use `send_to_agent` only to ask your parent a question or request a "
+            "decision when you cannot proceed without input. Do not use it to report "
+            "results or progress."
         )
 
 
@@ -289,15 +286,17 @@ class AgentCommunicationSystemPromptProvider(SystemPromptProvider):
     """Composite provider for agent-communication context.
 
     Replaces the deleted ``PeerCommunicationSystemPromptProvider`` with a
-    three-part contract whose applicability depends on the agent's topology
+    two-part contract whose applicability depends on the agent's topology
     (``comm_kind``) and the shape of its ``send_to_agent`` target set:
 
     - ``_PeerCommSubProvider`` — remote-agent reply contract (peer targets
       whose ``bus_ref`` is set).
-    - ``_SubagentDispatchSubProvider`` — NORMAL agent's subagent dispatch
-      contract (subagent targets).
     - ``_SubagentConsultationSubProvider`` — SUBAGENT consultation contract
       (ask parent for input via ``send_to_agent``).
+
+    The deprecated ``_SubagentDispatchSubProvider`` is retained in the module
+    but no longer instantiated — its effective content was fully covered by
+    ``TaskDispatchTool.description``.
 
     The composite provider owns the version/cache contract; sub-modules are
     internal strategy objects that contribute version fragments and content
@@ -315,7 +314,6 @@ class AgentCommunicationSystemPromptProvider(SystemPromptProvider):
         super().__init__()
         self._sub_providers: list[_CommSubProvider] = [
             _PeerCommSubProvider(tool_manager),
-            _SubagentDispatchSubProvider(tool_manager, comm_kind),
             _SubagentConsultationSubProvider(tool_manager, comm_kind),
         ]
 
@@ -658,7 +656,10 @@ class PrunedProvider(SystemPromptProvider):
 
 
 class OutputMdProvider(SystemPromptProvider):
-    """Dynamic OUTPUT.md path — computed per-turn from session_id.
+    """[DEPRECATED] Dynamic OUTPUT.md path — computed per-turn from session_id.
+
+    OutputMdProvider is no longer registered (subagent deliverable is now
+    reply-text-based, hook owns file writes). Retained for reference.
 
     Every invocation gets the correct OUTPUT.md path, regardless of
     whether the subagent is pool-reused or freshly created.

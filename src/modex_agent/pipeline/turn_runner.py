@@ -452,9 +452,9 @@ class ReActTurnRunner(TurnRunner):
         pool_data = self._resolve_pool_data(session_id)
         # Only the pool's main agent follows the workspace's pool_data
         # context_manager (to track workspace switches). A subagent registers
-        # its OWN context_manager — its own system prompt + OUTPUT.md base dir
+        # its OWN context_manager — its own system prompt + session memory
         # — and must never be overridden by the main agent's, otherwise every
-        # subagent inherits the main prompt and loses its OUTPUT.md task.
+        # subagent inherits the main prompt and loses its task context.
         # (turn_store below is still shared — it is
         # pool-level and session-isolated, and the subagent needs it so its
         # runtime + FINALLY_TURN hooks are constructed.)

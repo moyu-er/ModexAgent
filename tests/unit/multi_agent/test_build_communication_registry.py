@@ -145,10 +145,11 @@ async def test_build_communication_wires_session_registry(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_build_communication_restores_subagent_output_path(tmp_path):
+async def test_build_communication_restores_subagent_trace_dir(tmp_path):
     """_build_communication forwards workspace_path_resolver so _send computes
-    the subagent OUTPUT.md path, restoring the 'Output (after notification)'
-    line in the send_async ack text (parity with main)."""
+    the subagent trace_dir, restoring the 'Trace' line in the send_async ack
+    text (parity with main). After T4, output_path is no longer set by the
+    strategy — the hook owns OUTPUT_<n>.md writeback."""
     from modex_agent.core.agent import AgentContext
     from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
     from bot.service.pool.communication import _build_communication
@@ -183,16 +184,10 @@ async def test_build_communication_restores_subagent_output_path(tmp_path):
         context=ctx,
     )
     assert result and result.session_id
-    # output_path must be computed for subagent targets so the ack text shows
-    # "Output (after notification): <path>" (parity with main).
-    assert result.output_path == tmp_path / "output" / result.session_id / "OUTPUT.md"
-    assert result.output_path.parent.exists(), "output dir was not created"
-    # trace_dir must also be computed so the ack text shows the execution trace
-    # path (main's stated intent — "includes trace/output paths").
     assert result.trace_dir == tmp_path / "trace" / result.session_id
 
-    # send_async's ack must explain what each artifact IS, not just give paths:
-    # trace = live, runtime-observable execution log; output = final deliverable.
+    # send_async's ack must explain what the trace artifact IS:
+    # trace = live, runtime-observable execution log.
     ack = await service.send_async(
         target=_tgt("helper", AgentCommKind.SUBAGENT),
         content="more",
@@ -201,4 +196,3 @@ async def test_build_communication_restores_subagent_output_path(tmp_path):
     )
     assert "Trace" in ack and "live execution log" in ack
     assert "spans.jsonl" in ack
-    assert "Output" in ack and "final deliverable" in ack

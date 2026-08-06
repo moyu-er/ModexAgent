@@ -99,17 +99,12 @@ def _format_native_subagent_ack(result: AgentSendResult) -> str:
             "Trace (live execution log, append-only, safe to read while it "
             f"runs): {result.trace_dir}/spans.jsonl (OTel)"
         )
-    if result.output_path is not None:
-        lines.append(
-            "Output (final deliverable, empty/absent until the subagent "
-            f"completes): {result.output_path}"
-        )
     lines.extend(
         [
             "",
-            "You may tail the Trace file at any time to follow progress. Wait for",
-            "the notification before reading the Output file. If the notification",
-            "says the task is incomplete, use the invocation_id above to resume.",
+            "Wait for the inbox notification before reading any output. If the",
+            "notification says the task is incomplete, use the invocation_id",
+            "above to resume.",
         ]
     )
     return "\n".join(lines)

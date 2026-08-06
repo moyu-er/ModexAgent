@@ -11,7 +11,6 @@ Three test cases:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
@@ -76,29 +75,13 @@ def _make_bus(tmpdir: Path) -> LocalAgentMessageBus:
     return LocalAgentMessageBus(producer=producer, consumer=consumer)
 
 
-def _mock_output_exists(runtime_dir: Path, session_id: str):
-    """Patch Path.exists so that the OUTPUT.md for *session_id* appears to exist.
-
-    Colons in session_id make it illegal as a Windows path component, so we
-    cannot create the real file and must mock instead.
-    """
-    expected = runtime_dir / "output" / session_id / "OUTPUT.md"
-
-    def _exists(self):
-        if self == expected:
-            return True
-        return Path.__exists__(self) if hasattr(Path, "__exists__") else False
-
-    return patch.object(Path, "exists", _exists)
-
-
 # ---------------------------------------------------------------------------
 # Test 1: Full lifecycle — happy path
 # ---------------------------------------------------------------------------
 
 
 class TestFullLifecycleNotification:
-    """Happy path: subagent finishes with result + OUTPUT.md -> trace + XML."""
+    """Happy path: subagent finishes with result -> hook writes OUTPUT_<n>.md + notification."""
 
     async def test_full_lifecycle(self, tmp_path: Path) -> None:
         """Use path-safe session for trace store (Windows colon-in-path issue)."""
@@ -122,9 +105,8 @@ class TestFullLifecycleNotification:
         # Step 1: trace_hook.before_turn -> pre-registers trace_id + root span_id
         await trace_hook.before_turn(ctx)
 
-        # Step 2: auto_hook.finally_turn -> sends XML notification
-        with _mock_output_exists(runtime_dir, session_id):
-            await auto_hook.finally_turn(ctx, result)
+        # Step 2: auto_hook.finally_turn -> writes OUTPUT_1.md + sends notification
+        await auto_hook.finally_turn(ctx, result)
 
         # Step 3: trace_hook.finally_turn -> writes the root invoke_agent span
         await trace_hook.finally_turn(ctx, result)
@@ -142,6 +124,9 @@ class TestFullLifecycleNotification:
         assert turn_start.attributes[GenAiAttr.AGENT_NAME] == "worker"
         assert turn_start.status.code == SpanStatusCode.OK
 
+        # --- Verify OUTPUT_1.md was written to disk ---
+        assert (runtime_dir / "output" / session_id / "OUTPUT_1.md").exists()
+
         # --- Verify bus ---
         # The notification is sent to the parent's inbox via parent_session_id.
         parent_inbox = "conv123.main"
@@ -151,7 +136,7 @@ class TestFullLifecycleNotification:
         content = envelopes[0].payload["content"]
         assert "Message from subagent" in content
         assert "subagent 'worker'" in content
-        assert "(written)" in content
+        assert "OUTPUT_1.md" in content
 
 
 # ---------------------------------------------------------------------------
@@ -174,10 +159,11 @@ class TestCrashSendsErrorNotification:
         )
 
         ctx = _make_context()
-        # No OUTPUT.md on disk; error result simulates crash
         result = AgentResult(error="something broke", stop_reason=StopReason.ERROR)
 
         await auto_hook.finally_turn(ctx, result)
+
+        assert (runtime_dir / "output" / str(ctx.session) / "OUTPUT_1.md").exists()
 
         envelopes = await bus.consume("conv123.main", limit=10)
         assert len(envelopes) == 1
