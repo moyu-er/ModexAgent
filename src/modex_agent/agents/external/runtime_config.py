@@ -26,6 +26,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from modex_agent.core.agent import AgentCommKind
+
 __all__ = [
     "BEGIN_MARKER",
     "END_MARKER",
@@ -45,24 +47,48 @@ _BLOCK_RE = re.compile(
 )
 
 
-def default_runtime_block() -> str:
+def default_runtime_block(
+    comm_kind: AgentCommKind = AgentCommKind.NORMAL,
+) -> str:
     """Return the default static runtime-notes content.
 
     The content is provider-agnostic and intentionally short: the
     external agent's system prompt (see :mod:`system_prompt`) carries
     the dynamic targets table; AGENTS.md carries the stable contract
     that does not change per turn.
+
+    Args:
+        comm_kind: Routing kind. ``NORMAL`` (peer/main agent) instructs
+            the agent to use ``modexctl send`` for inter-agent output.
+            ``SUBAGENT`` instructs the agent that its final reply is
+            forwarded to its caller automatically and ``modexctl send``
+            is only for questions/decisions.
     """
+    if comm_kind is AgentCommKind.SUBAGENT:
+        return "\n".join(
+            [
+                "## ModexAgent runtime",
+                "",
+                "You are running as a subagent inside ModexAgent.",
+                "",
+                "Your final reply is your deliverable — it is forwarded to your caller "
+                "automatically when your turn ends. Output your result in your reply text.",
+                "",
+                "Use `modexctl send --to <name> --content <text>` only to ask a question "
+                "or request a decision when you cannot proceed without input.",
+                "",
+                "- The `.modex/` directory is framework-managed internal state. "
+                "Do NOT read, modify, or delete anything under `.modex/`.",
+            ]
+        )
     return "\n".join(
         [
             "## ModexAgent runtime",
             "",
             "You are running inside ModexAgent as an external coding agent.",
             "",
-            "- Send messages to other agents with `modexctl send --to <name> --content <text>`.",
-            "- Discover routable agents at any time with `modexctl agents`.",
-            "- Your stdout is observed but not delivered; use `modexctl send` "
-            "for any output that must reach another agent.",
+            "- `modexctl send --to <name> --content <text>` sends a message to another agent.",
+            "- Run `modexctl agents` to list routable targets at any time.",
             "- The `.modex/` directory is framework-managed internal state. "
             "Do NOT read, modify, or delete anything under `.modex/`.",
         ]

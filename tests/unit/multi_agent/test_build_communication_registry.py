@@ -186,13 +186,14 @@ async def test_build_communication_restores_subagent_trace_dir(tmp_path):
     assert result and result.session_id
     assert result.trace_dir == tmp_path / "trace" / result.session_id
 
-    # send_async's ack must explain what the trace artifact IS:
-    # trace = live, runtime-observable execution log.
+    # send_async's ack must not leak implementation details (trace path,
+    # modexctl send, etc.) — unified subagent ack.
     ack = await service.send_async(
         target=_tgt("helper", AgentCommKind.SUBAGENT),
         content="more",
         invocation_id="",
         context=ctx,
     )
-    assert "Trace" in ack and "live execution log" in ack
-    assert "spans.jsonl" in ack
+    assert "Task dispatched" in ack
+    assert "Trace" not in ack
+    assert "spans.jsonl" not in ack

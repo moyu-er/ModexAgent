@@ -745,7 +745,7 @@ class ExternalAgent(Agent[ExternalEvent]):
     def _ensure_runtime_block(self, paths: ExternalPaths) -> None:
         agents_md = paths.agents_md
         existing = read_runtime_block(agents_md)
-        current = default_runtime_block()
+        current = default_runtime_block(self._spec_template.comm_kind)
         if existing == current:
             return
         logger.info(
@@ -754,7 +754,7 @@ class ExternalAgent(Agent[ExternalEvent]):
             agents_md.exists(),
             "present" if existing is not None else "absent",
         )
-        write_runtime_block(agents_md)
+        write_runtime_block(agents_md, content=current)
 
     def _assemble_result(
         self, backend_result: BackendResult, text_buf: list[str]

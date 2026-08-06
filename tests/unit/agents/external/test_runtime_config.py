@@ -11,6 +11,7 @@ from modex_agent.agents.external.runtime_config import (
     read_runtime_block,
     write_runtime_block,
 )
+from modex_agent.core.agent import AgentCommKind
 
 
 class TestWriteRuntimeBlockCreate:
@@ -127,3 +128,36 @@ class TestDefaultRuntimeBlock:
 
     def test_mentions_modexctl_agents(self) -> None:
         assert "modexctl agents" in default_runtime_block()
+
+
+class TestDefaultRuntimeBlockCommKind:
+
+    def test_normal_contains_modexctl_send(self) -> None:
+        assert "modexctl send" in default_runtime_block(AgentCommKind.NORMAL)
+
+    def test_normal_contains_modexctl_agents(self) -> None:
+        assert "modexctl agents" in default_runtime_block(AgentCommKind.NORMAL)
+
+    def test_normal_no_stdout_observed(self) -> None:
+        assert "stdout is observed" not in default_runtime_block(AgentCommKind.NORMAL)
+
+    def test_subagent_contains_forwarded_automatically(self) -> None:
+        assert "forwarded to your caller automatically" in default_runtime_block(
+            AgentCommKind.SUBAGENT
+        )
+
+    def test_subagent_contains_deliverable(self) -> None:
+        assert "deliverable" in default_runtime_block(AgentCommKind.SUBAGENT)
+
+    def test_subagent_contains_modexctl_send(self) -> None:
+        assert "modexctl send" in default_runtime_block(AgentCommKind.SUBAGENT)
+
+    def test_both_contain_modex_guard(self) -> None:
+        assert ".modex/" in default_runtime_block(AgentCommKind.NORMAL)
+        assert ".modex/" in default_runtime_block(AgentCommKind.SUBAGENT)
+
+    def test_no_arg_equals_normal(self) -> None:
+        assert default_runtime_block() == default_runtime_block(AgentCommKind.NORMAL)
+
+    def test_subagent_no_modexctl_agents(self) -> None:
+        assert "modexctl agents" not in default_runtime_block(AgentCommKind.SUBAGENT)

@@ -52,14 +52,15 @@ def format_send_ack(result: AgentSendResult) -> str:
         ack = _format_peer_ack(result)
     elif result.target_kind == AgentCommKind.NORMAL and not result.is_peer_send:
         ack = _format_parent_reply_ack(result)
-    elif result.is_external:
-        ack = _format_external_subagent_ack(result)
     else:
-        ack = _format_native_subagent_ack(result)
+        ack = _format_subagent_ack(result)
 
     if result.warning:
         return f"{ack}\n\nNote: {result.warning}"
     return ack
+
+
+_ACK_ASYNC_NOTIFY = "Wait for the notification."
 
 
 def _format_peer_ack(result: AgentSendResult) -> str:
@@ -67,9 +68,8 @@ def _format_peer_ack(result: AgentSendResult) -> str:
         [
             f"Message sent to peer agent '{result.target_agent}'.",
             "",
-            "The peer agent will process your message asynchronously. If a "
-            "reply is needed, the peer agent will send it back via "
-            "send_to_agent.",
+            "The peer agent will process your message asynchronously. "
+            + _ACK_ASYNC_NOTIFY,
         ]
     )
 
@@ -79,53 +79,27 @@ def _format_parent_reply_ack(result: AgentSendResult) -> str:
         [
             f"Reply delivered to '{result.target_agent}'.",
             "",
-            "The parent agent will process your reply asynchronously.",
+            "The parent agent will process your reply asynchronously. "
+            + _ACK_ASYNC_NOTIFY,
         ]
     )
 
 
-def _format_native_subagent_ack(result: AgentSendResult) -> str:
+def _format_subagent_ack(result: AgentSendResult) -> str:
     lines = [
         f"Task dispatched to '{result.target_agent}' - running in background.",
-        "",
-        "Note: the subagent works asynchronously. You will receive an inbox",
-        "notification when it finishes.",
         "",
     ]
     if result.invocation_id:
         lines.append(f"invocation_id: {result.invocation_id}")
-    if result.trace_dir is not None:
-        lines.append(
-            "Trace (live execution log, append-only, safe to read while it "
-            f"runs): {result.trace_dir}/spans.jsonl (OTel)"
+        lines.extend(
+            [
+                "",
+                _ACK_ASYNC_NOTIFY
+                + " If it says the task is incomplete, use the"
+                " invocation_id above to resume.",
+            ]
         )
-    lines.extend(
-        [
-            "",
-            "Wait for the inbox notification before reading any output. If the",
-            "notification says the task is incomplete, use the invocation_id",
-            "above to resume.",
-        ]
-    )
-    return "\n".join(lines)
-
-
-def _format_external_subagent_ack(result: AgentSendResult) -> str:
-    lines = [
-        f"Task dispatched to '{result.target_agent}' - running in background.",
-        "",
-        "Note: the subagent works asynchronously. You will receive an inbox",
-        "notification when it finishes.",
-        "",
-    ]
-    if result.invocation_id:
-        lines.append(f"invocation_id: {result.invocation_id}")
-    lines.extend(
-        [
-            "",
-            "The subagent will reply via modexctl send. Wait for the inbox",
-            "notification before continuing. If the notification says the task",
-            "is incomplete, use the invocation_id above to resume.",
-        ]
-    )
+    else:
+        lines.append(_ACK_ASYNC_NOTIFY)
     return "\n".join(lines)

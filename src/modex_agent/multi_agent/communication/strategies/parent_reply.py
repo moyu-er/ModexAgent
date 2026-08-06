@@ -63,7 +63,6 @@ class ParentReplyStrategy(SendStrategy):
             source=effective_source.name,
             invocation_id=envelope_invocation_id,
             content=req.content,
-            target_execution_strategy=req.target.execution_strategy,
         )
         return AgentMessageEnvelope(
             payload=self._envelope_payload(content, AgentMessageType.AGENT_MESSAGE, req),

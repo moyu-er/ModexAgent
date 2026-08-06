@@ -6,9 +6,11 @@ markdown. The ``source_label`` (agent / peer agent / subagent), optional
 no separate builders per message kind.
 
 :func:`build_dispatch_message` is the convergence wrapper that
-``SubagentDispatchStrategy`` and ``ParentReplyStrategy`` delegate to so the
-``target_execution_strategy == EXTERNAL`` branch lives in one place
-(architecture test ``test_no_execution_strategy_branches.py`` compliance).
+``SubagentDispatchStrategy`` and ``ParentReplyStrategy`` delegate to. It never
+injects a reply contract: both are subagent/parent paths whose replies are
+auto-delivered by ``SubagentAutoSendHook``, so the WARNING + reply
+instructions are unnecessary. Peer sends (which DO need the contract) call
+:func:`build_agent_comm_message` directly with ``reply_contract`` set.
 
 The agent-facing builders produce PURE markdown — no ``<system-reminder>``
 wrapping and no XML tags. :func:`build_agent_reminder_record` owns the intake
@@ -43,7 +45,7 @@ from typing import Any, assert_never
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.agent import AgentImplementation
-from modex_agent.core.constants import ExecutionStrategyKind, StopReason
+from modex_agent.core.constants import StopReason
 from modex_agent.core.message_utils import sanitize_reminder_content, wrap_system_reminder
 from modex_agent.core.types import MessageRole, ReminderKind
 from modex_agent.multi_agent.message_type import AgentMessageType
@@ -226,28 +228,22 @@ def build_dispatch_message(
     source: str,
     invocation_id: str | None,
     content: str,
-    target_execution_strategy: ExecutionStrategyKind,
 ) -> str:
     """Build the markdown content for send_to_agent dispatch.
 
-    Single convergence point for the "target is external -> peer format"
-    rule. ``SubagentDispatchStrategy`` and ``ParentReplyStrategy`` both
-    delegate here so the branching lives in one place.
+    Used by ``SubagentDispatchStrategy`` and ``ParentReplyStrategy``. Both are
+    subagent/parent paths: the reply is auto-delivered by
+    ``SubagentAutoSendHook`` (native subagents via the hook's native content
+    path; external subagents via the hook's EXTERNAL content path that
+    notifies the parent on ``FINALLY_TURN``), so no reply-contract block is
+    injected. Injecting the WARNING + ``modexctl send`` instructions here
+    would cause a double reply -- the subagent would manually send AND the
+    hook would auto-forward.
 
-    External targets receive the full reply contract (the external CLI has
-    no SubagentAutoSendHook equivalent -- it MUST see ``modexctl send``
-    instructions to reply). Native targets receive the minimal format (the
-    SubagentAutoSendHook delivers the reply automatically, so the contract
-    is unnecessary token overhead).
+    Peer sends, which DO need the reply-contract block, call
+    :func:`build_agent_comm_message` directly with ``reply_contract`` set,
+    bypassing this wrapper.
     """
-    if target_execution_strategy == ExecutionStrategyKind.EXTERNAL:
-        return build_agent_comm_message(
-            source_label=SourceLabel.AGENT,
-            source=source,
-            content=content,
-            invocation_id=invocation_id,
-            reply_contract=AgentImplementation.EXTERNAL,
-        )
     return build_agent_comm_message(
         source_label=SourceLabel.AGENT,
         source=source,

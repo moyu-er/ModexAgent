@@ -82,8 +82,9 @@ class SendStrategy(ABC):
   `reply_contract` to `build_agent_comm_message` because peer receivers need
   an explicit reply-contract block telling them they MUST call `send_to_agent`
   to reply (their normal output is invisible to the sender). Dispatch and
-  parent-reply strategies omit the `reply_contract` for native targets
-  (SubagentAutoSendHook delivers replies automatically).
+  parent-reply strategies omit the `reply_contract` entirely
+  (SubagentAutoSendHook auto-delivers replies for both native and external
+  subagents).
 - `should_register_session` defaults to `False` — peer-normal sessions are
   registered by the **receiver's** `InboxPoller._ensure_session_registered`,
   not by the sender.

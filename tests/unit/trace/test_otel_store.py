@@ -561,7 +561,7 @@ class TestOtlpExport:
 
 
 class TestFormatSendAckSinglePath:
-    def test_ack_contains_only_spans_jsonl(self, tmp_path: Path) -> None:
+    def test_ack_omits_trace_paths(self, tmp_path: Path) -> None:
         from modex_agent.multi_agent.comm_kind import AgentCommKind
         from modex_agent.multi_agent.communication.result import (
             AgentSendResult,
@@ -578,9 +578,9 @@ class TestFormatSendAckSinglePath:
             trace_dir=trace_dir,
         )
         ack = format_send_ack(result)
-        assert "spans.jsonl" in ack
+        assert "spans.jsonl" not in ack
         assert "operations.jsonl" not in ack
-        assert "OTel" in ack
+        assert "OTel" not in ack
 
     def test_ack_no_trace_dir_omits_paths(self) -> None:
         from modex_agent.multi_agent.comm_kind import AgentCommKind

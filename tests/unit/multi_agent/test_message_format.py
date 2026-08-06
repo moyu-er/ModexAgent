@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from modex_agent.core import message_utils
 from modex_agent.core.agent import AgentImplementation
-from modex_agent.core.constants import ExecutionStrategyKind, StopReason
+from modex_agent.core.constants import StopReason
 from modex_agent.multi_agent import message_format
 from modex_agent.multi_agent.message_format import (
     ResultMeta,
@@ -384,21 +384,20 @@ def test_subagent_result_no_stop_reason_omits_line():
 
 
 # ---------------------------------------------------------------------------
-# build_dispatch_message — convergence wrapper
+# build_dispatch_message — convergence wrapper (subagent/parent dispatch)
 # ---------------------------------------------------------------------------
 
 
-def test_dispatch_external_target_uses_reply_contract():
+def test_dispatch_external_target_no_reply_contract():
     result = build_dispatch_message(
         source="main",
         invocation_id="abc12345",
         content="do work",
-        target_execution_strategy=ExecutionStrategyKind.EXTERNAL,
     )
-    assert "---" in result
-    assert "To reply" in result
-    assert 'modexctl send --to "main"' in result
-    assert "--stdin" in result
+    assert "WARNING" not in result
+    assert "modexctl send" not in result
+    assert "---" not in result
+    assert "To reply" not in result
 
 
 def test_dispatch_external_target_includes_invocation_id_when_passed():
@@ -406,7 +405,6 @@ def test_dispatch_external_target_includes_invocation_id_when_passed():
         source="main",
         invocation_id="abc12345",
         content="do work",
-        target_execution_strategy=ExecutionStrategyKind.EXTERNAL,
     )
     assert "invocation_id: abc12345" in result
 
@@ -416,11 +414,11 @@ def test_dispatch_native_target_uses_minimal_format():
         source="main",
         invocation_id="abc12345",
         content="do work",
-        target_execution_strategy=ExecutionStrategyKind.REACT,
     )
     assert "Message from agent 'main'" in result
     assert "invocation_id: abc12345" in result
     assert "Content:" in result
+    assert "WARNING" not in result
     assert "---" not in result
     assert "modexctl send" not in result
 
@@ -430,7 +428,6 @@ def test_dispatch_native_target_none_invocation_id_omits_line():
         source="main",
         invocation_id=None,
         content="do work",
-        target_execution_strategy=ExecutionStrategyKind.REACT,
     )
     assert "Message from agent 'main'" in result
     assert "invocation_id" not in result

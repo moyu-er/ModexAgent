@@ -220,7 +220,7 @@ class TestNativeSubagentAck:
         assert "session_id" not in result.stdout
         assert "status:" not in result.stdout
         assert "tail the Trace" not in result.stdout
-        assert "Wait for the inbox notification" in result.stdout
+        assert "Wait for the notification" in result.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -597,7 +597,7 @@ class TestResumedAck:
         assert "session_id" not in result.stdout
         assert "status:" not in result.stdout
         assert "tail the Trace" not in result.stdout
-        assert "Wait for the inbox notification" in result.stdout
+        assert "Wait for the notification" in result.stdout
 
 
 class TestRequestedNotFoundAck:

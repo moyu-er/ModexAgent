@@ -16,10 +16,15 @@ renderer preserves that order so prompt diffs stay deterministic.
 
 from __future__ import annotations
 
+from modex_agent.core.agent import AgentCommKind
+
 __all__ = ["render_system_prompt"]
 
 
-def render_system_prompt(targets: list[tuple[str, str]]) -> str:
+def render_system_prompt(
+    targets: list[tuple[str, str]],
+    comm_kind: AgentCommKind = AgentCommKind.NORMAL,
+) -> str:
     """Render the ``--append-system-prompt`` string from the targets list.
 
     Args:
@@ -28,6 +33,11 @@ def render_system_prompt(targets: list[tuple[str, str]]) -> str:
             :class:`ExternalEnvSpec.targets`). May be empty — the
             targets table is omitted in that case but the communication
             instructions remain.
+        comm_kind: Routing kind. ``NORMAL`` (peer/main agent) instructs
+            the agent to use ``modexctl send`` for inter-agent output.
+            ``SUBAGENT`` instructs the agent that its final reply is
+            forwarded to its caller automatically and ``modexctl send``
+            is only for questions/decisions.
 
     Returns:
         A plain-text (Markdown-flavoured) string suitable for passing
@@ -35,28 +45,41 @@ def render_system_prompt(targets: list[tuple[str, str]]) -> str:
         No trailing newline is appended so callers can concatenate or
         wrap freely.
     """
-    lines: list[str] = [
-        "You are running as an external coding agent integrated with ModexAgent.",
-        "",
-        "## Inter-agent communication",
-        (
-            "Use `modexctl send --to <name> --content <text>` to send a "
-            "message to another agent. This is the ONLY way your output "
-            "reaches another agent."
-        ),
-        (
-            "Your stdout is streamed to the orchestrator for observability "
-            "but is NOT delivered as a message. For any output that must "
-            "reach another agent, call `modexctl send` explicitly."
-        ),
-        "Run `modexctl agents` to list routable targets at any time.",
-        "",
-        "## Framework-managed files",
-        (
-            "The `.modex/` directory is framework-managed internal state. "
-            "Do NOT read, modify, or delete anything under `.modex/`."
-        ),
-    ]
+    if comm_kind is AgentCommKind.SUBAGENT:
+        lines: list[str] = [
+            "You are running as a subagent integrated with ModexAgent.",
+            "",
+            "Your final reply is your deliverable — it is forwarded to your caller "
+            "automatically when your turn ends. Output your result in your reply text.",
+            "",
+            "Use `modexctl send --to <name> --content <text>` only to ask a question "
+            "or request a decision when you cannot proceed without input.",
+            "",
+            "The `.modex/` directory is framework-managed internal state. Do NOT "
+            "read, modify, or delete anything under `.modex/`.",
+        ]
+    else:
+        lines = [
+            "You are running as an external coding agent integrated with ModexAgent.",
+            "",
+            "## Inter-agent communication",
+            (
+                "Use `modexctl send --to <name> --content <text>` to send a "
+                "message to another agent."
+            ),
+            (
+                "Your stdout is streamed to the orchestrator for observability "
+                "but is NOT delivered as a message. For any output that must "
+                "reach another agent, call `modexctl send` explicitly."
+            ),
+            "Run `modexctl agents` to list routable targets at any time.",
+            "",
+            "## Framework-managed files",
+            (
+                "The `.modex/` directory is framework-managed internal state. "
+                "Do NOT read, modify, or delete anything under `.modex/`."
+            ),
+        ]
 
     if targets:
         lines.append("")

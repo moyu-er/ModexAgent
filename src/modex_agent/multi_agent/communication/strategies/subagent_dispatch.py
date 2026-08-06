@@ -50,7 +50,6 @@ class SubagentDispatchStrategy(SendStrategy):
             source=effective_source.name,
             invocation_id=None,
             content=req.content,
-            target_execution_strategy=req.target.execution_strategy,
         )
         return AgentMessageEnvelope(
             payload=self._envelope_payload(content, AgentMessageType.TASK_REQUEST, req),

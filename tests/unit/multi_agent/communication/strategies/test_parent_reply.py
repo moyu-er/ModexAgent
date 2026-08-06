@@ -176,10 +176,11 @@ class TestParentReplyStrategy:
         assert envelope.message_type == AgentMessageType.AGENT_MESSAGE
         assert envelope.invocation_id is None
 
-    def test_build_envelope_external_target_uses_peer_format(self) -> None:
+    def test_build_envelope_external_target_uses_minimal_format(self) -> None:
         """When parent is external (e.g. opencode pool main), the reply XML
-        must carry <reply_contract> + modexctl send so the external CLI
-        knows how to continue the conversation."""
+        must NOT carry a reply contract. ParentReplyStrategy delegates to
+        build_dispatch_message, which never injects one -- the reply is
+        auto-delivered, and the contract would cause a double reply."""
         from modex_agent.core.constants import ExecutionStrategyKind
 
         strategy = ParentReplyStrategy(_make_deps())
@@ -202,9 +203,10 @@ class TestParentReplyStrategy:
         envelope = strategy.build_envelope(req, session, "")
         xml = envelope.payload["content"]
 
-        assert "---" in xml
-        assert "To reply" in xml
-        assert 'modexctl send --to "worker"' in xml
+        assert "---" not in xml
+        assert "To reply" not in xml
+        assert "modexctl send" not in xml
+        assert "WARNING" not in xml
 
     def test_build_envelope_native_target_uses_minimal_format(self) -> None:
         from modex_agent.core.constants import ExecutionStrategyKind

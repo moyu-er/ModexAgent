@@ -272,7 +272,7 @@ class TestBuildResultExecutionStrategyBranch:
         assert not (tmp_path / "output").exists()
 
     def test_native_subagent_ack_omits_output_line(self, tmp_path: Path) -> None:
-        """T4: native ack shows Trace but not Output."""
+        """T4: native ack omits Trace and Output — unified subagent ack."""
         from modex_agent.core.constants import ExecutionStrategyKind
         from modex_agent.multi_agent.communication.result import format_send_ack
         from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
@@ -305,10 +305,11 @@ class TestBuildResultExecutionStrategyBranch:
         result = strategy.build_result(req, session, "task-1")
         ack = format_send_ack(result)
 
-        assert "Trace" in ack
+        assert "Trace" not in ack
         assert "final deliverable" not in ack
 
-    def test_external_subagent_ack_uses_external_format(self) -> None:
+    def test_external_subagent_ack_matches_native(self) -> None:
+        """T4: external and native subagent acks are identical — no implementation details leaked."""
         from modex_agent.core.constants import ExecutionStrategyKind
         from modex_agent.multi_agent.communication.result import format_send_ack
 
@@ -328,9 +329,10 @@ class TestBuildResultExecutionStrategyBranch:
         result = strategy.build_result(req, session, "task-1")
         ack = format_send_ack(result)
 
-        assert "modexctl send" in ack
+        assert "modexctl send" not in ack
         assert "Trace" not in ack
         assert "Output" not in ack
+        assert "Wait for the notification" in ack
 
     def test_default_execution_strategy_is_react(self) -> None:
         """CommunicationTarget defaults to REACT — pool_builder must
@@ -343,17 +345,16 @@ class TestBuildResultExecutionStrategyBranch:
 
 
 class TestBuildEnvelopeXmlBranch:
-    """build_envelope must emit peer-format XML (with <reply_contract> +
-    modexctl send) when target is external, agent-format XML (minimal)
-    when target is native.
+    """build_envelope must emit minimal agent-format XML (no reply_contract,
+    no modexctl send) for BOTH external and native subagent dispatch.
 
-    Regression: external subagents received the minimal build_agent_comm_message
-    format — no reply_contract, no modexctl send instructions — so the
-    external CLI had no idea how to reply. Native subagents have
-    SubagentAutoSendHook to auto-deliver replies; external CLIs do not.
+    Subagent replies are auto-delivered by SubagentAutoSendHook (native via
+    the hook's native content path; external via the hook's EXTERNAL content
+    path). Injecting the reply contract would cause a double reply (manual
+    send + hook auto-forward), so build_dispatch_message never injects one.
     """
 
-    def test_external_target_envelope_xml_has_reply_contract_and_modexctl(self) -> None:
+    def test_external_target_envelope_xml_is_minimal_no_reply_contract(self) -> None:
         from modex_agent.core.constants import ExecutionStrategyKind
 
         strategy = SubagentDispatchStrategy(_make_deps())
@@ -372,9 +373,10 @@ class TestBuildEnvelopeXmlBranch:
         envelope = strategy.build_envelope(req, session, "task-1")
         xml = envelope.payload["content"]
 
-        assert "---" in xml
-        assert "To reply" in xml
-        assert 'modexctl send --to "main"' in xml
+        assert "---" not in xml
+        assert "To reply" not in xml
+        assert "modexctl send" not in xml
+        assert "WARNING" not in xml
 
     def test_native_target_envelope_xml_is_minimal_no_reply_contract(self) -> None:
         from modex_agent.core.constants import ExecutionStrategyKind
