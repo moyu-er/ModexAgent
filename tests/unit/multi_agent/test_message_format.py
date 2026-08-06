@@ -130,7 +130,7 @@ def test_peer_message_has_reply_contract_separator():
     )
     assert "---" in result
     assert "To reply" in result
-    assert "send_to_agent" in result
+    assert "task tool" in result
 
 
 def test_peer_message_names_source_as_reply_target():
@@ -174,17 +174,17 @@ def test_peer_message_external_uses_modexctl_cli():
     )
     assert 'modexctl send --to "main"' in result
     assert "--stdin" in result
-    assert "send_to_agent tool" not in result
+    assert "task tool" not in result
 
 
-def test_peer_message_native_uses_send_to_agent_tool():
+def test_peer_message_native_uses_task_tool():
     result = build_agent_comm_message(
         source_label=SourceLabel.PEER_AGENT,
         source="main",
         content="hi",
         reply_contract=AgentImplementation.NATIVE,
     )
-    assert "send_to_agent tool" in result
+    assert "task tool" in result
     assert "modexctl send" not in result
 
 

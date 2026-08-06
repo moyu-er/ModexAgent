@@ -106,7 +106,7 @@ class ExecutionStrategy(ABC):
     - ``supports_subagents``: whether this shape permits subagent templates
       (default ``True``; ``external`` overrides to ``False``).
     - ``requires_main_agent_tools``: whether the pool builder must register
-      the ``send_to_agent`` communication tool on the main agent (default
+      the ``task`` communication tool on the main agent (default
       ``True``; ``external`` overrides to ``False`` since its main
       agent has no tool surface).
     - :meth:`assemble`: construct all runtime components this strategy needs
@@ -129,7 +129,7 @@ class ExecutionStrategy(ABC):
 
     @property
     def requires_main_agent_tools(self) -> bool:
-        """Whether the pool builder registers ``send_to_agent`` on the main
+        """Whether the pool builder registers ``task`` on the main
         agent (default ``True``). ``external`` overrides to ``False``
         — its main agent has no tool surface.
         """

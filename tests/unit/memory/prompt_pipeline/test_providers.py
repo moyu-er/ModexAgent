@@ -179,6 +179,10 @@ def _make_tool_manager(targets: list, *, with_task: bool = True):
         mgr.register(
             TaskDispatchTool(
                 store=store,
+                source=AgentAddress(name="main"),
+                broker=MagicMock(),
+                registry=MagicMock(),
+                agent_bus=MagicMock(spec=AgentMessageBus),
                 service=MagicMock(),
             )
         )
@@ -235,7 +239,7 @@ async def test_comm_provider_peer_target_emits_peer_contract():
     result = await provider.get_or_refresh()
     assert "Remote Agents" in result
     assert "research-main" in result
-    assert "send_to_agent" in result
+    assert "`task`" in result
     assert provider.last_version is not None
     assert provider.last_version.startswith("comm:peer:")
 

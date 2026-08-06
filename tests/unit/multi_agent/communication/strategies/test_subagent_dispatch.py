@@ -332,7 +332,9 @@ class TestBuildResultExecutionStrategyBranch:
         assert "modexctl send" not in ack
         assert "Trace" not in ack
         assert "Output" not in ack
-        assert "Wait for the notification" in ack
+        assert "automatic_notification: true" in ack
+        assert "next_step:" in ack
+        assert "notification" in ack  # the result arrives as a notification
 
     def test_default_execution_strategy_is_react(self) -> None:
         """CommunicationTarget defaults to REACT — pool_builder must

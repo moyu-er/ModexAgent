@@ -133,7 +133,7 @@ class TestToolInvocationIdForwarding:
             current_agent_context.reset(token)
 
         assert result == "ok"
-        assert service.async_invocation_id == ""
+        assert service.async_invocation_id is None
 
 
 class TestToolInvocationIdNullStringNormalization:

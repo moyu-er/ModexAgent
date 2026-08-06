@@ -28,7 +28,7 @@ System prompt pipeline — an ordered, versioned collection of `SystemPromptProv
 | `ProviderBlocksProvider` | blocks hash | Provider blocks configured | Custom prompt blocks |
 | `ProviderPrefetchProvider` | prefetch hash | Prefetch configured | Prefetched context |
 | `TodoAwareSystemPromptProvider` | `todo-enabled` / `no-todo` | Agent owns `todo_read` + `todo_write` tools | Task-discipline reminder |
-| `AgentCommunicationSystemPromptProvider` | `comm:<fragments>` / `comm:none` | `send_to_agent`/`task` tools have targets matching sub-module conditions | Composite provider with 3 internal sub-modules: peer reply contract (targets with `bus_ref`, via `send_to_agent`), subagent dispatch contract (NON-subagent + `task` tool registered, guides LLM to use `task` for new dispatch and `send_to_agent` for continuation), subagent consultation contract (SUBAGENT kind, via `send_to_agent`). Version is `"comm:"` + `|`-joined sub-module fragments; content joins applying sections. |
+| `AgentCommunicationSystemPromptProvider` | `comm:<fragments>` / `comm:none` | `task`/`send_to_agent` tools have targets matching sub-module conditions | Composite provider with 3 internal sub-modules: peer reply contract (targets with `bus_ref`, via `task`), subagent dispatch contract (NON-subagent + `task` tool registered, guides LLM to use `task` for new dispatch and continuation), subagent consultation contract (SUBAGENT kind, via `send_to_agent`). Version is `"comm:"` + `|`-joined sub-module fragments; content joins applying sections. |
 
 ## For AI Agents
 
@@ -55,6 +55,6 @@ System prompt pipeline — an ordered, versioned collection of `SystemPromptProv
 - `modex_agent.core.prompt` — `SystemPromptProvider`, `SystemPromptPipeline`
 - `modex_agent.utils.timezone` — `get_user_timezone`
 - `modex_agent.core.tool_manager` — `ToolManager` (for Todo + PeerComm providers)
-- `modex_agent.multi_agent.tools` — `SendToAgentTool`, `CommunicationTarget` (for PeerComm provider)
+- `modex_agent.multi_agent.tools` — `TaskDispatchTool`, `SendToAgentTool`, `CommunicationTarget` (for PeerComm + Consultation providers)
 
 <!-- MANUAL -->

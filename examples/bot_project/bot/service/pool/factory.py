@@ -51,10 +51,7 @@ from modex_agent.multi_agent.pool_config import PoolAssemblyDeps, PoolStore
 from modex_agent.multi_agent.pool_config.specs import PoolSpec
 from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
-from modex_agent.multi_agent.tools import (
-    SendToAgentTool,
-    TaskDispatchTool,
-)
+from modex_agent.multi_agent.tools import TaskDispatchTool
 from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
 from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
@@ -449,7 +446,7 @@ async def create_pool(
     if strategy.requires_main_agent_tools:
         if main_store.list():
             tool_manager.register(
-                SendToAgentTool(
+                TaskDispatchTool(
                     store=main_store,
                     source=AgentAddress(name=main_agent_name),
                     broker=broker,
@@ -458,16 +455,9 @@ async def create_pool(
                     service=main_service,
                 )
             )
-            logger.info("Pool '%s': communication tool registered", pool_name)
-            tool_manager.register(
-                TaskDispatchTool(
-                    store=main_store,
-                    service=main_service,
-                )
-            )
-            logger.info("Pool '%s': task dispatch tool registered", pool_name)
+            logger.info("Pool '%s': task tool registered (subagent dispatch + peer communication)", pool_name)
         else:
-            logger.info("Pool '%s': no communication targets — skipped send_to_agent", pool_name)
+            logger.info("Pool '%s': no communication targets — task tool not registered", pool_name)
 
         _wire_main_pipeline(
             pool,
@@ -491,8 +481,8 @@ async def create_pool(
         )
     else:
         # external path: the external agent has no tool surface and
-        # communicates via ``modexctl send`` CLI (not ``send_to_agent``), so
-        # skip SendToAgentTool registration and the react-only
+        # communicates via ``modexctl send`` CLI (not the ``task`` tool), so
+        # skip task tool registration and the react-only
         # ``_wire_main_pipeline`` (governance/approval/hooks). Only set
         # ``command_processor`` on the pipeline so pre-lock ``/stop``
         # dispatch still works.
@@ -501,7 +491,7 @@ async def create_pool(
             if main_instance is not None and main_instance.pipeline is not None:
                 main_instance.pipeline.command_processor = command_processor
         logger.info(
-            "Pool '%s': external — skipped send_to_agent + _wire_main_pipeline",
+            "Pool '%s': external — skipped task tool + _wire_main_pipeline",
             pool_name,
         )
 

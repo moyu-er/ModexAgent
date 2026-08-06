@@ -8,8 +8,8 @@ from modex_agent.core.agent import AgentCommKind
 from modex_agent.multi_agent.communication.result import AgentSendResult, format_send_ack
 
 
-def test_parent_reply_ack_is_distinct_from_subagent_dispatch() -> None:
-    """D7: parent-reply ack is unchanged."""
+def test_parent_reply_ack_has_anti_redundancy() -> None:
+    """Parent reply ack carries automatic_notification + next_step."""
     result = AgentSendResult(
         target_agent="main",
         target_kind=AgentCommKind.NORMAL,
@@ -21,15 +21,14 @@ def test_parent_reply_ack_is_distinct_from_subagent_dispatch() -> None:
 
     ack = format_send_ack(result)
 
-    assert ack == (
-        "Reply delivered to 'main'.\n\n"
-        "The parent agent will process your reply asynchronously. "
-        "Wait for the notification."
-    )
+    assert "Reply delivered to 'main'." in ack
+    assert "automatic_notification: true" in ack
+    assert "next_step:" in ack
+    assert "Do NOT call send_to_agent" in ack
 
 
-def test_peer_ack_is_unchanged() -> None:
-    """D5: peer ack is unchanged."""
+def test_peer_ack_has_anti_redundancy() -> None:
+    """Peer ack carries next_step + clarifies replies are NOT automatic."""
     result = AgentSendResult(
         target_agent="peer",
         target_kind=AgentCommKind.NORMAL,
@@ -41,11 +40,12 @@ def test_peer_ack_is_unchanged() -> None:
 
     ack = format_send_ack(result)
 
-    assert ack == (
-        "Message sent to peer agent 'peer'.\n\n"
-        "The peer agent will process your message asynchronously. "
-        "Wait for the notification."
-    )
+    assert "Message sent to peer agent 'peer'." in ack
+    assert "next_step:" in ack
+    assert "not automatic" in ack
+    assert "Do NOT call task again" in ack
+    # Peers do NOT auto-notify (ADR-0019 deferred #1)
+    assert "automatic_notification: true" not in ack
 
 
 @pytest.mark.parametrize(
@@ -126,8 +126,10 @@ def test_subagent_ack_omits_implementation_details() -> None:
     assert "modexctl send" not in ack
     # D2: no "inbox notification"
     assert "inbox notification" not in ack
-    # D3: contains "Wait for the notification"
-    assert "Wait for the notification" in ack
+    # D3: identifies automatic notification and the next step
+    assert "automatic_notification: true" in ack
+    assert "next_step:" in ack
+    assert "notification" in ack  # the result arrives as a notification
     # D4: contains invocation_id
     assert result.invocation_id is not None
     assert result.invocation_id in ack

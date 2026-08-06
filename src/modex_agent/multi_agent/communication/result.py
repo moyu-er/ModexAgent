@@ -60,16 +60,15 @@ def format_send_ack(result: AgentSendResult) -> str:
     return ack
 
 
-_ACK_ASYNC_NOTIFY = "Wait for the notification."
-
-
 def _format_peer_ack(result: AgentSendResult) -> str:
     return "\n".join(
         [
             f"Message sent to peer agent '{result.target_agent}'.",
             "",
-            "The peer agent will process your message asynchronously. "
-            + _ACK_ASYNC_NOTIFY,
+            "next_step: The peer agent will process your message asynchronously"
+            " and may or may not reply — peer replies are not automatic."
+            " Do NOT call task again for this agent — continue with your"
+            " own work or end your turn.",
         ]
     )
 
@@ -79,8 +78,11 @@ def _format_parent_reply_ack(result: AgentSendResult) -> str:
         [
             f"Reply delivered to '{result.target_agent}'.",
             "",
-            "The parent agent will process your reply asynchronously. "
-            + _ACK_ASYNC_NOTIFY,
+            "automatic_notification: true",
+            "",
+            "next_step: The parent agent will process your reply asynchronously."
+            " Do NOT call send_to_agent again — end your turn or continue with"
+            " non-overlapping work.",
         ]
     )
 
@@ -89,17 +91,17 @@ def _format_subagent_ack(result: AgentSendResult) -> str:
     lines = [
         f"Task dispatched to '{result.target_agent}' - running in background.",
         "",
+        "automatic_notification: true",
+        "",
+        "next_step: The result will be delivered to you automatically as a"
+        " notification when the subagent finishes. Do NOT call task again"
+        " for this agent — end your turn or continue with non-overlapping work.",
+        "",
     ]
     if result.invocation_id:
         lines.append(f"invocation_id: {result.invocation_id}")
-        lines.extend(
-            [
-                "",
-                _ACK_ASYNC_NOTIFY
-                + " If it says the task is incomplete, use the"
-                " invocation_id above to resume.",
-            ]
+        lines.append(
+            "If the result says the task is incomplete, pass this invocation_id"
+            " to continue the session in a later turn."
         )
-    else:
-        lines.append(_ACK_ASYNC_NOTIFY)
     return "\n".join(lines)

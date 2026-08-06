@@ -220,7 +220,7 @@ class ExternalAwareFactory(DefaultAgentFactory):
         those objects — it builds a minimal ``AgentContext`` (empty history +
         empty ``InMemoryToolManager``) and calls ``agent.run()`` directly.
         The external agent communicates via ``modexctl send`` CLI, not
-        ``send_to_agent``.
+        the ``task`` tool.
         """
         from modex_agent.core.llm_struct import RuntimeSafetyPolicy
         from modex_agent.core.session_id import SessionIdFactory

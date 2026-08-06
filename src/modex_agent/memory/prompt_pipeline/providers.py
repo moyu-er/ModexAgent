@@ -142,11 +142,11 @@ class _PeerCommSubProvider(_CommSubProvider):
     """Remote-agent reply contract — moved from the deleted
     ``PeerCommunicationSystemPromptProvider``.
 
-    Fires when the agent owns ``send_to_agent`` AND at least one target is a
+    Fires when the agent owns ``task`` AND at least one target is a
     remote agent (a ``CommunicationTarget`` whose ``bus_ref`` is set — the
     target does not share this agent's bus, so there is no implicit reply
     path). For those targets the agent's ordinary output is invisible and a
-    reply is only possible via ``send_to_agent``.
+    reply is only possible via ``task``.
     """
 
     def __init__(self, tool_manager: ToolManager | None) -> None:
@@ -155,12 +155,12 @@ class _PeerCommSubProvider(_CommSubProvider):
     def _remote_target_names(self) -> list[str]:
         if self._tool_manager is None:
             return []
-        tool = self._tool_manager.get_tool("send_to_agent")
+        tool = self._tool_manager.get_tool("task")
         if tool is None:
             return []
-        from modex_agent.multi_agent.tools import SendToAgentTool
+        from modex_agent.multi_agent.tools import TaskDispatchTool
 
-        if not isinstance(tool, SendToAgentTool):
+        if not isinstance(tool, TaskDispatchTool):
             return []
         return sorted(t.name for t in tool.list_targets() if t.bus_ref is not None)
 
@@ -178,13 +178,13 @@ class _PeerCommSubProvider(_CommSubProvider):
         name_list = "\n".join(f"  - {name}" for name in names)
         return (
             "## Communicating With Remote Agents\n\n"
-            "Some agents you can reach via `send_to_agent` cannot see anything "
+            "Some agents you can reach via `task` cannot see anything "
             "you produce normally — not this reply, not your reasoning, not your "
             "tool output. For these agents the ONLY way they ever hear from you "
-            "is a `send_to_agent` call aimed at them.\n\n"
+            "is a `task` call aimed at them.\n\n"
             "Agents that require explicit sends:\n"
             f"{name_list}\n\n"
-            "Replies are OPTIONAL. Only call `send_to_agent` back when the sender "
+            "Replies are OPTIONAL. Only call `task` back when the sender "
             "actually needs your response — do NOT acknowledge just to be polite, "
             "and do NOT ping-pong. If the incoming message does not require action "
             "from you, end your turn without replying.\n"
@@ -241,13 +241,13 @@ class _SubagentDispatchSubProvider(_CommSubProvider):
             "use the `task` tool — its `content` parameter carries the full task\n"
             "description, and the tool guides you to construct a high-quality prompt.\n\n"
             "To CONTINUE an existing subagent session (e.g. after receiving a\n"
-            "NEED_DECISION response), use `send_to_agent` with the `invocation_id`\n"
+            "NEED_DECISION response), use `task` with the `invocation_id`\n"
             "from the prior task result.\n\n"
             "After dispatching, end your turn — the notification resumes you with the\n"
             "result when the subagent finishes.\n\n"
             "Subagents surface structured prefixes in their delivered result:\n"
             "- `NEED_DECISION: <question>` — needs your decision. Continue the session\n"
-            "  (send_to_agent with same invocation_id) with your answer.\n"
+            "  (task with same invocation_id) with your answer.\n"
             "- `PROGRESS_UPDATE: <info>` — informational, no action needed.\n"
         )
 

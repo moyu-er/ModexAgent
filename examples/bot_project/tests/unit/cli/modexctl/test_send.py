@@ -166,7 +166,8 @@ class TestPeerNormalAck:
         )
         assert result.exit_code == 0
         assert "Message sent to peer agent 'coder'." in result.stdout
-        assert "The peer agent will process your message asynchronously." in result.stdout
+        assert "next_step:" in result.stdout
+        assert "not automatic" in result.stdout
 
     def test_peer_send_constructs_correct_request(
         self,
@@ -220,7 +221,7 @@ class TestNativeSubagentAck:
         assert "session_id" not in result.stdout
         assert "status:" not in result.stdout
         assert "tail the Trace" not in result.stdout
-        assert "Wait for the notification" in result.stdout
+        assert "automatic_notification: true" in result.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -597,7 +598,7 @@ class TestResumedAck:
         assert "session_id" not in result.stdout
         assert "status:" not in result.stdout
         assert "tail the Trace" not in result.stdout
-        assert "Wait for the notification" in result.stdout
+        assert "automatic_notification: true" in result.stdout
 
 
 class TestRequestedNotFoundAck:

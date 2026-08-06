@@ -125,7 +125,7 @@ def _build_contract_block(
 
     ``reply_contract`` selects the concrete reply mechanism wording based
     on what the **receiver** can use:
-    - :attr:`AgentImplementation.NATIVE` -- reply via the ``send_to_agent`` tool
+    - :attr:`AgentImplementation.NATIVE` -- reply via the ``task`` tool
     - :attr:`AgentImplementation.EXTERNAL` -- reply via ``modexctl send`` CLI
 
     The sender's implementation is invisible to agents -- only the receiver's
@@ -145,7 +145,7 @@ def _build_contract_block(
         ]
     else:
         method_lines = [
-            "To reply, you MUST call the send_to_agent tool with:",
+            "To reply, you MUST call the task tool with:",
             f'  target_agent = "{source}"',
             '  content = "<your full reply>"',
         ]
@@ -229,7 +229,7 @@ def build_dispatch_message(
     invocation_id: str | None,
     content: str,
 ) -> str:
-    """Build the markdown content for send_to_agent dispatch.
+    """Build the markdown content for task dispatch.
 
     Used by ``SubagentDispatchStrategy`` and ``ParentReplyStrategy``. Both are
     subagent/parent paths: the reply is auto-delivered by

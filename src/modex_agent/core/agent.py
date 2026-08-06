@@ -47,7 +47,7 @@ class AgentImplementation(StrEnum):
 
     Topology (NORMAL vs SUBAGENT) decides routing and reply topology.
     Implementation decides how the agent actually runs and how peers
-    should word the reply contract (``send_to_agent`` tool vs ``modexctl
+    should word the reply contract (``task`` tool vs ``modexctl
     send`` CLI vs future mechanisms).
 
     Combinations are valid:

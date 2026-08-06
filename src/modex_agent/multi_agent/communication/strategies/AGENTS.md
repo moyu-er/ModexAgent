@@ -80,7 +80,7 @@ class SendStrategy(ABC):
   `SendStrategy` subclass, and one dispatch branch in `service._send`.
 - `PeerNormalStrategy` passes `source_label=SourceLabel.PEER_AGENT` and a
   `reply_contract` to `build_agent_comm_message` because peer receivers need
-  an explicit reply-contract block telling them they MUST call `send_to_agent`
+  an   explicit reply-contract block telling them they MUST call `task`
   to reply (their normal output is invisible to the sender). Dispatch and
   parent-reply strategies omit the `reply_contract` entirely
   (SubagentAutoSendHook auto-delivers replies for both native and external

@@ -9,7 +9,7 @@ one strategy class per routing topology.
 
 ## Purpose
 
-Route a `send_to_agent` call from a NORMAL or SUBAGENT sender to its target
+Route a `task` or `send_to_agent` call from a NORMAL or SUBAGENT sender to its target
 agent — intra-pool (star) or cross-pool (peer) — using a single
 `TopologyPolicy.check` gate followed by a flat strategy dispatch. The service
 never creates agent instances; it only constructs sessions, envelopes, and
@@ -96,8 +96,8 @@ Context propagates within the session group as designed behaviour.
 - Strategy dispatch is flat on `bus_ref` + `kind` — do not introduce nested
   if-trees.
 - `send_async` and `_send` require a pre-resolved `CommunicationTarget`
-  (no name-string lookup). The tool (`SendToAgentTool.execute`) does the
-  `store.get(name)` lookup.
+(no name-string lookup). The tool (`TaskDispatchTool.execute` /
+`SendToAgentTool.execute`) does the `store.get(name)` lookup.
 - `CommunicationTarget.bus_ref` is the load-bearing field for cross-pool
   routing: `None` = local (today's behaviour), set = cross-pool.
 - `AgentCommunicationService.__init__` is backward-compatible — new deps

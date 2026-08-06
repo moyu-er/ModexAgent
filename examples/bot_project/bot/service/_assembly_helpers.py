@@ -258,7 +258,7 @@ class _PoolAssemblyMixin:
         e.g. ast_grep), terminal tools (when ``terminal_manager`` is set), the
         custom send_file_to_user tool, the experience tool (when enabled), todo
         tools, and MCP tools resolved from ``main_spec.mcp`` via the registry.
-        ``send_to_agent`` is registered separately in ``create_pool`` after the
+        ``task`` is registered separately in ``create_pool`` after the
         communication service is wired.
         """
         # Local import to keep the module-level import graph lean and to honor

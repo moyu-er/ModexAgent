@@ -1,17 +1,12 @@
-"""Tests for TaskDispatchTool — subagent-only task dispatch.
-
-The task tool is a thin sibling of send_to_agent that always starts a fresh
-subagent session (invocation_id=None) and only accepts SUBAGENT targets.
-These tests mirror the SendToAgentTool test patterns but assert the
-subagent-only constraint and the richer task-prompt description.
-"""
-
 from __future__ import annotations
+
+from unittest.mock import MagicMock
 
 import pytest
 
 from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.tools import (
     CommunicationTarget,
@@ -67,15 +62,26 @@ def _store_with_subagent_target() -> CommunicationTargetStore:
     return store
 
 
+def _task_tool(
+    store: CommunicationTargetStore,
+    service: _RecordingService | None = None,
+) -> TaskDispatchTool:
+    return TaskDispatchTool(
+        store=store,
+        source=AgentAddress(name="test"),
+        broker=MagicMock(),
+        registry=MagicMock(),
+        agent_bus=MagicMock(),
+        service=service or _RecordingService(),  # type: ignore[arg-type]
+    )
+
+
 # -- 1. name -----------------------------------------------------------------
 
 
 class TestTaskDispatchToolName:
     def test_task_tool_name_is_task(self) -> None:
-        tool = TaskDispatchTool(
-            store=CommunicationTargetStore(),
-            service=_RecordingService(),  # type: ignore[arg-type]
-        )
+        tool = _task_tool(CommunicationTargetStore())
         assert tool.name == "task"
 
 
@@ -83,15 +89,12 @@ class TestTaskDispatchToolName:
 
 
 class TestTaskDispatchToolParams:
-    def test_params_have_target_agent_and_content_only(self) -> None:
-        tool = TaskDispatchTool(
-            store=CommunicationTargetStore(),
-            service=_RecordingService(),  # type: ignore[arg-type]
-        )
+    def test_params_have_target_agent_content_and_invocation_id(self) -> None:
+        tool = _task_tool(CommunicationTargetStore())
         props = tool.parameters["properties"]
         assert "target_agent" in props
         assert "content" in props
-        assert "invocation_id" not in props
+        assert "invocation_id" in props
         required = tool.parameters["required"]
         assert "target_agent" in required
         assert "content" in required
@@ -102,43 +105,42 @@ class TestTaskDispatchToolParams:
 
 
 class TestTaskDispatchToolDynamicSchema:
-    def test_target_agent_enum_only_subagent_targets(self) -> None:
-        store = CommunicationTargetStore()
-        store.add(CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT))
-        store.add(CommunicationTarget(name="worker", kind=AgentCommKind.SUBAGENT))
-        tool = TaskDispatchTool(
-            store=store,
-            service=_RecordingService(),  # type: ignore[arg-type]
-        )
-        schema = tool.get_dynamic_schema()
-        target_schema = schema["function"]["parameters"]["properties"]["target_agent"]
-        assert target_schema.get("enum") == ["scout", "worker"]
-
-    def test_target_agent_enum_excludes_normal_targets(self) -> None:
+    def test_target_agent_enum_includes_all_targets(self) -> None:
         store = CommunicationTargetStore()
         store.add(CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT))
         store.add(CommunicationTarget(name="peer-main", kind=AgentCommKind.NORMAL))
-        tool = TaskDispatchTool(
-            store=store,
-            service=_RecordingService(),  # type: ignore[arg-type]
-        )
+        tool = _task_tool(store)
         schema = tool.get_dynamic_schema()
         target_schema = schema["function"]["parameters"]["properties"]["target_agent"]
-        enum = target_schema.get("enum")
-        assert enum == ["scout"]
-        assert "peer-main" not in (enum or [])
+        assert target_schema.get("enum") == ["scout", "peer-main"]
 
     def test_dynamic_schema_not_mutating_static_params(self) -> None:
         store = _store_with_subagent_target()
-        tool = TaskDispatchTool(
-            store=store,
-            service=_RecordingService(),  # type: ignore[arg-type]
-        )
+        tool = _task_tool(store)
         before = tool.parameters["properties"]["target_agent"]
         tool.get_dynamic_schema()
         after = tool.parameters["properties"]["target_agent"]
         assert before is after
         assert "enum" not in before
+
+
+class TestTaskDispatchToolTargetManagement:
+    def test_add_target_and_has_target(self) -> None:
+        tool = _task_tool(CommunicationTargetStore())
+        target = CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT)
+
+        tool.add_target(target)
+
+        assert tool.has_target("scout")
+
+    def test_pop_target_by_name(self) -> None:
+        store = CommunicationTargetStore()
+        store.add(CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT))
+        tool = _task_tool(store)
+
+        tool.pop_target_by_name("scout")
+
+        assert not tool.has_target("scout")
 
 
 # -- 5, 6, 7, 13. execute ----------------------------------------------------
@@ -148,10 +150,7 @@ class TestTaskDispatchToolExecute:
     @pytest.mark.asyncio
     async def test_execute_calls_send_async_with_invocation_id_none(self) -> None:
         service = _RecordingService()
-        tool = TaskDispatchTool(
-            store=_store_with_subagent_target(),
-            service=service,  # type: ignore[arg-type]
-        )
+        tool = _task_tool(_store_with_subagent_target(), service)
         token = current_agent_context.set(_context())
         try:
             result = await tool.execute(
@@ -171,10 +170,7 @@ class TestTaskDispatchToolExecute:
     @pytest.mark.asyncio
     async def test_execute_rejects_unknown_target(self) -> None:
         service = _RecordingService()
-        tool = TaskDispatchTool(
-            store=_store_with_subagent_target(),
-            service=service,  # type: ignore[arg-type]
-        )
+        tool = _task_tool(_store_with_subagent_target(), service)
         token = current_agent_context.set(_context())
         try:
             result = await tool.execute(
@@ -186,19 +182,74 @@ class TestTaskDispatchToolExecute:
 
         assert "Error" in result
         assert "nonexistent" in result
-        assert "office-expert" in result  # lists available subagents
+        assert "Available:" in result
+        assert "office-expert" in result
         assert service.last_target is None
 
     @pytest.mark.asyncio
-    async def test_execute_rejects_normal_target(self) -> None:
+    async def test_execute_with_invocation_id_continues_session(self) -> None:
+        service = _RecordingService()
+        tool = _task_tool(_store_with_subagent_target(), service)
+        token = current_agent_context.set(_context())
+        try:
+            result = await tool.execute(
+                target_agent="office-expert",
+                content="test",
+                invocation_id="abc123",
+            )
+        finally:
+            current_agent_context.reset(token)
+
+        assert result == "ok"
+        assert service.async_invocation_id == "abc123"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("null_value", ["null", "Null", "NULL", "none", ""])
+    async def test_execute_null_string_treated_as_new_task(self, null_value: str) -> None:
+        service = _RecordingService()
+        tool = _task_tool(_store_with_subagent_target(), service)
+        token = current_agent_context.set(_context())
+        try:
+            result = await tool.execute(
+                target_agent="office-expert",
+                content="test",
+                invocation_id=null_value,
+            )
+        finally:
+            current_agent_context.reset(token)
+
+        assert result == "ok"
+        assert service.async_invocation_id is None, (
+            f"String {null_value!r} should be normalized to None, "
+            f"got {service.async_invocation_id!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_execute_peer_target_ignores_invocation_id(self) -> None:
         service = _RecordingService()
         store = CommunicationTargetStore()
         store.add(CommunicationTarget(name="peer-main", kind=AgentCommKind.NORMAL))
-        store.add(CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT))
-        tool = TaskDispatchTool(
-            store=store,
-            service=service,  # type: ignore[arg-type]
-        )
+        tool = _task_tool(store, service)
+        token = current_agent_context.set(_context())
+        try:
+            result = await tool.execute(
+                target_agent="peer-main",
+                content="test",
+                invocation_id="abc123",
+            )
+        finally:
+            current_agent_context.reset(token)
+
+        assert result == "ok"
+        assert service.async_invocation_id is None
+
+    @pytest.mark.asyncio
+    async def test_execute_peer_target_succeeds(self) -> None:
+        service = _RecordingService()
+        store = CommunicationTargetStore()
+        peer = CommunicationTarget(name="peer-main", kind=AgentCommKind.NORMAL)
+        store.add(peer)
+        tool = _task_tool(store, service)
         token = current_agent_context.set(_context())
         try:
             result = await tool.execute(
@@ -208,17 +259,13 @@ class TestTaskDispatchToolExecute:
         finally:
             current_agent_context.reset(token)
 
-        assert "Error" in result
-        assert "task dispatches to subagents only" in result
-        assert service.last_target is None
+        assert result == "ok"
+        assert service.last_target is peer
 
     @pytest.mark.asyncio
     async def test_self_dispatch_rejected(self) -> None:
         service = _RecordingService()
-        tool = TaskDispatchTool(
-            store=_store_with_subagent_target(),
-            service=service,  # type: ignore[arg-type]
-        )
+        tool = _task_tool(_store_with_subagent_target(), service)
         token = current_agent_context.set(_context())
         try:
             result = await tool.execute(
@@ -238,29 +285,20 @@ class TestTaskDispatchToolExecute:
 
 class TestTaskDispatchToolDescription:
     def test_description_contains_prompt_construction_guidance(self) -> None:
-        tool = TaskDispatchTool(
-            store=_store_with_subagent_target(),
-            service=_RecordingService(),  # type: ignore[arg-type]
-        )
+        tool = _task_tool(_store_with_subagent_target())
         desc = tool.description
         for keyword in ("TASK", "CONTEXT", "SCOPE", "OUTPUT", "VERIFICATION", "BOUNDARIES"):
             assert keyword in desc, f"expected {keyword!r} in description"
 
     def test_description_contains_when_not_to_use(self) -> None:
-        tool = TaskDispatchTool(
-            store=_store_with_subagent_target(),
-            service=_RecordingService(),  # type: ignore[arg-type]
-        )
+        tool = _task_tool(_store_with_subagent_target())
         desc = tool.description
         assert "When NOT to use" in desc
         lowered = desc.lower()
         assert "read" in lowered or "grep" in lowered or "glob" in lowered
 
     def test_description_contains_concurrency_guidance(self) -> None:
-        tool = TaskDispatchTool(
-            store=_store_with_subagent_target(),
-            service=_RecordingService(),  # type: ignore[arg-type]
-        )
+        tool = _task_tool(_store_with_subagent_target())
         desc = tool.description
         assert "concurrently" in desc or "multiple" in desc
 
@@ -280,20 +318,63 @@ class TestTaskDispatchToolDescription:
                 description="Implementation",
             )
         )
-        tool = TaskDispatchTool(
-            store=store,
-            service=_RecordingService(),  # type: ignore[arg-type]
-        )
+        tool = _task_tool(store)
         desc = tool.description
+        assert "## Subagents" in desc
+        assert "Available subagents:" in desc
         assert "scout" in desc
         assert "Fast recon" in desc
         assert "worker" in desc
         assert "Implementation" in desc
 
     def test_description_no_subagents_available(self) -> None:
-        tool = TaskDispatchTool(
-            store=CommunicationTargetStore(),
-            service=_RecordingService(),  # type: ignore[arg-type]
-        )
+        tool = _task_tool(CommunicationTargetStore())
         desc = tool.description
-        assert "No subagents currently available" in desc
+        assert "No agents currently available" in desc
+
+    def test_description_lists_peer_agents(self) -> None:
+        store = CommunicationTargetStore()
+        store.add(
+            CommunicationTarget(
+                name="peer-main",
+                kind=AgentCommKind.NORMAL,
+                description="Planning partner",
+            )
+        )
+        desc = _task_tool(store).description
+
+        assert "## Peer Agents" in desc
+        assert "Available peer agents:" in desc
+        assert "peer-main" in desc
+        assert "Planning partner" in desc
+
+    def test_description_peer_and_subagent_sections_both_present(self) -> None:
+        store = _store_with_subagent_target()
+        store.add(CommunicationTarget(name="peer-main", kind=AgentCommKind.NORMAL))
+        desc = _task_tool(store).description
+
+        assert "## Peer Agents" in desc
+        assert "## Subagents" in desc
+
+    def test_description_no_peer_section_when_only_subagents(self) -> None:
+        desc = _task_tool(_store_with_subagent_target()).description
+
+        assert "## Peer Agents" not in desc
+
+    def test_description_no_subagent_section_when_only_peers(self) -> None:
+        store = CommunicationTargetStore()
+        store.add(CommunicationTarget(name="peer-main", kind=AgentCommKind.NORMAL))
+        desc = _task_tool(store).description
+
+        assert "## Subagents" not in desc
+
+    def test_description_no_forbidden_words(self) -> None:
+        store = _store_with_subagent_target()
+        store.add(CommunicationTarget(name="peer-main", kind=AgentCommKind.NORMAL))
+        desc = _task_tool(store).description
+        lowered = desc.lower()
+
+        assert "pool" not in lowered
+        assert "system-reminder" not in lowered
+        assert "normal agent" not in lowered
+        assert "pass null" not in lowered
