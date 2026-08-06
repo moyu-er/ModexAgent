@@ -6,14 +6,63 @@
 
 `examples/bot_project/` is the primary end-to-end reference (Pool mode, WebUI React frontend, QQ + Telegram adapters). Framework-generic behavior in `src/modex_agent/`; business wiring in `examples/`.
 
-## Commands
+## Guidelines
 
-- `uv pip install -e ".[dev,llm,storage,gateway]"`: install
-- `pytest tests/unit/ -v`: unit tests
-- `pytest tests/integration/ -v -m integration`: integration tests
-- `ruff check src/modex_agent tests/`: lint
-- `ruff format src/modex_agent tests/`: format
-- `mypy src/modex_agent`: type check
+### 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+### 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+### 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+### 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
 ## Rules
 
@@ -41,33 +90,6 @@ Detailed rules in `rules/type-safety.md` and `rules/architecture.md`. Read befor
 2. **Tests must exercise the real call-site pattern.** If no correct test seam exists for a bug pattern, that itself is the finding — note it and flag the architectural gap.
 
    Example: a unit test that mocks `ExternalAgent.__init__` cannot reproduce a bug where `_handle_emission` drops child emissions because `child_discovery_sink` is None — the mock hides the None. The correct seam is to use a real agent with a mock `ChildSessionDiscoverySink`.
-
-## Memory Rules
-
-- Compression mutates persisted session/archive memory via lifecycle hooks.
-- Governance mutates only the LLM input copy before model calls. Never write governance output back to session.
-- Tool-call chains must stay structurally legal: don't split `assistant.tool_calls` from matching `tool` results.
-- `archive=None` is standard session-only mode for subagent memory.
-- Subagent session memory is temporary; clear after subagent finishes.
-- Memory scopes: Session, User, Tenant, Agent, Channel, Chat, Composite, Global.
-
-## Multi-Agent Communication Rules
-
-- Star topology: subagents communicate only through main agent (`subagent_validator.py` enforces).
-- Two LLM-facing tools: `task` (dispatch new subagent tasks) + `send_to_agent` (continuation, consultation, peer communication). Both converge on `AgentCommunicationService.send_async()`.
-- Session ID format: `{prefix}.{agent_name}` (dot-separated, via `SessionIdFactory`).
-- `SubagentAutoSendHook` auto-forwards final output to parent.
-- External coding agents (OpenCode) are NORMAL main agents of their own pools; they reply via `modexctl send` CLI, not `send_to_agent`. See ADR-0022 and `docs/design/external-agent-integration/`.
-
-## Approval Architecture Rules
-
-1. One approval path only: `ToolNode` → `ApprovalTransaction` → `TurnSnapshot` → `ApprovalRenderer`. Do NOT add approval logic to interceptors, hooks, or control consumers.
-2. `ApprovalRuntime` is a policy service, not a state owner. State lives in `ApprovalTransaction` inside `ReActTurnState`.
-3. `deny_reason` lives on `ApprovalTransaction.deny_reason`. Do not read from `ctx.metadata`.
-
-## Persistence
-
-Hybrid: per-workspace SQLite (`<workspace>/.modex/state.db`) for transactional state, plus files for human-editable and binary data. `PersistenceBackend` enum (`FILE`/`SQLITE`) drives factory selection. SQLite is the bot's default. See ADR-0023 and ADR-0028~0031 for schema details. `RecordScope` (frozen Pydantic) carries scope dimensions; `canonical()` is the DB key source.
 
 ## Documentation
 
