@@ -412,8 +412,9 @@ class TestOpenCodeConfigContent:
         plugin_url = parsed["plugin"][0]
         assert plugin_url.startswith("file://")
         from urllib.parse import urlparse
+        from urllib.request import url2pathname
 
-        url_path = Path(urlparse(plugin_url).path)
+        url_path = Path(url2pathname(urlparse(plugin_url).path))
         assert url_path.exists()
 
     def test_config_content_overrides_base_env(self, tmp_path: Path) -> None:

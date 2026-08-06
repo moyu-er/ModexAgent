@@ -42,6 +42,8 @@ import json
 import logging
 import os
 import socket
+import subprocess
+import sys
 import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -579,8 +581,15 @@ class OpenCodeServerManager:
                     continue
                 owner_pid = entry.get("ownerPid")
                 if isinstance(owner_pid, int) and _is_pid_alive(owner_pid):
-                    continue
-                logger.info("Reaping orphaned opencode process pid=%d (owner gone)", pid)
+                    if _is_python_process(owner_pid):
+                        continue
+                    logger.info(
+                        "Reaping orphaned opencode process pid=%d (owner pid=%d recycled to non-python process)",
+                        pid,
+                        owner_pid,
+                    )
+                else:
+                    logger.info("Reaping orphaned opencode process pid=%d (owner gone)", pid)
                 _sync_kill_proc(pid)
                 pid_file.unlink(missing_ok=True)
             except Exception:
@@ -588,6 +597,37 @@ class OpenCodeServerManager:
                     pid_file.unlink(missing_ok=True)
                 except Exception:
                     pass
+
+
+def _is_python_process(pid: int) -> bool:
+    """True if *pid* is a Python interpreter process.
+
+    Guards against PID recycling: after a bot crash, the OS may reuse
+    the bot's PID for an unrelated process. ``_is_pid_alive`` would
+    return True, causing the orphan reaper to skip a stale
+    ``opencode serve``. Checking the process name prevents that.
+    """
+    try:
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["tasklist", "/fi", f"PID eq {pid}", "/fo", "csv", "/nh"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return "python" in result.stdout.lower()
+        comm_path = Path(f"/proc/{pid}/comm")
+        if comm_path.exists():
+            return "python" in comm_path.read_text(errors="replace").lower()
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "comm="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return "python" in result.stdout.lower()
+    except Exception:
+        return False
 
 
 def _is_pid_alive(pid: int) -> bool:

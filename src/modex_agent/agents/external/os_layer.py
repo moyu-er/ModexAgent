@@ -338,7 +338,7 @@ _signal_handlers_registered: bool = False
 
 
 def register_signal_handlers() -> None:
-    """Register SIGTERM/SIGINT handlers that run atexit cleanup then exit.
+    """Register SIGTERM/SIGINT/SIGBREAK handlers that run atexit cleanup.
 
     Idempotent — safe to call multiple times. Cooperative — chains to
     the previous handler if non-default (checked via ``signal.getsignal``
@@ -347,6 +347,12 @@ def register_signal_handlers() -> None:
     The handler calls ``atexit._run_exitfuncs()`` (which runs all
     registered atexit hooks, including ``_atexit_cleanup`` from
     :mod:`opencode_server_backend`) then ``sys.exit(0)``.
+
+    On Windows, ``SIGBREAK`` is registered in addition to ``SIGINT``
+    because ``taskkill`` (without ``/f``) sends ``CTRL_BREAK_EVENT``,
+    which Python maps to ``SIGBREAK`` — not ``SIGINT``. ``SIGTERM`` is
+    registered too but is only meaningful on POSIX (Windows
+    ``TerminateProcess`` bypasses all signal handlers).
     """
     global _signal_handlers_registered
     if _signal_handlers_registered:
@@ -358,7 +364,6 @@ def register_signal_handlers() -> None:
         sys.exit(0)
 
     def _make_chained(prev: object) -> Callable[[int, object], None]:
-        # Chain: previous handler runs first (cooperative), then our cleanup.
         def _chained(signum: int, frame: object) -> None:
             if callable(prev):
                 prev(signum, frame)  # type: ignore[operator]
@@ -366,7 +371,10 @@ def register_signal_handlers() -> None:
 
         return _chained
 
-    for sig in (signal.SIGTERM, signal.SIGINT):
+    _sigs = [signal.SIGTERM, signal.SIGINT]
+    if _IS_WINDOWS:
+        _sigs.append(signal.SIGBREAK)
+    for sig in _sigs:
         prev = signal.getsignal(sig)
         if prev == signal.SIG_DFL or prev is None:
             signal.signal(sig, _signal_cleanup)

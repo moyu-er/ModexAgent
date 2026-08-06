@@ -254,8 +254,8 @@ class TestRegisterSignalHandlersIdempotent:
         os_layer.register_signal_handlers()
         os_layer.register_signal_handlers()
 
-        # signal.signal called exactly twice (SIGTERM + SIGINT) on first call only.
-        assert signal_mock.call_count == 2
+        expected = 3 if sys.platform == "win32" else 2
+        assert signal_mock.call_count == expected
 
     def test_first_call_registers_for_both_signals(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(os_layer, "_signal_handlers_registered", False)
@@ -266,7 +266,10 @@ class TestRegisterSignalHandlersIdempotent:
         os_layer.register_signal_handlers()
 
         registered_sigs = {c.args[0] for c in signal_mock.call_args_list}
-        assert registered_sigs == {signal.SIGTERM, signal.SIGINT}
+        expected = {signal.SIGTERM, signal.SIGINT}
+        if sys.platform == "win32":
+            expected.add(signal.SIGBREAK)
+        assert registered_sigs == expected
 
 
 # ---------------------------------------------------------------------------

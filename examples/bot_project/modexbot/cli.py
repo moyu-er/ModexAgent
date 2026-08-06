@@ -272,9 +272,34 @@ def _is_port_in_use(port: int) -> bool:
 
 
 def _kill_process(pid: int) -> bool:
-    """Kill a process by PID.  Returns True on success."""
+    """Kill a process by PID.  Returns True on success.
+
+    Graceful-first on both platforms so that ``OpenCodeServerManager``
+    lifecycle cleanup (and other ``atexit`` hooks) actually runs before
+    the process is torn down.
+
+    - POSIX: ``SIGTERM`` → 0.5s grace → ``SIGKILL`` fallback.
+    - Windows: ``taskkill`` (``CTRL_BREAK_EVENT``, catchable by Python's
+      ``signal.SIGBREAK`` handler) → 3s grace → ``taskkill /f``
+      (``TerminateProcess``, uncatchable) fallback.
+    """
     try:
         if sys.platform == "win32":
+            # Graceful: send CTRL_BREAK_EVENT via taskkill (no /f).
+            # The bot's signal handler (_install_signal_handlers in
+            # main.py) catches SIGBREAK → sets _shutdown_event →
+            # lifecycle().__aexit__ → opencode serve cleanup.
+            subprocess.run(
+                ["taskkill", "/pid", str(pid)],
+                capture_output=True,
+                timeout=5,
+            )
+            # Wait up to 3s for graceful shutdown.
+            for _ in range(6):
+                if not _is_running(pid):
+                    return True
+                time.sleep(0.5)
+            # Force kill fallback.
             subprocess.run(
                 ["taskkill", "/pid", str(pid), "/f"],
                 capture_output=True,

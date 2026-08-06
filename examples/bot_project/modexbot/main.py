@@ -80,8 +80,11 @@ def _install_signal_handlers(service: "BotService") -> None:
     """Register graceful-shutdown signal handlers (cross-platform).
 
     - Linux/macOS: ``loop.add_signal_handler`` (asyncio-native).
-    - Windows: ``signal.signal(SIGINT)`` — SIGTERM is uncatchable
-      on Windows (TerminateProcess), so only SIGINT is registered.
+    - Windows: ``signal.signal(SIGINT, SIGBREAK)`` — SIGTERM is
+      uncatchable on Windows (TerminateProcess), but ``taskkill``
+      without ``/f`` sends CTRL_BREAK_EVENT which Python maps to
+      ``SIGBREAK``. Both SIGINT (Ctrl+C) and SIGBREAK (taskkill) are
+      registered so either signal triggers graceful shutdown.
     """
 
     def _graceful_shutdown() -> None:
@@ -89,10 +92,8 @@ def _install_signal_handlers(service: "BotService") -> None:
         service._shutdown_event.set()
 
     if sys.platform == "win32":
-        signal_mod.signal(
-            signal_mod.SIGINT,
-            lambda _sig, _frame: _graceful_shutdown(),
-        )
+        for _sig in (signal_mod.SIGINT, signal_mod.SIGBREAK):
+            signal_mod.signal(_sig, lambda _s, _f: _graceful_shutdown())
     else:
         loop = asyncio.get_running_loop()
         for _sig in (signal_mod.SIGINT, signal_mod.SIGTERM):

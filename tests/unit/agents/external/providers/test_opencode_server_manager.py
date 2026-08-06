@@ -1177,3 +1177,145 @@ class TestIsProcessDead:
         assert OpenCodeServerManager.is_process_dead() is True
 
         await mgr._shutdown()
+
+
+# ---------------------------------------------------------------------------
+# _reap_orphaned_processes — PID recycling guard
+# ---------------------------------------------------------------------------
+
+
+class TestReapOrphanedProcesses:
+    async def test_reaps_when_owner_dead(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from modex_agent.agents.external.providers.opencode.server_manager import (
+            _is_pid_alive,
+            _is_python_process,
+        )
+
+        mgr = OpenCodeServerManager()
+        registry = tmp_path / "pid_registry"
+        registry.mkdir()
+        entry = {"pid": 99999, "ownerPid": 88888, "port": 1234, "binary": "opencode"}
+        (registry / "99999.json").write_text(
+            __import__("json").dumps(entry), encoding="utf-8"
+        )
+        monkeypatch.setattr(mgr, "_registry_dir", lambda: registry)
+        monkeypatch.setattr(
+            opencode_server_manager, "_is_pid_alive",
+            lambda pid: pid == 99999,
+        )
+        killed: list[int] = []
+        monkeypatch.setattr(
+            opencode_server_manager, "_sync_kill_proc",
+            lambda pid: killed.append(pid),
+        )
+
+        await mgr._reap_orphaned_processes()
+
+        assert 99999 in killed
+        assert not (registry / "99999.json").exists()
+
+    async def test_skips_when_owner_is_python(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        import json
+
+        mgr = OpenCodeServerManager()
+        registry = tmp_path / "pid_registry"
+        registry.mkdir()
+        entry = {"pid": 99999, "ownerPid": 88888, "port": 1234, "binary": "opencode"}
+        (registry / "99999.json").write_text(json.dumps(entry), encoding="utf-8")
+        monkeypatch.setattr(mgr, "_registry_dir", lambda: registry)
+        monkeypatch.setattr(
+            opencode_server_manager, "_is_pid_alive",
+            lambda pid: True,
+        )
+        monkeypatch.setattr(
+            opencode_server_manager, "_is_python_process",
+            lambda pid: True,
+        )
+        killed: list[int] = []
+        monkeypatch.setattr(
+            opencode_server_manager, "_sync_kill_proc",
+            lambda pid: killed.append(pid),
+        )
+
+        await mgr._reap_orphaned_processes()
+
+        assert killed == []
+        assert (registry / "99999.json").exists()
+
+    async def test_reaps_when_owner_pid_recycled_to_non_python(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        import json
+
+        mgr = OpenCodeServerManager()
+        registry = tmp_path / "pid_registry"
+        registry.mkdir()
+        entry = {"pid": 99999, "ownerPid": 88888, "port": 1234, "binary": "opencode"}
+        (registry / "99999.json").write_text(json.dumps(entry), encoding="utf-8")
+        monkeypatch.setattr(mgr, "_registry_dir", lambda: registry)
+        monkeypatch.setattr(
+            opencode_server_manager, "_is_pid_alive",
+            lambda pid: True,
+        )
+        monkeypatch.setattr(
+            opencode_server_manager, "_is_python_process",
+            lambda pid: False,
+        )
+        killed: list[int] = []
+        monkeypatch.setattr(
+            opencode_server_manager, "_sync_kill_proc",
+            lambda pid: killed.append(pid),
+        )
+
+        await mgr._reap_orphaned_processes()
+
+        assert 99999 in killed
+        assert not (registry / "99999.json").exists()
+
+    async def test_cleans_stale_pid_file_when_opencode_dead(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        import json
+
+        mgr = OpenCodeServerManager()
+        registry = tmp_path / "pid_registry"
+        registry.mkdir()
+        entry = {"pid": 99999, "ownerPid": 88888, "port": 1234, "binary": "opencode"}
+        (registry / "99999.json").write_text(json.dumps(entry), encoding="utf-8")
+        monkeypatch.setattr(mgr, "_registry_dir", lambda: registry)
+        monkeypatch.setattr(
+            opencode_server_manager, "_is_pid_alive",
+            lambda pid: False,
+        )
+
+        await mgr._reap_orphaned_processes()
+
+        assert not (registry / "99999.json").exists()
+
+
+class TestIsPythonProcess:
+    def test_returns_true_for_current_process(self) -> None:
+        from modex_agent.agents.external.providers.opencode.server_manager import (
+            _is_python_process,
+        )
+
+        assert _is_python_process(os.getpid()) is True
+
+    def test_returns_false_for_nonexistent_pid(self) -> None:
+        from modex_agent.agents.external.providers.opencode.server_manager import (
+            _is_python_process,
+        )
+
+        assert _is_python_process(999999) is False
