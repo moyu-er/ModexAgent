@@ -596,7 +596,7 @@ export const ChatView: FC<ChatViewProps> = ({
           margin without scrolling with the content. */}
       <div className="relative flex-1 min-h-0">
         <div ref={scrollRef} className="absolute inset-0 overflow-y-auto">
-          <div ref={contentRef} className={`${CONTENT_WIDTH} px-3 py-6 md:px-5`}>
+          <div ref={contentRef} className={`${CONTENT_WIDTH} px-2 py-6 md:px-3`}>
             {messages.map((msg) => (
               <MessageBubble
                 key={msg.id}

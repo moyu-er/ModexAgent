@@ -844,18 +844,20 @@
     }
   }
 
-  /* Message bubbles (§6). Assistant prose sits on the elevated surface
-   * with a thin brand left rail — a subtle "document" feel, distinct from
-   * both the canvas and the user's branded tint bubble. No blocky tint. */
+  /* Message bubbles (§6). Both bubbles size to content (w-fit) with a shared
+   * generous cap — the left/right offset between assistant and user is only
+   * ~6%, just enough to read the side. Assistant keeps a large floor so
+   * short replies still hold the "document" presence; user content may stay
+   * as narrow as it likes. */
   .bubble-assistant {
-    @apply w-full max-w-[72ch] rounded-lg rounded-tl-xs px-4 py-3;
+    @apply w-fit min-w-[60%] max-w-[94%] rounded-lg rounded-tl-xs px-4 py-3;
     background: var(--color-canvas-elevated);
     border: 1px solid var(--color-hairline);
     border-left: 2px solid color-mix(in oklab, var(--color-brand) 35%, transparent);
   }
 
   .bubble-user {
-    @apply w-fit max-w-[72ch] rounded-lg rounded-br-xs px-4 py-3;
+    @apply w-fit max-w-[94%] rounded-lg rounded-br-xs px-4 py-3;
     background: var(--color-user-bubble);
     color: var(--color-user-bubble-text);
     border: 1px solid var(--color-user-bubble-border);
@@ -994,6 +996,9 @@
     font-size: var(--text-md);
     line-height: var(--leading-prose);
     color: var(--color-ink);
+    /* Break long unbroken strings (URLs, tokens) so prose never overflows
+       the bubble; code blocks keep their own horizontal scroll. */
+    overflow-wrap: break-word;
   }
   .prose-chat p {
     margin-bottom: 0.75em;
