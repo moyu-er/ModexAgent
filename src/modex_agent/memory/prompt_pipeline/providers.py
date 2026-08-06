@@ -272,15 +272,16 @@ class _SubagentConsultationSubProvider(_CommSubProvider):
     def content(self) -> str:
         return (
             "## Consulting Your Parent\n\n"
-            "Your deliverable goes to OUTPUT.md (path shown elsewhere in this\n"
-            "prompt) — NOT to `send_to_agent`. That tool is for consultation only:\n"
-            "ask your parent a question or request a decision when you cannot\n"
-            "proceed without input.\n\n"
+            "Write your durable deliverable to OUTPUT.md (path shown elsewhere in this\n"
+            "prompt). At turn end, your parent automatically receives the final result\n"
+            "content plus the output and trace paths; OUTPUT.md itself is not embedded.\n"
+            "Use `send_to_agent` only to ask your parent a question or request a decision\n"
+            "when you cannot proceed without input.\n\n"
             '- `content`: `"QUESTION: ..."` or `"NEED_DECISION: ..."`.\n'
             "- After sending, stop and wait — the reply comes back as another\n"
             "  message to you.\n\n"
             "Do not use `send_to_agent` to report results or progress; that path\n"
-            "is automatic via OUTPUT.md.\n"
+            "is covered by the automatic final notification.\n"
         )
 
 

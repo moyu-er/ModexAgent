@@ -72,7 +72,7 @@ async def test_loop_detected_sends_incomplete_notification(tmp_path: Path):
     msgs = await bus.consume("conv123.main")
     assert len(msgs) == 1
     xml = msgs[0].payload["content"]
-    assert "Subagent 'worker' task ended" in xml
+    assert "Message from subagent" in xml
     assert "status: failed" in xml
     assert "Issue:" in xml
     assert "loop" in xml.lower()

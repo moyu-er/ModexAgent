@@ -7,46 +7,49 @@ The notification markdown is consumed **by the parent agent's LLM** (injected as
 tool-result message into the parent's conversation).  No code parses the fields
 programmatically — every field must be self-explanatory to an LLM.
 
-The hook delegates to ``build_agent_result`` from ``message_xml.py`` (convergence
-— single source of truth for the result markdown format).  The ``content`` body
-carries the subagent's last output plus optional advisory lines (issue, output
-path, trace path, replied flag).
+The hook delegates to ``build_agent_comm_message`` from ``message_format.py``
+(convergence — single source of truth for the result markdown format).  The
+``content`` body carries the subagent's last output; result metadata (status,
+stop reason, issue, output path, trace path) is carried by ``ResultMeta`` and
+rendered in the header block.
 
 Native (react) subagent — includes output/trace paths::
 
-    Subagent 'explore' task ended (status: success).
+    Message from subagent 'explore':
     invocation_id: 638aaa67
-    Stop reason: normal
-
-    Result:
-    Exploration complete. Found 3 entry points...
+    status: success
+    Stop reason: completed
     Output: /path/to/OUTPUT.md (written)
     Trace: /path/to/spans.jsonl
 
+    Result:
+    Exploration complete. Found 3 entry points...
+
 External coding subagent — no file artifacts::
 
-    Subagent 'coder' task ended (status: success).
+    Message from subagent 'coder':
     invocation_id: 638aaa67
-    Stop reason: normal
+    status: success
+    Stop reason: completed
 
     Result:
     Task finished.
 
 On failure an ``Issue:`` line explains the problem and how to resume::
 
-    Subagent 'office-expert' task ended (status: failed).
+    Message from subagent 'office-expert':
     invocation_id: 638aaa67
+    status: failed
     Stop reason: error
-
-    Result:
-
     Issue: Subagent crashed with error: timeout. To continue, send a message with invocation_id=638aaa67.
     Output: /path/to/OUTPUT.md (missing)
     Trace: /path/to/spans.jsonl
 
+    Result:
+
 Design rationale (ADR-0027 evolution):
 - ``status`` ("success"/"failed") replaces the old ``success`` boolean XML field.
-  ``build_agent_result`` renders it in the header line.
+  ``ResultMeta`` carries it; ``build_agent_comm_message`` renders it in the header.
 - ``result_text`` carries the subagent's **real last output** extracted from
   ``result.messages`` (not ``result.content``, which is a placeholder on
   non-normal exit paths).  Truncated to ``max_result_chars`` (default 6000).
@@ -67,7 +70,8 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.constants import ExecutionStrategyKind, StopReason
+from modex_agent.core.message_utils import sanitize_reminder_content
 from modex_agent.core.types import ReminderKind
 from modex_agent.hook.abc import FinallyTurnHook
 
@@ -85,7 +89,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
 
     Fires on FINALLY_TURN (success, error, cancel, max_iterations — always).
     Sends a markdown result notification to the parent inbox via
-    ``build_agent_result`` from ``message_xml.py``.
+    ``build_agent_comm_message`` from ``message_format.py``.
 
     Native (react) subagents include ``Output:`` and ``Trace:`` file paths so
     the parent can read the full deliverable.  External coding subagents omit
@@ -225,34 +229,36 @@ class SubagentAutoSendHook(FinallyTurnHook):
         output_status: str | None = None,
         replied: bool | None = None,
     ) -> str:
-        """Build the markdown result content via ``build_agent_result``.
+        """Build the markdown result content via ``build_agent_comm_message``.
 
-        Delegates the header format to ``build_agent_result`` (convergence —
-        single source of truth).  The ``content`` body is the result text
-        followed by optional advisory lines (Issue, Output, Trace, Replied),
-        each omitted when its value is None/empty.
+        Delegates to ``build_agent_comm_message`` with ``ResultMeta``
+        (convergence -- single source of truth).  Result metadata fields
+        (status, stop reason, issue, output, trace, replied) render in the
+        header; ``result_text`` is the body under the ``Result:`` heading.
         """
-        from modex_agent.multi_agent.message_xml import build_agent_result
+        from modex_agent.multi_agent.message_format import (
+            OutputStatus,
+            ResultMeta,
+            ResultStatus,
+            SourceLabel,
+            build_agent_comm_message,
+        )
 
-        body_lines: list[str] = [result_text]
-        if issue:
-            body_lines.append(f"Issue: {issue}")
-        if output_path is not None:
-            if output_status is not None:
-                body_lines.append(f"Output: {output_path} ({output_status})")
-            else:
-                body_lines.append(f"Output: {output_path}")
-        if trace_path is not None:
-            body_lines.append(f"Trace: {trace_path}")
-        if replied is not None:
-            body_lines.append(f"Replied: {str(replied).lower()}")
-
-        return build_agent_result(
+        return build_agent_comm_message(
+            source_label=SourceLabel.SUBAGENT,
             source=agent_name,
+            content=result_text,
             invocation_id=invocation_id,
-            status="success" if success else "failed",
-            stop_reason=stop_reason,
-            content="\n".join(body_lines),
+            result=ResultMeta(
+                status=ResultStatus.FAILED if not success else ResultStatus.SUCCESS,
+                stop_reason=StopReason(stop_reason) if stop_reason else None,
+                issue=issue or None,
+                output_path=output_path,
+                output_status=OutputStatus(output_status) if output_status else None,
+                trace_path=trace_path,
+                replied=replied,
+            ),
+            reply_contract=None,
         )
 
     # -- field extraction -----------------------------------------------------
@@ -442,15 +448,12 @@ class SubagentAutoSendHook(FinallyTurnHook):
         inbox_key = parent_session_id
 
         # Strip think tags from the content (defense in depth)
-        from modex_agent.hook.builtin.inbox_flush import InboxFlushHook
-
-        content = InboxFlushHook._sanitize_content(content)
+        content = sanitize_reminder_content(content)
 
         envelope = AgentMessageEnvelope(
             payload={
                 "content": content,
                 "message_type": AgentMessageType.AGENT_RESULT,
-                "metadata": {"agent_type": self._self_name, "format": "markdown"},
             },
             source=AgentAddress(name=self._self_name),
             target=AgentAddress(name=self._parent_name),

@@ -111,9 +111,10 @@ _NORMAL_PARAMS: dict[str, Any] = {
         "invocation_id": {
             "type": ["string", "null"],
             "description": (
-                "Task continuation id. Pass null to start a new task; the tool result "
-                "includes an invocation_id to pass back for follow-ups in the same task. "
-                "The target's session_id is '{invocation_id}.{target_agent}'."
+                "Task continuation id. Use the `task` tool for first dispatch; pass null "
+                "only as a fallback to create a fresh session. The tool result includes an "
+                "invocation_id to pass back for follow-ups in the same task. The target's "
+                "session_id is '{invocation_id}.{target_agent}'."
             ),
         },
     },

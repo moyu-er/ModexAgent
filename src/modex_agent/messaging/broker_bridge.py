@@ -13,7 +13,6 @@ from ..core.constants import DefaultValues
 from ..core.types import InputMessage, OutputMessage
 from modex_agent.core.session_id import SessionInfo, SessionIdFactory
 from modex_agent.media.models import Attachment
-from modex_agent.multi_agent.message_type import AgentMessageType
 from ..pipeline.adapters import InputAdapter, OutputAdapter
 from .broker import Address, BrokerMessage, MessageBroker
 
@@ -23,8 +22,14 @@ logger = logging.getLogger(__name__)
 class BrokerInputAdapter(InputAdapter):
     """把 Broker 的某个 Address 包装为 InputAdapter。支持 AgentMessageEnvelope 识别与去重。"""
 
-    def __init__(self, broker: MessageBroker, address: Address, deduplicator: Any | None = None, *,
-                 session_factory: SessionIdFactory | None = None) -> None:
+    def __init__(
+        self,
+        broker: MessageBroker,
+        address: Address,
+        deduplicator: Any | None = None,
+        *,
+        session_factory: SessionIdFactory | None = None,
+    ) -> None:
         super().__init__()
         self.broker = broker
         self.address = address
@@ -89,16 +94,6 @@ def _broker_msg_to_input_message(
         if value:
             metadata[key] = value
 
-    # Mark XML content format for agent messages so governance can protect XML structure
-    _xml_message_types = AgentMessageType.xml_content()
-    content_fmt = None
-    trunc_paths = None
-    if metadata.get("message_type") in _xml_message_types:
-        from modex_agent.core.message import ContentFormat
-
-        content_fmt = ContentFormat.XML
-        trunc_paths = ["content"]
-
     raw_session = payload.get("session_id", str(sender))
     session: SessionInfo | None = None
 
@@ -131,8 +126,6 @@ def _broker_msg_to_input_message(
         channel=msg.headers.get("channel", DefaultValues.CHANNEL),
         chat_id=msg.headers.get("chat_id", DefaultValues.CHAT_ID),
         metadata=metadata,
-        content_format=content_fmt,
-        truncatable_paths=trunc_paths,
         approval_decision=approval_decision_from_payload(payload),
         attachments_resolved=attachments_resolved_from_payload(payload),
     )

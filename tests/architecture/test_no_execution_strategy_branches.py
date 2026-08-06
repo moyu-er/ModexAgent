@@ -26,7 +26,7 @@ branching — per ADR-0025 D5):
   based on `req.target.execution_strategy`. Same per-target runtime category
   as `peer_normal.py`; added when ADR-0027 (external coding subagent) introduced
   the external-result shape.
-- `message_xml.py` — `build_dispatch_xml` is the single convergence point for
+- `message_format.py` — `build_dispatch_message` is the single convergence point for
   the "target is external → peer format" rule (delegated to by
   `SubagentDispatchStrategy` and `ParentReplyStrategy` so the branching lives
   in one place). Same per-target runtime category as `peer_normal.py`; added
@@ -65,7 +65,7 @@ _PIPELINE = _FRAMEWORK_SRC / "pipeline" / "pipeline.py"
 #   field shape (output_path/trace_dir omitted for external targets) based on
 #   req.target.execution_strategy. Same per-target runtime category as
 #   peer_normal.py; added with ADR-0027 (external coding subagent).
-# - message_xml.py — build_dispatch_xml is the single convergence point for
+# - message_format.py — build_dispatch_message is the single convergence point for
 #   the "target is external → peer format" rule (SubagentDispatchStrategy and
 #   ParentReplyStrategy both delegate here). Same per-target runtime category
 #   as peer_normal.py; added with ADR-0019 (cross-pool peer).
@@ -77,7 +77,7 @@ _ALLOWED_EXECUTION_STRATEGY_FILES = {
     _FRAMEWORK_SRC / "multi_agent" / "pool_config" / "specs.py",
     _FRAMEWORK_SRC / "multi_agent" / "template.py",
     _FRAMEWORK_SRC / "multi_agent" / "communication" / "strategies" / "subagent_dispatch.py",
-    _FRAMEWORK_SRC / "multi_agent" / "message_xml.py",
+    _FRAMEWORK_SRC / "multi_agent" / "message_format.py",
 }
 
 # Patterns that indicate strategy-specific assembly branching (forbidden).

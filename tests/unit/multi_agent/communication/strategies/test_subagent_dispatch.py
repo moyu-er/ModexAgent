@@ -209,7 +209,8 @@ class TestSubagentDispatchStrategy:
         assert envelope.parent_session_id == str(req.context.session)
         assert envelope.target is not None
         assert envelope.target.name == "worker"
-        assert "task-42" in envelope.payload["content"]
+        assert envelope.invocation_id == "task-42"
+        assert "task-42" not in envelope.payload["content"]
 
 
 class TestBuildResultExecutionStrategyBranch:
@@ -280,7 +281,7 @@ class TestBuildEnvelopeXmlBranch:
     modexctl send) when target is external, agent-format XML (minimal)
     when target is native.
 
-    Regression: external subagents received the minimal build_agent_message
+    Regression: external subagents received the minimal build_agent_comm_message
     format — no reply_contract, no modexctl send instructions — so the
     external CLI had no idea how to reply. Native subagents have
     SubagentAutoSendHook to auto-deliver replies; external CLIs do not.
@@ -330,4 +331,4 @@ class TestBuildEnvelopeXmlBranch:
 
         assert "<reply_contract>" not in xml
         assert "modexctl send" not in xml
-        assert "invocation_id: task-1" in xml
+        assert "invocation_id" not in xml

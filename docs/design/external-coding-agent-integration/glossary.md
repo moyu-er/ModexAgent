@@ -119,7 +119,7 @@ file, no IPC. Help output is env-gated: without `MODEX_SESSION_ID`,
 ### modexctl
 The production CLI (`src/modexctl/main.py`) with `send` + `agents`
 subcommands, `--content`/`--content-file`/`--stdin` input modes, and
-XML-wrapped content via `build_peer_agent_message`. `modexbot` is a
+XML-wrapped content via `build_agent_comm_message`. `modexbot` is a
 facade over `modexctl`; both share the same routing logic and
 `InboxMQ.deliver()` delivery path.
 
@@ -261,7 +261,7 @@ SQLite backend: writes to the workspace `state.db`) → target pool's
 ### outbound (external → other agent)
 External agent invokes `modexctl send --to <name> --content ...` (or
 `modexbot send` for backward compatibility) from its bash tool. The CLI
-wraps content in `build_peer_agent_message` XML (`<agent_message>` with
+wraps content in `build_agent_comm_message` XML (`<agent_message>` with
 `source`, `<content>`, and `<reply_contract>`), reads `MODEX_*` env,
 infers target session id via ADR-0019 prefix reuse, looks up target pool
 via `MODEX_AGENT_POOL_MAP`, and calls `InboxMQ.deliver()` on the target

@@ -84,7 +84,7 @@ Three parallel start points: **T1, T2, T5**. Critical path: T1 → T3 → T4 →
 
 **Blocked by:** T2 (needs `pool_name` + `bus_ref` fields + `store.get`), T3 (needs the strategy package + `SendStrategy` ABC).
 
-- [x] `PeerNormalStrategy` implements `SendStrategy`: `build_session` uses `create_with_prefix(prefix=sender_session_prefix, agent_name=target.name)` with no `parent_session_id`; `normalize_invocation_id` returns sender prefix internally but `AgentSendResult.invocation_id` is `None`; `build_envelope` uses `AGENT_MESSAGE` type with `invocation_id` on envelope but `build_agent_message` called with `invocation_id=None`; `apply_tracker` calls `record_send` (not `acknowledge`); `deliver` reads `target.bus_ref or local_bus` and calls `bus.send(...)`.
+- [x] `PeerNormalStrategy` implements `SendStrategy`: `build_session` uses `create_with_prefix(prefix=sender_session_prefix, agent_name=target.name)` with no `parent_session_id`; `normalize_invocation_id` returns sender prefix internally but `AgentSendResult.invocation_id` is `None`; `build_envelope` uses `AGENT_MESSAGE` type with `invocation_id` on envelope but `build_agent_comm_message` called with `invocation_id=None`; `apply_tracker` calls `record_send` (not `acknowledge`); `deliver` reads `target.bus_ref or local_bus` and calls `bus.send(...)`.
 - [x] Service strategy dispatch selects `peer_normal` when `target.bus_ref is not None`.
 - [x] `InboxPoller` registers an unseen session id in its local `SessionRegistry` before dispatching (generic branch — handles any unseen session, not just peer-originated).
 - [x] Integration test `tests/integration/multi_agent/test_cross_pool_peer.py` (pattern: `test_multi_pool_isolation.py` two-pool setup):

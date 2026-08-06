@@ -1,18 +1,14 @@
 """Tests for hook configuration, communication tool scoping, and subagent memory.
 
 Verifies:
-1. MaxIterationNotifyHook + SubagentAutoSendHook are correctly wired per agent
+1. TurnOutcomeNotifyHook and SubagentAutoSendHook are correctly scoped per agent
 2. Communication tools are properly scoped (subagent can only see parent)
 3. Subagent memory includes archive layer (session scope)
-4. AgentNotificationService routes by comm_kind (no parent_map)
-5. Hook instances are shared where appropriate (MaxIterationNotifyHook)
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-
-import pytest
 
 _BOT_PROJECT = Path(__file__).parent.parent.parent.parent / "examples" / "bot_project"
 if str(_BOT_PROJECT) not in sys.path:
@@ -24,17 +20,7 @@ if str(_BOT_PROJECT) not in sys.path:
 class TestHookConfiguration:
     """Verify hooks are correctly instantiated and wired per the design spec."""
 
-    def test_max_iteration_notify_hook_agent_agnostic(self):
-        """MaxIterationNotifyHook has no parent_name — routes by comm_kind."""
-        from modex_agent.hook.notification import AgentNotificationService, MaxIterationNotifyHook
-
-        svc = AgentNotificationService.__new__(AgentNotificationService)
-        hook = MaxIterationNotifyHook(notification_service=svc)
-        # Hook is agent-agnostic: same instance works for NORMAL and SUBAGENT
-        assert hook._svc is svc
-        # No parent_name field — routing is internal to AgentNotificationService
-
-    def test_subagent_auto_send_hook_has_parent_and_runtime_dir(self):
+    def test_subagent_auto_send_hook_has_parent_and_runtime_dir(self) -> None:
         """SubagentAutoSendHook receives parent_name and optional runtime_dir."""
         from pathlib import Path
 
@@ -50,57 +36,16 @@ class TestHookConfiguration:
         assert hook._parent_name == "coding"
         assert hook._runtime_dir == Path("/tmp/runtime")
 
-    def test_notification_service_no_parent_map(self):
-        """AgentNotificationService no longer uses parent_map — derives parent from session_meta."""
-        from modex_agent.hook.notification import AgentNotificationService
-
-        svc = AgentNotificationService.__new__(AgentNotificationService)
-        svc._output_adapter = None
-        svc._agent_bus = None
-        svc._session_strategy = None
-        # No _parent_map attribute should exist
-        assert not hasattr(svc, "_parent_map")
-
-    def test_notification_service_routing_decision(self):
-        """NORMAL agent → _notify_user; SUBAGENT agent → _notify_parent."""
-        from modex_agent.hook.notification import AgentNotificationService
-        from modex_agent.multi_agent.comm_kind import AgentCommKind
-
-        svc = AgentNotificationService.__new__(AgentNotificationService)
-
-        # NORMAL: should route to user
-        # SUBAGENT: should route to parent
-        # This is tested internally by checking comm_kind
-        assert AgentCommKind.NORMAL.value == "normal"
-        assert AgentCommKind.SUBAGENT.value == "subagent"
-
-    def test_xml_notification_format(self):
-        """MaxIterationNotifyHook uses build_agent_result for XML format."""
-        from modex_agent.multi_agent.message_xml import build_agent_result
-
-        xml = build_agent_result(
-            source="test_agent",
-            invocation_id="inv-123",
-            status="max_iterations",
-            stop_reason="max_iterations",
-            content="some output",
-        )
-        assert "Subagent 'test_agent' task ended" in xml
-        assert "status: max_iterations" in xml
-        assert "Stop reason:" in xml
-        assert "Result:" in xml
-        assert "some output" in xml
-
 
 # ── Communication Tool Scoping Tests ──
 
 class TestCommunicationToolScoping:
     """Verify communication tools are properly isolated per pool and per agent."""
 
-    def test_send_tool_dynamic_description_includes_targets(self):
+    def test_send_tool_dynamic_description_includes_targets(self) -> None:
         """SendToAgentTool builds dynamic description from CommunicationTargetStore."""
-        from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
         from modex_agent.multi_agent.comm_kind import AgentCommKind
+        from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
 
         store = CommunicationTargetStore()
         store.add(CommunicationTarget(
@@ -120,11 +65,13 @@ class TestCommunicationToolScoping:
 class TestSubagentMemoryLayers:
     """Verify subagent memory includes archive layer at session scope."""
 
-    def test_build_session_only_memory_creates_context_manager(self, tmp_path):
+    def test_build_session_only_memory_creates_context_manager(self, tmp_path: Path) -> None:
         """_build_session_only_memory returns a MemorySystemContextManager."""
-        from modex_agent.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
         from modex_agent.core.scope import MemoryAgentRole
         from modex_agent.ioc.configs.memory import MemoryConfig, ShortTermConfig
+        from modex_agent.ioc.factories.descriptors import (
+            build_session_only_memory as _build_session_only_memory,
+        )
 
         cfg = MemoryConfig(short_term=ShortTermConfig(max_context_tokens=80000))
         memory_ctx = _build_session_only_memory(
@@ -136,13 +83,13 @@ class TestSubagentMemoryLayers:
         # The system is a ContextManagedMemorySystem (Protocol)
         # Archive is created by _build_session_only_memory with SessionScope()
 
-    def test_archive_config_created_with_session_scope(self, tmp_path):
+    def test_archive_config_created_with_session_scope(self, tmp_path: Path) -> None:
         """_build_session_only_memory creates ArchiveMemoryConfig(scope=SessionScope())."""
-        from modex_agent.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
         from modex_agent.core.scope import MemoryAgentRole
-        from modex_agent.core.scope import SessionScope
-        from modex_agent.memory.layers.config import ArchiveMemoryConfig
         from modex_agent.ioc.configs.memory import MemoryConfig
+        from modex_agent.ioc.factories.descriptors import (
+            build_session_only_memory as _build_session_only_memory,
+        )
 
         cfg = MemoryConfig()
         memory_ctx = _build_session_only_memory(
@@ -156,11 +103,13 @@ class TestSubagentMemoryLayers:
         assert system is not None
         # Session scope ensures archive is per-session, not global
 
-    def test_max_context_tokens_respects_config(self, tmp_path):
+    def test_max_context_tokens_respects_config(self, tmp_path: Path) -> None:
         """Session layer max_context_tokens comes from the MemoryConfig."""
-        from modex_agent.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
         from modex_agent.core.scope import MemoryAgentRole
         from modex_agent.ioc.configs.memory import MemoryConfig, ShortTermConfig
+        from modex_agent.ioc.factories.descriptors import (
+            build_session_only_memory as _build_session_only_memory,
+        )
 
         cfg = MemoryConfig(short_term=ShortTermConfig(max_context_tokens=120000))
         memory_ctx = _build_session_only_memory(
@@ -170,10 +119,12 @@ class TestSubagentMemoryLayers:
         assert memory_ctx.memory_system is not None
         # Config with 120000 max_context_tokens was accepted and system created
 
-    def test_default_max_context_tokens_without_config(self, tmp_path):
+    def test_default_max_context_tokens_without_config(self, tmp_path: Path) -> None:
         """Without MemoryConfig, subagent gets default token-based memory."""
-        from modex_agent.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
         from modex_agent.core.scope import MemoryAgentRole
+        from modex_agent.ioc.factories.descriptors import (
+            build_session_only_memory as _build_session_only_memory,
+        )
 
         memory_ctx = _build_session_only_memory(
             None, tmp_path / "mem4", "sub",
@@ -188,36 +139,32 @@ class TestSubagentMemoryLayers:
 class TestHookWiringPerAgent:
     """Verify hook wiring matches the design spec per agent type."""
 
-    def test_main_agent_gets_inbox_flush_and_max_iter(self):
-        """Main agent (NORMAL) gets: InboxFlushHook + MaxIterationNotifyHook.
+    def test_main_agent_gets_inbox_flush_and_turn_outcome_notify(self) -> None:
+        """Main agents use InboxFlushHook and TurnOutcomeNotifyHook.
 
-        Verified by tracing pool_builder.py lines 207-214:
+        Verified by tracing the main-agent pipeline wiring:
           _add_hook(main_pipeline, InboxFlushHook(...))
-          _add_hook(main_pipeline, max_iter_hook)
+          _add_hook(main_pipeline, TurnOutcomeNotifyHook(...))
         """
         from modex_agent.hook.builtin import InboxFlushHook
-        from modex_agent.hook.notification import MaxIterationNotifyHook
+        from modex_agent.hook.notification import TurnOutcomeNotifyHook
 
-        # Verify these classes exist and are importable
         assert InboxFlushHook is not None
-        assert MaxIterationNotifyHook is not None
+        assert TurnOutcomeNotifyHook is not None
 
-    def test_subagent_gets_inbox_flush_subagent_auto_send_and_max_iter(self):
-        """Subagent gets: InboxFlushHook + SubagentAutoSendHook + MaxIterationNotifyHook.
+    def test_subagent_gets_inbox_flush_and_subagent_auto_send(self) -> None:
+        """Subagents use InboxFlushHook and SubagentAutoSendHook.
 
-        Verified by tracing pool_builder.py lines 272-281:
+        Verified by tracing AgentTemplate.materialize:
           _add_hook(sub_pipeline, InboxFlushHook(...))
           _add_hook(sub_pipeline, SubagentAutoSendHook(...))
-          _add_hook(sub_pipeline, max_iter_hook)
         """
         from modex_agent.hook.builtin import InboxFlushHook, SubagentAutoSendHook
-        from modex_agent.hook.notification import MaxIterationNotifyHook
 
         assert InboxFlushHook is not None
         assert SubagentAutoSendHook is not None
-        assert MaxIterationNotifyHook is not None
 
-    def test_subagent_auto_send_has_runtime_dir(self):
+    def test_subagent_auto_send_has_runtime_dir(self) -> None:
         """SubagentAutoSendHook receives runtime_dir for deterministic path derivation."""
         from pathlib import Path
 

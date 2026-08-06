@@ -47,19 +47,10 @@ def _collect_run_hooks(
 
 
 def _build_hook_runner(hooks: list[Hook[Any]]) -> HookRunner[Any]:  # type: ignore[type-arg]
-    """Build HookRunner from collected hooks with default HookSpec.
-
-    Default hooks (always present):
-      - MaxIterationNotifyHook — notify parent/user when max_iterations hit
-
-    Note: SubagentAutoSendHook is wired separately by _wire_subagent_hooks()
-    in AgentCommunicationService, with proper agent_bus and runtime_dir args.
-    """
+    """Build a HookRunner from the provided hooks."""
     from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
-    from modex_agent.hook.notification import MaxIterationNotifyHook
 
     runner = HookRunner()
-    runner.add(HookSpec(hook=MaxIterationNotifyHook(), on_error=HookErrorPolicy.LOG))
     for hook in hooks:
         runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
     return runner

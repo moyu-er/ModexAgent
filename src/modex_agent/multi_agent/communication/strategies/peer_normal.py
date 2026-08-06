@@ -10,8 +10,8 @@ from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.communication.strategies.base import SendRequest, SendStrategy
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.multi_agent.message_format import SourceLabel, build_agent_comm_message
 from modex_agent.multi_agent.message_type import AgentMessageType
-from modex_agent.multi_agent.message_xml import build_peer_agent_message
 from modex_agent.multi_agent.tools import CommunicationTarget
 
 
@@ -47,17 +47,19 @@ class PeerNormalStrategy(SendStrategy):
         sender_sid = req.context.session
         envelope_invocation_id = self.normalize_invocation_id(req)
 
-        xml_content = build_peer_agent_message(
+        content = build_agent_comm_message(
+            source_label=SourceLabel.PEER_AGENT,
             source=effective_source.name,
             content=req.content,
-            receiver_implementation=(
+            invocation_id=None,
+            reply_contract=(
                 AgentImplementation.EXTERNAL
                 if req.target.execution_strategy == ExecutionStrategyKind.EXTERNAL
                 else AgentImplementation.NATIVE
             ),
         )
         return AgentMessageEnvelope(
-            payload=self._envelope_payload(xml_content, AgentMessageType.AGENT_MESSAGE, req),
+            payload=self._envelope_payload(content, AgentMessageType.AGENT_MESSAGE, req),
             source=effective_source,
             target=AgentAddress(name=req.target.name),
             message_type=AgentMessageType.AGENT_MESSAGE,

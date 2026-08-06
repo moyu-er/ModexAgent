@@ -452,7 +452,7 @@ The ADR specified a single `modexbot` CLI. The implementation split into:
 - **`modexctl`** (`src/modexctl/main.py`) — the production CLI with
   `send` + `agents` subcommands, `--content`/`--content-file`/`--stdin`
   input modes, `OutboxLine` Pydantic serialization, and XML-wrapped
-  content via `build_peer_agent_message`.
+  content via `build_agent_comm_message`.
 - **`modexbot`** (`src/modex_agent/cli/modexbot/`) — a compatibility
   facade that delegates routing logic to `modexctl.main`.
 
@@ -501,7 +501,7 @@ but still additive — no existing behaviour changed:
 | `pipeline/pipeline.py` | `ExternalTurnRunner` injection + `update_emitter_factory` |
 | `pipeline/turn_runner.py` | `update_emitter_factory` no-op method |
 | `multi_agent/factory.py` | `ExecutionStrategy` enum dispatch |
-| `multi_agent/message_xml.py` | `implementation` parameter + `--stdin` guidance |
+| `multi_agent/message_format.py` | `implementation` parameter + `--stdin` guidance |
 | `multi_agent/envelope.py` | `to_input_metadata` / `to_input_message` |
 | `multi_agent/pool.py` | `input_message_from_dispatch_envelope` cleanup |
 | `multi_agent/communication/strategies/peer_normal.py` | `AgentImplementation` dispatch |
@@ -516,7 +516,7 @@ product-driven addition, not a framework requirement.
 
 ### CLI message wrapping
 
-`modexctl send` now wraps content in `build_peer_agent_message` XML so
+`modexctl send` now wraps content in `build_agent_comm_message` markdown so
 the receiving agent sees structured `<agent_message>` with `source`,
 `<content>`, and `<reply_contract>` (reply instructions tailored to
 receiver's implementation type). The original ADR's raw-text `content`

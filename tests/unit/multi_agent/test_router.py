@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
-from modex_agent.multi_agent.router import DefaultMeshRouter
+from modex_agent.multi_agent.router import DefaultMeshRouter, RouteResult
 
 
 class TestDefaultMeshRouter:
@@ -78,7 +78,11 @@ class TestDefaultMeshRouter:
         )
 
         assert result.is_envelope is True
-        assert result.prompt_modifier == "[Subagent office-expert result]\n\n"
+        assert tuple(RouteResult.__dataclass_fields__) == (
+            "session",
+            "envelope_metadata",
+            "is_envelope",
+        )
         assert result.session.agent_name == "main"
 
     def test_agent_message_is_envelope(self) -> None:
@@ -93,4 +97,3 @@ class TestDefaultMeshRouter:
         )
 
         assert result.is_envelope is True
-        assert result.prompt_modifier is None

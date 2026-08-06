@@ -951,7 +951,7 @@ follower turns) recovers the prefix without needing a side-channel store.
   payload, and `message_type` (to an enum) move to frozen `BaseModel`; broker
   serialization goes through `model_dump_json` / `model_validate_json`. This is
   a self-contained follow-up that does not change the model above.
-- **XML render relocation.** `build_agent_message` wrapping content into XML
+- **XML render relocation.** `build_agent_comm_message` wrapping content into XML
   moves from send-side to receive-side rendering in `InboxFlushHook`: the
   payload carries structured fields, and the model-facing text is rendered at
   injection time. Wire format and presentation decouple; pairs with the

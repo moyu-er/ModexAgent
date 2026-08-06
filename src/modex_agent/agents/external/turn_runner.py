@@ -41,13 +41,14 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult, StreamingAwareEmitter
 from modex_agent.core.history import ListMessageHistory
+from modex_agent.core.message_utils import sanitize_reminder_content, wrap_system_reminder
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook.abc import HookPayload, HookPoint
 from modex_agent.pipeline.turn_runner_abc import TurnRunner
@@ -56,7 +57,8 @@ from modex_agent.runtime.models import TurnIdentity
 from modex_agent.workspace.runtime import bind_workspace_root
 
 if TYPE_CHECKING:
-    from modex_agent.core.agent import Agent
+    from modex_agent.agents.external.agent import ExternalAgent
+    from modex_agent.agents.external.events import ExternalEvent
     from modex_agent.core.emitter import ContentEmitter
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.session_id import SessionInfo
@@ -88,8 +90,8 @@ class ExternalTurnRunner(TurnRunner):
     def __init__(
         self,
         *,
-        agent: Agent,
-        emitter_factory: Callable[..., ContentEmitter] | None,
+        agent: ExternalAgent,
+        emitter_factory: Callable[[str], ContentEmitter[ExternalEvent]] | None,
         output_adapter: OutputAdapter,
         registry: TurnSessionRegistry,
         on_session_start: Callable[[str], Awaitable[None]] | None = None,
@@ -125,13 +127,10 @@ class ExternalTurnRunner(TurnRunner):
             return None
 
     def set_emitter_factory(
-        self, emitter_factory: Callable[..., ContentEmitter[Any]] | None
+        self, emitter_factory: Callable[..., ContentEmitter[ExternalEvent]] | None
     ) -> None:
         self._emitter_factory = emitter_factory
-        from modex_agent.agents.external.agent import ExternalAgent
-
-        if isinstance(self._agent, ExternalAgent):
-            self._agent.set_child_emitter_factory(emitter_factory)
+        self._agent.set_child_emitter_factory(emitter_factory)
 
     async def process_locked(
         self,
@@ -179,7 +178,14 @@ class ExternalTurnRunner(TurnRunner):
         )
 
         # 3. Direct-input path: external CLI reads this, never history.
-        agent_context.current_input = input_msg.content
+        if input_msg.metadata.get("source_agent"):
+            # Approved exception: per-turn history is temporary, never persisted
+            # or replayed, so prompt-time wrapping equals post-normalize intake.
+            agent_context.current_input = wrap_system_reminder(
+                sanitize_reminder_content(input_msg.content or "")
+            )
+        else:
+            agent_context.current_input = input_msg.content
 
         # 4. Emitter — factory wins, else default StreamingAwareEmitter.
         if self._emitter_factory is not None:

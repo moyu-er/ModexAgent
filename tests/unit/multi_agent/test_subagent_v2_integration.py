@@ -149,8 +149,8 @@ class TestFullLifecycleNotification:
         assert len(envelopes) == 1
 
         content = envelopes[0].payload["content"]
-        assert "Subagent 'worker' task ended" in content
-        assert "Subagent 'worker'" in content
+        assert "Message from subagent" in content
+        assert "subagent 'worker'" in content
         assert "(written)" in content
 
 
@@ -183,7 +183,7 @@ class TestCrashSendsErrorNotification:
         assert len(envelopes) == 1
 
         content = envelopes[0].payload["content"]
-        assert "Subagent 'worker' task ended" in content
+        assert "Message from subagent" in content
         assert "status: failed" in content
         assert "crashed" in content.lower()
         assert "something broke" in content

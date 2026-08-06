@@ -285,7 +285,7 @@ class TraceCollectorHook(
         """Return the last triggering message in parts-based format for trace input.
 
         For main agent: the last user message.
-        For subagent: the last agent message (inbox-delivered <agent_message>).
+        For subagent: the last agent message (inbox-delivered system-reminder markdown).
         Preserves the original role — does not convert agent→user.
         """
         try:

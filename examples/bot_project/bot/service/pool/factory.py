@@ -312,8 +312,6 @@ async def create_pool(
 
     notification_service = AgentNotificationService(
         output_adapter=output_adapter,
-        agent_bus=agent_bus,
-        parent_agent_name=main_agent_name,
     )
 
     if tool_manager is None:

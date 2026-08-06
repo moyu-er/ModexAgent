@@ -10,8 +10,8 @@ from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.communication.strategies.base import SendRequest, SendStrategy
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.multi_agent.message_format import build_dispatch_message
 from modex_agent.multi_agent.message_type import AgentMessageType
-from modex_agent.multi_agent.message_xml import build_dispatch_xml
 
 _TASK_ID_BYTES = 8
 
@@ -46,14 +46,14 @@ class SubagentDispatchStrategy(SendStrategy):
         """Build a TASK_REQUEST envelope."""
         effective_source = self._resolve_source(req)
         parent_sid = req.context.session
-        xml_content = build_dispatch_xml(
+        content = build_dispatch_message(
             source=effective_source.name,
-            invocation_id=invocation_id,
+            invocation_id=None,
             content=req.content,
             target_execution_strategy=req.target.execution_strategy,
         )
         return AgentMessageEnvelope(
-            payload=self._envelope_payload(xml_content, AgentMessageType.TASK_REQUEST, req),
+            payload=self._envelope_payload(content, AgentMessageType.TASK_REQUEST, req),
             source=effective_source,
             target=AgentAddress(name=req.target.name),
             message_type=AgentMessageType.TASK_REQUEST,

@@ -541,7 +541,7 @@ class ExternalAgent(Agent[ExternalEvent]):
                     modex_sid, backend_result.session_id, self._provider_kind
                 )
 
-            return self._build_agent_result(backend_result, accumulator.text)
+            return self._assemble_result(backend_result, accumulator.text)
         except Exception:
             turn_failed = True
             raise
@@ -756,7 +756,7 @@ class ExternalAgent(Agent[ExternalEvent]):
         )
         write_runtime_block(agents_md)
 
-    def _build_agent_result(
+    def _assemble_result(
         self, backend_result: BackendResult, text_buf: list[str]
     ) -> AgentResult:
         """Map a :class:`BackendResult` to an :class:`AgentResult`."""

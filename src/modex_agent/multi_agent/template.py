@@ -223,10 +223,10 @@ class AgentTemplate:
         context_manager_for_create = subagent_ctx
 
         # ── Hooks ──
-        # ``SubagentAutoSendHook`` and ``MaxIterationNotifyHook`` both descend
-        # from the ``Hook`` ABC and are passed via ``hooks=`` to create_agent,
-        # then re-added to ``pipeline.hook_runner`` below (the ``hooks=`` list
-        # itself is not dispatched by the turn loop). ``InboxFlushHook`` is
+        # ``SubagentAutoSendHook`` descends from the ``Hook`` ABC and is passed
+        # via ``hooks=`` to create_agent, then re-added to
+        # ``pipeline.hook_runner`` below (the ``hooks=`` list itself is not
+        # dispatched by the turn loop). ``InboxFlushHook`` is
         # NOT here: AgentFactory auto-injects it onto ``hook_runner`` for every
         # agent with ``inbox_strategy != "none"`` + a consumer, so fold-in is
         # wired once for both main and subagent at the factory.
@@ -243,15 +243,6 @@ class AgentTemplate:
                     trace_enabled=deps.trace_enabled,
                 )
             )
-        if deps.notification_service is not None:
-            from modex_agent.hook.notification import MaxIterationNotifyHook
-
-            hooks.append(
-                MaxIterationNotifyHook(
-                    notification_service=deps.notification_service,
-                )
-            )
-
         # NativeEnvInjectionHook — populate _modex_env / _current_session_id
         # at BEFORE_TURN so native subagent subprocess tools receive
         # MODEX_* env vars (parity with main-agent wiring in pool_builder.

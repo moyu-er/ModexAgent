@@ -140,7 +140,7 @@ async def test_subagent_loop_routes_to_parent_inbox():
     assert key == "conv123.main"
     assert envelope.message_type == AgentMessageType.AGENT_RESULT
     xml = envelope.payload["content"]
-    assert "Subagent 'scout' task ended" in xml
+    assert "Message from subagent" in xml
     assert "loop" in xml.lower()
     assert "status: failed" in xml
 

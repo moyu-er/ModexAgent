@@ -101,7 +101,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         msgs = await bus.consume("conv123.main")
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
-        assert "Subagent 'worker' task ended" in xml
+        assert "Message from subagent" in xml
         assert "status: success" in xml
         assert "Result:" in xml
         assert "Done." in xml
@@ -356,7 +356,7 @@ class TestSubagentAutoSendHookFinallyTurn:
 
         msgs = await bus.consume("conv123.qq_bot")
         assert len(msgs) == 1
-        assert msgs[0].payload["metadata"]["agent_type"] == "worker"
+        assert msgs[0].source.name == "worker"
 
     async def test_result_text_from_messages_not_content(self, tmp_path: Path):
         """On max_iterations, result text comes from the last assistant
@@ -510,7 +510,7 @@ class TestSubagentAutoSendHookExternalBranch:
         await hook.finally_turn(ctx, result)
 
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        assert "Subagent 'pi_worker' task ended" in xml
+        assert "Message from subagent" in xml
         assert "Replied:" not in xml
 
     async def test_external_omits_native_artifacts(self, tmp_path: Path):
@@ -544,7 +544,7 @@ class TestSubagentAutoSendHookExternalBranch:
         await hook.finally_turn(ctx, result)
 
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        assert "Subagent 'pi_worker'" in xml
+        assert "subagent 'pi_worker'" in xml
         assert "invocation_id: abc12345" in xml
         assert "status: success" in xml
         assert "Final answer." in xml
@@ -930,7 +930,7 @@ class TestSubagentAutoSendHookBuildXml:
             output_path="output/conv123.worker:abc123/OUTPUT.md",
             output_status="written",
         )
-        assert "Subagent 'worker' task ended" in xml
+        assert "Message from subagent" in xml
         assert "invocation_id: abc123" in xml
         assert "status: success" in xml
         assert "Result:" in xml
@@ -949,7 +949,7 @@ class TestSubagentAutoSendHookBuildXml:
             output_path="o",
             output_status="missing",
         )
-        assert "Subagent 'worker' task ended" in xml
+        assert "Message from subagent" in xml
         assert "status: failed" in xml
         assert "Result:" in xml
         assert "Issue:" in xml
@@ -964,7 +964,7 @@ class TestSubagentAutoSendHookBuildXml:
             issue="",
             replied=True,
         )
-        assert "Subagent 'pi_worker' task ended" in xml
+        assert "Message from subagent" in xml
         assert "status: success" in xml
         assert "Replied: true" in xml
         assert "Trace:" not in xml
@@ -981,6 +981,6 @@ class TestSubagentAutoSendHookBuildXml:
             output_path="o",
             output_status="missing",
         )
-        assert "Subagent 'worker' task ended" in xml
+        assert "Message from subagent" in xml
         # Markdown preserves special chars verbatim (no XML entity escaping)
         assert "crashed <with> &special 'chars'" in xml

@@ -9,8 +9,8 @@ from modex_agent.messaging.broker import AddressKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.strategies.base import SendRequest, SendStrategy
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.multi_agent.message_format import build_dispatch_message
 from modex_agent.multi_agent.message_type import AgentMessageType
-from modex_agent.multi_agent.message_xml import build_dispatch_xml
 
 
 class ParentReplyStrategy(SendStrategy):
@@ -59,14 +59,14 @@ class ParentReplyStrategy(SendStrategy):
         if req.context.comm_kind == AgentCommKind.SUBAGENT:
             envelope_invocation_id = parent_sid.session_id_prefix
 
-        xml_content = build_dispatch_xml(
+        content = build_dispatch_message(
             source=effective_source.name,
             invocation_id=envelope_invocation_id,
             content=req.content,
             target_execution_strategy=req.target.execution_strategy,
         )
         return AgentMessageEnvelope(
-            payload=self._envelope_payload(xml_content, AgentMessageType.AGENT_MESSAGE, req),
+            payload=self._envelope_payload(content, AgentMessageType.AGENT_MESSAGE, req),
             source=effective_source,
             target=AgentAddress(kind=AddressKind.AGENT, name=req.target.name),
             message_type=AgentMessageType.AGENT_MESSAGE,

@@ -232,11 +232,11 @@ class ExternalAgentBuilder:
     @staticmethod
     def build_emitter_factory(
         emitter_output_adapter: OutputAdapter,
-    ) -> Callable[[str], ContentEmitter[Any]]:
+    ) -> Callable[[str], ContentEmitter[ExternalEvent]]:
         from ...core.emitter import StreamingAwareEmitter
         from .events import ExternalEvent
 
-        def _factory(session_id: str) -> ContentEmitter[Any]:
+        def _factory(session_id: str) -> ContentEmitter[ExternalEvent]:
             return StreamingAwareEmitter[ExternalEvent](
                 output_adapter=emitter_output_adapter,
                 session_id=session_id,

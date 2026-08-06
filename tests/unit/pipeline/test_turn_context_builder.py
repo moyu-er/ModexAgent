@@ -6,6 +6,7 @@ Unit tests for the four responsibilities extracted from AgentPipeline:
 These construct the builder directly (no AgentPipeline) so the tests target
 the builder's own contract, not the pipeline's wiring.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -153,11 +154,13 @@ async def test_build_turn_request_returns_none_for_notice_action() -> None:
         status=CommandParseStatus.VALID_COMMAND,
         invocation=SlashCommandInvocation(command="help", args="", raw="/help"),
     )
-    processor.handle = AsyncMock(return_value=CommandHandlingResult(
-        action=CommandAction.NOTICE,
-        dispatch_policy=CommandDispatchPolicy.NORMAL_QUEUE,
-        notice="help text",
-    ))
+    processor.handle = AsyncMock(
+        return_value=CommandHandlingResult(
+            action=CommandAction.NOTICE,
+            dispatch_policy=CommandDispatchPolicy.NORMAL_QUEUE,
+            notice="help text",
+        )
+    )
     output_adapter = MagicMock(spec=OutputAdapter)
     builder = _make_builder(command_processor=processor, output_adapter=output_adapter)
     input_msg = InputMessage(content="/help", session=SessionInfo.from_str("s:main"))
@@ -177,11 +180,13 @@ async def test_build_turn_request_approval_decision_carries_action() -> None:
         status=CommandParseStatus.VALID_COMMAND,
         invocation=SlashCommandInvocation(command="approve", args="", raw="/approve"),
     )
-    processor.handle = AsyncMock(return_value=CommandHandlingResult(
-        action=CommandAction.APPROVAL_DECISION,
-        dispatch_policy=CommandDispatchPolicy.NORMAL_QUEUE,
-        approval_action=ApprovalAction.ALLOW,
-    ))
+    processor.handle = AsyncMock(
+        return_value=CommandHandlingResult(
+            action=CommandAction.APPROVAL_DECISION,
+            dispatch_policy=CommandDispatchPolicy.NORMAL_QUEUE,
+            approval_action=ApprovalAction.ALLOW,
+        )
+    )
     builder = _make_builder(command_processor=processor)
     input_msg = InputMessage(content="/approve", session=SessionInfo.from_str("s:main"))
 
@@ -273,34 +278,6 @@ async def test_preprocess_applies_sanitizer() -> None:
     assert calls == ["hi"]
     assert media_blocks == []
     assert media_processor is None
-
-
-@pytest.mark.asyncio
-async def test_preprocess_applies_route_prompt_modifier_when_no_source_agent() -> None:
-    """A route_result.prompt_modifier is prepended unless the message is from another agent."""
-    route = MagicMock()
-    route.prompt_modifier = "[prefix] "
-    builder = _make_builder()
-    input_msg = InputMessage(content="body", session=SessionInfo.from_str("s:main"))
-
-    sanitized, _, _ = await builder.preprocess(input_msg, "s:main", {}, route)
-
-    assert sanitized == "[prefix] body"
-
-
-@pytest.mark.asyncio
-async def test_preprocess_skips_route_modifier_for_agent_messages() -> None:
-    """source_agent messages keep their content untouched by the route modifier."""
-    route = MagicMock()
-    route.prompt_modifier = "[prefix] "
-    builder = _make_builder()
-    input_msg = InputMessage(content="body", session=SessionInfo.from_str("s:main"))
-
-    sanitized, _, _ = await builder.preprocess(
-        input_msg, "s:main", {"source_agent": "sub1"}, route
-    )
-
-    assert sanitized == "body"
 
 
 # ---------------------------------------------------------------------------

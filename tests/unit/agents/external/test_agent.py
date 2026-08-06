@@ -56,7 +56,7 @@ from modex_agent.agents.external.types import (
     ExecOptions,
     ExternalEnvSpec,
 )
-from modex_agent.core.agent import AgentContext, current_agent_context
+from modex_agent.core.agent import AgentContext, AgentImplementation, current_agent_context
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult, ContentEmitter
 from modex_agent.core.history import ListMessageHistory
@@ -69,8 +69,8 @@ from modex_agent.core.turn_events import (
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
+from modex_agent.multi_agent.message_format import SourceLabel, build_agent_comm_message
 from modex_agent.multi_agent.message_type import AgentMessageType
-from modex_agent.multi_agent.message_xml import build_peer_agent_message
 
 _MODEX_ENV_KEYS = (
     "MODEX_WORKSPACE_ROOT",
@@ -805,9 +805,11 @@ class TestOutboundSendViaRouting:
         built: list[str] = []
 
         async def side_effect(_opts: ExecOptions) -> None:
-            xml_content = build_peer_agent_message(
+            xml_content = build_agent_comm_message(
+                source_label=SourceLabel.PEER_AGENT,
                 source=spec.agent_name,
                 content="hello from agent1",
+                reply_contract=AgentImplementation.EXTERNAL,
             )
             import json as _json
             line_dict = {

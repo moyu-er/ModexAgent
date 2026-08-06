@@ -52,7 +52,7 @@ InboxPoller (event-driven: Event.wait with ~interval tick fallback)
 - **Fold-in**: a turn already running consumes its own inbox on each iteration
   via `InboxFlushHook.before_iteration` (`only_types=AGENT_TYPES`) — a
   **batch pull** that appends each new inter-agent message to the running
-  turn's history as a separate `role=AGENT` record. This is where multi-message
+  turn's history as a separate `role=SYSTEM_REMINDER` record. This is where multi-message
   batching lives (mid-turn), not between turns. It does NOT consume
   `external_input` — a human DM is a separate turn (P6).
 - **Materialize-on-first-turn**: a subagent instance is built lazily by the
@@ -96,7 +96,7 @@ per invocation by pipeline providers, so reuse is safe.)
 | `descriptor.py` | `AgentDescriptor`, `AgentInstance`, `AgentLLMConfig`, `ContextGovernanceConfig` — agent metadata + `comm_kind`. All are frozen Pydantic `BaseModel` (B5B). |
 | `factory.py` | Agent instance factory — assembles `AgentInstance` via `create_agent()`. `DefaultAgentFactory` builds react agents (provider + tools + skill + TurnContextBuilder + ApprovalResumer/ApprovalRenderer + ReActTurnRunner + hooks + pipeline). `ExternalAwareFactory` (in `examples/bot_project/bot/service/external_strategy.py`) overrides `create_agent` to build only 6 objects (ExternalAgent + broker I/O + emitter + ExternalTurnRunner + pipeline, no hooks/provider/tools) — external pools boot without `model.yml`. `_get_builder` dispatch (runtime agent-construction, not assembly branching) is retained per ADR-0025 D5 deviations. |
 | `subagent_validator.py` | Framework-layer star-topology enforcement at registration. |
-| `message_xml.py` | XML message builders — `build_agent_message` (subagent dispatch / parent reply), `build_peer_agent_message` (cross-pool peer with `<reply_contract>`), `build_agent_result` (hook-generated turn result), and `build_dispatch_xml` (single convergence point for the "target is external → peer format" rule, delegated to by `SubagentDispatchStrategy` and `ParentReplyStrategy`). The `target_execution_strategy == EXTERNAL` branch in `build_dispatch_xml` is a runtime per-target site retained per ADR-0025 D5 deviations, same category as `peer_normal.py`. |
+| `message_format.py` | Unified markdown message builder — `build_agent_comm_message` (single builder for all agent-facing message markdown, selected by `source_label` + optional `result` + optional `reply_contract`), `build_dispatch_message` (single convergence point for the "target is external → peer format" rule, delegated to by `SubagentDispatchStrategy` and `ParentReplyStrategy`), `ResultMeta` (frozen Pydantic model for hook-generated result metadata), and `SourceLabel`/`ResultStatus`/`OutputStatus` StrEnums. The `target_execution_strategy == EXTERNAL` branch in `build_dispatch_message` is a runtime per-target site retained per ADR-0025 D5 deviations, same category as `peer_normal.py`. |
 | `address.py` / `state.py` / `registry.py` | Agent addressing types (`AgentAddress` is a Pydantic `BaseModel` subclass of `Address`, B5B), state enums, registry ABC. |
 
 ## Subdirectories

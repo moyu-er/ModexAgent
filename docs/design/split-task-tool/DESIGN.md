@@ -37,7 +37,7 @@ and topology policy are **not modified**.
 task.execute(target_agent, content)
   └─ service.send_async(target, content, invocation_id=None, context)
        └─ SubagentDispatchStrategy.execute()           ← UNCHANGED
-            ├─ build_envelope() → <agent_message> XML  ← UNCHANGED
+            ├─ build_envelope() → markdown message  ← UNCHANGED
             ├─ deliver via bus                          ← UNCHANGED
             └─ return AgentSendResult → format_send_ack ← UNCHANGED
 
@@ -347,7 +347,7 @@ in `template.py`). Add a comment documenting this:
 | `_build_subagent()` | Subagent mode description, unchanged |
 | `SendToAgentTool.execute()` | Dispatch logic unchanged |
 | `SendToAgentTool.get_dynamic_schema()` | Enum includes all targets (for continuation) |
-| `message_xml.py` / `build_dispatch_xml()` | XML envelope, shared by both tools |
+| `message_format.py` / `build_dispatch_message()` | markdown message, shared by both tools |
 | `envelope.py` / `AgentMessageEnvelope` | Envelope structure, shared |
 
 ## 11. Design Decisions Log

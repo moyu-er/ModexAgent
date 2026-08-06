@@ -4,20 +4,22 @@ Normalizes internal non-standard message roles to LLM-compatible format:
 - ``compact`` -> ``assistant`` (role replacement, content unchanged)
 - ``system_reminder`` -> ``user`` (role replacement, content already wrapped
   at storage time via :func:`wrap_system_reminder`)
-- ``agent`` -> ``user`` + legacy ``<agent_message>`` envelope (backward compat
-  for old history records; new code uses ``system_reminder``)
+- ``agent`` -> ``user`` (role replacement, content unchanged)
 
 :func:`wrap_system_reminder` wraps markdown content in a
 ``<system-reminder>`` XML envelope (no attributes) for use by message
 builders and hooks at storage time.
 """
 
+from __future__ import annotations
+
+import re
 from collections.abc import Sequence
 from typing import Any
 
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.types import MessageRole
-from modex_agent.core.message import ChatMessage, ContentFormat
-from modex_agent.utils.xml import xml_attr, xml_text
+
 
 def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
     """将 ChatMessage 或 dict 统一转换为 dict。"""
@@ -44,6 +46,19 @@ def wrap_system_reminder(content: str) -> str:
     return f"<system-reminder>\n{content.strip()}\n</system-reminder>"
 
 
+def sanitize_reminder_content(content: str) -> str:
+    """Strip nested system envelopes before reminder storage or delivery."""
+    if not content:
+        return content
+    sanitized = re.sub(
+        r"<\s*system(?:-reminder)?\b[^>]*>.*?<\s*/\s*system(?:-reminder)?\s*>",
+        "",
+        content,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return re.sub(r"\n{3,}", "\n\n", sanitized).strip()
+
+
 def normalize_agent_messages_for_llm(
     messages: Sequence[ChatMessage | dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -55,8 +70,8 @@ def normalize_agent_messages_for_llm(
     - ``role: "system_reminder"`` → ``role: "user"`` (pure role replacement,
       content untouched — the ``<system-reminder>`` envelope is already applied
       at storage time via ``wrap_system_reminder``)
-    - ``role: "agent"`` → ``role: "user"`` with XML ``<agent_message>`` envelope
-      (legacy branch, retained for already-persisted history records)
+    - ``role: "agent"`` → ``role: "user"`` (pure role replacement,
+      content untouched)
     - Other role messages are passed through unchanged
 
     Args:
@@ -82,33 +97,12 @@ def normalize_agent_messages_for_llm(
             converted.append({**msg_dict, "role": MessageRole.USER})
             continue
 
-        if role != MessageRole.AGENT:
-            converted.append(msg_dict)
+        # AGENT → USER (pure role replacement; content untouched)
+        if role == MessageRole.AGENT:
+            converted.append({**msg_dict, "role": MessageRole.USER})
             continue
 
-        source_agent = msg_dict.get("source_agent", "unknown")
-        original_content = msg_dict.get("content", "")
-        ts = msg_dict.get("created_at", "")
-
-        xml_content = (
-            f'<agent_message source="{xml_attr(str(source_agent))}"'
-            + (f' timestamp="{ts}"' if ts else "")
-            + ">\n"
-            + f"  <content>{xml_text(str(original_content))}</content>\n"
-            + "</agent_message>"
-        )
-
-        converted.append(
-            {
-                "role": MessageRole.USER,
-                "content": xml_content,
-                "content_format": ContentFormat.XML,
-                "truncatable_paths": ["content"],
-                "name": msg_dict.get("name"),
-                "tool_calls": msg_dict.get("tool_calls"),
-                "tool_call_id": msg_dict.get("tool_call_id"),
-                "metadata": msg_dict.get("metadata"),
-            }
-        )
+        # Other roles pass through unchanged
+        converted.append(msg_dict)
 
     return converted

@@ -349,7 +349,7 @@ nested if-tree. Adding a future strategy = adding a branch + a class.
 - `normalize_invocation_id`: returns sender prefix internally; the
   `AgentSendResult.invocation_id` field is `None` (hidden from sender).
 - `build_envelope`: `AGENT_MESSAGE` type; `invocation_id` set on the envelope
-  for tracker bookkeeping; `build_agent_message` called with
+  for tracker bookkeeping;   `build_agent_comm_message` called with
   `invocation_id=None` so the XML the receiver sees has no id.
 - `apply_tracker`: `record_send` (no `acknowledge` — no bracket in v1).
 - `deliver`: `bus = target.bus_ref or local_bus; bus.send(...)`.

@@ -18,10 +18,7 @@ from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.tool_manager import ToolManager
 from modex_agent.hook import HookErrorPolicy, HookSpec
 from modex_agent.hook.builtin import NativeEnvInjectionHook
-from modex_agent.hook.notification import (
-    MaxIterationNotifyHook,
-    TurnOutcomeNotifyHook,
-)
+from modex_agent.hook.notification import TurnOutcomeNotifyHook
 from modex_agent.ioc.factories.governance import create_governance
 from modex_agent.multi_agent import AgentPool
 from modex_agent.multi_agent.comm_kind import AgentCommKind
@@ -98,7 +95,6 @@ def _wire_main_pipeline(
     # InboxFlushHook is NOT added here: the AgentFactory auto-injects it onto
     # pipeline.hook_runner for every agent (main + subagent) with
     # inbox_strategy != "none", so fold-in is wired in one place.
-    _add_hook(pipeline, MaxIterationNotifyHook(notification_service=notification_service))
     _add_hook(pipeline, TurnOutcomeNotifyHook(notification_service=notification_service))
     _add_hook(
         pipeline,

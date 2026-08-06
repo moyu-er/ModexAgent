@@ -58,7 +58,6 @@ class ReminderKind(StrEnum):
     AGENT_MESSAGE = "agent_message"
     PEER_MESSAGE = "peer_message"
     SUBAGENT_RESULT = "subagent_result"
-    SUBAGENT_MAX_ITERATIONS = "subagent_max_iterations"
     TODO_REORIENTATION = "todo_reorientation"
 
 
@@ -75,7 +74,7 @@ class OutputMessageType(StrEnum):
     """输出消息类型枚举。
 
     用于 ``OutputMessage.message_type``，替代硬编码的字符串
-    （text / image / file / error / approval_request / command_response / busy_notice）。
+    （text / image / file / error / approval_request / command_response / busy_notice / notice）。
     """
 
     TEXT = "text"
@@ -85,6 +84,7 @@ class OutputMessageType(StrEnum):
     APPROVAL_REQUEST = "approval_request"
     COMMAND_RESPONSE = "command_response"
     BUSY_NOTICE = "busy_notice"
+    NOTICE = "notice"
 
 
 class ToolCall(BaseModel):

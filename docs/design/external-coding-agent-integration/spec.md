@@ -247,7 +247,7 @@ Key framework additions:
 - `pipeline/pipeline.py` — `ExternalTurnRunner` injection +
   `update_emitter_factory` mirror
 - `multi_agent/factory.py` — `ExecutionStrategy` enum dispatch
-- `multi_agent/message_xml.py` — `implementation` parameter +
+- `multi_agent/message_format.py` — `implementation` parameter +
   `--stdin` guidance
 - `multi_agent/envelope.py` — `to_input_metadata` / `to_input_message`
 - `providers/litellm_provider.py` — deferred `import litellm`
@@ -342,7 +342,7 @@ Help is env-gated: without `MODEX_SESSION_ID` in the environment, the
 `send` and `agents` subcommands are not registered.
 
 **Message wrapping.** `modexctl send` wraps content in
-`build_peer_agent_message` XML so the receiving agent sees structured
+`build_agent_comm_message` XML so the receiving agent sees structured
 `<agent_message>` with `source`, `<content>`, and `<reply_contract>`
 (reply instructions tailored to receiver's implementation type: NATIVE
 receivers are told to use `send_to_agent`; EXTERNAL receivers are told

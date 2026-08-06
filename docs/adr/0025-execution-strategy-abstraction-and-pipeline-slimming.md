@@ -563,7 +563,7 @@ ExternalExecutionStrategy.validate_pool_spec".
   `peer_normal.py` (which reply-shape/field-set the *target* gets); not
   assembly branching. Added when ADR-0027 (external coding subagent)
   introduced the external-result shape.
-- `message_xml.py:119` is **Retained** — `build_dispatch_xml` is the single
+- `message_format.py` is **Retained** — `build_dispatch_message` is the single
   convergence point for the "target is external → peer format" rule,
   delegated to by `SubagentDispatchStrategy` and `ParentReplyStrategy` so
   the branching lives in one place rather than duplicated across strategy
@@ -571,7 +571,7 @@ ExternalExecutionStrategy.validate_pool_spec".
   assembly branching. Added when ADR-0019 (cross-pool peer) introduced
   the peer XML format. Pushing this into the `ExecutionStrategy` ABC was
   considered and rejected: D1 fixes the strategy as a stateless
-  assemble-once object (never touched at runtime), and `build_dispatch_xml`
+  assemble-once object (never touched at runtime), and `build_dispatch_message`
   is a pure function called per-message with no `self` state to read —
   OOP dispatch would gain nothing while violating the D1 boundary.
 
