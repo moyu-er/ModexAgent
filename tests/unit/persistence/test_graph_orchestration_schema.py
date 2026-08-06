@@ -5,7 +5,7 @@ deliver_states).
 Verifies the DDL for the four orchestration tables:
 - Snowflake ID (BIGINT) primary keys, application-generated (not AUTOINCREMENT)
 - node_states MVCC version chain (append-only, one row per version)
-- deliver_states accumulated/submitted lifecycle
+- deliver_states pending/consumed lifecycle
 - graph_instances recursive subgraph nesting via parent_instance_id
 - All CHECK constraints, UNIQUE constraints, indexes, and updated_at triggers
 
@@ -603,7 +603,7 @@ def test_deliver_states_rejects_invalid_json() -> None:
         conn.close()
 
 
-def test_deliver_states_lifecycle_accumulated_to_submitted() -> None:
+def test_deliver_states_lifecycle_pending_to_consumed() -> None:
     conn = _connect()
     try:
         _seed_spec_and_instance(conn)
@@ -616,13 +616,13 @@ def test_deliver_states_lifecycle_accumulated_to_submitted() -> None:
         conn.commit()
         conn.execute(
             "UPDATE deliver_states SET status = ? WHERE deliver_id = ?",
-            ("submitted", DELIVER_ID),
+            ("consumed", DELIVER_ID),
         )
         conn.commit()
         status = conn.execute(
             "SELECT status FROM deliver_states WHERE deliver_id = ?", (DELIVER_ID,)
         ).fetchone()[0]
-        assert status == "submitted"
+        assert status == "consumed"
     finally:
         conn.close()
 
@@ -640,7 +640,7 @@ def test_deliver_states_updated_at_trigger_fires_when_omitted() -> None:
         conn.commit()
         conn.execute(
             "UPDATE deliver_states SET status = ? WHERE deliver_id = ?",
-            ("submitted", DELIVER_ID),
+            ("consumed", DELIVER_ID),
         )
         conn.commit()
         after = conn.execute(
