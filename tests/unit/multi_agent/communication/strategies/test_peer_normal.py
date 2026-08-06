@@ -145,7 +145,6 @@ class TestPeerNormalStrategy:
 
         assert result.invocation_id is None
         assert result.created_new_task is False
-        assert result.output_path is None
         assert result.trace_dir is None
 
     @pytest.mark.asyncio

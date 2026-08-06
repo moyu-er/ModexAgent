@@ -198,7 +198,10 @@ class SubagentAutoSendHook(FinallyTurnHook):
         invocation_id: str,
     ) -> str:
         stop_reason, error, _content = self._extract_raw_fields(result)
-        result_text = self._extract_notify_text(result)
+        # External subagents have no OUTPUT.md fallback — the notification IS
+        # the only delivery. Use the full result text (no truncation) so the
+        # parent receives the complete deliverable.
+        result_text = self._extract_full_result_text(result)
         success, issue = self._classify(
             stop_reason, error, invocation_id,
             is_external=True,

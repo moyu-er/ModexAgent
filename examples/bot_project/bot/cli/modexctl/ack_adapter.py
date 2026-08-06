@@ -45,6 +45,5 @@ def to_agent_send_result(send_result: SendResult) -> AgentSendResult:
         is_peer_send=send_result.is_peer_send,
         error=None,
         warning=warning,
-        output_path=send_result.output_path,
         trace_dir=send_result.trace_dir,
     )

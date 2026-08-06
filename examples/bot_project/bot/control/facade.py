@@ -430,7 +430,6 @@ class BotControlFacade:
             requested_invocation_id=requested_invocation_id,
             is_peer_send=result.is_peer_send,
             is_external_target=is_external,
-            output_path=result.output_path,
             trace_dir=result.trace_dir,
         )
 

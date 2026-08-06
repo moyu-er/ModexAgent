@@ -20,8 +20,8 @@ class AgentSendResult:
     error: str | None = None
     warning: str | None = None
     trace_dir: Path | None = None
-    output_path: Path | None = None
     is_peer_send: bool = False
+    is_external: bool = False
 
     @staticmethod
     def with_error(
@@ -52,7 +52,7 @@ def format_send_ack(result: AgentSendResult) -> str:
         ack = _format_peer_ack(result)
     elif result.target_kind == AgentCommKind.NORMAL and not result.is_peer_send:
         ack = _format_parent_reply_ack(result)
-    elif result.trace_dir is None and result.output_path is None:
+    elif result.is_external:
         ack = _format_external_subagent_ack(result)
     else:
         ack = _format_native_subagent_ack(result)

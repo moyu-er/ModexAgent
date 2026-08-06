@@ -50,7 +50,7 @@ routing path, not a topology role.
 | `__init__.py` | Re-exports `AgentCommunicationService` + `AgentSendResult` so existing imports (`from modex_agent.multi_agent.communication import AgentCommunicationService`) resolve unchanged |
 | `service.py` | `AgentCommunicationService` — thin orchestrator. `send_async(target, content, invocation_id, context)` → `_send` → `TopologyPolicy.check` → strategy dispatch → `format_send_ack`. Owns the `_strategies: dict[SendStrategyKind, SendStrategy]` map. Never creates agent instances. |
 | `topology.py` | `TopologyPolicy.check(sender_kind, target, sender_context) -> str | None` — single star-topology enforcement point. Returns error string if forbidden, `None` if allowed. Only constrains SUBAGENT senders. |
-| `result.py` | `AgentSendResult` (frozen dataclass) + `format_send_ack(result) -> str`. The ack text differs for peer sends (`is_peer_send=True`) vs subagent dispatches (includes trace/output paths + invocation_id). |
+| `result.py` | `AgentSendResult` (frozen dataclass) + `format_send_ack(result) -> str`. The ack text differs for peer sends (`is_peer_send=True`) vs subagent dispatches (includes trace path + invocation_id). |
 
 ## Subdirectories
 
@@ -110,7 +110,7 @@ Context propagates within the session group as designed behaviour.
   (register) → envelope → deliver → build_result. Concrete strategies
   override individual hooks.
 - `AgentSendResult` carries `is_peer_send` so `format_send_ack` can emit
-  the correct ack text (peer sends have no trace/output paths).
+  the correct ack text (peer sends have no trace path).
 
 ## Dependencies
 

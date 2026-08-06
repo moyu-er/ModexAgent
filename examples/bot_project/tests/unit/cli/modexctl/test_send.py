@@ -97,7 +97,6 @@ def _native_subagent_result() -> SendResult:
         dispatch_outcome=DispatchOutcome.NEW_TASK,
         is_peer_send=False,
         is_external_target=False,
-        output_path=None,
         trace_dir=Path("/data/trace"),
     )
 
@@ -123,7 +122,6 @@ def _resumed_subagent_result() -> SendResult:
         dispatch_outcome=DispatchOutcome.RESUMED,
         is_peer_send=False,
         is_external_target=False,
-        output_path=None,
         trace_dir=Path("/data/trace"),
     )
 
@@ -138,7 +136,6 @@ def _requested_not_found_result() -> SendResult:
         requested_invocation_id="inv456",
         is_peer_send=False,
         is_external_target=False,
-        output_path=None,
         trace_dir=Path("/data/trace"),
     )
 

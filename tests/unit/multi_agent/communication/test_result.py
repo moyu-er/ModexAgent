@@ -51,6 +51,7 @@ def test_parent_reply_ack_is_distinct_from_subagent_dispatch() -> None:
             session_id="task-1.external-worker",
             invocation_id="task-1",
             created_new_task=True,
+            is_external=True,
             warning="delivery warning",
         ),
         AgentSendResult(

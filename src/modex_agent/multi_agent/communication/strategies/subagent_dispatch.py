@@ -101,4 +101,5 @@ class SubagentDispatchStrategy(SendStrategy):
             session_id=str(session),
             invocation_id=invocation_id,
             created_new_task=created_new_task,
+            is_external=True,
         )
