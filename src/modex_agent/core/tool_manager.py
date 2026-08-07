@@ -3,18 +3,72 @@
 提供 ToolManager 抽象层，支持工具注册和执行调度。
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from contextvars import ContextVar
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
-from modex_agent.core.message import ContentFormat
+from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
+from modex_agent.core.message import ContentFormat, ContentPart, ImageUrlPart, TextPart
 from modex_agent.core.tool import DynamicSchemaProvider
 
 logger = logging.getLogger(__name__)
+
+
+# ctx is delivered via contextvar (not as an execute parameter) because MCP
+# tools forward **kwargs to the MCP server (tool.py:108 params=kwargs);
+# mixing ctx into kwargs would pollute external calls.
+
+
+class ToolExecutionContext(BaseModel):
+    """tool 执行时的只读上下文。
+
+    Frozen BaseModel (rule 10/12). 字段默认全 None → 现有 tool 零改动。
+    需要感知模型多模态能力的 tool 通过 :func:`get_tool_execution_context` 读取，
+    并用 :meth:`supports` 做声明式能力检查（参考 ADR-0014）。
+
+    声明式能力模型: tool 通过 ``required_modalities`` / ``produced_modalities``
+    frozenset 声明所需/所产出的模态；运行时由 :meth:`Tool.is_available` 与
+    :meth:`supports` 协同完成可见性过滤与优雅降级。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
+
+    model_info: ModelInfo | None = None
+    workspace_root: Path | None = None
+    tool_call_id: str | None = None
+    session_id: str | None = None
+
+    def supports(self, modality: Modality) -> bool:
+        """Conservative modality check for tools running in this context.
+
+        Returns ``False`` when ``model_info`` is None (no model bound — tools
+        should degrade gracefully, matching ``test_read_image_no_ctx_returns_degradation_text``).
+        Otherwise delegates to :meth:`ModelCapabilities.supports`.
+        """
+        if self.model_info is None:
+            return False
+        return self.model_info.capabilities.supports(modality)
+
+
+_tool_execution_ctx: ContextVar[ToolExecutionContext | None] = ContextVar(
+    "tool_execution_ctx", default=None
+)
+
+
+def get_tool_execution_context() -> ToolExecutionContext | None:
+    """Get the current tool execution context, if any.
+
+    Returns ``None`` outside a ``ToolManager.execute`` call.
+    """
+    return _tool_execution_ctx.get()
 
 
 @dataclass
@@ -42,6 +96,21 @@ class Tool(DynamicSchemaProvider):
 
     Implements DynamicSchemaProvider — override get_dynamic_schema()
     for context-aware descriptions. Default returns static get_schema().
+    """
+
+    required_modalities: frozenset[Modality] = frozenset()
+    """Modalities the model MUST support for this tool to be usable.
+
+    Empty (default) = modality-agnostic; the tool is visible to every model.
+    Drives :meth:`is_available` filtering in :meth:`ToolManager.get_tool_descriptions`.
+    """
+
+    produced_modalities: frozenset[Modality] = frozenset()
+    """Modalities this tool may produce in its output.
+
+    Declarative metadata for downstream consumers (e.g. governance, result
+    routing). Not used for visibility filtering — a tool that *produces*
+    images is still listed for a text-only model (it just degrades at runtime).
     """
 
     def __init__(
@@ -116,7 +185,19 @@ class Tool(DynamicSchemaProvider):
         """
         return self.get_schema()
 
-    def result_metadata(self, result: Any) -> tuple["ContentFormat | None", list[str] | None]:
+    def is_available(self, caps: ModelCapabilities | None) -> bool:
+        """Visibility gate used by :meth:`ToolManager.get_tool_descriptions`.
+
+        Returns ``True`` when ``caps is None`` — don't hide tools when the
+        active model's capabilities are unknown (back-compat). Otherwise
+        returns ``True`` iff every modality in :attr:`required_modalities`
+        is among ``caps.modalities``.
+        """
+        if caps is None:
+            return True
+        return self.required_modalities <= caps.modalities
+
+    def result_metadata(self, result: Any) -> tuple[ContentFormat | None, list[str] | None]:
         """Declare content metadata for a tool result, for governance truncation.
 
         Default: no metadata. Terminal-style tools override to return
@@ -132,24 +213,67 @@ class ToolResult(BaseModel):
     - ToolManager 执行结果
     - Agent 工具调用结果
     - LLM message 格式转换
+
+    Content is the source of truth: ``content: list[ContentPart]`` holds
+    TextPart / ImageUrlPart produced by the tool. ``message_content()``
+    renders the LLM-facing text (joined TextParts); ``image_blocks`` and
+    ``content_blocks`` expose image parts for multimodal consumers.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     tool_name: str
-    result: Any = None
     error: str | None = None
     execution_time: float = 0.0
     call_id: str | None = None
     overflow_processed: bool = False
     content_format: ContentFormat | None = None
     truncatable_paths: list[str] | None = None
+    content: list[ContentPart] = Field(default_factory=list)
 
-    @field_serializer("result")
-    def _serialize_result(self, v: Any) -> Any:
-        if v is None or isinstance(v, str | int | float | bool | list | dict):
-            return v
-        return str(v)
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_computed_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data.pop("image_blocks", None)
+            data.pop("content_blocks", None)
+        return data
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def image_blocks(self) -> list[ImageUrlPart]:
+        """ImageUrl parts extracted from ``content``, for multimodal consumers."""
+        return [part for part in self.content if isinstance(part, ImageUrlPart)]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def content_blocks(self) -> list[dict[str, Any]] | None:
+        """OpenAI wire-format dicts for image parts in ``content``.
+
+        Computed from :attr:`image_blocks` for back-compat with consumers
+        that expect ``[{"type": "image_url", "image_url": {"url": ...}}]``.
+        ``None`` when there are no image parts.
+        """
+        if not self.image_blocks:
+            return None
+        blocks: list[dict[str, Any]] = []
+        for part in self.image_blocks:
+            block: dict[str, Any] = {
+                "type": "image_url",
+                "image_url": {"url": part.image_url.url},
+            }
+            if part.image_url.detail is not None:
+                block["image_url"]["detail"] = part.image_url.detail
+            blocks.append(block)
+        return blocks
+
+    @classmethod
+    def from_text(cls, tool_name: str, text: str, **kwargs: Any) -> ToolResult:
+        """Build a text-only ToolResult.
+
+        ``text`` is wrapped in a :class:`TextPart` and stored in ``content``.
+        """
+        return cls(tool_name=tool_name, content=[TextPart(text=text)], **kwargs)
 
     @property
     def success(self) -> bool:
@@ -159,18 +283,20 @@ class ToolResult(BaseModel):
     def message_content(self) -> str:
         """Unified LLM-facing content rendering.
 
-        Structured XML failures (content_format=XML with a non-None result)
-        are emitted verbatim so the LLM receives a pure XML document.
-        Plain errors are prefixed with "Error: ". Successful results are
-        rendered as strings.
+        Priority chain:
+        1. ``content_format=XML`` with TextParts in ``content`` → render verbatim.
+        2. ``content`` has TextParts → join them.
+        3. ``error`` → ``"Error: {error}"``.
+        4. ``""``.
         """
-        if self.content_format is ContentFormat.XML and self.result is not None:
-            return str(self.result)
+        text_parts = [p.text for p in self.content if isinstance(p, TextPart)]
+        if self.content_format is ContentFormat.XML and text_parts:
+            return "".join(text_parts)
+        if text_parts:
+            return "".join(text_parts)
         if self.error is not None:
             return f"Error: {self.error}"
-        if self.result is None:
-            return ""
-        return str(self.result)
+        return ""
 
     def __repr__(self) -> str:
         status = "error" if self.error else "success"
@@ -180,11 +306,11 @@ class ToolResult(BaseModel):
         """转换为字典"""
         return {
             "tool_name": self.tool_name,
-            "result": self.result,
             "error": self.error,
             "execution_time": self.execution_time,
             "call_id": self.call_id,
             "success": self.success,
+            "content": [p.model_dump() for p in self.content],
         }
 
     def to_message(self) -> dict[str, Any]:
@@ -269,12 +395,14 @@ class ToolManager(ABC):
         self,
         tool_name: str,
         arguments: dict[str, Any],
+        ctx: ToolExecutionContext | None = None,
     ) -> ToolResult:
         """执行单个工具
 
         Args:
             tool_name: 工具名称
             arguments: 工具参数
+            ctx: 工具执行上下文（模型能力等），通过 contextvar 交付给工具
 
         Returns:
             ToolResult: 执行结果
@@ -297,27 +425,43 @@ class ToolManager(ABC):
             )
 
         start_time = asyncio.get_event_loop().time()
+        token = _tool_execution_ctx.set(ctx)
         try:
             result = await tool.execute(**arguments)
             execution_time = asyncio.get_event_loop().time() - start_time
-            # If the tool already returned a ToolResult (e.g. scoped tools
-            # that validate paths and return errors), pass it through so
-            # error information reaches the model intact.
+            # Exact-type check (not isinstance): a subclass returned by a tool
+            # should not silently bypass the content-copy re-wrap path, which
+            # normalizes content_format/truncatable_paths via result_metadata.
             if type(result) is ToolResult:
-                content_format, truncatable_paths = tool.result_metadata(result.result)
+                content_format, truncatable_paths = tool.result_metadata(result.message_content())
                 return ToolResult(
                     tool_name=result.tool_name,
-                    result=result.result,
                     error=result.error,
                     execution_time=execution_time,
                     call_id=result.call_id,
                     content_format=content_format,
                     truncatable_paths=truncatable_paths,
+                    content=result.content,
                 )
             content_format, truncatable_paths = tool.result_metadata(result)
+            if isinstance(result, str):
+                return ToolResult(
+                    tool_name=tool_name,
+                    content=[TextPart(text=result)],
+                    content_format=content_format,
+                    truncatable_paths=truncatable_paths,
+                    execution_time=execution_time,
+                )
+            if result is None:
+                return ToolResult(
+                    tool_name=tool_name,
+                    execution_time=execution_time,
+                    content_format=content_format,
+                    truncatable_paths=truncatable_paths,
+                )
             return ToolResult(
                 tool_name=tool_name,
-                result=result,
+                content=[TextPart(text=str(result))],
                 execution_time=execution_time,
                 content_format=content_format,
                 truncatable_paths=truncatable_paths,
@@ -329,11 +473,21 @@ class ToolManager(ABC):
                 error=f"Tool '{tool_name}' execution failed: {str(e)}",
                 execution_time=execution_time,
             )
+        finally:
+            _tool_execution_ctx.reset(token)
 
     # ---- 工具描述生成 ----
 
-    def get_tool_descriptions(self) -> list[dict[str, Any]]:
+    def get_tool_descriptions(
+        self, caps: ModelCapabilities | None = None
+    ) -> list[dict[str, Any]]:
         """获取所有工具的描述（供 LLM 使用）
+
+        Args:
+            caps: 当前模型的 capabilities。``None`` 时不过滤（back-compat，
+                与现有调用方一致）。非 None 时，跳过 :meth:`Tool.is_available`
+                返回 False 的工具，并把 ``caps`` 传给
+                :meth:`Tool.get_dynamic_schema_for` 以生成能力感知的 schema。
 
         Returns:
             OpenAI 格式的工具定义列表
@@ -343,8 +497,8 @@ class ToolManager(ABC):
             tool = self.get_tool(tool_name)
             if tool is None:
                 continue
-            if tool.config.enabled:
-                descriptions.append(tool.get_dynamic_schema())
+            if tool.config.enabled and tool.is_available(caps):
+                descriptions.append(tool.get_dynamic_schema_for(caps))
         return descriptions
 
 

@@ -13,6 +13,7 @@ reply) AND on_subagent_created was never called (webui tree not folded).
 This test drives the PRODUCTION helper (_build_communication) — the existing
 e2e bypasses it by building the service manually with session_registry set.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -65,14 +66,15 @@ def _descriptor(name: str, comm_kind: AgentCommKind) -> AgentDescriptor:
     )
 
 
-async def _make_pool(tmp_path: Path) -> tuple[AgentPool, LocalAgentMessageBus, InMemorySessionRegistry]:
+async def _make_pool(
+    tmp_path: Path,
+) -> tuple[AgentPool, LocalAgentMessageBus, InMemorySessionRegistry]:
     broker = InMemoryMessageBroker()
     await broker.start()
     server = InMemoryInboxServer()
     bus = LocalAgentMessageBus(
         producer=InboxProducer(server=server),
         consumer=InboxConsumer(server=server),
-        broker=broker,
     )
     registry = InMemorySessionRegistry()
     pool = AgentPool(
@@ -85,7 +87,9 @@ async def _make_pool(tmp_path: Path) -> tuple[AgentPool, LocalAgentMessageBus, I
     )
     # Register a NORMAL main agent + a SUBAGENT helper so _resolve_target finds
     # helper as a registered subagent (no template needed).
-    await pool.register_resident(_descriptor("main", AgentCommKind.NORMAL), MagicMock(pipeline=MagicMock()))
+    await pool.register_resident(
+        _descriptor("main", AgentCommKind.NORMAL), MagicMock(pipeline=MagicMock())
+    )
     helper_inst = MagicMock()
     helper_inst.descriptor = _descriptor("helper", AgentCommKind.SUBAGENT)
     await pool.register_resident(_descriptor("helper", AgentCommKind.SUBAGENT), helper_inst)
@@ -97,7 +101,7 @@ async def test_build_communication_wires_session_registry(tmp_path):
     """_build_communication forwards session_registry so _send registers the
     parent->child relationship and recover_parent_session resolves."""
     from modex_agent.core.agent import AgentContext
-    from bot.service.pool_builder import _build_communication
+    from bot.service.pool.communication import _build_communication
 
     pool, bus, registry = await _make_pool(tmp_path)
 
@@ -141,13 +145,14 @@ async def test_build_communication_wires_session_registry(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_build_communication_restores_subagent_output_path(tmp_path):
+async def test_build_communication_restores_subagent_trace_dir(tmp_path):
     """_build_communication forwards workspace_path_resolver so _send computes
-    the subagent OUTPUT.md path, restoring the 'Output (after notification)'
-    line in the send_async ack text (parity with main)."""
+    the subagent trace_dir, restoring the 'Trace' line in the send_async ack
+    text (parity with main). After T4, output_path is no longer set by the
+    strategy — the hook owns OUTPUT_<n>.md writeback."""
     from modex_agent.core.agent import AgentContext
     from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
-    from bot.service.pool_builder import _build_communication
+    from bot.service.pool.communication import _build_communication
 
     pool, bus, registry = await _make_pool(tmp_path)
     resolver = WorkspacePathResolver(
@@ -179,19 +184,16 @@ async def test_build_communication_restores_subagent_output_path(tmp_path):
         context=ctx,
     )
     assert result and result.session_id
-    # output_path must be computed for subagent targets so the ack text shows
-    # "Output (after notification): <path>" (parity with main).
-    assert result.output_path == tmp_path / "output" / result.session_id / "OUTPUT.md"
-    assert result.output_path.parent.exists(), "output dir was not created"
-    # trace_dir must also be computed so the ack text shows the execution trace
-    # path (main's stated intent — "includes trace/output paths").
     assert result.trace_dir == tmp_path / "trace" / result.session_id
 
-    # send_async's ack must explain what each artifact IS, not just give paths:
-    # trace = live, runtime-observable execution log; output = final deliverable.
+    # send_async's ack must not leak implementation details (trace path,
+    # modexctl send, etc.) — unified subagent ack.
     ack = await service.send_async(
-        target=_tgt("helper", AgentCommKind.SUBAGENT), content="more", invocation_id="", context=ctx,
+        target=_tgt("helper", AgentCommKind.SUBAGENT),
+        content="more",
+        invocation_id="",
+        context=ctx,
     )
-    assert "Trace" in ack and "live execution log" in ack
-    assert "spans.jsonl" in ack
-    assert "Output" in ack and "final deliverable" in ack
+    assert "Task dispatched" in ack
+    assert "Trace" not in ack
+    assert "spans.jsonl" not in ack

@@ -28,14 +28,6 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
     from modex_agent.memory.layers.config import (
         MemoryLayerConfigSet,
         SessionMemoryConfig,
-        UserRetentionBufferConfig,
-    )
-
-    user_retention_config = UserRetentionBufferConfig(
-        enabled=cfg.user_retention.enabled,
-        max_entries=cfg.user_retention.max_entries,
-        max_user_chars=cfg.user_retention.max_user_chars,
-        max_assistant_chars=cfg.user_retention.max_assistant_chars,
     )
 
     session_config = SessionMemoryConfig()
@@ -49,6 +41,7 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
         archive_config = ArchiveMemoryConfig(
             max_entries=cfg.archive.max_entries,
             retained_consumed_archive_pairs=cfg.archive.retained_consumed_pairs,
+            max_archive_total=cfg.archive.max_archive_total,
             scope=build_scope(cfg.archive.scope),
         )
 
@@ -67,7 +60,6 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
         session=session_config,
         archive=archive_config,
         core=core_memory_config,
-        user_retention=user_retention_config,
     )
 
 
@@ -99,6 +91,7 @@ def create_memory(
         "max_context_tokens": st.max_context_tokens,
         "max_token_ratio": st.max_token_ratio,
         "keep_ratio": st.keep_ratio,
+        "max_output_tokens": st.max_output_tokens,
     }
 
     # Pruned catalog manager (independent of archive)
@@ -112,9 +105,7 @@ def create_memory(
             topic_max_chars=cfg.pruned.topic_max_chars,
         )
 
-    # Summarizer-agent wiring (new agent-based archive flow)
-    # Archive generation is enabled whenever the archive layer is enabled.
-    # Explicit summarizer_agent config overrides defaults.
+    # Summarizer-agent wiring (archive flow)
     archive_agent = None
     archive_storage = None
     core_memory_consolidator = None
@@ -133,7 +124,6 @@ def create_memory(
             archive_config = ArchiveSummarizerConfig(
                 context_max_chars=cfg.summarizer_agent.context_max_chars,
                 core_max_chars=cfg.summarizer_agent.core_max_chars,
-                index_max_chars=cfg.summarizer_agent.index_max_chars,
                 max_iterations=cfg.summarizer_agent.max_iterations,
             )
             max_iterations = cfg.summarizer_agent.max_iterations
@@ -141,12 +131,6 @@ def create_memory(
             archive_config = ArchiveSummarizerConfig()
             max_iterations = ArchiveSummarizerConfig().max_iterations
 
-        # Archive summarizer / core memory consolidator both require an LLM
-        # provider. When the bot starts without a model configured (first-run
-        # state, user configures via WebUI afterward), skip building these
-        # agents — they cannot run without a provider, and the memory system
-        # operates in a degraded (no compression) mode until a provider is
-        # configured and the service restarts.
         if llm_provider is None:
             logger.warning(
                 "llm_provider is None — skipping archive summarizer and "
@@ -163,8 +147,31 @@ def create_memory(
                     max_iterations=max_iterations,
                 )
 
-        # archive_storage is created dynamically in cleanup_session
-        # via archive.get_storage_path(context) — not hardcoded here
+    # Compact agent wiring — always enabled by default (compact_enabled=True).
+    # Required for all agents (main + subagent): generates session-level
+    # compact summary when token pressure triggers cleanup.
+    compactor = None
+    compact_enabled = cfg.compact is not None and cfg.compact.enabled
+    if compact_enabled:
+        if llm_provider is None:
+            logger.warning(
+                "llm_provider is None — skipping session compactor "
+                "(no model configured). Cleanup will run in degraded mode "
+                "(tail-only, no compact summary)."
+            )
+        else:
+            from modex_agent.agents.summarizer.session_compactor import (
+                SessionCompactorAgent,
+                SessionCompactorConfig,
+            )
+
+            compact_cfg = SessionCompactorConfig(
+                max_output_tokens=cfg.compact.max_output_tokens,
+                max_iterations=cfg.compact.max_iterations,
+                temperature=cfg.compact.temperature,
+                tool_output_max_chars=cfg.compact.tool_output_max_chars,
+            )
+            compactor = SessionCompactorAgent(llm_provider, config=compact_cfg)
 
     return create_memory_system(
         workspace=workspace,
@@ -177,4 +184,5 @@ def create_memory(
         core_memory_consolidator=core_memory_consolidator,
         token_estimator=token_estimator,
         store_registry=store_registry,
+        compactor=compactor,
     )

@@ -12,11 +12,13 @@ from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 from modex_agent.control.exceptions import AgentControlError
 from modex_agent.hook.abc import (
+    AfterApprovalHook,
     AfterIterationHook,
     AfterLLMResponseHook,
     AfterToolExecutionHook,
     AfterTurnHook,
     BeforeIterationHook,
+    BeforeLLMHook,
     BeforeToolExecutionHook,
     BeforeTurnHook,
     FinalizeContentHook,
@@ -24,15 +26,16 @@ from modex_agent.hook.abc import (
     HookErrorPolicy,
     HookPayload,
     HookPoint,
-    HookResult,
     HookSpec,
 )
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.emitter import AgentResult
+    from modex_agent.core.message import ChatMessage
     from modex_agent.core.tool_manager import ToolResult
     from modex_agent.core.types import LLMResponse, ToolCall
+    from modex_agent.runtime.models import ApprovalTransaction
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +74,14 @@ class _FinalizeContentPayload(TypedDict, total=False):
 
 class _FinallyTurnPayload(TypedDict, total=False):
     result: AgentResult | None
+
+
+class _BeforeLLMPayload(TypedDict, total=False):
+    request: Sequence[ChatMessage] | None
+
+
+class _AfterApprovalPayload(TypedDict, total=False):
+    transaction: ApprovalTransaction | None
 
 
 # ---------------------------------------------------------------------------
@@ -116,8 +127,8 @@ async def _call_after_tool_execution(
 
 async def _call_after_llm_response(
     hook: AfterLLMResponseHook, ctx: AgentContext, **kw: Unpack[_AfterLLMResponsePayload]
-) -> HookResult | None:
-    return await hook.after_llm_response(ctx, kw.get("response"))  # type: ignore[arg-type]
+) -> None:
+    await hook.after_llm_response(ctx, kw.get("response"))  # type: ignore[arg-type]
 
 
 async def _call_finalize_content(
@@ -132,6 +143,18 @@ async def _call_finally_turn(
     await hook.finally_turn(ctx, kw.get("result"))
 
 
+async def _call_before_llm(
+    hook: BeforeLLMHook, ctx: AgentContext, **kw: Unpack[_BeforeLLMPayload]
+) -> None:
+    await hook.before_llm(ctx, kw.get("request"))  # type: ignore[arg-type]
+
+
+async def _call_after_approval(
+    hook: AfterApprovalHook, ctx: AgentContext, **kw: Unpack[_AfterApprovalPayload]
+) -> None:
+    await hook.after_approval(ctx, kw.get("transaction"))  # type: ignore[arg-type]
+
+
 _HOOK_DISPATCH: dict[HookPoint, tuple[type, Callable[..., Any]]] = {
     HookPoint.BEFORE_TURN: (BeforeTurnHook, _call_before_turn),
     HookPoint.AFTER_TURN: (AfterTurnHook, _call_after_turn),
@@ -142,6 +165,8 @@ _HOOK_DISPATCH: dict[HookPoint, tuple[type, Callable[..., Any]]] = {
     HookPoint.AFTER_LLM_RESPONSE: (AfterLLMResponseHook, _call_after_llm_response),
     HookPoint.FINALIZE_CONTENT: (FinalizeContentHook, _call_finalize_content),
     HookPoint.FINALLY_TURN: (FinallyTurnHook, _call_finally_turn),
+    HookPoint.BEFORE_LLM: (BeforeLLMHook, _call_before_llm),
+    HookPoint.AFTER_APPROVAL: (AfterApprovalHook, _call_after_approval),
 }
 
 
@@ -183,7 +208,7 @@ class HookRunner:
         payload: HookPayload | None = None,
         *,
         hook_timeout: float | None = None,
-    ) -> HookResult:
+    ) -> None:
         """按顺序调度所有注册的 Hook 的指定 hook_point 方法。
 
         Args:
@@ -191,11 +216,6 @@ class HookRunner:
             ctx: Agent 执行上下文
             payload: 可选统一承载数据，data 字段会作为 **kwargs 传递
             hook_timeout: 每个 hook 的超时秒数，None 使用默认值
-
-        Returns:
-            聚合后的 HookResult。
-            - 如果任何 hook 返回 veto=True，结果中 veto=True
-            - content_override 取最后一非空值
 
         Raises:
             AgentControlError: 受控终止异常透传
@@ -205,11 +225,9 @@ class HookRunner:
         timeout = hook_timeout if hook_timeout is not None else _DEFAULT_HOOK_TIMEOUT
         hook_kwargs = dict(payload.data) if payload else {}
 
-        aggregated = HookResult.pass_through()
-
         entry = _HOOK_DISPATCH.get(hook_point)
         if entry is None:
-            return aggregated
+            return
 
         dispatch_cls, caller = entry
 
@@ -219,18 +237,10 @@ class HookRunner:
                 continue
 
             try:
-                result = await asyncio.wait_for(
+                await asyncio.wait_for(
                     caller(hook, ctx, **hook_kwargs),
                     timeout=timeout,
                 )
-                if isinstance(result, HookResult):
-                    if result.veto:
-                        aggregated = HookResult(veto=True)
-                    if result.content_override is not None:
-                        aggregated = HookResult(
-                            veto=aggregated.veto,
-                            content_override=result.content_override,
-                        )
             except asyncio.CancelledError:
                 raise
             except AgentControlError:
@@ -242,7 +252,7 @@ class HookRunner:
             except TimeoutError:
                 logger.warning(
                     "Hook %s.%s timed out after %.1fs",
-                    type(hook).__name__,
+                    hook.name,
                     hook_point.value,
                     timeout,
                 )
@@ -250,12 +260,10 @@ class HookRunner:
             except Exception:
                 logger.exception(
                     "Hook %s failed in %s",
-                    type(hook).__name__,
+                    hook.name,
                     hook_point.value,
                 )
                 self._handle_error(spec, hook_point, timeout, is_timeout=False)
-
-        return aggregated
 
     def _handle_error(
         self,
@@ -266,7 +274,7 @@ class HookRunner:
         is_timeout: bool,
     ) -> None:
         """根据 HookErrorPolicy 处理 hook 异常。"""
-        hook_name = type(spec.hook).__name__
+        hook_name = spec.hook.name
 
         if spec.on_error == HookErrorPolicy.IGNORE:
             return
@@ -300,7 +308,7 @@ class HookRunner:
             except Exception:
                 logger.exception(
                     "Hook %s.finalize_content failed",
-                    type(hook).__name__,
+                    hook.name,
                 )
                 if spec.on_error == HookErrorPolicy.ABORT:
                     raise

@@ -1,31 +1,39 @@
-"""End-to-end联动: send_to_agent → Drainer-spawner materialize → subagent真实turn(mock LLM) → OUTPUT.md.
+"""End-to-end: send_to_agent → Drainer-spawner materialize → subagent real turn (mock LLM) → hook-owned OUTPUT_<n>.md.
 
-这是一次关键联动的回归守护。它真实地走完整条多 agent 链路, 只把 LLM 换成脚本式 mock:
+Critical regression guard for the subagent deliverable contract (T1-T8 refactor).
+Walks the full multi-agent chain with only the LLM swapped for a scripted mock:
 
     main agent
-      └─ SendToAgentTool / AgentCommunicationService.send_async (纯 router, ADR-0015 D3)
-           └─ bus.send → Drainer-spawner 首次 drain 时 lazy materialize
-                ├─ AgentTemplate.materialize 读 agents/helper.md 作为 subagent system prompt
-                ├─ 注入 OutputMdProvider (output_base_dir 来自 WorkspacePathResolver.runtime_dir)
-                ├─ DefaultAgentFactory 真实创建 ReActAgent + AgentPipeline
-                │     (factory wrap 挂上 workspace_manager + pool_name)
-                └─ broker / bus 投递 task_request
-      └─ Drainer → pipeline.process_message → 真实 react turn
-           └─ mock LLM 从 *自己* 的 system prompt 里解析 OUTPUT.md 路径并写入
+      └─ AgentCommunicationService.send_async (pure router, ADR-0015 D3)
+           └─ bus.send → Drainer-spawner lazy-materializes on first drain
+                ├─ AgentTemplate.materialize reads agents/helper.md as subagent system prompt
+                ├─ DefaultAgentFactory builds real ReActAgent + AgentPipeline
+                │     (factory wrap attaches workspace_manager + pool_name)
+                └─ broker / bus delivers task_request
+      └─ Drainer → pipeline.process_message → real react turn
+           └─ mock LLM returns a final text reply (the deliverable)
 
-它锁定 subagent 隔离守卫: 若被移除, subagent 会改用 main agent 的 context_manager
-(``MAIN PROMPT``), 于是 subagent 的 system prompt 变成 main 的, 没有 OUTPUT.md 任务,
-mock LLM 抓不到路径, 文件不落盘。
+The subagent's final reply text IS the deliverable. SubagentAutoSendHook fires on
+FINALLY_TURN, captures the reply, writes it to ``output/<session_id>/OUTPUT_<n>.md``
+(numbered via max+1 scan), and sends a truncated (≤300 chars) notification to the
+parent's inbox via the bus. The notification carries the output path via ResultMeta.
 
-Assertion 4 verifies the full subagent→parent notification chain: SubagentAutoSendHook
-fires on FINALLY_TURN via pipeline.hook_runner (materialize wires it post-hoc) and
-delivers an XML notification to the parent's inbox.
+Assertion 1 locks the subagent isolation guard: if removed, the subagent adopts the
+main agent's context_manager (``MAIN PROMPT``), so its system prompt becomes the
+main's and the deliverable contract breaks.
+
+Assertion 2 verifies OutputMdProvider is no longer injected (deprecated in T5) —
+the subagent system prompt must NOT contain "OUTPUT.md".
+
+Assertion 3 verifies the hook wrote OUTPUT_<n>.md with the subagent's reply text.
+
+Assertion 4 verifies the parent inbox received the notification with status, output
+path, and the deliverable text.
 """
 
 from __future__ import annotations
 
 import asyncio
-import re
 from pathlib import Path
 from typing import Any
 
@@ -33,13 +41,14 @@ import pytest
 
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.context import InMemoryContextManager
+from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import StreamingLLMProvider
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.session_registry import InMemorySessionRegistry
-from modex_agent.core.types import LLMResponse, ToolCall
+from modex_agent.core.types import LLMResponse
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent import SessionRetentionPolicy
+from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication import AgentCommunicationService
@@ -51,6 +60,8 @@ from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.pool_config import PoolStore
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import CommunicationTarget
+
+pytestmark = pytest.mark.integration
 
 
 def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
@@ -113,18 +124,21 @@ class _FakeWorkspaceManager:
 
 
 # ---------------------------------------------------------------------------
-# Scripted LLM provider — writes OUTPUT.md by reading its own system prompt
+# Scripted LLM provider — returns final reply text (the deliverable)
 # ---------------------------------------------------------------------------
 
 
 class _ScriptedProvider(StreamingLLMProvider):
     """Mock LLM that behaves like a well-behaved subagent.
 
-    On the first call it parses the OUTPUT.md absolute path out of its own
-    system prompt and emits a ``write`` tool call to that exact path. On the
-    second call it finishes. Every call records the system prompt it saw so
-    the test can assert which agent's prompt was actually used.
+    On the single call it returns a final text reply that IS the deliverable.
+    The hook (SubagentAutoSendHook) captures this reply and writes
+    ``OUTPUT_<n>.md`` — the subagent does not write any file itself.
+    Every call records the system prompt it saw so the test can assert which
+    agent's prompt was actually used.
     """
+
+    DELIVERABLE_TEXT: str = "Here is my deliverable: the task is complete."
 
     def __init__(self) -> None:
         self.call_count = 0
@@ -136,23 +150,7 @@ class _ScriptedProvider(StreamingLLMProvider):
         sys_text = str(sys_msg.get("content", "")) if sys_msg else ""
         self.seen_system_prompts.append(sys_text)
 
-        if self.call_count == 1:
-            m = re.search(r"([A-Za-z]:[^\s`]*OUTPUT\.md|/\S*OUTPUT\.md)", sys_text)
-            if not m:
-                return LLMResponse(content="I cannot find where to write output.")
-            output_path = m.group(1)
-            return LLMResponse(
-                content="",
-                tool_calls=[
-                    ToolCall(
-                        tool_name="write",
-                        arguments={"path": output_path, "content": "# Deliverable\n\nDone."},
-                        call_id="call_write_1",
-                    )
-                ],
-                finish_reason="tool_calls",
-            )
-        return LLMResponse(content="done, see OUTPUT.md", finish_reason="stop")
+        return LLMResponse(content=self.DELIVERABLE_TEXT, finish_reason="stop")
 
     async def chat_stream(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
         return await self.chat(messages, **kwargs)
@@ -169,29 +167,31 @@ class _ScriptedProvider(StreamingLLMProvider):
 @pytest.mark.asyncio
 async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # template.materialize unconditionally calls resolve_modexctl_bin_dir() for
+    # NativeEnvInjectionHook wiring. Provide a dummy binary so materialize
+    # doesn't fail in environments without modexctl installed.
+    fake_bin_dir = tmp_path / "fake_bin"
+    fake_bin_dir.mkdir()
+    (fake_bin_dir / "modexctl").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    monkeypatch.setenv("MODEXBOT_BIN_DIR", str(fake_bin_dir))
+
     # --- project skeleton: agents/<type>.md + template yml ---
     project = tmp_path / "project"
     (project / "agents").mkdir(parents=True)
     (project / "agents" / "helper.md").write_text(
-        "You are `helper`, a test subagent.\n\n"
-        "## Communication Rules\n"
-        "Write your deliverable to OUTPUT.md (path in the system prompt), "
-        "then stop.\n",
+        "You are `helper`, a test subagent. Complete the task and provide "
+        "your result in your final reply.\n",
         encoding="utf-8",
     )
     tpl_dir = project / "config" / "pools" / "main" / "templates"
     tpl_dir.mkdir(parents=True)
     (tpl_dir / "helper.yml").write_text(
-        "agent_name: helper\n"
-        "description: Test helper\n"
-        "tool_preset: read_write\n"
-        "max_steps: 5\n",
+        "agent_name: helper\ndescription: Test helper\ntool_preset: read_write\nmax_steps: 5\n",
         encoding="utf-8",
     )
-    (tpl_dir.parent / "pool.yml").write_text(
-        "main_agent_name: main\n", encoding="utf-8"
-    )
+    (tpl_dir.parent / "pool.yml").write_text("main_agent_name: main\n", encoding="utf-8")
     template_registry = AgentTemplateRegistry(PoolStore(base_dir=project))
 
     # --- workspace (fake) ---
@@ -214,7 +214,7 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     inbox_server = InMemoryInboxServer()
     producer = InboxProducer(server=inbox_server)
     consumer = InboxConsumer(server=inbox_server)
-    bus = LocalAgentMessageBus(producer=producer, consumer=consumer, broker=broker)
+    bus = LocalAgentMessageBus(producer=producer, consumer=consumer)
 
     provider = _ScriptedProvider()
 
@@ -280,6 +280,8 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         pool=pool,
         session_factory=session_factory,
         broker=broker,
+        # Must mirror production wiring (bot resources.py) — TurnRunner reads safety.turn.
+        safety=RuntimeSafetyPolicy(),
         project_dir=project,
         agent_bus=bus,
         context_fork_builder=context_fork_builder,
@@ -323,11 +325,18 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
 
         # Wait for the subagent turn to finish. The Drainer-spawner
         # materializes the helper instance lazily on first drain, then runs the
-        # turn. Poll the scripted provider's call count as the turn-done signal.
+        # turn. Poll for: (1) the single LLM call, AND (2) the hook-written
+        # OUTPUT_<n>.md file appearing under runtime_dir/output — the file
+        # signals FINALLY_HOOK has fired (synchronous write before the bus
+        # notification).
         deadline = asyncio.get_event_loop().time() + 10.0
         while asyncio.get_event_loop().time() < deadline:
-            if provider.call_count >= 2:
-                # Two LLM calls == write-OUTPUT.md turn + final stop turn done.
+            output_files = (
+                list((runtime_dir / "output").rglob("OUTPUT_*.md"))
+                if (runtime_dir / "output").exists()
+                else []
+            )
+            if provider.call_count >= 1 and output_files:
                 break
             await asyncio.sleep(0.05)
 
@@ -343,27 +352,33 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
             "in _process_message_locked is missing"
         )
 
-        # --- assertion 2: OUTPUT.md task + workspace-rooted path in prompt ---
-        assert "OUTPUT.md" in subagent_system
-        injected_path = re.search(
-            r"([A-Za-z]:[^\s`]*OUTPUT\.md|/\S*OUTPUT\.md)", subagent_system,
-        )
-        assert injected_path is not None, "no absolute OUTPUT.md path in prompt"
-        output_file = Path(injected_path.group(1))
-        assert output_file.is_relative_to(runtime_dir), (
-            f"OUTPUT path {output_file} not under workspace runtime_dir {runtime_dir}"
+        # --- assertion 2: OutputMdProvider deprecated — no OUTPUT.md in prompt ---
+        assert "OUTPUT.md" not in subagent_system, (
+            "OutputMdProvider is deprecated (T5) but OUTPUT.md still appears "
+            "in the subagent system prompt — the provider is still registered"
         )
 
-        # --- assertion 3: OUTPUT.md actually written ---
-        assert output_file.exists(), f"OUTPUT.md was not written at {output_file}"
-        assert "Deliverable" in output_file.read_text(encoding="utf-8")
+        # --- assertion 3: hook wrote OUTPUT_<n>.md with the deliverable text ---
+        output_files = list((runtime_dir / "output").rglob("OUTPUT_*.md"))
+        assert output_files, (
+            f"no OUTPUT_*.md file written under {runtime_dir / 'output'} — "
+            "SubagentAutoSendHook did not write the deliverable file"
+        )
+        output_file = output_files[0]
+        assert output_file.name == "OUTPUT_1.md", (
+            f"expected OUTPUT_1.md (first deliverable), got {output_file.name}"
+        )
+        file_content = output_file.read_text(encoding="utf-8")
+        assert file_content == provider.DELIVERABLE_TEXT, (
+            f"OUTPUT file content does not match subagent's final reply text: "
+            f"got {file_content!r}, expected {provider.DELIVERABLE_TEXT!r}"
+        )
 
         # --- assertion 4: parent notified via SubagentAutoSendHook ---
-        # ADR-0015 D5: the subagent's SubagentAutoSendHook fires on FINALLY_TURN
-        # (dispatched via pipeline.hook_runner — materialize wires it post-hoc,
-        # since create_agent(hooks=...) only stores them on the dead pipeline.hooks
-        # list). The hook sends an XML notification to the PARENT's inbox. Poll
-        # the parent inbox for it.
+        # The hook fires on FINALLY_TURN, writes OUTPUT_<n>.md, then sends a
+        # markdown notification to the PARENT's inbox via the bus. The
+        # notification carries status, output path (via ResultMeta), and the
+        # truncated (≤300 chars) deliverable text.
         parent_session_id = str(ctx.session)
         notif_deadline = asyncio.get_event_loop().time() + 5.0
         while asyncio.get_event_loop().time() < notif_deadline:
@@ -377,8 +392,19 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         notifications = await bus.consume(parent_session_id, limit=10)
         assert notifications, "parent inbox reported pending but consume returned empty"
         notif_content = str(notifications[0].payload)
-        assert "subagent_result" in notif_content or "success" in notif_content, (
-            f"parent notification envelope has unexpected content: {notif_content[:200]}"
+        assert "Message from subagent" in notif_content, (
+            f"notification missing 'Message from subagent' header: {notif_content[:200]}"
+        )
+        assert "status: success" in notif_content, (
+            f"notification missing 'status: success': {notif_content[:200]}"
+        )
+        assert "Output:" in notif_content, (
+            f"notification missing 'Output:' line (hook should carry output_path "
+            f"via ResultMeta): {notif_content[:200]}"
+        )
+        assert provider.DELIVERABLE_TEXT in notif_content, (
+            f"notification body does not contain the deliverable text: "
+            f"{notif_content[:200]}"
         )
     finally:
         await pool.shutdown_all()

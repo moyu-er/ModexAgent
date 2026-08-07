@@ -11,7 +11,7 @@ Multi-channel input/output adapters that bridge external platforms (QQ, Telegram
 |------|-------------|
 | `__init__.py` | Package marker, exports key adapter classes |
 | `channels.py` | The multi-channel spine — `ADAPTERS` registry, `@register` decorator, `AdapterBuildContext`, `set_conv_channel`/`get_conv_channel`, and `ChannelRouterOutputAdapter`. `WebUIService` imports every `register_*.py` to fire the decorators, then iterates `ADAPTERS` to build enabled adapters |
-| `qq.py` | QQ platform adapters — `QQInputAdapter` (C2C + group), `QQOutputAdapter` (message sending, file upload). Uses ABC `configure_input_pipeline` default (stores pipeline/ctx/output) |
+| `qq/` | QQ platform adapters — `QQInputAdapter` (C2C + group), `QQOutputAdapter` (message sending, file upload). Split into `__init__.py` (re-exports), `_ws_state.py`, `input.py`, `output.py`, `emitter.py`. Uses ABC `configure_input_pipeline` default (stores pipeline/ctx/output) |
 | `telegram.py` | Telegram adapters — `TelegramInputAdapter` (long-polling inbound via injected PTB hooks), `TelegramOutputAdapter` (HTML render + 4096-char chunking). PTB-free and unit-testable in isolation; real polling wired by `register_telegram.py` |
 | `web_socket.py` | `WebSocketInputAdapter` — manages WebSocket connections for WebUI chat. No-op `configure_input_pipeline` override (pipeline is held by `WebUIServer`) |
 | `register_qq.py` | QQ adapter registration — `@register("qq")`; wires QQ to the bot service. Returns `None` when disabled/unconfigured |

@@ -18,15 +18,27 @@ class ControlCommandType(str, Enum):
     INJECT_USER_MESSAGE = "inject_user_message"
     APPROVAL_RESPONSE = "approval_response"
     INJECT_STEER = "inject_steer"
+    # Graph instance lifecycle control (ticket 10 §3.3).
+    PAUSE_GRAPH = "pause_graph"
+    STOP_GRAPH = "stop_graph"
+    RESUME_GRAPH = "resume_graph"
+    DELIVER_TO_NODE = "deliver_to_node"
 
 
 @dataclass(frozen=True)
 class ControlScope:
-    """Scope for control commands/events."""
+    """Scope for control commands/events.
+
+    For graph-scoped commands (PAUSE_GRAPH / STOP_GRAPH / RESUME_GRAPH /
+    DELIVER_TO_NODE), `graph_instance_id` identifies the target
+    `GraphInstance`. The existing session_id/agent_id/turn_id fields stay
+    — a graph instance lives within a session.
+    """
 
     session_id: str
     agent_id: str | None = None
     turn_id: str | None = None
+    graph_instance_id: int | None = None
 
 
 @dataclass

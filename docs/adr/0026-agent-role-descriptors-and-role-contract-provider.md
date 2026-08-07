@@ -147,8 +147,8 @@ pool 的 main agent**（`pool_opencode`）。orchestrator 要委托编码工作�
 没有 `SubagentAutoSendHook` 自动回报，体验不如 subagent。
 
 **D1 能力**：扩展 subagent materialize 路径，允许 `AgentTemplate` 声明
-`execution_strategy: external_coding` + `provider_kind: opencode`。materialize
-时构造 `ExternalCodingAgent` 而非 `ReActAgent`，对父 agent 而言与其他
+`execution_strategy: external` + `provider_kind: opencode`。materialize
+时构造 `ExternalAgent` 而非 `ReActAgent`，对父 agent 而言与其他
 subagent 无区别（同样的 `send_to_agent` 接口、`SubagentAutoSendHook` 回报、
 `invocation_id` 续接语义）。
 
@@ -244,5 +244,5 @@ oracle subagents）稳定，且下一个瓶颈是"编码委托质量/成本"时�
 - ADR-0015（subagent materialize 路径，本 ADR 不改其语义）
 - ADR-0019（cross-pool peer，本 ADR 不触及 peer 通信）
 - ADR-0022（external coding agent，D1 待办与其相关）
-- `docs/design/external-coding-agent-integration/deferred.md`（D1 详细记录）
+- `docs/design/external-agent-integration/deferred.md`（D1 详细记录）
 - `agents/orchestrator.md`（待重写，承载编排决策树，独立于本 ADR）

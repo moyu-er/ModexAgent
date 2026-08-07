@@ -29,9 +29,9 @@ delegate coding work to OpenCode, the only path today is **peer communication**
    pools (`coder` + `opencode`) for what is conceptually one coding workflow.
 
 **The capability.** Extend the subagent materialize path so that an
-`AgentTemplate` may declare `execution_strategy: external_coding` +
+`AgentTemplate` may declare `execution_strategy: external` +
 `provider_kind: opencode` (or `pi`). On materialize, instead of constructing
-a `ReActAgent`, the framework constructs an `ExternalCodingAgent` bound to
+a `ReActAgent`, the framework constructs an `ExternalAgent` bound to
 the parent pool's `AgentMessageBus`. To the parent agent, the external
 subagent is indistinguishable from an in-process subagent: same
 `send_to_agent` interface, same `SubagentAutoSendHook` completion notification,
@@ -40,7 +40,7 @@ same `invocation_id` resume semantics.
 **Why deferred.** The change touches three non-trivial areas:
 
 1. **`SubagentDispatchStrategy` / `AgentTemplate.materialize`** — add a
-   strategy branch that constructs `ExternalCodingAgent` instead of
+   strategy branch that constructs `ExternalAgent` instead of
    `ReActAgent`. Additive (existing react subagents unaffected), but a new
    seam.
 2. **Subagent lifecycle** — external subagents own resources (workdir, CLI
@@ -71,4 +71,4 @@ and the cost savings from routing them to cheaper models diminish. Decided
 
 **Related.** ADR-0022, ADR-0019, ADR-0015 (subagent materialize),
 ADR-0026 (agent role descriptors — orchestrator pattern is D1's prerequisite),
-`src/modex_agent/agents/external_coding/`, `src/modex_agent/multi_agent/template.py`.
+`src/modex_agent/agents/external/`, `src/modex_agent/multi_agent/template.py`.

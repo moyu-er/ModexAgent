@@ -19,18 +19,19 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
-from helpers import CounterState, make_runtime
+from helpers import CounterState, make_coordinator, make_runtime
 
 from modex_graph import (
     Graph,
     GraphContext,
     GraphEngine,
     GraphNode,
+    IntegratedInput,
     Node,
     NodeInstanceStatus,
-    NodeResult,
     NodeTrigger,
     ParallelScheduler,
     SchedulerKind,
@@ -41,6 +42,7 @@ def make_parallel_ctx(state: CounterState | None = None) -> GraphContext[Counter
     return GraphContext(
         state=state if state is not None else CounterState(),
         runtime=make_runtime(),
+        coordinator=make_coordinator(),
         scheduler_kind=SchedulerKind.PARALLEL,
     )
 
@@ -50,11 +52,13 @@ class DispatchAddNode(Node[CounterState]):
         self.amount = amount
         self.target = target
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
         ctx.state.count += self.amount
         if self.target is not None:
-            ctx.dispatch(self.target)
-        return NodeResult()
+            self.deliver(None, self.target, ctx)
+        return None
 
 
 class FanOutDispatchNode(Node[CounterState]):
@@ -65,11 +69,13 @@ class FanOutDispatchNode(Node[CounterState]):
         self.target_a = target_a
         self.target_b = target_b
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
         ctx.state.count += self.amount
-        ctx.dispatch(self.target_a)
-        ctx.dispatch(self.target_b)
-        return NodeResult()
+        self.deliver(None, self.target_a, ctx)
+        self.deliver(None, self.target_b, ctx)
+        return None
 
 
 class ConditionalDispatchNode(Node[CounterState]):
@@ -79,23 +85,26 @@ class ConditionalDispatchNode(Node[CounterState]):
         self.amount = amount
         self.chosen_target = chosen_target
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
         ctx.state.count += self.amount
-        ctx.dispatch(self.chosen_target)
-        return NodeResult()
+        self.deliver(None, self.chosen_target, ctx)
+        return None
 
 
 class RecordExecutionNode(Node[CounterState]):
-    """Appends its instance id to state.messages (ReducerChannel)."""
-
     def __init__(self, target: str | None = None) -> None:
         self.target = target
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
         label = ctx._current_instance or self.name
+        ctx.state.messages.append(label)
         if self.target is not None:
-            ctx.dispatch(self.target)
-        return NodeResult(state_update={"messages": [label]})
+            self.deliver(None, self.target, ctx)
+        return None
 
 
 # ── NodeTrigger enum ──────────────────────────────────────────────────────
@@ -189,14 +198,13 @@ class TestOnAllPreds:
         assert d_instances[0].status == NodeInstanceStatus.COMPLETED
 
     async def test_d_count_reflects_single_execution(self) -> None:
-        """A fast (count=1). B,C fork (mutations dropped). D fast (count+1000).
-        Total = 1 + 1000 = 1001."""
+        """All branch mutations are visible and D executes once."""
         g = self._build_graph()
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
         ctx = make_parallel_ctx(CounterState(count=0))
         result = await GraphEngine(compiled).run_async(ctx)
-        assert result.count == 1001
+        assert result.count == 1111
 
     async def test_d_not_fired_when_one_source_dispatches_to_end(self) -> None:
         """C dispatches to END instead of D. D's activated sources = {b} only.
@@ -304,10 +312,7 @@ class TestOnReceive:
             assert inst.status == NodeInstanceStatus.COMPLETED
 
     async def test_concurrent_dispatches_still_two_instances(self) -> None:
-        """B and C are in the same batch (forked). Both dispatch to D.
-        D (ON_RECEIVE) creates two instances — but they can't fire
-        concurrently (each is blocked by B/C reachability). After B and C
-        complete, the two D instances fire sequentially."""
+        """Concurrent B and C dispatches create two D instances."""
         g = self._build_graph()
         compiled = g.compile(
             scheduler=SchedulerKind.PARALLEL,
@@ -378,9 +383,7 @@ class TestLongChain:
         assert isinstance(scheduler, ParallelScheduler)
         d_instances = [i for i in scheduler._instances.values() if i.node_name == "d"]
         assert len(d_instances) == 1
-        # A=1 fast. B,C fork (mutations dropped). E fast (+10000).
-        # F fast (+100000). D fast (+1000).
-        assert ctx.state.count == 111001
+        assert ctx.state.count == 111111
 
 
 # ── Node-level trigger overrides graph-level default ──────────────────────
@@ -398,11 +401,13 @@ class TestNodeTriggerOverridesDefault:
                 self.amount = amount
                 self.target = target
 
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
                 ctx.state.count += self.amount
                 if self.target is not None:
-                    ctx.dispatch(self.target)
-                return NodeResult()
+                    self.deliver(None, self.target, ctx)
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("a", FanOutDispatchNode(amount=1, target_a="b", target_b="c"))
@@ -438,11 +443,13 @@ class TestNodeTriggerOverridesDefault:
                 self.amount = amount
                 self.target = target
 
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
                 ctx.state.count += self.amount
                 if self.target is not None:
-                    ctx.dispatch(self.target)
-                return NodeResult()
+                    self.deliver(None, self.target, ctx)
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("a", FanOutDispatchNode(amount=1, target_a="b", target_b="c"))
@@ -481,13 +488,15 @@ class TestSelfLoop:
             def __init__(self) -> None:
                 pass
 
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
                 ctx.state.count += 1
                 if ctx.state.count >= 5:
-                    ctx.dispatch(GraphNode.END)
+                    self.deliver(None, GraphNode.END, ctx)
                 else:
-                    ctx.dispatch("loop")
-                return NodeResult()
+                    self.deliver(None, "loop", ctx)
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("loop", SelfDispatchNode())
@@ -507,13 +516,15 @@ class TestSelfLoop:
 
     async def test_self_loop_instance_count(self) -> None:
         class SelfDispatchNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
                 ctx.state.count += 1
                 if ctx.state.count >= 3:
-                    ctx.dispatch(GraphNode.END)
+                    self.deliver(None, GraphNode.END, ctx)
                 else:
-                    ctx.dispatch("loop")
-                return NodeResult()
+                    self.deliver(None, "loop", ctx)
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("loop", SelfDispatchNode())
@@ -532,9 +543,7 @@ class TestSelfLoop:
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
-        loop_instances = [
-            i for i in scheduler._instances.values() if i.node_name == "loop"
-        ]
+        loop_instances = [i for i in scheduler._instances.values() if i.node_name == "loop"]
         # 3 executions → 3 instances (loop#0, loop#1, loop#2).
         assert len(loop_instances) == 3
         for inst in loop_instances:
@@ -542,13 +551,15 @@ class TestSelfLoop:
 
     async def test_self_loop_on_receive_also_works(self) -> None:
         class SelfDispatchNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
                 ctx.state.count += 1
                 if ctx.state.count >= 4:
-                    ctx.dispatch(GraphNode.END)
+                    self.deliver(None, GraphNode.END, ctx)
                 else:
-                    ctx.dispatch("loop")
-                return NodeResult()
+                    self.deliver(None, "loop", ctx)
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("loop", SelfDispatchNode())
@@ -613,9 +624,7 @@ class TestReachabilityBFS:
         g.add_edge(GraphNode.START, "loop")
         g.add_edge("loop", "loop")
         g.add_edge("loop", GraphNode.END)
-        compiled = g.compile(
-            scheduler=SchedulerKind.PARALLEL, cycle_detection="off"
-        )
+        compiled = g.compile(scheduler=SchedulerKind.PARALLEL, cycle_detection="off")
         scheduler = ParallelScheduler(compiled)
         iid = scheduler._create_instance("loop")
         scheduler._instances[iid].status = NodeInstanceStatus.PENDING
@@ -644,8 +653,10 @@ class TestResolveTrigger:
         class OnReceiveNode(Node[CounterState]):
             trigger = NodeTrigger.ON_RECEIVE
 
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
-                return NodeResult()
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("a", OnReceiveNode())
@@ -724,11 +735,13 @@ class TestOnAllPredsMultipleGroups:
 
     async def test_single_source_multiple_dispatches(self) -> None:
         class DoubleDispatchNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
                 ctx.state.count += 1
-                ctx.dispatch("d")
-                ctx.dispatch("d")
-                return NodeResult()
+                self.deliver(None, "d", ctx)
+                self.deliver(None, "d", ctx)
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("a", DoubleDispatchNode())
@@ -746,3 +759,203 @@ class TestOnAllPredsMultipleGroups:
         assert isinstance(scheduler, ParallelScheduler)
         d_instances = [i for i in scheduler._instances.values() if i.node_name == "d"]
         assert len(d_instances) == 1
+
+
+# ── ON_RECEIVE per-node serial gate ───────────────────────────────────────
+
+
+class AsyncRecordNode(Node[CounterState]):
+    """Records start/end markers with an await yield point.
+
+    The ``await asyncio.sleep(0)`` creates a yield point where another
+    task can interleave. If two instances of this node ran concurrently,
+    their start/end markers would interleave (start, start, end, end).
+    Under per-node serial execution they appear as paired (start, end,
+    start, end).
+    """
+
+    def __init__(self, target: str | None = None) -> None:
+        self.target = target
+
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
+        label = ctx._current_instance or self.name
+        ctx.state.messages.append(f"start:{label}")
+        await asyncio.sleep(0)
+        ctx.state.messages.append(f"end:{label}")
+        if self.target is not None:
+            self.deliver(None, self.target, ctx)
+        return None
+
+
+class TestOnReceiveSerialGate:
+    """Per-node serial gate for ON_RECEIVE dispatches.
+
+    When an ON_RECEIVE dispatch targets a node that already has an
+    in-flight instance, the dispatch queues in a per-node FIFO instead
+    of firing immediately. When the in-flight instance completes, the
+    next queued dispatch fires. N dispatches to a running node produce
+    N serial executions — no concurrent execution of the same node.
+    """
+
+    def _make_scheduler(
+        self, default_trigger: NodeTrigger = NodeTrigger.ON_RECEIVE
+    ) -> ParallelScheduler[Any]:
+        g: Graph[CounterState] = Graph()
+        g.add_node("a", DispatchAddNode(amount=1, target="b"))
+        g.add_node("b", DispatchAddNode(amount=1, target=GraphNode.END))
+        g.add_edge(GraphNode.START, "a")
+        g.add_edge("a", "b")
+        g.add_edge("b", GraphNode.END)
+        compiled = g.compile(
+            scheduler=SchedulerKind.PARALLEL,
+            default_trigger=default_trigger,
+        )
+        scheduler: ParallelScheduler[Any] = ParallelScheduler(compiled)
+        scheduler._ctx = make_parallel_ctx()
+        scheduler._wakeup = asyncio.Event()
+        return scheduler
+
+    def test_dispatch_to_running_node_queues(self) -> None:
+        scheduler = self._make_scheduler()
+
+        b_iid = scheduler._create_instance("b")
+        scheduler._instances[b_iid].status = NodeInstanceStatus.RUNNING
+        a_iid = scheduler._create_instance("a")
+        scheduler._instances[a_iid].status = NodeInstanceStatus.RUNNING
+
+        scheduler._handle_dispatch(a_iid, "b", {"delivered": "data"})
+
+        assert "b" in scheduler._on_receive_queue
+        assert len(scheduler._on_receive_queue["b"]) == 1
+        b_instances = [i for i in scheduler._instances.values() if i.node_name == "b"]
+        assert len(b_instances) == 1
+
+    def test_dispatch_to_idle_node_fires_immediately(self) -> None:
+        scheduler = self._make_scheduler()
+
+        a_iid = scheduler._create_instance("a")
+        scheduler._instances[a_iid].status = NodeInstanceStatus.RUNNING
+
+        scheduler._handle_dispatch(a_iid, "b", {"delivered": "data"})
+
+        assert "b" not in scheduler._on_receive_queue
+        b_instances = [i for i in scheduler._instances.values() if i.node_name == "b"]
+        assert len(b_instances) == 1
+        assert b_instances[0].status == NodeInstanceStatus.READY
+        assert b_instances[0].upstream_payloads is not None
+        assert b_instances[0].upstream_payloads[0].content == "data"
+
+    def test_queue_drains_fifo_order(self) -> None:
+        scheduler = self._make_scheduler()
+
+        b_iid = scheduler._create_instance("b")
+        scheduler._instances[b_iid].status = NodeInstanceStatus.RUNNING
+        a_iid = scheduler._create_instance("a")
+        scheduler._instances[a_iid].status = NodeInstanceStatus.RUNNING
+
+        scheduler._handle_dispatch(a_iid, "b", {"delivered": "first"})
+        scheduler._handle_dispatch(a_iid, "b", {"delivered": "second"})
+        scheduler._handle_dispatch(a_iid, "b", {"delivered": "third"})
+
+        assert len(scheduler._on_receive_queue["b"]) == 3
+
+        scheduler._instances[b_iid].status = NodeInstanceStatus.COMPLETED
+        scheduler._active.discard(b_iid)
+        scheduler._drain_on_receive_queue("b")
+
+        b_instances = sorted(
+            [i for i in scheduler._instances.values() if i.node_name == "b"],
+            key=lambda i: i.seq,
+        )
+        assert len(b_instances) == 2
+        assert b_instances[1].upstream_payloads is not None
+        assert b_instances[1].upstream_payloads[0].content == "first"
+
+        b1_iid = b_instances[1].instance_id
+        scheduler._instances[b1_iid].status = NodeInstanceStatus.COMPLETED
+        scheduler._active.discard(b1_iid)
+        scheduler._drain_on_receive_queue("b")
+
+        b_instances = sorted(
+            [i for i in scheduler._instances.values() if i.node_name == "b"],
+            key=lambda i: i.seq,
+        )
+        assert len(b_instances) == 3
+        assert b_instances[2].upstream_payloads is not None
+        assert b_instances[2].upstream_payloads[0].content == "second"
+
+        b2_iid = b_instances[2].instance_id
+        scheduler._instances[b2_iid].status = NodeInstanceStatus.COMPLETED
+        scheduler._active.discard(b2_iid)
+        scheduler._drain_on_receive_queue("b")
+
+        b_instances = sorted(
+            [i for i in scheduler._instances.values() if i.node_name == "b"],
+            key=lambda i: i.seq,
+        )
+        assert len(b_instances) == 4
+        assert b_instances[3].upstream_payloads is not None
+        assert b_instances[3].upstream_payloads[0].content == "third"
+
+        assert "b" not in scheduler._on_receive_queue
+
+    def test_on_all_preds_dispatches_not_gated(self) -> None:
+        scheduler = self._make_scheduler(default_trigger=NodeTrigger.ON_ALL_PREDS)
+
+        b_iid = scheduler._create_instance("b")
+        scheduler._instances[b_iid].status = NodeInstanceStatus.RUNNING
+        a_iid = scheduler._create_instance("a")
+        scheduler._instances[a_iid].status = NodeInstanceStatus.RUNNING
+
+        scheduler._handle_dispatch(a_iid, "b", {"delivered": "data"})
+
+        assert "b" not in scheduler._on_receive_queue
+        assert "b" in scheduler._pending_dispatches
+        assert "a" in scheduler._pending_dispatches["b"]
+        assert len(scheduler._pending_dispatches["b"]["a"]) == 1
+
+
+class TestOnReceiveSerialExecutionIntegration:
+    """End-to-end: two concurrent dispatches to an ON_RECEIVE node
+    execute serially (no concurrent execution of the same node)."""
+
+    async def test_two_dispatches_execute_serially(self) -> None:
+        g: Graph[CounterState] = Graph()
+        g.add_node("a", FanOutDispatchNode(amount=1, target_a="b", target_b="c"))
+        g.add_node("b", DispatchAddNode(amount=10, target="d"))
+        g.add_node("c", DispatchAddNode(amount=100, target="d"))
+        g.add_node("d", AsyncRecordNode(target=GraphNode.END))
+        g.add_edge(GraphNode.START, "a")
+        g.add_edge("a", "b")
+        g.add_edge("a", "c")
+        g.add_edge("b", "d")
+        g.add_edge("c", "d")
+        g.add_edge("d", GraphNode.END)
+        compiled = g.compile(
+            scheduler=SchedulerKind.PARALLEL,
+            default_trigger=NodeTrigger.ON_RECEIVE,
+        )
+
+        ctx = make_parallel_ctx(CounterState(count=0))
+        engine = GraphEngine(compiled)
+        await engine.run_async(ctx)
+
+        scheduler = engine._scheduler
+        assert isinstance(scheduler, ParallelScheduler)
+        d_instances = [i for i in scheduler._instances.values() if i.node_name == "d"]
+        assert len(d_instances) == 2
+        for inst in d_instances:
+            assert inst.status == NodeInstanceStatus.COMPLETED
+
+        d_messages = [
+            m for m in ctx.state.messages if m.startswith("start:d") or m.startswith("end:d")
+        ]
+        assert len(d_messages) == 4
+        assert d_messages[0].startswith("start:")
+        assert d_messages[1].startswith("end:")
+        assert d_messages[2].startswith("start:")
+        assert d_messages[3].startswith("end:")
+        assert d_messages[0].split(":")[1] == d_messages[1].split(":")[1]
+        assert d_messages[0].split(":")[1] != d_messages[2].split(":")[1]

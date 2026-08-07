@@ -15,7 +15,7 @@ The change is at the Typer app construction layer: disable rich markup mode and 
 - [x] `modexctl <unknown-command>` produces a plain-text error with no rich panels.
 - [x] Existing `send` command stdout is byte-identical to before (the change affects only help/error rendering, not command output).
 - [x] Existing `agents` command stdout is byte-identical to before.
-- [x] All existing tests in `tests/unit/cli/modexctl/` pass (`TestUnifiedCommGate`, `TestSendCommand`, `TestAgentsCommand`, `TestStaleAppFailClosed`, `TestWorkflowCommandGate`, `TestParsePoolMap`, `TestBuildInboxLine`, `TestComputeTargetSessionId`, `TestResolveTargetPool`, `TestParseTargets`, `test_sqlite_persistence_unification.py`, `test_parent_session_id_propagation.py`, `test_external_coding_communication.py`, `test_cross_pool_peer_messaging.py`).
+- [x] All existing tests in `tests/unit/cli/modexctl/` pass (`TestUnifiedCommGate`, `TestSendCommand`, `TestAgentsCommand`, `TestStaleAppFailClosed`, `TestWorkflowCommandGate`, `TestParsePoolMap`, `TestBuildInboxLine`, `TestComputeTargetSessionId`, `TestResolveTargetPool`, `TestParseTargets`, `test_sqlite_persistence_unification.py`, `test_parent_session_id_propagation.py`, `test_external_communication.py`, `test_cross_pool_peer_messaging.py`).
 - [x] ANSI color codes may still appear in `--help` / error output (Typer default) — this is acceptable and not a failure.
 
 ## Comments

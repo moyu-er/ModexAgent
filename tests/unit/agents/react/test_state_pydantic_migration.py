@@ -12,7 +12,6 @@ Verifies that the 5 migrated types (``ApprovalTransaction`` /
 - ``model_dump()`` / ``model_validate()`` round-trip correctly for
   JSON-serializable fields.
 - ``ToolCallState`` accepts ``arbitrary_types_allowed`` for ``ToolResult``.
-- Channel codec registrations round-trip via ``register_codec``.
 """
 
 from __future__ import annotations

@@ -23,14 +23,11 @@ from .retry import (
 )
 
 __all__ = [
-    # conditional.py (ticket 04)
     "ConditionalNode",
     "SwitchNode",
     "build_conditional_graph",
-    # retry.py (ticket 05)
     "RetryNode",
     "build_retry_graph",
-    # map_reduce.py (ticket 06)
     "MapNode",
     "ReduceNode",
     "build_map_reduce_graph",

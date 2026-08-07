@@ -26,6 +26,7 @@ from modex_agent.memory.history_search import (
     RecentFirstHistorySearch,
 )
 from modex_agent.memory.layers.config import ArchiveMemoryConfig, StorageFactory
+from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +177,22 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
                 ),
             )
             await self._do_prune(archive)
+            # FIFO eviction at append time: same backend-boundary pattern
+            # as DefaultMemoryMaintenancePolicy.scan_once (lifecycle.py:160-179).
+            # Only DirArchiveStorage (the file-backed archive doc tree)
+            # supports directory-level FIFO; the SQLite archive store
+            # lacks min_safe_id and is intentionally skipped here, matching
+            # existing scan_once semantics.
+            if (
+                self._config.max_archive_total is not None
+                and isinstance(archive, DirArchiveStorage)
+            ):
+                deleted = await archive.prune_to_max(
+                    self._config.max_archive_total,
+                    min_safe_id=state.core_consumed_archive_id,
+                )
+                if deleted:
+                    await archive.cleanup_empty_dirs()
 
         if lock is not None:
             async with lock.write():
@@ -199,7 +216,6 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
                 generation.documents.core,
                 encoding="utf-8",
             )
-            (archive_dir / "index.md").write_text(generation.documents.index, encoding="utf-8")
         return result
 
     async def _load_state(self, archive: ArchiveStore) -> ArchiveState:

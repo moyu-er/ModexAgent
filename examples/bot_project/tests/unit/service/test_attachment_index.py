@@ -79,9 +79,7 @@ class TestAttachmentSerialization:
     def test_to_dict_carries_only_metadata_fields(self) -> None:
         att = _inbound_attachment()
         d = att.to_dict()
-        assert set(d.keys()) == {
-            "id", "kind", "name", "mime", "size", "path", "locator"
-        }
+        assert set(d.keys()) == {"id", "kind", "name", "mime", "size", "path", "locator"}
         # StrEnum wire form is the string value.
         assert d["kind"] == "image"
         assert d["locator"] == "media"
@@ -93,8 +91,13 @@ class TestAttachmentSerialization:
 
     def test_round_trip_preserves_none_mime(self) -> None:
         att = Attachment(
-            id="x", kind=Kind.OTHER, name="blob", mime=None,
-            size=0, path="/p", locator=AttachmentLocator.WORKSPACE,
+            id="x",
+            kind=Kind.OTHER,
+            name="blob",
+            mime=None,
+            size=0,
+            path="/p",
+            locator=AttachmentLocator.WORKSPACE,
         )
         assert Attachment.from_dict(att.to_dict()) == att
 
@@ -156,9 +159,7 @@ class TestPersistStageWiring:
             root = Path(tmp)
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
             store.set_agent_pool_map({"main": "main"})
-            env = UserInputEnvelope(
-                external_id="u1", content="hello", channel="websocket"
-            )
+            env = UserInputEnvelope(external_id="u1", content="hello", channel="websocket")
             env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
             env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
             env.metadata[RoutingMeta.WORKSPACE] = str(root)
@@ -178,9 +179,7 @@ class TestPersistStageWiring:
             root = Path(tmp)
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
             store.set_agent_pool_map({"main": "main"})
-            env = UserInputEnvelope(
-                external_id="u1", content="hello", channel="websocket"
-            )
+            env = UserInputEnvelope(external_id="u1", content="hello", channel="websocket")
             env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
             env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
             env.metadata[RoutingMeta.WORKSPACE] = str(root)
@@ -271,8 +270,13 @@ class TestFindAttachment:
                     content="first",
                     attachments=[
                         Attachment(
-                            id="other", kind=Kind.OTHER, name="o", mime=None,
-                            size=1, path="/o", locator=AttachmentLocator.WORKSPACE,
+                            id="other",
+                            kind=Kind.OTHER,
+                            name="o",
+                            mime=None,
+                            size=1,
+                            path="/o",
+                            locator=AttachmentLocator.WORKSPACE,
                         ).to_dict()
                     ],
                 ),
@@ -314,9 +318,7 @@ class TestFindAttachment:
                 ),
                 sessions_dir=sessions_dir,
             )
-            found = await find_attachment(
-                ws_store, "u1.main", att.id, sessions_dir=sessions_dir
-            )
+            found = await find_attachment(ws_store, "u1.main", att.id, sessions_dir=sessions_dir)
         assert found == att
 
     @pytest.mark.asyncio
@@ -324,13 +326,21 @@ class TestFindAttachment:
         """When the same id appears on two records, the chronologically first is returned."""
         shared_id = "dup-id"
         first = Attachment(
-            id=shared_id, kind=Kind.IMAGE, name="first.png", mime="image/png",
-            size=1, path="media/main/uploads/s1/first.png",
+            id=shared_id,
+            kind=Kind.IMAGE,
+            name="first.png",
+            mime="image/png",
+            size=1,
+            path="media/main/uploads/s1/first.png",
             locator=AttachmentLocator.MEDIA,
         )
         second = Attachment(
-            id=shared_id, kind=Kind.IMAGE, name="second.png", mime="image/png",
-            size=2, path="media/main/uploads/s1/second.png",
+            id=shared_id,
+            kind=Kind.IMAGE,
+            name="second.png",
+            mime="image/png",
+            size=2,
+            path="media/main/uploads/s1/second.png",
             locator=AttachmentLocator.MEDIA,
         )
         with TemporaryDirectory() as tmp:

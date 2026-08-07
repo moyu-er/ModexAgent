@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modex_agent.agents.external_coding.paths import ProviderKind
+from modex_agent.agents.external.paths import ProviderKind
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.multi_agent.comm_kind import AgentCommKind
@@ -58,7 +58,7 @@ def _make_external_deps(
         broker=MagicMock(),
     )
     if builder is not None:
-        deps = dataclasses.replace(deps, subagent_external_coding_builder=builder)  # type: ignore[arg-type]
+        deps = dataclasses.replace(deps, subagent_external_builder=builder)  # type: ignore[arg-type]
     return deps, factory, pool
 
 
@@ -66,7 +66,7 @@ def _external_template(name: str = "pi-coder") -> AgentTemplate:
     return AgentTemplate(
         spec=SubagentSpec(
             agent_name=name,
-            execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            execution_strategy=ExecutionStrategyKind.EXTERNAL,
             provider_kind=ProviderKind.PI,
             max_steps=40,
             roles=["implementer"],
@@ -75,7 +75,7 @@ def _external_template(name: str = "pi-coder") -> AgentTemplate:
 
 
 class TestMaterializeExternalDispatch:
-    """Seam 1 (T5): materialize forwards EXTERNAL_CODING to SubagentExternalCodingBuilder."""
+    """Seam 1 (T5): materialize forwards EXTERNAL to SubagentExternalBuilder."""
 
     @pytest.mark.asyncio
     async def test_dispatches_to_builder_with_external_descriptor(self) -> None:
@@ -91,7 +91,7 @@ class TestMaterializeExternalDispatch:
         kwargs = builder.build.call_args.kwargs
         assert kwargs["spec"] is template.spec
         descriptor = kwargs["descriptor"]
-        assert descriptor.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
+        assert descriptor.execution_strategy == ExecutionStrategyKind.EXTERNAL
         assert descriptor.provider_kind == ProviderKind.PI
         assert descriptor.comm_kind == AgentCommKind.SUBAGENT
         assert descriptor.max_iterations == 40
@@ -149,7 +149,7 @@ class TestMaterializeExternalDispatch:
         template = _external_template()
         parent = SessionIdFactory().create(agent_name="main")
 
-        with pytest.raises(ValueError, match="subagent_external_coding_builder"):
+        with pytest.raises(ValueError, match="subagent_external_builder"):
             await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
 
     @pytest.mark.asyncio

@@ -20,6 +20,7 @@ import type {
   ApprovalConfig,
   ContextMode,
   MainAgentNode,
+  MemoryToggle,
   PoolSummary,
   PoolTree,
   PromptSummary,
@@ -86,13 +87,13 @@ const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
 const normalizeTree = (tree: PoolTree): PoolTree => {
   let changed = false;
   // Normalize main
-  const mainNormalized = tree.main.execution_strategy === "external_coding"
+  const mainNormalized = tree.main.execution_strategy === "external"
     ? selectProvider(tree.main.provider_kind)
     : tree.main.provider_kind;
   if (mainNormalized !== tree.main.provider_kind) changed = true;
   // Normalize subagents
   const subagents = tree.subagents.map((s) => {
-    if (s.execution_strategy !== "external_coding") return s;
+    if (s.execution_strategy !== "external") return s;
     const normalized = selectProvider(s.provider_kind);
     if (normalized === s.provider_kind) return s;
     changed = true;
@@ -119,7 +120,7 @@ const SYSTEM_PROMPT_MODE_HINT_KEY: Record<SystemPromptMode, MessageKey> = {
 };
 const FORK_MAX_DEFAULT = 80;
 const FORK_MAX_MAX = 100;
-const SUPPLEMENTS = ["ast_grep", "todo"] as const;
+const SUPPLEMENTS = ["ast_grep", "todo", "aci"] as const;
 
 // Seven preset AgentRole values (mirror modex_agent.core.constants.AgentRole).
 // Custom strings are also allowed — the backend stores list[str] verbatim.
@@ -355,9 +356,9 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel, onNavigateTo
     return found?.main_agent_name ?? name;
   };
 
-  const isExternal = form.main.execution_strategy === "external_coding";
+  const isExternal = form.main.execution_strategy === "external";
   const effectiveStrategy: ImplementationChoice = isExternal
-    ? "external_coding"
+    ? "external"
     : "react";
   const IMPLEMENTATION_OPTIONS = IMPLEMENTATION_DEFS.map((d) => ({
     value: d.value,
@@ -374,7 +375,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel, onNavigateTo
             ...prev,
             main: {
               ...prev.main,
-              execution_strategy: "external_coding",
+              execution_strategy: "external",
               provider_kind: DEFAULT_EXTERNAL_PROVIDER,
             },
             subagents: [],
@@ -399,7 +400,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel, onNavigateTo
   };
 
   const onImplementationChange = (next: ImplementationChoice): void => {
-    if (next === "external_coding") {
+    if (next === "external") {
       if (isExternal) return;
       setConfirmSwitch(true);
       return;
@@ -989,6 +990,13 @@ function MainAgentFields({
   const setApproval = (p: Partial<ApprovalConfig>): void =>
     patch({ approval: { ...approval, ...p } });
 
+  const memory: MemoryToggle = node.memory ?? {
+    archive_enabled: false,
+    core_enabled: false,
+  };
+  const setMemory = (p: Partial<MemoryToggle>): void =>
+    patch({ memory: { ...memory, ...p } });
+
   const writePaths = (approval.tools.write?.allowed_paths ?? []).join("\n");
   const editPaths = (approval.tools.edit?.allowed_paths ?? []).join("\n");
   const setToolPaths = (tool: "write" | "edit", text: string): void => {
@@ -1097,6 +1105,33 @@ function MainAgentFields({
         )}
       </div>
 
+      {/* Memory sub-section */}
+      <div className="rounded-md border border-hairline bg-hairline-soft p-3">
+        <div className="flex flex-col gap-1.5">
+          <Checkbox
+            label={t("settings.pools.archiveMemory")}
+            checked={memory.archive_enabled}
+            onChange={(e) =>
+              setMemory({
+                archive_enabled: e.target.checked,
+                core_enabled: e.target.checked ? memory.core_enabled : false,
+              })
+            }
+          />
+          <Checkbox
+            label={t("settings.pools.coreMemory")}
+            checked={memory.core_enabled}
+            disabled={!memory.archive_enabled}
+            helper={
+              memory.archive_enabled
+                ? undefined
+                : t("settings.pools.coreRequiresArchive")
+            }
+            onChange={(e) => setMemory({ core_enabled: e.target.checked })}
+          />
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <AgentMcpSelector
           value={node.mcp}
@@ -1165,9 +1200,9 @@ function SubagentCard({
   onNavigateToPrompts: () => void;
 }) {
   const t = useT();
-  const isExternal = node.execution_strategy === "external_coding";
+  const isExternal = node.execution_strategy === "external";
   const effectiveStrategy: ImplementationChoice = isExternal
-    ? "external_coding"
+    ? "external"
     : "react";
   const descriptor = descriptorFor(node.provider_kind);
   const IMPLEMENTATION_OPTIONS = IMPLEMENTATION_DEFS.map((d) => ({
@@ -1179,10 +1214,10 @@ function SubagentCard({
   // stay in form state (hidden, not cleared) so toggling back restores them.
   // No confirm dialog — the switch only affects this subagent.
   const onSubagentImplementationChange = (next: ImplementationChoice): void => {
-    if (next === "external_coding") {
+    if (next === "external") {
       if (isExternal) return;
       onPatch({
-        execution_strategy: "external_coding",
+        execution_strategy: "external",
         provider_kind: DEFAULT_EXTERNAL_PROVIDER,
       });
       return;

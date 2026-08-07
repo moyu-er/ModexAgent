@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from modex_agent.core.scope import MemoryLayerName, RecordScope
+from modex_agent.core.types import MessageRole
 from modex_agent.memory.core.split_stores import MessageStore
 from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
 from modex_agent.persistence import ConnectionManager, DatabaseKind
@@ -73,6 +74,19 @@ class TestMessageStoreConformance:
         loaded = await message_store.load_messages()
         assert [m["id"] for m in loaded] == ["m1", "m2"]
 
+    async def test_append_accepts_every_message_role(self, message_store: MessageStore) -> None:
+        """Every ``MessageRole`` member round-trips on both backends.
+
+        Pins the SQLite ``memory_session_messages.role`` CHECK constraint
+        against the canonical enum: the intake writer persists
+        ``system_reminder`` records, and a role missing from the CHECK fails
+        with ``sqlite3.IntegrityError`` at append time.
+        """
+        for index, role in enumerate(MessageRole):
+            await message_store.append_message(msg(f"r{index}", role=str(role)))
+        loaded = await message_store.load_messages()
+        assert [m["role"] for m in loaded] == [str(role) for role in MessageRole]
+
     async def test_get_revision_empty(self, message_store: MessageStore) -> None:
         rev = await message_store.get_revision()
         assert rev.message_count == 0
@@ -108,11 +122,15 @@ class TestMessageStoreConformance:
 
 
 class TestRetainMessages:
-    """``retain_messages`` — only active messages are retained; others removed.
+    """``retain_messages`` — the active set becomes exactly the keep list, in order.
 
-    FILE backend: hard-deletes (gone entirely).
-    SQLite backend: soft-deletes (visible via ``load_all_messages``).
-    Both conform: ``load_messages`` excludes removed messages.
+    Removed rows are not physically deleted:
+    - pruned messages (absent from keep): FILE hard-deletes, SQLite soft-deletes
+      (visible via ``load_all_messages``).
+    - stale copies of kept messages: SQLite marks them ``superseded``
+      (invisible to every read path); FILE rewrites the file wholesale.
+    New keep entries (e.g. a compact summary) are inserted at their position
+    in the keep list on both backends.
     """
 
     async def test_retain_keeps_only_specified(self, message_store: MessageStore) -> None:
@@ -123,6 +141,18 @@ class TestRetainMessages:
         loaded = await message_store.load_messages()
         assert len(loaded) == 1
         assert loaded[0]["id"] == "m2"
+
+    async def test_retain_inserts_new_head_message(self, message_store: MessageStore) -> None:
+        """A keep entry that did not exist (e.g. a compact summary) is inserted
+        at its position in the keep list — the session-cleanup pattern."""
+        await message_store.save_messages([msg("m1"), msg("m2"), msg("m3")])
+        rev = await message_store.get_revision()
+        new_head = {"id": "compact-1", "role": "compact", "content": "summary"}
+        result = await message_store.retain_messages([new_head, msg("m3")], rev)
+        assert result is not None
+        loaded = await message_store.load_messages()
+        assert [m["id"] for m in loaded] == ["compact-1", "m3"]
+        assert loaded[0]["role"] == "compact"
 
     async def test_retain_revision_mismatch_returns_none(self, message_store: MessageStore) -> None:
         await message_store.save_messages([msg("m1")])

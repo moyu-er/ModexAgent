@@ -9,7 +9,7 @@ one strategy class per routing topology.
 
 ## Purpose
 
-Route a `send_to_agent` call from a NORMAL or SUBAGENT sender to its target
+Route a `task` or `send_to_agent` call from a NORMAL or SUBAGENT sender to its target
 agent — intra-pool (star) or cross-pool (peer) — using a single
 `TopologyPolicy.check` gate followed by a flat strategy dispatch. The service
 never creates agent instances; it only constructs sessions, envelopes, and
@@ -50,7 +50,7 @@ routing path, not a topology role.
 | `__init__.py` | Re-exports `AgentCommunicationService` + `AgentSendResult` so existing imports (`from modex_agent.multi_agent.communication import AgentCommunicationService`) resolve unchanged |
 | `service.py` | `AgentCommunicationService` — thin orchestrator. `send_async(target, content, invocation_id, context)` → `_send` → `TopologyPolicy.check` → strategy dispatch → `format_send_ack`. Owns the `_strategies: dict[SendStrategyKind, SendStrategy]` map. Never creates agent instances. |
 | `topology.py` | `TopologyPolicy.check(sender_kind, target, sender_context) -> str | None` — single star-topology enforcement point. Returns error string if forbidden, `None` if allowed. Only constrains SUBAGENT senders. |
-| `result.py` | `AgentSendResult` (frozen dataclass) + `format_send_ack(result) -> str`. The ack text differs for peer sends (`is_peer_send=True`) vs subagent dispatches (includes trace/output paths + invocation_id). |
+| `result.py` | `AgentSendResult` (frozen dataclass) + `format_send_ack(result) -> str`. The ack text differs for peer sends (`is_peer_send=True`) vs subagent dispatches (includes trace path + invocation_id). |
 
 ## Subdirectories
 
@@ -77,7 +77,7 @@ Adding a future strategy = adding a `SendStrategyKind` enum value + a
 
 ## Session Semantics
 
-| Strategy | Session construction | invocation_id in ack | invocation_id in XML | parent_session_id | message_type |
+| Strategy | Session construction | invocation_id in ack | invocation_id in message | parent_session_id | message_type |
 |---|---|---|---|---|---|
 | SubagentDispatch | `create_with_prefix(prefix=invocation_id, parent=sender)` | surfaced | surfaced | set (sender) | `TASK_REQUEST` |
 | ParentReply | reuse `parent_session_id` | hidden (None) | hidden | n/a (reuse) | `AGENT_MESSAGE` |
@@ -96,8 +96,8 @@ Context propagates within the session group as designed behaviour.
 - Strategy dispatch is flat on `bus_ref` + `kind` — do not introduce nested
   if-trees.
 - `send_async` and `_send` require a pre-resolved `CommunicationTarget`
-  (no name-string lookup). The tool (`SendToAgentTool.execute`) does the
-  `store.get(name)` lookup.
+(no name-string lookup). The tool (`TaskDispatchTool.execute` /
+`SendToAgentTool.execute`) does the `store.get(name)` lookup.
 - `CommunicationTarget.bus_ref` is the load-bearing field for cross-pool
   routing: `None` = local (today's behaviour), set = cross-pool.
 - `AgentCommunicationService.__init__` is backward-compatible — new deps
@@ -110,7 +110,7 @@ Context propagates within the session group as designed behaviour.
   (register) → envelope → deliver → build_result. Concrete strategies
   override individual hooks.
 - `AgentSendResult` carries `is_peer_send` so `format_send_ack` can emit
-  the correct ack text (peer sends have no trace/output paths).
+  the correct ack text (peer sends have no trace path).
 
 ## Dependencies
 
@@ -118,7 +118,7 @@ Context propagates within the session group as designed behaviour.
 - `modex_agent.multi_agent.strategies` — `SendStrategy` ABC + concrete strategies
 - `modex_agent.multi_agent.tools` — `CommunicationTarget`, `CommunicationTargetStore`, `resolve_parent_name`
 - `modex_agent.multi_agent.envelope` — `AgentMessageEnvelope`
-- `modex_agent.multi_agent.message_xml` — `build_dispatch_xml`, `build_agent_message`, `build_peer_agent_message`
+- `modex_agent.multi_agent.message_format` — `build_dispatch_message`, `build_agent_comm_message`, `SourceLabel`, `ResultMeta`
 - `modex_agent.multi_agent.bus` — `AgentMessageBus` (delivery target)
 - `modex_agent.multi_agent.address` — `AgentAddress`
 - `modex_agent.core.session_id` — `SessionIdFactory`, `SessionInfo`

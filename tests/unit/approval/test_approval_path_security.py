@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.agents.react.approval import TieredToolApprovalClassifier
+from modex_agent.approval.runtime import TieredToolApprovalClassifier
 from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from modex_agent.approval.constants import ApprovalTier
 from modex_agent.core.agent import AgentContext

@@ -189,9 +189,7 @@ class TestLegacyPoolYmlLoadsPromptNameNone:
         tree = store.read_pool("coding")
         assert tree.subagents[0].prompt_name is None
 
-    def test_legacy_pool_yml_round_trip_does_not_add_prompt_name_null(
-        self, tmp_path: Path
-    ) -> None:
+    def test_legacy_pool_yml_round_trip_does_not_add_prompt_name_null(self, tmp_path: Path) -> None:
         """A legacy config (no prompt_name key) read then written back must
         NOT emit ``prompt_name: null`` to the YAML — the key is omitted
         entirely so the file stays backward-compatible."""
@@ -246,9 +244,7 @@ class TestPromptNamePersistsOnRoundTrip:
         tree = store.read_pool("coding")
         tree = tree.model_copy(
             update={
-                "subagents": [
-                    tree.subagents[0].model_copy(update={"prompt_name": "scout-prompt"})
-                ]
+                "subagents": [tree.subagents[0].model_copy(update={"prompt_name": "scout-prompt"})]
             }
         )
         store.write_pool("coding", tree)
@@ -294,17 +290,13 @@ class TestPoolStoreDefaultPromptSeed:
 
 
 class TestCreatePoolSeedsWithInjectedSeed:
-    def test_create_pool_seeds_main_md_with_injected_seed(
-        self, tmp_path: Path
-    ) -> None:
+    def test_create_pool_seeds_main_md_with_injected_seed(self, tmp_path: Path) -> None:
         store = PoolStore(base_dir=tmp_path, default_prompt_seed="INJECTED SEED TEXT")
         store.create_pool("research")
         md = (tmp_path / "agents" / "research.md").read_text(encoding="utf-8")
         assert md == "INJECTED SEED TEXT"
 
-    def test_create_pool_with_default_empty_seed_writes_empty_md(
-        self, tmp_path: Path
-    ) -> None:
+    def test_create_pool_with_default_empty_seed_writes_empty_md(self, tmp_path: Path) -> None:
         # Framework default is empty string — the bot layer overrides with
         # the real default. Framework-only tests see an empty seed.
         store = PoolStore(base_dir=tmp_path)
@@ -312,9 +304,7 @@ class TestCreatePoolSeedsWithInjectedSeed:
         md = (tmp_path / "agents" / "research.md").read_text(encoding="utf-8")
         assert md == ""
 
-    def test_create_pool_does_not_use_framework_hardcoded_prompt(
-        self, tmp_path: Path
-    ) -> None:
+    def test_create_pool_does_not_use_framework_hardcoded_prompt(self, tmp_path: Path) -> None:
         # The old framework _DEFAULT_MAIN_PROMPT contained "You are an AI
         # assistant." — with the injection in place, a custom seed MUST
         # appear verbatim, NOT the old hardcoded text.
@@ -324,9 +314,7 @@ class TestCreatePoolSeedsWithInjectedSeed:
         assert "You are an AI assistant" not in md
         assert md == "MY CUSTOM SEED"
 
-    def test_seed_missing_md_uses_injected_seed_on_write_pool(
-        self, tmp_path: Path
-    ) -> None:
+    def test_seed_missing_md_uses_injected_seed_on_write_pool(self, tmp_path: Path) -> None:
         # _seed_missing_md (called by write_pool) also uses the injected seed
         # when creating a prompt md for a brand-new subagent.
         _seed_legacy_pool_yml(tmp_path, "coding")
@@ -349,26 +337,20 @@ class TestPoolStoreBackwardCompat:
     """Existing PoolStore callers that don't pass default_prompt_seed continue
     to work — the parameter has a default of ""."""
 
-    def test_pool_store_constructed_without_seed_still_reads(
-        self, tmp_path: Path
-    ) -> None:
+    def test_pool_store_constructed_without_seed_still_reads(self, tmp_path: Path) -> None:
         _seed_legacy_pool_yml(tmp_path, "main")
         store = PoolStore(base_dir=tmp_path)
         tree = store.read_pool("main")
         assert tree.name == "main"
 
-    def test_pool_store_constructed_without_seed_still_lists(
-        self, tmp_path: Path
-    ) -> None:
+    def test_pool_store_constructed_without_seed_still_lists(self, tmp_path: Path) -> None:
         _seed_legacy_pool_yml(tmp_path, "alpha")
         _seed_legacy_pool_yml(tmp_path, "beta")
         store = PoolStore(base_dir=tmp_path)
         names = [s.name for s in store.list_pools()]
         assert sorted(names) == ["alpha", "beta"]
 
-    def test_pool_store_constructed_without_seed_still_writes(
-        self, tmp_path: Path
-    ) -> None:
+    def test_pool_store_constructed_without_seed_still_writes(self, tmp_path: Path) -> None:
         _seed_legacy_pool_yml(tmp_path, "main")
         store = PoolStore(base_dir=tmp_path)
         tree = store.read_pool("main")
@@ -377,9 +359,7 @@ class TestPoolStoreBackwardCompat:
         reread = store.read_pool("main")
         assert reread.name == "main"
 
-    def test_pool_store_constructed_without_seed_still_validates(
-        self, tmp_path: Path
-    ) -> None:
+    def test_pool_store_constructed_without_seed_still_validates(self, tmp_path: Path) -> None:
         _seed_legacy_pool_yml(tmp_path, "main")
         store = PoolStore(base_dir=tmp_path)
         tree = PoolSpec(
@@ -418,18 +398,14 @@ class TestDeletePoolLeavesPromptMd:
         assert md.exists()
         assert md.read_text(encoding="utf-8") == "body for alpha\n"
 
-    def test_delete_pool_raises_unknown_pool_error_when_absent(
-        self, tmp_path: Path
-    ) -> None:
+    def test_delete_pool_raises_unknown_pool_error_when_absent(self, tmp_path: Path) -> None:
         from modex_agent.multi_agent.pool_config.store import UnknownPoolError
 
         store = PoolStore(base_dir=tmp_path)
         with pytest.raises(UnknownPoolError):
             store.delete_pool("nonexistent")
 
-    def test_shared_prompt_md_survives_one_pool_deletion(
-        self, tmp_path: Path
-    ) -> None:
+    def test_shared_prompt_md_survives_one_pool_deletion(self, tmp_path: Path) -> None:
         # Two pools whose main agent is named "shared" — both fall back to
         # agents/shared.md as the system prompt.
         _seed_legacy_pool_yml(tmp_path, "alpha")

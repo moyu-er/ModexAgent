@@ -1,10 +1,12 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-22 -->
+<!-- Updated: 2026-07-28 -->
 
 # builtin hooks
 
 ## Purpose
-Framework-provided hooks covering logging, context tracking, and multi-agent communication.
+Framework-provided hooks covering logging, context tracking, multi-agent communication, environment injection, and loop detection.
+Session-cleanup re-orientation now lives in `memory/cleanup_hooks.py`
+(`TodoReorientationHook`, a `MemoryHook` — not a ReAct `HookRunner` hook).
 Also hosts `control_drain.py`, which despite living under
 `hook/builtin/` actually defines *interceptors* (not hooks) that consume the control
 channel — see the separate table below.
@@ -15,7 +17,9 @@ channel — see the separate table below.
 | `logging.py` | `RunLoggingHook` | after_llm_response, before/after_tool_execution | live | Basic execution logging |
 | `runtime_context.py` | `RuntimeContextHook` | before_turn, before/after_tool_execution | live | Tracks tool calls per session via RuntimeContextManager |
 | `inbox_flush.py` | `InboxFlushHook` | before_turn, before_iteration | live | Flushes inbox messages at turn start |
-| `subagent_auto_send.py` | `SubagentAutoSendHook` | after_turn | live | Auto-forwards to subagents when LLM forgets send_message |
+| `subagent_auto_send.py` | `SubagentAutoSendHook` | after_turn | live | On subagent turn completion, writes the numbered OUTPUT_<n>.md deliverable (hook-owned, not subagent-written) and notifies the parent via the bus (notification truncated ≤300 chars; result metadata carries only the output path) |
+| `env_injection.py` | `NativeEnvInjectionHook` | before_turn | live | Populates `MODEX_*` env contextvars for native agent subprocess tools |
+| `loop_detection.py` | `LoopDetectionHook` | after_llm_response | live | Detects ReAct tool-repeating loops and force-exits the turn (stateless) |
 | `experience_review.py` | `ExperienceReviewAgent` driver | — | live | Background conversation-review agent; spawns its own task. |
 
 ## Non-Hook Files In This Directory
@@ -32,13 +36,14 @@ cancel-drain utility:
 ## Design Rules
 - One hook class per file
 - Each hook inherits from per-point ABCs (BeforeTurnHook, AfterToolExecutionHook, etc.) via multiple inheritance
-- Per-turn state in `ctx.runtime.state` (pool-safe); session-keyed `self._state[sid]` if unavoidable
+- **Hooks MUST be stateless** — see `hook/AGENTS.md` Rule 1. Per-turn state goes in `ctx.runtime.state.custom` via `TurnCustomKey`; the ONLY acceptable instance attributes are immutable configuration injected at construction. Never use `self._state[session_id]` dicts — they leak across the pool's lifetime.
 - Register via `HookRunner.add(HookSpec(hook=MyHook(), on_error=...))`
 
 ## Dependencies
 - `modex_agent.core` -- AgentContext
 - `modex_agent.control` -- ControlChannel, ControlCommandType, ControlScope
-- `modex_agent.interceptor.abc` -- ToolCallInterceptor, LLMStreamInterceptor (control_drain.py only)
+- `modex_agent.interceptor.abc` -- ToolCallInterceptor, LlmStreamInterceptor (control_drain.py only)
 - `modex_agent.hook.abc` -- Hook base ABC + per-point ABC hierarchy
+- `modex_agent.runtime.enums` -- `TurnCustomKey` (typed keys for per-turn `state.custom`)
 
 <!-- MANUAL -->

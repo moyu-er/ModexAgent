@@ -1,4 +1,5 @@
 """InboxPoller — sole between-turn driver; single-flight; lazy materialize; reconcile."""
+
 from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
@@ -13,6 +14,7 @@ class _FakePool:
     poller: sessions_with_pending / get / get_template / consume_inbox /
     peek_inbox / materialize_agent / dispatch_envelope.
     """
+
     def __init__(self, pending_sessions: set[str], instances: dict, templates: dict | None = None):
         self._pending = set(pending_sessions)
         self._instances = instances
@@ -56,7 +58,9 @@ class _FakePool:
 
 @pytest.mark.asyncio
 async def test_poller_starts_turn_for_idle_pending_session():
-    inst = MagicMock(); inst.pipeline = MagicMock(); inst.pipeline.process_message = AsyncMock()
+    inst = MagicMock()
+    inst.pipeline = MagicMock()
+    inst.pipeline.process_message = AsyncMock()
     pool = _FakePool({"inv1.scout"}, {"scout": inst})
     poller = InboxPoller(pool, interval=0.02)
     poller.start()
@@ -67,9 +71,14 @@ async def test_poller_starts_turn_for_idle_pending_session():
 
 @pytest.mark.asyncio
 async def test_poller_skips_busy_session_no_double_spawn():
-    inst = MagicMock(); inst.pipeline = MagicMock()
+    inst = MagicMock()
+    inst.pipeline = MagicMock()
     started = []
-    async def slow(_batch): started.append(1); await asyncio.sleep(1)
+
+    async def slow(_batch):
+        started.append(1)
+        await asyncio.sleep(1)
+
     inst.pipeline.process_message = slow
     pool = _FakePool({"inv1.scout"}, {"scout": inst})
     poller = InboxPoller(pool, interval=0.02)
@@ -82,12 +91,16 @@ async def test_poller_skips_busy_session_no_double_spawn():
 @pytest.mark.asyncio
 async def test_poller_lazy_materializes_missing_instance():
     materialized = {"called": False}
+
     class _T:
         async def materialize(self, parent, inv, deps):
             materialized["called"] = True
-            inst = MagicMock(); inst.pipeline = MagicMock(); inst.pipeline.process_message = AsyncMock()
+            inst = MagicMock()
+            inst.pipeline = MagicMock()
+            inst.pipeline.process_message = AsyncMock()
             pool._instances["scout"] = inst
             return inst
+
     pool = _FakePool({"inv1.scout"}, {}, templates={"scout": _T()})
     poller = InboxPoller(pool, interval=0.02)
     poller.start()
@@ -98,11 +111,16 @@ async def test_poller_lazy_materializes_missing_instance():
 
 @pytest.mark.asyncio
 async def test_poller_reconciles_leaked_done_task():
-    inst = MagicMock(); inst.pipeline = MagicMock(); inst.pipeline.process_message = AsyncMock()
+    inst = MagicMock()
+    inst.pipeline = MagicMock()
+    inst.pipeline.process_message = AsyncMock()
     pool = _FakePool(set(), {"main": inst})
     poller = InboxPoller(pool, interval=0.02)
+
     # inject a done-but-not-popped task (simulates a missed finally)
-    async def _done(): return None
+    async def _done():
+        return None
+
     poller._inflight["stale.main"] = asyncio.create_task(_done())
     await asyncio.sleep(0.01)  # let it finish
     poller._reconcile()
@@ -126,7 +144,9 @@ async def test_materialize_registers_parent_session_id_from_envelope():
 
     class _T:
         async def materialize(self, parent, inv, deps):
-            inst = MagicMock(); inst.pipeline = MagicMock(); inst.pipeline.process_message = AsyncMock()
+            inst = MagicMock()
+            inst.pipeline = MagicMock()
+            inst.pipeline.process_message = AsyncMock()
             pool._instances["scout"] = inst
             return inst
 
@@ -135,6 +155,7 @@ async def test_materialize_registers_parent_session_id_from_envelope():
 
     async def peek_with_parent(sid, limit=1):
         return [MagicMock(parent_session_id="conv123.main")]
+
     pool.peek_inbox = peek_with_parent
 
     poller = InboxPoller(pool, interval=0.02)

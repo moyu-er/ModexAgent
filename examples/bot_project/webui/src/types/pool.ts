@@ -21,6 +21,13 @@ export interface ApprovalConfig {
   tools: Record<string, ApprovalEntry>;
 }
 
+// ─── Memory ──────────────────────────────────────────────────────────────────
+
+export interface MemoryToggle {
+  archive_enabled: boolean;
+  core_enabled: boolean;
+}
+
 // ─── MCP registry entry ──────────────────────────────────────────────────────
 //
 // The backend stores the transport discriminator on disk under the `type` key
@@ -56,7 +63,7 @@ export interface McpServerEntry {
 
 // ─── Pool tree ───────────────────────────────────────────────────────────────
 
-export type ExecutionStrategy = "react" | "single_turn" | "pipeline" | "external_coding";
+export type ExecutionStrategy = "react" | "single_turn" | "pipeline" | "external";
 export type ProviderKind = "pi" | "opencode";
 
 export interface MainAgentNode {
@@ -68,10 +75,12 @@ export interface MainAgentNode {
   tool_preset: ToolPreset;
   tool_supplements: string[];
   approval?: ApprovalConfig | null;
+  /** Memory layer toggles; core memory requires archive memory. */
+  memory?: MemoryToggle;
   mcp: string[];
   /** Execution strategy; backend default is "react". Present on read; omit on write to use the default. */
   execution_strategy?: ExecutionStrategy;
-  /** External coding provider; null when the agent is native (execution_strategy !== "external_coding"). */
+  /** External coding provider; null when the agent is native (execution_strategy !== "external"). */
   provider_kind?: ProviderKind | null;
   /** Agent role tags (T1 data layer). Plain strings — preset AgentRole values or custom strings. */
   roles?: string[];

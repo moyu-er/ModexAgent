@@ -66,7 +66,7 @@ class HybridMemoryStoreRegistry(MemoryStoreRegistry):
                     cursors=structured.cursors,
                     archive=structured.archive,
                 )
-            case MemoryLayerName.SESSION | MemoryLayerName.USER_RETENTION:
+            case MemoryLayerName.SESSION:
                 return self._persistence.create_bundle(
                     record_scope,
                     with_archive=False,

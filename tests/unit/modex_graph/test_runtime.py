@@ -1,9 +1,11 @@
 """GraphRuntime no-op default tests."""
+
 from __future__ import annotations
 
 from helpers import CounterState, make_ctx
 
-from modex_graph import GraphContext, GraphRuntime, Node, NodeResult
+from modex_graph import GraphContext, GraphRuntime, Node
+from modex_graph.integration import IntegratedInput
 
 
 class TestGraphRuntimeNoOp:
@@ -19,8 +21,7 @@ class TestGraphRuntimeNoOp:
     async def test_after_node_no_op(self) -> None:
         runtime = GraphRuntime()
         ctx = make_ctx(CounterState())
-        result = NodeResult()
-        await runtime.after_node(ctx, "test_node", result)
+        await runtime.after_node(ctx, "test_node")
         assert ctx.state.count == 0
 
     async def test_dispatch_hook_no_op(self) -> None:
@@ -135,9 +136,12 @@ class TestGraphRuntimeNoOp:
             def __init__(self, amount: int) -> None:
                 self.amount = amount
 
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
                 ctx.state.count += self.amount
-                return NodeResult()
+                self.deliver(None, None, ctx)
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("a", AddNode(5))

@@ -278,50 +278,6 @@ class CoreMemoryManager(ABC):
         return UserScope()
 
 
-class UserRetentionBuffer(ABC):
-    """Auxiliary memory for pruned unfinished user/agent inputs."""
-
-    @abstractmethod
-    async def append_entries(
-        self,
-        context: MemoryContext,
-        entries: Sequence[Any],
-    ) -> None:
-        pass
-
-    @abstractmethod
-    async def get_entries(self, context: MemoryContext) -> list[Any]:
-        pass
-
-    @abstractmethod
-    async def replace_entries(
-        self,
-        context: MemoryContext,
-        entries: Sequence[Any],
-    ) -> None:
-        pass
-
-    @abstractmethod
-    async def clear(self, context: MemoryContext) -> None:
-        pass
-
-    @abstractmethod
-    async def mark_all_completed(
-        self,
-        context: MemoryContext,
-        assistant_content: str,
-    ) -> None:
-        pass
-
-    @abstractmethod
-    async def upsert_pruned_user(
-        self,
-        context: MemoryContext,
-        entry: Any,
-    ) -> None:
-        pass
-
-
 @dataclass(frozen=True)
 class MemoryLayerSet:
     """Fieldized memory layer ownership for the default tiered system."""
@@ -329,7 +285,6 @@ class MemoryLayerSet:
     session: SessionMemoryManager
     archive: ArchiveMemoryManager | None = None
     core: CoreMemoryManager | None = None
-    user_retention: UserRetentionBuffer | None = None
 
     def with_session(self, manager: SessionMemoryManager) -> MemoryLayerSet:
         return replace(self, session=manager)
@@ -339,9 +294,3 @@ class MemoryLayerSet:
 
     def with_core(self, manager: CoreMemoryManager | None) -> MemoryLayerSet:
         return replace(self, core=manager)
-
-    def with_user_retention(
-        self,
-        manager: UserRetentionBuffer | None,
-    ) -> MemoryLayerSet:
-        return replace(self, user_retention=manager)

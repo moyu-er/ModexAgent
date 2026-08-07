@@ -12,9 +12,7 @@ async def test_stop_closes_web_runner_before_bot_resources() -> None:
     service._session_gc = MagicMock()
     service._session_gc.stop = AsyncMock(side_effect=lambda: order.append("gc"))
     service._web_runner = MagicMock()
-    service._web_runner.cleanup = AsyncMock(
-        side_effect=lambda: order.append("web")
-    )
+    service._web_runner.cleanup = AsyncMock(side_effect=lambda: order.append("web"))
 
     async def stop_bot(_service: BotService) -> None:
         order.append("bot")

@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
@@ -103,9 +103,7 @@ class SendStrategy(ABC):
         self, req: SendRequest, session: SessionInfo, invocation_id: str
     ) -> AgentMessageEnvelope: ...
 
-    async def deliver(
-        self, env: AgentMessageEnvelope, target: CommunicationTarget
-    ) -> str | None:
+    async def deliver(self, env: AgentMessageEnvelope, target: CommunicationTarget) -> str | None:
         """Default delivery: local agent bus or broker fallback.
 
         Subclasses with a different delivery target (e.g. peer-pool bus)
@@ -152,6 +150,13 @@ class SendStrategy(ABC):
 
     # --- shared helpers ---------------------------------------------------
 
+    def _envelope_payload(self, content: str, message_type: str, req: SendRequest) -> dict[str, Any]:
+        """Build the envelope payload dict, including workspace when bound."""
+        payload: dict[str, Any] = {"content": content, "message_type": message_type}
+        if req.context.workspace is not None:
+            payload["workspace"] = str(req.context.workspace)
+        return payload
+
     def _resolve_source(self, req: SendRequest) -> AgentAddress:
         """Resolve effective source address from context, fallback to default."""
         if req.context.session.agent_name:
@@ -175,17 +180,6 @@ class SendStrategy(ABC):
         if self._deps.workspace_path_resolver is None:
             return None
         return self._deps.workspace_path_resolver.runtime_dir()
-
-    def _subagent_output_path(
-        self, target_kind: AgentCommKind | None, session_id: str
-    ) -> Path | None:
-        """Compute subagent OUTPUT.md path for the ack text."""
-        runtime_dir = self._subagent_runtime_dir(target_kind)
-        if runtime_dir is None:
-            return None
-        output_path = runtime_dir / "output" / session_id / "OUTPUT.md"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        return output_path
 
     def _subagent_trace_dir(
         self, target_kind: AgentCommKind | None, session_id: str

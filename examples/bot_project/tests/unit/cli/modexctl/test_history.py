@@ -17,8 +17,8 @@ import os
 from pathlib import Path
 
 import pytest
+from bot.cli.modexctl.app import EXIT_ROUTING, EXIT_USAGE, build_app
 from bot.cli.modexctl.http_client import ControlClientError
-from bot.cli.modexctl.main import EXIT_ROUTING, EXIT_USAGE, build_app
 from bot.control.models import (
     HistoryMessage,
     HistoryRequest,
@@ -30,7 +30,7 @@ from typer.testing import CliRunner
 # Resolve the actual module object (not the re-exported ``main`` function
 # that ``bot.cli.modexctl.__init__`` shadows). Needed for monkeypatching
 # ``fetch_history`` on the module's namespace.
-main_module = importlib.import_module("bot.cli.modexctl.main")
+main_module = importlib.import_module("bot.cli.modexctl.commands.history")
 
 # ---------------------------------------------------------------------------
 # Env fixtures
@@ -145,15 +145,16 @@ class TestHistoryHappyPath:
         )
         assert result.exit_code == 0
         lines = result.stdout.splitlines()
-        assert len(lines) == 2
+        assert len(lines) == 3
+        assert lines[0].startswith("# ")
 
-        first = json.loads(lines[0])
+        first = json.loads(lines[1])
         assert first["role"] == "assistant"
         assert first["content"] == "Hello world"
         assert first["message_id"] == "m2"
         assert first["created_at"] == "2000"
 
-        second = json.loads(lines[1])
+        second = json.loads(lines[2])
         assert second["role"] == "user"
         assert second["message_id"] == "m1"
 
@@ -250,7 +251,9 @@ class TestHistoryHappyPath:
             ["history", "--agent", "coder", "--invocation-id", "inv456"],
         )
         assert result.exit_code == 0
-        line = json.loads(result.stdout.strip())
+        lines = result.stdout.splitlines()
+        data_line = next(ln for ln in lines if not ln.startswith("# "))
+        line = json.loads(data_line)
         allowed = {
             "role",
             "content",
@@ -542,7 +545,7 @@ def _sample_transcript_result(limit: int = 3) -> HistoryResult:
         session_id="inv456.coder",
         agent_name="coder",
         pool="default",
-        execution_strategy="external_coding",
+        execution_strategy="external",
         items=[
             HistoryMessage(
                 role="assistant",
@@ -581,9 +584,10 @@ class TestTranscriptHistoryCLI:
         )
         assert result.exit_code == 0
         lines = result.stdout.splitlines()
-        assert len(lines) == 3
+        assert len(lines) == 4
+        assert lines[0].startswith("# ")
 
-        first = json.loads(lines[0])
+        first = json.loads(lines[1])
         assert first["role"] == "assistant"
         assert first["content"] == "World"
         assert "message_id" not in first
@@ -591,7 +595,7 @@ class TestTranscriptHistoryCLI:
         assert "tool_calls" not in first
         assert "name" not in first
 
-        tool_line = json.loads(lines[2])
+        tool_line = json.loads(lines[3])
         assert tool_line["role"] == "tool"
         assert tool_line["content"] == "file contents"
         assert tool_line["tool_name"] == "read_file"
@@ -623,6 +627,8 @@ class TestTranscriptHistoryCLI:
             "message_id",
         }
         for line in result.stdout.splitlines():
+            if line.startswith("# "):
+                continue
             parsed = json.loads(line)
             assert set(parsed.keys()) <= allowed
 
@@ -637,7 +643,7 @@ class TestTranscriptHistoryCLI:
             session_id="inv456.coder",
             agent_name="coder",
             pool="default",
-            execution_strategy="external_coding",
+            execution_strategy="external",
             items=[],
             effective_limit=3,
         )

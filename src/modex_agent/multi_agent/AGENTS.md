@@ -29,12 +29,12 @@ There is exactly **one** consumer per session at a time, enforced structurally
 (not by a lock):
 
 ```
-writer (agent / human DM / approval)
-   └─ bus.send(session_id, envelope)            # PERSISTS only — no in-process wakeup
+writer (agent / human DM / approval / CLI modexctl send / external reply)
+   └─ bus.send(session_id, envelope)            # PERSISTS + signal_wakeup() → poller Event
         ↓
    inbox[session_id]  (per-pool, on-disk, FIFO + dedup)
         ↓
-InboxPoller tick (~200ms, sole between-turn driver)
+InboxPoller (event-driven: Event.wait with ~interval tick fallback)
    ├─ session busy (inflight[sid] not done)?   → skip; fold-in handles mid-turn
    ├─ instance live?                           → _run_turn(sid, instance)
    └─ instance missing + template exists?      → _materialize_then_turn(sid, tmpl)
@@ -52,7 +52,7 @@ InboxPoller tick (~200ms, sole between-turn driver)
 - **Fold-in**: a turn already running consumes its own inbox on each iteration
   via `InboxFlushHook.before_iteration` (`only_types=AGENT_TYPES`) — a
   **batch pull** that appends each new inter-agent message to the running
-  turn's history as a separate `role=AGENT` record. This is where multi-message
+  turn's history as a separate `role=SYSTEM_REMINDER` record. This is where multi-message
   batching lives (mid-turn), not between turns. It does NOT consume
   `external_input` — a human DM is a separate turn (P6).
 - **Materialize-on-first-turn**: a subagent instance is built lazily by the
@@ -81,11 +81,11 @@ per invocation by pipeline providers, so reuse is safe.)
 | File | Description |
 |------|-------------|
 | `pool.py` | `AgentPool` — resident-agent registry, the poll-driven inbox surface (`submit_input`, `consume_inbox`, `sessions_with_pending`, `dispatch_envelope`, `recover_parent_session`), session/task eviction. `input_message_from_dispatch_envelope` reconstructs the full `InputMessage` (content + `approval_decision` + `attachments_resolved`) from a broker envelope. |
-| `inbox_poller.py` | `InboxPoller` — the sole between-turn driver (one per pool, ~200ms tick). Owns `inflight: dict[sid, Task]` single-flight + `reconcile_inflight`; delegates per-envelope turn execution to `pool.dispatch_envelope`. |
-| `bus.py` | `AgentMessageBus` ABC + `LocalAgentMessageBus` — persist + (cross-process only) broker `_inbox_wakeup`. `consume(only_types=)` for fold-in filtering; `sessions_with_pending()` for poller enumeration. No in-process signal/event. |
+| `inbox_poller.py` | `InboxPoller` — the sole between-turn driver (one per pool). Event-driven via a pool-level `asyncio.Event` signalled from `LocalAgentMessageBus.send` (the single convergence point of all inbox writers), with an `interval`-cadence tick as a defensive fallback for writers that bypass the bus. Owns `inflight: dict[sid, Task]` single-flight + `reconcile_inflight`; delegates per-envelope turn execution to `pool.dispatch_envelope`. |
+| `bus.py` | `AgentMessageBus` ABC + `LocalAgentMessageBus` — persist + signal the pool's `InboxPoller` via `signal_wakeup()` (in-process `Event.set`, the single convergence point for every inbox writer: user input, agent-to-agent, CLI `modexctl send`, external peer reply). `consume(only_types=)` for fold-in filtering; `sessions_with_pending()` for poller enumeration. The poller is wired post-construction via `set_poller()`; until then `send` is persist-only and the poller's tick fallback covers delivery. |
 | `communication/` (package) | `AgentCommunicationService` — pure router. Strategy-dispatched (ADR-0019): `_send` resolves target → `TopologyPolicy.check` → one of three `SendStrategy` subclasses (`SubagentDispatchStrategy`, `ParentReplyStrategy`, `PeerNormalStrategy`) handles the full vertical slice (session construction, invocation_id semantics, envelope shape, delivery, result). See `communication/AGENTS.md` for the strategy contract. |
 | `comm_kind.py` | `AgentCommKind` — `NORMAL` / `SUBAGENT` topology kind. |
-| `tools.py` | `SendToAgentTool` (the single LLM-facing comm tool), `CommunicationTargetStore`, `CommunicationTarget` (carries `pool_name` + `bus_ref` for cross-pool routing per ADR-0019). |
+| `tools.py` | `TaskDispatchTool` (main agent's sole external communication tool: subagent dispatch + continuation + peer communication, fused from the former `SendToAgentTool` + `TaskDispatchTool` split) + `SendToAgentTool` (subagent→parent consultation only) + `CommunicationTargetStore`, `CommunicationTarget` (carries `pool_name` + `bus_ref` for cross-pool routing per ADR-0019). Both tools converge on `AgentCommunicationService.send_async()`. |
 | `template.py` | `AgentTemplate` — subagent preset + the **only** construction path (`materialize`). Builds the tool manager, session-only memory, subagent hooks; wires per-invocation APPEND/FORK prompt providers. |
 | `template_registry.py` | `AgentTemplateRegistry` — scans/loads per-pool subagent templates (`config/pools/<pool>/templates/*.yml`). |
 | `materialize_deps.py` | `AgentMaterializeDeps` — frozen value object of construction deps (factory, broker, pool, path resolver, fork builder, …); replaces ~30 scattered ctor params. |
@@ -94,9 +94,9 @@ per invocation by pipeline providers, so reuse is safe.)
 | `router.py` | `DefaultMeshRouter` — session identity resolved via `InputMessage.session` (no string parsing). |
 | `envelope.py` | `AgentMessageEnvelope` — source, target, session id, agent_session_id, invocation id, message_type, payload. |
 | `descriptor.py` | `AgentDescriptor`, `AgentInstance`, `AgentLLMConfig`, `ContextGovernanceConfig` — agent metadata + `comm_kind`. All are frozen Pydantic `BaseModel` (B5B). |
-| `factory.py` | Agent instance factory — assembles `AgentInstance` via `create_agent()`. `DefaultAgentFactory` builds react agents (provider + tools + skill + TurnContextBuilder + ApprovalResumer/ApprovalRenderer + ReActTurnRunner + hooks + pipeline). `ExternalCodingAwareFactory` (in `examples/bot_project/bot/service/external_coding_strategy.py`) overrides `create_agent` to build only 6 objects (ExternalCodingAgent + broker I/O + emitter + ExternalTurnRunner + pipeline, no hooks/provider/tools) — external_coding pools boot without `model.yml`. `_get_builder` dispatch (runtime agent-construction, not assembly branching) is retained per ADR-0025 D5 deviations. |
+| `factory.py` | Agent instance factory — assembles `AgentInstance` via `create_agent()`. `DefaultAgentFactory` builds react agents (provider + tools + skill + TurnContextBuilder + ApprovalResumer/ApprovalRenderer + ReActTurnRunner + hooks + pipeline). `ExternalAwareFactory` (in `examples/bot_project/bot/service/external_strategy.py`) overrides `create_agent` to build only 6 objects (ExternalAgent + broker I/O + emitter + ExternalTurnRunner + pipeline, no hooks/provider/tools) — external pools boot without `model.yml`. `_get_builder` dispatch (runtime agent-construction, not assembly branching) is retained per ADR-0025 D5 deviations. |
 | `subagent_validator.py` | Framework-layer star-topology enforcement at registration. |
-| `message_xml.py` | XML message builders — `build_agent_message` (subagent dispatch / parent reply), `build_peer_agent_message` (cross-pool peer with `<reply_contract>`), `build_agent_result` (hook-generated turn result), and `build_dispatch_xml` (single convergence point for the "target is external → peer format" rule, delegated to by `SubagentDispatchStrategy` and `ParentReplyStrategy`). The `target_execution_strategy == EXTERNAL_CODING` branch in `build_dispatch_xml` is a runtime per-target site retained per ADR-0025 D5 deviations, same category as `peer_normal.py`. |
+| `message_format.py` | Unified markdown message builder — `build_agent_comm_message` (single builder for all agent-facing message markdown, selected by `source_label` + optional `result` + optional `reply_contract`), `build_dispatch_message` (convergence wrapper for subagent/parent dispatch that never injects a reply contract — replies are auto-delivered by `SubagentAutoSendHook`, delegated to by `SubagentDispatchStrategy` and `ParentReplyStrategy`), `ResultMeta` (frozen Pydantic model for hook-generated result metadata; carries `output_path` from the hook (the status enum was removed)), and `SourceLabel`/`ResultStatus` StrEnums. |
 | `address.py` / `state.py` / `registry.py` | Agent addressing types (`AgentAddress` is a Pydantic `BaseModel` subclass of `Address`, B5B), state enums, registry ABC. |
 
 ## Subdirectories
@@ -118,14 +118,23 @@ per invocation by pipeline providers, so reuse is safe.)
   **session group** (A→B creates `convA.mainB`; B→A reply lands on
   `convA.mainA`). No fresh `invocation_id` is minted; the peer session is a root
   session (`parent_session_id=null`) — peer agents are equals, not parent/child.
-- `send_to_agent(target_agent, content, invocation_id?)` is the single
-  LLM-facing comm tool. `SendToAgentTool.execute` resolves the target by name
-  from `CommunicationTargetStore` and dispatches via
-  `AgentCommunicationService.send_async`. The service runs `TopologyPolicy.check`
-  (single star-topology enforcement point) then delegates to one of three
-  `SendStrategy` subclasses based on the target's routing kind. It never creates
-  an agent instance — the poller materializes lazily.
-  - `invocation_id` empty → mint a new subagent task session (cold-start; the
+- Two LLM-facing tools, both converging on `AgentCommunicationService.send_async`:
+  - `task(target_agent, content, invocation_id?)` — the **main agent's sole
+    external communication tool** (fused from the former `SendToAgentTool` +
+    `TaskDispatchTool` split). Dispatches new subagent tasks (omit
+    `invocation_id`), continues existing subagent sessions (pass
+    `invocation_id`), and sends peer messages (NORMAL targets —
+    `invocation_id` ignored). Only registered for main agents. Dynamic
+    description with distinct peer/subagent sections guides the LLM to
+    construct high-quality, self-contained task prompts.
+  - `send_to_agent(target_agent, content, invocation_id?)` — **subagent-only**
+    tool for child→parent consultation. `SendToAgentTool.execute` resolves the
+    target by name from `CommunicationTargetStore` and dispatches via
+    `AgentCommunicationService.send_async`. The service runs `TopologyPolicy.check`
+    (single star-topology enforcement point) then delegates to one of three
+    `SendStrategy` subclasses based on the target's routing kind. It never creates
+    an agent instance — the poller materializes lazily.
+  - `invocation_id` omitted → mint a new subagent task session (cold-start; the
     poller materializes on first turn).
   - `invocation_id` concrete → continue that subagent session verbatim.
   - `target.bus_ref` set → cross-pool peer send (ADR-0019): delivers directly to
@@ -135,11 +144,11 @@ per invocation by pipeline providers, so reuse is safe.)
     only target its own parent; subagent→subagent is rejected.
 - **The subagent reply path converges on the same bus.** `SubagentAutoSendHook`
   (`hook/builtin/`) fires on `FINALLY_TURN` and calls `bus.send(parent_sid,
-  agent_result envelope)` — the same carrier as `send_to_agent`. It does not
+  agent_result envelope)` — the same carrier as `task`/`send_to_agent`. It does not
   hand-build envelopes or call a parallel mechanism. The notification carries
-  absolute, workspace-rooted trace/output paths (parity with the `send_to_agent`
+  absolute, workspace-rooted trace/output paths (parity with the `task`
   ack). **Note**: this hook fires ONLY for subagent turns — peer (NORMAL) agents
-  do NOT auto-notify; they must explicitly call `send_to_agent` to reply
+  do NOT auto-notify; they must explicitly call `task` to reply
   (ADR-0019 deferred #1).
 - Human DM / WebUI / approval decisions enter via `pool.submit_input(session_id,
   InputMessage)`, which serializes the full `InputMessage` (via
@@ -154,9 +163,11 @@ removed. Do not add compatibility wrappers.
 
 Each pool owns its own `InboxMQ` (own storage dir
 `<workspace_data>/inbox/<pool_name>/`), `LocalAgentMessageBus`, and
-`InboxPoller`. The `MessageBroker` stays workspace/bot-level as the
-cross-process `_inbox_wakeup` fallback (single-process deployments are
-poller-only). `session_id` is unique within a pool, so the inbox keys by bare
+`InboxPoller`. The `MessageBroker` stays workspace/bot-level for cross-pool
+peer routing (ADR-0019 `bus_ref`); it no longer carries an `_inbox_wakeup`
+signal — between-turn wakeup is now an in-process `asyncio.Event` on the
+poller, signalled from `LocalAgentMessageBus.send`.
+`session_id` is unique within a pool, so the inbox keys by bare
 `session_id`; `(workspace, pool)` isolation is structural (a pool belongs to
 exactly one workspace).
 

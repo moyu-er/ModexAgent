@@ -5,8 +5,10 @@ as the innermost mandatory interceptor). These tests exercise the executor's
 interceptor composition and the timeout interceptor's behaviour.
 """
 
+from __future__ import annotations
+
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -24,6 +26,9 @@ from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.core.tool_manager import InMemoryToolManager
+
+if TYPE_CHECKING:
+    from modex_agent.core.capabilities import ModelCapabilities
 
 
 def _make_ctx(*, tool_manager=None, **kw) -> AgentContext:
@@ -51,10 +56,15 @@ class _RecordingToolManager:
     def __init__(self, tool_coro) -> None:
         self._tool_coro = tool_coro
 
-    async def execute(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+    async def execute(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        ctx: Any = None,
+    ) -> ToolResult:
         return await self._tool_coro(tool_name, arguments)
 
-    def get_tool_descriptions(self) -> list[str]:
+    def get_tool_descriptions(self, caps: ModelCapabilities | None = None) -> list[str]:
         return []
 
 
@@ -71,7 +81,7 @@ class TestToolExecutorInterceptorWrap:
     @pytest.mark.asyncio
     async def test_interceptor_present_wraps_and_runs_tool(self):
         async def real_tool(tool_name, arguments):
-            return ToolResult(tool_name=tool_name, result="ran")
+            return ToolResult.from_text(tool_name, "ran")
 
         ctx = _make_ctx(tool_manager=_RecordingToolManager(real_tool))
         chain = _RecordingInterceptorChain()
@@ -86,7 +96,7 @@ class TestToolExecutorInterceptorWrap:
         wrapped_ctx, call_ctx = chain.calls[0]
         assert wrapped_ctx is ctx
         assert call_ctx.tool_name == "echo"
-        assert result.result == "ran"
+        assert result.message_content() == "ran"
         assert result.error is None
 
 
@@ -94,7 +104,7 @@ class TestToolExecutorRawExecution:
     @pytest.mark.asyncio
     async def test_no_interceptors_runs_with_timeout(self):
         async def real_tool(tool_name, arguments):
-            return ToolResult(tool_name=tool_name, result="ok")
+            return ToolResult.from_text(tool_name, "ok")
 
         ctx = _make_ctx(tool_manager=_RecordingToolManager(real_tool))
 
@@ -102,7 +112,7 @@ class TestToolExecutorRawExecution:
         tc = ToolCall(tool_name="echo", arguments={}, call_id="c1")
 
         result = await executor.execute(tc, ctx)
-        assert result.result == "ok"
+        assert result.message_content() == "ok"
         assert result.error is None
 
 
@@ -111,7 +121,7 @@ class TestToolExecutorTimeout:
     async def test_slow_tool_returns_timeout_xml_result(self):
         async def slow_tool(tool_name, arguments):
             await asyncio.sleep(0.5)
-            return ToolResult(tool_name=tool_name, result="done")
+            return ToolResult.from_text(tool_name, "done")
 
         ctx = _make_ctx(tool_manager=_RecordingToolManager(slow_tool))
         ctx.runtime.services.safety = RuntimeSafetyPolicy(
@@ -125,15 +135,15 @@ class TestToolExecutorTimeout:
 
         assert result.error is not None
         assert "timed out" in result.error.lower()
-        assert result.result is not None
-        assert "<tool_timeout>" in str(result.result)
+        assert result.message_content()
+        assert "<tool_timeout>" in result.message_content()
         assert result.content_format == ContentFormat.XML
 
     @pytest.mark.asyncio
     async def test_safety_present_overrides_default(self):
         async def slow_tool(tool_name, arguments):
             await asyncio.sleep(0.5)
-            return ToolResult(tool_name=tool_name, result="done")
+            return ToolResult.from_text(tool_name, "done")
 
         ctx = _make_ctx(tool_manager=_RecordingToolManager(slow_tool))
         ctx.runtime.services.safety = RuntimeSafetyPolicy(
@@ -150,7 +160,7 @@ class TestToolExecutorTimeout:
     @pytest.mark.asyncio
     async def test_fast_tool_completes_under_default_timeout(self):
         async def fast_tool(tool_name, arguments):
-            return ToolResult(tool_name=tool_name, result="ok")
+            return ToolResult.from_text(tool_name, "ok")
 
         ctx = _make_ctx(tool_manager=_RecordingToolManager(fast_tool))
 
@@ -158,7 +168,7 @@ class TestToolExecutorTimeout:
         tc = ToolCall(tool_name="fast_tool", arguments={}, call_id="c1")
 
         result = await executor.execute(tc, ctx)
-        assert result.result == "ok"
+        assert result.message_content() == "ok"
         assert result.error is None
 
     @pytest.mark.asyncio
@@ -166,8 +176,8 @@ class TestToolExecutorTimeout:
         async def slow_then_fast(tool_name, arguments):
             if tool_name == "slow":
                 await asyncio.sleep(0.3)
-                return ToolResult(tool_name=tool_name, result="slow_done")
-            return ToolResult(tool_name=tool_name, result="fast_done")
+                return ToolResult.from_text(tool_name, "slow_done")
+            return ToolResult.from_text(tool_name, "fast_done")
 
         ctx = _make_ctx(tool_manager=_RecordingToolManager(slow_then_fast))
         ctx.runtime.services.safety = RuntimeSafetyPolicy(
@@ -179,9 +189,9 @@ class TestToolExecutorTimeout:
         tc1 = ToolCall(tool_name="slow", arguments={}, call_id="c1")
         result1 = await executor.execute(tc1, ctx)
         assert result1.error is not None
-        assert "<tool_timeout>" in str(result1.result)
+        assert "<tool_timeout>" in result1.message_content()
 
         tc2 = ToolCall(tool_name="fast", arguments={}, call_id="c2")
         result2 = await executor.execute(tc2, ctx)
-        assert result2.result == "fast_done"
+        assert result2.message_content() == "fast_done"
         assert result2.error is None

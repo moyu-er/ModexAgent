@@ -7,7 +7,7 @@ Related ADR: ADR-0033 (`docs/adr/0033-generalized-graph-engine.md`)
 
 As a framework developer, I find that the current graph engine is
 nominally generic but in practice only serves ReAct. Other agents bypass
-it entirely (`ExternalCodingAgent` drives a subprocess; the deprecated
+it entirely (`ExternalAgent` drives a subprocess; the deprecated
 `SummarizerAgent` calls a provider directly). The engine's types are
 coupled to ReAct concepts (`AgentContext` leaks into `Node.execute`),
 its nodes are god objects that inline hook dispatch / control drain /
@@ -255,7 +255,7 @@ fan-out, subgraph nesting, graph-of-graphs) without node-code changes.
     preserved by construction — the dispatch sites are node-controlled
     and identical before and after migration, eliminating the need for
     a hook timing parity test.
-52. As a ReAct maintainer, I want `ExternalCodingAgent` to remain
+52. As a ReAct maintainer, I want `ExternalAgent` to remain
     unchanged (not migrated to the graph), so that the subprocess
     streaming harness is not forced into a graph shape it doesn't fit.
 53. As a ReAct maintainer, I want `ApprovalTransaction` /
@@ -662,7 +662,7 @@ tests (ADR-0025 used this pattern to enforce no
   in `modex_graph/examples/` is NOT required for Phase-a merge. The
   D12 capability checklist is the design target; the example is
   deferred.
-- **`ExternalCodingAgent` migration**: `ExternalCodingAgent` remains a
+- **`ExternalAgent` migration**: `ExternalAgent` remains a
   subprocess streaming harness, NOT migrated to the graph engine. Its
   `ExecutionStrategy` / `TurnRunner` ABCs (ADR-0025) are unchanged.
 - **`SummarizerAgent` removal**: tracked separately (ADR-0033 D10),
@@ -687,7 +687,7 @@ tests (ADR-0025 used this pattern to enforce no
   Engine, Node, NodeResult, Command, Channel, GraphRuntime,
   GraphBubbleUp. The "ReAct Agent" and "Graph" entries were corrected
   to reflect the actual current state (ReAct is one configuration of
-  the graph engine, not the only agent runtime; ExternalCodingAgent
+  the graph engine, not the only agent runtime; ExternalAgent
   does not use the graph).
 - **Highest implementation risk**: Stage 2's snapshot simplification
   (310 → 50 lines via per-channel checkpoint). Mitigation: snapshot

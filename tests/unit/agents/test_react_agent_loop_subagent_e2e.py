@@ -140,9 +140,9 @@ async def test_subagent_loop_routes_to_parent_inbox():
     assert key == "conv123.main"
     assert envelope.message_type == AgentMessageType.AGENT_RESULT
     xml = envelope.payload["content"]
-    assert "<subagent_result>" in xml
+    assert "Message from subagent" in xml
     assert "loop" in xml.lower()
-    assert "<success>false</success>" in xml
+    assert "status: failed" in xml
 
 
 # Import ReActTurnState here to avoid a top-level import cycle in some test runners.

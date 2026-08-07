@@ -9,8 +9,8 @@ params, 80+ line body) unconditionally assemble ReAct-only resources
 (`BotModelProvider`, `terminal_manager`, full `_build_tools`,
 `_build_skill_manager`, `ApprovalRenderer`, `ApprovalResumer`,
 `TurnContextBuilder`, governance, interceptor, hook, control_channel) and
-then short-circuit with `if execution_strategy == EXTERNAL_CODING` to swap
-in external-coding deps. Four such branches exist today. Adding a third
+then short-circuit with `if execution_strategy == EXTERNAL` to swap
+in external deps. Four such branches exist today. Adding a third
 pool shape means editing all four sites plus `pool_builder` and
 `AgentPipeline`.
 
@@ -20,7 +20,7 @@ require a `model.yml` they do not need (else they get a
 
 ## Goal
 
-Pool shape (react vs external_coding vs future) is decided by an explicit
+Pool shape (react vs external vs future) is decided by an explicit
 `ExecutionStrategy` ABC, not by scattered `if` branches. `pool_builder` and
 `AgentPipeline` contain zero strategy-specific branching. Adding a new
 strategy = one new file + one registry registration.
@@ -32,13 +32,13 @@ strategy = one new file + one registry registration.
 - `ExecutionStrategy` ABC + `ExecutionStrategyRegistry` (framework).
 - `TurnRunner` ABC (framework, one method).
 - `PoolAssemblyContext` + `StrategyAssembly` (frozen dataclasses).
-- `ReactExecutionStrategy` + `ExternalCodingExecutionStrategy`.
+- `ReactExecutionStrategy` + `ExternalExecutionStrategy`.
 - `AgentPipeline` slimmed (33 → 13 params, 5 mirrors → 0, ~200 lines).
 - `pool_builder.create_pool` restructured (common + strategy + post, ~150
   lines).
 - Rename `ExecutionStrategy` enum → `ExecutionStrategyKind`.
 - Rename concrete `TurnRunner` → `ReActTurnRunner`.
-- Eliminate four `if execution_strategy == EXTERNAL_CODING` assembly branches
+- Eliminate four `if execution_strategy == EXTERNAL` assembly branches
   (pipeline runner selection, pool_config validation, factory builder
   dispatch). Keep `peer_normal.py` reply-contract branch (runtime routing,
   not assembly).
@@ -108,7 +108,7 @@ Output of `assemble()`. Carries:
 - `provider`, `tool_manager`, `skill_manager`, `mcp_manager`,
   `terminal_manager`, `context_manager`, `dream_engine`, `dream_interval`,
   `command_processor`, `control_channel` (react-only, `None` for
-  external_coding)
+  external)
 - `backend`, `session_map_store` (external-only, `None` for react)
 - `extra_cleanup: tuple[Callable[[], Awaitable[None]], ...] = ()`
 
@@ -132,10 +132,10 @@ See ADR-0025 D5.
 | `src/modex_agent/multi_agent/execution_strategy.py` | `ExecutionStrategy` ABC + `ExecutionStrategyRegistry` + `PoolAssemblyContext` + `StrategyAssembly` + `default_strategy_registry()` |
 | `src/modex_agent/pipeline/turn_runner_abc.py` | `TurnRunner` ABC (1 abstract method + 3 lifecycle + 2 wiring + 12 read-only properties — see ADR-0025 D3 deviations) |
 | `src/modex_agent/agents/react/strategy.py` | `ReactExecutionStrategy` |
-| `src/modex_agent/agents/external_coding/strategy.py` | `ExternalCodingExecutionStrategy` |
+| `src/modex_agent/agents/external/strategy.py` | `ExternalExecutionStrategy` |
 | `tests/unit/multi_agent/test_execution_strategy_registry.py` | Registry tests |
 | `tests/unit/agents/react/test_strategy.py` | React strategy assemble tests |
-| `tests/unit/agents/external_coding/test_strategy.py` | External strategy assemble tests |
+| `tests/unit/agents/external/test_strategy.py` | External strategy assemble tests |
 | `tests/architecture/test_no_execution_strategy_branches.py` | Architecture guard: no `if execution_strategy ==` in pool_builder.create_pool or AgentPipeline.__init__ |
 
 ### Modified files
@@ -144,11 +144,11 @@ See ADR-0025 D5.
 |---|---|
 | `src/modex_agent/pipeline/pipeline.py` | Slim `AgentPipeline.__init__` to 13 params, delete 5 mirrors, delete `if is_external` branch |
 | `src/modex_agent/pipeline/turn_runner.py` | Rename `TurnRunner` → `ReActTurnRunner`, inherit ABC |
-| `src/modex_agent/agents/external_coding/turn_runner.py` | Inherit `TurnRunner` ABC |
-| `examples/bot_project/bot/service/pool_builder.py` | Restructure `create_pool` to common + strategy + post; move `_build_llm_provider`/`_build_tools`/`_build_skill_manager`/`_wire_main_pipeline` into `ReactExecutionStrategy`; move `_build_external_coding_deps` content into `ExternalCodingExecutionStrategy` |
-| `examples/bot_project/bot/service/_external_coding_wiring.py` | Delete superseded functions (or shrink to thin re-exports during Stage 1–3) |
+| `src/modex_agent/agents/external/turn_runner.py` | Inherit `TurnRunner` ABC |
+| `examples/bot_project/bot/service/pool_builder.py` | Restructure `create_pool` to common + strategy + post; move `_build_llm_provider`/`_build_tools`/`_build_skill_manager`/`_wire_main_pipeline` into `ReactExecutionStrategy`; move `_build_external_deps` content into `ExternalExecutionStrategy` |
+| `examples/bot_project/bot/service/_external_wiring.py` | Delete superseded functions (or shrink to thin re-exports during Stage 1–3) |
 | `src/modex_agent/multi_agent/factory.py` | `_get_builder` dispatch **Retained** (runtime agent-construction dispatch, not assembly branching — see ADR-0025 D5 deviations) |
-| `src/modex_agent/multi_agent/pool_config/store.py` | `external_coding` validation branches **Retained** at store level as defense-in-depth (restored after code review; WebUI write-time tests depend on them) |
+| `src/modex_agent/multi_agent/pool_config/store.py` | `external` validation branches **Retained** at store level as defense-in-depth (restored after code review; WebUI write-time tests depend on them) |
 | `src/modex_agent/core/constants.py` | Rename `ExecutionStrategy` enum → `ExecutionStrategyKind` |
 | `examples/bot_project/bot/service/core.py` | Register strategies via `default_strategy_registry()` (or override) in `BotService.initialize()` |
 
@@ -156,7 +156,7 @@ See ADR-0025 D5.
 
 - All existing react pool tests (unit + integration) must pass unchanged
   through Stages 0–4 (behaviour-equivalent refactor).
-- All existing external_coding tests must pass unchanged through Stages 0–4.
+- All existing external tests must pass unchanged through Stages 0–4.
 - New strategy unit tests: each strategy's `assemble()` produces a
   well-typed `StrategyAssembly` with the right `None`/non-`None` fields.
 - New architecture guard test: `pool_builder.create_pool` and
@@ -176,9 +176,9 @@ See ADR-0025 D5.
    flows in via `PoolAssemblyContext`. Need to confirm `_wire_main_pipeline`
    line 1040–1050 has no other dependencies on assembly-time-only values.
 
-3. **`AgentPool` subagent fields for external_coding.** During Stage 2 we
+3. **`AgentPool` subagent fields for external.** During Stage 2 we
    will confirm `_template_registry` and `_materialize_deps` are safe to
-   leave empty (not read by the external_coding path). If read, add
+   leave empty (not read by the external path). If read, add
    `strategy.supports_subagents` guards at the read sites.
 
 4. **`peer_normal.py:54` retention.** Confirmed in-scope to keep (runtime
@@ -191,11 +191,11 @@ See ADR-0025 D5.
 |---|---|---|
 | 0 | New unit tests for ABC + registry pass; existing tests unchanged. | ✅ Passed |
 | 1 | Full react pool test suite passes (unit + integration). External_coding tests unchanged (old path). | ✅ Passed |
-| 2 | Full external_coding test suite passes. React tests unchanged. | ✅ Passed |
+| 2 | Full external test suite passes. React tests unchanged. | ✅ Passed |
 | 3 | `AgentPipeline` unit tests pass with slimmed constructor. Full regression. Mirror setter properties deleted. | ✅ Passed |
-| 4 | Architecture guard test passes (no strategy branches in pool_builder/pipeline). Full regression. `_external_coding_wiring` deleted. | ✅ Passed |
+| 4 | Architecture guard test passes (no strategy branches in pool_builder/pipeline). Full regression. `_external_wiring` deleted. | ✅ Passed |
 | Cleanup 1 | Typed property/setter cleanup — zero `getattr`/`_xxx` on turn_runner/builder/approval. | ✅ Passed |
-| Cleanup 2 | external_coding bloat elimination — boots without `model.yml`, 6 objects (down from ~15). | ✅ Passed |
+| Cleanup 2 | external bloat elimination — boots without `model.yml`, 6 objects (down from ~15). | ✅ Passed |
 
-Final regression: 4332 framework tests + 1066 bot tests + 3 external_coding
+Final regression: 4332 framework tests + 1066 bot tests + 3 external
 integration tests pass. mypy 380 baseline errors (zero new).

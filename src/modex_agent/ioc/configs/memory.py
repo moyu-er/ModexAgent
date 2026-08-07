@@ -21,6 +21,7 @@ class ShortTermConfig(BaseModel):
     max_context_tokens: int = 200000
     max_token_ratio: float = 0.85
     keep_ratio: float = 0.3
+    max_output_tokens: int = 0
 
     @field_validator("max_token_ratio", mode="after")
     @classmethod
@@ -31,19 +32,6 @@ class ShortTermConfig(BaseModel):
         if v > 0.9:
             return 0.9
         return v
-
-
-class UserRetentionConfig(BaseModel):
-    """User retention buffer config — pruned user context tracking.
-
-    This is NOT something users normally configure. Defaults work
-    for nearly all use cases.
-    """
-
-    enabled: bool = True
-    max_entries: int = 5
-    max_user_chars: int = 4000
-    max_assistant_chars: int = 4000
 
 
 class RetentionConfig(BaseModel):
@@ -92,6 +80,7 @@ class SessionConfig(BaseModel):
     max_context_tokens: int = 200000
     max_token_ratio: float = 0.85
     keep_ratio: float = 0.3
+    max_output_tokens: int = 0
 
     @field_validator("max_token_ratio", mode="after")
     @classmethod
@@ -167,8 +156,21 @@ class SummarizerAgentConfig(BaseModel):
     enabled: bool = True
     context_max_chars: int = 20_000
     core_max_chars: int = 3000
-    index_max_chars: int = 200
     max_iterations: int = 50
+
+
+class CompactConfig(BaseModel):
+    """Configuration for session-level compact summary generation.
+
+    Compact is always enabled by default — it is the essential session-level
+    compression mechanism for all agents (main + subagent).
+    """
+
+    enabled: bool = True
+    max_output_tokens: int = 8192
+    max_iterations: int = 3
+    temperature: float = 0.2
+    tool_output_max_chars: int = 2000
 
 
 class MemoryConfig(BaseModel):
@@ -177,23 +179,23 @@ class MemoryConfig(BaseModel):
     None (as an optional field) = memory system not created.
     MemoryConfig() = enabled with all defaults:
       - session layer: on (token-budget compression triggers)
-      - user retention layer: on (internal, transparent)
+      - compact: on (session-level compact summary)
       - archive/core: off
       - governance/lossy: off
     """
 
     # New fields
     session: SessionConfig = Field(default_factory=SessionConfig)
+    compact: CompactConfig = Field(default_factory=CompactConfig)
     archive: ArchiveConfig | None = Field(default_factory=ArchiveConfig)
     core: CoreMemoryConfig | None = None
     dream_engine: DreamEngineConfig | None = None
 
-    # Summarizer-agent wiring (new agent-based archive flow)
+    # Summarizer-agent wiring (archive flow)
     summarizer_agent: SummarizerAgentConfig | None = None
 
     # Existing fields
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
-    user_retention: UserRetentionConfig = Field(default_factory=UserRetentionConfig)
     governance: GovernanceConfig | None = None
     pruned: PrunedCatalogConfig | None = None
 

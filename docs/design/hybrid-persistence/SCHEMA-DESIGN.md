@@ -406,7 +406,7 @@ CREATE TABLE memory_session_messages (
     message_json    TEXT    NOT NULL CHECK (json_valid(message_json)),
     created_at      REAL    NOT NULL,
     state           TEXT    NOT NULL DEFAULT 'normal'
-                    CHECK (state IN ('normal', 'pinned', 'soft_deleted')),
+                    CHECK (state IN ('normal', 'pinned', 'soft_deleted', 'superseded')),
     UNIQUE (scope_key, seq)
 );
 
@@ -416,7 +416,7 @@ CREATE INDEX idx_memory_session_active
 
 CREATE INDEX idx_memory_session_ttl
     ON memory_session_messages (updated_at)
-    WHERE state = 'soft_deleted';
+    WHERE state IN ('soft_deleted', 'superseded');
 
 CREATE INDEX idx_memory_session_state
     ON memory_session_messages (scope_key, state);
@@ -554,7 +554,7 @@ CREATE TABLE workspace_meta (
 | 1 | `WorkspaceRegistryStore` | framework | `workspace/` | ✅ | deepened `RegistryStore`; absorbs `RecentWorkspaces` |
 | 2 | `SessionStore` | framework | `core/` | ✅ | removed `index_dir` param |
 | 3 | `PoolRoutingStore` | framework | `multi_agent/` | ✅ | extracted from `PoolSessionStore` |
-| 4 | `ExternalSessionMapStore` | framework | `agents/external_coding/` | ✅ | extracted from `ExternalSessionStore` |
+| 4 | `ExternalSessionMapStore` | framework | `agents/external/` | ✅ | extracted from `ExternalSessionStore` |
 | 5 | `TurnStateStore` | framework | `runtime/` | ✅ | — |
 | 6 | `TodoStore` | framework | `runtime/` | ✅ | — |
 | 7 | `InboxMQ` | framework | `multi_agent/inbox/` | ✅ | `deliver()` sync method; absorbs `DeliveredIdTracker` |
@@ -596,11 +596,11 @@ CREATE TABLE workspace_meta (
 | Store | Mechanism | Trigger | Implementation |
 |---|---|---|---|
 | Session messages | prune → soft_deleted | `cleanup_session()` | `UPDATE state='soft_deleted'` in same txn as content return |
-| Session messages | TTL physical delete | background job | `DELETE WHERE state='soft_deleted' AND updated_at < ?` |
+| Session messages | retain → superseded (kept rows' stale copies) | `cleanup_session()` | `UPDATE state='superseded'` + re-insert keep list with fresh seqs in one txn |
+| Session messages | TTL physical delete | background job | `DELETE WHERE state IN ('soft_deleted','superseded') AND updated_at < ?` |
 | Archive entries | max_entries / max_age_days | `scan_once()` | `DELETE FROM memory_archive_entries WHERE ...` + delete Markdown dirs |
 | Core Memory | max_memory_chars | `scan_once()` | truncate file content (file system) |
 | Pruned | `prune_oldest(keep_count)` | explicit call | delete oldest JSONL + index entries (file system) |
-| URB | `_enforce_limits` max_entries | each append/upsert | FIFO from list head (KVStore) |
 | Turn snapshots | completed retention | background job | `DELETE WHERE phase IN ('completed','cancelled','error') AND created_at < ?` |
 | Inbox messages | `reap_expired()` | poller tick | `DELETE WHERE state='expired' AND created_at < ?` |
 | Inbox dead_letter | TTL | background job | `DELETE WHERE expired_at < ?` |

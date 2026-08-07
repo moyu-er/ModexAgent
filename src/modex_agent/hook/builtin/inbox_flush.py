@@ -5,11 +5,11 @@
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING
 
-from modex_agent.core.types import MessageRole
+from modex_agent.core.types import ReminderKind
 from modex_agent.hook.abc import BeforeIterationHook, BeforeTurnHook
+from modex_agent.multi_agent.message_format import build_agent_reminder_record
 from modex_agent.multi_agent.message_type import AgentMessageType
 
 if TYPE_CHECKING:
@@ -44,42 +44,36 @@ class InboxFlushHook(BeforeTurnHook, BeforeIterationHook):
     async def before_iteration(self, ctx: AgentContext) -> None:
         await self._flush(ctx.history, str(ctx.session))
 
-    @staticmethod
-    def _sanitize_content(content: str) -> str:
-        """对 inbox 消息内容进行基本安全过滤，防止 prompt injection。"""
-        if not content:
-            return content
-        content = re.sub(
-            r"<\s*system\b[^>]*>.*?<\s*/\s*system\s*>",
-            "",
-            content,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        content = re.sub(r"\n{3,}", "\n\n", content)
-        return content.strip()
-
     async def _flush(self, history: MessageHistory, session_id: str | None) -> bool:
         if not session_id:
             return False
         messages = await self._consumer.consume(
             session_id,
             limit=self._max_messages,
-            only_types=AgentMessageType.fold_eligible(),
+            only_types={message_type.value for message_type in AgentMessageType.fold_eligible()},
         )
         if not messages:
             return False
 
         for msg in messages:
-            safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", msg.source)[:64] or "agent"
-            sanitized = self._sanitize_content(msg.content)
-            await history.append(
+            msg_meta = msg.metadata or {}
+            reminder_kind_raw = msg_meta.get("reminder_kind")
+            reminder_kind = ReminderKind(reminder_kind_raw) if reminder_kind_raw else None
+            invocation_id_raw = msg_meta.get("invocation_id")
+            invocation_id = str(invocation_id_raw) if invocation_id_raw else None
+            append_dict = build_agent_reminder_record(
+                msg.content,
+                source_agent=msg.source,
+                reminder_kind=reminder_kind,
+                message_type=AgentMessageType(msg.message_type),
+                invocation_id=invocation_id,
+            )
+            append_dict.update(
                 {
-                    "role": MessageRole.AGENT,
-                    "source_agent": safe_name,
-                    "content": sanitized,
                     "meta_inbox": True,
                     "meta_source": msg.source,
                     "meta_target_agent": self._agent_name,
                 }
             )
+            await history.append(append_dict)
         return True

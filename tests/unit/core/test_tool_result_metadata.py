@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 
-from modex_agent.core.message import ContentFormat
+from modex_agent.core.message import ContentFormat, TextPart
 from modex_agent.core.tool_manager import InMemoryToolManager, Tool, ToolResult
 
 
@@ -60,7 +60,7 @@ def test_plain_tool_has_no_metadata() -> None:
 def test_terminal_to_message_carries_metadata() -> None:
     res = ToolResult(
         tool_name="term",
-        result="<command_result><output>x</output></command_result>",
+        content=[TextPart(text="<command_result><output>x</output></command_result>")],
         content_format=ContentFormat.XML,
         truncatable_paths=["output", "tui_screen", "cursor_line"],
     )

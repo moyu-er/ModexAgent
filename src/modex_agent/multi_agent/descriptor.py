@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from modex_agent.core.constants import ExecutionStrategyKind, ReasoningEffort
+from modex_agent.core.capabilities import ModelInfo
+from modex_agent.core.constants import ExecutionStrategyKind, ProviderKind, ReasoningEffort
 from modex_agent.core.context import ContextManager
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.ioc.configs.memory import MemoryConfig
@@ -13,7 +14,6 @@ from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
-    from modex_agent.agents.external_coding.paths import ProviderKind
     from modex_agent.pipeline.pipeline import AgentPipeline
 
 
@@ -33,6 +33,13 @@ class AgentLLMConfig(BaseModel):
     top_p: float = 1.0
     reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
     extra_params: dict[str, Any] = Field(default_factory=dict)
+    model_info: ModelInfo | None = None
+    """Active model's identity + capabilities (ADR-0014). Threaded from
+    ``AgentMaterializeDeps.llm_model_info`` → ``AgentTemplate.materialize``
+    → ``descriptor.llm_config.model_info`` → ``DefaultAgentFactory._build_turn_runner``
+    → ``runtime_services.model_info`` so tools (e.g. ReadFileTool image path)
+    can gate multimodal behaviour. ``None`` for framework tests / callers
+    that don't configure capabilities — tools degrade to text-only."""
 
 
 class ContextGovernanceConfig(BaseModel):
@@ -69,11 +76,13 @@ class AgentDescriptor(BaseModel):
     denied_tools: list[str] | None = None
     allowed_skills: list[str] | None = None
     max_iterations: int = 15
-    execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT  # ExecutionStrategyKind member
+    execution_strategy: ExecutionStrategyKind = (
+        ExecutionStrategyKind.REACT
+    )  # ExecutionStrategyKind member
     provider_kind: ProviderKind | None = None
     """External-coding provider discriminator — symmetric with
     ``execution_strategy``. Set iff ``execution_strategy`` is
-    ``EXTERNAL_CODING``; ``None`` for every react/pipeline/single-turn agent.
+    ``EXTERNAL``; ``None`` for every react/pipeline/single-turn agent.
     Mirrors :attr:`modex_agent.multi_agent.pool_config.specs.SubagentSpec.provider_kind`
     and :attr:`MainAgentSpec.provider_kind`; the spec's value is forwarded
     verbatim by ``AgentTemplate.materialize``."""
@@ -128,10 +137,4 @@ class AgentInstance:
             await self.pipeline.agent.stop()
 
 
-# ProviderKind lives behind external_coding.__init__ which imports modules that
-# import from multi_agent — a cycle we can only close once AgentDescriptor and
-# AgentInstance are defined above. Rebuild the schema now so the model is fully
-# resolved before any caller tries to instantiate it.
-from modex_agent.agents.external_coding.paths import ProviderKind  # noqa: E402, F401
 
-AgentDescriptor.model_rebuild()

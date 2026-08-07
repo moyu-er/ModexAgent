@@ -7,7 +7,7 @@ strategy-specific about a single turn: context assembly, approval
 suspend/resume, governance, hooks, interceptors, runtime state (react's
 ``ReActTurnRunner``); or the minimal "set ``current_input``, call
 ``agent.run()``, fire ``on_session_start``/``on_session_end``" path
-(external_coding's ``ExternalTurnRunner``).
+(external's ``ExternalTurnRunner``).
 
 ``AgentPipeline`` holds a ``TurnRunner`` (ABC) reference, never a concrete
 subclass — adding a new strategy never touches the pipeline.
@@ -26,7 +26,7 @@ Concrete runners
 ----------------
 - ``ReActTurnRunner`` — ``pipeline/turn_runner.py`` (renamed from ``TurnRunner``
   in Ticket 2 of the execution-strategy refactor).
-- ``ExternalTurnRunner`` — ``agents/external_coding/turn_runner.py``.
+- ``ExternalTurnRunner`` — ``agents/external/turn_runner.py``.
 
 See ADR-0025 (D3) for the full decision rationale.
 """
@@ -65,13 +65,13 @@ class TurnRunner(ABC):
 
     The primary contract is :meth:`process_locked` (abstract). Concrete runners
     implement the full turn-execution recipe (react: context assembly +
-    approval + graph loop; external_coding: minimal ``agent.run()`` with env
+    approval + graph loop; external: minimal ``agent.run()`` with env
     wiring) inside it.
 
     The ABC also exposes a small set of pipeline-facing seams (methods with
     no-op defaults + read-only properties returning ``None``/``[]``) that the
     pipeline needs for pre-lock dispatch, lifecycle, and late-binding. React
-    runners override them; external_coding runners use the defaults. These are
+    runners override them; external runners use the defaults. These are
     NOT strategy mirrors (ADR-0025 D4) — they are legitimate pipeline→runner
     queries. The strategy's ``assemble()`` configures the runner fully at
     assembly time; post-construction wiring targets the runner's sub-objects
@@ -111,7 +111,7 @@ class TurnRunner(ABC):
         """Clean up per-session resources held by this runner.
 
         Called by ``AgentPipeline.cleanup_session_resources``. Default is a
-        no-op (external_coding has no per-session resources to clean).
+        no-op (external has no per-session resources to clean).
         ReActTurnRunner delegates to ``ApprovalRenderer.cleanup_session``.
         """
         return None
@@ -126,7 +126,7 @@ class TurnRunner(ABC):
 
         Called by ``AgentPipeline._load_pending_approval_snapshot`` for
         pre-lock command dispatch. Returns ``None`` by default
-        (external_coding has no approval flow). ReActTurnRunner delegates to
+        (external has no approval flow). ReActTurnRunner delegates to
         ``ApprovalResumer.load_pending``.
         """
         return None
@@ -157,7 +157,7 @@ class TurnRunner(ABC):
     ) -> None:
         """Set pool-level context after construction (called by pool_builder).
 
-        Default is a no-op (external_coding has no pool context).
+        Default is a no-op (external has no pool context).
         ReActTurnRunner overrides to store ``workspace_manager`` + ``pool_name``
         on itself so per-turn ``_resolve_pool_data`` can resolve the active
         workspace's pool snapshot.

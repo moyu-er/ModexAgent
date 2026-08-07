@@ -91,13 +91,13 @@ class AgentTemplate:
         tool_manager, skill_manager, and session-scoped memory; only the three
         parent-dependent features above are skipped.
 
-        ``EXTERNAL_CODING`` subagents dispatch early to
+        ``EXTERNAL`` subagents dispatch early to
         :meth:`_materialize_external`, skipping react-specific assembly
         (memory, tool_manager, skill_manager, hooks) — the external builder
         owns that assembly. React/pipeline/single-turn subagents take the
         existing path below.
         """
-        if self.spec.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
+        if self.spec.execution_strategy == ExecutionStrategyKind.EXTERNAL:
             return await self._materialize_external(parent_session, invocation_id, deps)
 
         from modex_agent.multi_agent.address import AgentAddress
@@ -124,15 +124,13 @@ class AgentTemplate:
             guard = (
                 "\n\n---\n\n"
                 "## Read-Only Mode\n\n"
-                "You are in read-only mode for project files. Your task is to read, "
-                "search, and analyze — NOT to modify project source code.\n\n"
-                "- Your `write` and `edit` tools are restricted to the output directory "
-                "(for writing OUTPUT.md) — they will NOT work on project paths.\n"
+                "You are in read-only mode. Report your final result via your "
+                "reply text, not by writing files.\n\n"
+                "- Your `write` and `edit` tools are restricted — they will NOT "
+                "work on project paths.\n"
                 "- Your `bash` tool is for reading/searching only. Do NOT use it to "
                 "modify, delete, or create files.\n"
-                "- Do NOT use shell redirection (> / >>) or heredocs to write files.\n"
-                "- **You CAN and MUST use `write` to save OUTPUT.md** — "
-                "the path shown above is in your allowed write directory."
+                "- Do NOT use shell redirection (> / >>) or heredocs to write files."
             )
             system_prompt = system_prompt + guard
 
@@ -200,6 +198,22 @@ class AgentTemplate:
             fork_context_spec=fork_context_spec,
             roles=list(self.spec.roles),
             store_registry=deps.memory_store_registry,
+            comm_kind=AgentCommKind.SUBAGENT,
+        )
+
+        # ── Register TodoReorientationHook on the subagent's memory system ──
+        # Every native subagent needs post-cleanup reorientation: when
+        # ``messages_pruned > 0`` the hook persists a ``<system-reminder>``
+        # so the agent re-orients on its next iteration.  When the subagent
+        # has todo tools (``deps.todo_store`` is wired via
+        # ``tool_supplements``) the reminder includes the active todo list;
+        # otherwise a generic "Continue your work" reminder is written.
+        # ``has_archive`` is always False for subagents (``subagent_memory()``
+        # sets ``archive=None``).
+        from modex_agent.memory.cleanup_hooks import TodoReorientationHook
+
+        subagent_ctx.memory_system.add_cleanup_hook(
+            TodoReorientationHook(todo_store=deps.todo_store, has_archive=False)
         )
 
         tool_manager = await self._build_tool_manager(deps, name, runtime_dir)
@@ -207,10 +221,10 @@ class AgentTemplate:
         context_manager_for_create = subagent_ctx
 
         # ── Hooks ──
-        # ``SubagentAutoSendHook`` and ``MaxIterationNotifyHook`` both descend
-        # from the ``Hook`` ABC and are passed via ``hooks=`` to create_agent,
-        # then re-added to ``pipeline.hook_runner`` below (the ``hooks=`` list
-        # itself is not dispatched by the turn loop). ``InboxFlushHook`` is
+        # ``SubagentAutoSendHook`` descends from the ``Hook`` ABC and is passed
+        # via ``hooks=`` to create_agent, then re-added to
+        # ``pipeline.hook_runner`` below (the ``hooks=`` list itself is not
+        # dispatched by the turn loop). ``InboxFlushHook`` is
         # NOT here: AgentFactory auto-injects it onto ``hook_runner`` for every
         # agent with ``inbox_strategy != "none"`` + a consumer, so fold-in is
         # wired once for both main and subagent at the factory.
@@ -227,15 +241,6 @@ class AgentTemplate:
                     trace_enabled=deps.trace_enabled,
                 )
             )
-        if deps.notification_service is not None:
-            from modex_agent.hook.notification import MaxIterationNotifyHook
-
-            hooks.append(
-                MaxIterationNotifyHook(
-                    notification_service=deps.notification_service,
-                )
-            )
-
         # NativeEnvInjectionHook — populate _modex_env / _current_session_id
         # at BEFORE_TURN so native subagent subprocess tools receive
         # MODEX_* env vars (parity with main-agent wiring in pool_builder.
@@ -244,12 +249,12 @@ class AgentTemplate:
         # targets is the parent only (the subagent's sole routable peer
         # per star topology). session_id / agent_name / parent_session_id
         # are placeholders overridden per-turn from ctx.session inside the
-        # hook. workspace_root mirrors subagent_external_coding_builder.
+        # hook. workspace_root mirrors subagent_external_builder.
         # _resolve_workspace_dir: prefer deps.project_dir, else climb
         # three levels from resolver.runtime_dir()
         # (<workspace>/.modex/runtime_state/<pool>).
-        from modex_agent.agents.external_coding.cli_resolver import resolve_modexctl_bin_dir
-        from modex_agent.agents.external_coding.types import ExternalEnvSpec
+        from modex_agent.agents.external.cli_resolver import resolve_modexctl_bin_dir
+        from modex_agent.agents.external.types import ExternalEnvSpec
         from modex_agent.hook.builtin import NativeEnvInjectionHook
 
         subagent_workspace_root: Path
@@ -266,9 +271,7 @@ class AgentTemplate:
         subagent_pool_map: dict[str, str] = {name: subagent_pool_name}
         if parent_name:
             subagent_pool_map[parent_name] = subagent_pool_name
-        subagent_targets: list[tuple[str, str]] = (
-            [(parent_name, "")] if parent_name else []
-        )
+        subagent_targets: list[tuple[str, str]] = [(parent_name, "")] if parent_name else []
         subagent_env_spec = ExternalEnvSpec(
             workspace_root=subagent_workspace_root,
             inbox_root=subagent_workspace_root / ".modex" / "inbox",
@@ -293,6 +296,7 @@ class AgentTemplate:
                 temperature=deps.llm_temperature,
                 max_output_tokens=deps.llm_max_output_tokens,
                 reasoning_effort=deps.llm_reasoning_effort,
+                model_info=deps.llm_model_info,
             ),
             system_prompt_template=system_prompt,
             max_iterations=self.spec.max_steps,
@@ -354,23 +358,23 @@ class AgentTemplate:
 
         Delegates the full subagent assembly (provider backend, parser,
         session store, env builder, harness, pipeline) to
-        :attr:`AgentMaterializeDeps.subagent_external_coding_builder`. The
+        :attr:`AgentMaterializeDeps.subagent_external_builder`. The
         dispatch ends with the same ``pool.register_resident`` +
         ``on_subagent_created`` calls the react path makes, so parent-child
         wiring is uniform across execution strategies.
 
         Raises ``ValueError`` if no builder is wired — react-only pools do
-        not inject one, and an ``EXTERNAL_CODING`` subagent without a builder
+        not inject one, and an ``EXTERNAL`` subagent without a builder
         is a configuration error the framework cannot recover from.
         """
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.comm_kind import AgentCommKind
         from modex_agent.multi_agent.descriptor import AgentDescriptor
 
-        if deps.subagent_external_coding_builder is None:
+        if deps.subagent_external_builder is None:
             raise ValueError(
-                f"Subagent {self.spec.agent_name!r} requires external_coding "
-                "execution_strategy but no subagent_external_coding_builder is "
+                f"Subagent {self.spec.agent_name!r} requires external "
+                "execution_strategy but no subagent_external_builder is "
                 "wired in AgentMaterializeDeps"
             )
 
@@ -382,10 +386,11 @@ class AgentTemplate:
             comm_kind=AgentCommKind.SUBAGENT,
             max_iterations=self.spec.max_steps,
             system_prompt_template="",
+            safety_policy=deps.safety,
             roles=list(self.spec.roles),
         )
 
-        instance = await deps.subagent_external_coding_builder.build(
+        instance = await deps.subagent_external_builder.build(
             spec=self.spec,
             descriptor=descriptor,
             parent_session=parent_session,
@@ -394,16 +399,10 @@ class AgentTemplate:
         )
 
         # External subagents bypass pool_builder's ``_create_with_emitter``
-        # wrapper, so the framework must inject the emitter factory here.
-        # ``ExternalTurnRunner`` inherits the no-op ``set_pool_context``
-        # default, so only emitter wiring is needed.
-        if (
-            instance.pipeline is not None
-            and deps.emitter_factory is not None
-        ):
-            instance.pipeline._turn_runner.set_emitter_factory(
-                deps.emitter_factory
-            )
+        # wrapper, so the framework injects the emitter factory here via the
+        # shared ``_inject_emitter_and_pool_context`` helper — the same
+        # function ``_create_with_emitter`` calls (architecture rule 15).
+        _inject_emitter_and_pool_context(instance, deps)
 
         await deps.pool.register_resident(descriptor, instance)
 
@@ -421,12 +420,11 @@ class AgentTemplate:
     ) -> InMemoryToolManager:
         """Build the agent tool manager from this template's tool policy.
 
-        Registers, in order: preset tools (with a scoped write dir so
-        READ_ONLY agents can still write OUTPUT.md), additive supplement
-        tools (e.g. ast_grep), per-agent MCP tools resolved from the
-        registry by this template's ``mcp`` selection, and finally a
-        ``SendToAgentTool`` wired against a subagent-scoped communication
-        service (baked default — every subagent can delegate/reply).
+        Registers, in order: preset tools, additive supplement tools (e.g.
+        ast_grep), per-agent MCP tools resolved from the registry by this
+        template's ``mcp`` selection, and finally a ``SendToAgentTool``
+        wired against a subagent-scoped communication service (baked
+        default — every subagent can delegate/reply).
         """
         from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
         from modex_agent.tools.presets import get_preset_tools, get_supplement_tools
@@ -437,16 +435,9 @@ class AgentTemplate:
         def _make_bash() -> SubprocessTool:
             return SubprocessTool(timeout=300)
 
-        # READ_ONLY agents (scout, oracle) get a scoped write dir so they can
-        # still write OUTPUT.md via the restricted write tool.
-        scoped_write_dir: Path | None = None
-        if runtime_dir is not None:
-            scoped_write_dir = runtime_dir / "output"
-
         for tool in get_preset_tools(
             self.spec.tool_preset,
             subprocess_tool_factory=_make_bash,
-            scoped_write_dir=scoped_write_dir,
             root_provider=deps.root_provider,
         ):
             tm.register(tool)
@@ -499,8 +490,9 @@ class AgentTemplate:
         different invokers, so the parent is resolved dynamically at execution
         time from ``current_agent_context`` (see ``resolve_parent_name``). The
         subagent's ``send_to_agent`` is for consultation only — the deliverable
-        goes to OUTPUT.md (enforced elsewhere). Failures are logged and
-        swallowed — a subagent must still materialize without a comm tool.
+        is the subagent's final reply text (forwarded by
+        ``SubagentAutoSendHook``). Failures are logged and swallowed — a
+        subagent must still materialize without a comm tool.
         """
         if deps.pool is None or deps.broker is None or deps.agent_bus is None:
             return
@@ -590,3 +582,23 @@ class AgentTemplate:
         )
         builder = DefaultSkillBuilder(base_path=deps.project_dir)
         return SkillManager(source=skill_source, builder=builder)
+
+
+def _inject_emitter_and_pool_context(
+    instance: AgentInstance,
+    deps: AgentMaterializeDeps,
+) -> None:
+    """Inject emitter factory + pool context into a turn runner post-build.
+
+    Shared convergence point for emitter injection (architecture rule 15).
+    The ``_create_with_emitter`` wrapper in ``pool_builder`` calls the same
+    ``set_emitter_factory`` / ``set_pool_context`` methods on the turn runner;
+    external subagents bypass that wrapper (they go through
+    ``BotSubagentExternalBuilder.build`` → ``assemble_pipeline`` directly), so
+    ``_materialize_external`` calls this function instead.
+    """
+    if instance.pipeline is None:
+        return
+    turn_runner = instance.pipeline._turn_runner
+    if deps.emitter_factory is not None:
+        turn_runner.set_emitter_factory(deps.emitter_factory)

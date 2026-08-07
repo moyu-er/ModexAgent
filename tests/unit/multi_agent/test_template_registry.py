@@ -14,9 +14,7 @@ from modex_agent.tools.presets import ToolPreset, ToolSupplement
 def _write_pool_yml(pool_dir: Path, main_agent_name: str | None = None) -> None:
     pool_dir.mkdir(parents=True, exist_ok=True)
     main = main_agent_name or pool_dir.name
-    (pool_dir / "pool.yml").write_text(
-        f"main_agent_name: {main}\n", encoding="utf-8"
-    )
+    (pool_dir / "pool.yml").write_text(f"main_agent_name: {main}\n", encoding="utf-8")
 
 
 def _write_template(pool_dir: Path, name: str, content: str) -> None:
@@ -82,9 +80,7 @@ def test_registry_injects_default_memory_when_omitted(tmp_path: Path) -> None:
     _write_template(pool_dir, "scout", "agent_name: scout\ndescription: recon\n")
 
     default = MemoryConfig(session=SessionConfig(max_token_ratio=0.9))
-    registry = AgentTemplateRegistry(
-        PoolStore(base_dir=tmp_path), default_subagent_memory=default
-    )
+    registry = AgentTemplateRegistry(PoolStore(base_dir=tmp_path), default_subagent_memory=default)
     tmpl = registry.get_template("main", "scout")
     assert tmpl is not None
     assert tmpl.memory is default  # injected, not None
@@ -164,18 +160,14 @@ experience:
   enabled: true
 """,
     )
-    with caplog.at_level(
-        logging.WARNING, logger="modex_agent.multi_agent.pool_config.store"
-    ):
+    with caplog.at_level(logging.WARNING, logger="modex_agent.multi_agent.pool_config.store"):
         reg = AgentTemplateRegistry(PoolStore(base_dir=tmp_path))
     assert reg.get_template("main", "worker") is None
     assert "approval" in caplog.text
     assert "experience" in caplog.text
 
 
-def test_template_rejects_unknown_keys(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_template_rejects_unknown_keys(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """A typo'd / stale key surfaces and the template is NOT silently accepted.
 
     The per-file validation in PoolStore keeps the registry resilient (other
@@ -190,9 +182,7 @@ def test_template_rejects_unknown_keys(
         "typo",
         "agent_name: typo\nagent_typ: scout\nextra_field: 1\n",
     )
-    with caplog.at_level(
-        logging.WARNING, logger="modex_agent.multi_agent.pool_config.store"
-    ):
+    with caplog.at_level(logging.WARNING, logger="modex_agent.multi_agent.pool_config.store"):
         reg = AgentTemplateRegistry(PoolStore(base_dir=tmp_path))
     # Rejected: not silently accepted.
     assert reg.get_template("main", "typo") is None
@@ -215,8 +205,8 @@ def test_template_rejects_unknown_key_does_not_block_others(tmp_path: Path) -> N
 @pytest.mark.parametrize(
     "tool_supplements,expected",
     [
-        ("[\"ast_grep\"]", [ToolSupplement.AST_GREP]),
-        ("[\"invalid_value\"]", []),
+        ('["ast_grep"]', [ToolSupplement.AST_GREP]),
+        ('["invalid_value"]', []),
     ],
     ids=["valid", "invalid-rejected"],
 )

@@ -175,8 +175,14 @@ async def _build_and_initialize_service(
 
 
 @pytest.mark.asyncio
-async def test_peer_targets_wired_after_assembly(tmp_path: Path) -> None:
+async def test_peer_targets_wired_after_assembly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Two peered pools see each other's main agent as a NORMAL peer target."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "modexctl.bat").write_text("@echo off\n", encoding="utf-8")
+    monkeypatch.setenv("MODEXBOT_BIN_DIR", str(bin_dir))
     _write_minimal_config(tmp_path)
     _write_pool(tmp_path, "alpha", ["beta"])
     _write_pool(tmp_path, "beta", ["alpha"])
@@ -185,13 +191,15 @@ async def test_peer_targets_wired_after_assembly(tmp_path: Path) -> None:
     provider = _ScriptedProvider()
 
     import bot.service.core as core_mod
-    import bot.service.pool_builder as pool_builder_mod
+    import bot.service.react_strategy as react_strategy_mod
 
-    original_llm_provider = pool_builder_mod._build_llm_provider
+    original_llm_provider = react_strategy_mod.ReactExecutionStrategy._build_llm_provider
     original_default_provider = core_mod.BotService._build_default_provider
     original_project_dir = core_mod.BotService._project_dir
 
-    pool_builder_mod._build_llm_provider = lambda *a, **k: provider
+    react_strategy_mod.ReactExecutionStrategy._build_llm_provider = (
+        lambda self, *a, **k: provider
+    )
     core_mod.BotService._build_default_provider = lambda self: provider  # type: ignore[method-assign]
     core_mod.BotService._project_dir = property(lambda self: tmp_path)  # type: ignore[assignment, method-assign]
 
@@ -225,7 +233,7 @@ async def test_peer_targets_wired_after_assembly(tmp_path: Path) -> None:
         beta_names = [t.name for t in pool_beta.target_store.list()]
         assert beta_names.index("beta-helper") < beta_names.index("alpha")
     finally:
-        pool_builder_mod._build_llm_provider = original_llm_provider
+        react_strategy_mod.ReactExecutionStrategy._build_llm_provider = original_llm_provider
         core_mod.BotService._build_default_provider = original_default_provider  # type: ignore[method-assign]
         core_mod.BotService._project_dir = original_project_dir  # type: ignore[method-assign]
         if service is not None and service.workspace_stack is not None:
@@ -234,8 +242,14 @@ async def test_peer_targets_wired_after_assembly(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_duplicate_peer_main_agent_name_raises(tmp_path: Path) -> None:
+async def test_duplicate_peer_main_agent_name_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """When two peers share a main agent name, Phase 2 add() raises ValueError."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "modexctl.bat").write_text("@echo off\n", encoding="utf-8")
+    monkeypatch.setenv("MODEXBOT_BIN_DIR", str(bin_dir))
     _write_minimal_config(tmp_path)
     _write_pool(tmp_path, "alpha", ["beta", "gamma"])
     _write_pool(tmp_path, "beta", ["alpha"])
@@ -246,13 +260,15 @@ async def test_duplicate_peer_main_agent_name_raises(tmp_path: Path) -> None:
     provider = _ScriptedProvider()
 
     import bot.service.core as core_mod
-    import bot.service.pool_builder as pool_builder_mod
+    import bot.service.react_strategy as react_strategy_mod
 
-    original_llm_provider = pool_builder_mod._build_llm_provider
+    original_llm_provider = react_strategy_mod.ReactExecutionStrategy._build_llm_provider
     original_default_provider = core_mod.BotService._build_default_provider
     original_project_dir = core_mod.BotService._project_dir
 
-    pool_builder_mod._build_llm_provider = lambda *a, **k: provider
+    react_strategy_mod.ReactExecutionStrategy._build_llm_provider = (
+        lambda self, *a, **k: provider
+    )
     core_mod.BotService._build_default_provider = lambda self: provider  # type: ignore[method-assign]
     core_mod.BotService._project_dir = property(lambda self: tmp_path)  # type: ignore[assignment, method-assign]
 
@@ -264,7 +280,7 @@ async def test_duplicate_peer_main_agent_name_raises(tmp_path: Path) -> None:
     except ValueError as exc:
         assert "Duplicate communication target name" in str(exc)
     finally:
-        pool_builder_mod._build_llm_provider = original_llm_provider
+        react_strategy_mod.ReactExecutionStrategy._build_llm_provider = original_llm_provider
         core_mod.BotService._build_default_provider = original_default_provider  # type: ignore[method-assign]
         core_mod.BotService._project_dir = original_project_dir  # type: ignore[method-assign]
         if service is not None and service.workspace_stack is not None:

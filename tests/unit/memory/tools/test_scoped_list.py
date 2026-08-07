@@ -19,7 +19,7 @@ async def test_list_dir_success(tmp_path: Path, tool: ScopedListTool) -> None:
 
     result = await tool.execute(path=str(tmp_path))
     assert result.success
-    lines = result.result.split("\n")
+    lines = result.message_content().split("\n")
     assert len(lines) == 2
     # sorted by name: alpha.txt, beta
     assert "file  alpha.txt" in lines[0]
@@ -34,7 +34,7 @@ async def test_list_nested_dir(tmp_path: Path, tool: ScopedListTool) -> None:
 
     result = await tool.execute(path=str(nested))
     assert result.success
-    assert "file  inner.txt" in result.result
+    assert "file  inner.txt" in result.message_content()
 
 
 @pytest.mark.asyncio
@@ -69,7 +69,7 @@ async def test_list_empty_dir(tmp_path: Path, tool: ScopedListTool) -> None:
 
     result = await tool.execute(path=str(empty))
     assert result.success
-    assert "empty" in result.result.lower()
+    assert "empty" in result.message_content().lower()
 
 
 @pytest.mark.asyncio

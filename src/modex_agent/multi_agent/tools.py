@@ -54,6 +54,19 @@ def _current_parent_name() -> str | None:
     return resolve_parent_name(current_agent_context.get(None))
 
 
+def _current_agent_context() -> AgentContext | None:
+    """Return the current ``AgentContext`` from the ``current_agent_context`` contextvar.
+
+    Returns ``None`` when the contextvar is unset. Lazy import keeps the
+    module importable without the contextvar dependency at import time.
+    Shared by ``SendToAgentTool`` and ``TaskDispatchTool`` so both resolve
+    context through one source of truth.
+    """
+    from modex_agent.core.agent import current_agent_context
+
+    return current_agent_context.get(None)
+
+
 @dataclass(frozen=True)
 class CommunicationTarget:
     name: str
@@ -65,6 +78,35 @@ class CommunicationTarget:
 
 
 # -- parameter schemas --------------------------------------------------------
+
+_SUBAGENT_DESC_LIMIT = 40
+
+
+def _truncate_desc(desc: str, limit: int = _SUBAGENT_DESC_LIMIT) -> str:
+    """Truncate a subagent description to ``limit`` chars, appending ``...``."""
+    if len(desc) <= limit:
+        return desc
+    return desc[:limit].rstrip() + "..."
+
+
+def _normalize_invocation_id(value: Any) -> str | None:
+    """Normalize an ``invocation_id`` tool argument.
+
+    Shared by ``SendToAgentTool`` and ``TaskDispatchTool`` (convergence —
+    architecture rule 15). Handles:
+
+    - ``None`` or omitted → ``None`` (new task / no continuation)
+    - ``"null"`` / ``"none"`` string (common LLM outputs) → ``None``
+    - Empty / whitespace string → ``None``
+    - Any other value → ``str(value).strip()``
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in ("null", "none"):
+        return None
+    return text
+
 
 _NORMAL_PARAMS: dict[str, Any] = {
     "type": "object",
@@ -79,14 +121,19 @@ _NORMAL_PARAMS: dict[str, Any] = {
         },
         "content": {
             "type": "string",
-            "description": "Complete task description with necessary context.",
+            "description": (
+                "Message content — a continuation of an existing subagent session, "
+                "a message to a peer, or a consultation. Not for dispatching new "
+                "subagent tasks (use the `task` tool)."
+            ),
         },
         "invocation_id": {
             "type": ["string", "null"],
             "description": (
-                "Task continuation id. Pass null to start a new task; the tool result "
-                "includes an invocation_id to pass back for follow-ups in the same task. "
-                "The target's session_id is '{invocation_id}.{target_agent}'."
+                "Task continuation id. Use the `task` tool for first dispatch; pass null "
+                "only as a fallback to create a fresh session. The tool result includes an "
+                "invocation_id to pass back for follow-ups in the same task. The target's "
+                "session_id is '{invocation_id}.{target_agent}'."
             ),
         },
     },
@@ -99,8 +146,8 @@ _SUBAGENT_PARAMS: dict[str, Any] = {
         "target_agent": {
             "type": "string",
             "description": (
-                "The agent that assigned your task — the exact value of source= "
-                "from the <agent_message> you received."
+                "The agent that assigned your task — the exact name shown after "
+                "'Message from agent' in the system-reminder you received."
             ),
         },
         "content": {"type": "string", "description": "Message content."},
@@ -126,8 +173,8 @@ class CommunicationTargetStore:
       dynamically at call time from ``current_agent_context``. This is required
       because the tool instance is reused across different invokers, so any
       parent baked at materialize time would go stale. The subagent's
-      ``send_to_agent`` is for CONSULTATION only; the deliverable goes to
-      OUTPUT.md (enforced elsewhere).
+      ``send_to_agent`` is for CONSULTATION only; the deliverable is the
+      subagent's final reply text (forwarded by ``SubagentAutoSendHook``).
     """
 
     def __init__(self, *, for_subagent: bool = False) -> None:
@@ -223,7 +270,8 @@ class CommunicationTargetStore:
 
     def _build_normal(self) -> str:
         lines = [
-            "Communicate with another agent — your ONLY channel to them.",
+            "Communicate with another agent — your ONLY channel for messaging,",
+            "continuation, and peer coordination.",
             "",
             "Only `content` reaches the target; your reasoning, tool calls, and",
             "this reply stay local. Sends are asynchronous — end your turn after;",
@@ -235,60 +283,60 @@ class CommunicationTargetStore:
             return "\n".join(lines)
         lines.extend(
             [
-                "Two target kinds, each labeled in parentheses:",
+                "Use this tool for:",
+                "  - Continuing an existing subagent session (pass invocation_id).",
+                "  - Messaging a peer agent as an equal.",
+                "  - Replying to a remote agent that sent you a message.",
                 "",
-                "  - (subagent): your helper. Delegate a self-contained subtask;",
-                "    you direct it, it runs on your behalf. Put the task in `content`;",
-                "    thread `invocation_id` across follow-ups (null starts a new task,",
-                "    the returned id continues it).",
-                "  - (normal): an independent peer agent (often another team). Ask,",
-                "    share, or coordinate — communicate as equals, not as a director.",
-                "    `content` reads like a message to a colleague, not an order.",
-                "    `invocation_id` is ignored — the sender's session prefix is reused,",
-                "    so each peer conversation keeps a stable thread.",
+                "For dispatching a NEW subagent task, use the `task` tool instead.",
                 "",
                 "Available targets (use the exact name as target_agent):",
             ]
         )
-        for t in self._targets.values():
-            entry = f"  - {t.name} ({t.kind.value})"
-            if t.description:
-                entry += f": {t.description}"
-            lines.append(entry)
+        subagent_targets = [t for t in self._targets.values() if t.kind == AgentCommKind.SUBAGENT]
+        normal_targets = [t for t in self._targets.values() if t.kind == AgentCommKind.NORMAL]
+        if subagent_targets:
+            lines.append("")
+            lines.append("Subagents (for continuing sessions; use the `task` tool for new tasks):")
+            for t in subagent_targets:
+                entry = f"  - {t.name}"
+                if t.description:
+                    entry += f": {_truncate_desc(t.description)}"
+                lines.append(entry)
+        if normal_targets:
+            lines.append("")
+            lines.append("Peer targets (for messaging and coordination):")
+            for t in normal_targets:
+                entry = f"  - {t.name}"
+                if t.description:
+                    entry += f": {t.description}"
+                lines.append(entry)
         return "\n".join(lines)
 
     def _build_subagent(self) -> str:
         parent = self._parent_target()
         lines = [
-            "Ask the agent that assigned you this task a clarifying question or "
-            "for a decision.",
+            "Ask the agent that assigned you this task a clarifying question or for a decision.",
             "",
-            "Your task arrived as:",
-            '  <agent_message source="<PARENT_NAME>" invocation_id="...">',
-            "    <content>...</content>",
-            "  </agent_message>",
+            "Your task arrived as a system-reminder starting with",
+            "\"Message from agent '<PARENT_NAME>':\".",
         ]
         if parent is not None:
             lines.append(
-                f"Use that exact {parent.name!r} (the `source` value) as "
-                "`target_agent`. It is your only valid target."
+                f"Use that exact {parent.name!r} (the name shown after "
+                "'Message from agent') as `target_agent`. It is your only valid target."
             )
         else:
             lines.append("No parent is currently available.")
         lines.extend(
             [
                 "",
-                "Use this tool ONLY to consult your parent when you cannot proceed "
-                "without input:",
+                "Use this tool ONLY to consult your parent when you cannot proceed without input:",
                 '  content: "QUESTION: ..." or "NEED_DECISION: ...".',
-                "Then stop and wait — the reply comes back to you as another "
-                "<agent_message>.",
+                "Then stop and wait — the reply comes back to you as another system-reminder.",
                 "",
-                "This tool is for consultation, not for returning your result. "
-                "Your deliverable",
-                "still goes to OUTPUT.md (write it there as instructed); nothing "
-                "you send here",
-                "counts as your answer.",
+                "Your deliverable is your final reply text, forwarded automatically.",
+                "Do not use send_to_agent to report results.",
             ]
         )
         return "\n".join(lines)
@@ -366,17 +414,9 @@ class SendToAgentTool(Tool):
     async def execute(self, **kwargs: Any) -> str:
         target_agent = str(kwargs.get("target_agent", ""))
         content = str(kwargs.get("content", ""))
-        invocation_id_value = kwargs.get("invocation_id")
-        if (
-            invocation_id_value is None
-            or isinstance(invocation_id_value, str)
-            and invocation_id_value.strip().lower() == "null"
-        ):
-            invocation_id = None
-        else:
-            invocation_id: str | None = str(invocation_id_value)
+        invocation_id = _normalize_invocation_id(kwargs.get("invocation_id"))
 
-        context = self._get_context()
+        context = _current_agent_context()
         if context is None:
             return "Error: no agent context available"
 
@@ -399,8 +439,230 @@ class SendToAgentTool(Tool):
             context=context,
         )
 
-    @staticmethod
-    def _get_context() -> AgentContext | None:
-        from modex_agent.core.agent import current_agent_context
 
-        return current_agent_context.get(None)
+# -- task dispatch tool -------------------------------------------------------
+
+_TASK_PARAMS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "target_agent": {
+            "type": "string",
+            "description": (
+                "REQUIRED: exact name of the target agent. "
+                "MUST be one of the names listed in the tool description "
+                "under 'Available peer agents' or 'Available subagents'. "
+                "Do not invent names, do not use descriptions as names."
+            ),
+        },
+        "content": {
+            "type": "string",
+            "description": (
+                "Complete, self-contained message or task description. "
+                "For subagents: they start with a fresh context — include "
+                "concrete objective, relevant context (file paths, constraints), "
+                "scope (code or research), expected output, verification method, "
+                "and boundaries. For peer agents: the message content to send."
+            ),
+        },
+        "invocation_id": {
+            "type": "string",
+            "description": (
+                "Optional. Used ONLY to continue an existing subagent session — "
+                "pass the invocation_id returned by a prior task result. "
+                "Omit this parameter entirely for a new subagent task or for "
+                "peer communication. Peer agents ignore this parameter."
+            ),
+        },
+    },
+    "required": ["target_agent", "content"],
+}
+
+
+class TaskDispatchTool(Tool):
+    """Dispatch a task to a subagent or send a message to a peer agent.
+
+    The main agent's sole external communication tool: dispatches new
+    subagent tasks (omit ``invocation_id``), continues existing subagent
+    sessions (pass ``invocation_id``), and sends peer messages (NORMAL
+    targets — ``invocation_id`` ignored). Fused from the former
+    ``SendToAgentTool`` + ``TaskDispatchTool`` split (convergence).
+    """
+
+    def __init__(
+        self,
+        *,
+        store: CommunicationTargetStore,
+        source: AgentAddress,
+        broker: MessageBroker,
+        registry: AgentRegistry,
+        agent_bus: AgentMessageBus,
+        service: AgentCommunicationService,
+    ) -> None:
+        self._store = store
+        self._source = source
+        self._broker = broker
+        self._registry = registry
+        self._agent_bus = agent_bus
+        self._service = service
+        super().__init__(
+            name="task",
+            parameters=_TASK_PARAMS,
+            config=ToolConfig(),
+        )
+
+    @property
+    def description(self) -> str:
+        return self._build_description()
+
+    def _build_description(self) -> str:
+        targets = self._store.list()
+        subagent_targets = [t for t in targets if t.kind == AgentCommKind.SUBAGENT]
+        peer_targets = [t for t in targets if t.kind == AgentCommKind.NORMAL]
+
+        lines = [
+            "Dispatch a task to a subagent or send a message to a peer agent.",
+            "",
+            "Only `content` reaches the target — your reasoning, tool calls, and",
+            "output stay local. Sends are asynchronous: end your turn after",
+            "dispatching; the result arrives as a notification when the agent finishes.",
+            "",
+            "When NOT to use this tool:",
+            "- If you want to read a specific file, use the read tool directly — it's faster",
+            "- If you are searching for a specific pattern, use grep or glob directly",
+            "- If you are searching within 2-3 known files, use read instead of delegating",
+            "- If no available agent is a good fit for the task, do it yourself",
+            "",
+            "Usage notes:",
+            "1. Launch multiple tasks concurrently when they are independent — use",
+            "   multiple tool calls in a single message.",
+            "2. Once you delegate work to an agent, do not duplicate that work yourself.",
+            "   Continue with non-overlapping tasks, or end your turn and wait for the",
+            "   notification.",
+            "3. The agent's result is returned to you only — relay a concise summary to",
+            "   the user if needed.",
+            "4. Construct a high-quality subagent task with:",
+            "   - TASK: What exactly to do (concrete objective, not a topic)",
+            "   - CONTEXT: Relevant file paths, patterns, constraints",
+            "   - SCOPE: Write code or just research (search/read/analyze)",
+            "   - OUTPUT: Exactly what to return in the final reply",
+            "   - VERIFICATION: How to verify (e.g., test commands)",
+            "   - BOUNDARIES: What NOT to do, out-of-scope items",
+            "5. The agent's output should generally be trusted.",
+            "",
+            'A one-line task like "fix the bug" is insufficient — the result quality',
+            "is directly proportional to your prompt quality.",
+            "",
+        ]
+
+        if not targets:
+            lines.append("No agents currently available.")
+            return "\n".join(lines)
+
+        if peer_targets:
+            lines.append("## Peer Agents")
+            lines.append("")
+            lines.append(
+                "Peer agents are independent agents you can coordinate with as an"
+                " equal. They receive your message as a notification and may or may"
+                " not reply. Do not expect immediate results — continue your work"
+                " after sending."
+            )
+            lines.append("")
+            lines.append("Available peer agents:")
+            for t in peer_targets:
+                entry = f"  - {t.name}"
+                if t.description:
+                    entry += f": {t.description}"
+                lines.append(entry)
+            lines.append("")
+
+        if subagent_targets:
+            lines.append("## Subagents")
+            lines.append("")
+            lines.append(
+                "Subagents are specialized workers you dispatch tasks to. They start"
+                " with a fresh context and run autonomously — they cannot see your"
+                " conversation, reasoning, or prior tool results. Everything they"
+                " need must be in `content`. Omit `invocation_id` for a new task;"
+                " pass a prior `invocation_id` to continue an existing session."
+            )
+            lines.append("")
+            lines.append("Available subagents:")
+            for t in subagent_targets:
+                entry = f"  - {t.name}"
+                if t.description:
+                    entry += f": {t.description}"
+                lines.append(entry)
+
+        return "\n".join(lines)
+
+    def list_targets(self) -> list[CommunicationTarget]:
+        """Return all targets from the shared store (same as SendToAgentTool)."""
+        return self._store.list()
+
+    def add_target(self, target: CommunicationTarget) -> None:
+        """Register a new communication target (peer or subagent)."""
+        self._store.add(target)
+
+    def pop_target_by_name(self, name: str) -> None:
+        """Remove a communication target by name."""
+        self._store.pop_by_name(name)
+
+    def has_target(self, name: str) -> bool:
+        """Check whether a target is registered."""
+        return self._store.has(name)
+
+    def get_dynamic_schema(self) -> dict[str, Any]:
+        """Return schema with target_agent enum bound to ALL available targets."""
+        schema = super().get_dynamic_schema()
+        function = dict(schema.get("function", {}))
+        parameters = dict(function.get("parameters", {}))
+        properties = dict(parameters.get("properties", {}))
+
+        all_names = [t.name for t in self._store.list()]
+        if all_names and "target_agent" in properties:
+            properties["target_agent"] = {
+                **properties["target_agent"],
+                "enum": all_names,
+            }
+
+        parameters["properties"] = properties
+        function["parameters"] = parameters
+        return {**schema, "function": function}
+
+    async def execute(self, **kwargs: Any) -> str:
+        target_agent = str(kwargs.get("target_agent", ""))
+        content = str(kwargs.get("content", ""))
+
+        invocation_id = _normalize_invocation_id(kwargs.get("invocation_id"))
+
+        context = _current_agent_context()
+        if context is None:
+            return "Error: no agent context available"
+
+        caller_name = context.session.agent_name
+        if caller_name and target_agent == caller_name:
+            return (
+                f"Error: You are {caller_name!r} — you cannot dispatch a task "
+                f"to yourself. Choose a different target."
+            )
+
+        target = self._store.get(target_agent)
+        if target is None:
+            available = ", ".join(t.name for t in self._store.list())
+            return (
+                f"Error: '{target_agent}' is not a valid target. "
+                f"Available: {available}"
+            )
+
+        # Peer targets (NORMAL): invocation_id is ignored — peer sessions reuse
+        # the sender's session prefix (ADR-0019), no invocation_id semantics.
+        if target.kind == AgentCommKind.NORMAL:
+            invocation_id = None
+
+        return await self._service.send_async(
+            target=target,
+            content=content,
+            invocation_id=invocation_id,
+            context=context,
+        )

@@ -13,7 +13,8 @@ Tiered tool approval policies and command parsing. Approval persistence is NOT o
 | `constants.py` | `ApprovalDecision` (ALLOWED/DENIED/PENDING/PREEMPTED), `ApprovalTier` (NORMAL/SENSITIVE/DANGEROUS/HARDLINE), `ApprovalStatus` (PENDING/APPROVED/DENIED/PARTIAL) |
 | `types.py` | `ApprovalAction` (ALLOW/DENY), `ApprovalResolution` (ALLOWED/DENIED/TIMED_OUT/IGNORED/PREEMPTED), `DenyAction`, `TimeoutAction`, `ApprovalResultType`, `ApprovalDenyPolicy` |
 | `response.py` | `parse_input_command()` -- command-first parsing returning `ParsedInputCommand` or None; `parse_approval_action()` convenience wrapper. Recognizes /approve, /deny, /allow, /reject, /yes, /no, /ok, /cancel with and without slash prefix |
-| `__init__.py` | Re-exports: AgentApprovalConfig, ToolApprovalConfig, ApprovalDecision, ApprovalStatus, ApprovalTier |
+| `runtime.py` | `ApprovalRuntime` (policy service: classifier + deny policy), `ApprovalClassifier` ABC, `TieredToolApprovalClassifier` (path-based NORMAL/DANGEROUS). Migrated from `agents/react/approval.py` — zero react-layer dependencies. |
+| `__init__.py` | Re-exports: AgentApprovalConfig, ToolApprovalConfig, ApprovalDecision, ApprovalStatus, ApprovalTier. Does NOT re-export `runtime.py` (circular import — see file comment). |
 
 ## Approval Flow
 ```
@@ -31,6 +32,8 @@ ToolNode: _resume_suspended_batch() -> PRE_APPROVED_TOOL_IDS -> _execute_batch()
 - Do NOT add approval-specific stores; use `TurnStateStore` from `modex_agent.runtime`
 
 ## Dependencies
-- None internal (pure data types and parsing; no agent/runtime imports)
+- `modex_agent.core` — `AgentContext`, `ToolCall` (used by `ApprovalClassifier`)
+- `modex_agent.interceptor` — `ArgumentMatcher` (used by `TieredToolApprovalClassifier`)
+- `modex_agent.runtime.enums` — `ApprovalDenyPolicy` (used by `ApprovalRuntime`)
 
 <!-- MANUAL: -->

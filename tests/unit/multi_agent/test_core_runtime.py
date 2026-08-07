@@ -38,6 +38,7 @@ def sample_descriptor():
 
 # ── 4. Agent Factory ──
 
+
 @pytest.mark.asyncio
 async def test_default_agent_factory_pipeline_uses_mesh_router(sample_descriptor, any_broker):
     factory = DefaultAgentFactory(default_llm_provider=MagicMock())
@@ -57,6 +58,7 @@ def test_agent_factory_abc():
 
 
 # ── 6. Agent Pool ──
+
 
 @pytest.mark.asyncio
 async def test_agent_pool_shutdown_all_stops_poller(any_broker):
@@ -147,8 +149,8 @@ async def test_session_activity_records_created_at_and_last_active(any_broker):
         pool._touch_session("conv:worker:inv")
 
         activity = pool._session_activity["conv:worker:inv"]
-        assert activity.created_at == created0          # immutable
-        assert activity.last_active >= created0          # refreshed
+        assert activity.created_at == created0  # immutable
+        assert activity.last_active >= created0  # refreshed
         assert pool._session_lru["conv:worker:inv"] > lru0  # bumped
     finally:
         await pool.shutdown_all()

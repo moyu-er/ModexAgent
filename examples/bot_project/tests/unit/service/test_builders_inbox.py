@@ -8,7 +8,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from bot.scope import BotRecordScope
-from bot.service.external_coding_strategy import build_external_coding_env_spec
+from bot.service.external_strategy import build_external_env_spec
 from bot.service.builders import build_inbox
 
 from modex_agent.ioc.configs.app import AppConfig
@@ -35,9 +35,7 @@ def test_build_inbox_uses_pool_record_scope_for_sqlite(tmp_path: Path) -> None:
 
 
 def test_build_inbox_keeps_file_backend(tmp_path: Path) -> None:
-    config = AppConfig(
-        persistence=PersistenceConfig(backend=PersistenceBackend.FILE)
-    )
+    config = AppConfig(persistence=PersistenceConfig(backend=PersistenceBackend.FILE))
 
     inbox = build_inbox(
         config,
@@ -50,12 +48,14 @@ def test_build_inbox_keeps_file_backend(tmp_path: Path) -> None:
     assert isinstance(inbox, LocalFileInboxMQ)
 
 
-def test_external_coding_env_keeps_workspace_inbox_contract(
+def test_external_env_keeps_workspace_inbox_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / ("modexctl.bat" if sys.platform == "win32" else "modexctl")).write_text("@echo off\n")
+    (bin_dir / ("modexctl.bat" if sys.platform == "win32" else "modexctl")).write_text(
+        "@echo off\n"
+    )
     monkeypatch.setenv("MODEXBOT_BIN_DIR", str(bin_dir))
 
     workspace_dir = tmp_path / "workspace"
@@ -66,7 +66,7 @@ def test_external_coding_env_keeps_workspace_inbox_contract(
         main=MainAgentSpec(agent_name="coder"),
     )
 
-    env_spec = build_external_coding_env_spec(
+    env_spec = build_external_env_spec(
         pool_name="pool_coder",
         pool_spec=pool_spec,
         project_dir=tmp_path,
@@ -84,7 +84,7 @@ def test_main_agent_env_spec_defaults_to_normal_comm_kind(
 ) -> None:
     """Main-agent env spec MUST default to comm_kind=NORMAL + parent_session_id=None.
 
-    Regression guard: if a future change to build_external_coding_env_spec
+    Regression guard: if a future change to build_external_env_spec
     accidentally sets comm_kind=SUBAGENT or a non-None parent_session_id,
     every main-agent modexctl send would route via the subagent branch
     (target_sid = MODEX_PARENT_SESSION_ID), which is either None (error)
@@ -92,7 +92,9 @@ def test_main_agent_env_spec_defaults_to_normal_comm_kind(
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / ("modexctl.bat" if sys.platform == "win32" else "modexctl")).write_text("@echo off\n")
+    (bin_dir / ("modexctl.bat" if sys.platform == "win32" else "modexctl")).write_text(
+        "@echo off\n"
+    )
     monkeypatch.setenv("MODEXBOT_BIN_DIR", str(bin_dir))
 
     from modex_agent.core.agent import AgentCommKind
@@ -105,7 +107,7 @@ def test_main_agent_env_spec_defaults_to_normal_comm_kind(
         main=MainAgentSpec(agent_name="coder"),
     )
 
-    env_spec = build_external_coding_env_spec(
+    env_spec = build_external_env_spec(
         pool_name="pool_coder",
         pool_spec=pool_spec,
         project_dir=tmp_path,

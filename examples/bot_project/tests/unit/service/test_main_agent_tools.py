@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
-from bot.service.pool_builder import build_main_agent_tool_names
+from bot.service.pool.tool_projection import build_main_agent_tool_names
 
 
 class TestBuildMainAgentToolNames:
     def test_full_preset_with_ast_grep_supplement(self) -> None:
-        """FULL preset + ast_grep + send_to_agent covers the core tool set."""
+        """FULL preset + ast_grep + task covers the core tool set."""
         names = build_main_agent_tool_names("full", ["ast_grep"], use_terminal=False)
         # Core file/search tools from FULL preset.
         assert {"read", "write", "edit", "ls", "grep", "glob"} <= names
         # ast_grep supplement.
         assert {"ast_grep_search", "ast_grep_replace"} <= names
-        # send_to_agent always present.
-        assert "send_to_agent" in names
+        # task tool always present (subagent dispatch + peer communication).
+        assert "task" in names
+        # send_to_agent is NOT registered on the main agent.
+        assert "send_to_agent" not in names
 
     def test_terminal_added_when_use_terminal(self) -> None:
         names = build_main_agent_tool_names("full", [], use_terminal=True)

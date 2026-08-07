@@ -85,7 +85,7 @@ class HistoryResult(BaseModel):
 
     ``effective_limit`` echoes the validated limit so the CLI can detect
     server-side clamping (defence-in-depth). ``execution_strategy`` is the
-    pool's main-agent strategy string (``react`` / ``external_coding`` / ...).
+    pool's main-agent strategy string (``react`` / ``external`` / ...).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -162,8 +162,8 @@ class SendResult(BaseModel):
     ``target_kind`` is the :class:`AgentCommKind` value (``"normal"`` or
     ``"subagent"``). ``dispatch_outcome`` tells the CLI which ack template
     to emit. ``is_peer_send`` and ``is_external_target`` drive the CLI's
-    format selection. ``output_path`` / ``trace_dir`` are sourced verbatim
-    from :class:`AgentSendResult` (never re-derived from
+    format selection. ``trace_dir`` is sourced verbatim from
+    :class:`AgentSendResult` (never re-derived from
     :class:`WorkspacePathResolver`). ``requested_invocation_id`` is
     populated only in T07.
     """
@@ -178,5 +178,4 @@ class SendResult(BaseModel):
     requested_invocation_id: str | None = None
     is_peer_send: bool = False
     is_external_target: bool = False
-    output_path: Path | None = None
     trace_dir: Path | None = None

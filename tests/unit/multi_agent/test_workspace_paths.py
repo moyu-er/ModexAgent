@@ -1,4 +1,5 @@
 """Tests for WorkspacePathResolver — workspace-aware path resolution."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -33,12 +34,16 @@ class _FakePoolData(PoolDataSnapshot):
 
 def test_runtime_dir_prefers_workspace_pool_data() -> None:
     pool_data = _FakePoolData(
-        context_manager=MagicMock(), turn_store=MagicMock(), runtime_dir=Path("/ws/runtime"),
+        context_manager=MagicMock(),
+        turn_store=MagicMock(),
+        runtime_dir=Path("/ws/runtime"),
     )
     ws_mgr = MagicMock()
     ws_mgr.resolve_workspace.return_value.pool_data.get.return_value = pool_data
     resolver = WorkspacePathResolver(
-        workspace_manager=ws_mgr, pool_name="main", fallback_runtime_dir=Path("/fb"),
+        workspace_manager=ws_mgr,
+        pool_name="main",
+        fallback_runtime_dir=Path("/fb"),
     )
     assert resolver.runtime_dir() == Path("/ws/runtime")
 
@@ -47,14 +52,18 @@ def test_runtime_dir_falls_back_to_ctor_arg() -> None:
     ws_mgr = MagicMock()
     ws_mgr.resolve_workspace.return_value.pool_data.get.return_value = None
     resolver = WorkspacePathResolver(
-        workspace_manager=ws_mgr, pool_name="main", fallback_runtime_dir=Path("/fb"),
+        workspace_manager=ws_mgr,
+        pool_name="main",
+        fallback_runtime_dir=Path("/fb"),
     )
     assert resolver.runtime_dir() == Path("/fb")
 
 
 def test_runtime_dir_returns_none_when_no_workspace() -> None:
     resolver = WorkspacePathResolver(
-        workspace_manager=None, pool_name="main", fallback_runtime_dir=None,
+        workspace_manager=None,
+        pool_name="main",
+        fallback_runtime_dir=None,
     )
     assert resolver.runtime_dir() is None
 
@@ -67,19 +76,25 @@ def test_runtime_dir_returns_none_when_workspace_unmaterialized() -> None:
     ws_mgr = MagicMock()
     ws_mgr.resolve_workspace.side_effect = RuntimeError
     resolver = WorkspacePathResolver(
-        workspace_manager=ws_mgr, pool_name="main", fallback_runtime_dir=None,
+        workspace_manager=ws_mgr,
+        pool_name="main",
+        fallback_runtime_dir=None,
     )
     assert resolver.runtime_dir() is None
 
 
 def test_memory_dir_prefers_workspace() -> None:
     pool_data = _FakePoolData(
-        context_manager=MagicMock(), turn_store=MagicMock(), memory_dir=Path("/ws/memory"),
+        context_manager=MagicMock(),
+        turn_store=MagicMock(),
+        memory_dir=Path("/ws/memory"),
     )
     ws_mgr = MagicMock()
     ws_mgr.resolve_workspace.return_value.pool_data.get.return_value = pool_data
     resolver = WorkspacePathResolver(
-        workspace_manager=ws_mgr, pool_name="main", fallback_memory_dir=Path("/fb"),
+        workspace_manager=ws_mgr,
+        pool_name="main",
+        fallback_memory_dir=Path("/fb"),
     )
     assert resolver.memory_dir() == Path("/ws/memory")
 
@@ -87,13 +102,17 @@ def test_memory_dir_prefers_workspace() -> None:
 def test_pruned_manager_prefers_workspace() -> None:
     pruned = MagicMock(name="ws_pruned")
     pool_data = _FakePoolData(
-        context_manager=MagicMock(), turn_store=MagicMock(), pruned_manager=pruned,
+        context_manager=MagicMock(),
+        turn_store=MagicMock(),
+        pruned_manager=pruned,
     )
     ws_mgr = MagicMock()
     ws_mgr.resolve_workspace.return_value.pool_data.get.return_value = pool_data
     fallback = MagicMock(name="fb_pruned")
     resolver = WorkspacePathResolver(
-        workspace_manager=ws_mgr, pool_name="main", fallback_pruned_manager=fallback,
+        workspace_manager=ws_mgr,
+        pool_name="main",
+        fallback_pruned_manager=fallback,
     )
     assert resolver.pruned_manager() is pruned
 
@@ -103,6 +122,8 @@ def test_pruned_manager_falls_back_to_ctor() -> None:
     ws_mgr.resolve_workspace.return_value.pool_data.get.return_value = None
     fallback = MagicMock(name="fb_pruned")
     resolver = WorkspacePathResolver(
-        workspace_manager=ws_mgr, pool_name="main", fallback_pruned_manager=fallback,
+        workspace_manager=ws_mgr,
+        pool_name="main",
+        fallback_pruned_manager=fallback,
     )
     assert resolver.pruned_manager() is fallback

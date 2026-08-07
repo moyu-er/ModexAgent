@@ -94,10 +94,11 @@ class ReactLlmClient:
         streamed_content = ""
         finish_reason: FinishReason = FinishReason.STOP
         tool_calls_list: list[ToolCall] = []
+        provider_response: LLMResponse | None = None
 
         async def _actual_stream():
             """Call provider.chat_stream, converting the result to LLMStreamChunk."""
-            nonlocal tool_calls_list
+            nonlocal tool_calls_list, provider_response
 
             async def _on_content_delta(delta: str) -> None:
                 nonlocal streamed_content
@@ -142,7 +143,9 @@ class ReactLlmClient:
                 max_output_tokens=context.max_output_tokens,
                 on_content_delta=_on_content_delta,
                 on_reasoning_delta=_on_reasoning_delta,
+                prompt_cache_key=str(context.session),
             )
+            provider_response = response
             tool_calls_list = list(response.tool_calls or [])
             yield LLMStreamChunk(
                 content_delta=response.content,
@@ -196,6 +199,12 @@ class ReactLlmClient:
             reasoning_content=accumulated_reasoning or None,
             finish_reason=finish_reason,
             tool_calls=tool_calls_list,
+            usage=provider_response.usage if provider_response is not None else {},
+            completion_start_time=(
+                provider_response.completion_start_time
+                if provider_response is not None
+                else None
+            ),
         )
 
     async def _call_non_streaming_with_recovery(
@@ -212,7 +221,7 @@ class ReactLlmClient:
             except Exception as e:
                 if not is_context_overflow_error(e):
                     raise
-                recovery = await attempt_recovery(current_messages, e, attempt, config)
+                recovery = await attempt_recovery(current_messages, e, attempt, config, ctx)
                 if not recovery.should_retry:
                     raise
                 logger.warning("LLM context overflow, retrying: %s", recovery.reason)
@@ -239,7 +248,7 @@ class ReactLlmClient:
             except Exception as e:
                 if not is_context_overflow_error(e):
                     raise
-                recovery = await attempt_recovery(current_messages, e, attempt, config)
+                recovery = await attempt_recovery(current_messages, e, attempt, config, ctx)
                 if not recovery.should_retry:
                     raise
                 logger.warning(
@@ -277,6 +286,7 @@ class ReactLlmClient:
             max_output_tokens=ctx.max_output_tokens,
             on_content_delta=_on_content,
             on_reasoning_delta=_on_reasoning,
+            prompt_cache_key=str(ctx.session),
         )
         if ctx.emitter is not None:
             await ctx.emitter.emit_stream_end(resuming=bool(response.tool_calls))
@@ -297,6 +307,7 @@ class ReactLlmClient:
             tools=ctx.get_tool_descriptions() if ctx.tool_manager else None,
             temperature=ctx.temperature or 0.7,
             max_output_tokens=ctx.max_output_tokens,
+            prompt_cache_key=str(ctx.session),
         )
         if ctx.emitter is not None:
             if response.content:

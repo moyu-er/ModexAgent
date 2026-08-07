@@ -1,4 +1,4 @@
-"""ReAct graph constants — node names, transition reasons, hook/scope/event enums.
+"""ReAct graph constants — node names, hook/scope/event enums.
 
 Per ADR-0033 D9.2: business modules define their own ``StrEnum`` values for
 graph-runtime string parameters (``hook_point``/``scope``/``event_type``).
@@ -7,12 +7,12 @@ graph-runtime string parameters (``hook_point``/``scope``/``event_type``).
 
 ``ReActHookPoint`` / ``ReActScope`` / ``ReActEvent`` are the business-side
 typed enums consumed by ``ReactGraphRuntime`` (Stage 1, ADR-0033 D13).
-``ReActNode`` / ``ReActReason`` remain as graph topology identifiers.
+``ReActNode`` remains as the graph topology identifier. The former
+``ReActReason`` enum was removed (P3.4b convergence — edges are plain
+topology, routing is deliver-only).
 """
 
 from enum import StrEnum
-
-from modex_agent.core.constants import StopReason
 
 
 class ReActNode(StrEnum):
@@ -20,18 +20,6 @@ class ReActNode(StrEnum):
     LLM = "llm"
     TOOL = "tool"
     END = "end"
-
-
-class ReActReason(StrEnum):
-    NORMAL_START = "normal_start"
-    HAS_TOOLS = "has_tools"
-    NO_TOOLS = "no_tools"
-    TOOLS_DONE = "tools_done"
-    LLM_ERROR = "llm_error"
-    DONE = "done"
-    # Turn-ending reasons aligned with StopReason
-    MAX_ITERATIONS = StopReason.MAX_ITERATIONS
-    TURN_CANCELLED = StopReason.TURN_CANCELLED
 
 
 class InterruptReason(StrEnum):
@@ -69,6 +57,7 @@ class ReActHookPoint(StrEnum):
     BEFORE_TOOL_EXECUTION = "before_tool_execution"
     AFTER_TOOL_EXECUTION = "after_tool_execution"
     FINALIZE_CONTENT = "finalize_content"
+    BEFORE_LLM = "before_llm"
 
 
 class ReActScope(StrEnum):

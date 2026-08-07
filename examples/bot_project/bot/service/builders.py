@@ -57,11 +57,11 @@ def _make_file_tools() -> list[Tool]:
 
 def _make_shell_tool(
     terminal_manager: Any | None = None,
-    timeout: int = 300,
+    timeout: int = 90,
 ) -> Tool:
-    from modex_agent.tools.terminal import SubprocessExecutor, SubprocessTool
+    from modex_agent.tools.terminal import SubprocessTool, create_subprocess_executor
 
-    return SubprocessTool(executor=SubprocessExecutor(), timeout=timeout)
+    return SubprocessTool(executor=create_subprocess_executor(), timeout=timeout)
 
 
 def _make_search_tools() -> list[Tool]:
@@ -106,9 +106,7 @@ async def _load_agent_mcp_tools(
         try:
             backend = await mcp_registry.acquire(selection)
         except Exception as exc:  # noqa: BLE001 - fail-soft: MCP must never break the pool
-            logger.warning(
-                "Agent %s: shared MCP acquire failed: %s", agent_name, exc
-            )
+            logger.warning("Agent %s: shared MCP acquire failed: %s", agent_name, exc)
             return [], None
 
         # Diagnostic: reveal which shared-registry servers were READY at this
@@ -118,13 +116,17 @@ async def _load_agent_mcp_tools(
         # in WHEN they acquire — a server that dropped in between is absent).
         logger.info(
             "Agent %s: shared MCP acquire connected_servers=%s (selection=%s)",
-            agent_name, backend.connected_servers, selection,
+            agent_name,
+            backend.connected_servers,
+            selection,
         )
 
         tools = await acquire_mcp_tools(backend, tool_timeout=60)
         logger.info(
             "Agent %s: %d MCP tools loaded from selection %s",
-            agent_name, len(tools), selection,
+            agent_name,
+            len(tools),
+            selection,
         )
         return tools, backend
 
@@ -155,7 +157,9 @@ async def _load_agent_mcp_tools(
         tools = await acquire_mcp_tools(manager, tool_timeout=60)
         logger.info(
             "Agent %s: %d MCP tools loaded from selection %s",
-            agent_name, len(tools), selection,
+            agent_name,
+            len(tools),
+            selection,
         )
         return tools, manager
 
@@ -304,8 +308,8 @@ def build_external_session_map_store(
         )
 
         return SqliteExternalSessionMapStore(persistence.connection, scope)
-    from modex_agent.agents.external_coding.paths import ExternalPaths
-    from modex_agent.agents.external_coding.session_store import (
+    from modex_agent.agents.external.paths import ExternalPaths
+    from modex_agent.agents.external.session_store import (
         LocalFileExternalSessionMapStore,
     )
 

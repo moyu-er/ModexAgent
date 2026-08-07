@@ -5,6 +5,7 @@ Requires: .env file in examples/bot_project/ (or env vars set directly).
 
 Run: pytest tests/integration/test_openai_provider.py -v -m integration
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -77,20 +78,22 @@ class TestOpenAIProviderNonStreaming:
 
     @pytest.mark.asyncio
     async def test_tool_calling(self, provider):
-        tools = [{
-            "type": "function",
-            "function": {
-                "name": "get_weather",
-                "description": "Get weather for a city",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "city": {"type": "string", "description": "City name"},
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get weather for a city",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "city": {"type": "string", "description": "City name"},
+                        },
+                        "required": ["city"],
                     },
-                    "required": ["city"],
                 },
-            },
-        }]
+            }
+        ]
         result = await provider.chat(
             messages=[{"role": "user", "content": "What's the weather in Beijing? Use the tool."}],
             tools=tools,
@@ -136,20 +139,22 @@ class TestOpenAIProviderStreaming:
 
     @pytest.mark.asyncio
     async def test_streaming_tool_calling(self, provider):
-        tools = [{
-            "type": "function",
-            "function": {
-                "name": "calculator",
-                "description": "Calculate an expression",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "expression": {"type": "string", "description": "Math expression"},
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "calculator",
+                    "description": "Calculate an expression",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "expression": {"type": "string", "description": "Math expression"},
+                        },
+                        "required": ["expression"],
                     },
-                    "required": ["expression"],
                 },
-            },
-        }]
+            }
+        ]
         deltas: list[str] = []
 
         result = await provider.chat_stream(
@@ -172,6 +177,7 @@ class TestFactoryRouting:
             base_url="https://api.openai.com/v1",
         )
         from modex_agent.providers.openai_provider import OpenAIProvider
+
         provider = create_llm_provider(config)
         assert isinstance(provider, OpenAIProvider)
         assert provider.get_default_model() == "gpt-4o"
@@ -182,6 +188,7 @@ class TestFactoryRouting:
             api_key="sk-test",
         )
         from modex_agent.providers.litellm_provider import LiteLLMProvider
+
         provider = create_llm_provider(config)
         assert isinstance(provider, LiteLLMProvider)
         assert provider.get_default_model() == "gpt-4o"

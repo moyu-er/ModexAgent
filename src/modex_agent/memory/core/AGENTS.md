@@ -25,7 +25,7 @@ this package during the hybrid-persistence refactor (T04/T05).
 | `split_stores.py` | The four split store ABCs and `MemoryStoreBundle` (see below) |
 | `storage.py` | Empty placeholder. The legacy `MemoryStorage` god-interface was removed in T10; kept only so stale imports raise a clear `ImportError` |
 | `store_metadata.py` | `StoreMetadata` ABC, physical-store metadata (`get_lock()`, `base_path`) accessed via `isinstance` at the store-backend extension boundary |
-| `layers.py` | `SessionMemoryManager`, `ArchiveMemoryManager`, `CoreMemoryManager`, `UserRetentionBuffer` ABCs |
+| `layers.py` | `SessionMemoryManager`, `ArchiveMemoryManager`, `CoreMemoryManager` ABCs |
 | `models.py` | `CoreMemoryContents` (renamed from `LongTermMemory` per ADR-0035), `MemoryContextDict`, `StorageRevision`, `ArchiveEntry`, `UnprocessedResult` data models |
 | `consolidation.py` | `MemoryUpdateMode` (StrEnum), `MemoryUpdate` dataclass, long-term memory update types |
 | `lock.py` | `StorageLock` ABC, `AioRWLock`, `NoOpStorageLock` concurrency control |

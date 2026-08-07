@@ -5,8 +5,8 @@ methods on ``AgentPipeline``:
 
 * ``build_turn_request``   — parse slash commands / approval actions into a
   :class:`TurnRequest` (was ``AgentPipeline._build_turn_request``).
-* ``preprocess``           — sanitize content, process attachments, apply the
-  route prompt modifier (was ``_preprocess_input``).
+* ``preprocess``           — sanitize content and process attachments (was
+  ``_preprocess_input``).
 * ``assemble``             — load context, write the user message, run the
   multi-agent builder (was ``_assemble_context``; delegates to
   :func:`modex_agent.pipeline.context_assembler.assemble_context`).
@@ -17,6 +17,7 @@ Behaviour is identical to the pre-extraction methods — pure move. The builder
 holds no back-reference to ``AgentPipeline``: every dependency is injected via
 the constructor and stored as ``self._<name>``.
 """
+
 from __future__ import annotations
 
 import logging
@@ -102,10 +103,7 @@ def _attachment_reference(att: Attachment, ws_root: Path) -> str:
     abs_path = (ws_root / att.path).resolve() if att.path else None
     mime = att.mime or "unknown"
     path_str = str(abs_path) if abs_path is not None else "<unknown path>"
-    return (
-        f"[Attachment: {att.name} ({mime}, {_human_byte_size(att.size)}) "
-        f"@ {path_str}]"
-    )
+    return f"[Attachment: {att.name} ({mime}, {_human_byte_size(att.size)}) @ {path_str}]"
 
 
 @dataclass(frozen=True)
@@ -314,9 +312,9 @@ class TurnContextBuilder:
         input_msg: InputMessage,
         session_id: str,
         input_metadata: dict[str, Any],
-        route_result: RouteResult | None,
+        _route_result: RouteResult | None,
     ) -> tuple[str | None, list[MediaBlock], MediaProcessor | None]:
-        """Preprocess input: sanitize, handle attachments, apply route modifier.
+        """Preprocess input: sanitize content and handle attachments.
 
         Returns:
             (sanitized_content, media_blocks, media_processor).
@@ -362,11 +360,6 @@ class TurnContextBuilder:
         #   vetted files (the gate-vetted path lives on Attachment.path).
         # _media_processor = MediaProcessor(); media_result = await ...
 
-        # 应用路由的 prompt modifier（agent 消息跳过，前缀由 to_messages() 统一注入）
-        source_agent = input_metadata.get("source_agent")
-        if not source_agent and route_result and route_result.prompt_modifier:
-            sanitized_content = route_result.prompt_modifier + sanitized_content
-
         return sanitized_content, media_blocks, _media_processor
 
     async def assemble(
@@ -383,6 +376,7 @@ class TurnContextBuilder:
         append_user_message: bool = True,
     ) -> ContextState:
         """Assemble context state via context_assembler module."""
+        caps = self._runtime_services.model_info if self._runtime_services is not None else None
         return await assemble_context(
             session_id,
             input_msg,
@@ -398,6 +392,7 @@ class TurnContextBuilder:
             skill_manager=self._skill_manager,
             context_builder=self._context_builder,
             append_user_message=append_user_message,
+            model_info=caps,
         )
 
     def build_runtime_and_context(
@@ -409,6 +404,7 @@ class TurnContextBuilder:
         input_metadata: dict[str, Any] | None = None,
         pool_data: PoolDataSnapshot | None = None,
         inline_attachments: Sequence[Attachment] | None = None,
+        workspace: Path | None = None,
     ) -> tuple[AgentContext, ContentEmitter]:
         """Build AgentContext and emitter for the turn.
 
@@ -451,6 +447,7 @@ class TurnContextBuilder:
         # the resolved workspace's stores (e.g. experience dir). None when
         # no workspace manager is wired.
         agent_context.workspace_snapshot = pool_data
+        agent_context.workspace = workspace
 
         # ---- governance (pending injection, etc.) — unconditional ----
         base_services = self._runtime_services
@@ -460,12 +457,8 @@ class TurnContextBuilder:
         # Resolve the turn-scoped turn store. Precedence:
         # process-scope runtime_services override > per-turn pool snapshot
         # > pipeline-level self.turn_store.
-        snapshot_turn_store = (
-            pool_data.turn_store if pool_data is not None else self._turn_store
-        )
-        snapshot_trace_store = (
-            pool_data.trace_store if pool_data is not None else None
-        )
+        snapshot_turn_store = pool_data.turn_store if pool_data is not None else self._turn_store
+        snapshot_trace_store = pool_data.trace_store if pool_data is not None else None
 
         # ---- typed AgentRuntime with ReActTurnState (new) ----
         if snapshot_turn_store is not None:
@@ -480,12 +473,10 @@ class TurnContextBuilder:
                 phase=RTurnPhase.CREATED,
             )
             services = AgentRuntimeServices(
-                hooks=(
-                    base_services.hooks if base_services is not None else None
-                ) or self._hook_runner,
-                interceptors=(
-                    base_services.interceptors if base_services is not None else None
-                ) or self._interceptor_chain,
+                hooks=(base_services.hooks if base_services is not None else None)
+                or self._hook_runner,
+                interceptors=(base_services.interceptors if base_services is not None else None)
+                or self._interceptor_chain,
                 approval=base_services.approval if base_services is not None else None,
                 governance=governance,
                 turn_store=(
@@ -504,9 +495,7 @@ class TurnContextBuilder:
                 ),
                 control_channel=self._control_channel
                 or (base_services.control_channel if base_services is not None else None),
-                model_capabilities=(
-                    base_services.model_capabilities if base_services is not None else None
-                ),
+                model_info=(base_services.model_info if base_services is not None else None),
             )
             agent_context.runtime = AgentRuntime(services=services, state=react_state)
             agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
@@ -523,11 +512,7 @@ class TurnContextBuilder:
                     trace_store=snapshot_trace_store,
                     control_channel=self._control_channel
                     or (base_services.control_channel if base_services is not None else None),
-                    model_capabilities=(
-                        base_services.model_capabilities
-                        if base_services is not None
-                        else None
-                    ),
+                    model_info=(base_services.model_info if base_services is not None else None),
                 ),
                 state=ReActTurnState(
                     identity=turn_identity,

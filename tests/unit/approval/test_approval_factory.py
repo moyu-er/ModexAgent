@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modex_agent.agents.react.approval import ApprovalRuntime, TieredToolApprovalClassifier
+from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.approval.constants import ApprovalTier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo

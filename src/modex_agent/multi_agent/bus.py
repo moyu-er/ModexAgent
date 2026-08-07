@@ -6,14 +6,14 @@ import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from modex_agent.messaging.broker import Address, AddressKind, BrokerMessage
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.messaging.broker import AddressKind
 
 if TYPE_CHECKING:
-    from modex_agent.messaging.broker import MessageBroker
     from modex_agent.multi_agent.envelope import AgentMessageEnvelope
     from modex_agent.multi_agent.inbox.consumer import BaseInboxConsumer
     from modex_agent.multi_agent.inbox.producer import BaseInboxProducer
+    from modex_agent.multi_agent.inbox.types import InboxMessage
+    from modex_agent.multi_agent.inbox_poller import InboxPoller
 
 logger = logging.getLogger(__name__)
 
@@ -21,15 +21,15 @@ logger = logging.getLogger(__name__)
 class AgentMessageBus(ABC):
     """Pluggable messaging facade for upper-layer multi-agent components.
 
-    The bus is poll-driven: producers persist envelopes via the inbox
-    producer, and an ``InboxPoller`` (per pool) drives between-turn
-    consumption. Cross-process latency is handled by a broker
-    ``_inbox_wakeup`` message emitted from ``send``.
+    The bus is event-driven with a tick fallback: producers persist envelopes
+    via the inbox producer and signal the pool's ``InboxPoller`` so between-
+    turn delivery starts with ~zero latency. The poller still ticks as a
+    defensive fallback (covering any writer that bypasses ``send``).
     """
 
     @abstractmethod
     async def send(self, session_id: str, envelope: AgentMessageEnvelope) -> None:
-        """Persist ``envelope`` for ``session_id`` and wake cross-process consumers."""
+        """Persist ``envelope`` for ``session_id`` and wake the pool poller."""
         ...
 
     @abstractmethod
@@ -68,55 +68,50 @@ class AgentMessageBus(ABC):
 
 
 class LocalAgentMessageBus(AgentMessageBus):
-    """Local poll-driven implementation of AgentMessageBus.
+    """Local event-driven implementation of AgentMessageBus.
 
     Responsibilities:
     1. Persist messages via the InboxProducer.
-    2. Emit a broker ``_inbox_wakeup`` for cross-process consumers when a
-       broker is configured (single-process deployments are poller-only).
+    2. Signal the pool's ``InboxPoller`` after a successful persist so it
+       rescans immediately (single convergence point for every inbox writer:
+       user input, agent-to-agent, CLI ``modexctl send``, external peer
+       reply). The poller still ticks every ``interval`` as a defensive
+       fallback for writers that bypass this bus.
 
-    Between-turn delivery is driven by an ``InboxPoller`` polling
-    ``consume``; there is no in-process signal/Event wakeup path.
+    The poller is attached after construction via :meth:`set_poller` (it is
+    created by the pool wiring, which runs after the bus). Until then ``send``
+    is persist-only and the poller relies on its tick fallback.
     """
 
     def __init__(
         self,
         producer: BaseInboxProducer,
         consumer: BaseInboxConsumer,
-        broker: MessageBroker | None = None,
     ) -> None:
         self._producer = producer
         self._consumer = consumer
-        self._broker = broker
         self._closed = False
+        self._poller: InboxPoller | None = None
+
+    def set_poller(self, poller: InboxPoller) -> None:
+        """Wire the pool's ``InboxPoller`` so ``send`` can wake it directly.
+
+        Called once by the pool wiring after both the bus and the poller exist.
+        Idempotent: re-wiring just replaces the reference.
+        """
+        self._poller = poller
 
     async def send(self, session_id: str, envelope: AgentMessageEnvelope) -> None:
-        """Persist the envelope, then emit a broker wakeup for cross-process consumers.
+        """Persist the envelope, then wake the pool poller for immediate rescan.
 
-        NOTE: the broker ``_inbox_wakeup`` is emitted here but no handler
-        consumes it yet — cross-process wakeup is deferred. Single-process
-        deployments are poller-only (the ``InboxPoller`` ticks ~200ms and
-        re-scans regardless), so messages are never lost; multi-process
-        deployments simply wait up to one tick for delivery. Wiring a wakeup
-        handler that pokes the target pool's poller is a tracked follow-up.
+        ``signal_wakeup`` is a non-blocking ``Event.set``; it never awaits the
+        poller. If no poller is wired yet the call degrades to persist-only
+        and the poller's tick fallback picks the message up within one
+        ``interval``.
         """
         await self._producer.send(session_id, envelope)
-        if self._broker is not None:
-            try:
-                wakeup = BrokerMessage(
-                    payload={"_inbox_wakeup": True, "session_id": session_id},
-                    sender=Address(kind=AddressKind.SYSTEM, name="local_agent_message_bus"),
-                )
-                target_name = envelope.target.name if envelope.target else session_id
-                await self._broker.send_to(
-                    AgentAddress(kind=AddressKind.AGENT, name=target_name),
-                    wakeup,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to send broker wakeup signal for session %s",
-                    session_id,
-                )
+        if self._poller is not None:
+            self._poller.signal_wakeup()
 
     async def consume(
         self,
@@ -126,9 +121,7 @@ class LocalAgentMessageBus(AgentMessageBus):
         only_types: set[str] | None = None,
     ) -> list[AgentMessageEnvelope]:
         """Return up to ``limit`` pending envelopes for ``session_id`` (non-blocking)."""
-        messages = await self._consumer.consume(
-            session_id, limit, only_types=only_types
-        )
+        messages = await self._consumer.consume(session_id, limit, only_types=only_types)
         return [self._reconstruct(msg, session_id) for msg in messages]
 
     async def peek(self, session_id: str, limit: int = 1) -> list[AgentMessageEnvelope]:
@@ -137,7 +130,7 @@ class LocalAgentMessageBus(AgentMessageBus):
         return [self._reconstruct(msg, session_id) for msg in messages]
 
     @staticmethod
-    def _reconstruct(msg, session_id: str) -> AgentMessageEnvelope:
+    def _reconstruct(msg: InboxMessage, session_id: str) -> AgentMessageEnvelope:
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 
@@ -158,9 +151,7 @@ class LocalAgentMessageBus(AgentMessageBus):
             message_type=msg.message_type,
             session_id=msg.metadata.get("session_id", session_id),
             agent_session_id=msg.metadata.get("agent_session_id", session_id),
-            parent_session_id=msg.metadata.get("parent_session_id")
-            if msg.metadata
-            else None,
+            parent_session_id=msg.metadata.get("parent_session_id") if msg.metadata else None,
             invocation_id=msg.metadata.get("invocation_id") if msg.metadata else None,
             message_id=msg.message_id,
             timestamp=msg.timestamp,

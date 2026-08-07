@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from bot.service.model_provider import BotModelProvider
-from bot.service.pool_builder import _wire_main_pipeline
+from bot.service.pool.pipeline_wiring import _wire_main_pipeline
 from bot.service.react_strategy import ReactExecutionStrategy
 
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
@@ -60,9 +60,7 @@ def test_build_llm_provider_returns_bot_model_provider(tmp_path: Path) -> None:
 def test_wire_main_pipeline_adds_model_choice_hook(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     reg = ModelChoiceRegistry()
-    main_spec = MainAgentSpec(
-        agent_name="main", approval=ApprovalConfig(enabled=False)
-    )
+    main_spec = MainAgentSpec(agent_name="main", approval=ApprovalConfig(enabled=False))
     assembly_deps = PoolAssemblyDeps(memory=MemoryConfig())
 
     agent = _Agent()

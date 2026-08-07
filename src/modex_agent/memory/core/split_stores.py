@@ -68,12 +68,14 @@ class MessageStore(ABC):
     Owns the short-term message list: load/save/append, revision tracking,
     pinning, pruning, deletion, and expired-message cleanup.
 
-    **Soft-delete model.**  ``prune_messages`` and ``retain_messages``
-    soft-delete (mark as deleted) rather than physically removing rows.
+    **Soft-delete model.**  ``prune_messages`` soft-deletes (marks as
+    deleted) rather than physically removing rows.  ``retain_messages``
+    replaces the active set with the given list: pruned rows are
+    soft-deleted, stale copies of kept rows are marked ``superseded``.
     ``load_messages`` returns only active messages; ``load_all_messages``
-    returns including soft-deleted ones (used by context fork).  Physical
-    removal happens via ``cleanup_expired`` (TTL) or ``delete_session_rows``
-    (session deletion).
+    returns including soft-deleted ones (used by context fork) but never
+    superseded copies.  Physical removal happens via ``cleanup_expired``
+    (TTL, both deleted states) or ``delete_session_rows`` (session deletion).
     """
 
     @abstractmethod
@@ -141,13 +143,20 @@ class MessageStore(ABC):
         keep_messages: list[dict[str, Any]],
         expected_revision: StorageRevision | None = None,
     ) -> StorageRevision | None:
-        """Soft-delete all active messages not in *keep_messages*.
+        """Replace the active set with exactly *keep_messages*, in order.
 
-        Messages whose content matches an entry in *keep_messages* stay
-        active; every other active message is soft-deleted (preserved for
-        :meth:`load_all_messages`).  When *expected_revision* is provided
-        and does not match the current revision, returns ``None`` without
-        modifying anything.
+        After the call, ``load_messages()`` returns *keep_messages* in the
+        given order — including entries that did not previously exist (e.g. a
+        compact summary prepended by session cleanup).  Removed messages are
+        not physically deleted:
+
+        - messages absent from *keep_messages* are soft-deleted (visible via
+          :meth:`load_all_messages`, purged by TTL);
+        - prior physical copies of kept messages are marked ``superseded``
+          (invisible to every read path, purged by TTL).
+
+        When *expected_revision* is provided and does not match the current
+        revision, returns ``None`` without modifying anything.
         """
         ...
 

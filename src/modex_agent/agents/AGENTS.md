@@ -7,7 +7,7 @@ Agent reasoning pattern implementations. Each sub-package implements a specific 
 
 ## Purpose
 
-The `agents/` module provides concrete agent implementations: the `ReActAgent` (Thought→Action→Observation loop with approval suspension/resume, built on the `modex_graph` engine), `ExternalCodingAgent` (Pi/OpenCode CLI harness), and `ExperienceReviewAgent` (ReAct-based conversation review for experience creation/update). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). New agent strategies go in new subdirectories.
+The `agents/` module provides concrete agent implementations: the `ReActAgent` (Thought→Action→Observation loop with approval suspension/resume, built on the `modex_graph` engine), `ExternalAgent` (Pi/OpenCode CLI harness), `ExperienceReviewAgent` (ReAct-based conversation review for experience creation/update), and `SessionCompactorAgent` (tool-less single-LLM-call compact summary generation). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). New agent strategies go in new subdirectories.
 
 ## Key Files
 
@@ -20,8 +20,8 @@ The `agents/` module provides concrete agent implementations: the `ReActAgent` (
 | Directory | Files | Purpose |
 |-----------|-------|---------|
 | `react/` | 14 py (incl. `nodes/`) | `ReActAgent` — 4-node graph (START→LLM→TOOL→END) built on `modex_graph`, `TieredToolApprovalClassifier`, `ReActTurnState` (GraphState), `ReactGraphRuntime` adapter, approval suspend/resume (see `react/AGENTS.md`) |
-| `external_coding/` | 21 py (incl. `providers/`) | `ExternalCodingAgent` — provider-neutral streaming harness, Pi/OpenCode adapters, session-map ABC, env/prompt/path/OS process seams (see `external_coding/AGENTS.md`, ADR-0022) |
-| `summarizer/` | 6 py | `ArchiveSummarizer` (MD archive generation), `CoreMemoryConsolidator` (ReAct-based core memory consolidation; renamed from `KnowledgeConsolidator` per ADR-0035), `ScopedFileAgent` base class (see `summarizer/AGENTS.md`). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). |
+| `external/` | 21 py (incl. `providers/`) | `ExternalAgent` — provider-neutral streaming harness, Pi/OpenCode adapters, session-map ABC, env/prompt/path/OS process seams (see `external/AGENTS.md`, ADR-0022) |
+| `summarizer/` | 7 py | `ArchiveSummarizer` (MD archive generation), `CoreMemoryConsolidator` (ReAct-based core memory consolidation; renamed from `KnowledgeConsolidator` per ADR-0035), `SessionCompactorAgent` (tool-less single-LLM-call compact summary), `ScopedFileAgent` base class (see `summarizer/AGENTS.md`). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). |
 | `experience/` | 2 py | `ExperienceReviewAgent` — ReAct agent that reviews conversations and creates/updates EXPERIENCE.md files using experience tools (see `experience/AGENTS.md`) |
 
 ### react/ Submodule Details
@@ -34,10 +34,10 @@ The ReAct module is the primary agent runtime. Key components:
 | `graph.py` | `build_react_graph()` — builds `Graph[ReActTurnState]` with 4 nodes + 8 edges using `modex_graph.Graph` API |
 | `context.py` | `ReActGraphContext(GraphContext[ReActTurnState])` — type-safe accessors (`agent_ctx`, `tool_manager`, `context_manager`) |
 | `runtime.py` | `ReactGraphRuntime(GraphRuntime)` — AOP bridge: maps ReAct StrEnums to `HookPoint`/`InterceptorScope`/`ReActEvent`, bridges `GraphContext.user_data` → `AgentContext` for all AOP services |
-| `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy` (simplified via `state.checkpoint()` per-channel path, ADR-0033 D14), `ReActRuntimeStateCodec` |
+| `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy`, `ReActRuntimeStateCodec` |
 | `builder.py` | `ReActAgentBuilder` — `build_agent()` + `build_emitter_factory()` from `AgentDescriptor` |
 | `approval.py` | `ApprovalRuntime` + `TieredToolApprovalClassifier` (NORMAL/DANGEROUS path-based) |
-| `constants.py` | `ReActNode`, `ReActReason`, `ReActHookPoint`, `ReActScope`, `ReActEvent` StrEnums |
+| `constants.py` | `ReActNode`, `ReActHookPoint`, `ReActScope`, `ReActEvent` StrEnums |
 | `nodes/start.py` | `StartNode` — routes to LLM (fresh) or stored `current_node` (resume from suspended) |
 | `nodes/llm.py` | `LLMNode` — calls LLM, handles streaming, dispatches hooks/interceptors via `ctx.runtime.*`, emits iteration events |
 | `nodes/tool.py` | `ToolNode` — classify all → suspend for approval via `ctx.interrupt(tx)` → batch execute → route |
@@ -48,7 +48,7 @@ The ReAct module is the primary agent runtime. Key components:
 | File | Description |
 |------|-------------|
 | `scoped_file_agent.py` | `ScopedFileAgent` — ReAct agent base with scoped file tools, `SummarizerTrajectoryEmitter` for JSONL traces, 2-attempt retry |
-| `archive_agent.py` | `ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator)` — generates `context.md`/`knowledge.md`/`index.md` from pruned messages |
+| `archive_agent.py` | `ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator)` — generates `context.md`/`knowledge.md` from pruned messages (no `index.md`; topic from compact summary's `## Objective`) |
 | `consolidator.py` | `CoreMemoryConsolidator(ScopedFileAgent, CoreMemoryConsolidatorBase)` (renamed from `KnowledgeConsolidator` per ADR-0035) — reads `knowledge.md` from archives, updates `SOUL.md`/`USER.md`/`MEMORY.md` via ReAct |
 | `emitter.py` | `SummarizerTrajectoryEmitter` — JSONL trace file writer for agent observability |
 | `abc.py` | `ArchiveGenerator` ABC, `CoreMemoryConsolidatorBase` ABC (renamed from `KnowledgeConsolidatorBase` per ADR-0035), `ArchiveSummarizerResult`, lazy prompt loader |
@@ -59,12 +59,12 @@ The ReAct module is the primary agent runtime. Key components:
 |------|-------------|
 | `review_agent.py` | `ExperienceReviewAgent(ScopedFileAgent)` — ReAct agent with 6 experience tools, 2-attempt retry, JSONL trace observability |
 
-### external_coding/ Submodule Details
+### external/ Submodule Details
 
 | File | Description |
 |------|-------------|
-| `agent.py` | `ExternalCodingAgent`, `StreamingProviderBackend`, stale-session retry, canonical `TurnEvent` projection, retryable `stop()` |
-| `builder.py` | `ExternalCodingAgentBuilder` — explicit backend/parser/session-store/env collaborator assembly |
+| `agent.py` | `ExternalAgent`, `StreamingProviderBackend`, stale-session retry, canonical `TurnEvent` projection, retryable `stop()` |
+| `builder.py` | `ExternalAgentBuilder` — explicit backend/parser/session-store/env collaborator assembly |
 | `session_store.py` | `ExternalSessionMapStore` ABC + local-file adapter; SQLite adapter lives under `persistence/adapters/` |
 | `env_builder.py` / `runtime_config.py` | Per-turn `MODEX_*` environment and provider-visible AGENTS.md runtime block |
 | `os_layer.py` | Cross-platform executable resolution, process-group spawn, and complete process-tree termination |
@@ -74,7 +74,7 @@ The ReAct module is the primary agent runtime. Key components:
 
 Lifecycle rule: upper layers call only `StreamingProviderBackend.close()`.
 Persistent and per-turn differences stay inside adapters. Cleanup failure must
-propagate so `ExternalCodingAgent` and `AgentPool` retain the owner for retry;
+propagate so `ExternalAgent` and `AgentPool` retain the owner for retry;
 never mark an agent stopped or remove it from a pool before close succeeds.
 
 The `ExperienceReviewAgent`:
@@ -90,7 +90,8 @@ The `ExperienceReviewAgent`:
 ```
 Agent[E]
 ├── ReActAgent               (modex_graph-based, 4-node, with approval)
-├── ExternalCodingAgent      (external CLI harness, provider backend lifecycle)
+├── ExternalAgent      (external CLI harness, provider backend lifecycle)
+├── SessionCompactorAgent     (tool-less, single LLM call → compact summary)
 └── ScopedFileAgent          (ReAct with scoped file tools)
     ├── ArchiveSummarizer    (pruned → archive files)
     ├── CoreMemoryConsolidator (archive → core memory files; renamed from KnowledgeConsolidator per ADR-0035)
@@ -107,15 +108,14 @@ Agent[E]
 - Prompt templates come from `SummarizerPromptRegistry` loaded via `_get_registry()`
 
 ### ReAct Graph Edges
+Edges are plain topology — nodes route at runtime via `deliver()`.
 ```
-START --NORMAL_START--> LLM
-START --RESUME_TOOLS--> TOOL
-LLM   --HAS_TOOLS--> TOOL
-LLM   --NO_TOOLS--> END
-LLM   --MAX_ITERATIONS--> END
-LLM   --LLM_ERROR--> END
-TOOL  --TOOLS_DONE--> LLM
-TOOL  --TURN_CANCELLED--> END
+START → LLM
+LLM   → TOOL
+LLM   → END
+TOOL  → LLM
+TOOL  → END
+END   → GraphNode.END
 ```
 
 ### Runtime Modes

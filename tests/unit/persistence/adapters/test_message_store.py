@@ -314,3 +314,63 @@ class TestSoftDeleteRetain:
         assert len(all_msgs) == 5
         deleted = [m for m in all_msgs if m.get("_deleted") is True]
         assert len(deleted) == 3
+
+
+class TestRetainSupersede:
+    """``retain_messages`` re-inserts the keep list with fresh rows; the stale
+    copies of kept messages become ``superseded`` — invisible to every read
+    path and TTL-purged like soft-deleted rows."""
+
+    async def test_kept_message_appears_once_in_load_all(
+        self, message_store: SqliteMessageStore
+    ) -> None:
+        """Superseded copies never surface — no duplicates in the history view."""
+        await message_store.save_messages([msg("m1"), msg("m2"), msg("m3")])
+        rev = await message_store.get_revision()
+        await message_store.retain_messages([msg("m2")], rev)
+
+        all_msgs = await message_store.load_all_messages()
+        ids = [m["id"] for m in all_msgs]
+        assert sorted(ids) == ["m1", "m2", "m3"]
+        by_id = {m["id"]: m for m in all_msgs}
+        assert by_id["m1"].get("_deleted") is True
+        assert by_id["m3"].get("_deleted") is True
+        assert by_id["m2"].get("_deleted") is None
+
+    async def test_retain_reinsert_preserves_created_at(
+        self, message_store: SqliteMessageStore
+    ) -> None:
+        """Re-inserted kept messages keep their original creation time
+        (callers pass loaded dicts, which carry ``created_at``)."""
+        await message_store.append_message(msg("m1"))
+        await message_store.append_message(msg("m2"))
+        loaded_before = await message_store.load_messages()
+        created_before = {m["id"]: m["created_at"] for m in loaded_before}
+        rev = await message_store.get_revision()
+        await message_store.retain_messages([loaded_before[1]], rev)
+
+        loaded = await message_store.load_messages()
+        assert [m["id"] for m in loaded] == ["m2"]
+        assert loaded[0]["created_at"] == created_before["m2"]
+
+    async def test_cleanup_expired_purges_superseded(
+        self, connection: ConnectionManager, scope: RecordScope
+    ) -> None:
+        """With ttl_seconds=0, superseded rows are physically purged like
+        soft-deleted ones."""
+        store = SqliteMessageStore(connection, scope, ttl_seconds=0.0)
+        await store.save_messages([msg("m1"), msg("m2"), msg("m3")])
+        rev = await store.get_revision()
+        await store.retain_messages([msg("m2")], rev)
+
+        # Give a tiny delay so time.time() advances past updated_at.
+        time.sleep(0.01)
+        removed = await store.cleanup_expired()
+
+        assert removed == 3  # m1/m3 soft-deleted + stale superseded copy of m2
+        count = await connection.query_value(
+            "SELECT COUNT(*) FROM memory_session_messages WHERE scope_key = ?",
+            int,
+            (scope.canonical(),),
+        )
+        assert count == 1  # only the re-inserted active m2 remains

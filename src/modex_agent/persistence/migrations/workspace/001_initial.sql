@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS memory_session_messages (
     scope_key       TEXT    NOT NULL,
     seq             INTEGER NOT NULL,
     message_id      TEXT,
-    role            TEXT    NOT NULL CHECK (role IN ('user', 'assistant', 'system', 'tool', 'agent', 'pending')),
+    role            TEXT    NOT NULL,
     content         TEXT,
     is_content_json INTEGER NOT NULL DEFAULT 0 CHECK (is_content_json IN (0, 1)),
     token_count     INTEGER,
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS memory_session_messages (
     created_at      INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
     updated_at      INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
     state           TEXT    NOT NULL DEFAULT 'normal'
-                    CHECK (state IN ('normal', 'pinned', 'soft_deleted')),
+                    CHECK (state IN ('normal', 'pinned', 'soft_deleted', 'superseded')),
     UNIQUE (scope_key, seq)
 );
 
@@ -35,7 +35,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_session_active
 
 CREATE INDEX IF NOT EXISTS idx_memory_session_ttl
     ON memory_session_messages (updated_at)
-    WHERE state = 'soft_deleted';
+    WHERE state IN ('soft_deleted', 'superseded');
 
 CREATE INDEX IF NOT EXISTS idx_memory_session_state
     ON memory_session_messages (scope_key, state);
@@ -346,14 +346,14 @@ END;
 -- 14. external_session_map
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS external_session_map (
-    modex_session_id    TEXT    PRIMARY KEY,
-    scope_key           TEXT    NOT NULL,
-    provider_session_id TEXT    NOT NULL,
-    provider_kind       TEXT    NOT NULL CHECK (provider_kind IN ('pi', 'opencode')),
-    last_committed_at   INTEGER NOT NULL,
-    invalidated         INTEGER NOT NULL DEFAULT 0 CHECK (invalidated IN (0, 1)),
-    created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
-    updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+    modex_session_id       TEXT    PRIMARY KEY,
+    scope_key              TEXT    NOT NULL,
+    provider_session_id    TEXT    NOT NULL,
+    provider_kind          TEXT    NOT NULL CHECK (provider_kind IN ('pi', 'opencode')),
+    last_committed_at      INTEGER NOT NULL,
+    invalidated            INTEGER NOT NULL DEFAULT 0 CHECK (invalidated IN (0, 1)),
+    created_at             INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    updated_at             INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
 );
 
 CREATE TRIGGER IF NOT EXISTS trg_external_session_map_auto_updated_at
@@ -384,5 +384,154 @@ FOR EACH ROW
 WHEN NEW.updated_at IS OLD.updated_at
 BEGIN
     UPDATE pool_routing SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+    WHERE rowid = NEW.rowid;
+END;
+
+-- ---------------------------------------------------------------------------
+-- 16. graph_specs — graph definition persistence (full GraphSpec serialization).
+--     spec_id is a Snowflake ID (BIGINT, application-generated; not AUTOINCREMENT).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS graph_specs (
+    spec_id         BIGINT  PRIMARY KEY,
+    name            TEXT    NOT NULL,
+    version         TEXT    NOT NULL DEFAULT '1.0',
+    spec_json       TEXT    NOT NULL CHECK (json_valid(spec_json)),
+    created_at      INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    updated_at      INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    UNIQUE (name, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_graph_specs_name ON graph_specs (name);
+
+CREATE TRIGGER IF NOT EXISTS trg_graph_specs_auto_updated_at
+AFTER UPDATE ON graph_specs
+FOR EACH ROW
+WHEN NEW.updated_at IS OLD.updated_at
+BEGIN
+    UPDATE graph_specs SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+    WHERE rowid = NEW.rowid;
+END;
+
+-- ---------------------------------------------------------------------------
+-- 17. graph_instances — runtime graph instances (graph_instance_id is the
+--     persistence unique key). parent_instance_id enables recursive subgraph
+--     nesting (null for top-level). parent_node is the node name in the parent
+--     graph that spawned this instance.
+--     spec_id references graph_specs.spec_id (FK enforced at app layer; SQLite
+--     FK enforcement is off by default).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS graph_instances (
+    graph_instance_id   BIGINT  PRIMARY KEY,
+    spec_id             BIGINT  NOT NULL,
+    parent_instance_id  BIGINT,
+    parent_node         TEXT,
+    status              TEXT    NOT NULL DEFAULT 'running'
+                        CHECK (status IN ('running', 'paused', 'stopped', 'crashed', 'completed', 'failed')),
+    created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+);
+
+CREATE INDEX IF NOT EXISTS idx_graph_instances_spec
+    ON graph_instances (spec_id);
+
+CREATE INDEX IF NOT EXISTS idx_graph_instances_parent
+    ON graph_instances (parent_instance_id)
+    WHERE parent_instance_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_graph_instances_active
+    ON graph_instances (status)
+    WHERE status IN ('running', 'paused', 'crashed');
+
+CREATE TRIGGER IF NOT EXISTS trg_graph_instances_auto_updated_at
+AFTER UPDATE ON graph_instances
+FOR EACH ROW
+WHEN NEW.updated_at IS OLD.updated_at
+BEGIN
+    UPDATE graph_instances SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+    WHERE rowid = NEW.rowid;
+END;
+
+-- ---------------------------------------------------------------------------
+-- 18. node_states — per-node invocation version chain.
+--     One row per (graph_instance_id, node_name, version). All versions
+--     retained for MVCC rollback. `status` tracks the InvocationStatus
+--     lifecycle (running → completed/canceled/crashed); no pending or
+--     superseded states. `invocation_id` links the version to its producing
+--     invocation; `parent_version` chains versions to their predecessor.
+--     `suspended` marks a RUNNING invocation paused for HITL resume.
+--     graph_instance_id references graph_instances.graph_instance_id (app-layer FK).
+--     No auto-update trigger — each version row is write-once on INSERT,
+--     then updated via CAS on lifecycle transitions; `updated_at` reflects
+--     the last transition.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS node_states (
+    node_state_id       BIGINT  PRIMARY KEY,
+    graph_instance_id   BIGINT  NOT NULL,
+    node_name           TEXT    NOT NULL,
+    version             INTEGER NOT NULL DEFAULT 0,
+    parent_version      INTEGER,
+    status              TEXT    NOT NULL DEFAULT 'running'
+                        CHECK (status IN ('running', 'completed',
+                                          'canceled', 'crashed')),
+    invocation_id       BIGINT  NOT NULL DEFAULT 0,
+    state_json          TEXT    NOT NULL CHECK (json_valid(state_json)),
+    suspended           INTEGER NOT NULL DEFAULT 0,
+    created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    UNIQUE (graph_instance_id, node_name, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_node_states_latest
+    ON node_states (graph_instance_id, node_name, version DESC);
+
+CREATE INDEX IF NOT EXISTS idx_node_states_node
+    ON node_states (graph_instance_id, node_name);
+
+CREATE INDEX IF NOT EXISTS idx_node_states_status
+    ON node_states (graph_instance_id, node_name, status);
+
+CREATE INDEX IF NOT EXISTS idx_node_states_cross
+    ON node_states (graph_instance_id, node_name, invocation_id);
+
+CREATE INDEX IF NOT EXISTS idx_node_states_global
+    ON node_states (graph_instance_id, invocation_id DESC);
+
+-- ---------------------------------------------------------------------------
+-- 19. deliver_states — accumulated deliver payloads with consumption state machine.
+--     node_name is the accumulating node; next_node is the target downstream.
+--     `source_node` / `source_invocation_id` record the delivering node;
+--     `consumed_by_invocation_id` records the consumer (NULL until consumed).
+--     `status` transitions: PENDING → CONSUMED_PENDING → CONSUMED_COMPLETED
+--     (three-state machine). Default is 'pending'.
+--     graph_instance_id references graph_instances.graph_instance_id (app-layer FK).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS deliver_states (
+    deliver_id          BIGINT  PRIMARY KEY,
+    graph_instance_id   BIGINT  NOT NULL,
+    node_name           TEXT    NOT NULL,
+    next_node           TEXT    NOT NULL,
+    source_node         TEXT    NOT NULL DEFAULT '',
+    source_invocation_id INTEGER NOT NULL DEFAULT 0,
+    consumed_by_invocation_id INTEGER,
+    content_json        TEXT    NOT NULL CHECK (json_valid(content_json)),
+    status              TEXT    NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'consumed',
+                                          'consumed_pending', 'consumed_completed')),
+    created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+);
+
+CREATE INDEX IF NOT EXISTS idx_deliver_states_node
+    ON deliver_states (graph_instance_id, node_name, status);
+
+CREATE INDEX IF NOT EXISTS idx_deliver_states_target
+    ON deliver_states (graph_instance_id, next_node, status);
+
+CREATE TRIGGER IF NOT EXISTS trg_deliver_states_auto_updated_at
+AFTER UPDATE ON deliver_states
+FOR EACH ROW
+WHEN NEW.updated_at IS OLD.updated_at
+BEGIN
+    UPDATE deliver_states SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
     WHERE rowid = NEW.rowid;
 END;

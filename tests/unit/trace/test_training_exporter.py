@@ -19,20 +19,22 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.trace.semconv import SpanName, SpanStatusCode
+from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
 from modex_agent.trace.store import SpanModel, SpanStatus, TraceQuery
+from modex_agent.trace.scoring import (
+    TrajectoryScore,
+    compute_score,
+    overall_score,
+)
 from modex_agent.trace.training_exporter import (
     DPOPair,
     ExportResult,
     SFTExample,
     TrainingDataExporter,
-    TrajectoryScore,
-    _compute_score,
     _edit_distance_ratio,
     _jaccard_similarity,
     _levenshtein,
     _ngram_set,
-    _overall_score,
     _tenant_of,
     _wrap_reasoning,
 )
@@ -47,7 +49,11 @@ class InMemoryTraceStore(TraceQuery):
         self._spans: list[SpanModel] = []
 
     async def list_by_session(self, session_id: str) -> list[SpanModel]:
-        return [s for s in self._spans if s.attributes.get("gen_ai.session.id") == session_id]
+        return [
+            s
+            for s in self._spans
+            if s.attributes.get(GenAiAttr.CONVERSATION_ID.value) == session_id
+        ]
 
     async def list_by_trace_id(self, trace_id: str) -> list[SpanModel]:
         return [s for s in self._spans if s.trace_id == trace_id]
@@ -68,8 +74,8 @@ def _make_span(
 ) -> SpanModel:
     """Build a minimal SpanModel with common attributes pre-filled."""
     attrs: dict[str, Any] = {
-        "gen_ai.agent.name": agent_name,
-        "gen_ai.session.id": session_id,
+        GenAiAttr.AGENT_NAME.value: agent_name,
+        GenAiAttr.CONVERSATION_ID.value: session_id,
     }
     if attributes:
         attrs.update(attributes)
@@ -131,14 +137,16 @@ def _make_trajectory(
                 name="chat",
                 start_time=ts,
                 attributes={
-                    "gen_ai.output.content": "",
+                    GenAiAttr.OUTPUT_MESSAGES.value: [
+                        {"role": "assistant", "parts": [{"type": "text", "content": ""}]}
+                    ],
                     "has_tool_calls": True,
-                    "finish_reason": "tool_calls",
-                    "gen_ai.output.tool_calls": [
+                    GenAiAttr.RESPONSE_FINISH_REASONS.value: ["tool_calls"],
+                    GenAiAttr.OUTPUT_TOOL_CALLS.value: [
                         {"tool_name": "calculator", "arguments": '{"expr": "2+2"}'}
                     ],
-                    "gen_ai.usage.input_tokens": 10,
-                    "gen_ai.usage.output_tokens": 5,
+                    GenAiAttr.USAGE_INPUT_TOKENS.value: 10,
+                    GenAiAttr.USAGE_OUTPUT_TOKENS.value: 5,
                 },
             )
         )
@@ -153,8 +161,8 @@ def _make_trajectory(
                 name="execute_tool",
                 start_time=ts,
                 attributes={
-                    "gen_ai.tool.name": "calculator",
-                    "gen_ai.tool.result": "4",
+                    GenAiAttr.TOOL_NAME.value: "calculator",
+                    GenAiAttr.TOOL_RESULT.value: "4",
                 },
                 status_code=SpanStatusCode.OK
                 if tool_success
@@ -165,20 +173,22 @@ def _make_trajectory(
 
     # Final chat span (no tool_calls)
     final_attrs: dict[str, Any] = {
-        "gen_ai.output.content": final_content,
+        GenAiAttr.OUTPUT_MESSAGES.value: [
+            {"role": "assistant", "parts": [{"type": "text", "content": final_content}]}
+        ],
         "has_tool_calls": False,
-        "finish_reason": "stop",
-        "gen_ai.usage.input_tokens": 20,
-        "gen_ai.usage.output_tokens": 10,
+        GenAiAttr.RESPONSE_FINISH_REASONS.value: ["stop"],
+        GenAiAttr.USAGE_INPUT_TOKENS.value: 20,
+        GenAiAttr.USAGE_OUTPUT_TOKENS.value: 10,
     }
     if with_reasoning:
-        final_attrs["gen_ai.output.reasoning_content"] = reasoning
-        final_attrs["gen_ai.usage.reasoning_tokens"] = 15
+        final_attrs[GenAiAttr.OUTPUT_REASONING_CONTENT.value] = reasoning
+        final_attrs[GenAiAttr.USAGE_REASONING_TOKENS.value] = 15
     if usage:
-        final_attrs["gen_ai.usage.input_tokens"] = usage.get("input_tokens", 20)
-        final_attrs["gen_ai.usage.output_tokens"] = usage.get("output_tokens", 10)
+        final_attrs[GenAiAttr.USAGE_INPUT_TOKENS.value] = usage.get("input_tokens", 20)
+        final_attrs[GenAiAttr.USAGE_OUTPUT_TOKENS.value] = usage.get("output_tokens", 10)
         if "reasoning_tokens" in usage:
-            final_attrs["gen_ai.usage.reasoning_tokens"] = usage["reasoning_tokens"]
+            final_attrs[GenAiAttr.USAGE_REASONING_TOKENS.value] = usage["reasoning_tokens"]
     spans.append(
         _make_span(
             trace_id=trace_id,
@@ -577,7 +587,7 @@ class TestDeduplication:
 class TestL2Scoring:
     def test_compute_score_all_success(self) -> None:
         spans = _make_trajectory(tool_success=True, with_reasoning=True)
-        score = _compute_score(spans)
+        score = compute_score(spans)
         assert isinstance(score, TrajectoryScore)
         assert score.tool_success_rate == 1.0
         assert score.reasoning_depth == 15
@@ -587,19 +597,19 @@ class TestL2Scoring:
 
     def test_compute_score_failed_tool(self) -> None:
         spans = _make_trajectory(tool_success=False, with_reasoning=True)
-        score = _compute_score(spans)
+        score = compute_score(spans)
         assert score.tool_success_rate == 0.0
         assert score.reasoning_depth == 15
 
     def test_compute_score_no_tools(self) -> None:
         spans = _make_trajectory(with_tool_calls=False, with_reasoning=True)
-        score = _compute_score(spans)
+        score = compute_score(spans)
         # No tools → tool_success_rate defaults to 1.0
         assert score.tool_success_rate == 1.0
 
     def test_compute_score_no_reasoning(self) -> None:
         spans = _make_trajectory(with_reasoning=False)
-        score = _compute_score(spans)
+        score = compute_score(spans)
         assert score.reasoning_depth == 0
 
     def test_overall_score_combines_metrics(self) -> None:
@@ -608,7 +618,7 @@ class TestL2Scoring:
             reasoning_depth=500,
             trajectory_compactness=0.3,
         )
-        overall = _overall_score(score)
+        overall = overall_score(score)
         # 0.5*1.0 + 0.3*(500/1000) + 0.2*0.3 = 0.5 + 0.15 + 0.06 = 0.71
         assert overall == pytest.approx(0.71, rel=1e-3)
 
@@ -618,7 +628,7 @@ class TestL2Scoring:
             reasoning_depth=10000,
             trajectory_compactness=2.0,
         )
-        overall = _overall_score(score)
+        overall = overall_score(score)
         assert overall <= 1.0
         # 0.5*1 + 0.3*1 + 0.2*1 = 1.0
         assert overall == pytest.approx(1.0, rel=1e-3)

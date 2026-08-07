@@ -34,12 +34,12 @@ We want to admit these external CLIs as **first-class pool members** so that:
    context.
 
 The integration model is straightforward: each external CLI is wrapped by a
-framework-side harness (`ExternalCodingAgent`) that owns the per-turn
+framework-side harness (`ExternalAgent`) that owns the per-turn
 lifecycle, the provider subprocess is spawned with an env carrying ModexAgent
 identity, and outbound communication goes through a **direct write into the
 target pool's `pending.jsonl`** — reusing the inbox mechanism ADR-0015
 already defined. Cross-pool routing reuses the ADR-0019 peer-normal prefix
-rule. The design is strictly additive: with no `external_coding` execution
+rule. The design is strictly additive: with no `external` execution
 strategy configured, behaviour is byte-for-byte today's.
 
 ## Decision
@@ -123,7 +123,7 @@ only `--session <id>` (or nothing on the first turn).
 ### D4 — OS abstraction: two primitives, not a strategy hierarchy
 
 OS-specific behaviour is concentrated in **two functions** in
-`agents/external_coding/os_layer.py`:
+`agents/external/os_layer.py`:
 
 ```python
 def resolve_executable(name: str, logger) -> ResolvedExecutable: ...
@@ -332,17 +332,17 @@ Changes to existing framework code: **2 lines + 1 comment**.
 
 | File | Change |
 |---|---|
-| `multi_agent/factory.py:120-126` | add `"external_coding"` branch in `_get_builder` (2 lines) |
-| `multi_agent/descriptor.py:62` | add `external_coding` to the documented `execution_strategy` values (comment) |
+| `multi_agent/factory.py:120-126` | add `"external"` branch in `_get_builder` (2 lines) |
+| `multi_agent/descriptor.py:62` | add `external` to the documented `execution_strategy` values (comment) |
 
-Everything else is additive, under `src/modex_agent/agents/external_coding/`:
+Everything else is additive, under `src/modex_agent/agents/external/`:
 
 ```
-agents/external_coding/
+agents/external/
 ├── __init__.py
-├── agent.py              # ExternalCodingAgent(Agent[E]) — harness
-├── builder.py            # ExternalCodingAgentBuilder — pool registration
-├── events.py             # ExternalCodingEvent(StrEnum)
+├── agent.py              # ExternalAgent(Agent[E]) — harness
+├── builder.py            # ExternalAgentBuilder — pool registration
+├── events.py             # ExternalEvent(StrEnum)
 ├── os_layer.py           # resolve_executable, spawn_process_group, terminate_process_group
 ├── paths.py              # ExternalPaths + ProviderKind
 ├── session_store.py      # ExternalSessionStore — modex↔provider session map
@@ -373,7 +373,7 @@ through the existing pool factory dispatch.
 
 - Two industry coding agents (Pi, OpenCode) become peer-addressable pool
   members, expanding the agent ecosystem without writing a new agent runtime.
-- The integration is strictly additive: no `external_coding` strategy
+- The integration is strictly additive: no `external` strategy
   configured ⇒ byte-for-byte today's behaviour.
 - Cross-pool routing reuses ADR-0019's prefix rule and ADR-0015's inbox
   mechanism; no new transport, no new topology kind.
@@ -432,7 +432,7 @@ through the existing pool factory dispatch.
   are NORMAL peers, routed via the same `PeerNormalStrategy` prefix-reuse
   rule.
 - **Builds on ADR-0003** (src layout) — all new code lives under
-  `src/modex_agent/agents/external_coding/`, matching the
+  `src/modex_agent/agents/external/`, matching the
   framework-vs-examples separation.
 - **Does not revise** any prior decision; this is a pure addition.
 
@@ -452,7 +452,7 @@ The ADR specified a single `modexbot` CLI. The implementation split into:
 - **`modexctl`** (`src/modexctl/main.py`) — the production CLI with
   `send` + `agents` subcommands, `--content`/`--content-file`/`--stdin`
   input modes, `OutboxLine` Pydantic serialization, and XML-wrapped
-  content via `build_peer_agent_message`.
+  content via `build_agent_comm_message`.
 - **`modexbot`** (`src/modex_agent/cli/modexbot/`) — a compatibility
   facade that delegates routing logic to `modexctl.main`.
 
@@ -473,12 +473,12 @@ The ADR specified 5 event types emitted directly through
   abstract); `StreamingAwareEmitter` forwards text to `emit_delta` and
   no-ops reasoning/tool events; `WebBotEmitter` projects canonical
   events into existing `ServerEvent`/transcript types.
-- `ExternalCodingAgent._handle_emission` is the sole adapter from
+- `ExternalAgent._handle_emission` is the sole adapter from
   provider `Emission` → canonical `TurnEvent`; tool arguments are parsed
   here (not in WebUI).
-- WebUI has **zero imports** from `external_coding` — it consumes only
+- WebUI has **zero imports** from `external` — it consumes only
   the canonical seam. Architecture guards enforce this.
-- `ExternalCodingEvent` now inherits `AgentEvent` (eliminating
+- `ExternalEvent` now inherits `AgentEvent` (eliminating
   `type: ignore`).
 - Tool call/result share a non-empty `call_id` (provider-minted or
   parser-minted).
@@ -501,7 +501,7 @@ but still additive — no existing behaviour changed:
 | `pipeline/pipeline.py` | `ExternalTurnRunner` injection + `update_emitter_factory` |
 | `pipeline/turn_runner.py` | `update_emitter_factory` no-op method |
 | `multi_agent/factory.py` | `ExecutionStrategy` enum dispatch |
-| `multi_agent/message_xml.py` | `implementation` parameter + `--stdin` guidance |
+| `multi_agent/message_format.py` | `implementation` parameter + `--stdin` guidance |
 | `multi_agent/envelope.py` | `to_input_metadata` / `to_input_message` |
 | `multi_agent/pool.py` | `input_message_from_dispatch_envelope` cleanup |
 | `multi_agent/communication/strategies/peer_normal.py` | `AgentImplementation` dispatch |
@@ -516,7 +516,7 @@ product-driven addition, not a framework requirement.
 
 ### CLI message wrapping
 
-`modexctl send` now wraps content in `build_peer_agent_message` XML so
+`modexctl send` now wraps content in `build_agent_comm_message` markdown so
 the receiving agent sees structured `<agent_message>` with `source`,
 `<content>`, and `<reply_contract>` (reply instructions tailored to
 receiver's implementation type). The original ADR's raw-text `content`
@@ -560,7 +560,7 @@ is terminal and later execution is rejected. Cleanup failures are propagated
 instead of hidden so ownership can be retried; a process is removed from the
 active set only after it has exited.
 
-`ExternalCodingAgent.stop()` shares concurrent stop attempts and marks the
+`ExternalAgent.stop()` shares concurrent stop attempts and marks the
 agent stopped only after backend close succeeds. `AgentPool.shutdown_all()`
 similarly shares concurrent shutdown, applies one deadline, and removes only
 owners that stopped successfully. Timed-out or failed owners remain

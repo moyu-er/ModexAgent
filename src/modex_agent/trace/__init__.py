@@ -13,6 +13,11 @@ from modex_agent.trace.otel_store import (
     OtelSpanTraceStore,
     build_trace_stores,
 )
+from modex_agent.trace.prompt_capture import (
+    PromptCaptureStrategy,
+    SummaryPromptCapture,
+    build_prompt_capture,
+)
 from modex_agent.trace.store import JsonlSpanQuery, SpanModel, SpanStatus, TraceQuery
 
 __all__ = [
@@ -23,10 +28,13 @@ __all__ = [
     "CassetteReplayEngine",
     "JsonlSpanQuery",
     "OtelSpanTraceStore",
+    "PromptCaptureStrategy",
     "SpanModel",
     "SpanStatus",
+    "SummaryPromptCapture",
     "TraceCollectorHook",
     "TraceQuery",
     "apply_cassette_wrapping",
+    "build_prompt_capture",
     "build_trace_stores",
 ]

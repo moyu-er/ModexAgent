@@ -43,7 +43,9 @@ class PoolInstance:
     main_execution_strategy: ExecutionStrategyKind
     provider: Any
     notification_service: Any  # AgentNotificationService
-    communication_service: Any  # AgentCommunicationService — resolves paths from workspace at runtime
+    communication_service: (
+        Any  # AgentCommunicationService — resolves paths from workspace at runtime
+    )
     agent_bus: AgentMessageBus  # exposed for cross-pool peer wiring
     target_store: CommunicationTargetStore  # exposed for cross-pool peer wiring
 

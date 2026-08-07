@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from bot.service._runtime_builders import _build_main_command_processor
 from bot.service.core import BotService
 
 from modex_agent.commands.processor import SlashCommandProcessor
@@ -22,5 +23,5 @@ def test_bot_service_can_build_main_command_processor() -> None:
     stack = MagicMock()
     stack.controller = MagicMock()
     service.workspace_stack = stack  # type: ignore[assignment]
-    processor = service._build_main_command_processor()
+    processor = _build_main_command_processor()
     assert isinstance(processor, SlashCommandProcessor)

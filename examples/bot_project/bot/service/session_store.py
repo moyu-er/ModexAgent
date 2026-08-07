@@ -66,12 +66,12 @@ class WorkspacePoolSessionStore(LocalFileSessionStore):
             is_workspace_root_bound,
             resolve_workspace_root,
         )
+
         if is_workspace_root_bound():
             from modex_agent.workspace.paths import WorkspacePaths
+
             root = resolve_workspace_root()
-            return WorkspacePaths(
-                root=root / self._data_dir_name
-            ).session_index_dir
+            return WorkspacePaths(root=root / self._data_dir_name).session_index_dir
         return self._root
 
     def _path_for(self, session_id: str) -> Path:
@@ -125,9 +125,7 @@ class WorkspacePoolSessionStore(LocalFileSessionStore):
 
         await asyncio.to_thread(_rm)
 
-    async def delete_sessions_by_prefix(
-        self, session_prefix: str
-    ) -> None:
+    async def delete_sessions_by_prefix(self, session_prefix: str) -> None:
         """Remove every record whose session id shares *session_prefix*.
 
         A conversation (prefix) owns the main session plus every subagent

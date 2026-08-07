@@ -18,11 +18,9 @@ from modex_agent.memory.layers.config import (
     MemoryLayerConfigSet,
     SessionMemoryConfig,
     StorageFactory,
-    UserRetentionBufferConfig,
 )
 from modex_agent.memory.layers.core import ScopedCoreMemoryManager
 from modex_agent.memory.layers.session import ScopedSessionMemoryManager
-from modex_agent.memory.layers.user_buffer import ScopedUserRetentionBuffer
 from modex_agent.memory.registry import MemoryStoreRegistry
 
 
@@ -48,18 +46,10 @@ class MemoryLayerFactory:
         core_memory_manager = MemoryLayerFactory._maybe_build(
             registry, config.core, MemoryLayerName.CORE, ScopedCoreMemoryManager
         )
-        user_retention_manager = (
-            MemoryLayerFactory._maybe_build(
-                registry, config.user_retention, MemoryLayerName.USER_RETENTION, ScopedUserRetentionBuffer
-            )
-            if config.user_retention is not None and config.user_retention.enabled
-            else None
-        )
         return MemoryLayerSet(
             session=session_manager,
             archive=archive_manager,
             core=core_memory_manager,
-            user_retention=user_retention_manager,
         )
 
     @staticmethod
@@ -92,13 +82,11 @@ class MemoryLayerFactory:
         *,
         registry: MemoryStoreRegistry,
         config: SessionMemoryConfig | None = None,
-        user_retention_config: UserRetentionBufferConfig | None = None,
     ) -> MemoryLayerSet:
         effective_config = MemoryLayerConfigSet(
             session=config or SessionMemoryConfig(),
             archive=None,
             core=None,
-            user_retention=user_retention_config or UserRetentionBufferConfig(),
         )
         return MemoryLayerFactory.build(registry=registry, config=effective_config)
 
@@ -117,7 +105,6 @@ class MemoryLayerFactory:
             session=SessionMemoryConfig(),
             archive=ArchiveMemoryConfig(scope=SessionScope()),
             core=None,
-            user_retention=UserRetentionBufferConfig(enabled=True),
         )
         return MemoryLayerFactory.build(registry=registry, config=effective_config)
 

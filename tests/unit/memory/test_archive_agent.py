@@ -20,19 +20,16 @@ class TestArchiveSummarizerConfig:
         config = ArchiveSummarizerConfig()
         assert config.context_max_chars == 20_000
         assert config.core_max_chars == 3000
-        assert config.index_max_chars == 200
         assert config.max_iterations == 25
 
     def test_custom_config(self) -> None:
         config = ArchiveSummarizerConfig(
             context_max_chars=1000,
             core_max_chars=1200,
-            index_max_chars=200,
             max_iterations=5,
         )
         assert config.context_max_chars == 1000
         assert config.core_max_chars == 1200
-        assert config.index_max_chars == 200
         assert config.max_iterations == 5
 
 
@@ -51,17 +48,14 @@ class TestBuildSystemPrompt:
             tmp_path,
             context_max_chars=500,
             core_max_chars=600,
-            index_max_chars=100,
         )
         assert "500" in prompt
         assert "600" in prompt
-        assert "100" in prompt
 
     def test_contains_output_file_sections(self, tmp_path: Path) -> None:
         prompt = ArchiveSummarizer.build_system_prompt(tmp_path)
         assert "context.md" in prompt
         assert "knowledge.md" in prompt
-        assert "index.md" in prompt
 
     def test_contains_execution_rules(self, tmp_path: Path) -> None:
         prompt = ArchiveSummarizer.build_system_prompt(tmp_path)
@@ -351,7 +345,7 @@ class TestSummarizerTrajectoryEmitter:
             await emitter.emit(ReActEvent.TOOL_CALL_START, ToolCall(tool_name="write", arguments={"path": "/tmp/f.txt"}))
             await emitter.emit(
                 ReActEvent.TOOL_CALL_END,
-                (ToolCall(tool_name="write", arguments={}), ToolResult(tool_name="write", result="ok")),
+                (ToolCall(tool_name="write", arguments={}), ToolResult.from_text("write", "ok")),
             )
             from modex_agent.core.emitter import AgentResult
             await emitter.emit_complete(AgentResult(content="done", stop_reason="completed"))

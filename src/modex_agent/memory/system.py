@@ -7,6 +7,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.agent import AgentCommKind
+from modex_agent.core.constants import RuntimeInfoKey, format_working_directory_line
 from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.governance import ContextGovernance
@@ -22,8 +24,6 @@ from modex_agent.memory.injection.policy import MemoryInjectionPolicy
 from modex_agent.memory.layers.config import MemoryLayerConfigSet
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.pruned.manager import PrunedManager
-
-# UserRetentionBuffer injection moved to framework.memory.user_buffer (Task 6 stub)
 from modex_agent.memory.registry.base import MemoryStoreRegistry
 from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
 from modex_agent.memory.token_estimator import TokenEstimator
@@ -62,27 +62,17 @@ def create_memory_system(
     archive_agent: ArchiveGenerator | None = None,
     archive_storage: DirArchiveStorage | None = None,
     core_memory_consolidator: CoreMemoryConsolidatorBase | None = None,
-    archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
     token_estimator: TokenEstimator | None = None,
     store_registry: MemoryStoreRegistry | None = None,
+    compactor: Any | None = None,
 ) -> DefaultMemorySystem:
-    """Create a production-ready memory system.
-
-    Args:
-        workspace: Root directory for file-based storage.
-        config: Optional layer configuration set.
-        llm_provider: Optional LLM provider for compression/summarization.
-        session_only: If True, create session-only layers (subagent — no archive, no core memory).
-        store_registry: Optional registry override; defaults to local file storage.
-    """
+    """Create a production-ready memory system."""
     registry = store_registry or DefaultMemoryStoreRegistry(workspace)
     if session_only:
         session_config = config.session if config else None
-        user_retention_config = config.user_retention if config else None
         layer_set = MemoryLayerFactory.session_only(
             registry=registry,
             config=session_config,
-            user_retention_config=user_retention_config,
         )
     else:
         layer_set = MemoryLayerFactory.single_user(
@@ -99,8 +89,8 @@ def create_memory_system(
         archive_agent=archive_agent,
         archive_storage=archive_storage,
         core_memory_consolidator=core_memory_consolidator,
-        archive_trigger_callback=archive_trigger_callback,
         token_estimator=token_estimator,
+        compactor=compactor,
     )
 
 
@@ -111,7 +101,7 @@ class MemorySystemContextManager(ContextManager):
       1. Runtime metadata (date, platform)
       2. Base system prompt (agent personality / system.md)
       3. Memory layers via ``injection_policy.assemble()`` — session, archive,
-         core memory, user-retention (subject to budget & pruning)
+         core memory (subject to budget & pruning)
       4. Experiences — persistent reference knowledge (NOT a memory layer)
       5. Skills — persistent reference knowledge (NOT a memory layer)
 
@@ -136,6 +126,7 @@ class MemorySystemContextManager(ContextManager):
         fork_context_spec: ForkContextSpec | None = None,
         archive_injection_config: ArchiveInjectionConfig | None = None,
         roles: list[str] | None = None,
+        comm_kind: AgentCommKind | None = None,
     ) -> None:
         from modex_agent.memory.injection import FullInjectionPolicy
 
@@ -144,9 +135,8 @@ class MemorySystemContextManager(ContextManager):
         self.default_agent_id = default_agent_id
         self.default_agent_role = default_agent_role
         self.base_system_prompt = base_system_prompt
-        self.injection_policy: MemoryInjectionPolicy = injection_policy or FullInjectionPolicy(
-            archive_config=archive_injection_config
-        )
+        self.injection_policy: MemoryInjectionPolicy = injection_policy or FullInjectionPolicy()
+        self._archive_injection_config = archive_injection_config
         self._last_session_id: str | None = None
         self._context_cache: dict[str, MemoryContext] = {}
         self._max_context_cache_size = 1000
@@ -155,47 +145,20 @@ class MemorySystemContextManager(ContextManager):
         # Subagent per-invocation context (APPEND parent prompt + FORK context).
         # None for normal agents → providers are skipped, so load() is unchanged
         # for every non-subagent caller. The parent *value* arrives per turn via
-        # runtime_info["parent_session_id"] (set by dispatch_envelope from the
+        # runtime_info[RuntimeInfoKey.PARENT_SESSION_ID] (set by dispatch_envelope from the
         # envelope); the lookup closure only resolves the parent's prompt from
         # the in-memory pool, never from a session store.
         self._parent_prompt_lookup = parent_prompt_lookup
         self._fork_context_spec = fork_context_spec
         self._roles: list[str] = list(roles) if roles else []
+        self._comm_kind: AgentCommKind | None = comm_kind
 
     def wrap_governance(
         self,
         governance: ContextGovernance | None,
         session_id: str,
     ) -> ContextGovernance | None:
-        try:
-            urb = self.memory_system.layers.user_retention
-        except AttributeError:
-            return governance
-        if urb is None:
-            return governance
-        from modex_agent.memory.context_governance import (
-            CompositeGovernance,
-            UserRetentionBufferInjectionGovernance,
-        )
-        from modex_agent.memory.layers.config import UserRetentionBufferConfig
-
-        # Mirror the URB layer's default entry limit (3) for injection.
-        injector = UserRetentionBufferInjectionGovernance(
-            urb=urb,
-            context_factory=lambda: (
-                self._context_cache.get(session_id)
-                or MemoryContext(
-                    session_id=session_id,
-                    user_id=self.default_user_id,
-                    agent_id=self.default_agent_id,
-                    agent_role=self.default_agent_role,
-                )
-            ),
-            max_entries=UserRetentionBufferConfig().max_entries,
-        )
-        if governance is not None:
-            return CompositeGovernance([governance, injector])
-        return injector
+        return governance
 
     # -- ContextManager interface -----------------------------------------
 
@@ -235,23 +198,24 @@ class MemorySystemContextManager(ContextManager):
 
         # Extract query from runtime_info for provider prefetch
         query = ""
-        if runtime_info and "message" in runtime_info:
-            query = str(runtime_info["message"])
+        if runtime_info and RuntimeInfoKey.MESSAGE in runtime_info:
+            query = str(runtime_info[RuntimeInfoKey.MESSAGE])
 
         # ── Prompt assembly ────────────────────────────────────────────
-        # Build SystemPromptPipeline with individual providers.
-        # Archive and Pruned have dedicated refreshable providers.
-        # The injection_policy provides: disclaimer + core memory + blocks + prefetch.
+        # The injection_policy assembles the core memory bundle (disclaimer +
+        # core memory XML, budget-trimmed). All other content (archive, pruned,
+        # provider blocks, prefetch) is handled by dedicated SystemPromptProvider
+        # pipeline providers with version-based caching below.
         # ────────────────────────────────────────────────────────────────
         from modex_agent.core.prompt import SystemPromptPipeline
-        from modex_agent.memory.injection.full_injection import FullInjectionPolicy
         from modex_agent.memory.prompt_pipeline.providers import (
+            AgentCommunicationSystemPromptProvider,
             AgentRoleContractProvider,
             ArchiveProvider,
             BasePromptProvider,
-            ExperienceProvider,
             CoreMemoryProvider,
-            PeerCommunicationSystemPromptProvider,
+            ExperienceProvider,
+            ModelInfoProvider,
             ProviderBlocksProvider,
             ProviderPrefetchProvider,
             PrunedProvider,
@@ -259,19 +223,7 @@ class MemorySystemContextManager(ContextManager):
             TodoAwareSystemPromptProvider,
         )
 
-        # If the policy injects archive/pruned content itself, those sections are
-        # handled by dedicated refreshable providers below; use a clean policy
-        # that skips them to avoid double emission.
-        policy = self.injection_policy
-        pipeline_policy: MemoryInjectionPolicy
-        if policy.injects_pruned() or policy.injects_archive():
-            pipeline_policy = FullInjectionPolicy(
-                pruned_manager=None,
-                archive_config=ArchiveInjectionConfig(count=0),
-            )
-        else:
-            pipeline_policy = policy
-        result = await pipeline_policy.assemble(
+        result = await self.injection_policy.assemble(
             context=ctx,
             memory_system=self.memory_system,
             query=query,
@@ -281,14 +233,21 @@ class MemorySystemContextManager(ContextManager):
 
         # 1. Runtime metadata (refreshes daily)
         if runtime_info:
-            providers.append(RuntimeProvider())
+            providers.append(
+                RuntimeProvider(
+                    working_directory=runtime_info.get(RuntimeInfoKey.WORKING_DIRECTORY)
+                )
+            )
+            providers.append(
+                ModelInfoProvider(runtime_info.get(RuntimeInfoKey.MODEL_INFO))
+            )
 
         # 1b. APPEND parent prompt — per-invocation (subagents only). Sits BEFORE
         # the base prompt so the agent's own prompt follows its parent's, mirroring
         # the pre-refactor "[parent] --- [base]" ordering. The parent arrives via
         # runtime_info (threaded from the envelope by dispatch_envelope), not by
         # recovering it from a session store.
-        parent_sid = (runtime_info or {}).get("parent_session_id") if runtime_info else None
+        parent_sid = (runtime_info or {}).get(RuntimeInfoKey.PARENT_SESSION_ID) if runtime_info else None
         if self._parent_prompt_lookup is not None and parent_sid:
             from modex_agent.memory.prompt_pipeline.providers import (
                 AppendParentPromptProvider,
@@ -313,24 +272,20 @@ class MemorySystemContextManager(ContextManager):
                 )
             )
 
-        # 2b. OUTPUT.md path — dynamic per-session (subagents only)
-        if self._output_base_dir is not None:
-            from modex_agent.memory.prompt_pipeline.providers import OutputMdProvider
-
-            providers.append(OutputMdProvider(self._output_base_dir, session_id))
-
-        # 2c. Todo task discipline — gated on tool presence inside the provider
+        # 2b. Todo task discipline — gated on tool presence inside the provider
         providers.append(TodoAwareSystemPromptProvider(tool_manager))
 
-        providers.append(PeerCommunicationSystemPromptProvider(tool_manager))
+        providers.append(
+            AgentCommunicationSystemPromptProvider(tool_manager, self._comm_kind)
+        )
 
-        # 3. Memory layers from injection policy (disclaimer + core memory + blocks + prefetch)
+        # 3. Core memory bundle from injection policy (disclaimer + core memory, budget-trimmed)
         if result.system_prompt:
             providers.append(CoreMemoryProvider(result.system_prompt))
 
         # 4. Archive summaries (must refresh on cleanup)
-        archive_config = policy.get_archive_injection_config()
-        if archive_config is not None:
+        archive_config = self._archive_injection_config
+        if archive_config is not None and archive_config.count > 0:
             providers.append(ArchiveProvider(self.memory_system, ctx, archive_config))
 
         # 5. Pruned catalog (must refresh on cleanup)
@@ -481,12 +436,12 @@ class MemorySystemContextManager(ContextManager):
                 return str(value) if value is not None else None
             return None
 
-        user_id = _extract("user_id") or self.default_user_id
+        user_id = _extract(RuntimeInfoKey.USER_ID) or self.default_user_id
         agent_id = _extract("agent_id") or self.default_agent_id
         agent_role = _extract("agent_role") or self.default_agent_role
-        tenant_id = _extract("tenant_id")
-        channel = _extract("channel")
-        chat_id = _extract("chat_id")
+        tenant_id = _extract(RuntimeInfoKey.TENANT_ID)
+        channel = _extract(RuntimeInfoKey.CHANNEL)
+        chat_id = _extract(RuntimeInfoKey.CHAT_ID)
         sender_agent = _extract("sender_agent") or _extract("source_agent")
         receiver_agent = _extract("receiver_agent")
 
@@ -522,10 +477,10 @@ class MemorySystemContextManager(ContextManager):
         if not input_metadata:
             return user_message
         runtime_lines: list[str] = []
-        if "channel" in input_metadata:
-            runtime_lines.append(f"channel={input_metadata['channel']}")
-        if "chat_id" in input_metadata:
-            runtime_lines.append(f"chat_id={input_metadata['chat_id']}")
+        if RuntimeInfoKey.CHANNEL in input_metadata:
+            runtime_lines.append(f"channel={input_metadata[RuntimeInfoKey.CHANNEL]}")
+        if RuntimeInfoKey.CHAT_ID in input_metadata:
+            runtime_lines.append(f"chat_id={input_metadata[RuntimeInfoKey.CHAT_ID]}")
         if not runtime_lines:
             return user_message
 
@@ -573,4 +528,8 @@ class MemorySystemContextManager(ContextManager):
             platform_raw, platform_raw
         )
         lines.append(f"Platform: {platform_name}")
+        working_directory = info.get(RuntimeInfoKey.WORKING_DIRECTORY)
+        dir_line = format_working_directory_line(working_directory)
+        if dir_line is not None:
+            lines.append(dir_line)
         return "\n".join(lines)

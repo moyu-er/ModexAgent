@@ -136,6 +136,10 @@ class TurnCustomKey(StrEnum):
     TURN_UUID = "_turn_uuid"
     INJECTION_CYCLE_COUNT = "_injection_cycle_count"
     TRACE_ID = "_trace_id"
+    # Root invoke_agent span_id for the current turn (G10 multi-agent handoff).
+    # Set by TraceCollectorHook.before_turn; read by AgentCommunicationService
+    # to link the agent.handoff span's parent_span_id to the turn's root span.
+    ROOT_SPAN_ID = "_root_span_id"
     # Resolved image-kind Attachment records for the current turn (ADR-0014 §3 /
     # OpenSpec native-multimodal-inline unit 3). Path-only VOs (path/mime/kind/
     # name/size) — never bytes. Read by the inline renderer (unit 4) to bind
@@ -147,8 +151,13 @@ class TurnCustomKey(StrEnum):
     # image_url block list, so base64 is encoded once per turn and reused
     # across ReAct iterations. Lives only in turn state — never persisted.
     INLINE_IMAGE_CACHE = "_inline_image_cache"
-    # Probe state machine for TodoCompletionProbeHook: {"fp": str, "count": int}.
-    # Transient ("_"-prefix ⇒ never persisted in snapshots); reclaimed when the
-    # turn's ReActTurnState is rebuilt. Tracks the last-probed active-todo
-    # fingerprint so each distinct list is probed at most once per turn.
-    TODO_PROBE = "_todo_probe"
+    # Per-turn cache of image content blocks produced by TOOLS (e.g. ReadFileTool
+    # reading an image file), keyed by tool_call_id. Mirrors INLINE_IMAGE_CACHE
+    # (which is keyed by attachment id for user-uploaded attachments). Value:
+    # dict[str, ToolMediaEntry] mapping call_id -> entry (carries tool_name +
+    # image_blocks for per-call attribution in the synthetic user message).
+    # Lives only in turn state — never persisted. Read by enrich_inline_media
+    # which delegates to a ToolResultMediaStrategy (default
+    # SyntheticUserMessageStrategy — Path B) to inject a synthetic user message
+    # after tool results.
+    TOOL_MEDIA_CACHE = "_tool_media_cache"

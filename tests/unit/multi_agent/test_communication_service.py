@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import pytest
 
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.messaging.broker import BrokerMessage, MessageBroker
+from modex_agent.messaging.broker import Address, AddressKind, BrokerMessage, MessageBroker
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.multi_agent.registry import AgentProfile
-from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.tools import CommunicationTarget
 
 
@@ -24,7 +26,11 @@ def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
 class _FakeRegistry:
     """Minimal registry for testing communication service routing."""
 
-    def __init__(self, profiles: list[AgentProfile] | None = None, descriptors: list[AgentDescriptor] | None = None) -> None:
+    def __init__(
+        self,
+        profiles: list[AgentProfile] | None = None,
+        descriptors: list[AgentDescriptor] | None = None,
+    ) -> None:
         self._profiles = profiles or []
         self._descriptors = descriptors or []
 
@@ -66,13 +72,16 @@ class _FakeBroker(MessageBroker):
     async def consume(self, address: object) -> BrokerMessage | None:
         return None
 
-    def consume_stream(self, address: object):  # type: ignore[no-untyped-def]
+    def consume_stream(self, address: Address) -> AsyncIterator[BrokerMessage]:
         import asyncio
 
-        async def _gen():
+        async def _gen() -> AsyncIterator[BrokerMessage]:
             while True:
                 await asyncio.sleep(0.1)
-                yield BrokerMessage(payload={}, sender=object())  # type: ignore[call-arg]
+                yield BrokerMessage(
+                    payload={},
+                    sender=Address(kind=AddressKind.AGENT, name="source"),
+                )
 
         return _gen()
 
@@ -170,7 +179,7 @@ class TestCommunicationService:
             invocation_id="",
             context=ctx,
         )
-        assert "Task dispatched to 'reviewer'" in result
+        assert "Reply delivered to 'reviewer'." in result
 
     @pytest.mark.asyncio
     async def test_normal_target_with_concrete_uuid_errors(self) -> None:
@@ -185,14 +194,16 @@ class TestCommunicationService:
             invocation_id="abc123",
             context=ctx,
         )
-        assert "Task dispatched to 'reviewer'" in result
+        assert "Reply delivered to 'reviewer'." in result
 
     @pytest.mark.asyncio
     async def test_subagent_empty_uuid_creates_task(self) -> None:
         svc = self._make_service(
             profiles=[AgentProfile(name="office-expert", comm_kind=AgentCommKind.SUBAGENT)],
             descriptors=[
-                AgentDescriptor(address=AgentAddress(name="office-expert"), comm_kind=AgentCommKind.SUBAGENT),
+                AgentDescriptor(
+                    address=AgentAddress(name="office-expert"), comm_kind=AgentCommKind.SUBAGENT
+                ),
             ],
         )
         ctx = _make_context()
@@ -210,7 +221,9 @@ class TestCommunicationService:
         svc = self._make_service(
             profiles=[AgentProfile(name="office-expert", comm_kind=AgentCommKind.SUBAGENT)],
             descriptors=[
-                AgentDescriptor(address=AgentAddress(name="office-expert"), comm_kind=AgentCommKind.SUBAGENT),
+                AgentDescriptor(
+                    address=AgentAddress(name="office-expert"), comm_kind=AgentCommKind.SUBAGENT
+                ),
             ],
         )
         ctx = _make_context()
@@ -229,7 +242,9 @@ class TestCommunicationService:
         svc = self._make_service(
             profiles=[AgentProfile(name="office-expert", comm_kind=AgentCommKind.SUBAGENT)],
             descriptors=[
-                AgentDescriptor(address=AgentAddress(name="office-expert"), comm_kind=AgentCommKind.SUBAGENT),
+                AgentDescriptor(
+                    address=AgentAddress(name="office-expert"), comm_kind=AgentCommKind.SUBAGENT
+                ),
             ],
             agent_bus=bus,
         )
@@ -248,6 +263,7 @@ class TestCommunicationService:
         assert len(bus.sent_silent) == 0
         session_id, envelope = bus.sent[0]
         from modex_agent.core.session_id import SessionIdFactory
+
         factory = SessionIdFactory()
         expected_sid = factory.create_with_prefix(
             agent_name="office-expert",
@@ -264,7 +280,9 @@ class TestCommunicationService:
         svc = self._make_service(
             profiles=[AgentProfile(name="office-expert", comm_kind=AgentCommKind.SUBAGENT)],
             descriptors=[
-                AgentDescriptor(address=AgentAddress(name="office-expert"), comm_kind=AgentCommKind.SUBAGENT),
+                AgentDescriptor(
+                    address=AgentAddress(name="office-expert"), comm_kind=AgentCommKind.SUBAGENT
+                ),
             ],
         )
         ctx = _make_context()
@@ -274,7 +292,9 @@ class TestCommunicationService:
             invocation_id=None,
             context=ctx,
         )
-        assert "invocation_id" in result.lower() or "Error" in result or "not found" in result.lower()
+        assert (
+            "invocation_id" in result.lower() or "Error" in result or "not found" in result.lower()
+        )
 
     @pytest.mark.asyncio
     async def test_subagent_consult_routes_to_real_parent_session(self) -> None:
@@ -327,7 +347,9 @@ class TestCommunicationService:
         svc = self._make_service(
             profiles=[AgentProfile(name="query-12306", comm_kind=AgentCommKind.SUBAGENT)],
             descriptors=[
-                AgentDescriptor(address=AgentAddress(name="query-12306"), comm_kind=AgentCommKind.SUBAGENT),
+                AgentDescriptor(
+                    address=AgentAddress(name="query-12306"), comm_kind=AgentCommKind.SUBAGENT
+                ),
             ],
             source_name="office-expert",
         )
@@ -346,4 +368,4 @@ class TestCommunicationService:
 
         assert "Error:" in result
         assert "subagent" in result.lower()
-        assert "normal" in result.lower()
+        assert "peer" in result.lower()

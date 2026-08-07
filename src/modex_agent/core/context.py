@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.constants import RuntimeInfoKey, format_working_directory_line
 from modex_agent.core.history import ListMessageHistory, MessageHistory
 from modex_agent.core.message import ChatMessage
 
@@ -46,10 +47,10 @@ class ContextState:
         内部存储的 role: "agent" 消息会在此处转换为 role: "user" 并添加来源前缀。
         当存在 agent 消息时，自动追加 Agent 通信说明到 system prompt。
         """
-        history_list = await self.history.to_list()
+        raw_history = await self.history.to_list()
 
         # 将内部 agent 角色转换为 LLM 兼容格式
-        history_list, has_agent_msgs = normalize_agent_messages_for_llm(history_list)
+        history_list = normalize_agent_messages_for_llm(raw_history)
 
         messages = []
         # Prefer pipeline over static system_prompt
@@ -236,4 +237,8 @@ class InMemoryContextManager(ContextManager):
             lines.append(f"Current Time: {info['current_time']}")
         if "platform" in info:
             lines.append(f"Platform: {info['platform']}")
+        working_directory = info.get(RuntimeInfoKey.WORKING_DIRECTORY)
+        dir_line = format_working_directory_line(working_directory)
+        if dir_line is not None:
+            lines.append(dir_line)
         return "\n".join(lines)

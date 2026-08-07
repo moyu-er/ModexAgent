@@ -47,6 +47,16 @@
     - It is genuinely a tuple-like record (no behavior beyond field access).
     When any of these conditions stops being true, promote it to
     `BaseModel`.
+    **Never use `@dataclass(frozen=True)` on classes with behavior** (methods,
+    ABC inheritance, mutable per-execution state). Frozen dataclasses raise
+    `FrozenInstanceError` on legitimate attribute assignment in subclasses —
+    this is a class-system conflict, not a feature. If a class has `execute()`,
+    `run()`, or any method that writes `self.x = y`, it is a runtime object,
+    not a value object (rule 12 exception). Use a regular class with an
+    explicit `__init__`. **Never work around `FrozenInstanceError` with
+    `object.__setattr__`** — that hides the design error and scatters
+    low-level protocol manipulation across the codebase. Fix the root cause:
+    remove `frozen=True` (or remove `@dataclass` entirely).
 12. **No bare `dict`, `TypedDict`, or `list[dict[...]]` for structured data in
     framework-facing APIs.** Wire formats, LLM message payloads, tool I/O,
     hook/interceptor signals, approval requests/responses, and control-channel
@@ -75,3 +85,14 @@
     `modex_agent.core.types` (or its owning module's public surface) and is
     referenced by name in the relevant `AGENTS.md`. A field, payload, or
     parameter that exists only as an anonymous `dict` is a rule violation.
+17. **No `object.__setattr__`, `object.__getattribute__`, `__dict__` manipulation,
+    or other metadata-protocol bypasses.** These are low-level escapes that
+    hide design errors (frozen dataclass on a behavior class, class-level
+    mutable defaults, missing `__init__`). If you reach for `object.__setattr__`,
+    stop — the root cause is one of:
+    - The class should not be `frozen=True` (rule 11) — remove `frozen`.
+    - The class should not be a `@dataclass` at all — use a regular class
+      with explicit `__init__`.
+    - The state belongs on a different object (e.g. `ctx`, not `self`) —
+      move it.
+    Fix the root cause. Never scatter `object.__setattr__` across a codebase.

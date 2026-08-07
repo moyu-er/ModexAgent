@@ -43,12 +43,14 @@ def test_from_event_carries_tool_call_fields() -> None:
         tool="read",
         args={"path": "x"},
         turn_id="turn_1",
+        call_id="call_0",
     )
     envelope = DeltaEnvelope.from_event(event)
     assert envelope.payload == {
         "tool": "read",
         "args": {"path": "x"},
         "turn_id": "turn_1",
+        "call_id": "call_0",
     }
 
 

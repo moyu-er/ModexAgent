@@ -28,9 +28,11 @@ CRITICAL design rules (ADR-0033 D5):
 4. ``around`` constructs interceptor context internally from
    ``ctx.user_data`` (AgentContext).
 
-Stage 1 status: this class exists but is NOT referenced by ReAct runtime
-code yet. ReAct still uses the old ``core/graph/`` engine. Stage 3 wires
-this class into the ReAct graph nodes.
+Migration status (ADR-0033 D13): COMPLETE. The old
+``modex_agent.core.graph`` directory is deleted; ``ReactGraphRuntime`` is
+instantiated by ``ReActAgent.run`` and passed as ``GraphContext.runtime``
+to the new ``modex_graph.GraphEngine`` (see ``react/agent.py``). Methods
+treat ``None`` services as no-ops, so clean mode (no services) still works.
 """
 
 from __future__ import annotations
@@ -77,6 +79,7 @@ class ReactGraphRuntime(GraphRuntime):
         ReActHookPoint.BEFORE_TOOL_EXECUTION: HookPoint.BEFORE_TOOL_EXECUTION,
         ReActHookPoint.AFTER_TOOL_EXECUTION: HookPoint.AFTER_TOOL_EXECUTION,
         ReActHookPoint.FINALIZE_CONTENT: HookPoint.FINALIZE_CONTENT,
+        ReActHookPoint.BEFORE_LLM: HookPoint.BEFORE_LLM,
     }
 
     def __init__(
@@ -108,7 +111,7 @@ class ReactGraphRuntime(GraphRuntime):
         explicitly by the nodes via ``dispatch_hook``.
         """
 
-    async def after_node(self, ctx: GraphContext[Any], node_name: str, result: Any) -> None:
+    async def after_node(self, ctx: GraphContext[Any], node_name: str) -> None:
         """Engine calls this after each node's ``execute(ctx)`` returns.
 
         No-op for ReAct — same rationale as ``before_node``.
@@ -206,7 +209,8 @@ class ReactGraphRuntime(GraphRuntime):
         """
         if self._governance is None:
             return messages
-        return await self._governance.apply(messages)
+        agent_ctx = get_agent_ctx(ctx)
+        return await self._governance.apply(messages, agent_ctx)
 
     async def drain_control(self, ctx: GraphContext[Any]) -> None:
         """Drain the control channel for cancellation / injection signals.

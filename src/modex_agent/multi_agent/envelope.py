@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.messaging.broker import Address, AddressKind, BrokerMessage
@@ -121,9 +122,7 @@ class AgentMessageEnvelope:
             in_reply_to=headers.get("in_reply_to") or None,
             correlation_id=msg.correlation_id,
             timestamp=msg.timestamp,
-            metadata={
-                k: v for k, v in headers.items() if k not in _ROUTING_HEADERS
-            },
+            metadata={k: v for k, v in headers.items() if k not in _ROUTING_HEADERS},
         )
 
     def to_input_metadata(self) -> dict[str, Any]:
@@ -162,10 +161,12 @@ class AgentMessageEnvelope:
             attachments_resolved_from_payload,
         )
 
+        workspace_raw = self.payload.get("workspace")
         return InputMessage(
             content=self.payload.get("content", ""),
             session=session,
             metadata=self.to_input_metadata(),
             approval_decision=approval_decision_from_payload(self.payload),
             attachments_resolved=attachments_resolved_from_payload(self.payload),
+            workspace=Path(workspace_raw) if workspace_raw is not None else None,
         )

@@ -165,7 +165,7 @@ ModexAgent/
 | [CONTEXT.md](CONTEXT.md) | Domain glossary — Pool, Workspace, ReAct Agent, Graph, GraphInterrupt, Assembly, etc. |
 | [Bot local setup](docs/bot-local-setup.md) | Step-by-step bot setup from source (prerequisites, venv, config wizard, troubleshooting) |
 | [Bot example](examples/bot_project/README.md) | bot_project walkthrough (multi-channel IM + WebUI, multi-agent setup, configuration) |
-| [External coding agents](docs/design/external-coding-agent-integration/spec.md) | Integrate Pi / OpenCode / future coding agent CLIs as pool main agents (ADR-0022) |
+| [External coding agents](docs/design/external-agent-integration/spec.md) | Integrate OpenCode / future coding agent CLIs as pool main agents (ADR-0022) |
 | Per-module `AGENTS.md` | Every package under `src/modex_agent/` ships an `AGENTS.md` describing its responsibility and key files |
 
 ## Development

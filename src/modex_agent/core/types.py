@@ -42,7 +42,23 @@ class MessageRole(StrEnum):
     ASSISTANT = "assistant"
     TOOL = "tool"
     AGENT = "agent"
+    COMPACT = "compact"
     PENDING = "pending"
+    SYSTEM_REMINDER = "system_reminder"
+
+
+class ReminderKind(StrEnum):
+    """Category of a system-reminder message.
+
+    Stored as ``ChatMessage`` metadata (``reminder_kind`` extra field) to
+    classify the source/channel of a framework-to-agent notification.
+    Used by builders, strategies, and ``InboxFlushHook``.
+    """
+
+    AGENT_MESSAGE = "agent_message"
+    PEER_MESSAGE = "peer_message"
+    SUBAGENT_RESULT = "subagent_result"
+    TODO_REORIENTATION = "todo_reorientation"
 
 
 class TodoStatus(StrEnum):
@@ -58,7 +74,7 @@ class OutputMessageType(StrEnum):
     """输出消息类型枚举。
 
     用于 ``OutputMessage.message_type``，替代硬编码的字符串
-    （text / image / file / error / approval_request / command_response / busy_notice）。
+    （text / image / file / error / approval_request / command_response / busy_notice / notice）。
     """
 
     TEXT = "text"
@@ -68,6 +84,7 @@ class OutputMessageType(StrEnum):
     APPROVAL_REQUEST = "approval_request"
     COMMAND_RESPONSE = "command_response"
     BUSY_NOTICE = "busy_notice"
+    NOTICE = "notice"
 
 
 class ToolCall(BaseModel):
@@ -257,6 +274,7 @@ class LLMResponse(BaseModel):
     reasoning_content: str | None = None
     finish_reason: FinishReason = FinishReason.STOP
     usage: dict[str, int] = Field(default_factory=dict)
+    completion_start_time: str | None = None
     error: str | None = None
     error_info: LLMErrorInfo | None = None
 

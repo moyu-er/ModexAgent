@@ -1,5 +1,6 @@
 # tests/unit/multi_agent/test_inbox_server_types.py
 """InboxServer consume type-filter + sessions_with_pending."""
+
 from __future__ import annotations
 from pathlib import Path
 
@@ -9,7 +10,9 @@ from modex_agent.multi_agent.inbox.types import InboxMessage
 
 
 def _msg(session_id: str, mtype: str, mid: str) -> InboxMessage:
-    return InboxMessage(session_id=session_id, source="x", content="c", message_type=mtype, message_id=mid)
+    return InboxMessage(
+        session_id=session_id, source="x", content="c", message_type=mtype, message_id=mid
+    )
 
 
 @pytest.mark.asyncio
@@ -82,9 +85,9 @@ async def test_consume_empty_only_types_consumes_nothing() -> None:
 @pytest.mark.asyncio
 async def test_sessions_with_pending_excludes_empty_and_delivered_only() -> None:
     s = InMemoryInboxServer()
-    await s.receive("a", _msg("a", "task_request", "1"))   # pending
+    await s.receive("a", _msg("a", "task_request", "1"))  # pending
     await s.receive("b", _msg("b", "task_request", "2"))
-    await s.consume("b")                                    # b now delivered-only, no pending
+    await s.consume("b")  # b now delivered-only, no pending
     # c never touched
     pending = await s.sessions_with_pending()
     assert pending == ["a"]

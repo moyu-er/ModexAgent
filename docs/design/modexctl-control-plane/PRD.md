@@ -333,7 +333,7 @@ hardened the install scripts.
 ### History source selection
 
 - The bot selects the history source deterministically from
-  `execution_strategy` in the pool spec: `EXTERNAL_CODING` goes to
+  `execution_strategy` in the pool spec: `EXTERNAL` goes to
   transcript, all others go to MessageStore. It does not probe both
   stores.
 

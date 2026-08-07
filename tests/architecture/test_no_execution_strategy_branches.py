@@ -12,25 +12,20 @@ branching — per ADR-0025 D5):
 - `peer_normal.py` — runtime per-target routing (which reply mechanism a
   *target* agent uses). This is runtime routing, not assembly branching.
 - `factory.py` — `_get_builder` runtime agent-construction dispatch (selects
-  ExternalCodingAgentBuilder vs ReActAgentBuilder). This is runtime
+  ExternalAgentBuilder vs ReActAgentBuilder). This is runtime
   construction, not assembly branching.
 - `subagent_validator.py` — runtime subagent registration validation.
 - `pool_config/specs.py` — Pydantic `@model_validator` cross-field validation
-  (provider_kind set iff execution_strategy == EXTERNAL_CODING).
+  (provider_kind set iff execution_strategy == EXTERNAL).
 - `template.py` — T5 subagent materialize dispatch (delegates to
-  `subagent_external_coding_builder.build()` when target strategy is
-  EXTERNAL_CODING). Same runtime construction-dispatch category as
+  `subagent_external_builder.build()` when target strategy is
+  EXTERNAL). Same runtime construction-dispatch category as
   `factory.py._get_builder`.
 - `communication/strategies/subagent_dispatch.py` — `SubagentDispatchStrategy.build_result`
   selects ack field shape (output_path/trace_dir omitted for external targets)
   based on `req.target.execution_strategy`. Same per-target runtime category
   as `peer_normal.py`; added when ADR-0027 (external coding subagent) introduced
   the external-result shape.
-- `message_xml.py` — `build_dispatch_xml` is the single convergence point for
-  the "target is external → peer format" rule (delegated to by
-  `SubagentDispatchStrategy` and `ParentReplyStrategy` so the branching lives
-  in one place). Same per-target runtime category as `peer_normal.py`; added
-  when ADR-0019 (cross-pool peer) introduced the peer XML format.
 
 Any other file containing `execution_strategy ==` is a regression.
 
@@ -43,7 +38,7 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FRAMEWORK_SRC = _REPO_ROOT / "src" / "modex_agent"
-_POOL_BUILDER = _REPO_ROOT / "examples" / "bot_project" / "bot" / "service" / "pool_builder.py"
+_POOL_DIR = _REPO_ROOT / "examples" / "bot_project" / "bot" / "service" / "pool"
 _PIPELINE = _FRAMEWORK_SRC / "pipeline" / "pipeline.py"
 
 # Files allowed to contain `execution_strategy ==` (runtime dispatch/routing/
@@ -54,21 +49,17 @@ _PIPELINE = _FRAMEWORK_SRC / "pipeline" / "pipeline.py"
 # - execution_strategy.py — docstring text (the phrase "if execution_strategy =="
 #   appears in the module docstring describing what the ABC replaces).
 # - pool_config/specs.py — Pydantic @model_validator cross-field validation
-#   (provider_kind set iff execution_strategy == EXTERNAL_CODING). Same
+#   (provider_kind set iff execution_strategy == EXTERNAL). Same
 #   validation category as subagent_validator.py; not assembly branching.
 # - template.py — T5 subagent materialize dispatch: when the spec's
-#   execution_strategy is EXTERNAL_CODING, materialize delegates to
-#   deps.subagent_external_coding_builder.build() instead of
+#   execution_strategy is EXTERNAL, materialize delegates to
+#   deps.subagent_external_builder.build() instead of
 #   agent_factory.create_agent(). Same runtime construction-dispatch category
 #   as factory.py._get_builder; the react path is byte-for-byte unchanged.
 # - communication/strategies/subagent_dispatch.py — build_result picks ack
 #   field shape (output_path/trace_dir omitted for external targets) based on
 #   req.target.execution_strategy. Same per-target runtime category as
 #   peer_normal.py; added with ADR-0027 (external coding subagent).
-# - message_xml.py — build_dispatch_xml is the single convergence point for
-#   the "target is external → peer format" rule (SubagentDispatchStrategy and
-#   ParentReplyStrategy both delegate here). Same per-target runtime category
-#   as peer_normal.py; added with ADR-0019 (cross-pool peer).
 _ALLOWED_EXECUTION_STRATEGY_FILES = {
     _FRAMEWORK_SRC / "multi_agent" / "communication" / "strategies" / "peer_normal.py",
     _FRAMEWORK_SRC / "multi_agent" / "factory.py",
@@ -77,7 +68,6 @@ _ALLOWED_EXECUTION_STRATEGY_FILES = {
     _FRAMEWORK_SRC / "multi_agent" / "pool_config" / "specs.py",
     _FRAMEWORK_SRC / "multi_agent" / "template.py",
     _FRAMEWORK_SRC / "multi_agent" / "communication" / "strategies" / "subagent_dispatch.py",
-    _FRAMEWORK_SRC / "multi_agent" / "message_xml.py",
 }
 
 # Patterns that indicate strategy-specific assembly branching (forbidden).
@@ -113,24 +103,27 @@ def _files_with_execution_strategy_compare(root: Path) -> set[Path]:
 
 
 def test_pool_builder_create_pool_has_no_strategy_branching() -> None:
-    """pool_builder.create_pool must not contain `if is_external` or
+    """pool/ subpackage must not contain `if is_external` or
     `if execution_strategy ==` assembly branches.
 
     The function may use `execution_strategy ==` for a 1-line strategy-name
     selection (ternary), but not for branching the assembly path. This test
-    checks the full source of pool_builder.py for the forbidden patterns;
-    the ternary at line ~186 (`strategy_name = "external_coding" if ... else "react"`)
+    checks ALL .py files in the pool/ subpackage for the forbidden patterns;
+    the ternary at factory.py line ~186 (`strategy_name = "external" if ... else "react"`)
     uses `if` inline but does NOT match `if\\s+.*execution_strategy\\s*==` (no
     leading `if` keyword on the same statement as the comparison in a branch).
     """
-    source = _source(_POOL_BUILDER)
-    for pattern in _FORBIDDEN_PATTERNS:
-        matches = pattern.findall(source)
-        assert not matches, (
-            f"pool_builder.py contains forbidden strategy-branching pattern "
-            f"{pattern.pattern!r} ({len(matches)} matches). ADR-0025 requires "
-            f"zero strategy-specific branching in create_pool."
-        )
+    for py_file in _POOL_DIR.rglob("*.py"):
+        if "__pycache__" in py_file.parts:
+            continue
+        source = _source(py_file)
+        for pattern in _FORBIDDEN_PATTERNS:
+            matches = pattern.findall(source)
+            assert not matches, (
+                f"{py_file.name} contains forbidden strategy-branching pattern "
+                f"{pattern.pattern!r} ({len(matches)} matches). ADR-0025 requires "
+                f"zero strategy-specific branching in create_pool."
+            )
 
 
 def test_pipeline_init_has_no_strategy_branching() -> None:

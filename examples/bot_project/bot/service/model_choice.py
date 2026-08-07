@@ -13,6 +13,7 @@ from collections import OrderedDict
 from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
+from modex_agent.core.capabilities import ModelInfo
 from modex_agent.hook.abc import BeforeTurnHook
 
 from .model_config import BotModelConfig, ResolvedModel
@@ -61,7 +62,7 @@ class ModelChoiceRegistry:
 class ModelChoiceBindHook(BeforeTurnHook):
     """BeforeTurnHook：把 registry 中本 session 的模型选择快照进 ContextVar，
 
-    并把当前模型的 capabilities 覆写到 runtime.services.model_capabilities（按 turn
+    并把当前模型的 capabilities 覆写到 runtime.services.model_info（按 turn
     切换图片内联行为）。registry 缺失（IM / 后台）时回退默认模型。
     """
 
@@ -82,4 +83,7 @@ class ModelChoiceBindHook(BeforeTurnHook):
         runtime = ctx.runtime
         services = runtime.services if runtime is not None else None
         if services is not None:
-            services.model_capabilities = resolved.capabilities
+            services.model_info = ModelInfo(
+                model_name=resolved.model.model,
+                capabilities=resolved.capabilities,
+            )

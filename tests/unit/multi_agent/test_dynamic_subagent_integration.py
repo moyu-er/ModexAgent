@@ -5,9 +5,15 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.constants import StopReason
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.multi_agent.comm_kind import AgentCommKind
-from modex_agent.multi_agent.message_xml import build_agent_message, build_agent_result
+from modex_agent.multi_agent.message_format import (
+    ResultMeta,
+    ResultStatus,
+    SourceLabel,
+    build_agent_comm_message,
+)
 from modex_agent.multi_agent.pool_config import PoolStore
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
@@ -24,9 +30,7 @@ def _write_files(base: Path, pool: str, agent_type: str, yml_content: str, md_co
     tpl_dir.mkdir(parents=True, exist_ok=True)
     (tpl_dir / f"{agent_type}.yml").write_text(yml_content, encoding="utf-8")
     if not (pool_dir / "pool.yml").exists():
-        (pool_dir / "pool.yml").write_text(
-            f"main_agent_name: {pool}\n", encoding="utf-8"
-        )
+        (pool_dir / "pool.yml").write_text(f"main_agent_name: {pool}\n", encoding="utf-8")
     agents_dir = base / "agents" / pool
     agents_dir.mkdir(parents=True, exist_ok=True)
     (agents_dir / f"{agent_type}.md").write_text(md_content, encoding="utf-8")
@@ -59,27 +63,31 @@ def test_template_to_descriptor_pipeline():
 
 
 def test_xml_message_round_trip():
-    """Verify XML formats are self-describing and parseable."""
+    """Verify unified markdown formats are self-describing and parseable."""
     # Agent sends a message
-    msg = build_agent_message(
+    msg = build_agent_comm_message(
+        source_label=SourceLabel.AGENT,
         source="office-expert",
-        invocation_id="abc123",
         content="PDF 转换完成，共 12 页。",
+        invocation_id="abc123",
     )
-    assert "<agent_message" in msg
-    assert 'source="office-expert"' in msg
+    assert "Message from agent" in msg
+    assert "Message from agent 'office-expert'" in msg
     assert "PDF 转换完成" in msg
 
     # Hook generates a result
-    result = build_agent_result(
+    result = build_agent_comm_message(
+        source_label=SourceLabel.SUBAGENT,
         source="office-expert",
-        invocation_id="abc123",
-        status="completed",
-        stop_reason="missed_communication",
         content="任务完成。文件路径：/output/result.docx",
+        invocation_id="abc123",
+        result=ResultMeta(
+            status=ResultStatus.SUCCESS,
+            stop_reason=StopReason.MISSED_COMMUNICATION,
+        ),
     )
-    assert "<agent_result" in result
-    assert 'status="completed"' in result
+    assert "Message from subagent" in result
+    assert "status: success" in result
     assert "任务完成" in result
 
 
@@ -128,9 +136,7 @@ def test_template_memory_baked_from_factory_default():
         project = Path(tmp)
         yml = "agent_name: light\ndescription: light\n"
         _write_files(project, "main", "light", yml, "Light agent.")
-        registry = AgentTemplateRegistry(
-            PoolStore(base_dir=project), default_subagent_memory=baked
-        )
+        registry = AgentTemplateRegistry(PoolStore(base_dir=project), default_subagent_memory=baked)
         t = registry.get_template("main", "light")
         assert t is not None
         assert t.memory is baked
@@ -170,9 +176,9 @@ class TestInvocationIdNullCreatesNewSubagent:
 
     async def test_null_invocation_id_normal_agent(self):
         """send_to_agent(target='normal-agent', invocation_id=null) sends normally."""
-        from modex_agent.multi_agent.communication import AgentCommunicationService
-        from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.core.agent import AgentContext
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.communication import AgentCommunicationService
 
         mock_broker = AsyncMock()
         mock_registry = MagicMock()
@@ -207,9 +213,9 @@ class TestInvocationIdNullCreatesNewSubagent:
 
     async def test_concrete_invocation_id_continues_session(self):
         """send_to_agent(target='helper', invocation_id='abc123') continues existing session."""
-        from modex_agent.multi_agent.communication import AgentCommunicationService
-        from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.core.agent import AgentContext
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.communication import AgentCommunicationService
 
         mock_broker = AsyncMock()
         mock_registry = MagicMock()
@@ -281,8 +287,8 @@ class TestSubagentIdentityResolution:
     async def test_subagent_send_has_correct_source(self):
         """When subagent sends via send_to_agent, envelope source must be subagent name."""
         from modex_agent.core.agent import AgentContext, current_agent_context
-        from modex_agent.multi_agent.communication import AgentCommunicationService
         from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.communication import AgentCommunicationService
 
         sent_envelopes: list = []
         mock_broker = AsyncMock()
@@ -408,10 +414,10 @@ class TestAgentMessageXmlWrapping:
         payload = sent_payloads[0]
         content = payload.get("content", "")
 
-        assert "<agent_message" in content, (
-            f"Agent messages must be XML-wrapped, got: {content[:100]}"
+        assert "Message from agent" in content, (
+            f"Agent messages must be markdown-wrapped, got: {content[:100]}"
         )
-        assert 'invocation_id="existing123"' in content
+        assert "invocation_id" not in content
         assert "Follow-up question" in content
 
 
@@ -487,13 +493,13 @@ class TestSubagentSafetyHooks:
     """ADR-0015 D3: _wire_subagent_hooks deleted from the service; safety hooks
     are now wired inside AgentTemplate.materialize."""
 
-    # ADR-0015 D3: test_max_iteration_notify_hook_is_wired deleted.
     # ADR-0015 D3: test_hooks_not_wired_without_pipeline deleted.
 
 
 class TestOutputMdInjection:
-    """Verify OUTPUT.md protocol is injected into subagent system prompt
-    with the correct absolute path and scoped-write alignment."""
+    """Verify OUTPUT.md is no longer injected into subagent system prompts
+    (deliverable is now reply-text-based). Path computation tests remain
+    for the underlying directory structure."""
 
     def test_output_md_path_contains_session_structure(self):
         """OUTPUT.md path must contain session-id components and end with OUTPUT.md."""
@@ -516,49 +522,6 @@ class TestOutputMdInjection:
         assert ".reviewer" in str(output_path)
         assert "output" in str(output_path)
 
-    def test_scoped_write_dir_covers_output_md(self):
-        """READ_ONLY scoped_write_dir must be the parent of OUTPUT.md's directory."""
-        from pathlib import Path as _Path
-
-        from modex_agent.core.session_id import SessionIdFactory
-
-        factory = SessionIdFactory()
-        session = factory.create(
-            agent_name="scout",
-            external_id="xyz789",
-        )
-        session_id = session.session_id
-        runtime_dir = _Path(tempfile.gettempdir()) / "runtime_state" / "coding"
-        scoped_write_dir = runtime_dir / "output"
-        output_path = runtime_dir / "output" / session_id / "OUTPUT.md"
-
-        # The scoped write allowed dir must be an ancestor of OUTPUT.md
-        output_resolved = output_path.resolve()
-        scoped_resolved = scoped_write_dir.resolve()
-        assert str(output_resolved).startswith(str(scoped_resolved)), (
-            f"OUTPUT.md path ({output_resolved}) must be under scoped_write_dir ({scoped_resolved})"
-        )
-
-    def test_read_only_template_gets_scoped_write_tools(self):
-        """READ_ONLY template must receive ScopedWriteFileTool + ScopedEditFileTool."""
-        import tempfile
-        from pathlib import Path as _Path
-
-        from modex_agent.tools.presets import ToolPreset, get_preset_tools
-
-        scoped_dir = _Path(tempfile.gettempdir()) / "output"
-        tools = get_preset_tools(ToolPreset.READ_ONLY, scoped_write_dir=scoped_dir)
-        tool_names = {t.name for t in tools}
-
-        assert "write" in tool_names, "READ_ONLY must have write tool for OUTPUT.md"
-        assert "edit" in tool_names, "READ_ONLY must have edit tool for OUTPUT.md"
-        # The write tool description mentions it is scoped to allowed directories
-        write_tool = next(t for t in tools if t.name == "write")
-        desc = write_tool.description
-        assert "You can ONLY write" in desc or "ONLY" in desc.upper(), (
-            "Scoped write tool must indicate path restriction in description"
-        )
-
     def test_full_template_does_not_get_scoped_tools(self):
         """READ_WRITE template uses standard write/edit, not scoped versions."""
         from modex_agent.tools.presets import ToolPreset, get_preset_tools
@@ -568,35 +531,24 @@ class TestOutputMdInjection:
         assert "write" in tool_names
         assert "edit" in tool_names
 
-    def test_no_scoped_dir_means_no_write_for_read_only(self):
-        """READ_ONLY without scoped_write_dir gets no write/edit at all."""
-        from modex_agent.tools.presets import ToolPreset, get_preset_tools
-
-        tools = get_preset_tools(ToolPreset.READ_ONLY, scoped_write_dir=None)
-        tool_names = {t.name for t in tools}
-
-        assert "write" not in tool_names, "Without scoped_write_dir, READ_ONLY must not get write"
-        assert "edit" not in tool_names, "Without scoped_write_dir, READ_ONLY must not get edit"
-
     # ADR-0015 D3: test_system_prompt_includes_output_md_protocol deleted —
-    # prompt assembly moved into AgentTemplate.materialize. OUTPUT.md injection
-    # is covered by test_built_system_prompt_contains_output_md below.
+    # prompt assembly moved into AgentTemplate.materialize. OUTPUT.md is no
+    # longer injected — covered by test_built_system_prompt_does_not_contain_output_md.
     # ADR-0015 D3: test_output_md_before_fork_context deleted — same reason;
-    # OUTPUT.md-before-fork ordering is asserted by the OutputMdProvider
-    # ordering exercised in test_built_system_prompt_contains_output_md.
+    # OutputMdProvider is deprecated (T5), no longer registered in system.py.
 
-    async def test_built_system_prompt_contains_output_md(self):
-        """OutputMdProvider injects per-session OUTPUT.md path dynamically."""
+    async def test_built_system_prompt_does_not_contain_output_md(self):
+        """OutputMdProvider is deprecated (T5); built prompt must NOT contain
+        OUTPUT.md or 'work is lost' wording."""
         import tempfile
         from pathlib import Path as _Path
 
         from modex_agent.core.scope import MemoryAgentRole
-        from modex_agent.ioc.factories.descriptors import build_session_only_memory
         from modex_agent.ioc.configs.memory import MemoryConfig
+        from modex_agent.ioc.factories.descriptors import build_session_only_memory
 
         runtime_dir = _Path(tempfile.mkdtemp()) / "runtime"
         session_id = "conv-1.reviewer.abc123"
-        output_path = runtime_dir / "output" / session_id / "OUTPUT.md"
         output_base_dir = runtime_dir / "output"
 
         system_prompt = "You are a code reviewer."
@@ -611,16 +563,12 @@ class TestOutputMdInjection:
             output_base_dir=output_base_dir,
         )
 
-        # load() sets _last_session_id so OutputMdProvider gets the right session
+        # load() sets _last_session_id so providers get the right session
         await ctx_mgr.load(session_id)
         built = await ctx_mgr.build_system_prompt(tool_manager=None)
 
-        assert "OUTPUT.md" in built
-        assert str(output_path) in built, (
-            f"Built prompt must contain the absolute OUTPUT.md path: {output_path}"
-        )
-        assert "CRITICAL" in built
-        assert "`write` tool" in built
+        assert "OUTPUT.md" not in built
+        assert "work is lost" not in built
 
 
 class TestSubagentToolInstanceIsolation:

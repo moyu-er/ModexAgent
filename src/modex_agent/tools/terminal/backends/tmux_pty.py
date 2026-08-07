@@ -44,8 +44,11 @@ invalidated on ``terminate`` / ``kill``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
+import shutil
+import subprocess
 import time
 from typing import Any
 
@@ -79,6 +82,7 @@ class TmuxPtyBackend(TerminalBackend):
     platform = Platform.LINUX
 
     def __init__(self, *, visibility: TerminalVisibility = TerminalVisibility.HIDDEN) -> None:
+        super().__init__()
         try:
             import libtmux
         except ImportError as e:
@@ -91,20 +95,11 @@ class TmuxPtyBackend(TerminalBackend):
         self._session_name: str | None = None
         self._shell: str | None = None
         self._visibility = visibility
-        # 1-second TTL cache for ``is_alive`` (ADR-0032 D5 Fix 2). The
-        # poll loop calls ``is_alive`` ~20×/s; without the cache each
-        # call would spawn a ``tmux ls`` subprocess via ``run_in_executor``.
-        # ``None`` means "no cached value; next call must re-query".
         self._alive_cache: tuple[float, bool] | None = None
 
     @property
     def visibility(self) -> TerminalVisibility:
         return self._visibility
-
-    @property
-    def _attach(self) -> bool:
-        """Whether ``new_session(attach=...)`` attaches the new session to a window."""
-        return self._visibility == TerminalVisibility.VISIBLE
 
     @property
     def window_title(self) -> str:
@@ -120,32 +115,108 @@ class TmuxPtyBackend(TerminalBackend):
         self._session_name = f"agent_{os.getpid()}_{id(self)}"
 
         loop = asyncio.get_running_loop()
-        self._session = await loop.run_in_executor(
-            None,
-            lambda: self._server.new_session(
+
+        def _create_session():
+            with contextlib.suppress(Exception):
+                self._server.set_option("history-limit", 5000)
+            return self._server.new_session(
                 session_name=self._session_name,
-                attach=self._attach,
+                attach=False,
                 window_name="main",
+                window_command=self._shell,
                 environment=env or {},
                 start_directory=cwd,
-            ),
-        )
+            )
+
+        self._session = await loop.run_in_executor(None, _create_session)
         window = self._session.windows[0]
         self._pane = window.panes[0]
 
-        if self._shell != "/bin/sh":
-            await loop.run_in_executor(
-                None,
-                lambda: self._pane.send_keys(self._shell, enter=True),
-            )
+        if self._visibility == TerminalVisibility.VISIBLE:
+            await loop.run_in_executor(None, self._open_visible_window)
 
         logger.info(
-            "tmux session started: %s (shell=%s, attach=%s). Attach: tmux attach -t %s",
+            "tmux session started: %s (shell=%s, visible=%s). Attach: tmux attach -t %s",
             self._session_name,
             self._shell,
-            self._attach,
+            self._visibility == TerminalVisibility.VISIBLE,
             self._session_name,
         )
+
+    def _open_visible_window(self) -> None:
+        """Open a terminal emulator window running ``tmux attach``.
+
+        The tmux session is created detached; this spawns a new
+        Terminal.app / xterm / gnome-terminal window that attaches to
+        it. The user sees the real shell and can interact directly
+        (keyboard, Ctrl-C, Tab completion) — tmux shares the PTY
+        between the visible client and the agent's control protocol.
+        """
+        attach_cmd = f"exec tmux attach -t {self._session_name}"
+        if shutil.which("osascript"):
+            subprocess.Popen(
+                ["osascript", "-e", f'tell application "Terminal" to do script "{attach_cmd}"'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        elif shutil.which("xterm"):
+            subprocess.Popen(
+                ["xterm", "-e", "tmux", "attach", "-t", self._session_name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        elif shutil.which("gnome-terminal"):
+            subprocess.Popen(
+                ["gnome-terminal", "--", "tmux", "attach", "-t", self._session_name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            logger.warning(
+                "VISIBLE tmux: no terminal emulator found. Session %s is detached — "
+                "attach manually: tmux attach -t %s",
+                self._session_name,
+                self._session_name,
+            )
+
+    def _close_visible_window(self) -> None:
+        """Close the Terminal.app window opened for this session.
+
+        With ``exec tmux attach``, killing the tmux session causes
+        ``tmux attach`` to exit. The Terminal.app window is left idle
+        (title no longer contains ``-zsh``/``-bash``/``tmux``).
+        ``Terminal close`` on such a window may trigger a confirmation
+        dialog, so we use System Events to click the close button,
+        which bypasses the dialog.
+
+        Silently does nothing on failure — the tmux session is already
+        killed, so the visible window is a cosmetic leftover.
+        """
+        if not shutil.which("osascript"):
+            return
+        script = (
+            'tell application "System Events"\n'
+            'tell process "Terminal"\n'
+            "set toClose to {}\n"
+            "repeat with w in windows\n"
+            "set winName to name of w\n"
+            'if winName does not contain "-zsh" and winName does not contain "-bash" and winName does not contain "login" then\n'
+            "set end of toClose to w\n"
+            "end if\n"
+            "end repeat\n"
+            "repeat with w in toClose\n"
+            "click button 1 of w\n"
+            "end repeat\n"
+            "end tell\n"
+            "end tell"
+        )
+        with contextlib.suppress(Exception):
+            subprocess.run(
+                ["osascript", "-e", script],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            )
 
     async def drain_startup(self) -> None:
         """Poll capture_pane until a prompt appears.
@@ -209,27 +280,26 @@ class TmuxPtyBackend(TerminalBackend):
     def _diff_output(self, previous: str, current: str) -> str:
         """Return new content from *current* that was not in *previous*.
 
-        ADR-0032 D5 Fix 1: prefix-match algorithm. If *previous* is a
-        line-prefix of *current* (the common case under
-        ``capture-pane -p -S -`` — output is appended at the bottom and
-        scrollback is stable), return the suffix as new output.
-        Prefix-match failure (rare: output scrolls beyond the 2000-line
-        scrollback between two ``capture_pane`` calls, or content
-        changed completely) falls back to the entire *current* snapshot
-        — same as the previous tail-match behavior, but only in the
-        genuine edge case rather than on every >30-line command.
-
-        Replaces the tail-match algorithm (which returned the entire
-        current snapshot as "new" output whenever the pane scrolled
-        past the visible window, producing duplicates).
+        Handles two cases:
+        1. **Pure append** — previous is a line-prefix of current (output
+           appended at the bottom, scrollback stable). Returns the suffix.
+        2. **Last-line modified** — the prompt line in previous got the
+           command text appended (``$ `` → ``$ echo FIRST``). All lines
+           except the last of previous match; returns from the first
+           differing line in current.
+        Falls back to the entire current snapshot when neither matches.
         """
         prev_lines = previous.splitlines()
         curr_lines = current.splitlines()
-        # Prefix-match: previous is a line-prefix of current.
+
         if len(prev_lines) <= len(curr_lines) and prev_lines == curr_lines[: len(prev_lines)]:
-            new_lines = curr_lines[len(prev_lines) :]
-            return "\n".join(new_lines)
-        # Prefix-match failure — fall back to entire current snapshot.
+            return "\n".join(curr_lines[len(prev_lines) :])
+
+        if len(prev_lines) >= 1:
+            head = prev_lines[:-1]
+            if len(head) <= len(curr_lines) and head == curr_lines[: len(head)]:
+                return "\n".join(curr_lines[len(head) :])
+
         return "\n".join(curr_lines)
 
     async def is_alive(self) -> bool:
@@ -252,17 +322,17 @@ class TmuxPtyBackend(TerminalBackend):
         return result
 
     async def terminate(self) -> None:
+        loop = asyncio.get_running_loop()
         if self._session is not None:
-            loop = asyncio.get_running_loop()
             try:
-                await loop.run_in_executor(None, self._session.kill_session)
+                kill_fn = getattr(self._session, "kill", None) or self._session.kill_session
+                await loop.run_in_executor(None, kill_fn)
             except Exception as exc:
-                logger.debug("tmux terminate failed: %s", exc)
+                logger.warning("tmux terminate failed: %s", exc)
             self._session = None
             self._pane = None
-        # Invalidate the ``is_alive`` cache (ADR-0032 D5 Fix 2). The
-        # session was killed; the next ``is_alive`` call must re-query
-        # (and will return False because the session is gone).
+        if self._visibility == TerminalVisibility.VISIBLE:
+            await loop.run_in_executor(None, self._close_visible_window)
         self._alive_cache = None
 
     async def kill(self) -> None:
@@ -292,3 +362,7 @@ class TmuxPtyBackend(TerminalBackend):
     def output_buffer_text(self) -> str:
         """Return the last captured pane text."""
         return self._last_capture or ""
+
+    def clear_buffer(self) -> None:
+        """No-op for snapshot backends — tmux uses _last_capture, not _output_buffer."""
+        pass

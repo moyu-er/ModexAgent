@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.agents.external_coding.paths import ExternalPaths, ProviderKind
-from modex_agent.agents.external_coding.session_store import (
+from modex_agent.agents.external.paths import ExternalPaths, ProviderKind
+from modex_agent.agents.external.session_store import (
     ExternalSessionMapStore,
     LocalFileExternalSessionMapStore,
 )

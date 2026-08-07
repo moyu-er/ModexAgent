@@ -81,7 +81,7 @@ class BaseTerminalManager(TerminalManagerBase):
         config: TerminalRuntimeConfig | None = None,
         default_cwd: str | None = None,
         max_terminals: int | None = None,
-        enable_memory_pressure: bool = False,
+        enable_memory_pressure: bool = True,
     ) -> None:
         self.platform = shell_info.platform
         self.shell_info = shell_info
@@ -228,7 +228,7 @@ def create_terminal_manager(
     config: TerminalRuntimeConfig | None = None,
     default_cwd: str | None = None,
     max_terminals: int | None = None,
-    enable_memory_pressure: bool = False,
+    enable_memory_pressure: bool = True,
 ) -> TerminalManagerBase:
     """Construct a ``BaseTerminalManager`` parameterised by the two ADR-0010 axes.
 

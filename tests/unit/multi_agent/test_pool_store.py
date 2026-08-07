@@ -1,31 +1,31 @@
-"""TDD tests for external_coding pool canonical YAML persistence in PoolStore.
+"""TDD tests for external pool canonical YAML persistence in PoolStore.
 
 The store is the single write path for pool.yml and enforces three
-external_coding invariants at write time (restored after ticket 6's deletion
+external invariants at write time (restored after ticket 6's deletion
 proved too aggressive — the WebUI pool write endpoint relies on store-level
 validation to return HTTP 400 on bad input):
 
-* Subagents are stripped for external_coding pools (the external CLI has no
+* Subagents are stripped for external pools (the external CLI has no
   tool surface to dispatch subagent tasks).
-* ``provider_kind`` is required for external_coding pools (raises
+* ``provider_kind`` is required for external pools (raises
   ``PoolValidationError`` on missing).
 * Native-only fields (``max_steps``, terminal fields, ``tool_preset``,
-  ``tool_supplements``, ``approval``, ``mcp``) are omitted for external_coding
+  ``tool_supplements``, ``approval``, ``mcp``) are omitted for external
   pools — they are meaningless for external CLIs.
 
-``ExternalCodingExecutionStrategy.validate_pool_spec`` remains as
+``ExternalExecutionStrategy.validate_pool_spec`` remains as
 defense-in-depth at assembly time. The store checks use
-``execution_strategy != REACT`` (not ``== EXTERNAL_CODING``) to stay within
+``execution_strategy != REACT`` (not ``== EXTERNAL``) to stay within
 the ADR-0025 D5 arch-guard allowlist.
 
-Locks the write-time invariants for external_coding pools:
+Locks the write-time invariants for external pools:
 
 * ``execution_strategy`` + ``provider_kind`` are persisted.
-* Native-only fields are omitted for external_coding pools.
+* Native-only fields are omitted for external pools.
 * ``description``, ``main_agent_name``, ``peers``, and existing ``media``
   are preserved.
 * ``provider_kind`` is required by the store (raises on missing).
-* Subagent templates are stripped by the store for external_coding pools.
+* Subagent templates are stripped by the store for external pools.
 * Switching back to ``react`` omits external-only keys.
 * Existing react pool behavior is unchanged.
 """
@@ -37,7 +37,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from modex_agent.agents.external_coding.paths import ProviderKind
+from modex_agent.agents.external.paths import ProviderKind
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.multi_agent.pool_config import (
     MainAgentSpec,
@@ -63,9 +63,7 @@ def _make_peer(tmp_path: Path, name: str) -> None:
     """Create a minimal peer pool directory so peer validation passes."""
     peer_dir = tmp_path / "config" / "pools" / name
     peer_dir.mkdir(parents=True, exist_ok=True)
-    (peer_dir / "pool.yml").write_text(
-        f"main_agent_name: {name}\npeers: []\n", encoding="utf-8"
-    )
+    (peer_dir / "pool.yml").write_text(f"main_agent_name: {name}\npeers: []\n", encoding="utf-8")
 
 
 class TestExternalPoolSavePersistsRoutingKeys:
@@ -81,7 +79,7 @@ class TestExternalPoolSavePersistsRoutingKeys:
             main_agent_name="pi",
             main=MainAgentSpec(
                 agent_name="pi",
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
                 provider_kind=ProviderKind.PI,
             ),
         )
@@ -89,12 +87,12 @@ class TestExternalPoolSavePersistsRoutingKeys:
         store.write_pool("pool_pi", tree)
         # Then the YAML carries both routing keys.
         data = _read_yml(store, "pool_pi")
-        assert data["execution_strategy"] == "external_coding"
+        assert data["execution_strategy"] == "external"
         assert data["provider_kind"] == "pi"
 
 
 class TestExternalPoolSaveOmitsNativeFields:
-    """The store omits native fields for external_coding pools — they are
+    """The store omits native fields for external pools — they are
     meaningless for external CLIs. Only description + routing keys are
     written. The strategy's validate_pool_spec is defense-in-depth at
     assembly time; the store is the single pool.yml write path.
@@ -113,13 +111,13 @@ class TestExternalPoolSaveOmitsNativeFields:
                 tool_preset=ToolPreset.MINIMAL,
                 tool_supplements=[ToolSupplement.AST_GREP],
                 mcp=["some-server"],
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
                 provider_kind=ProviderKind.PI,
             ),
         )
         store.write_pool("pool_pi", tree)
         data = _read_yml(store, "pool_pi")
-        # Native fields are NOT written for external_coding pools.
+        # Native fields are NOT written for external pools.
         assert "max_steps" not in data
         assert "use_terminal" not in data
         assert "terminal_visibility" not in data
@@ -127,7 +125,7 @@ class TestExternalPoolSaveOmitsNativeFields:
         assert "tool_supplements" not in data
         assert "mcp" not in data
         # Routing keys ARE written.
-        assert data["execution_strategy"] == "external_coding"
+        assert data["execution_strategy"] == "external"
         assert data["provider_kind"] == "pi"
 
 
@@ -148,7 +146,7 @@ class TestExternalPoolSavePreservesSharedFields:
             main=MainAgentSpec(
                 agent_name="pi",
                 description="External coding agent via Pi CLI.",
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
                 provider_kind=ProviderKind.PI,
             ),
             peers=["default"],
@@ -167,8 +165,7 @@ class TestExternalPoolSavePreservesSharedFields:
         pool_dir = tmp_path / "config" / "pools" / "pool_pi"
         pool_dir.mkdir(parents=True, exist_ok=True)
         (pool_dir / "pool.yml").write_text(
-            "main_agent_name: pi\n"
-            "media:\n  max_image_bytes: 5242880\n",
+            "main_agent_name: pi\nmedia:\n  max_image_bytes: 5242880\n",
             encoding="utf-8",
         )
         tree = PoolSpec(
@@ -176,7 +173,7 @@ class TestExternalPoolSavePreservesSharedFields:
             main_agent_name="pi",
             main=MainAgentSpec(
                 agent_name="pi",
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
                 provider_kind=ProviderKind.PI,
             ),
         )
@@ -188,7 +185,7 @@ class TestExternalPoolSavePreservesSharedFields:
 
 
 class TestExternalPoolStoreValidatesProviderKind:
-    """The store validates provider_kind for external_coding pools — the
+    """The store validates provider_kind for external pools — the
     WebUI pool write endpoint relies on store-level validation to return
     HTTP 400 on missing provider_kind. validate_pool_spec on the strategy
     is defense-in-depth at assembly time.
@@ -203,7 +200,7 @@ class TestExternalPoolStoreValidatesProviderKind:
             main_agent_name="pi",
             main=MainAgentSpec.model_construct(
                 agent_name="pi",
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
                 provider_kind=None,
             ),
         )
@@ -219,7 +216,7 @@ class TestExternalPoolStoreValidatesProviderKind:
             main_agent_name="pi",
             main=MainAgentSpec.model_construct(
                 agent_name="pi",
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
                 provider_kind=None,
             ),
         )
@@ -232,16 +229,14 @@ class TestExternalPoolStoreValidatesProviderKind:
 class TestExternalSaveRemovesSubagents:
     """Switching from react (with subagents) to external (without subagents)
     removes the subagent templates and prompt mds — the store strips
-    subagents from the input tree for external_coding pools before writing.
+    subagents from the input tree for external pools before writing.
 
-    The store enforces the "no subagents on external_coding" invariant at
-    write time; ``ExternalCodingExecutionStrategy.validate_pool_spec`` is
+    The store enforces the "no subagents on external" invariant at
+    write time; ``ExternalExecutionStrategy.validate_pool_spec`` is
     defense-in-depth at assembly time.
     """
 
-    def test_external_save_removes_existing_subagent_templates(
-        self, tmp_path: Path
-    ) -> None:
+    def test_external_save_removes_existing_subagent_templates(self, tmp_path: Path) -> None:
         # Given a react pool with one subagent ("helper").
         store = _store(tmp_path)
         react_tree = PoolSpec(
@@ -254,13 +249,13 @@ class TestExternalSaveRemovesSubagents:
         templates_dir = store._templates_dir("pool_pi")
         assert (templates_dir / "helper.yml").exists()
 
-        # When the pool is switched to external_coding.
+        # When the pool is switched to external.
         external_tree = PoolSpec(
             name="pool_pi",
             main_agent_name="pi",
             main=MainAgentSpec(
                 agent_name="pi",
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
                 provider_kind=ProviderKind.PI,
             ),
         )
@@ -270,9 +265,7 @@ class TestExternalSaveRemovesSubagents:
         yml_files = list(templates_dir.glob("*.yml"))
         assert yml_files == []
 
-    def test_external_save_removes_subagent_prompt_mds(
-        self, tmp_path: Path
-    ) -> None:
+    def test_external_save_removes_subagent_prompt_mds(self, tmp_path: Path) -> None:
         # Given a react pool whose subagent has a prompt md.
         store = _store(tmp_path)
         react_tree = PoolSpec(
@@ -285,13 +278,13 @@ class TestExternalSaveRemovesSubagents:
         helper_md = store.agents_dir / "helper.md"
         assert helper_md.exists()
 
-        # When switched to external_coding.
+        # When switched to external.
         external_tree = PoolSpec(
             name="pool_pi",
             main_agent_name="pi",
             main=MainAgentSpec(
                 agent_name="pi",
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
                 provider_kind=ProviderKind.PI,
             ),
         )
@@ -313,13 +306,13 @@ class TestExternalSaveRemovesSubagents:
         assert main_md.exists()
         main_md.write_text("custom main prompt", encoding="utf-8")
 
-        # When switched to external_coding.
+        # When switched to external.
         external_tree = PoolSpec(
             name="pool_pi",
             main_agent_name="pi",
             main=MainAgentSpec(
                 agent_name="pi",
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
                 provider_kind=ProviderKind.PI,
             ),
         )
@@ -329,10 +322,8 @@ class TestExternalSaveRemovesSubagents:
         assert main_md.exists()
         assert main_md.read_text(encoding="utf-8") == "custom main prompt"
 
-    def test_external_save_strips_subagents_from_input_tree(
-        self, tmp_path: Path
-    ) -> None:
-        # The store strips subagents from the input tree for external_coding
+    def test_external_save_strips_subagents_from_input_tree(self, tmp_path: Path) -> None:
+        # The store strips subagents from the input tree for external
         # pools before writing. The frontend may send stale subagents; the
         # store canonicalizes them away on disk.
         store = _store(tmp_path)
@@ -341,7 +332,7 @@ class TestExternalSaveRemovesSubagents:
             main_agent_name="pi",
             main=MainAgentSpec(
                 agent_name="pi",
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
                 provider_kind=ProviderKind.PI,
             ),
             subagents=[SubagentSpec(agent_name="helper")],
@@ -368,7 +359,7 @@ class TestSwitchExternalToReact:
             main_agent_name="pi",
             main=MainAgentSpec(
                 agent_name="pi",
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
                 provider_kind=ProviderKind.PI,
             ),
         )
@@ -395,9 +386,7 @@ class TestSwitchExternalToReact:
 class TestReactPoolUnchanged:
     """Existing react pool write behavior is not affected."""
 
-    def test_react_save_omits_execution_strategy_and_provider_kind(
-        self, tmp_path: Path
-    ) -> None:
+    def test_react_save_omits_execution_strategy_and_provider_kind(self, tmp_path: Path) -> None:
         store = _store(tmp_path)
         tree = PoolSpec(
             name="default",
@@ -433,9 +422,7 @@ class TestReactPoolUnchanged:
 class TestExternalPoolRoundTrip:
     """read_pool recovers the external routing keys after a save."""
 
-    def test_read_pool_recovers_external_strategy_and_provider_kind(
-        self, tmp_path: Path
-    ) -> None:
+    def test_read_pool_recovers_external_strategy_and_provider_kind(self, tmp_path: Path) -> None:
         store = _store(tmp_path)
         tree = PoolSpec(
             name="pool_pi",
@@ -443,13 +430,13 @@ class TestExternalPoolRoundTrip:
             main=MainAgentSpec(
                 agent_name="pi",
                 description="Pi agent",
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
                 provider_kind=ProviderKind.PI,
             ),
         )
         store.write_pool("pool_pi", tree)
         spec = store.read_pool("pool_pi")
-        assert spec.main.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
+        assert spec.main.execution_strategy == ExecutionStrategyKind.EXTERNAL
         assert spec.main.provider_kind == ProviderKind.PI
         assert spec.main.description == "Pi agent"
 

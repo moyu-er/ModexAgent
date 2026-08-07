@@ -1,8 +1,8 @@
 # External coding agent integration — spec
 
 Status: implemented (revised 2026-07-14, 2026-07-15)
-Parent ADR: ADR-0022 (`docs/adr/0022-external-coding-agent-integration.md`)
-Domain glossary: `docs/design/external-coding-agent-integration/glossary.md`
+Parent ADR: ADR-0022 (`docs/adr/0022-external-agent-integration.md`)
+Domain glossary: `docs/design/external-agent-integration/glossary.md`
 
 > **Revision note (2026-07-15):** This spec was written before
 > implementation. Several decisions evolved during development — the
@@ -40,7 +40,7 @@ dedicated pools**. Each provider (Pi, OpenCode, …) gets its own pool
 (`pool_pi`, `pool_opencode`) registered when — and only when — the provider's
 CLI is installed.
 
-A framework-side **harness** (`ExternalCodingAgent`, an `Agent[E]`
+A framework-side **harness** (`ExternalAgent`, an `Agent[E]`
 subclass) owns turn orchestration and delegates provider resource ownership
 to a `StreamingProviderBackend`:
 
@@ -62,7 +62,7 @@ to a `StreamingProviderBackend`:
    session id back to `ExternalSessionMapStore`.
 
 Provider cleanup converges through `StreamingProviderBackend.close()`.
-`ExternalCodingAgent.stop()` invokes it, and workspace teardown reaches the
+`ExternalAgent.stop()` invokes it, and workspace teardown reaches the
 agent through `AgentPool.shutdown_all()`. A normal turn does not close the
 warm OpenCode server.
 
@@ -154,7 +154,7 @@ OpenCode session in the same list as every other agent, identified by the
     provider backends, so that adding a new provider requires zero
     OS-branch code.
 20. As a developer, I want the integration to be strictly additive
-    (no `external_coding` execution strategy configured ⇒ byte-for-byte
+    (no `external` execution strategy configured ⇒ byte-for-byte
     today's behaviour), so that the change is risk-free for deployments
     that do not opt in.
 21. As a developer, I want every cross-module data structure (env specs,
@@ -168,7 +168,7 @@ OpenCode session in the same list as every other agent, identified by the
 23. As a developer, I want the framework footprint of this feature to be
     two lines in `factory.py` plus one comment in `descriptor.py`, so
     that the integration's surface area stays inside
-    `agents/external_coding/`.
+    `agents/external/`.
 24. As a developer, I want no independent memory file maintained for
     external agents, so that session-state ownership is unambiguous
     (the provider's own session file is the ground truth; ModexAgent's
@@ -205,7 +205,7 @@ OpenCode session in the same list as every other agent, identified by the
 
 ### Modules added
 
-All new code lives under `src/modex_agent/agents/external_coding/`. The
+All new code lives under `src/modex_agent/agents/external/`. The
 package is provider-agnostic; per-provider code is isolated under
 `providers/`. The CLI lives under `src/modex_agent/cli/modexbot/`.
 
@@ -229,7 +229,7 @@ value object):
   `InboxMQ.deliver()` for both FILE and SQLite persistence.
 - `SessionMapEntry` — frozen BaseModel persisted through
   `ExternalSessionMapStore` (JSON for FILE, scoped database rows for SQLite).
-- `ExternalCodingEvent` — StrEnum: `TEXT_DELTA`, `THINKING`,
+- `ExternalEvent` — StrEnum: `TEXT_DELTA`, `THINKING`,
   `TOOL_USE`, `TOOL_RESULT`, `ERROR` (extensible).
 
 ### Modules modified (framework footprint — additive)
@@ -247,7 +247,7 @@ Key framework additions:
 - `pipeline/pipeline.py` — `ExternalTurnRunner` injection +
   `update_emitter_factory` mirror
 - `multi_agent/factory.py` — `ExecutionStrategy` enum dispatch
-- `multi_agent/message_xml.py` — `implementation` parameter +
+- `multi_agent/message_format.py` — `implementation` parameter +
   `--stdin` guidance
 - `multi_agent/envelope.py` — `to_input_metadata` / `to_input_message`
 - `providers/litellm_provider.py` — deferred `import litellm`
@@ -310,7 +310,6 @@ interface. Provider differences remain inside adapters:
 |---|---|---|---|
 | `OpenCodeServerBackend` | One warm `opencode serve` per backend | Keep server for reuse | Roll back failed startup or terminate and reap the server tree on close |
 | `OpenCodeBackend` | One `opencode run` child per turn | Wait and reap | Terminate and reap every active child tree |
-| `PiBackend` | One `pi` child per turn | Wait and reap | Terminate and reap every active child tree |
 | `_OpenCodeFallbackBackend` | Owns SSE and subprocess adapters | Sticky switch to subprocess after SSE startup failure | Attempt both closes; preserve the first failure |
 
 Each real adapter serializes spawn/register with close and rejects execution
@@ -318,7 +317,7 @@ after successful close. Active subprocesses remain owned until their final
 `wait()` completes. Multi-child close is all-settled: every child receives a
 cleanup attempt before the first failure is propagated.
 
-`ExternalCodingAgent.stop()` shares one in-flight close task across concurrent
+`ExternalAgent.stop()` shares one in-flight close task across concurrent
 callers. It sets `_stopped` only after close succeeds; failure or cancellation
 leaves the agent retryable. `AgentPool.shutdown_all()` applies the same owner
 rule at pool scope: concurrent callers share one shutdown, all agents use one
@@ -343,7 +342,7 @@ Help is env-gated: without `MODEX_SESSION_ID` in the environment, the
 `send` and `agents` subcommands are not registered.
 
 **Message wrapping.** `modexctl send` wraps content in
-`build_peer_agent_message` XML so the receiving agent sees structured
+`build_agent_comm_message` XML so the receiving agent sees structured
 `<agent_message>` with `source`, `<content>`, and `<reply_contract>`
 (reply instructions tailored to receiver's implementation type: NATIVE
 receivers are told to use `send_to_agent`; EXTERNAL receivers are told
@@ -397,7 +396,7 @@ per-spawn, the static part is workdir-local and identical across pools.
 ### Event parsing
 
 `ProviderEventParser` consumes one stdout JSONL line and emits zero or
-more `Emission` records. The harness (`ExternalCodingAgent._handle_emission`)
+more `Emission` records. The harness (`ExternalAgent._handle_emission`)
 maps `Emission` → canonical `TurnEvent` (provider-neutral frozen Pydantic
 discriminated union in `core/turn_events.py`) and calls
 `emitter.emit_turn_event()`. Four canonical event kinds:
@@ -414,12 +413,12 @@ discriminated union in `core/turn_events.py`) and calls
 `StreamingAwareEmitter` forwards text to `emit_delta` and no-ops
 reasoning/tool events (IM emitters inherit this). `WebBotEmitter`
 projects canonical events into existing `ServerEvent`/transcript types.
-The WebUI has zero imports from `external_coding` — it consumes only
+The WebUI has zero imports from `external` — it consumes only
 the canonical seam (enforced by architecture guard tests).
 
 Tool call/result share a non-empty `call_id` (provider-minted or
 parser-minted). Tool arguments are parsed in
-`ExternalCodingAgent._handle_emission` (not in WebUI) via
+`ExternalAgent._handle_emission` (not in WebUI) via
 `TypeAdapter(dict[str, JsonValue])`.
 
 OpenCode parser reads from `part.state.input`/`part.state.output`
@@ -477,7 +476,7 @@ existing `tests/integration/multi_agent/test_cross_pool_peer.py` pattern:
   `TopologyPolicy`, real ADR-0019 peer wiring.
 - Pool A's main agent: the existing fake-instance pattern
   (`_make_fake_instance`) — records processed `InputMessage`s.
-- External pool's main agent: the real `ExternalCodingAgent`, but with
+- External pool's main agent: the real `ExternalAgent`, but with
   its `ProviderBackend` replaced by a `ScriptedProviderBackend`.
 
 The scripted backend is the only new test artefact. It:
@@ -496,8 +495,8 @@ recovery, self-send rejection, and unknown-target error.
 
 ### Unit tests (pure-function contracts)
 
-Mirror `src/modex_agent/agents/external_coding/` under
-`tests/unit/agents/external_coding/`. Each module has its own test file:
+Mirror `src/modex_agent/agents/external/` under
+`tests/unit/agents/external/`. Each module has its own test file:
 
 - `test_paths.py` — `ExternalPaths` derived-path correctness; provider
   session path; lock-file path; escape-proof (workdir parent never
@@ -619,5 +618,5 @@ Mirror `src/modex_agent/agents/external_coding/` under
   - Builds on ADR-0019 (cross-pool peer communication — external pools
     are NORMAL peers routed via `PeerNormalStrategy` prefix reuse).
   - Builds on ADR-0003 (src layout — new code under
-    `src/modex_agent/agents/external_coding/`).
+    `src/modex_agent/agents/external/`).
   - Does not revise any prior decision.

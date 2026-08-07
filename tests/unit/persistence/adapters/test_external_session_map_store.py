@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from modex_agent.agents.external_coding.paths import ProviderKind
+from modex_agent.agents.external.paths import ProviderKind
 from modex_agent.core.scope import RecordScope
 from modex_agent.persistence import ConnectionManager
 from modex_agent.persistence.adapters.external_session_map_store import (

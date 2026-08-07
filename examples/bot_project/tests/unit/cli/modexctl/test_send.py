@@ -2,9 +2,9 @@
 
 Tests the CLI in isolation: ``fetch_send`` is monkeypatched so the test
 never makes a real HTTP request. Verifies the CLI constructs the correct
-``SendRequest``, maps ``SendResult.dispatch_outcome`` to the legacy ack
-text for each strategy (peer normal, subagent dispatch, parent reply),
-and exits 0 on success / 2 on bot error.
+``SendRequest`` and emits the framework's unified ack text (via
+:func:`format_send_ack`) for each strategy (peer normal, subagent
+dispatch, parent reply), and exits 0 on success / 2 on bot error.
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ import os
 from pathlib import Path
 
 import pytest
+from bot.cli.modexctl.app import EXIT_ROUTING, EXIT_USAGE, build_app
 from bot.cli.modexctl.http_client import ControlClientError
-from bot.cli.modexctl.main import EXIT_ROUTING, EXIT_USAGE, build_app
 from bot.control.models import (
     ControlError,
     DispatchOutcome,
@@ -24,7 +24,7 @@ from bot.control.models import (
 )
 from typer.testing import CliRunner
 
-main_module = importlib.import_module("bot.cli.modexctl.main")
+main_module = importlib.import_module("bot.cli.modexctl.commands.send")
 
 # ---------------------------------------------------------------------------
 # Env fixtures
@@ -44,9 +44,7 @@ def no_modex_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture()
-def normal_env(
-    monkeypatch: pytest.MonkeyPatch, no_modex_env: None, tmp_path: Path
-) -> None:
+def normal_env(monkeypatch: pytest.MonkeyPatch, no_modex_env: None, tmp_path: Path) -> None:
     monkeypatch.setenv("MODEX_SESSION_ID", "conv123.main")
     monkeypatch.setenv("MODEX_AGENT_NAME", "main")
     monkeypatch.setenv("MODEX_INBOX_ROOT", str(tmp_path / "inbox"))
@@ -58,9 +56,7 @@ def normal_env(
 
 
 @pytest.fixture()
-def subagent_env(
-    monkeypatch: pytest.MonkeyPatch, normal_env: None
-) -> None:
+def subagent_env(monkeypatch: pytest.MonkeyPatch, normal_env: None) -> None:
     monkeypatch.setenv("MODEX_COMM_KIND", "subagent")
     monkeypatch.setenv("MODEX_PARENT_SESSION_ID", "conv123.main")
 
@@ -101,7 +97,6 @@ def _native_subagent_result() -> SendResult:
         dispatch_outcome=DispatchOutcome.NEW_TASK,
         is_peer_send=False,
         is_external_target=False,
-        output_path=Path("/data/output.md"),
         trace_dir=Path("/data/trace"),
     )
 
@@ -127,7 +122,6 @@ def _resumed_subagent_result() -> SendResult:
         dispatch_outcome=DispatchOutcome.RESUMED,
         is_peer_send=False,
         is_external_target=False,
-        output_path=Path("/data/output.md"),
         trace_dir=Path("/data/trace"),
     )
 
@@ -142,7 +136,6 @@ def _requested_not_found_result() -> SendResult:
         requested_invocation_id="inv456",
         is_peer_send=False,
         is_external_target=False,
-        output_path=Path("/data/output.md"),
         trace_dir=Path("/data/trace"),
     )
 
@@ -172,8 +165,9 @@ class TestPeerNormalAck:
             ["send", "--to", "coder", "--content", "hello"],
         )
         assert result.exit_code == 0
-        assert "Message delivered to 'coder'." in result.stdout
-        assert "The agent will process your message asynchronously." in result.stdout
+        assert "Message sent to peer agent 'coder'." in result.stdout
+        assert "next_step:" in result.stdout
+        assert "not automatic" in result.stdout
 
     def test_peer_send_constructs_correct_request(
         self,
@@ -215,22 +209,19 @@ class TestNativeSubagentAck:
         normal_env: None,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(
-            main_module, "fetch_send", lambda req: _native_subagent_result()
-        )
+        monkeypatch.setattr(main_module, "fetch_send", lambda req: _native_subagent_result())
 
         result = runner.invoke(
             build_app(),
             ["send", "--to", "coder", "--content", "do work"],
         )
         assert result.exit_code == 0
-        assert "Task dispatched to 'coder'." in result.stdout
+        assert "Task dispatched to 'coder'" in result.stdout
         assert "invocation_id: inv456" in result.stdout
         assert "session_id" not in result.stdout
-        assert "status: new_task" in result.stdout
-        assert "output_path" not in result.stdout
-        assert "trace_dir" not in result.stdout
-        assert "Do not poll." in result.stdout
+        assert "status:" not in result.stdout
+        assert "tail the Trace" not in result.stdout
+        assert "automatic_notification: true" in result.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -245,21 +236,17 @@ class TestExternalSubagentAck:
         normal_env: None,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(
-            main_module, "fetch_send", lambda req: _external_subagent_result()
-        )
+        monkeypatch.setattr(main_module, "fetch_send", lambda req: _external_subagent_result())
 
         result = runner.invoke(
             build_app(),
             ["send", "--to", "pi", "--content", "hello"],
         )
         assert result.exit_code == 0
-        assert "Task dispatched to 'pi'." in result.stdout
+        assert "Task dispatched to 'pi'" in result.stdout
         assert "invocation_id: inv789" in result.stdout
         assert "session_id" not in result.stdout
-        assert "status: new_task" in result.stdout
-        assert "output_path" not in result.stdout
-        assert "trace_dir" not in result.stdout
+        assert "status:" not in result.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -274,17 +261,15 @@ class TestParentReplyAck:
         subagent_env: None,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(
-            main_module, "fetch_send", lambda req: _parent_reply_result()
-        )
+        monkeypatch.setattr(main_module, "fetch_send", lambda req: _parent_reply_result())
 
         result = runner.invoke(
             build_app(),
             ["send", "--to", "main", "--content", "reply"],
         )
         assert result.exit_code == 0
-        assert "Reply delivered." in result.stdout
-        assert "The agent will continue processing." in result.stdout
+        assert "Reply delivered to 'main'." in result.stdout
+        assert "process your reply asynchronously" in result.stdout
 
     def test_parent_reply_sets_parent_session_id(
         self,
@@ -400,9 +385,7 @@ class TestInputModes:
             lambda req: (captured.append(req), _peer_result())[1],
         )
 
-        runner.invoke(
-            build_app(), ["send", "--to", "coder", "hello", "world", "test"]
-        )
+        runner.invoke(build_app(), ["send", "--to", "coder", "hello", "world", "test"])
         assert captured[0].content == "hello world test"
 
     def test_positional_message_with_special_chars(
@@ -520,9 +503,7 @@ class TestSendNotGatedOnSubagent:
         normal_env: None,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(
-            main_module, "fetch_send", lambda req: _peer_result()
-        )
+        monkeypatch.setattr(main_module, "fetch_send", lambda req: _peer_result())
 
         result = runner.invoke(
             build_app(),
@@ -605,22 +586,19 @@ class TestResumedAck:
         normal_env: None,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(
-            main_module, "fetch_send", lambda req: _resumed_subagent_result()
-        )
+        monkeypatch.setattr(main_module, "fetch_send", lambda req: _resumed_subagent_result())
 
         result = runner.invoke(
             build_app(),
             ["send", "--to", "coder", "--content", "continue", "--invocation-id", "inv456"],
         )
         assert result.exit_code == 0
-        assert "Task dispatched to 'coder'." in result.stdout
+        assert "Task dispatched to 'coder'" in result.stdout
         assert "invocation_id: inv456" in result.stdout
         assert "session_id" not in result.stdout
-        assert "status: resumed" in result.stdout
-        assert "output_path" not in result.stdout
-        assert "trace_dir" not in result.stdout
-        assert "Do not poll." in result.stdout
+        assert "status:" not in result.stdout
+        assert "tail the Trace" not in result.stdout
+        assert "automatic_notification: true" in result.stdout
 
 
 class TestRequestedNotFoundAck:
@@ -630,22 +608,37 @@ class TestRequestedNotFoundAck:
         normal_env: None,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(
-            main_module, "fetch_send", lambda req: _requested_not_found_result()
-        )
+        monkeypatch.setattr(main_module, "fetch_send", lambda req: _requested_not_found_result())
 
         result = runner.invoke(
             build_app(),
             ["send", "--to", "coder", "--content", "work", "--invocation-id", "inv456"],
         )
         assert result.exit_code == 0
-        assert "Task dispatched to 'coder'." in result.stdout
+        assert "Task dispatched to 'coder'" in result.stdout
         assert "invocation_id: a1b2c3d4" in result.stdout
+        assert "Note: requested invocation_id 'inv456' not found; created new task" in result.stdout
         assert "session_id" not in result.stdout
-        assert "status: new_task (requested 'inv456' not found, created new)" in result.stdout
-        assert "output_path" not in result.stdout
-        assert "trace_dir" not in result.stdout
-        assert "Do not poll." in result.stdout
+        assert "status:" not in result.stdout
+
+    def test_not_found_without_requested_id_outputs_generic_warning(
+        self,
+        runner: CliRunner,
+        normal_env: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        missing_id_result = _requested_not_found_result().model_copy(
+            update={"requested_invocation_id": None}
+        )
+        monkeypatch.setattr(main_module, "fetch_send", lambda req: missing_id_result)
+
+        result = runner.invoke(
+            build_app(),
+            ["send", "--to", "coder", "--content", "work"],
+        )
+
+        assert result.exit_code == 0
+        assert "Note: requested invocation_id not found; created new task" in result.stdout
 
     def test_not_found_external_target_no_paths(
         self,
@@ -663,21 +656,17 @@ class TestRequestedNotFoundAck:
             is_peer_send=False,
             is_external_target=True,
         )
-        monkeypatch.setattr(
-            main_module, "fetch_send", lambda req: external_not_found
-        )
+        monkeypatch.setattr(main_module, "fetch_send", lambda req: external_not_found)
 
         result = runner.invoke(
             build_app(),
             ["send", "--to", "pi", "--content", "x", "--invocation-id", "inv789"],
         )
         assert result.exit_code == 0
-        assert "Task dispatched to 'pi'." in result.stdout
+        assert "Task dispatched to 'pi'" in result.stdout
         assert "invocation_id: a1b2c3d4" in result.stdout
         assert "session_id" not in result.stdout
-        assert "status: new_task (requested 'inv789' not found, created new)" in result.stdout
-        assert "output_path" not in result.stdout
-        assert "trace_dir" not in result.stdout
+        assert "status:" not in result.stdout
 
 
 # ---------------------------------------------------------------------------

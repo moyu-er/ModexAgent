@@ -5,12 +5,13 @@ from __future__ import annotations
 from modex_agent.core.agent import AgentImplementation
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import ReminderKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.communication.strategies.base import SendRequest, SendStrategy
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.multi_agent.message_format import SourceLabel, build_agent_comm_message
 from modex_agent.multi_agent.message_type import AgentMessageType
-from modex_agent.multi_agent.message_xml import build_peer_agent_message
 from modex_agent.multi_agent.tools import CommunicationTarget
 
 
@@ -46,28 +47,29 @@ class PeerNormalStrategy(SendStrategy):
         sender_sid = req.context.session
         envelope_invocation_id = self.normalize_invocation_id(req)
 
-        xml_content = build_peer_agent_message(
+        content = build_agent_comm_message(
+            source_label=SourceLabel.PEER_AGENT,
             source=effective_source.name,
             content=req.content,
-            receiver_implementation=(
+            invocation_id=None,
+            reply_contract=(
                 AgentImplementation.EXTERNAL
-                if req.target.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
+                if req.target.execution_strategy == ExecutionStrategyKind.EXTERNAL
                 else AgentImplementation.NATIVE
             ),
         )
         return AgentMessageEnvelope(
-            payload={"content": xml_content, "message_type": AgentMessageType.AGENT_MESSAGE},
+            payload=self._envelope_payload(content, AgentMessageType.AGENT_MESSAGE, req),
             source=effective_source,
             target=AgentAddress(name=req.target.name),
             message_type=AgentMessageType.AGENT_MESSAGE,
             session_id=str(sender_sid),
             agent_session_id=str(session),
             invocation_id=envelope_invocation_id,
+            metadata={"reminder_kind": ReminderKind.PEER_MESSAGE},
         )
 
-    async def deliver(
-        self, env: AgentMessageEnvelope, target: CommunicationTarget
-    ) -> str | None:
+    async def deliver(self, env: AgentMessageEnvelope, target: CommunicationTarget) -> str | None:
         """Deliver to the target's bus, falling back to the local bus."""
         bus = target.bus_ref or self._deps.agent_bus
         if bus is None:

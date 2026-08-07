@@ -5,12 +5,13 @@ from __future__ import annotations
 import uuid as _uuid_mod
 
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import ReminderKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.communication.strategies.base import SendRequest, SendStrategy
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.multi_agent.message_format import build_dispatch_message
 from modex_agent.multi_agent.message_type import AgentMessageType
-from modex_agent.multi_agent.message_xml import build_dispatch_xml
 
 _TASK_ID_BYTES = 8
 
@@ -45,14 +46,13 @@ class SubagentDispatchStrategy(SendStrategy):
         """Build a TASK_REQUEST envelope."""
         effective_source = self._resolve_source(req)
         parent_sid = req.context.session
-        xml_content = build_dispatch_xml(
+        content = build_dispatch_message(
             source=effective_source.name,
-            invocation_id=invocation_id,
+            invocation_id=None,
             content=req.content,
-            target_execution_strategy=req.target.execution_strategy,
         )
         return AgentMessageEnvelope(
-            payload={"content": xml_content, "message_type": AgentMessageType.TASK_REQUEST},
+            payload=self._envelope_payload(content, AgentMessageType.TASK_REQUEST, req),
             source=effective_source,
             target=AgentAddress(name=req.target.name),
             message_type=AgentMessageType.TASK_REQUEST,
@@ -60,6 +60,7 @@ class SubagentDispatchStrategy(SendStrategy):
             agent_session_id=str(session),
             parent_session_id=str(parent_sid),
             invocation_id=invocation_id,
+            metadata={"reminder_kind": ReminderKind.AGENT_MESSAGE},
         )
 
     def should_register_session(self) -> bool:
@@ -69,10 +70,10 @@ class SubagentDispatchStrategy(SendStrategy):
     def build_result(
         self, req: SendRequest, session: SessionInfo, invocation_id: str
     ) -> AgentSendResult:
-        """Add trace/output paths for subagent ack."""
+        """Add trace_dir for subagent ack (output_path is owned by the hook)."""
         from modex_agent.core.constants import ExecutionStrategyKind
 
-        if req.target.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
+        if req.target.execution_strategy == ExecutionStrategyKind.EXTERNAL:
             return self._build_external_result(req, session, invocation_id)
         return self._build_native_result(req, session, invocation_id)
 
@@ -86,7 +87,6 @@ class SubagentDispatchStrategy(SendStrategy):
             session_id=str(session),
             invocation_id=invocation_id,
             created_new_task=created_new_task,
-            output_path=self._subagent_output_path(req.target.kind, str(session)),
             trace_dir=self._subagent_trace_dir(req.target.kind, str(session)),
         )
 
@@ -100,4 +100,5 @@ class SubagentDispatchStrategy(SendStrategy):
             session_id=str(session),
             invocation_id=invocation_id,
             created_new_task=created_new_task,
+            is_external=True,
         )

@@ -14,5 +14,4 @@ for _mod_name in list(sys.modules):
     if _mod_name == "bot" or _mod_name.startswith("bot."):
         del sys.modules[_mod_name]
 
-pytest_plugins = ["tests.integration.bot_project._external_coding_fixtures"]
-
+pytest_plugins = ["tests.integration.bot_project._external_fixtures"]

@@ -9,11 +9,11 @@ Related: ADR-0015 (subagent materialize), ADR-0019 (cross-pool peer), ADR-0022 (
 
 ADR-0022 integrated external coding agents (OpenCode, Pi) as NORMAL main agents of their own dedicated pools (`pool_opencode`, `pool_pi`). The deferred.md of that design explicitly listed "external CLI as subagent" as a rejected alternative for day-one scope. The framework's `AgentImplementation` enum (`core/agent.py:38`) even documents `SUBAGENT + EXTERNAL` as "reserved (future)".
 
-As external-coding-as-main-agent stabilized in production, the cost of the rejected alternative became clear:
+As external-as-main-agent stabilized in production, the cost of the rejected alternative became clear:
 
 1. **Topology mismatch.** A user wanting OpenCode to handle a coding sub-task had to stand up a whole `pool_opencode` and route via cross-pool peer messaging (`send_to_agent(opencode)`), even when the parent agent was in the same workspace. Star topology was preserved only by making the external agent a peer, not a child — doubling pool count and operational surface.
 2. **Asymmetric configuration.** `MainAgentSpec` carried `execution_strategy` + `provider_kind`; `SubagentSpec` did not. Whether an agent could be external-coded was decided by where it sat in the topology, not by what it was.
-3. **No subagent lifecycle path.** `AgentTemplate.materialize` hardcoded `execution_strategy=REACT` at line 240, and `ExternalCodingAgent` held a fixed `backend` in its constructor — both prevented a subagent from being external-coded without rewriting the agent class.
+3. **No subagent lifecycle path.** `AgentTemplate.materialize` hardcoded `execution_strategy=REACT` at line 240, and `ExternalAgent` held a fixed `backend` in its constructor — both prevented a subagent from being external-coded without rewriting the agent class.
 
 This ADR closes that gap: external coding agents can now be configured as subagents inside any pool, with a design that converges main-agent and subagent paths onto a single assembly/data-flow where possible, while keeping them independent where their lifecycle semantics genuinely differ.
 
@@ -31,29 +31,29 @@ class SubagentSpec(BaseModel):
 
     @model_validator(mode="after")
     def _check_provider_kind_consistency(self) -> Self:
-        if self.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
+        if self.execution_strategy == ExecutionStrategyKind.EXTERNAL:
             if self.provider_kind is None:
-                raise ValueError("external_coding execution_strategy requires provider_kind")
+                raise ValueError("external execution_strategy requires provider_kind")
         else:
             if self.provider_kind is not None:
-                raise ValueError("provider_kind only valid with external_coding execution_strategy")
+                raise ValueError("provider_kind only valid with external execution_strategy")
         return self
 ```
 
 The same validator is backfilled to `MainAgentSpec`. Empirical audit of all existing pool.yml configs confirmed no deployed configuration writes the contradictory combination (react + provider_kind=opencode), so the backfill is non-breaking.
 
-`AgentImplementation` (`NATIVE` / `EXTERNAL`) is retained as a **derived enum** — not a spec field — classifying how an agent is implemented based on its `execution_strategy`. It exists so judgement sites read `if impl == AgentImplementation.EXTERNAL` instead of `if execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING` (rule 14: enums over raw strings). The four valid combinations (`NORMAL+NATIVE`, `NORMAL+EXTERNAL`, `SUBAGENT+NATIVE`, `SUBAGENT+EXTERNAL`) are documented in its docstring; `SUBAGENT+EXTERNAL` is the combination this ADR enables.
+`AgentImplementation` (`NATIVE` / `EXTERNAL`) is retained as a **derived enum** — not a spec field — classifying how an agent is implemented based on its `execution_strategy`. It exists so judgement sites read `if impl == AgentImplementation.EXTERNAL` instead of `if execution_strategy == ExecutionStrategyKind.EXTERNAL` (rule 14: enums over raw strings). The four valid combinations (`NORMAL+NATIVE`, `NORMAL+EXTERNAL`, `SUBAGENT+NATIVE`, `SUBAGENT+EXTERNAL`) are documented in its docstring; `SUBAGENT+EXTERNAL` is the combination this ADR enables.
 
 ### 2. `AgentTemplate.materialize` transparently forwards `execution_strategy` + `provider_kind`
 
 The hardcoded `execution_strategy=REACT` at `template.py:240` is replaced with `self.spec.execution_strategy`, and `provider_kind` is forwarded to `AgentDescriptor`. For react subagents (the only kind before this ADR), the descriptor is byte-for-byte identical to the pre-ADR output — no behavior change.
 
-### 3. New ABC: `SubagentExternalCodingBuilder` — independent subagent assembly entry point
+### 3. New ABC: `SubagentExternalBuilder` — independent subagent assembly entry point
 
 A new framework-layer ABC, injected optionally into `AgentMaterializeDeps`:
 
 ```python
-class SubagentExternalCodingBuilder(ABC):
+class SubagentExternalBuilder(ABC):
     @abstractmethod
     async def build(
         self,
@@ -65,13 +65,13 @@ class SubagentExternalCodingBuilder(ABC):
     ) -> AgentInstance: ...
 ```
 
-`AgentMaterializeDeps` gains exactly one field: `subagent_external_coding_builder: SubagentExternalCodingBuilder | None = None`. React-only pools leave it `None`. `materialize` dispatches on `spec.execution_strategy == EXTERNAL_CODING` to the builder; otherwise it takes the existing `deps.agent_factory.create_agent` path.
+`AgentMaterializeDeps` gains exactly one field: `subagent_external_builder: SubagentExternalBuilder | None = None`. React-only pools leave it `None`. `materialize` dispatches on `spec.execution_strategy == EXTERNAL` to the builder; otherwise it takes the existing `deps.agent_factory.create_agent` path.
 
-**Independence from main-agent factory path.** The subagent=external path does not borrow the main agent's `ExternalCodingAwareFactory`. A pool whose main agent is react can have external subagents without `deps.agent_factory` being anything other than `DefaultAgentFactory`, and vice versa. The two assembly paths are symmetric (one builder for subagent, one factory for main) and neither depends on the other. This is a deliberate rejection of an earlier proposal that would have made `pool_builder` scan `pool_spec.subagents` and switch the factory — that would have let subagent configuration leak into main-agent assembly, violating independence.
+**Independence from main-agent factory path.** The subagent=external path does not borrow the main agent's `ExternalAwareFactory`. A pool whose main agent is react can have external subagents without `deps.agent_factory` being anything other than `DefaultAgentFactory`, and vice versa. The two assembly paths are symmetric (one builder for subagent, one factory for main) and neither depends on the other. This is a deliberate rejection of an earlier proposal that would have made `pool_builder` scan `pool_spec.subagents` and switch the factory — that would have let subagent configuration leak into main-agent assembly, violating independence.
 
-### 4. `ExternalCodingAgent` is decoupled from a fixed backend via new `BackendProvider` ABC
+### 4. `ExternalAgent` is decoupled from a fixed backend via new `BackendProvider` ABC
 
-The root obstruction to subagent=external was that `ExternalCodingAgent.__init__` took a fixed `backend: StreamingProviderBackend`. This couples agent-instance lifetime to backend lifetime, which is fine for main agents (one session, one backend, pool-scoped) but broken for subagents: `AgentPool` reuses one `AgentInstance` per `agent_name` across many modex session ids, but warm backends — specifically `OpenCodeServerBackend`'s `opencode serve` SSE process — embed `MODEX_SESSION_ID` in their spawn env and cannot be shared across sessions without restarting the server (and thereby killing any in-flight turn).
+The root obstruction to subagent=external was that `ExternalAgent.__init__` took a fixed `backend: StreamingProviderBackend`. This couples agent-instance lifetime to backend lifetime, which is fine for main agents (one session, one backend, pool-scoped) but broken for subagents: `AgentPool` reuses one `AgentInstance` per `agent_name` across many modex session ids, but warm backends — specifically `OpenCodeServerBackend`'s `opencode serve` SSE process — embed `MODEX_SESSION_ID` in their spawn env and cannot be shared across sessions without restarting the server (and thereby killing any in-flight turn).
 
 A new ABC replaces the fixed backend:
 
@@ -87,12 +87,12 @@ class BackendProvider(ABC):
     async def close_all(self) -> None: ...
 ```
 
-`ExternalCodingAgent._run_turn` calls `acquire()` at turn start and `release()` at turn end. The agent no longer holds a backend; it borrows one per turn. This is the unified seam across both paths:
+`ExternalAgent._run_turn` calls `acquire()` at turn start and `release()` at turn end. The agent no longer holds a backend; it borrows one per turn. This is the unified seam across both paths:
 
 - **Main agent path** injects `PoolScopedBackendProvider` — a trivial wrapper that returns the same pool-scoped backend on every `acquire()` and does nothing on `release()`. Externally indistinguishable from the pre-ADR-0027 fixed-backend behavior; ADR-0022 main-agent behavior is preserved byte-for-byte.
 - **Subagent path** injects `CachingBackendProvider` — provider-kind-aware caching with two strategies:
   - **Warm backends (`OpenCodeServerBackend` only)**: per-modex_session_id cache with `MAX_WARM_BACKENDS` LRU cap (default 10). Each entry holds one long-lived `opencode serve` process. LRU eviction closes the evicted serve process. Cap is pool-level across all external subagent agent_names.
-  - **Stateless per-turn backends (`OpenCodeBackend`, `PiBackend`)**: shared single instance per `provider_kind`. Each turn spawns a fresh subprocess that is auto-reaped on turn end; no caching, no cap needed.
+  - **Stateless per-turn backends (`OpenCodeBackend`)**: shared single instance per `provider_kind`. Each turn spawns a fresh subprocess that is auto-reaped on turn end; no caching, no cap needed.
 
 The `MAX_WARM_BACKENDS` cap applies **only** to `OpenCodeServerBackend`. Per-turn-spawn backends are stateless and unbounded by design — their subprocesses are reaped per-turn, so they cannot accumulate.
 
@@ -135,13 +135,13 @@ The parent agent's decision logic reads only the uniform parts and does not bran
 
 - External coding agents (OpenCode today, Codex/Cursor when added) can be configured as subagents in any pool, eliminating the cross-pool peer detour for in-workspace coding delegation.
 - `SubagentSpec` and `MainAgentSpec` now carry the same two configuration fields (`execution_strategy` + `provider_kind`), making the framework's "what an agent is" orthogonal to "where an agent sits".
-- `ExternalCodingAgent` is no longer coupled to a fixed backend — `BackendProvider` unifies main and subagent paths behind one interface with two implementations.
+- `ExternalAgent` is no longer coupled to a fixed backend — `BackendProvider` unifies main and subagent paths behind one interface with two implementations.
 - Resource safety for warm SSE backends is bounded by `MAX_WARM_BACKENDS` LRU; stateless per-turn backends need no cap. Bot crash in the 90% case (normal exit / SIGTERM / SIGINT) is handled by three-layer Python cleanup with no platform-specific code.
 - `SubagentAutoSendHook`'s turn-end notification works uniformly for react and external subagents; parent agents do not need to know which kind of subagent they are parenting.
 
 ### Negative
 
-- `ExternalCodingAgent`'s constructor signature changes (`backend` → `backend_provider`). All call sites in the main-agent path must wrap their backend in `PoolScopedBackendProvider` before passing it to the builder. This is a mechanical change but it does touch the stable ADR-0022 path.
+- `ExternalAgent`'s constructor signature changes (`backend` → `backend_provider`). All call sites in the main-agent path must wrap their backend in `PoolScopedBackendProvider` before passing it to the builder. This is a mechanical change but it does touch the stable ADR-0022 path.
 - `ExternalTurnRunner` gains a `HookRunner` dependency that it did not have before. The runner's "minimal, no-frills" character is slightly eroded — though only `FINALLY_TURN` is dispatched, not the full hook chain.
 - `SIGKILL` / crash orphan processes are an accepted limitation. Users may need to manually kill `opencode serve` processes after a hard crash. This is documented as a known limitation, not a defect.
 - The `MAX_WARM_BACKENDS` cap (default 10) means the 11th concurrent modex session using an OpenCode SSE subagent will close the least-recently-used serve process, losing its warm SSE. The next turn for the evicted session will pay a cold-start cost (1-2s). This is the explicit resource-safety trade-off.

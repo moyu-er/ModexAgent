@@ -46,9 +46,12 @@ def _context() -> AgentContext:
 def _store_with_target() -> CommunicationTargetStore:
     """Pre-populated store for tests that need a valid target."""
     store = CommunicationTargetStore()
-    store.add(CommunicationTarget(
-        name="office-expert", kind=AgentCommKind.SUBAGENT,
-    ))
+    store.add(
+        CommunicationTarget(
+            name="office-expert",
+            kind=AgentCommKind.SUBAGENT,
+        )
+    )
     return store
 
 
@@ -130,7 +133,7 @@ class TestToolInvocationIdForwarding:
             current_agent_context.reset(token)
 
         assert result == "ok"
-        assert service.async_invocation_id == ""
+        assert service.async_invocation_id is None
 
 
 class TestToolInvocationIdNullStringNormalization:
@@ -202,9 +205,12 @@ class TestSendToAgentToolTargetValidation:
     async def test_rejects_unknown_target(self) -> None:
         service = _RecordingService()
         store = CommunicationTargetStore()
-        store.add(CommunicationTarget(
-            name="office-expert", kind=AgentCommKind.SUBAGENT,
-        ))
+        store.add(
+            CommunicationTarget(
+                name="office-expert",
+                kind=AgentCommKind.SUBAGENT,
+            )
+        )
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
@@ -282,9 +288,12 @@ class TestSelfSendGuard:
     @pytest.mark.asyncio
     async def test_self_send_checked_before_target_lookup(self) -> None:
         store = CommunicationTargetStore()
-        store.add(CommunicationTarget(
-            name="agent", kind=AgentCommKind.NORMAL,
-        ))
+        store.add(
+            CommunicationTarget(
+                name="agent",
+                kind=AgentCommKind.NORMAL,
+            )
+        )
         service = _RecordingService()
         tool = SendToAgentTool(
             store=store,
@@ -318,13 +327,22 @@ class TestToolManagerIntegration:
 
     def test_tool_manager_descriptions_use_dynamic_schema(self) -> None:
         from modex_agent.core.tool_manager import InMemoryToolManager
+
         store = CommunicationTargetStore()
-        store.add(CommunicationTarget(
-            name="scout", kind=AgentCommKind.SUBAGENT, description="Fast recon",
-        ))
-        store.add(CommunicationTarget(
-            name="worker", kind=AgentCommKind.SUBAGENT, description="Implementation",
-        ))
+        store.add(
+            CommunicationTarget(
+                name="scout",
+                kind=AgentCommKind.SUBAGENT,
+                description="Fast recon",
+            )
+        )
+        store.add(
+            CommunicationTarget(
+                name="worker",
+                kind=AgentCommKind.SUBAGENT,
+                description="Implementation",
+            )
+        )
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
@@ -375,21 +393,33 @@ class TestSendToAgentToolDescription:
         )
         assert "No targets" in tool.description
 
-        tool.add_target(CommunicationTarget(
-            name="scout", kind=AgentCommKind.SUBAGENT, description="Fast recon",
-        ))
+        tool.add_target(
+            CommunicationTarget(
+                name="scout",
+                kind=AgentCommKind.SUBAGENT,
+                description="Fast recon",
+            )
+        )
         assert "scout" in tool.description
         assert "Fast recon" in tool.description
         assert "No targets" not in tool.description
 
     def test_description_updates_after_pop_target(self) -> None:
         store = CommunicationTargetStore()
-        store.add(CommunicationTarget(
-            name="scout", kind=AgentCommKind.SUBAGENT, description="Recon",
-        ))
-        store.add(CommunicationTarget(
-            name="worker", kind=AgentCommKind.SUBAGENT, description="Impl",
-        ))
+        store.add(
+            CommunicationTarget(
+                name="scout",
+                kind=AgentCommKind.SUBAGENT,
+                description="Recon",
+            )
+        )
+        store.add(
+            CommunicationTarget(
+                name="worker",
+                kind=AgentCommKind.SUBAGENT,
+                description="Impl",
+            )
+        )
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
@@ -417,9 +447,12 @@ class TestSendToAgentToolDescription:
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         with pytest.raises(ValueError, match="office-expert"):
-            tool.add_target(CommunicationTarget(
-                name="office-expert", kind=AgentCommKind.SUBAGENT,
-            ))
+            tool.add_target(
+                CommunicationTarget(
+                    name="office-expert",
+                    kind=AgentCommKind.SUBAGENT,
+                )
+            )
 
     def test_pop_nonexistent_does_not_change_description(self) -> None:
         store = _store_with_target()
@@ -482,13 +515,22 @@ class TestSendToAgentToolDescription:
     def test_description_via_tool_manager(self) -> None:
         """ToolManager.get_tool_descriptions() returns dynamic description."""
         from modex_agent.core.tool_manager import InMemoryToolManager
+
         store = CommunicationTargetStore()
-        store.add(CommunicationTarget(
-            name="scout", kind=AgentCommKind.SUBAGENT, description="Fast recon",
-        ))
-        store.add(CommunicationTarget(
-            name="worker", kind=AgentCommKind.SUBAGENT, description="Implementation",
-        ))
+        store.add(
+            CommunicationTarget(
+                name="scout",
+                kind=AgentCommKind.SUBAGENT,
+                description="Fast recon",
+            )
+        )
+        store.add(
+            CommunicationTarget(
+                name="worker",
+                kind=AgentCommKind.SUBAGENT,
+                description="Implementation",
+            )
+        )
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
@@ -505,6 +547,42 @@ class TestSendToAgentToolDescription:
         assert "Fast recon" in desc
         assert "worker" in desc
         assert "Implementation" in desc
+
+    def test_subagent_description_truncated_in_send_to_agent(self) -> None:
+        """Long subagent descriptions are truncated to ~40 chars with ``...``
+        in the send_to_agent description, while normal target descriptions
+        are kept in full."""
+        store = CommunicationTargetStore()
+        store.add(
+            CommunicationTarget(
+                name="coder",
+                kind=AgentCommKind.SUBAGENT,
+                description="Executes delegated implementation tasks with code generation and testing",
+            )
+        )
+        store.add(
+            CommunicationTarget(
+                name="team-alpha",
+                kind=AgentCommKind.NORMAL,
+                description="Another team agent for cross-team work and coordination",
+            )
+        )
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        desc = tool.description
+        # Subagent description truncated — full text must NOT appear.
+        assert "coder" in desc
+        assert "code generation and testing" not in desc
+        assert "Executes delegated implementation tasks..." in desc
+        # Normal target description kept in full.
+        assert "team-alpha" in desc
+        assert "cross-team work and coordination" in desc
 
 
 class TestSendToAgentToolDynamicSchema:
@@ -551,14 +629,21 @@ class TestSendToAgentToolDynamicSchema:
             agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
-        assert "enum" not in tool.get_dynamic_schema()["function"]["parameters"]["properties"]["target_agent"]
+        assert (
+            "enum"
+            not in tool.get_dynamic_schema()["function"]["parameters"]["properties"]["target_agent"]
+        )
 
         tool.add_target(CommunicationTarget(name="alpha", kind=AgentCommKind.SUBAGENT))
-        enum = tool.get_dynamic_schema()["function"]["parameters"]["properties"]["target_agent"].get("enum")
+        enum = tool.get_dynamic_schema()["function"]["parameters"]["properties"][
+            "target_agent"
+        ].get("enum")
         assert enum == ["alpha"]
 
         tool.add_target(CommunicationTarget(name="beta", kind=AgentCommKind.SUBAGENT))
-        enum = tool.get_dynamic_schema()["function"]["parameters"]["properties"]["target_agent"].get("enum")
+        enum = tool.get_dynamic_schema()["function"]["parameters"]["properties"][
+            "target_agent"
+        ].get("enum")
         assert enum == ["alpha", "beta"]
 
     def test_target_agent_description_emphasizes_exact_name(self) -> None:
@@ -595,22 +680,16 @@ class TestSendToAgentToolDynamicSchema:
         assert "follow-up" in desc.lower() or "continue" in desc.lower()
         assert "{invocation_id}.{target_agent}" in desc
 
-    def test_invocation_id_description_explains_peer_ignore(self) -> None:
-        """invocation_id handling MUST be documented per-kind in the tool
-        description — subagent threads an id, normal peers reuse the
-        sender's prefix and ignore this field.
+    def test_description_documents_continuation_and_peer_guidance(self) -> None:
+        """The tool description must document continuation (invocation_id)
+        and peer messaging guidance so the LLM picks the right relationship.
 
-        Verified against the tool description (dynamic), not the static
-        parameter schema, because the per-kind behaviour is itself dynamic.
-        The static parameter schema stays kind-agnostic.
+        The static parameter schema stays kind-agnostic; the per-kind guidance
+        lives in the dynamic tool description.
         """
         store = CommunicationTargetStore()
-        store.add(
-            CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT)
-        )
-        store.add(
-            CommunicationTarget(name="coding_main", kind=AgentCommKind.NORMAL)
-        )
+        store.add(CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT))
+        store.add(CommunicationTarget(name="coding_main", kind=AgentCommKind.NORMAL))
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
@@ -620,9 +699,13 @@ class TestSendToAgentToolDynamicSchema:
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         desc = tool.description.lower()
-        assert "thread `invocation_id`" in desc
-        assert "`invocation_id` is ignored" in desc
-        assert "sender's session prefix is reused" in desc
+        # Continuation guidance — invocation_id mentioned for subagent sessions.
+        assert "pass invocation_id" in desc
+        # Peer messaging guidance — normal targets as equals.
+        assert "peer agent" in desc
+        assert "as an equal" in desc
+        # Pointer to the `task` tool for new subagent dispatch.
+        assert "`task` tool" in desc
 
     def test_static_parameters_not_mutated_by_dynamic_schema(self) -> None:
         """get_dynamic_schema() must not modify the shared parameter template."""
@@ -680,11 +763,11 @@ class TestSubagentDescriptionContent:
             desc = tool.description
         finally:
             current_agent_context.reset(token)
-        assert "<agent_message" in desc
-        assert "source=" in desc
+        assert "system-reminder" in desc
+        assert "Message from agent" in desc
         assert "'main'" in desc  # the resolved parent echoed back
 
-    def test_subagent_description_mentions_output_md_and_consultation(self) -> None:
+    def test_subagent_description_mentions_consultation_not_output_md(self) -> None:
         store = _subagent_store()
         tool = SendToAgentTool(
             store=store,
@@ -699,8 +782,9 @@ class TestSubagentDescriptionContent:
             desc = tool.description
         finally:
             current_agent_context.reset(token)
-        assert "OUTPUT.md" in desc
-        assert "consultation" in desc.lower()
+        assert "OUTPUT.md" not in desc
+        assert "Your deliverable is your final reply text, forwarded automatically." in desc
+        assert "consult" in desc.lower()
 
     def test_main_description_does_not_carry_subagent_text(self) -> None:
         """The main-agent description must not contain the subagent-only
@@ -733,7 +817,7 @@ class TestSubagentDescriptionContent:
         # No contextvar set → no resolvable parent.
         desc = tool.description
         assert "No parent" in desc
-        assert "<agent_message" in desc  # description template still shown
+        assert "system-reminder" in desc  # description template still shown
 
 
 class TestSubagentWiringSelectsSubagentMode:
@@ -779,3 +863,31 @@ class TestSubagentWiringSelectsSubagentMode:
         params = send_tools[0]["function"]["parameters"]
         assert "invocation_id" not in params.get("properties", {})
         assert "invocation_id" not in params.get("required", [])
+
+
+# -- Empty-store gating (pool_builder.create_pool skip condition) --
+
+
+def test_empty_store_list_is_falsy():
+    """An empty CommunicationTargetStore.list() is falsy.
+
+    pool_builder.create_pool gates SendToAgentTool registration on
+    ``if main_store.list():`` — an empty list (no subagents, no peers)
+    must be falsy so the tool is not registered for solo agents.
+    """
+    store = CommunicationTargetStore()
+    assert store.list() == []
+    assert not store.list()
+
+
+def test_nonempty_store_list_is_truthy():
+    """A CommunicationTargetStore with at least one target is truthy."""
+    store = CommunicationTargetStore()
+    store.add(
+        CommunicationTarget(
+            name="explore",
+            kind=AgentCommKind.SUBAGENT,
+        )
+    )
+    assert store.list()
+    assert len(store.list()) == 1

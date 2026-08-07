@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from modex_agent.memory.injection.archive import ArchiveInjectionConfig
 from modex_agent.memory.system import MemorySystemContextManager
 
 
@@ -51,6 +52,7 @@ async def test_load_produces_complete_context_state():
     ctx_mgr = MemorySystemContextManager(
         memory_system=mock_system,
         base_system_prompt="You are helpful.",
+        archive_injection_config=ArchiveInjectionConfig(),
     )
     state = await ctx_mgr.load("s1", tool_manager=MagicMock())
     assert state.history is not None

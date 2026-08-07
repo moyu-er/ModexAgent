@@ -1,4 +1,5 @@
 """DefaultAgentFactory wires LoopDetectionHook for every agent."""
+
 import pytest
 
 from modex_agent.hook.builtin.loop_detection import LoopDetectionHook

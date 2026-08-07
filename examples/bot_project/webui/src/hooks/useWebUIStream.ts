@@ -3,7 +3,7 @@ import type { ApprovalRequestEvent, ApprovalRequestView, ServerEventUnion, TodoI
 import type { OutgoingAttachmentRef } from "../types/attachments";
 import { eventsToMessages } from "../types/events";
 import { WebSocketClient, buildWsUrl } from "../lib/ws-client";
-import { fetchApprovals, fetchMessages, fetchTodos, submitApproval as apiSubmitApproval } from "../lib/api";
+import { fetchApprovals, fetchMessages, fetchTodos, submitApproval as apiSubmitApproval, uploadAttachment } from "../lib/api";
 import { applyServerEvent, clearPendingApproval, type StreamState } from "./useWebUIStream.reducer";
 import { useT } from "../i18n";
 
@@ -35,6 +35,10 @@ export interface UseWebUIStreamResult {
     attachments?: OutgoingAttachmentRef[],
     providerName?: string,
     modelName?: string,
+    /** Hero-mode lazy-upload: files selected before a session exists. Uploaded
+     *  in the `attached` handler once the real session id is known, then
+     *  transmitted as refs alongside the message. Undefined in normal mode. */
+    pendingFiles?: File[],
   ) => void;
   pause: () => void;
   /** POST an allow/deny decision for a pending approval; clears the card on success. */
@@ -78,6 +82,7 @@ export function useWebUIStream(
     providerName?: string;
     modelName?: string;
     requestId: string;
+    files?: File[];
   } | null>(null);
   /** Non-selected sessions currently mid-turn. Used to notify the host exactly
    * once per turn (on the false→true streaming transition) so it can reorder
@@ -120,15 +125,49 @@ export function useWebUIStream(
           pendingWsSendRef.current = null;
           const client = clientRef.current;
           if (client?.connected) {
-            client.sendMessage(
-              event.session_id,
-              pending.content,
-              currentWsRef.current,
-              pending.requestId,
-              pending.attachments,
-              pending.providerName,
-              pending.modelName,
-            );
+            // Hero-mode lazy upload: if the queued send carries files
+            // selected before the session existed, upload them now (the
+            // real session id is available) before transmitting
+            // send_message. Upload failure drops the optimistic message
+            // and aborts the send — the user can retry.
+            const fullSid = event.session_id;
+            void (async (): Promise<void> => {
+              let refs = pending.attachments;
+              if (pending.files && pending.files.length > 0) {
+                try {
+                  const uploaded = await Promise.all(
+                    pending.files.map(
+                      (f) => uploadAttachment(fullSid, f, currentWsRef.current),
+                    ),
+                  );
+                  refs = [
+                    ...(refs ?? []),
+                    ...uploaded.map((r) => ({
+                      local_path: r.local_path,
+                      filename: r.filename,
+                      mime: r.mime ?? undefined,
+                    })),
+                  ];
+                } catch (err) {
+                  console.error("Hero attachment upload failed", err);
+                  pendingRequestRef.current = null;
+                  setState((prev) => ({
+                    ...prev,
+                    messages: prev.messages.filter((m) => m.id !== pending.requestId),
+                  }));
+                  return;
+                }
+              }
+              client.sendMessage(
+                fullSid,
+                pending.content,
+                currentWsRef.current,
+                pending.requestId,
+                refs,
+                pending.providerName,
+                pending.modelName,
+              );
+            })();
           }
         }
         return;
@@ -478,6 +517,7 @@ export function useWebUIStream(
       attachments?: OutgoingAttachmentRef[],
       providerName?: string,
       modelName?: string,
+      pendingFiles?: File[],
     ): void => {
       if (!sessionId) {
         console.warn("Cannot send message: no session selected");
@@ -505,7 +545,7 @@ export function useWebUIStream(
       // `attached` event handler flushes it with the full session id once
       // the backend responds. The optimistic message is already shown above.
       if (getPoolForUuid?.(sessionId) !== undefined) {
-        pendingWsSendRef.current = { content, attachments, providerName, modelName, requestId };
+        pendingWsSendRef.current = { content, attachments, providerName, modelName, requestId, files: pendingFiles };
         return;
       }
 

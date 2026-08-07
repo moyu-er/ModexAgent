@@ -935,14 +935,14 @@ async def test_peer_routes_503_without_controller(tmp_path: Path) -> None:
         await client.close()
 
 
-# ─── external_coding save cleanup ──────────────────────────────────────────
+# ─── external save cleanup ──────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_write_pool_external_coding_clears_skills_and_strips_subagents(
+async def test_write_pool_external_clears_skills_and_strips_subagents(
     tmp_path: Path,
 ) -> None:
-    """Saving an external_coding pool removes all per-pool skill assignments
+    """Saving an external pool removes all per-pool skill assignments
     after PoolStore commits, strips subagents from the returned tree, preserves
     the external strategy/provider, and sets restart_required.
 
@@ -971,9 +971,9 @@ async def test_write_pool_external_coding_clears_skills_and_strips_subagents(
         assert (tmp_path / "skills" / "main" / "main" / "hello").exists()
         assert (tmp_path / "skills" / "main" / "researcher" / "hello").exists()
 
-        # Switch the pool to external_coding (frontend sends stale subagents).
+        # Switch the pool to external (frontend sends stale subagents).
         got = await (await client.get("/api/pools/main")).json()
-        got["main"]["execution_strategy"] = "external_coding"
+        got["main"]["execution_strategy"] = "external"
         got["main"]["provider_kind"] = "pi"
         resp = await client.put("/api/pools/main", json=got)
         assert resp.status == 200, await resp.text()
@@ -981,7 +981,7 @@ async def test_write_pool_external_coding_clears_skills_and_strips_subagents(
 
         # Canonical reread: subagents stripped, external keys preserved.
         assert data["subagents"] == []
-        assert data["main"]["execution_strategy"] == "external_coding"
+        assert data["main"]["execution_strategy"] == "external"
         assert data["main"]["provider_kind"] == "pi"
         assert data["restart_required"] is True
 
@@ -1026,7 +1026,7 @@ async def test_write_pool_react_preserves_skill_assignments(
 async def test_write_pool_external_missing_provider_kind_400(
     tmp_path: Path,
 ) -> None:
-    """An external_coding save without provider_kind is rejected as a
+    """An external save without provider_kind is rejected as a
     FieldValidationError (400), mapped from PoolStore's PoolValidationError.
 
     No skills are cleared because the write never commits.
@@ -1036,7 +1036,7 @@ async def test_write_pool_external_missing_provider_kind_400(
     await client.start_server()
     try:
         got = await (await client.get("/api/pools/main")).json()
-        got["main"]["execution_strategy"] = "external_coding"
+        got["main"]["execution_strategy"] = "external"
         got["main"]["provider_kind"] = None
         resp = await client.put("/api/pools/main", json=got)
         assert resp.status == 400

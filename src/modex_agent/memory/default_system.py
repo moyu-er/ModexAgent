@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -14,7 +14,6 @@ from modex_agent.core.scope import (
     MemoryLayerName,
 )
 from modex_agent.memory.archive_models import ArchiveChannel
-from modex_agent.memory.cleanup_events import MemoryCleanupListener
 from modex_agent.memory.core.layers import (
     ArchiveMemoryManager,
     MemoryLayerSet,
@@ -26,12 +25,12 @@ from modex_agent.memory.core.system import (
     MemorySystem,
 )
 from modex_agent.memory.history import MessageHistory
+from modex_agent.memory.hooks import MemoryHook, MemoryHookRunner
 from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 
 if TYPE_CHECKING:
     from modex_agent.agents.summarizer.abc import ArchiveGenerator, CoreMemoryConsolidatorBase
     from modex_agent.memory.stores.dir_archive import DirArchiveStorage
-from modex_agent.core.types import MessageRole
 from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.recorder import MemoryAppendRecorder
 from modex_agent.memory.registry.base import MemoryStoreRegistry
@@ -54,26 +53,24 @@ class ScopedMessageHistory(MessageHistory):
         recorder: MemoryAppendRecorder | None = None,
         archive_manager: ArchiveMemoryManager | None = None,
         cleanup_config: dict[str, int | float] | None = None,
-        user_retention: Any | None = None,
         pruned_manager: PrunedManager | None = None,
         archive_agent: ArchiveGenerator | None = None,
         archive_storage: DirArchiveStorage | None = None,
-        archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
-        cleanup_listeners: Sequence[MemoryCleanupListener] | None = None,
+        hook_runner: MemoryHookRunner | None = None,
         token_estimator: TokenEstimator | None = None,
+        compactor: Any | None = None,
     ) -> None:
         self._manager = manager
         self._context = context
         self._recorder = recorder
         self._archive_manager = archive_manager
         self._cleanup_config: dict[str, int | float] = cleanup_config or {}
-        self._user_retention = user_retention
         self._pruned_manager: PrunedManager | None = pruned_manager
         self._archive_agent = archive_agent
         self._archive_storage = archive_storage
-        self._archive_trigger_callback = archive_trigger_callback
-        self._cleanup_listeners: list[MemoryCleanupListener] = list(cleanup_listeners or [])
+        self._hook_runner: MemoryHookRunner | None = hook_runner
         self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
+        self._compactor = compactor
         self._cache: list[ChatMessage] | None = (
             [ChatMessage.coerce(m) for m in initial_messages]
             if initial_messages is not None
@@ -84,57 +81,18 @@ class ScopedMessageHistory(MessageHistory):
     async def _run_cleanup(self) -> None:
         from modex_agent.memory.cleanup import cleanup_session
 
-        async def _trigger() -> None:
-            if self._archive_trigger_callback is not None:
-                await self._archive_trigger_callback(self._context)
-
-        async def _on_triggered(context: MemoryContext, reason: Any) -> None:
-            for listener in self._cleanup_listeners:
-                try:
-                    await listener.on_cleanup_triggered(context, reason)
-                except Exception:
-                    logger.warning(
-                        "cleanup listener on_cleanup_triggered failed: session=%s",
-                        context.session_id,
-                    )
-
-        result = await cleanup_session(
+        await cleanup_session(
             session=self._manager,
             archive=self._archive_manager,
             context=self._context,
-            user_retention=self._user_retention,
+            compactor=self._compactor,
             pruned_manager=self._pruned_manager,
             archive_agent=self._archive_agent,
             archive_storage=self._archive_storage,
-            on_archive_generated=_trigger if self._archive_trigger_callback is not None else None,
-            on_triggered=_on_triggered if self._cleanup_listeners else None,
+            hook_runner=self._hook_runner,
             token_estimator=self._token_estimator,
             **self._cleanup_config,
         )
-
-        if result.triggered:
-            for listener in self._cleanup_listeners:
-                try:
-                    await listener.on_cleanup_finished(self._context, result)
-                except Exception:
-                    logger.warning(
-                        "cleanup listener on_cleanup_finished failed: session=%s",
-                        self._context.session_id,
-                    )
-
-    async def _urb_completion_hook(self, message: ChatMessage | dict[str, Any]) -> None:
-        """If message is a plain assistant, mark all URB entries completed."""
-        if self._user_retention is None:
-            return
-        msg_dict = message.to_dict() if hasattr(message, "to_dict") else dict(message)
-        if msg_dict.get("role") != str(MessageRole.ASSISTANT):
-            return
-        if msg_dict.get("tool_calls"):
-            return
-        assistant_content = msg_dict.get("content")
-        if assistant_content is None:
-            return
-        await self._user_retention.mark_all_completed(self._context, assistant_content)
 
     def _stamp_token_count(
         self, messages: Sequence[ChatMessage | dict[str, Any]]
@@ -155,8 +113,6 @@ class ScopedMessageHistory(MessageHistory):
         await self._manager.add_messages(self._context, [stamped])
         if self._recorder is not None:
             await self._recorder.record([stamped], self._context)
-        if self._user_retention is not None:
-            await self._urb_completion_hook(stamped)
         await self._run_cleanup()
         async with self._cache_lock:
             self._cache = None
@@ -168,8 +124,6 @@ class ScopedMessageHistory(MessageHistory):
         await self._manager.add_messages(self._context, stamped)
         if self._recorder is not None:
             await self._recorder.record(stamped, self._context)
-        if self._user_retention is not None and stamped:
-            await self._urb_completion_hook(stamped[-1])
         await self._run_cleanup()
         async with self._cache_lock:
             self._cache = None
@@ -228,8 +182,8 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         archive_agent: ArchiveGenerator | None = None,
         archive_storage: DirArchiveStorage | None = None,
         core_memory_consolidator: CoreMemoryConsolidatorBase | None = None,
-        archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
         token_estimator: TokenEstimator | None = None,
+        compactor: Any | None = None,
     ) -> None:
         self._layers = layer_set
         self._registry = store_registry
@@ -239,10 +193,10 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         self._archive_agent = archive_agent
         self._archive_storage = archive_storage
         self._core_memory_consolidator = core_memory_consolidator
-        self._archive_trigger_callback = archive_trigger_callback
         self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
-        self._cleanup_listeners: list[MemoryCleanupListener] = []
+        self._hook_runner = MemoryHookRunner()
         self._recorder = MemoryAppendRecorder()
+        self._compactor = compactor
         if providers is not None:
             for provider in providers.all():
                 self._recorder.add_provider(provider)
@@ -258,25 +212,15 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         if self._providers is not None:
             await self._providers.shutdown_all()
 
-    def set_archive_trigger_callback(
-        self,
-        callback: Callable[[MemoryContext], Awaitable[None]] | None,
-    ) -> None:
-        """Set a callback invoked after each archive is generated.
+    def add_cleanup_hook(self, hook: MemoryHook) -> None:
+        """Register a memory lifecycle hook for cleanup dispatch.
 
-        The callback receives the MemoryContext so the caller can check
-        unprocessed archive counts and trigger DreamEngine if needed.
+        Hooks are forwarded to every ``ScopedMessageHistory`` via the shared
+        ``MemoryHookRunner`` (passed by reference at creation time). Late
+        registration works: a hook added after a history is created still
+        receives subsequent events because the runner is the same object.
         """
-        self._archive_trigger_callback = callback
-
-    def add_cleanup_listener(self, listener: MemoryCleanupListener) -> None:
-        """Register a cleanup (compaction) event listener.
-
-        Listeners are forwarded to every ``ScopedMessageHistory`` created after
-        registration. Register before the first turn so live histories observe
-        events (mirrors the ``archive_trigger_callback`` threading limitation).
-        """
-        self._cleanup_listeners.append(listener)
+        self._hook_runner.add(hook)
 
     def create_message_history(
         self,
@@ -290,13 +234,12 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
             recorder=self._recorder,
             archive_manager=self._layers.archive,
             cleanup_config=self._cleanup_config,
-            user_retention=self._layers.user_retention,
             pruned_manager=self._pruned_manager,
             archive_agent=self._archive_agent,
             archive_storage=self._archive_storage,
-            archive_trigger_callback=self._archive_trigger_callback,
-            cleanup_listeners=self._cleanup_listeners,
+            hook_runner=self._hook_runner,
             token_estimator=self._token_estimator,
+            compactor=self._compactor,
         )
 
     async def add_messages(
@@ -358,8 +301,6 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
             await self._layers.archive.clear(context)
         if self._layers.core is not None:
             await self._layers.core.clear(context)
-        if self._layers.user_retention is not None:
-            await self._layers.user_retention.clear(context)
 
     # -- Provider management ---------------------------------------------
 

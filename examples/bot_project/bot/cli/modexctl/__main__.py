@@ -6,7 +6,7 @@ script entry point — needed because the installer's standalone Python
 does not run ``pip install`` to generate ``.exe`` console scripts.
 """
 
-from bot.cli.modexctl.main import main
+from bot.cli.modexctl.app import main
 
 if __name__ == "__main__":
     main()

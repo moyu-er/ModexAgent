@@ -25,7 +25,9 @@ from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
 
 def _make_trace_context(session_id: str, store: OtelSpanTraceStore | None = None) -> AgentContext:
     state = ReActTurnState(
-        identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str(session_id), turn_id="t1"),
+        identity=TurnIdentity(
+            agent_id="test", session=SessionInfo.from_str(session_id), turn_id="t1"
+        ),
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.CREATED,
     )
@@ -64,24 +66,23 @@ async def test_before_turn_records_turn_start(tmp_path: Path) -> None:
     hook = _make_hook()
 
     await hook.before_turn(ctx)
-    # Root span is written at finally_turn, not before_turn
     await hook.finally_turn(ctx, None)
 
     spans = await _collect_spans(store, "s1")
-    assert len(spans) == 1
-    span = spans[0]
-    assert span.name == SpanName.INVOKE_AGENT.value
-    assert span.parent_span_id is None
-    assert span.kind == "INTERNAL"
-    assert span.attributes[GenAiAttr.OPERATION_NAME] == "invoke_agent"
-    assert span.attributes[GenAiAttr.SESSION_ID] == "s1"
-    assert span.status.code == SpanStatusCode.OK
-    assert span.end_time is not None
-    # trace_id should be stored in turn state
+    assert len(spans) == 2
+    root_spans = [s for s in spans if s.name == SpanName.INVOKE_AGENT.value]
+    assert len(root_spans) == 2
+    for span in root_spans:
+        assert span.parent_span_id is None
+        assert span.kind == "INTERNAL"
+        assert span.attributes[GenAiAttr.OPERATION_NAME] == "invoke_agent"
+        assert span.attributes[GenAiAttr.CONVERSATION_ID] == "s1"
+        assert span.status.code == SpanStatusCode.OK
+        assert span.end_time is not None
     assert ctx.runtime is not None
     trace_id = ctx.runtime.state.custom.get(TurnCustomKey.TRACE_ID)
     assert trace_id is not None
-    assert span.trace_id == trace_id
+    assert root_spans[0].trace_id == trace_id
 
 
 @pytest.mark.asyncio
@@ -102,11 +103,10 @@ async def test_after_llm_response_records_llm_call(tmp_path: Path) -> None:
     await hook.finally_turn(ctx, None)
 
     spans = await _collect_spans(store, "s2")
-    # LLM call + root span (written at finally_turn)
-    assert len(spans) == 2
+    assert len(spans) == 3
     llm_span = next(s for s in spans if s.name == SpanName.CHAT.value)
     assert llm_span.kind == "CLIENT"
-    assert llm_span.attributes[GenAiAttr.OUTPUT_CONTENT] == "hello"
+    assert llm_span.attributes[GenAiAttr.OUTPUT_MESSAGES][0]["parts"][0]["content"] == "hello"
     assert llm_span.attributes[GenAiAttr.OUTPUT_TOOL_CALLS] == [
         {"tool_name": "search", "arguments": '{"q": "test"}'},
     ]
@@ -117,26 +117,60 @@ async def test_after_llm_response_records_llm_call(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_before_tool_execution_records_tool_batch(tmp_path: Path) -> None:
+async def test_after_llm_response_records_cache_tokens_and_ttft(tmp_path: Path) -> None:
+    """Verify cache tokens + completion_start_time are emitted on chat spans."""
     store = _make_store(tmp_path)
-    ctx = _make_trace_context("s3", store)
+    ctx = _make_trace_context("s_cache", store)
     hook = _make_hook()
 
     await hook.before_turn(ctx)
 
-    tool_calls = [
-        ToolCall(call_id="c1", tool_name="search", arguments={"q": "a"}),
-        ToolCall(call_id="c2", tool_name="read", arguments={"path": "/tmp"}),
-    ]
-    await hook.before_tool_execution(ctx, tool_calls)
+    response = LLMResponse(
+        content="hello",
+        usage={
+            "prompt_tokens": 1000,
+            "completion_tokens": 500,
+            "total_tokens": 1500,
+            "cache_read_input_tokens": 800,
+            "cache_creation_input_tokens": 100,
+            "reasoning_tokens": 50,
+        },
+        completion_start_time="2026-07-29T16:00:00.123456+00:00",
+    )
+    await hook.after_llm_response(ctx, response)
+    await hook.finally_turn(ctx, None)
 
-    spans = await _collect_spans(store, "s3")
-    span = spans[-1]
-    assert span.name == SpanName.EXECUTE_TOOL_BATCH.value
-    assert span.attributes["tool_count"] == 2
-    assert span.attributes["tool_names"] == ["search", "read"]
+    spans = await _collect_spans(store, "s_cache")
+    llm_span = next(s for s in spans if s.name == SpanName.CHAT.value)
+    assert llm_span.attributes[GenAiAttr.USAGE_INPUT_TOKENS] == 1000
+    assert llm_span.attributes[GenAiAttr.USAGE_OUTPUT_TOKENS] == 500
+    assert llm_span.attributes[GenAiAttr.USAGE_CACHE_READ_INPUT_TOKENS] == 800
+    assert llm_span.attributes[GenAiAttr.USAGE_CACHE_CREATION_INPUT_TOKENS] == 100
+    assert llm_span.attributes[GenAiAttr.USAGE_REASONING_TOKENS] == 50
+    assert llm_span.attributes[GenAiAttr.LANGFUSE_OBSERVATION_COMPLETION_START_TIME] == (
+        "2026-07-29T16:00:00.123456+00:00"
+    )
 
 
+@pytest.mark.asyncio
+async def test_after_llm_response_no_ttft_when_none(tmp_path: Path) -> None:
+    """completion_start_time attr absent when LLMResponse.completion_start_time is None."""
+    store = _make_store(tmp_path)
+    ctx = _make_trace_context("s_no_ttft", store)
+    hook = _make_hook()
+
+    await hook.before_turn(ctx)
+
+    response = LLMResponse(content="hello", usage={"prompt_tokens": 5})
+    await hook.after_llm_response(ctx, response)
+    await hook.finally_turn(ctx, None)
+
+    spans = await _collect_spans(store, "s_no_ttft")
+    llm_span = next(s for s in spans if s.name == SpanName.CHAT.value)
+    assert GenAiAttr.LANGFUSE_OBSERVATION_COMPLETION_START_TIME not in llm_span.attributes
+
+
+@pytest.mark.asyncio
 @pytest.mark.asyncio
 async def test_after_tool_execution_records_per_tool(tmp_path: Path) -> None:
     store = _make_store(tmp_path)
@@ -145,23 +179,32 @@ async def test_after_tool_execution_records_per_tool(tmp_path: Path) -> None:
 
     await hook.before_turn(ctx)
 
+    tool_calls = [
+        ToolCall(tool_name="search", arguments={"query": "hello"}),
+        ToolCall(tool_name="read", arguments={"path": "config.py"}),
+    ]
+    await hook.before_tool_execution(ctx, tool_calls)
+
     results = [
-        ToolResult(tool_name="search", result="found", execution_time=0.05),
+        ToolResult.from_text("search", "found", execution_time=0.05),
         ToolResult(tool_name="read", error="file not found", execution_time=0.01),
     ]
     await hook.after_tool_execution(ctx, results)
 
     spans = await _collect_spans(store, "s4")
-    # 2 tool results (root span not yet written — only at finally_turn)
-    assert len(spans) == 2
-    s0 = spans[0]
-    assert s0.name == SpanName.EXECUTE_TOOL.value
+    tool_spans = [s for s in spans if s.name == SpanName.EXECUTE_TOOL.value]
+    assert len(tool_spans) == 2
+
+    s0 = tool_spans[0]
     assert s0.attributes[GenAiAttr.TOOL_NAME] == "search"
     assert s0.attributes[GenAiAttr.TOOL_RESULT] == "found"
     assert s0.status.code == SpanStatusCode.OK
+    import json as _json
+    s0_input = _json.loads(s0.attributes[GenAiAttr.LANGFUSE_OBSERVATION_INPUT])
+    assert s0_input["tool_name"] == "search"
+    assert s0_input["arguments"] == {"query": "hello"}
 
-    s1 = spans[1]
-    assert s1.name == SpanName.EXECUTE_TOOL.value
+    s1 = tool_spans[1]
     assert s1.attributes[GenAiAttr.TOOL_NAME] == "read"
     assert s1.status.code == SpanStatusCode.ERROR
     assert s1.status.message == "file not found"
@@ -173,17 +216,24 @@ async def test_finally_turn_writes_root_span(tmp_path: Path) -> None:
     ctx = _make_trace_context("s5", store)
     hook = _make_hook()
 
+    from modex_agent.core.message import ChatMessage
+
+    await ctx.history.append(ChatMessage(role="user", content="hello"))
     await hook.before_turn(ctx)
     await hook.finally_turn(ctx, AgentResult(content="done"))
 
     spans = await _collect_spans(store, "s5")
-    # Root invoke_agent span written at finally_turn with stop_reason + end_time
-    assert len(spans) == 1
-    root = spans[0]
+    assert len(spans) == 2
+    root = next(s for s in spans if s.attributes.get("stop_reason") == "completed")
     assert root.name == SpanName.INVOKE_AGENT.value
     assert root.end_time is not None
     assert root.attributes["stop_reason"] == "completed"
-    assert root.attributes[GenAiAttr.OUTPUT_CONTENT] == "done"
+    import json as _json
+    output = _json.loads(root.attributes[GenAiAttr.LANGFUSE_OBSERVATION_OUTPUT])
+    assert any(m.get("parts", [{}])[0].get("content") == "done" for m in output)
+    # finally_turn root span must also carry input (Langfuse last-write-wins
+    # overwrites the before_turn span — input must be re-sent)
+    assert GenAiAttr.LANGFUSE_OBSERVATION_INPUT in root.attributes or GenAiAttr.LANGFUSE_TRACE_INPUT in root.attributes
 
 
 @pytest.mark.asyncio
@@ -195,7 +245,7 @@ async def test_disabled_hook_records_nothing(tmp_path: Path) -> None:
     await hook.before_turn(ctx)
     await hook.after_llm_response(ctx, LLMResponse(content="x"))
     await hook.before_tool_execution(ctx, [ToolCall(call_id="c1", tool_name="t", arguments={})])
-    await hook.after_tool_execution(ctx, [ToolResult(tool_name="t", result="ok")])
+    await hook.after_tool_execution(ctx, [ToolResult.from_text("t", "ok")])
     await hook.finally_turn(ctx, AgentResult(content="done"))
 
     spans = await _collect_spans(store, "s7")
@@ -225,7 +275,7 @@ async def test_llm_response_captures_tool_call_arguments(tmp_path: Path) -> None
     spans = await _collect_spans(store, "s_tc")
     span = spans[-1]
     assert span.name == SpanName.CHAT.value
-    assert span.attributes[GenAiAttr.OUTPUT_CONTENT] == "Let me search and read."
+    assert span.attributes[GenAiAttr.OUTPUT_MESSAGES][0]["parts"][0]["content"] == "Let me search and read."
     tool_calls = span.attributes[GenAiAttr.OUTPUT_TOOL_CALLS]
     assert len(tool_calls) == 2
     assert tool_calls[0]["tool_name"] == "search"
@@ -256,7 +306,7 @@ async def test_tool_execution_captures_result_content(tmp_path: Path) -> None:
     hook = _make_hook()
 
     await hook.before_turn(ctx)
-    results = [ToolResult(tool_name="read", result="file contents here", execution_time=0.02)]
+    results = [ToolResult.from_text("read", "file contents here", execution_time=0.02)]
     await hook.after_tool_execution(ctx, results)
 
     spans = await _collect_spans(store, "s_result")
@@ -274,13 +324,12 @@ async def test_tool_execution_result_truncated(tmp_path: Path) -> None:
 
     await hook.before_turn(ctx)
     long_result = "x" * 5000
-    results = [ToolResult(tool_name="read", result=long_result)]
+    results = [ToolResult.from_text("read", long_result)]
     await hook.after_tool_execution(ctx, results)
 
     spans = await _collect_spans(store, "s_trunc")
     span = spans[-1]
-    assert "truncated" in span.attributes[GenAiAttr.TOOL_RESULT]
-    assert len(span.attributes[GenAiAttr.TOOL_RESULT]) < len(long_result)
+    assert span.attributes[GenAiAttr.TOOL_RESULT] == long_result
 
 
 @pytest.mark.asyncio
@@ -291,17 +340,22 @@ async def test_before_tool_execution_captures_full_arguments(tmp_path: Path) -> 
 
     await hook.before_turn(ctx)
     tool_calls = [
-        ToolCall(call_id="c1", tool_name="write", arguments={"path": "/out/OUTPUT.md", "content": "done"}),
+        ToolCall(
+            call_id="c1", tool_name="write", arguments={"path": "/out/OUTPUT.md", "content": "done"}
+        ),
     ]
     await hook.before_tool_execution(ctx, tool_calls)
+    results = [ToolResult.from_text("write", "ok", execution_time=0.01, call_id="c1")]
+    await hook.after_tool_execution(ctx, results)
 
     spans = await _collect_spans(store, "s_args")
-    span = spans[-1]
-    assert span.attributes["tool_names"] == ["write"]
-    tool_args = span.attributes["tool_arguments"]
-    assert len(tool_args) == 1
-    assert tool_args[0]["tool_name"] == "write"
-    assert "OUTPUT.md" in tool_args[0]["arguments"]
+    tool_spans = [s for s in spans if s.name == SpanName.EXECUTE_TOOL.value]
+    assert len(tool_spans) == 1
+    import json as _json
+    inp = _json.loads(tool_spans[0].attributes[GenAiAttr.LANGFUSE_OBSERVATION_INPUT])
+    assert inp["tool_name"] == "write"
+    assert inp["arguments"]["path"] == "/out/OUTPUT.md"
+    assert "OUTPUT.md" in str(inp["arguments"]["path"])
 
 
 # -- runtime store wiring ------------------------------------------------------
@@ -317,8 +371,8 @@ async def test_hook_writes_to_runtime_trace_store(tmp_path: Path) -> None:
     await hook.finally_turn(ctx, None)
 
     spans = await _collect_spans(store, "ws_sess.main")
-    assert len(spans) == 1
-    assert spans[0].name == SpanName.INVOKE_AGENT.value
+    assert len(spans) == 2
+    assert all(s.name == SpanName.INVOKE_AGENT.value for s in spans)
     assert (tmp_path / "traces" / "ws_sess.main" / "spans.jsonl").exists()
 
 
@@ -329,3 +383,30 @@ async def test_hook_noop_when_no_runtime_store(tmp_path: Path) -> None:
 
     # Should not raise — just silently skip
     await hook.before_turn(ctx)
+
+
+@pytest.mark.asyncio
+async def test_send_to_agent_emits_handoff_span(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    ctx = _make_trace_context("handoff.main", store)
+    hook = _make_hook()
+
+    await hook.before_turn(ctx)
+
+    tool_calls = [
+        ToolCall(tool_name="send_to_agent", arguments={"target_agent": "coder", "content": "do the thing"}),
+    ]
+    await hook.before_tool_execution(ctx, tool_calls)
+
+    results = [
+        ToolResult.from_text("send_to_agent", "ack: sent to coder", execution_time=0.02),
+    ]
+    await hook.after_tool_execution(ctx, results)
+
+    spans = await _collect_spans(store, "handoff.main")
+    handoff_spans = [s for s in spans if s.name == SpanName.AGENT_HANDOFF.value]
+    assert len(handoff_spans) == 1
+    hs = handoff_spans[0]
+    assert hs.attributes[GenAiAttr.HANDOFF_TARGET_AGENT] == "coder"
+    assert hs.attributes[GenAiAttr.HANDOFF_MESSAGE_TYPE] is not None
+    assert hs.parent_span_id is not None

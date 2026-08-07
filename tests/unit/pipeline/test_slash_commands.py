@@ -16,24 +16,30 @@ from modex_agent.commands.models import (
     SlashCommandInvocation,
 )
 from modex_agent.core.agent import Agent, AgentContext
+from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.skills import SkillManager
+from modex_agent.core.tool_manager import ToolManager
 from modex_agent.core.types import InputMessage, MessageRole
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.pipeline.adapters import InputAdapter, NullOutputAdapter, OutputAdapter
-from modex_agent.pipeline.adapters import OutputMessage
+from modex_agent.pipeline.adapters import (
+    InputAdapter,
+    NullOutputAdapter,
+    OutputAdapter,
+    OutputMessage,
+)
 from modex_agent.pipeline.context_assembler import assemble_context
 
 
-class FakeContextState:
-    def __init__(self) -> None:
-        self.history = ListMessageHistory([])
-        self.system_prompt = ""
+class FakeContextState(ContextState):
+    pass
 
 
-class FakeContextManager:
+class FakeContextManager(ContextManager):
     def __init__(self) -> None:
-        self.state = FakeContextState()
+        self.state = FakeContextState(history=ListMessageHistory([]))
         self.saved: list[dict[str, Any]] = []
 
     async def load_with_metadata(
@@ -43,9 +49,14 @@ class FakeContextManager:
     ) -> FakeContextState:
         return self.state
 
-    async def load(self, session_id: str, **kwargs: Any) -> FakeContextState:
-        tool_manager = kwargs.get("tool_manager")
-        runtime_info = kwargs.get("runtime_info")
+    async def load(
+        self,
+        session_id: str,
+        runtime_info: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        tool_manager: ToolManager | None = None,
+        skill_manager: SkillManager | None = None,
+    ) -> FakeContextState:
         self.state.system_prompt = await self.build_system_prompt(
             tool_manager=tool_manager,
             runtime_info=runtime_info,
@@ -55,7 +66,7 @@ class FakeContextManager:
     async def save(
         self,
         session_id: str,
-        user_message: object | None,
+        user_message: ChatMessage | dict[str, Any] | None,
         assistant_result: AgentResult,
         metadata: dict[str, Any] | None = None,
     ) -> None:
@@ -64,9 +75,12 @@ class FakeContextManager:
     async def load_checkpoint(self, session_id: str) -> None:
         return None
 
+    async def clear(self, session_id: str) -> None:
+        return None
+
     async def build_system_prompt(
         self,
-        tool_manager: object | None,
+        tool_manager: ToolManager | None,
         runtime_info: dict[str, Any] | None = None,
     ) -> str:
         return "system"
@@ -114,6 +128,37 @@ async def test_assemble_context_appends_transformed_skill_content() -> None:
     messages = await state.history.to_list()
     assert messages[-1]["role"] == MessageRole.USER
     assert messages[-1]["content"] == "<command_context>skill</command_context>"
+
+
+@pytest.mark.asyncio
+async def test_assemble_context_wraps_source_agent_as_system_reminder() -> None:
+    # Given
+    ctx_mgr = FakeContextManager()
+    input_msg = InputMessage(
+        content="delegated result",
+        session=SessionInfo.from_str("s1"),
+        metadata={"source_agent": "planner"},
+    )
+
+    # When
+    state = await assemble_context(
+        "s1",
+        input_msg,
+        input_msg.metadata,
+        input_msg.content,
+        [],
+        None,
+        ctx_mgr,
+        None,
+        False,
+    )
+
+    # Then
+    messages = await state.history.to_list()
+    assert messages[-1]["role"] == MessageRole.SYSTEM_REMINDER
+    assert messages[-1]["content"] == (
+        "<system-reminder>\ndelegated result\n</system-reminder>"
+    )
 
 
 @pytest.mark.asyncio
@@ -296,7 +341,6 @@ async def test_pipeline_continue_during_pending_approval_returns_notice() -> Non
 @pytest.mark.asyncio
 async def test_pipeline_drops_slash_command_when_busy_in_queue_mode() -> None:
     """Slash commands must not be queued as raw text when agent is busy."""
-    import asyncio
 
     from modex_agent.core.agent_runtime_config import BusyInputMode
     from modex_agent.core.context import InMemoryContextManager
@@ -433,9 +477,9 @@ async def test_pipeline_skill_propagates_xml_format_to_agent_messages() -> None:
 def test_command_processor_exposes_dispatch_policy_before_lock() -> None:
     from modex_agent.commands.models import CommandContext
     from modex_agent.commands.processor import SlashCommandProcessor
+    from modex_agent.core.session_id import SessionInfo
     from modex_agent.runtime.enums import AgentKind, SnapshotReason, TurnPhase
     from modex_agent.runtime.models import ResumePoint, TurnIdentity, TurnSnapshot
-    from modex_agent.core.session_id import SessionInfo
 
     processor = SlashCommandProcessor.default()
     parse_result = processor.parse("/approve")

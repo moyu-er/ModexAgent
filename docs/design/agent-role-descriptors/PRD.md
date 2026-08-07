@@ -7,11 +7,11 @@ ADR-0015 (`docs/adr/0015-unified-inbox-driven-agent-messaging.md` — `AgentTemp
 is the subagent construction path that this feature extends with `roles`透传);
 ADR-0020 (`docs/adr/0020-pool-config-convergence-and-framework-promotion.md` —
 `PoolSpec`/`MainAgentSpec`/`SubagentSpec` are the wire models this feature extends);
-ADR-0022 (`docs/adr/0022-external-coding-agent-integration.md` — D1 deferred
-capability extends external_coding to subagent backend);
+ADR-0022 (`docs/adr/0022-external-agent-integration.md` — D1 deferred
+capability extends external to subagent backend);
 `CONTEXT.md` → "PoolSpec", "MainAgentSpec", "SubagentSpec", "AgentTemplate",
 "AgentDescriptor", "SystemPromptPipeline", "SystemPromptProvider";
-`docs/design/external-coding-agent-integration/deferred.md` (D1 record).
+`docs/design/external-agent-integration/deferred.md` (D1 record).
 
 ## Problem Statement
 
@@ -73,8 +73,8 @@ changes MUST dispatch reviewer → reviewer failed MUST dispatch worker, max
 
 A deferred capability **D1** (external coding agent as a subagent backend)
 is recorded but not implemented in this feature. D1 lets an `AgentTemplate`
-declare `execution_strategy: external_coding` and materialize as an
-`ExternalCodingAgent` instead of a `ReActAgent`, giving the orchestrator a
+declare `execution_strategy: external` and materialize as an
+`ExternalAgent` instead of a `ReActAgent`, giving the orchestrator a
 subagent-shaped interface to OpenCode/Pi. It is deferred because it touches
 subagent materialize, lifecycle, and stop-event translation — higher risk
 than this feature. When D1 lands, the related "auxiliary model routing"
@@ -210,7 +210,7 @@ external subagent.
 
 26. As a future framework developer, I want the D1 capability
     (external coding agent as a subagent backend via
-    `execution_strategy: external_coding` on `AgentTemplate`)
+    `execution_strategy: external` on `AgentTemplate`)
     to be documented as a deferred follow-up, so that the path
     from "orchestrator dispatches coding work to OpenCode via
     peer communication" to "orchestrator dispatches coding work
@@ -363,11 +363,11 @@ external subagent.
 
 ### D1 deferred capability (recorded, not implemented)
 
-- Documented in `docs/design/external-coding-agent-integration/deferred.md`
+- Documented in `docs/design/external-agent-integration/deferred.md`
   (already updated) and ADR-0026.
 - The capability extends `AgentTemplate` to declare
-  `execution_strategy: external_coding` + `provider_kind: opencode`,
-  materializing as `ExternalCodingAgent` instead of `ReActAgent`.
+  `execution_strategy: external` + `provider_kind: opencode`,
+  materializing as `ExternalAgent` instead of `ReActAgent`.
 - Prerequisites for restarting D1: the orchestrator pattern
   (this feature) must be stable in production use; the next
   bottleneck must be "coding delegation quality / cost to
@@ -588,7 +588,7 @@ PR or commit message) at implementation time:
 
 ### Related deferred record
 
-See `docs/design/external-coding-agent-integration/deferred.md`
+See `docs/design/external-agent-integration/deferred.md`
 for the full D1 record (external coding agent as subagent
 backend). That document has been updated to reference this
 feature as a prerequisite and to record the auxiliary-model-

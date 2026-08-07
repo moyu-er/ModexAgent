@@ -124,7 +124,7 @@ class TestInterceptorChainToolFallback:
         call_ctx = _make_tool_call_ctx()
 
         async def actual() -> ToolResult:
-            return ToolResult(tool_name="test_tool", result="ok")
+            return ToolResult.from_text("test_tool", "ok")
 
         result = await chain.around_tool_call(fake_ctx, call_ctx, actual)
 
@@ -141,7 +141,7 @@ class TestInterceptorChainToolFallback:
         call_ctx = _make_tool_call_ctx()
 
         async def actual() -> ToolResult:
-            return ToolResult(tool_name="test_tool", result="ok")
+            return ToolResult.from_text("test_tool", "ok")
 
         with pytest.raises(AgentCancelled):
             await chain.around_tool_call(fake_ctx, call_ctx, actual)
@@ -154,7 +154,7 @@ class TestInterceptorChainToolFallback:
         call_ctx = _make_tool_call_ctx()
 
         async def actual() -> ToolResult:
-            return ToolResult(tool_name="test_tool", result="ok")
+            return ToolResult.from_text("test_tool", "ok")
 
         with pytest.raises(AgentTimeout):
             await chain.around_tool_call(fake_ctx, call_ctx, actual)
@@ -167,7 +167,7 @@ class TestInterceptorChainToolFallback:
         call_ctx = _make_tool_call_ctx()
 
         async def actual() -> ToolResult:
-            return ToolResult(tool_name="test_tool", result="ok")
+            return ToolResult.from_text("test_tool", "ok")
 
         with pytest.raises(AgentControlError):
             await chain.around_tool_call(fake_ctx, call_ctx, actual)
@@ -187,7 +187,7 @@ class TestInterceptorChainOnionOrder:
 
         async def actual() -> ToolResult:
             log.append("actual")
-            return ToolResult(tool_name="test_tool", result="ok")
+            return ToolResult.from_text("test_tool", "ok")
 
         await chain.around_tool_call(fake_ctx, call_ctx, actual)
 
@@ -199,7 +199,7 @@ class TestInterceptorChainOnionOrder:
         chain = InterceptorChain([
             OrderInterceptor("outer", log),
             ShortCircuitInterceptor(
-                ToolResult(tool_name="test_tool", result="shortcut")
+                ToolResult.from_text("test_tool", "shortcut")
             ),
             OrderInterceptor("inner", log),
         ])
@@ -207,11 +207,11 @@ class TestInterceptorChainOnionOrder:
 
         async def actual() -> ToolResult:
             log.append("actual")
-            return ToolResult(tool_name="test_tool", result="ok")
+            return ToolResult.from_text("test_tool", "ok")
 
         result = await chain.around_tool_call(fake_ctx, call_ctx, actual)
 
-        assert result.result == "shortcut"
+        assert result.message_content() == "shortcut"
         assert log == ["outer_in", "outer_out"]
         assert "actual" not in log
 

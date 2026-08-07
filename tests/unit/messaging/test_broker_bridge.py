@@ -41,6 +41,7 @@ class MockInputAdapter(InputAdapter):
                     yield msg
                 except asyncio.TimeoutError:
                     continue
+
         return _gen()
 
     def inject(self, message: InputMessage):
@@ -108,6 +109,22 @@ async def test_broker_input_adapter_preserves_metadata(broker):
     assert im.chat_id == "789"
 
 
+async def test_agent_markdown_is_not_classified_as_xml() -> None:
+    msg = BrokerMessage(
+        payload={
+            "content": "Message from agent 'planner':\n\nContent:\nhello",
+            "session_id": "s1.main",
+            "message_type": "agent_message",
+        },
+        sender=Address(kind="agent", name="planner"),
+    )
+
+    input_message = _broker_msg_to_input_message(msg)
+
+    assert input_message.content_format is None
+    assert input_message.truncatable_paths is None
+
+
 async def test_broker_output_adapter_sends_via_topic(broker):
     adapter = BrokerOutputAdapter(
         broker=broker,
@@ -162,7 +179,11 @@ async def test_bridge_service_input_binding(broker):
     )
     await service.start()
 
-    mock_in.inject(InputMessage(content="from_qq", session=SessionInfo.from_str("s1"), source="qq", sender_id="u1"))
+    mock_in.inject(
+        InputMessage(
+            content="from_qq", session=SessionInfo.from_str("s1"), source="qq", sender_id="u1"
+        )
+    )
 
     got = await asyncio.wait_for(broker.consume(bound_addr), timeout=0.5)
     assert got.payload["content"] == "from_qq"

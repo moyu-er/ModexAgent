@@ -20,8 +20,8 @@ class AgentSendResult:
     error: str | None = None
     warning: str | None = None
     trace_dir: Path | None = None
-    output_path: Path | None = None
     is_peer_send: bool = False
+    is_external: bool = False
 
     @staticmethod
     def with_error(
@@ -49,67 +49,59 @@ def format_send_ack(result: AgentSendResult) -> str:
         return f"Error: {result.error}"
 
     if result.is_peer_send:
-        return _format_peer_ack(result)
+        ack = _format_peer_ack(result)
+    elif result.target_kind == AgentCommKind.NORMAL and not result.is_peer_send:
+        ack = _format_parent_reply_ack(result)
+    else:
+        ack = _format_subagent_ack(result)
 
-    if result.trace_dir is None and result.output_path is None:
-        return _format_external_subagent_ack(result)
-
-    return _format_native_subagent_ack(result)
+    if result.warning:
+        return f"{ack}\n\nNote: {result.warning}"
+    return ack
 
 
 def _format_peer_ack(result: AgentSendResult) -> str:
-    return "\n".join([
-        f"Message sent to peer agent '{result.target_agent}'.",
-        "",
-        "The peer agent will process your message asynchronously. If a "
-        "reply is needed, the peer agent will send it back via "
-        "send_to_agent.",
-    ])
+    return "\n".join(
+        [
+            f"Message sent to peer agent '{result.target_agent}'.",
+            "",
+            "next_step: The peer agent will process your message asynchronously"
+            " and may or may not reply — peer replies are not automatic."
+            " Do NOT call task again for this agent — continue with your"
+            " own work or end your turn.",
+        ]
+    )
 
 
-def _format_native_subagent_ack(result: AgentSendResult) -> str:
+def _format_parent_reply_ack(result: AgentSendResult) -> str:
+    return "\n".join(
+        [
+            f"Reply delivered to '{result.target_agent}'.",
+            "",
+            "automatic_notification: true",
+            "",
+            "next_step: The parent agent will process your reply asynchronously."
+            " Do NOT call send_to_agent again — end your turn or continue with"
+            " non-overlapping work.",
+        ]
+    )
+
+
+def _format_subagent_ack(result: AgentSendResult) -> str:
     lines = [
         f"Task dispatched to '{result.target_agent}' - running in background.",
         "",
-        "Note: the subagent works asynchronously. You will receive an inbox",
-        "notification when it finishes.",
+        "automatic_notification: true",
+        "",
+        "next_step: The result will be delivered to you automatically as a"
+        " notification when the subagent finishes. Do NOT call task again"
+        " for this agent — end your turn or continue with non-overlapping work.",
         "",
     ]
     if result.invocation_id:
         lines.append(f"invocation_id: {result.invocation_id}")
-    if result.trace_dir is not None:
         lines.append(
-            "Trace (live execution log, append-only, safe to read while it "
-            f"runs): {result.trace_dir}/spans.jsonl (OTel)"
+            "If the result says the task is incomplete, pass this invocation_id"
+            " to continue the session in a later turn."
         )
-    if result.output_path is not None:
-        lines.append(
-            "Output (final deliverable, empty/absent until the subagent "
-            f"completes): {result.output_path}"
-        )
-    lines.extend([
-        "",
-        "You may tail the Trace file at any time to follow progress. Wait for",
-        "the notification before reading the Output file. If the notification",
-        "says the task is incomplete, use the invocation_id above to resume.",
-    ])
-    return "\n".join(lines)
-
-
-def _format_external_subagent_ack(result: AgentSendResult) -> str:
-    lines = [
-        f"Task dispatched to '{result.target_agent}' - running in background.",
-        "",
-        "Note: the subagent works asynchronously. You will receive an inbox",
-        "notification when it finishes.",
-        "",
-    ]
-    if result.invocation_id:
-        lines.append(f"invocation_id: {result.invocation_id}")
-    lines.extend([
-        "",
-        "The subagent will reply via modexctl send. Wait for the inbox",
-        "notification before continuing. If the notification says the task",
-        "is incomplete, use the invocation_id above to resume.",
-    ])
     return "\n".join(lines)

@@ -14,9 +14,16 @@ sequential execution behaviour; `PARALLEL` selects `ParallelScheduler`
 `NodeInstanceStatus` is the `StrEnum` state machine for `NodeInstance` under
 `ParallelScheduler`: `DORMANT → PENDING → READY → RUNNING → COMPLETED`.
 
-`NodeTrigger` is the per-node trigger mode `StrEnum` (Task 06):
+`NodeTrigger` is the per-node trigger mode `StrEnum`:
 `ON_ALL_PREDS` (wait for all activated predecessors) or `ON_RECEIVE`
 (each dispatch creates an instance).
+
+`GraphInstanceStatus` is the lifecycle state machine `StrEnum` for
+`GraphInstance`: `running` / `paused` / `stopped` /
+`crashed` / `completed` / `failed`. Recovery rules: `paused` is NOT
+auto-recovered (manual resume only); `stopped` is terminal (manual
+termination, not resumable); `crashed` IS auto-recovered by fault
+recovery; `completed`/`failed` are terminal.
 
 Per ADR-0033 D9.2: business modules use `StrEnum` for their own node names
 (e.g. `ReActNode.START/LLM/TOOL/END`); the engine's `GraphNode` is distinct
@@ -65,10 +72,10 @@ class NodeInstanceStatus(StrEnum):
     - `READY → RUNNING` — scheduler picked up the instance for execution.
     - `RUNNING → COMPLETED` — node `execute()` returned.
 
-    `DORMANT` is the initial status when an instance is first created. In the
-    current phase (no fork isolation), instances transition `DORMANT → READY`
-    immediately upon creation (no gating). `PENDING` is reserved for future
-    trigger-mode gating (Task 04+).
+    `DORMANT` is the initial status when an instance is first created.
+    Trigger gating moves it through `PENDING` before it becomes `READY`, the
+    scheduler marks it `RUNNING` during execution, and successful execution
+    ends at `COMPLETED`.
     """
 
     DORMANT = "dormant"
@@ -79,7 +86,7 @@ class NodeInstanceStatus(StrEnum):
 
 
 class NodeTrigger(StrEnum):
-    """Per-node trigger mode under `ParallelScheduler` (Task 06).
+    """Per-node trigger mode under `ParallelScheduler`.
 
     Controls when a node becomes READY given inbound dispatches:
 
@@ -94,3 +101,67 @@ class NodeTrigger(StrEnum):
 
     ON_ALL_PREDS = "on_all_preds"
     ON_RECEIVE = "on_receive"
+
+
+class GraphInstanceStatus(StrEnum):
+    """Lifecycle state machine for `GraphInstance`.
+
+    Transitions:
+
+    - `running → paused` — manual pause.
+    - `running → stopped` — manual stop (terminal).
+    - `running → crashed` — unhandled exception / process kill.
+    - `running → completed` — normal termination (terminal).
+    - `running → failed` — error termination (terminal).
+    - `paused → running` — manual resume.
+    - `crashed → running` — fault-recovery auto-resume.
+
+    Recovery rules:
+
+    - `paused`: NOT auto-recovered by fault recovery. Only manual
+      `resume()` transitions it back to `running`.
+    - `stopped`: terminal — manual termination, NOT resumable.
+    - `crashed`: auto-recovered by fault recovery (load latest checkpoint
+      → rebuild scheduler state → re-dispatch).
+    - `completed` / `failed`: terminal — no recovery.
+    """
+
+    RUNNING = "running"
+    PAUSED = "paused"
+    STOPPED = "stopped"
+    CRASHED = "crashed"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class SchedulerInstanceStatus(StrEnum):
+    """Scheduler state for whether an instance is ready to execute."""
+
+    DORMANT = "dormant"
+    READY = "ready"
+    RUNNING = "running"
+    COMPLETED = "completed"
+
+
+class InvocationStatus(StrEnum):
+    """Persistent status for an invocation version chain.
+
+    Records begin directly as ``RUNNING`` (no ``PENDING`` intermediate).
+    Terminal states: ``COMPLETED``, ``CANCELED``, ``CRASHED`` — no
+    transition FROM terminal. Suspended invocations stay ``RUNNING``
+    with ``suspended=True`` (a distinct flag, not a separate status).
+    """
+
+    RUNNING = "running"
+    COMPLETED = "completed"
+    CANCELED = "canceled"
+    CRASHED = "crashed"
+
+
+class DeliverConsumptionStatus(StrEnum):
+    """Consumption status for delivers across persistence implementations."""
+
+    PENDING = "pending"
+    CONSUMED = "consumed"
+    CONSUMED_PENDING = "consumed_pending"
+    CONSUMED_COMPLETED = "consumed_completed"

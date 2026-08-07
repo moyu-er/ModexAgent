@@ -61,7 +61,7 @@ class _RecordingOtelStore(OtelSpanTraceStore):
         self.saved.append(span)
 
     async def list_by_session(self, session_id: str) -> list[SpanModel]:
-        return [s for s in (*self._seed, *self.saved) if s.attributes.get(GenAiAttr.SESSION_ID) == session_id]
+        return [s for s in (*self._seed, *self.saved) if s.attributes.get(GenAiAttr.CONVERSATION_ID) == session_id]
 
     async def list_by_trace_id(self, trace_id: str) -> list[SpanModel]:
         return [s for s in (*self._seed, *self.saved) if s.trace_id == trace_id]
@@ -151,7 +151,7 @@ def _chat_span(
 ) -> SpanModel:
     attrs: dict[str, object] = {
         GenAiAttr.AGENT_NAME: _AGENT_NAME,
-        GenAiAttr.SESSION_ID: _SESSION_ID,
+        GenAiAttr.CONVERSATION_ID: _SESSION_ID,
         GenAiAttr.USAGE_INPUT_TOKENS: input_tokens,
         GenAiAttr.USAGE_OUTPUT_TOKENS: output_tokens,
     }
@@ -334,7 +334,7 @@ async def test_token_sum_ignores_non_chat_spans() -> None:
         start_time=1000.0,
         attributes={
             GenAiAttr.AGENT_NAME: _AGENT_NAME,
-            GenAiAttr.SESSION_ID: _SESSION_ID,
+            GenAiAttr.CONVERSATION_ID: _SESSION_ID,
             GenAiAttr.USAGE_INPUT_TOKENS: 999_999,
             GenAiAttr.USAGE_OUTPUT_TOKENS: 999_999,
         },
@@ -359,7 +359,7 @@ async def test_token_sum_ignores_chat_spans_with_missing_usage() -> None:
         start_time=1000.0,
         attributes={
             GenAiAttr.AGENT_NAME: _AGENT_NAME,
-            GenAiAttr.SESSION_ID: _SESSION_ID,
+            GenAiAttr.CONVERSATION_ID: _SESSION_ID,
         },
     )
     store.seed([_chat_span(input_tokens=10, output_tokens=20), no_usage])
@@ -474,7 +474,7 @@ async def test_saved_span_uses_training_tag_name() -> None:
     span = _training_span(store)
     assert span.name == "training_tag"
     assert span.trace_id == _TRACE_ID
-    assert span.attributes[GenAiAttr.SESSION_ID] == _SESSION_ID
+    assert span.attributes[GenAiAttr.CONVERSATION_ID] == _SESSION_ID
     assert span.attributes[GenAiAttr.AGENT_NAME] == _AGENT_NAME
     assert span.status.code == SpanStatusCode.OK
 

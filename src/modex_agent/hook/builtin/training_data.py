@@ -204,7 +204,7 @@ def _build_training_tag_span(
     """Build a dedicated ``training_tag`` span carrying the relevance flag."""
     attrs: dict[str, object] = {
         GenAiAttr.AGENT_NAME: agent_name,
-        GenAiAttr.SESSION_ID: session_id,
+        GenAiAttr.CONVERSATION_ID: session_id,
         TRAINING_RELEVANT_ATTR: relevant,
     }
     if invocation_id is not None:

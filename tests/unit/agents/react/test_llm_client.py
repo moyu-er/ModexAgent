@@ -142,6 +142,25 @@ class _FakeEmitter:
         pass
 
 
+class _FakeNonStreamEmitter(_FakeEmitter):
+    def wants_streaming(self) -> bool:
+        return False
+
+    async def emit_content(self, content: str):
+        pass
+
+
+class _FakeNonStreamProvider:
+    def __init__(self, *, response: LLMResponse):
+        self._response = response
+
+    def get_default_model(self) -> str:
+        return "mock"
+
+    async def chat(self, messages, **kw):
+        return self._response
+
+
 class TestReactLlmClientStreamCaptureStashesPartial:
     """ReactLlmClient.call's control-drain path must stash the live partial.
 
@@ -209,3 +228,114 @@ class TestReactLlmClientStreamCaptureStashesPartial:
             await ReactLlmClient(MagicMock(spec=StreamingLLMProvider)).call([], ctx)
 
         assert TurnCustomKey.INTERRUPTED_PARTIAL not in ctx.runtime.state.custom
+
+
+class TestStreamWithControlPreservesUsage:
+    """_stream_with_control must propagate usage from the provider response.
+
+    Regression: the control-drain path reconstructed LLMResponse with only
+    content/reasoning/finish_reason/tool_calls — dropping ``response.usage``,
+    so the trace hook never saw token counts.
+    """
+
+    async def test_usage_propagated_through_control_drain_path(self):
+        ctx = _make_ctx()
+        ctx.emitter = _FakeEmitter()
+        provider = _FakeStreamProvider(
+            ["hello"],
+            response=LLMResponse(
+                content="hello",
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            ),
+        )
+        ctx.runtime.services.interceptors = _PassthroughInterceptorChain()
+
+        result = await ReactLlmClient(provider).call([], ctx)
+
+        assert result.usage == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+
+    async def test_usage_propagated_through_plain_stream_path(self):
+        ctx = _make_ctx()
+        ctx.emitter = _FakeEmitter()
+        provider = _FakeStreamProvider(
+            ["hello"],
+            response=LLMResponse(
+                content="hello",
+                usage={"prompt_tokens": 20, "completion_tokens": 8, "total_tokens": 28},
+            ),
+        )
+        # No interceptor chain → routes through _stream_with_recovery → _stream_plain
+        ctx.runtime.services.interceptors = None
+
+        result = await ReactLlmClient(provider).call([], ctx)
+
+        assert result.usage == {"prompt_tokens": 20, "completion_tokens": 8, "total_tokens": 28}
+
+    async def test_usage_propagated_through_non_streaming_path(self):
+        ctx = _make_ctx()
+        # Non-streaming: emitter.wants_streaming() must be False
+        ctx.emitter = _FakeNonStreamEmitter()
+        provider = _FakeNonStreamProvider(
+            response=LLMResponse(
+                content="hello",
+                usage={"prompt_tokens": 30, "completion_tokens": 12, "total_tokens": 42},
+            ),
+        )
+
+        result = await ReactLlmClient(provider).call([], ctx)
+
+        assert result.usage == {"prompt_tokens": 30, "completion_tokens": 12, "total_tokens": 42}
+
+
+class TestCompletionStartTimePropagation:
+    """completion_start_time (TTFT) must flow from provider → LLMResponse → hook.
+
+    Langfuse maps ``langfuse.observation.completion_start_time`` to its
+    ``completionStartTime`` field — the only direct TTFT path. The provider
+    captures it at first content delta; _stream_with_control must not drop it.
+    """
+
+    async def test_completion_start_time_through_control_drain_path(self):
+        ctx = _make_ctx()
+        ctx.emitter = _FakeEmitter()
+        provider = _FakeStreamProvider(
+            ["hello"],
+            response=LLMResponse(
+                content="hello",
+                completion_start_time="2025-01-01T00:00:00.123456+00:00",
+            ),
+        )
+        ctx.runtime.services.interceptors = _PassthroughInterceptorChain()
+
+        result = await ReactLlmClient(provider).call([], ctx)
+
+        assert result.completion_start_time == "2025-01-01T00:00:00.123456+00:00"
+
+    async def test_completion_start_time_through_plain_stream_path(self):
+        ctx = _make_ctx()
+        ctx.emitter = _FakeEmitter()
+        provider = _FakeStreamProvider(
+            ["hello"],
+            response=LLMResponse(
+                content="hello",
+                completion_start_time="2025-01-01T00:00:00.654321+00:00",
+            ),
+        )
+        ctx.runtime.services.interceptors = None
+
+        result = await ReactLlmClient(provider).call([], ctx)
+
+        assert result.completion_start_time == "2025-01-01T00:00:00.654321+00:00"
+
+    async def test_completion_start_time_none_when_not_provided(self):
+        ctx = _make_ctx()
+        ctx.emitter = _FakeEmitter()
+        provider = _FakeStreamProvider(
+            ["hello"],
+            response=LLMResponse(content="hello"),
+        )
+        ctx.runtime.services.interceptors = _PassthroughInterceptorChain()
+
+        result = await ReactLlmClient(provider).call([], ctx)
+
+        assert result.completion_start_time is None

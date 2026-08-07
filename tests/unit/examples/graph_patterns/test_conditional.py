@@ -1,3 +1,4 @@
+# ruff: noqa: ANN401
 """Tests for `examples/graph_patterns/conditional.py`.
 
 Verifies:
@@ -10,47 +11,76 @@ Verifies:
   via default edges.
 
 Tests assert observable state changes (counter increments + branch labels),
-not internal `NodeResult.transition` values — per the TDD-at-the-execution-seam
+not internal routing fields — per the TDD-at-the-execution-seam
 guidance in the task spec.
 """
 
 from __future__ import annotations
 
 import sys
+from importlib import import_module
 from pathlib import Path
-from typing import Annotated
+from typing import Any
 
-# Add `examples/` to sys.path so `graph_patterns` is importable as a
-# top-level package. Mirrors the pattern in tests/unit/bot/test_pool_initialize.py
-# which adds examples/bot_project/ to sys.path for `from bot...` imports.
-_EXAMPLES_DIR = Path(__file__).parent.parent.parent.parent.parent / "examples"
-if str(_EXAMPLES_DIR) not in sys.path:
-    sys.path.insert(0, str(_EXAMPLES_DIR))
-
-from graph_patterns import (  # noqa: E402
-    ConditionalNode,
-    SwitchNode,
-    build_conditional_graph,
-)
-
-from modex_graph import (  # noqa: E402
+from modex_graph import (
     Graph,
     GraphContext,
     GraphEngine,
     GraphNode,
+    GraphPersistenceCoordinator,
     GraphRuntime,
     GraphState,
-    LastValue,
+    IntegratedInput,
     Node,
-    NodeResult,
+    NullDeliverStoreFactory,
+    NullGraphInstanceStore,
+    NullNodeStateStore,
 )
+
+_EXAMPLES_DIR = Path(__file__).parent.parent.parent.parent.parent / "examples"
+if str(_EXAMPLES_DIR) not in sys.path:
+    sys.path.insert(0, str(_EXAMPLES_DIR))
+
+_conditional = import_module("graph_patterns.conditional")
+ConditionalNode = _conditional.ConditionalNode
+SwitchNode = _conditional.SwitchNode
+build_conditional_graph = _conditional.build_conditional_graph
+
+
+class _AutoRegCoord(GraphPersistenceCoordinator):
+    def collect_consumable_delivers(
+        self, node_name: str, invocation_id: int
+    ) -> list[Any]:
+        if self.get_deliver_store(node_name) is None:
+            self.register_node(node_name)
+        return super().collect_consumable_delivers(node_name, invocation_id)
+
+    def route_deliver(
+        self,
+        target_node: str,
+        content: Any,
+        source_node: str,
+        source_invocation_id: int,
+    ) -> int | None:
+        if target_node != GraphNode.END and self.get_deliver_store(target_node) is None:
+            self.register_node(target_node)
+        return super().route_deliver(target_node, content, source_node, source_invocation_id)
+
+
+def _make_coordinator() -> _AutoRegCoord:
+    return _AutoRegCoord(
+        graph_instance_id=0,
+        instance_store=NullGraphInstanceStore(),
+        node_state_store=NullNodeStateStore(0),
+        default_deliver_store_factory=NullDeliverStoreFactory(),
+    )
 
 
 class BranchState(GraphState):
     """Test state: a counter and the label of the last-executed branch."""
 
-    count: Annotated[int, LastValue] = 0
-    last_branch: Annotated[str, LastValue] = ""
+    count: int = 0
+    last_branch: str = ""
 
 
 class AddNode(Node[BranchState]):
@@ -60,10 +90,13 @@ class AddNode(Node[BranchState]):
         self.amount = amount
         self.label = label
 
-    def execute(self, ctx: GraphContext[BranchState]) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[BranchState], integrated_input: IntegratedInput
+    ) -> None:
         ctx.state.count += self.amount
         ctx.state.last_branch = self.label
-        return NodeResult()
+        self.deliver(None, None, ctx)
+        return None
 
 
 def make_ctx(state: BranchState | None = None) -> GraphContext[BranchState]:
@@ -71,6 +104,7 @@ def make_ctx(state: BranchState | None = None) -> GraphContext[BranchState]:
     return GraphContext(
         state=state if state is not None else BranchState(),
         runtime=GraphRuntime(),
+        coordinator=_make_coordinator(),
     )
 
 
@@ -87,8 +121,8 @@ class TestConditionalNode:
         g.add_node("high", AddNode(amount=10, label="high"))
         g.add_node("low", AddNode(amount=1, label="low"))
         g.add_edge(GraphNode.START, "decide")
-        g.add_edge("decide", "high", reason="high")
-        g.add_edge("decide", "low", reason="low")
+        g.add_edge("decide", "high")
+        g.add_edge("decide", "low")
         g.add_edge("high", GraphNode.END)
         g.add_edge("low", GraphNode.END)
         return g
@@ -132,10 +166,10 @@ class TestSwitchNode:
         g.add_node("c", AddNode(amount=3, label="c"))
         g.add_node("d", AddNode(amount=4, label="d"))
         g.add_edge(GraphNode.START, "switch")
-        g.add_edge("switch", "a", reason="a")
-        g.add_edge("switch", "b", reason="b")
-        g.add_edge("switch", "c", reason="c")
-        g.add_edge("switch", "d", reason="d")
+        g.add_edge("switch", "a")
+        g.add_edge("switch", "b")
+        g.add_edge("switch", "c")
+        g.add_edge("switch", "d")
         g.add_edge("a", GraphNode.END)
         g.add_edge("b", GraphNode.END)
         g.add_edge("c", GraphNode.END)

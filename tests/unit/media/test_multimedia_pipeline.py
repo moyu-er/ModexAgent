@@ -330,7 +330,7 @@ class TestBuildToolMessage:
     def test_short_result_not_truncated(self):
         from modex_agent.core.tool_manager import ToolResult
 
-        result = ToolResult(tool_name="test", result="short output")
+        result = ToolResult.from_text("test", "short output")
         msg = build_tool_message(result)
         assert msg.content == "short output"
 
@@ -338,7 +338,7 @@ class TestBuildToolMessage:
         from modex_agent.core.tool_manager import ToolResult
 
         long_content = "x" * 30000
-        result = ToolResult(tool_name="test", result=long_content)
+        result = ToolResult.from_text("test", long_content)
         msg = build_tool_message(result)
         assert msg.content == long_content
         assert len(msg.content) == 30000
@@ -353,7 +353,7 @@ class TestBuildToolMessage:
     def test_empty_result_gets_space(self):
         from modex_agent.core.tool_manager import ToolResult
 
-        result = ToolResult(tool_name="test", result=None)
+        result = ToolResult(tool_name="test")
         msg = build_tool_message(result)
         assert msg.content == " "
 
@@ -365,7 +365,7 @@ class TestBuildToolMessage:
         terminal XML itself. Terminal tool results arrive with metadata already set.
         """
         from modex_agent.core.tool_manager import ToolResult
-        from modex_agent.core.message import ContentFormat
+        from modex_agent.core.message import ContentFormat, TextPart
 
         xml_content = (
             "<command_result>"
@@ -376,7 +376,7 @@ class TestBuildToolMessage:
         )
         result = ToolResult(
             tool_name="bash",
-            result=xml_content,
+            content=[TextPart(text=xml_content)],
             content_format=ContentFormat.XML,
             truncatable_paths=["output", "tui_screen", "cursor_line"],
         )
@@ -388,7 +388,7 @@ class TestBuildToolMessage:
         from modex_agent.core.tool_manager import ToolResult
         from modex_agent.core.message import ContentFormat
 
-        result = ToolResult(tool_name="grep", result="Found 3 matches")
+        result = ToolResult.from_text("grep", "Found 3 matches")
         msg = build_tool_message(result)
         assert msg.content_format == ContentFormat.PLAIN
         assert msg.truncatable_paths is None

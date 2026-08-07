@@ -38,4 +38,3 @@ async def test_full_pipeline_no_experiences(tmp_path: Path):
     read_tool = ExperienceReadTool(exp_dir, meta_store)
     result = await read_tool.execute(name="nonexistent")
     assert "not found" in result
-

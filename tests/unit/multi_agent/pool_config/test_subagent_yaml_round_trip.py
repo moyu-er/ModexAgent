@@ -2,7 +2,7 @@
 
 Locks the contract that ``PoolStore.write_pool`` persists a subagent's
 ``execution_strategy`` and ``provider_kind`` to ``templates/<agent>.yml`` so a
-hand-edited or WebUI-saved external-coding subagent survives a read→write cycle
+hand-edited or WebUI-saved external subagent survives a read→write cycle
 without losing its strategy. Default values (``react`` / ``None``) MUST be
 stripped so legacy native subagent templates stay free of
 ``execution_strategy: react`` noise.
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from modex_agent.agents.external_coding.paths import ProviderKind
+from modex_agent.agents.external.paths import ProviderKind
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.multi_agent.pool_config import (
     MainAgentSpec,
@@ -32,7 +32,7 @@ class TestSubagentExecutionStrategyRoundTrip:
     """A subagent's ``execution_strategy`` + ``provider_kind`` round-trip via
     the on-disk YAML template."""
 
-    def test_external_coding_subagent_round_trips(self, tmp_path: Path) -> None:
+    def test_external_subagent_round_trips(self, tmp_path: Path) -> None:
         store = PoolStore(base_dir=tmp_path)
         tree = PoolSpec(
             name="coding",
@@ -41,7 +41,7 @@ class TestSubagentExecutionStrategyRoundTrip:
             subagents=[
                 SubagentSpec(
                     agent_name="ext",
-                    execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                    execution_strategy=ExecutionStrategyKind.EXTERNAL,
                     provider_kind=ProviderKind.OPENCODE,
                 ),
             ],
@@ -51,11 +51,11 @@ class TestSubagentExecutionStrategyRoundTrip:
         reread = store.read_pool("coding")
         assert len(reread.subagents) == 1
         ext = reread.subagents[0]
-        assert ext.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
+        assert ext.execution_strategy == ExecutionStrategyKind.EXTERNAL
         assert ext.provider_kind == ProviderKind.OPENCODE
 
         raw_text = _template_path(tmp_path, "coding", "ext").read_text(encoding="utf-8")
-        assert "execution_strategy: external_coding" in raw_text
+        assert "execution_strategy: external" in raw_text
         assert "provider_kind: opencode" in raw_text
 
     def test_native_react_subagent_round_trips_without_default_noise(self, tmp_path: Path) -> None:
@@ -94,7 +94,7 @@ class TestSubagentExecutionStrategyRoundTrip:
             subagents=[
                 SubagentSpec(
                     agent_name="ext",
-                    execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                    execution_strategy=ExecutionStrategyKind.EXTERNAL,
                     provider_kind=ProviderKind.OPENCODE,
                 ),
                 SubagentSpec(agent_name="native"),
@@ -104,13 +104,13 @@ class TestSubagentExecutionStrategyRoundTrip:
 
         reread = store.read_pool("coding")
         by_name = {sub.agent_name: sub for sub in reread.subagents}
-        assert by_name["ext"].execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
+        assert by_name["ext"].execution_strategy == ExecutionStrategyKind.EXTERNAL
         assert by_name["ext"].provider_kind == ProviderKind.OPENCODE
         assert by_name["native"].execution_strategy == ExecutionStrategyKind.REACT
         assert by_name["native"].provider_kind is None
 
         ext_text = _template_path(tmp_path, "coding", "ext").read_text(encoding="utf-8")
-        assert "execution_strategy: external_coding" in ext_text
+        assert "execution_strategy: external" in ext_text
         assert "provider_kind: opencode" in ext_text
 
         native_raw = yaml.safe_load(

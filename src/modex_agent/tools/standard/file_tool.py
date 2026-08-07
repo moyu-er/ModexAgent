@@ -4,11 +4,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import difflib
 import logging
 from pathlib import Path
 from typing import Any
 
-from ...core.tool_manager import Tool
+from ...core.capabilities import Modality, ModelCapabilities
+from ...core.message import ImageUrl, ImageUrlPart, TextPart
+from ...core.tool_manager import Tool, ToolResult, get_tool_execution_context
+from ...media.media_utils import build_image_url_block_compressed
+from ...media.mime import classify_kind, sniff_mime
+from ...media.models import Kind
 
 logger = logging.getLogger(__name__)
 
@@ -385,11 +392,100 @@ def _paginate_file(
     return "\n".join(parts)
 
 
+# -- diff 生成 ---------------------------------------------------------------
+
+
+_DIFF_LINE_CAP = 2000
+
+
+def _build_unified_diff(old: str, new: str, path: str) -> str:
+    """Build a unified diff string between old and new content.
+
+    Truncates to _DIFF_LINE_CAP lines (appending a truncation notice) so
+    LLM-visible diffs stay bounded. Returns an empty string when there are
+    no changes.
+    """
+    diff_lines = list(
+        difflib.unified_diff(
+            old.splitlines(),
+            new.splitlines(),
+            fromfile=path,
+            tofile=path,
+            lineterm="",
+        )
+    )
+    if not diff_lines:
+        return ""
+    if len(diff_lines) > _DIFF_LINE_CAP:
+        diff_lines = diff_lines[:_DIFF_LINE_CAP]
+        diff_lines.append("... (diff truncated)")
+    return "\n".join(diff_lines)
+
+
+# -- 多模态文件读取 ---------------------------------------------------------
+
+
+async def _read_image_as_multimodal(
+    file_path: Path,
+    mime: str,
+) -> ToolResult:
+    """Read an image file → compress → return ToolResult with image content.
+
+    Capability gate: when the current model lacks ``Modality.IMAGE``, returns
+    a brief text result stating the file is an image but visual content is not
+    available.  The capability limitation itself is surfaced via the tool
+    description (``get_dynamic_schema_for`` adjusts it for text-only models);
+    the tool result only states the objective fact — no system diagnosis or
+    action advice — so the agent can decide how to proceed.
+
+    When the model is image-capable, the text hint is carried as a
+    :class:`TextPart` in ``content`` and the image as an
+    :class:`ImageUrlPart` (transient — promoted to a synthetic user message
+    by ``enrich_inline_media`` via :class:`SyntheticUserMessageStrategy`,
+    never persisted).
+    """
+    ctx = get_tool_execution_context()
+    if ctx is None or not ctx.supports(Modality.IMAGE):
+        # Tool results are the agent's observations — not a system log channel.
+        # The capability limitation is already surfaced via the tool description
+        # (get_dynamic_schema_for adjusts it for text-only models).  The result
+        # should only state the objective fact and let the agent decide what to
+        # do next (skip, ask the user, infer from filename, etc.).  Do NOT put
+        # system diagnosis ("model lacks IMAGE capability"), file sizes, or
+        # action advice ("use a vision-capable model") here — the agent may
+        # have called read autonomously, not at the user's request.
+        degradation_text = f"Image file: {file_path} ({mime}). Visual content not available."
+        return ToolResult.from_text("read", degradation_text)
+
+    try:
+        raw = await asyncio.to_thread(file_path.read_bytes)
+        block = build_image_url_block_compressed(raw, mime, str(file_path))
+        text_hint = f"[Image read: {file_path} ({mime})]"
+        return ToolResult(
+            tool_name="read",
+            content=[
+                TextPart(text=text_hint),
+                ImageUrlPart(image_url=ImageUrl(url=block["image_url"]["url"])),
+            ],
+        )
+    except Exception as exc:
+        return ToolResult(
+            tool_name="read",
+            error=f"Failed to read image {file_path.name}: {exc}",
+        )
+
+
 # -- 工具类 -----------------------------------------------------------------
 
 
 class ReadFileTool(Tool):
     """读取文件内容的工具."""
+
+    produced_modalities: frozenset[Modality] = frozenset({Modality.IMAGE})
+    """ReadFileTool may produce an image_url block when the file is an image
+    and the active model supports IMAGE. Declared as produced (not required)
+    so the tool stays visible to text-only models — it degrades at runtime
+    via :func:`_read_image_as_multimodal` instead."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -402,8 +498,20 @@ class ReadFileTool(Tool):
     def description(self) -> str:
         return (
             "Read the contents of a file at the given path. "
-            f"By default reads up to {_DEFAULT_LIMIT} lines from the beginning. "
-            "Use offset to skip lines and limit to control how many lines to read."
+            f"Returns up to {_DEFAULT_LIMIT} lines from the beginning by default; "
+            "use offset to skip lines and limit to control how many lines to read.\n"
+            "Usage:\n"
+            "- Use this tool even if you have read the file before — file contents "
+            "may have changed since your last read.\n"
+            "- For large files, read in chunks (offset + limit) rather than tiny "
+            "30-line slices. If you need more context, read a larger window.\n"
+            "- Prefer grep/glob when searching for content or files — read is for "
+            "examining a specific known file.\n"
+            "- You can call multiple read tools in a single response — batch "
+            "speculative reads that are potentially useful.\n"
+            "- Typically reads text files (UTF-8). Image files may also be "
+            "read as visual content, depending on your capabilities. Other "
+            "binary files are not supported."
         )
 
     @property
@@ -426,19 +534,49 @@ class ReadFileTool(Tool):
             "required": ["path"],
         }
 
+    def get_dynamic_schema_for(
+        self, caps: ModelCapabilities | None = None
+    ) -> dict[str, Any]:
+        """Adapt the description to the active model's IMAGE capability.
+
+        Keeps the base schema intact and only rewrites the image sentence
+        when the model is text-only. When ``caps is None`` (unknown model)
+        the optimistic original description is preserved.
+        """
+        schema = super().get_dynamic_schema_for(caps)
+        if caps is None or caps.supports(Modality.IMAGE):
+            return schema
+        function = schema["function"]
+        function["description"] = function["description"].replace(
+            "Image files may also be read as visual content, depending on your capabilities.",
+            "Image files cannot be read as visual content by the current model.",
+        )
+        return schema
+
     async def execute(
         self, path: str, offset: int = 0, limit: int = _DEFAULT_LIMIT, **kwargs: Any
-    ) -> str:
+    ) -> str | ToolResult:
         try:
             file_path = _resolve_path(path)
             if not file_path.exists():
-                return f"Error: File not found: {path}"
+                return ToolResult(tool_name=self.name, error=f"File not found: {path}")
             if not file_path.is_file():
-                return f"Error: Not a file: {path}"
+                return ToolResult(tool_name=self.name, error=f"Not a file: {path}")
 
-            return _paginate_file(file_path, offset=offset, limit=limit)
+            with open(file_path, "rb") as f:
+                header = f.read(16)
+            mime = sniff_mime(header, file_path.name)
+            kind = classify_kind(mime) if mime else Kind.OTHER
+
+            if kind is Kind.IMAGE:
+                return await _read_image_as_multimodal(file_path, mime or "image/png")
+
+            result = _paginate_file(file_path, offset=offset, limit=limit)
+            if result.startswith("Error: "):
+                return ToolResult(tool_name=self.name, error=result[len("Error: ") :])
+            return result
         except Exception as e:
-            return f"Error reading file: {str(e)}"
+            return ToolResult(tool_name=self.name, error=f"Failed to read file: {e}")
 
 
 class WriteFileTool(Tool):
@@ -453,7 +591,20 @@ class WriteFileTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Write content to a file at the given path. Creates parent directories if needed."
+        return (
+            "Write content to a file at the given path. "
+            "Creates parent directories if needed. Overwrites existing files.\n"
+            "Usage:\n"
+            "- If editing an existing file, prefer the edit tool over write — "
+            "write replaces the entire file and is more error-prone for large files.\n"
+            "- You MUST use the read tool first before writing to an existing file. "
+            "(recommended, not enforced)\n"
+            "- ALWAYS prefer editing existing files in the codebase. "
+            "NEVER write new files unless explicitly required.\n"
+            "- NEVER proactively create documentation files (*.md, README) "
+            "unless explicitly requested.\n"
+            "- Only use emojis if the user explicitly requests it."
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -466,14 +617,27 @@ class WriteFileTool(Tool):
             "required": ["path", "content"],
         }
 
-    async def execute(self, path: str, content: str, **kwargs: Any) -> str:
+    async def execute(self, path: str, content: str, **kwargs: Any) -> str | ToolResult:
         try:
             file_path = _resolve_path(path)
             file_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if file_path.exists() and file_path.is_file():
+                diff = ""
+                try:
+                    old_content = file_path.read_text(encoding="utf-8")
+                    diff = _build_unified_diff(old_content, content, path)
+                except (UnicodeDecodeError, OSError):
+                    pass
+                file_path.write_text(content, encoding="utf-8")
+                if diff:
+                    return f"Wrote {len(content)} bytes to {path}.\n\n```diff\n{diff}\n```"
+                return f"Wrote {len(content)} bytes to {path}."
+
             file_path.write_text(content, encoding="utf-8")
-            return f"Successfully wrote {len(content)} bytes to {path}"
+            return f"Created {path} with {len(content)} bytes."
         except Exception as e:
-            return f"Error writing file: {str(e)}"
+            return ToolResult(tool_name=self.name, error=f"Failed to write file: {e}")
 
 
 class EditFileTool(Tool):
@@ -547,13 +711,16 @@ class EditFileTool(Tool):
         new_string: str,
         replace_all: bool = False,
         **kwargs: Any,
-    ) -> str:
+    ) -> str | ToolResult:
         try:
             file_path = _resolve_path(path)
 
             # 无变化检查
             if old_string == new_string:
-                return "Error: No changes to make — old_string and new_string are identical."
+                return ToolResult(
+                    tool_name=self.name,
+                    error="No changes to make — old_string and new_string are identical.",
+                )
 
             # 读取或初始化文件
             if file_path.exists():
@@ -567,18 +734,21 @@ class EditFileTool(Tool):
             if old_string == "":
                 if not file_exists:
                     _write_file(file_path, new_string, encoding, line_endings)
-                    return f"Successfully created {path} with {len(new_string)} bytes."
+                    return f"Created {path} with {len(new_string)} bytes."
                 if content.strip() == "":
                     _write_file(file_path, new_string, encoding, line_endings)
-                    return f"Successfully wrote {len(new_string)} bytes to {path}."
-                return (
-                    "Error: Cannot create new file — file already exists and is not empty. "
-                    "Use write_file to overwrite, or provide old_string to edit."
+                    return f"Wrote {len(new_string)} bytes to {path}."
+                return ToolResult(
+                    tool_name=self.name,
+                    error=(
+                        "Cannot create new file — file already exists and is not empty. "
+                        "Use write_file to overwrite, or provide old_string to edit."
+                    ),
                 )
 
             # 非空 old_string 且文件不存在
             if not file_exists:
-                return f"Error: File not found: {path}"
+                return ToolResult(tool_name=self.name, error=f"File not found: {path}")
 
             # 查找实际匹配字符串（四级模糊匹配）
             actual_old = _find_actual_string(content, old_string)
@@ -593,11 +763,14 @@ class EditFileTool(Tool):
                 preview = old_string[:200]
                 if len(old_string) > 200:
                     preview += "..."
-                return (
-                    f"Error: old_string not found in {path}. "
-                    f"The file contents may be out of date — please use the read tool to "
-                    f"reload the file and retry with the exact current content.\n"
-                    f"String: {preview}"
+                return ToolResult(
+                    tool_name=self.name,
+                    error=(
+                        f"old_string not found in {path}. "
+                        f"The file contents may be out of date — please use the read tool to "
+                        f"reload the file and retry with the exact current content.\n"
+                        f"String: {preview}"
+                    ),
                 )
 
             # 检查匹配次数
@@ -606,11 +779,15 @@ class EditFileTool(Tool):
                 preview = old_string[:200]
                 if len(old_string) > 200:
                     preview += "..."
-                return (
-                    f"Error: Found {matches} matches of the string to replace, "
-                    f"but replace_all is false. To replace all occurrences, set replace_all=true. "
-                    f"To replace only one occurrence, provide more context to uniquely identify the instance.\n"
-                    f"String: {preview}"
+                return ToolResult(
+                    tool_name=self.name,
+                    error=(
+                        f"Found {matches} matches of the string to replace, "
+                        f"but replace_all is false. To replace all occurrences, set replace_all=true. "
+                        f"To replace only one occurrence, provide more context to uniquely identify "
+                        f"the instance.\n"
+                        f"String: {preview}"
+                    ),
                 )
 
             # 引号风格保留
@@ -625,18 +802,25 @@ class EditFileTool(Tool):
 
             # 验证替换确实发生了
             if updated == content:
-                return "Error: Edit produced no changes."
+                return ToolResult(
+                    tool_name=self.name,
+                    error="Edit produced no changes.",
+                )
 
             # 写入文件
             _write_file(file_path, updated, encoding, line_endings)
 
+            diff = _build_unified_diff(content, updated, path)
             if replace_all:
-                return f"Successfully edited {path}. All {matches} occurrences replaced."
-            return f"Successfully edited {path}."
+                return (
+                    f"Edit applied successfully. All {matches} occurrences replaced.\n\n"
+                    f"```diff\n{diff}\n```"
+                )
+            return f"Edit applied successfully.\n\n```diff\n{diff}\n```"
 
         except Exception as e:
             logger.exception("EditFileTool error")
-            return f"Error editing file: {str(e)}"
+            return ToolResult(tool_name=self.name, error=f"Failed to edit file: {e}")
 
 
 class ListDirTool(Tool):

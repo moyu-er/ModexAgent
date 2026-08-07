@@ -1,11 +1,15 @@
+# ruff: noqa: ANN401
 """Tests for ReAct nodes."""
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from modex_agent import ToolCall
-from modex_agent.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.agent import ReActEvent
+from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.context import ReActGraphContext
 from modex_agent.agents.react.injection_drainer import InjectionDrainer
 from modex_agent.agents.react.llm_client import ReactLlmClient
@@ -19,12 +23,51 @@ from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.approval.constants import ApprovalDecision
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import FinishReason
+from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager, ToolResult
+from modex_agent.core.types import LLMResponse
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-from modex_agent.core.session_id import SessionInfo
+from modex_graph import (
+    GraphPersistenceCoordinator,
+    NullDeliverStoreFactory,
+    NullGraphInstanceStore,
+    NullNodeStateStore,
+)
+from modex_graph.constants import GraphNode
+
+
+class _AutoRegCoord(GraphPersistenceCoordinator):
+    """Test-only coordinator that auto-registers nodes on begin_invocation."""
+
+    def collect_consumable_delivers(
+        self, node_name: str, invocation_id: int
+    ) -> list[Any]:
+        if self.get_deliver_store(node_name) is None:
+            self.register_node(node_name)
+        return super().collect_consumable_delivers(node_name, invocation_id)
+    def route_deliver(
+        self,
+        target_node: str,
+        content: Any,
+        source_node: str,
+        source_invocation_id: int,
+    ) -> int | None:
+        if target_node != GraphNode.END and self.get_deliver_store(target_node) is None:
+            self.register_node(target_node)
+        return super().route_deliver(target_node, content, source_node, source_invocation_id)
+
+
+
+def _make_test_coordinator() -> _AutoRegCoord:
+    return _AutoRegCoord(
+        graph_instance_id=0,
+        instance_store=NullGraphInstanceStore(),
+        node_state_store=NullNodeStateStore(0),
+        default_deliver_store_factory=NullDeliverStoreFactory(),
+    )
 
 
 def _make_state() -> ReActTurnState:
@@ -68,7 +111,12 @@ def _make_graph_ctx(
         session=SessionInfo.from_str("test.agent"),
     )
     graph_runtime = ReactGraphRuntime()
-    return ReActGraphContext(state=state, runtime=graph_runtime, user_data=agent_ctx)
+    return ReActGraphContext(
+        state=state,
+        runtime=graph_runtime,
+        user_data=agent_ctx,
+        coordinator=_make_test_coordinator(),
+    )
 
 
 def _make_llm_client() -> ReactLlmClient:
@@ -118,8 +166,8 @@ class TestStartNode:
         ctx = _make_graph_ctx(runtime=runtime)
         ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
 
-        result = await node.execute(ctx)
-        assert result.transition == ReActReason.NORMAL_START
+        await node.run(ctx)
+        assert node._submit_result == {ReActNode.LLM: [None]}
         assert ctx.state.iteration == 0
 
     @pytest.mark.asyncio
@@ -129,9 +177,8 @@ class TestStartNode:
         runtime.state.resume_target = ReActNode.TOOL
         ctx = _make_graph_ctx(runtime=runtime)
 
-        result = await node.execute(ctx)
-        assert result.command is not None
-        assert result.command.goto == ReActNode.TOOL
+        await node.run(ctx)
+        assert node._submit_result == {ReActNode.TOOL: [None]}
         assert ctx.state.resume_target is None
 
     @pytest.mark.asyncio
@@ -141,9 +188,8 @@ class TestStartNode:
         runtime.state.resume_target = ReActNode.LLM
         ctx = _make_graph_ctx(runtime=runtime)
 
-        result = await node.execute(ctx)
-        assert result.command is not None
-        assert result.command.goto == ReActNode.LLM
+        await node.run(ctx)
+        assert node._submit_result == {ReActNode.LLM: [None]}
         assert ctx.state.resume_target is None
 
 
@@ -165,8 +211,8 @@ class TestEndNode:
         ctx = _make_graph_ctx(runtime=runtime)
         ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
 
-        result = await node.execute(ctx)
-        assert result.transition is None
+        await node.run(ctx)
+        assert GraphNode.END in node._submit_result
         assert ctx.state.result is not None
         assert ctx.state.result.content == "Done!"
 
@@ -177,8 +223,8 @@ class TestEndNode:
         ctx = _make_graph_ctx(runtime=runtime)
         ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
 
-        result = await node.execute(ctx)
-        assert result.transition is None
+        await node.run(ctx)
+        assert GraphNode.END in node._submit_result
         assert ctx.state.result is not None
         assert ctx.state.result.content == "max iterations reached"
         assert ctx.state.result.stop_reason == "max_iterations"
@@ -191,8 +237,8 @@ class TestEndNode:
         ctx = _make_graph_ctx(runtime=runtime)
         ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
 
-        result = await node.execute(ctx)
-        assert result.transition is None
+        await node.run(ctx)
+        assert GraphNode.END in node._submit_result
         assert ctx.state.result is not None
         assert ctx.state.result.stop_reason == "turn_cancelled"
 
@@ -221,8 +267,8 @@ class TestLLMNode:
         ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
         ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
 
-        result = await node.execute(ctx)
-        assert result.transition == ReActReason.HAS_TOOLS
+        await node.run(ctx)
+        assert ReActNode.TOOL in node._submit_result
 
     @pytest.mark.asyncio
     async def test_routes_to_end_on_no_tool_calls(self):
@@ -247,8 +293,8 @@ class TestLLMNode:
         ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
         ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
 
-        result = await node.execute(ctx)
-        assert result.transition == ReActReason.NO_TOOLS
+        await node.run(ctx)
+        assert ReActNode.END in node._submit_result
 
     @pytest.mark.asyncio
     async def test_routes_to_end_on_max_iterations(self):
@@ -261,8 +307,8 @@ class TestLLMNode:
         ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
         ctx.agent_ctx.max_iterations = 5
 
-        result = await node.execute(ctx)
-        assert result.transition == ReActReason.MAX_ITERATIONS
+        await node.run(ctx)
+        assert node._submit_result == {ReActNode.END: [None]}
 
     @pytest.mark.asyncio
     async def test_routes_to_end_on_llm_error(self):
@@ -287,8 +333,8 @@ class TestLLMNode:
         ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
         ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
 
-        result = await node.execute(ctx)
-        assert result.transition == ReActReason.LLM_ERROR
+        await node.run(ctx)
+        assert ReActNode.END in node._submit_result
 
 
 class TestToolNode:
@@ -300,7 +346,7 @@ class TestToolNode:
 
         async def _mock_execute(tc, ctx):
             executed.append(tc.tool_name)
-            return ToolResult(tool_name=tc.tool_name, result=f"ok_{tc.tool_name}")
+            return ToolResult.from_text(tc.tool_name, f"ok_{tc.tool_name}")
 
         tool_executor.execute = _mock_execute  # type: ignore[method-assign]
         node = ToolNode(tool_executor)
@@ -317,10 +363,63 @@ class TestToolNode:
         ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
         ctx.agent_ctx.history = history  # type: ignore[assignment]
 
-        result = await node.execute(ctx)
-        assert result.transition == ReActReason.TOOLS_DONE
+        await node.run(ctx)
+        assert ReActNode.LLM in node._submit_result
         assert len(executed) == 2
         assert len(history.msgs) == 2
+
+    @pytest.mark.asyncio
+    async def test_missing_call_id_canonicalized_before_events(self):
+        """Providers may omit ``call_id``. The node assigns ONE id up front so
+        TOOL_CALL_START/END event payloads, the executed call, and the history
+        tool message all carry the same id — streamed start/end pairs and
+        persisted call/result records can then be matched by id."""
+        captured: dict[str, str | None] = {}
+
+        tool_executor = ToolExecutor()
+
+        async def _mock_execute(tc, ctx):
+            captured["call_id"] = tc.call_id
+            return ToolResult.from_text(tc.tool_name, "ok")
+
+        tool_executor.execute = _mock_execute  # type: ignore[method-assign]
+        node = ToolNode(tool_executor)
+
+        history = _MockHistory()
+        tc = ToolCall(tool_name="read", arguments={})  # provider omitted call_id
+        response = LLMResponse(content="", tool_calls=[tc])
+
+        runtime = _make_runtime()
+        runtime.state.llm_response = response  # type: ignore[assignment]
+        runtime.state.iteration = 1
+        emitter = _MockEmitter()
+        agent_ctx = AgentContext(
+            system_prompt="test",
+            history=ListMessageHistory(),
+            tool_manager=InMemoryToolManager(),
+            identity=runtime.state.identity,
+            runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
+        )
+        ctx = ReActGraphContext(
+            state=runtime.state,  # type: ignore[arg-type]
+            runtime=ReactGraphRuntime(emitter=emitter),
+            user_data=agent_ctx,
+            coordinator=_make_test_coordinator(),
+        )
+        ctx.agent_ctx.history = history  # type: ignore[assignment]
+
+        await node.run(ctx)
+
+        call_id = captured["call_id"]
+        assert call_id  # assigned, non-empty
+        starts = [d for e, d in emitter.events if e == ReActEvent.TOOL_CALL_START]
+        ends = [d for e, d in emitter.events if e == ReActEvent.TOOL_CALL_END]
+        assert len(starts) == 1
+        assert len(ends) == 1
+        assert starts[0].call_id == call_id
+        assert ends[0][0].call_id == call_id
+        assert history.msgs[0].tool_call_id == call_id
 
     @pytest.mark.asyncio
     async def test_denied_tool_cascades_and_cancels(self):
@@ -330,7 +429,7 @@ class TestToolNode:
 
         async def _mock_execute(tc, ctx):
             executed.append(tc.tool_name)
-            return ToolResult(tool_name=tc.tool_name, result="ok")
+            return ToolResult.from_text(tc.tool_name, "ok")
 
         tool_executor.execute = _mock_execute  # type: ignore[method-assign]
         node = ToolNode(tool_executor)
@@ -338,31 +437,32 @@ class TestToolNode:
         history = _MockHistory()
         tc1 = ToolCall(tool_name="t1", arguments={}, call_id="c1")
         tc2 = ToolCall(tool_name="t2", arguments={}, call_id="c2")
+        response = type("_MockResponse", (), {"tool_calls": [tc1, tc2]})()
+
+        from modex_agent.approval.runtime import ApprovalRuntime
+        from modex_agent.runtime.enums import ApprovalDenyPolicy
 
         runtime = _make_runtime()
         runtime.state.iteration = 1
+        runtime.state.llm_response = response  # type: ignore[assignment]
+        runtime.services.approval = ApprovalRuntime(
+            classifier=type(
+                "_Cls",
+                (),
+                {"classify": lambda s, tc, c: "normal" if tc.tool_name == "t1" else "hardline"},
+            )(),  # type: ignore[arg-type]
+            default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN,
+        )
         ctx = _make_graph_ctx(runtime=runtime)
         ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
         ctx.agent_ctx.history = history  # type: ignore[assignment]
 
-        from modex_agent.runtime.enums import ApprovalDenyPolicy
-        from modex_agent.agents.react.approval import ApprovalRuntime
+        await node.run(ctx)
 
-        ctx.agent_ctx.runtime.services.approval = ApprovalRuntime(
-            classifier=type("_Cls", (), {"classify": lambda s, tc, c: "normal"})(),  # type: ignore[arg-type]
-            default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN,
-        )
-
-        result = await node._execute_batch(
-            [tc1, tc2],
-            [ApprovalDecision.ALLOWED, ApprovalDecision.DENIED],
-            ctx,
-        )
-
-        assert result.transition == ReActReason.TURN_CANCELLED
-        assert (
-            len(executed) == 0
-        )  # atomic batch: ALLOWED converted to PREEMPTED when any DENIED present
+        # Atomic batch: one DENIED cascades to PREEMPT the ALLOWED call,
+        # nothing executes, and CANCEL_TURN routes the turn to END.
+        assert node._submit_result == {ReActNode.END: [None]}
+        assert len(executed) == 0
 
     @pytest.mark.asyncio
     async def test_denied_tool_cancel_path_uses_real_tool_executor(self):
@@ -372,22 +472,25 @@ class TestToolNode:
         node = ToolNode(tool_executor)
 
         tc = ToolCall(tool_name="write", arguments={"path": "/tmp/x"}, call_id="c1")
-        runtime = _make_runtime()
-        runtime.state.iteration = 1
-        from modex_agent.agents.react.approval import ApprovalRuntime
+        response = type("_MockResponse", (), {"tool_calls": [tc]})()
+
+        from modex_agent.approval.runtime import ApprovalRuntime
         from modex_agent.runtime.enums import ApprovalDenyPolicy
 
+        runtime = _make_runtime()
+        runtime.state.iteration = 1
+        runtime.state.llm_response = response  # type: ignore[assignment]
         runtime.services.approval = ApprovalRuntime(
-            classifier=type("_Cls", (), {"classify": lambda s, tc, c: "normal"})(),  # type: ignore[arg-type]
+            classifier=type("_Cls", (), {"classify": lambda s, tc, c: "hardline"})(),  # type: ignore[arg-type]
             default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN,
         )
         ctx = _make_graph_ctx(runtime=runtime)
         ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
         ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
 
-        result = await node._execute_batch([tc], [ApprovalDecision.DENIED], ctx)
+        await node.run(ctx)
 
-        assert result.transition == ReActReason.TURN_CANCELLED
+        assert node._submit_result == {ReActNode.END: [None]}
 
     @pytest.mark.asyncio
     async def test_exceeds_max_tools_routes_to_end(self):
@@ -404,8 +507,8 @@ class TestToolNode:
         ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
         ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
 
-        result = await node.execute(ctx)
-        assert result.transition == ReActReason.TURN_CANCELLED
+        await node.run(ctx)
+        assert node._submit_result == {ReActNode.END: [None]}
 
     @pytest.mark.asyncio
     async def test_classify_all_returns_allowed_for_normal_tools(self):

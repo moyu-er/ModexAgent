@@ -64,12 +64,12 @@ class GraphRuntime(ABC):  # noqa: B024
         # Default: no-op.
 
     async def after_node(  # noqa: B027
-        self, ctx: GraphContext[Any], node_name: str, result: Any
+        self, ctx: GraphContext[Any], node_name: str
     ) -> None:
         """Called by the engine after each node's `execute(ctx)` returns.
 
-        `result` is the `NodeResult` returned by the node. Use for
-        node-exit observability, metrics, post-execution validation, etc.
+        Use for node-exit observability, metrics, post-execution validation,
+        and similar lifecycle concerns.
         """
         # noqa: B027
         # Default: no-op.

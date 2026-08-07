@@ -43,7 +43,7 @@ ADRs document significant architectural decisions, including the context driving
 | 0011 | Approval batch atomicity and channel divergence |
 | 0012 | Input pipeline claim-consume and unified approval decision |
 | 0013 | Attachment system asymmetric transcript-indexed |
-| 0014 | Native multimodal mechanism A activation |
+| 0014 | Native multimodal mechanism A activation (revised: tool-side capability awareness + Path B injection) |
 | 0015 | Unified inbox-driven agent messaging (partially superseded) |
 | 0016 | Loop detection controlled exit |
 | 0017 | MCP shared connection registry |

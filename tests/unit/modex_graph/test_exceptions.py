@@ -1,8 +1,9 @@
 """GraphBubbleUp exception family tests — engine never swallows."""
+
 from __future__ import annotations
 
 import pytest
-from helpers import CounterState, make_ctx
+from helpers import CounterState, make_coordinator, make_ctx
 
 from modex_graph import (
     Graph,
@@ -13,8 +14,8 @@ from modex_graph import (
     GraphInterrupt,
     GraphNode,
     GraphRuntime,
+    IntegratedInput,
     Node,
-    NodeResult,
     ParentCommand,
 )
 
@@ -45,9 +46,11 @@ class TestEngineDoesNotSwallow:
 
     async def test_engine_propagates_graphinterrupt(self) -> None:
         class InterruptNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
                 ctx.interrupt({"approval": "needed"})
-                return NodeResult()
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("n", InterruptNode())
@@ -61,7 +64,9 @@ class TestEngineDoesNotSwallow:
 
     async def test_engine_propagates_graphdrained(self) -> None:
         class DrainNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
                 raise GraphDrained()
 
         g: Graph[CounterState] = Graph()
@@ -75,7 +80,9 @@ class TestEngineDoesNotSwallow:
 
     async def test_engine_propagates_parentcommand(self) -> None:
         class ParentCmdNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
                 raise ParentCommand("goto_parent")
 
         g: Graph[CounterState] = Graph()
@@ -95,8 +102,11 @@ class TestEngineDoesNotSwallow:
                 raise GraphInterrupt(value="from_before_node")
 
         class NoOpNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
-                return NodeResult()
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
+                self.deliver(None, None, ctx)
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("n", NoOpNode())
@@ -106,6 +116,7 @@ class TestEngineDoesNotSwallow:
         ctx = GraphContext(
             state=CounterState(),
             runtime=InterruptRuntime(),
+            coordinator=make_coordinator(),
         )
         with pytest.raises(GraphInterrupt) as exc_info:
             await GraphEngine(compiled).run_async(ctx)
@@ -115,14 +126,15 @@ class TestEngineDoesNotSwallow:
         """GraphBubbleUp raised in runtime.after_node propagates."""
 
         class DrainRuntime(GraphRuntime):
-            async def after_node(
-                self, ctx: GraphContext[CounterState], node_name: str, result: NodeResult
-            ) -> None:
+            async def after_node(self, ctx: GraphContext[CounterState], node_name: str) -> None:
                 raise GraphDrained()
 
         class NoOpNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
-                return NodeResult()
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
+                self.deliver(None, None, ctx)
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("n", NoOpNode())
@@ -132,6 +144,7 @@ class TestEngineDoesNotSwallow:
         ctx = GraphContext(
             state=CounterState(),
             runtime=DrainRuntime(),
+            coordinator=make_coordinator(),
         )
         with pytest.raises(GraphDrained):
             await GraphEngine(compiled).run_async(ctx)

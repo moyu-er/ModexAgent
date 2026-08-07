@@ -16,10 +16,10 @@ approval suspend/resume, and integration points for hooks, interceptors, and con
 | `graph.py` | `build_react_graph()` — builds `Graph[ReActTurnState]` (from `modex_graph`) with 4 nodes + 8 edges. |
 | `context.py` | `ReActGraphContext(GraphContext[ReActTurnState])` — type-safe accessors (`agent_ctx`, `tool_manager`, `context_manager`). |
 | `runtime.py` | `ReactGraphRuntime(GraphRuntime)` — AOP bridge mapping ReAct StrEnums to framework enums, bridging `GraphContext.user_data` → `AgentContext`. |
-| `state.py` | `ReActTurnState(GraphState)` with `Annotated[T, LastValue]` fields, `ReActSnapshotPolicy` (simplified via `state.checkpoint()` per-channel path, ADR-0033 D14), `ReActRuntimeStateCodec`. |
+| `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy`, and `ReActRuntimeStateCodec`. |
 | `builder.py` | `ReActAgentBuilder` -- `build_agent()` + `build_emitter_factory()` from `AgentDescriptor`. |
-| `approval.py` | `ApprovalRuntime` + `TieredToolApprovalClassifier` (NORMAL/DANGEROUS path-based). |
-| `constants.py` | `ReActNode`, `ReActReason`, `ReActHookPoint`, `ReActScope`, `ReActEvent`, `InterruptReason` (B1) StrEnums. |
+| `approval.py` | *(removed — migrated to `modex_agent.approval.runtime`)* |
+| `constants.py` | `ReActNode`, `ReActHookPoint`, `ReActScope`, `ReActEvent`, `InterruptReason` (B1) StrEnums. |
 | `nodes/start.py` | `StartNode` -- routes to LLM (fresh) or stored `current_node` (resume from suspended). |
 | `nodes/llm.py` | `LLMNode` -- calls LLM, handles streaming, dispatches hooks/interceptors via `ctx.runtime.*`, emits iteration events. |
 | `nodes/tool.py` | `ToolNode` -- classify all -> suspend for approval via `ctx.interrupt(tx)` -> batch execute -> route. |
@@ -27,15 +27,15 @@ approval suspend/resume, and integration points for hooks, interceptors, and con
 
 ## Graph Edges
 
+Edges are plain topology — nodes route at runtime via `deliver()`.
+
 ```
-START --NORMAL_START--> LLM
-START --RESUME_TOOLS--> TOOL
-LLM   --HAS_TOOLS--> TOOL
-LLM   --NO_TOOLS--> END
-LLM   --MAX_ITERATIONS--> END
-LLM   --LLM_ERROR--> END
-TOOL  --TOOLS_DONE--> LLM
-TOOL  --TURN_CANCELLED--> END
+START → LLM
+LLM   → TOOL
+LLM   → END
+TOOL  → LLM
+TOOL  → END
+END   → GraphNode.END
 ```
 
 ## Runtime Modes
@@ -73,8 +73,8 @@ Deny policy: default `TOOL_RESULT_ONLY` (loop continues); override to `CANCEL_TU
   routed through `ReactGraphRuntime` via `ctx.runtime.*`. Iteration-level hooks
   (`BEFORE_ITERATION`/`AFTER_ITERATION`) are dispatched explicitly by nodes, NOT
   engine-auto-invoked (preserves hook timing exactly).
-- Per-turn state lives in `ctx.state` (`ReActTurnState`, a `GraphState(BaseModel)` with
-  `Annotated[T, LastValue]` per-field channels). `ctx.state.result` holds the final
+- Per-turn state lives in `ctx.state` (`ReActTurnState`, a mutable `GraphState`).
+  `ctx.state.result` holds the final
   `AgentResult` (replaces the old `custom[GRAPH_RESULT]` pattern).
 - Approval does NOT go through interceptors; it is handled at the `ToolNode`/pipeline
   layer via `ctx.interrupt(tx)` → `GraphInterrupt` → `TurnSnapshot`.

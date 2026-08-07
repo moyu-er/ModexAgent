@@ -1,5 +1,5 @@
-"""ArchiveSummarizer — ReAct-based agent that generates context.md, knowledge.md,
-index.md from pruned messages.
+"""ArchiveSummarizer — ReAct-based agent that generates context.md, knowledge.md
+from pruned messages.
 
 Extends :class:`ScopedFileAgent` for common ReAct wiring.
 """
@@ -26,7 +26,7 @@ from modex_agent.memory.archive_models import (
 
 logger = logging.getLogger(__name__)
 
-_ARCHIVE_FILES = ("context.md", "knowledge.md", "index.md")
+_ARCHIVE_FILES = ("context.md", "knowledge.md")
 
 # Max chars to keep per message role when feeding transcript to the archive agent.
 _CONTENT_LIMITS: dict[str, int] = {
@@ -44,7 +44,6 @@ class ArchiveSummarizerConfig:
 
     context_max_chars: int = 20_000
     core_max_chars: int = 3000
-    index_max_chars: int = 200
     max_iterations: int = 25
 
 
@@ -52,7 +51,7 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
     """Generates archive summary files from pruned messages using a ReAct agent.
 
     The agent receives a transcript and uses scoped file tools to write
-    context.md, knowledge.md, and index.md into the target archive directory.
+    context.md and knowledge.md into the target archive directory.
     """
 
     def __init__(
@@ -71,14 +70,12 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
         archive_dir: Path,
         context_max_chars: int = 20_000,
         core_max_chars: int = 3000,
-        index_max_chars: int = 200,
     ) -> str:
         """Build the system prompt from the template with variable substitution."""
         prompt = _get_registry().get_system(
             "archive/agent",
             context_max_chars=str(context_max_chars),
             knowledge_max_chars=str(core_max_chars),
-            index_max_chars=str(index_max_chars),
         )
         # Append allowed directory information
         dir_line = f"\n- {archive_dir.resolve()}\n"
@@ -202,7 +199,6 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
         archive_dir: Path,
         context_max_chars: int = 20_000,
         core_max_chars: int = 3000,
-        index_max_chars: int = 200,
     ) -> str:
         """Build the user message from the template with variable substitution.
 
@@ -215,7 +211,6 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
             archive_id=str(archive_id),
             context_max_chars=str(context_max_chars),
             knowledge_max_chars=str(core_max_chars),
-            index_max_chars=str(index_max_chars),
             transcript="__TRANSCRIPT__",
         )
         return template.replace("__TRANSCRIPT__", transcript)
@@ -241,13 +236,11 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
                 archive_dir,
                 context_max_chars=self._config.context_max_chars,
                 core_max_chars=self._config.core_max_chars,
-                index_max_chars=self._config.index_max_chars,
             )
             system_prompt = self.build_system_prompt(
                 archive_dir,
                 context_max_chars=self._config.context_max_chars,
                 core_max_chars=self._config.core_max_chars,
-                index_max_chars=self._config.index_max_chars,
             )
             trace_path = archive_dir / "trace.jsonl"
 
@@ -269,7 +262,7 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
                     documents = ArchiveDocuments(
                         context=(archive_dir / "context.md").read_text(encoding="utf-8"),
                         core=(archive_dir / "knowledge.md").read_text(encoding="utf-8"),
-                        index=(archive_dir / "index.md").read_text(encoding="utf-8"),
+                        index="",
                     )
                     return ArchiveGenerationResult(
                         documents=documents,

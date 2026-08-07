@@ -9,7 +9,7 @@ import sys
 from collections.abc import AsyncIterator
 from inspect import isabstract
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -26,6 +26,7 @@ from modex_agent.messaging.broker import AddressKind, BrokerMessage  # noqa: E40
 from modex_agent.messaging.broker_bridge import BrokerInputAdapter  # noqa: E402
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker  # noqa: E402
 from modex_agent.multi_agent.address import AgentAddress  # noqa: E402
+from modex_agent.multi_agent.pool_instance import PoolInstance  # noqa: E402
 
 # ── Stubs ──
 
@@ -171,6 +172,28 @@ class TestLocalFilePoolRoutingStore:
         assert store.get_pool("sess-good") is None
         # Corrupt file is left in place (not deleted by delete_pool_routes).
         assert store._file("sess-corrupt").exists()
+
+
+@pytest.mark.asyncio
+async def test_pool_router_preserves_workspace_when_submitting_message(tmp_path: Path) -> None:
+    from modex_agent.multi_agent.pool_router import LocalFilePoolRoutingStore, PoolRouter
+
+    session = SessionInfo.from_str("conversation.main")
+    workspace = Path("D:/projects/demo")
+    message = InputMessage(content="hello", session=session, workspace=workspace)
+    pool = _FakePoolInstance("main")
+    store = LocalFilePoolRoutingStore(tmp_path)
+    store.set_pool(session.session_id_prefix, "main")
+    router = PoolRouter(
+        input_adapter=_StubInput(),
+        broker=InMemoryMessageBroker(),
+        pools=cast(dict[str, PoolInstance], {"main": pool}),
+        session_store=store,
+        default_pool="main",
+    )
+
+    await router.route_message(message)
+    assert pool.submitted[0][1].workspace == workspace
 
 
 # ── PoolRouter Tests ──

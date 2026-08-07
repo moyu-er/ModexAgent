@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from modex_agent.agents.external_coding.paths import ProviderKind
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.constants import ExecutionStrategyKind, ProviderKind
 from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.tools.presets import (
     DEFAULT_FORK_MAX_MESSAGES,
@@ -21,24 +20,46 @@ def _validate_execution_provider_pair(
     execution_strategy: ExecutionStrategyKind,
     provider_kind: ProviderKind | None,
 ) -> None:
-    """Enforce ``provider_kind`` set iff ``execution_strategy == EXTERNAL_CODING``.
+    """Enforce ``provider_kind`` set iff ``execution_strategy == EXTERNAL``.
 
     Shared cross-field rule for :class:`MainAgentSpec` and :class:`SubagentSpec`.
-    A non-EXTERNAL_CODING strategy must not carry a ``provider_kind`` (the
-    field is meaningless without an external backend), and an EXTERNAL_CODING
+    A non-EXTERNAL strategy must not carry a ``provider_kind`` (the
+    field is meaningless without an external backend), and an EXTERNAL
     strategy must declare one (the harness needs to know which CLI to spawn).
     Raising ``ValueError`` lets pydantic surface it as a ``ValidationError``.
     """
-    if execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
+    if execution_strategy == ExecutionStrategyKind.EXTERNAL:
         if provider_kind is None:
-            raise ValueError(
-                "provider_kind must be set when execution_strategy='external_coding'"
-            )
+            raise ValueError("provider_kind must be set when execution_strategy='external'")
     elif provider_kind is not None:
         raise ValueError(
             "provider_kind must be None when execution_strategy="
-            f"{execution_strategy!r} (only 'external_coding' uses a provider)"
+            f"{execution_strategy!r} (only 'external' uses a provider)"
         )
+
+
+class MemoryToggle(BaseModel):
+    """Per-main-agent gate for the archive/core memory layers.
+
+    Defaults to fully off — ``MemoryToggle()`` is byte-for-byte identical to
+    the pre-field behavior (no archive, no core). ``core_enabled`` requires
+    ``archive_enabled``: core memory is fed by archive consolidation, so
+    enabling core without archive is a configuration error.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    archive_enabled: bool = False
+    core_enabled: bool = False
+
+    @model_validator(mode="after")
+    def _validate_core_requires_archive(self) -> MemoryToggle:
+        if self.core_enabled and not self.archive_enabled:
+            raise ValueError(
+                "core_enabled=True requires archive_enabled=True "
+                "(core memory is fed by archive consolidation)"
+            )
+        return self
 
 
 class MainAgentSpec(BaseModel):
@@ -68,6 +89,10 @@ class MainAgentSpec(BaseModel):
     ``agents/<agent_name>.md`` is used. A non-None value references a different
     prompt md by name. Pure metadata in T1; runtime wiring comes in later
     tickets."""
+    memory: MemoryToggle = Field(default_factory=MemoryToggle)
+    """Per-main-agent memory layer gate. Default ``MemoryToggle()`` is fully
+    off — identical to the pre-field behavior. Subagents do NOT carry this
+    field (subagents are session-only by construction)."""
 
     @model_validator(mode="after")
     def _validate(self) -> MainAgentSpec:

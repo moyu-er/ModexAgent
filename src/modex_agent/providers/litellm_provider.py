@@ -26,7 +26,7 @@ from modex_agent.core.tool_call_accumulator import (
     parse_tool_call_chunks_from_delta,
 )
 from modex_agent.core.types import LLMResponse, ToolCall
-from modex_agent.providers.shared.constants import inject_reasoning_effort
+from modex_agent.providers.shared.constants import inject_cache_control, inject_reasoning_effort
 from modex_agent.utils.think_tag import ThinkTagExtractor
 
 import importlib.util
@@ -188,6 +188,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         stream: bool = False,
         **kwargs,
     ) -> dict[str, Any]:
+        session_id = kwargs.pop("prompt_cache_key", "")
         params = {
             "model": model or self._model,
             "messages": self._sanitize_api_messages(messages),
@@ -202,8 +203,10 @@ class LiteLLMProvider(StreamingLLMProvider):
 
         if stream:
             params["stream"] = True
+            params["stream_options"] = {"include_usage": True}
 
         inject_reasoning_effort(params, self._reasoning_effort)
+        inject_cache_control(params, session_id)
 
         if tools:
             params["tools"] = tools
@@ -312,6 +315,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         usage: dict = {}
         think_extractor = ThinkTagExtractor() if self._parse_think_tags else None
         has_native_reasoning = False
+        first_token_time: float | None = None
 
         def _add_tool_call(tool_call: ToolCall) -> None:
             tool_key = f"{tool_call.tool_name}:{json.dumps(tool_call.arguments, sort_keys=True)}"
@@ -369,6 +373,10 @@ class LiteLLMProvider(StreamingLLMProvider):
                     error_info=error_info,
                 )
 
+            chunk_usage = self._get_attr_or_extra(chunk, "usage")
+            if chunk_usage is not None:
+                usage = _extract_litellm_usage(chunk_usage)
+
             delta = self._extract_delta(chunk)
             if not delta:
                 continue
@@ -382,6 +390,8 @@ class LiteLLMProvider(StreamingLLMProvider):
 
             # 原生 reasoning_content 优先级最高；一旦出现即持久，不再回落 think 提取
             if "reasoning_content" in delta and delta["reasoning_content"]:
+                if first_token_time is None:
+                    first_token_time = time.time()
                 has_native_reasoning = True
                 reasoning_delta = delta["reasoning_content"]
                 reasoning_parts.append(reasoning_delta)
@@ -389,6 +399,8 @@ class LiteLLMProvider(StreamingLLMProvider):
 
             # 处理普通 content；若开启 parse_think_tags 且无原生 reasoning，则做 tag 剥离
             if "content" in delta and delta["content"]:
+                if first_token_time is None:
+                    first_token_time = time.time()
                 if think_extractor and not has_native_reasoning:
                     content_delta, reasoning_delta = think_extractor.feed(delta["content"])
                     if reasoning_delta:
@@ -423,10 +435,52 @@ class LiteLLMProvider(StreamingLLMProvider):
             elapsed_ms,
         )
 
+        completion_start_time: str | None = None
+        if first_token_time is not None:
+            from datetime import datetime, timezone
+            completion_start_time = datetime.fromtimestamp(
+                first_token_time, tz=timezone.utc
+            ).isoformat()
+
         return LLMResponse(
             content="".join(content_parts),
             tool_calls=tool_calls,
             reasoning_content="".join(reasoning_parts) if reasoning_parts else None,
             finish_reason=FinishReason(finish_reason) if finish_reason else FinishReason.STOP,
             usage=usage,
+            completion_start_time=completion_start_time,
         )
+
+
+def _extract_litellm_usage(usage_obj: Any) -> dict[str, int]:
+    """Extract token counts from a litellm usage object into a flat dict.
+
+    litellm returns usage as either a pydantic model (Usage) or a dict.
+    Key names vary across providers (input_tokens vs prompt_tokens).
+    """
+    if isinstance(usage_obj, dict):
+        return {k: v for k, v in usage_obj.items() if isinstance(v, int)}
+    result: dict[str, int] = {}
+    for attr in (
+        "prompt_tokens", "completion_tokens", "total_tokens",
+        "input_tokens", "output_tokens",
+        "reasoning_tokens",
+        "cache_read_input_tokens", "cache_creation_input_tokens",
+        "prompt_cache_hit_tokens", "prompt_cache_miss_tokens",
+    ):
+        val = getattr(usage_obj, attr, None)
+        if val is not None and isinstance(val, (int, float)):
+            result[attr] = int(val)
+
+    prompt_details = getattr(usage_obj, "prompt_tokens_details", None)
+    if prompt_details is not None:
+        cached = getattr(prompt_details, "cached_tokens", None)
+        if cached is not None and isinstance(cached, (int, float)):
+            result["cache_read_input_tokens"] = int(cached)
+
+    completion_details = getattr(usage_obj, "completion_tokens_details", None)
+    if completion_details is not None:
+        reasoning = getattr(completion_details, "reasoning_tokens", None)
+        if reasoning is not None and isinstance(reasoning, (int, float)):
+            result["reasoning_tokens"] = int(reasoning)
+    return result

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -16,6 +16,8 @@ from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.pool_config.specs import SubagentSpec
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
+
+from pathlib import Path
 
 
 def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
@@ -96,6 +98,36 @@ async def test_materialize_subagent_inherits_reasoning_effort() -> None:
 
 
 @pytest.mark.asyncio
+async def test_materialize_subagent_inherits_llm_model_info() -> None:
+    """AgentLLMConfig on the subagent descriptor receives llm_model_info from deps.
+
+    Without this threading, the factory gets a descriptor with model_info=None,
+    so runtime_services.model_info is None and tools (e.g. ReadFileTool image
+    path) degrade to text-only even when the LLM supports IMAGE.
+    """
+    from modex_agent.core.capabilities import ModelCapabilities, ModelInfo, Modality
+
+    vision_info = ModelInfo(
+        model_name="test-vision",
+        capabilities=ModelCapabilities(modalities=frozenset({Modality.TEXT, Modality.IMAGE})),
+    )
+    deps, factory = _make_deps()
+    deps = dataclasses.replace(deps, llm_model_info=vision_info)
+    template = AgentTemplate(spec=SubagentSpec(agent_name="scout"))
+    parent = SessionIdFactory().create(agent_name="main")
+    with patch(
+        "modex_agent.agents.external.cli_resolver.resolve_modexctl_bin_dir",
+        return_value=Path("/fake/bin"),
+    ):
+        await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
+    call_kwargs = factory.create_agent.call_args.kwargs
+    descriptor = call_kwargs.get("descriptor") or factory.create_agent.call_args.args[0]
+    assert descriptor.llm_config.model_info is not None
+    assert descriptor.llm_config.model_info is vision_info
+    assert descriptor.llm_config.model_info.capabilities.supports(Modality.IMAGE)
+
+
+@pytest.mark.asyncio
 async def test_materialize_subagent_passes_roles_to_descriptor() -> None:
     """T1 data-layer透传: SubagentSpec.roles lands on AgentDescriptor.roles.
 
@@ -162,7 +194,7 @@ async def test_materialize_subagent_wires_hooks_to_hook_runner():
 
 
 # ---------------------------------------------------------------------------
-# EXTERNAL_CODING subagent dispatch — emitter_factory post-build wiring
+# EXTERNAL subagent dispatch — emitter_factory post-build wiring
 # ---------------------------------------------------------------------------
 
 
@@ -176,8 +208,8 @@ async def test_materialize_external_injects_emitter_factory_into_turn_runner():
     default ``StreamingAwareEmitter``+``BrokerOutputAdapter`` from
     ``assemble_pipeline`` and turns are invisible in the WebUI history.
     """
-    from modex_agent.agents.external_coding.subagent_builder import (
-        SubagentExternalCodingBuilder,
+    from modex_agent.agents.external.subagent_builder import (
+        SubagentExternalBuilder,
     )
     from modex_agent.core.constants import ExecutionStrategyKind
     from modex_agent.core.session_id import SessionInfo
@@ -197,7 +229,7 @@ async def test_materialize_external_injects_emitter_factory_into_turn_runner():
         pipeline=fake_pipeline,
     )
 
-    class _StubBuilder(SubagentExternalCodingBuilder):
+    class _StubBuilder(SubagentExternalBuilder):
         async def build(self, spec, descriptor, parent_session, invocation_id, deps):
             return fake_instance
 
@@ -208,32 +240,28 @@ async def test_materialize_external_injects_emitter_factory_into_turn_runner():
         pool=pool,
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
-        subagent_external_coding_builder=_StubBuilder(),
+        subagent_external_builder=_StubBuilder(),
         emitter_factory=sentinel_emitter_factory,
     )
     spec = SubagentSpec(
         agent_name="coder",
-        execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+        execution_strategy=ExecutionStrategyKind.EXTERNAL,
         provider_kind=ProviderKind.OPENCODE,
     )
     template = AgentTemplate(spec=spec)
     parent = SessionInfo.from_str("inv1.main")
 
-    await template.materialize(
-        parent_session=parent, invocation_id="inv1", deps=deps
-    )
+    await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
 
-    fake_turn_runner.set_emitter_factory.assert_called_once_with(
-        sentinel_emitter_factory
-    )
+    fake_turn_runner.set_emitter_factory.assert_called_once_with(sentinel_emitter_factory)
 
 
 @pytest.mark.asyncio
 async def test_materialize_external_skips_emitter_injection_when_deps_emitter_none():
     """No emitter_factory in deps → no set_emitter_factory call; the
     external subagent keeps the default factory from assemble_pipeline."""
-    from modex_agent.agents.external_coding.subagent_builder import (
-        SubagentExternalCodingBuilder,
+    from modex_agent.agents.external.subagent_builder import (
+        SubagentExternalBuilder,
     )
     from modex_agent.core.constants import ExecutionStrategyKind
     from modex_agent.core.session_id import SessionInfo
@@ -252,7 +280,7 @@ async def test_materialize_external_skips_emitter_injection_when_deps_emitter_no
         pipeline=fake_pipeline,
     )
 
-    class _StubBuilder(SubagentExternalCodingBuilder):
+    class _StubBuilder(SubagentExternalBuilder):
         async def build(self, spec, descriptor, parent_session, invocation_id, deps):
             return fake_instance
 
@@ -263,19 +291,17 @@ async def test_materialize_external_skips_emitter_injection_when_deps_emitter_no
         pool=pool,
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
-        subagent_external_coding_builder=_StubBuilder(),
+        subagent_external_builder=_StubBuilder(),
         emitter_factory=None,
     )
     spec = SubagentSpec(
         agent_name="coder",
-        execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+        execution_strategy=ExecutionStrategyKind.EXTERNAL,
         provider_kind=ProviderKind.OPENCODE,
     )
     template = AgentTemplate(spec=spec)
     parent = SessionInfo.from_str("inv1.main")
 
-    await template.materialize(
-        parent_session=parent, invocation_id="inv1", deps=deps
-    )
+    await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
 
     fake_turn_runner.set_emitter_factory.assert_not_called()

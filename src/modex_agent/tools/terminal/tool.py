@@ -13,13 +13,8 @@ if TYPE_CHECKING:
 from modex_agent.core.tool_manager import Tool
 from modex_agent.tools.terminal.managers import TerminalManagerBase
 from modex_agent.tools.terminal.process_registry import ProcessRegistry
-from modex_agent.tools.terminal.prompt import resolve_cursor_line
-from modex_agent.tools.terminal.types import TerminalVisibility
+from modex_agent.tools.terminal.prompt import resolve_cursor_line, sanitize_terminal_output
 from modex_agent.utils.xml import xml_attr, xml_text
-
-
-def _visibility_text(visibility: TerminalVisibility | str) -> str:
-    return visibility.value if isinstance(visibility, TerminalVisibility) else str(visibility)
 
 
 class TerminalAction(StrEnum):
@@ -44,8 +39,8 @@ class TerminalTool(Tool):
     """Tool for managing named terminal sessions.
 
     Parameters:
-        action: One of open, close, list, select, history, interrupt.
-        name: Terminal name (optional for open/interrupt, required for others).
+        action: One of open, close, list, select, interrupt, current.
+        name: Terminal tab name (optional for open/interrupt/current, required for others).
         cwd: Initial working directory (only for open).
     """
 
@@ -61,7 +56,7 @@ class TerminalTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Manage persistent terminal tabs for the 'command' and 'process' tools. "
+            "Manage persistent terminal tabs for the 'bash' and 'process' tools. "
             "Every command runs in the CURRENTLY SELECTED tab — use 'open' or 'select' "
             "to switch context before running commands.\n\n"
             "Actions:\n"
@@ -129,9 +124,8 @@ class TerminalTool(Tool):
             session = await self._manager.get_or_create(target_name, cwd=cwd)
             await session.ensure_started()
             return (
-                f"Opened terminal '{target_name}' ({session.shell_info.name}) "
-                f"at timestamp {int(session.created_at)}. "
-                f"This tab is now the default — 'command' and 'process' tools will use it."
+                f"Opened terminal tab '{target_name}'. "
+                f"It is now the default — 'bash' and 'process' tools will use it."
             )
 
         if action_enum == TerminalAction.CLOSE:
@@ -142,20 +136,19 @@ class TerminalTool(Tool):
 
         if action_enum == TerminalAction.LIST:
             sessions = await self._manager.list_sessions()
-            if not sessions:
-                return "<terminal_result>\n<action>list</action>\n<output>No active terminals.</output>\n</terminal_result>"
-            lines = ["<terminal_result>", "<action>list</action>", "<tabs>"]
-            for s in sessions:
+            active = [s for s in sessions if s.is_alive]
+            if not active:
+                return "<terminal_result>\n<output>No active terminal tabs.</output>\n</terminal_result>"
+            lines = ["<terminal_result>", "<tabs>"]
+            for s in active:
                 default_attr = ' default="true"' if s.is_default else ""
-                alive_attr = ' alive="false"' if not s.is_alive else ""
                 proc_attr = ""
                 if self._registry:
                     running = self._registry.get_running_by_terminal(s.name)
                     if running:
                         proc_attr = f' process="{xml_attr(running.command)}"'
                 lines.append(
-                    f'  <tab name="{xml_attr(s.name)}" shell="{s.shell_type}" '
-                    f'created_at="{int(s.created_at)}"{default_attr}{alive_attr}{proc_attr} />'
+                    f'  <tab name="{xml_attr(s.name)}"{default_attr}{proc_attr} />'
                 )
             lines.append("</tabs>")
             lines.append("</terminal_result>")
@@ -179,13 +172,11 @@ class TerminalTool(Tool):
             await asyncio.sleep(0.3)
             await session.refresh_output(timeout=0.5)
             segment = await session.current_segment()
-            cursor = resolve_cursor_line(segment).strip()
+            cursor = sanitize_terminal_output(resolve_cursor_line(segment)).strip()
             return (
                 "<terminal_result>\n"
-                f"<action>interrupt</action>\n"
-                f"<terminal>{xml_text(session.name)}</terminal>\n"
-                f"<output>{xml_text(cursor or '(interrupted)')}</output>\n"
-                f"</terminal_result>"
+                f"<output>\n{xml_text(cursor or '(interrupted)')}\n</output>\n"
+                "</terminal_result>"
             )
 
         if action_enum == TerminalAction.CURRENT:
@@ -196,7 +187,6 @@ class TerminalTool(Tool):
             if session is None:
                 return (
                     "<terminal_result>\n"
-                    "<action>current</action>\n"
                     "<status>unknown</status>\n"
                     "<output>No terminal is active. Use terminal open to create one.</output>\n"
                     "</terminal_result>"
@@ -204,46 +194,25 @@ class TerminalTool(Tool):
 
             status = await session.command_status()
             output = await session.last_command_output()
-            segment = await session.current_segment()
-            cursor = resolve_cursor_line(segment).strip()
 
             raw_idle_ms = int((time.monotonic() - session.last_byte_at) * 1000)
-            idle_ms_str = str(raw_idle_ms) if raw_idle_ms > 0 else None
+            no_output_ms_str = str(raw_idle_ms) if raw_idle_ms > 0 else None
 
-            default_session = await self._manager.get_default_session()
-            is_default = default_session is not None and session.name == default_session.name
-
-            alive = await session.is_alive()
             parts = [
                 "<terminal_result>",
-                "<action>current</action>",
-                f"<terminal>{xml_text(session.name)}</terminal>",
-                f"<shell>{xml_text(session.shell_info.name)}</shell>",
-                f"<alive>{str(alive).lower()}</alive>",
-                f"<visibility>{_visibility_text(session._backend.visibility)}</visibility>",
-                f"<created_at>{int(session.created_at)}</created_at>",
-                f"<default>{str(is_default).lower()}</default>",
                 f"<status>{status.value}</status>",
             ]
-            if cursor:
-                parts.append(f"<cursor>{xml_text(cursor)}</cursor>")
-            if idle_ms_str:
-                parts.append(f"<idle_ms>{idle_ms_str}</idle_ms>")
+            if no_output_ms_str:
+                parts.append(f"<no_output_ms>{no_output_ms_str}</no_output_ms>")
 
-            # Running command info
+            parts.append(f"<tab_name>{xml_text(session.name)}</tab_name>")
+
             if self._registry:
                 running = self._registry.get_running_by_terminal(session.name)
                 if running:
                     parts.append(f"<running_command>{xml_text(running.command)}</running_command>")
-                    parts.append(f"<running_since>{int(running.started_at)}</running_since>")
 
-            if session.last_status:
-                parts.append(f"<last_status>{xml_text(session.last_status)}</last_status>")
-
-            if session.window_title:
-                parts.append(f"<window_title>{xml_text(session.window_title)}</window_title>")
-
-            parts.append(f"<output>{xml_text(output or '(no output yet)')}</output>")
+            parts.append(f"<output>\n{xml_text(sanitize_terminal_output(output) or '(no output yet)')}\n</output>")
 
             # Interference detection for visible terminals
             if session.detect_interference(status):

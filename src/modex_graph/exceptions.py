@@ -10,17 +10,14 @@ Two layers:
       Suspend-without-re-execution semantics: already-applied state updates
       persist; resume re-enters from the entry node, NOT by re-running the
       interrupted node body.
-    - `GraphDrained` — cooperative shutdown. Class exists but is never
-      raised; wiring is deferred (ADR-0034 D10 termination does not use it).
+    - `GraphDrained` — cooperative pause/stop signal raised by scheduler
+      safe points when `GraphRunControl` receives an external request.
     - `ParentCommand` — subgraph→parent routing. Class exists but is never
       raised; wiring is deferred (ADR-0033 D12 Phase c item 2).
-    - `InvalidUpdateError` — multiple concurrent writes to the same
-      `LastValue` channel in one generation. Raised by `LastValue.update`
-      when `len(values) > 1`. See ADR-0033 D4.
 
 - Routing / recursion errors:
     - `RoutingError` — raised when the engine cannot resolve a next node
-      (no matching `Command.goto`, transition, or default edge).
+      (node did not deliver and no default edge exists).
     - `GraphRecursionError` — raised when the engine-level `max_iterations`
       safety net is exceeded (abnormal exit, prevents infinite loops).
 """
@@ -33,8 +30,8 @@ from typing import Any
 class GraphBubbleUp(Exception):  # noqa: N818
     """Base class for cooperative-control exceptions the engine never swallows.
 
-    Subclasses: `GraphInterrupt`, `GraphDrained`, `ParentCommand`,
-    `InvalidUpdateError`. The engine propagates these to the caller verbatim
+    Subclasses: `GraphInterrupt`, `GraphDrained`, `ParentCommand`. The engine
+    propagates these to the caller verbatim
     — never caught and silenced. See ADR-0033 D7.
     """
 
@@ -46,7 +43,7 @@ class GraphInterrupt(GraphBubbleUp):
     side effects persist across the interrupt boundary. Resume re-enters
     the graph at the entry node; the interrupted node body is NOT re-run.
     Re-entry routing is driven by `state.resume_target`: the entry node
-    reads it and routes via `Command(goto=...)`.
+    reads it and routes via `deliver(content, target, ctx)`.
 
     The `value` carries the interrupt payload (e.g. an `ApprovalTransaction`
     awaiting human decision). The caller (e.g. `ReActAgent.run()`) inspects
@@ -60,15 +57,7 @@ class GraphInterrupt(GraphBubbleUp):
 
 
 class GraphDrained(GraphBubbleUp):
-    """Cooperative shutdown signal.
-
-    The class exists but is never raised. ADR-0034 realized Phase c via
-    continuous scheduling (not BSP supersteps), so there are no superstep
-    boundaries to wire this at. Termination is driven by the ready/active
-    sets being empty (ADR-0034 D10). Cooperative shutdown wiring (e.g.
-    SIGTERM-style graceful drain with checkpoint preservation) remains
-    deferred. See ADR-0033 D7 + D1.
-    """
+    """Cooperative pause/stop signal raised at scheduler safe points."""
 
 
 class ParentCommand(GraphBubbleUp):
@@ -81,33 +70,12 @@ class ParentCommand(GraphBubbleUp):
     """
 
 
-class InvalidUpdateError(GraphBubbleUp):
-    """Raised when multiple concurrent writes target the same `LastValue` channel.
-
-    Per ADR-0033 D4: `LastValue` enforces single-writer semantics. When ≥2
-    concurrent instances write the same `LastValue` field in one generation,
-    `LastValue.update(values)` with `len(values) > 1` raises this error.
-    Callers should use `ReducerChannel` for fan-in, or restructure the graph
-    so only one instance writes each `LastValue` field per generation.
-
-    This is a `GraphBubbleUp` subclass: the engine propagates it to the
-    caller verbatim (never caught and silenced). The caller can catch it as
-    `InvalidUpdateError`, `GraphBubbleUp`, or `Exception`.
-
-    Raised by:
-    - `WriteConflictDetector.commit()` when two same-generation instances
-      write the same field.
-    - `LastValue.update(values)` when `len(values) > 1` (the batch merge
-      path, still used by `GraphState.apply_concurrent_updates`).
-    """
-
-
 class RoutingError(Exception):
     """Raised when the engine cannot resolve the next node.
 
-    Two-layer routing model (ADR-0034 D12): `Command.goto` (dynamic layer)
-    is tried first, then `transition` matched against static edges, then the
-    default edge (`reason=None`). If none matches, `RoutingError` is raised.
+    Deliver-only routing: nodes must call ``deliver(content, next_node, ctx)``
+    during ``execute()``. If a node produces no delivers and has no downstream
+    edges, ``RoutingError`` is raised.
     """
 
 
@@ -116,7 +84,20 @@ class GraphRecursionError(Exception):
 
     This is an ABNORMAL exit — it prevents infinite loops. Distinct from
     the node-level graceful exit (nodes check business iteration count and
-    return `transition=...` to route to END via static edge, producing a
-    normal result). Both coexist; engine-level N should be larger than
-    business max (e.g. business 25, compile 100). See ADR-0033 D9.3.
+    deliver to END, producing a normal result). Both coexist; engine-level
+    N should be larger than business max (e.g. business 25, compile 100).
+    See ADR-0033 D9.3.
+    """
+
+
+class InvocationStateError(Exception):
+    """Raised when a CAS (compare-and-swap) transition on a node invocation fails.
+
+    The strict lifecycle methods (``complete_invocation``,
+    ``suspend_invocation``, ``cancel_invocation``) update the
+    ``node_states`` row only if it is in the ``running`` state with
+    ``suspended=0``. If the row is already terminal (``completed`` /
+    ``canceled`` / ``crashed``) or suspended, the UPDATE affects 0 rows
+    and this exception is raised — indicating a lost race or a duplicate
+    transition attempt.
     """

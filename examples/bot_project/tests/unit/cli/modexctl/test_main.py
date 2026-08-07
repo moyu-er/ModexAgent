@@ -11,17 +11,14 @@ asserted where relevant.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
 import pytest
 import typer
-from bot.cli.modexctl.main import (
-    EXIT_OK,
-    EXIT_USAGE,
-    _parse_targets,
-    build_app,
-)
+from bot.cli.modexctl.app import EXIT_OK, EXIT_USAGE, build_app
+from bot.cli.modexctl.context import ModexCtlContext, _parse_targets, _read_env_snapshot
 from typer.testing import CliRunner
 
 # ---------------------------------------------------------------------------
@@ -58,6 +55,7 @@ def no_modex_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for k in list(os.environ):
         if k.startswith("MODEX_"):
             monkeypatch.delenv(k, raising=False)
+    monkeypatch.delenv("OPENCODE_SESSION_ID", raising=False)
 
 
 @pytest.fixture()
@@ -76,6 +74,39 @@ def workflow_env(monkeypatch: pytest.MonkeyPatch, comm_env: None) -> None:
     monkeypatch.setenv("MODEX_WORKFLOW_ID", "wf-123")
     monkeypatch.setenv("MODEX_TASK_ID", "task-456")
     monkeypatch.setenv("MODEX_NODE_ID", "node-789")
+
+
+@pytest.fixture()
+def opencode_env(
+    monkeypatch: pytest.MonkeyPatch, no_modex_env: None, tmp_path: Path
+) -> Path:
+    """Set up opencode singleton env: OPENCODE_SESSION_ID + snapshot file.
+
+    Returns the tmp_path that should be used as CWD for the test.
+    """
+    workspace = tmp_path / "workspace"
+    snapshots_dir = workspace / ".modex" / "external" / "env-snapshots"
+    snapshots_dir.mkdir(parents=True)
+
+    opencode_sid = "ses_abc123"
+    snapshot = {
+        "MODEX_SESSION_ID": "abc.coder",
+        "MODEX_AGENT_NAME": "coder",
+        "MODEX_INBOX_ROOT": str(workspace / ".modex" / "inbox"),
+        "MODEX_AGENT_POOL_MAP": "analyst=pool_analyst",
+        "MODEX_TARGETS": "analyst=Reviews code",
+        "MODEX_WORKSPACE_ROOT": str(workspace),
+        "MODEX_CONTROL_ORIGIN": "http://127.0.0.1:21800",
+        "MODEX_COMM_KIND": "normal",
+        "PATH": "/usr/bin:/bin",
+    }
+    (snapshots_dir / f"{opencode_sid}.json").write_text(
+        json.dumps(snapshot, indent=2, sort_keys=True), encoding="utf-8"
+    )
+
+    monkeypatch.setenv("OPENCODE_SESSION_ID", opencode_sid)
+    monkeypatch.chdir(workspace)
+    return workspace
 
 
 def _registered_names(app: typer.Typer) -> set[str | None]:
@@ -635,3 +666,187 @@ class TestInBotHelpCleanliness:
         assert result.exit_code == 0
         for term in _FORBIDDEN_HELP_TERMS:
             assert term not in result.output
+
+
+# ---------------------------------------------------------------------------
+# OPENCODE_SESSION_ID fallback — modexctl reads per-provider-session env
+# snapshot when MODEX_* vars are absent (opencode singleton path).
+# ---------------------------------------------------------------------------
+
+
+class TestOpenCodeSessionFallback:
+    """``ModexCtlContext.from_env()`` falls back to a snapshot file written by
+    the external agent harness when ``OPENCODE_SESSION_ID`` is set but the
+    native ``MODEX_*`` vars are absent (opencode singleton process)."""
+
+    def test_from_env_native_path_unchanged(self, comm_env: None) -> None:
+        """All MODEX_* env vars present → from_env uses them directly; no
+        OPENCODE_SESSION_ID needed."""
+        ctx = ModexCtlContext.from_env()
+        assert ctx is not None
+        assert ctx.session_id == "abc.coder"
+        assert ctx.agent_name == "coder"
+        assert ctx.comm_kind == "normal"
+
+    def test_from_env_opencode_fallback(self, opencode_env: Path) -> None:
+        """MODEX_* absent, OPENCODE_SESSION_ID set, snapshot present → context
+        built from snapshot."""
+        ctx = ModexCtlContext.from_env()
+        assert ctx is not None
+        assert ctx.session_id == "abc.coder"
+        assert ctx.agent_name == "coder"
+        assert ctx.comm_kind == "normal"
+        assert ctx.workspace_root == str(opencode_env)
+        assert ctx.control_origin == "http://127.0.0.1:21800"
+        assert ctx.pool_map == {"analyst": "pool_analyst"}
+        assert ctx.targets == {"analyst": "Reviews code"}
+
+    def test_from_env_opencode_fallback_missing_snapshot(
+        self, no_modex_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """OPENCODE_SESSION_ID set but no snapshot file → None."""
+        monkeypatch.setenv("OPENCODE_SESSION_ID", "ses_nonexistent")
+        monkeypatch.chdir(tmp_path)
+        ctx = ModexCtlContext.from_env()
+        assert ctx is None
+
+    def test_from_env_opencode_fallback_corrupt_snapshot(
+        self, no_modex_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Snapshot file exists but invalid JSON → None."""
+        workspace = tmp_path / "workspace"
+        snapshots_dir = workspace / ".modex" / "external" / "env-snapshots"
+        snapshots_dir.mkdir(parents=True)
+        (snapshots_dir / "ses_bad.json").write_text("{not valid json", encoding="utf-8")
+        monkeypatch.setenv("OPENCODE_SESSION_ID", "ses_bad")
+        monkeypatch.chdir(workspace)
+        ctx = ModexCtlContext.from_env()
+        assert ctx is None
+
+    def test_from_env_opencode_fallback_missing_keys(
+        self, no_modex_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Snapshot file exists but missing MODEX_SESSION_ID → None."""
+        workspace = tmp_path / "workspace"
+        snapshots_dir = workspace / ".modex" / "external" / "env-snapshots"
+        snapshots_dir.mkdir(parents=True)
+        # Missing MODEX_SESSION_ID and MODEX_AGENT_NAME
+        snapshot = {
+            "MODEX_INBOX_ROOT": str(workspace / ".modex" / "inbox"),
+            "MODEX_AGENT_POOL_MAP": "analyst=pool_analyst",
+            "MODEX_TARGETS": "analyst=Reviews code",
+        }
+        (snapshots_dir / "ses_partial.json").write_text(
+            json.dumps(snapshot), encoding="utf-8"
+        )
+        monkeypatch.setenv("OPENCODE_SESSION_ID", "ses_partial")
+        monkeypatch.chdir(workspace)
+        ctx = ModexCtlContext.from_env()
+        assert ctx is None
+
+    def test_from_env_fails_closed_when_snapshot_missing(
+        self, comm_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """OPENCODE_SESSION_ID set but no snapshot → fail closed (return None).
+
+        The opencode process env has frozen MODEX_* vars that would cause
+        crossover if read via the native path.
+        """
+        monkeypatch.setenv("OPENCODE_SESSION_ID", "ses_abc123")
+        ctx = ModexCtlContext.from_env()
+        assert ctx is None
+
+    def test_from_env_opencode_preferred_when_snapshot_exists(
+        self, comm_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Both MODEX_* env vars AND OPENCODE_SESSION_ID+snapshot set →
+        opencode snapshot wins (process env MODEX_* are frozen/untrustworthy
+        in the opencode singleton)."""
+        # Write a snapshot with DIFFERENT session_id than comm_env
+        snapshots_dir = tmp_path / ".modex" / "external" / "env-snapshots"
+        snapshots_dir.mkdir(parents=True)
+        snapshot = {
+            "MODEX_SESSION_ID": "snapshot_session",
+            "MODEX_AGENT_NAME": "snapshot_agent",
+            "MODEX_INBOX_ROOT": str(tmp_path / "inbox"),
+            "MODEX_AGENT_POOL_MAP": "snap=pool",
+            "MODEX_TARGETS": "snap=target",
+            "MODEX_WORKSPACE_ROOT": str(tmp_path),
+            "MODEX_CONTROL_ORIGIN": "http://127.0.0.1:21800",
+            "MODEX_COMM_KIND": "normal",
+            "PATH": "/usr/bin",
+        }
+        (snapshots_dir / "ses_real.json").write_text(
+            json.dumps(snapshot, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        monkeypatch.setenv("OPENCODE_SESSION_ID", "ses_real")
+        monkeypatch.chdir(tmp_path)
+
+        ctx = ModexCtlContext.from_env()
+        assert ctx is not None
+        # From snapshot, NOT from frozen process env
+        assert ctx.session_id == "snapshot_session"
+        assert ctx.agent_name == "snapshot_agent"
+
+    def test_from_env_opencode_subagent_snapshot(
+        self, opencode_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Snapshot with MODEX_COMM_KIND=subagent + MODEX_PARENT_SESSION_ID →
+        context.is_subagent is True."""
+        opencode_sid = "ses_abc123"
+        snapshot = {
+            "MODEX_SESSION_ID": "inv1.coder",
+            "MODEX_AGENT_NAME": "coder",
+            "MODEX_INBOX_ROOT": str(opencode_env / ".modex" / "inbox"),
+            "MODEX_AGENT_POOL_MAP": "coder=default;default=default",
+            "MODEX_TARGETS": "default=Main Agent",
+            "MODEX_WORKSPACE_ROOT": str(opencode_env),
+            "MODEX_CONTROL_ORIGIN": "http://127.0.0.1:21800",
+            "MODEX_COMM_KIND": "subagent",
+            "MODEX_PARENT_SESSION_ID": "conv1.default",
+        }
+        snapshots_dir = opencode_env / ".modex" / "external" / "env-snapshots"
+        (snapshots_dir / f"{opencode_sid}.json").write_text(
+            json.dumps(snapshot), encoding="utf-8"
+        )
+        ctx = ModexCtlContext.from_env()
+        assert ctx is not None
+        assert ctx.is_subagent is True
+        assert ctx.parent_session_id == "conv1.default"
+        assert ctx.parent_name == "default"
+
+    def test_read_env_snapshot_path_traversal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """opencode_sid with '../' is sanitized; stays inside env-snapshots/."""
+        workspace = tmp_path / "workspace"
+        snapshots_dir = workspace / ".modex" / "external" / "env-snapshots"
+        snapshots_dir.mkdir(parents=True)
+        # Place a file at the traversal target (one dir up from env-snapshots)
+        traversal_target = workspace / ".modex" / "external" / "escape.json"
+        traversal_target.write_text(
+            json.dumps({"MODEX_SESSION_ID": "PWNED"}), encoding="utf-8"
+        )
+        monkeypatch.chdir(workspace)
+        # "../escape" sanitizes: /->_  -> ".._escape", then ..->_  -> "__escape"
+        result = _read_env_snapshot("../escape")
+        # Must NOT read the traversal target
+        assert result is None
+        # Place file at the sanitized path inside env-snapshots/
+        sanitized_path = snapshots_dir / "__escape.json"
+        sanitized_path.write_text(
+            json.dumps({"MODEX_SESSION_ID": "safe"}), encoding="utf-8"
+        )
+        result = _read_env_snapshot("../escape")
+        assert result is not None
+        assert result["MODEX_SESSION_ID"] == "safe"
+
+    def test_read_env_snapshot_returns_none_for_missing_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Non-existent sid → None."""
+        workspace = tmp_path / "workspace"
+        (workspace / ".modex" / "external" / "env-snapshots").mkdir(parents=True)
+        monkeypatch.chdir(workspace)
+        result = _read_env_snapshot("ses_does_not_exist")
+        assert result is None

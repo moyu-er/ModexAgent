@@ -238,3 +238,114 @@ async def test_fork_provider_differs_per_session():
     b = await ForkContextProvider(spec, "inv2.planner", _MockMemory(), _PARENT_SID).get_or_refresh()
     assert "inv1" in a and "inv2" not in a
     assert "inv2" in b and "inv1" not in b
+
+
+# ── Provider convergence (T5) — deprecated providers ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_h1_output_md_provider_not_in_pipeline():
+    from modex_agent.core.agent import AgentCommKind
+    from modex_agent.memory.injection import RestrictedInjectionPolicy
+    from modex_agent.memory.system import MemorySystemContextManager
+
+    mgr = MemorySystemContextManager(
+        memory_system=_MockMemory(),  # type: ignore[arg-type]
+        output_base_dir=Path("/tmp/test_output"),
+        injection_policy=RestrictedInjectionPolicy(),
+        comm_kind=AgentCommKind.SUBAGENT,
+    )
+    state = await mgr.load(session_id="inv1.scout")
+    assert state.system_prompt_pipeline is not None
+    prompt = await state.system_prompt_pipeline.get_or_refresh()
+    assert "OUTPUT.md" not in prompt
+    assert "work is lost" not in prompt
+
+
+def test_h2_output_md_provider_class_deprecated():
+    from modex_agent.memory.prompt_pipeline.providers import OutputMdProvider
+
+    assert "[DEPRECATED]" in (OutputMdProvider.__doc__ or "")
+
+
+def test_h3_consult_content_no_output_reference():
+    from modex_agent.core.agent import AgentCommKind
+    from modex_agent.memory.prompt_pipeline.providers import (
+        _SubagentConsultationSubProvider,
+    )
+
+    provider = _SubagentConsultationSubProvider(None, AgentCommKind.SUBAGENT)
+    assert "OUTPUT" not in provider.content()
+
+
+def test_h4_consult_content_no_deliverable_reference():
+    from modex_agent.core.agent import AgentCommKind
+    from modex_agent.memory.prompt_pipeline.providers import (
+        _SubagentConsultationSubProvider,
+    )
+
+    provider = _SubagentConsultationSubProvider(None, AgentCommKind.SUBAGENT)
+    assert "deliverable" not in provider.content().lower()
+
+
+def test_h5_consult_content_guides_against_reporting_results():
+    from modex_agent.core.agent import AgentCommKind
+    from modex_agent.memory.prompt_pipeline.providers import (
+        _SubagentConsultationSubProvider,
+    )
+
+    provider = _SubagentConsultationSubProvider(None, AgentCommKind.SUBAGENT)
+    assert "Do not use it to report results" in provider.content()
+
+
+def test_h6_consult_content_no_prefixes():
+    from modex_agent.core.agent import AgentCommKind
+    from modex_agent.memory.prompt_pipeline.providers import (
+        _SubagentConsultationSubProvider,
+    )
+
+    provider = _SubagentConsultationSubProvider(None, AgentCommKind.SUBAGENT)
+    content = provider.content()
+    assert "QUESTION" not in content
+    assert "NEED_DECISION" not in content
+
+
+def test_h7_consult_content_has_ask_parent_question():
+    from modex_agent.core.agent import AgentCommKind
+    from modex_agent.memory.prompt_pipeline.providers import (
+        _SubagentConsultationSubProvider,
+    )
+
+    provider = _SubagentConsultationSubProvider(None, AgentCommKind.SUBAGENT)
+    assert "ask your parent a question" in provider.content()
+
+
+def test_h8_dispatch_applies_returns_false():
+    from modex_agent.core.agent import AgentCommKind
+    from modex_agent.memory.prompt_pipeline.providers import (
+        _SubagentDispatchSubProvider,
+    )
+
+    provider = _SubagentDispatchSubProvider(None, AgentCommKind.NORMAL)
+    assert provider.applies() is False
+
+
+def test_h9_dispatch_provider_class_deprecated():
+    from modex_agent.memory.prompt_pipeline.providers import (
+        _SubagentDispatchSubProvider,
+    )
+
+    assert "[DEPRECATED]" in (_SubagentDispatchSubProvider.__doc__ or "")
+
+
+@pytest.mark.asyncio
+async def test_h10_no_dispatch_in_subagent_prompt():
+    from modex_agent.core.agent import AgentCommKind
+    from modex_agent.memory.prompt_pipeline.providers import (
+        AgentCommunicationSystemPromptProvider,
+    )
+
+    provider = AgentCommunicationSystemPromptProvider(None, AgentCommKind.SUBAGENT)
+    result = await provider.get_or_refresh()
+    assert "Dispatching Subagents" not in result
+    assert "PROGRESS_UPDATE" not in result

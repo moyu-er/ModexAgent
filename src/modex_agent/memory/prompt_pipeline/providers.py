@@ -9,13 +9,21 @@ from __future__ import annotations
 import hashlib
 import logging
 import sys
+import time
+from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.constants import AgentRole
+from modex_agent.core.agent import AgentCommKind
+from modex_agent.core.capabilities import Modality, ModelInfo
+from modex_agent.core.constants import (
+    _NO_DIR_SENTINEL,
+    AgentRole,
+    format_working_directory_line,
+)
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.scope import MemoryContext
 from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
@@ -108,71 +116,234 @@ class TodoAwareSystemPromptProvider(SystemPromptProvider):
         return _TODO_TASK_DISCIPLINE_PROMPT if self._has_todo_tools() else ""
 
 
-class PeerCommunicationSystemPromptProvider(SystemPromptProvider):
-    """Injects the remote-agent reply contract.
+class _CommSubProvider(ABC):
+    """Internal strategy object for ``AgentCommunicationSystemPromptProvider``.
 
-    Fires only when the agent owns ``send_to_agent`` AND at least one of its
-    targets is a remote agent (a ``CommunicationTarget`` whose ``bus_ref`` is
-    set — the target does not share this agent's bus, so there is no implicit
-    reply path). For those targets the agent's ordinary output is invisible
-    and a reply is only possible via ``send_to_agent``.
+    Each sub-module contributes one communication-context section. Sub-modules
+    are NOT independent ``SystemPromptProvider`` instances — the composite
+    provider owns the version/cache contract and delegates content/version
+    computation to its sub-modules.
+    """
 
-    The contract makes this unmissable without ever naming the underlying
-    topology (the agent stays unaware of pools, main-vs-subagent roles, or any
-    routing machinery): it only knows some reachable agents require explicit
-    sends to receive anything back.
+    @abstractmethod
+    def applies(self) -> bool:
+        """Return True if this sub-module's section should be emitted."""
 
-    Replies are OPTIONAL — forcing them would create infinite ping-pong.
+    @abstractmethod
+    def version_part(self) -> str:
+        """Return the version fragment for this sub-module."""
 
-    Version is derived from the sorted remote target names so the cache
-    invalidates exactly when the reachable set changes.
+    @abstractmethod
+    def content(self) -> str:
+        """Return the prompt section content (empty if N/A)."""
+
+
+class _PeerCommSubProvider(_CommSubProvider):
+    """Remote-agent reply contract — moved from the deleted
+    ``PeerCommunicationSystemPromptProvider``.
+
+    Fires when the agent owns ``task`` AND at least one target is a
+    remote agent (a ``CommunicationTarget`` whose ``bus_ref`` is set — the
+    target does not share this agent's bus, so there is no implicit reply
+    path). For those targets the agent's ordinary output is invisible and a
+    reply is only possible via ``task``.
     """
 
     def __init__(self, tool_manager: ToolManager | None) -> None:
-        super().__init__()
         self._tool_manager = tool_manager
 
     def _remote_target_names(self) -> list[str]:
         if self._tool_manager is None:
             return []
-        tool = self._tool_manager.get_tool("send_to_agent")
+        tool = self._tool_manager.get_tool("task")
         if tool is None:
             return []
-        from modex_agent.multi_agent.tools import SendToAgentTool
+        from modex_agent.multi_agent.tools import TaskDispatchTool
 
-        if not isinstance(tool, SendToAgentTool):
+        if not isinstance(tool, TaskDispatchTool):
             return []
         return sorted(t.name for t in tool.list_targets() if t.bus_ref is not None)
 
-    async def _fetch_version(self) -> str:
-        names = self._remote_target_names()
-        return "remote-comm:" + ",".join(names) if names else "no-remote-comm"
+    def applies(self) -> bool:
+        return bool(self._remote_target_names())
 
-    async def _fetch_content(self) -> str:
+    def version_part(self) -> str:
+        names = self._remote_target_names()
+        return "peer:" + ",".join(names)
+
+    def content(self) -> str:
         names = self._remote_target_names()
         if not names:
             return ""
         name_list = "\n".join(f"  - {name}" for name in names)
         return (
             "## Communicating With Remote Agents\n\n"
-            "Some agents you can reach via `send_to_agent` cannot see anything "
+            "Some agents you can reach via `task` cannot see anything "
             "you produce normally — not this reply, not your reasoning, not your "
             "tool output. For these agents the ONLY way they ever hear from you "
-            "is a `send_to_agent` call aimed at them.\n\n"
+            "is a `task` call aimed at them.\n\n"
             "Agents that require explicit sends:\n"
             f"{name_list}\n\n"
-            "Replies are OPTIONAL. Only call `send_to_agent` back when the sender "
+            "Replies are OPTIONAL. Only call `task` back when the sender "
             "actually needs your response — do NOT acknowledge just to be polite, "
             "and do NOT ping-pong. If the incoming message does not require action "
             "from you, end your turn without replying.\n"
         )
 
 
-class RuntimeProvider(SystemPromptProvider):
-    """Runtime metadata — current date/hour and platform. Refreshes hourly."""
+class _SubagentDispatchSubProvider(_CommSubProvider):
+    """[DEPRECATED] Main-agent subagent dispatch contract.
+
+    Effective information was fully covered by TaskDispatchTool.description;
+    the NEED_DECISION/PROGRESS_UPDATE prefix contract was unfulfilled
+    (subagents were never instructed to use these prefixes in final results).
+    Retained for reference.
+
+    Originally fired when the agent was NOT a subagent (``comm_kind`` is
+    ``None`` or ``NORMAL``) AND the agent owned the ``task`` tool AND at
+    least one target was a subagent (``kind == SUBAGENT``). Main agents
+    were constructed with ``comm_kind=None`` (the default), so the check
+    used ``== SUBAGENT`` rather than ``!= NORMAL`` to treat ``None`` as
+    main/normal.
+    """
+
+    def __init__(
+        self,
+        tool_manager: ToolManager | None,
+        comm_kind: AgentCommKind | None,
+    ) -> None:
+        self._tool_manager = tool_manager
+        self._comm_kind = comm_kind
+
+    def _subagent_target_names(self) -> list[str]:
+        if self._tool_manager is None:
+            return []
+        tool = self._tool_manager.get_tool("task")
+        if tool is None:
+            return []
+        from modex_agent.multi_agent.tools import TaskDispatchTool
+
+        if not isinstance(tool, TaskDispatchTool):
+            return []
+        return sorted(t.name for t in tool.list_targets() if t.kind == AgentCommKind.SUBAGENT)
+
+    def applies(self) -> bool:
+        return False
+
+    def version_part(self) -> str:
+        names = self._subagent_target_names()
+        return "dispatch:" + ",".join(names)
+
+    def content(self) -> str:
+        return (
+            "## Dispatching Subagents\n\n"
+            "Subagents cannot see anything you output directly. To assign a NEW task,\n"
+            "use the `task` tool — its `content` parameter carries the full task\n"
+            "description, and the tool guides you to construct a high-quality prompt.\n\n"
+            "To CONTINUE an existing subagent session (e.g. after receiving a\n"
+            "NEED_DECISION response), use `task` with the `invocation_id`\n"
+            "from the prior task result.\n\n"
+            "After dispatching, end your turn — the notification resumes you with the\n"
+            "result when the subagent finishes.\n\n"
+            "Subagents surface structured prefixes in their delivered result:\n"
+            "- `NEED_DECISION: <question>` — needs your decision. Continue the session\n"
+            "  (task with same invocation_id) with your answer.\n"
+            "- `PROGRESS_UPDATE: <info>` — informational, no action needed.\n"
+        )
+
+
+class _SubagentConsultationSubProvider(_CommSubProvider):
+    """SUBAGENT consultation contract — ask parent for input via
+    ``send_to_agent``.
+
+    Fires when ``comm_kind == SUBAGENT``.
+    """
+
+    def __init__(
+        self,
+        tool_manager: ToolManager | None,
+        comm_kind: AgentCommKind | None,
+    ) -> None:
+        self._tool_manager = tool_manager
+        self._comm_kind = comm_kind
+
+    def applies(self) -> bool:
+        return self._comm_kind == AgentCommKind.SUBAGENT
+
+    def version_part(self) -> str:
+        return "consult"
+
+    def content(self) -> str:
+        return (
+            "## Consulting Your Parent\n\n"
+            "Use `send_to_agent` only to ask your parent a question or request a "
+            "decision when you cannot proceed without input. Do not use it to report "
+            "results or progress."
+        )
+
+
+class AgentCommunicationSystemPromptProvider(SystemPromptProvider):
+    """Composite provider for agent-communication context.
+
+    Replaces the deleted ``PeerCommunicationSystemPromptProvider`` with a
+    two-part contract whose applicability depends on the agent's topology
+    (``comm_kind``) and the shape of its ``send_to_agent`` target set:
+
+    - ``_PeerCommSubProvider`` — remote-agent reply contract (peer targets
+      whose ``bus_ref`` is set).
+    - ``_SubagentConsultationSubProvider`` — SUBAGENT consultation contract
+      (ask parent for input via ``send_to_agent``).
+
+    The deprecated ``_SubagentDispatchSubProvider`` is retained in the module
+    but no longer instantiated — its effective content was fully covered by
+    ``TaskDispatchTool.description``.
+
+    The composite provider owns the version/cache contract; sub-modules are
+    internal strategy objects that contribute version fragments and content
+    sections. Version is ``"comm:"`` + ``|``-joined fragments of all applying
+    sub-modules (``"comm:none"`` if none apply); content is ``\\n\\n``-joined
+    sections of all applying sub-modules, empty strings skipped (``""`` if
+    none apply).
+    """
+
+    def __init__(
+        self,
+        tool_manager: ToolManager | None,
+        comm_kind: AgentCommKind | None,
+    ) -> None:
+        super().__init__()
+        self._sub_providers: list[_CommSubProvider] = [
+            _PeerCommSubProvider(tool_manager),
+            _SubagentConsultationSubProvider(tool_manager, comm_kind),
+        ]
 
     async def _fetch_version(self) -> str:
-        return datetime.now(get_user_timezone()).strftime("%Y-%m-%d-%H")
+        parts = [sub.version_part() for sub in self._sub_providers if sub.applies()]
+        return "comm:" + "|".join(parts) if parts else "comm:none"
+
+    async def _fetch_content(self) -> str:
+        sections = [sub.content() for sub in self._sub_providers if sub.applies()]
+        return "\n\n".join(s for s in sections if s)
+
+
+class RuntimeProvider(SystemPromptProvider):
+    """Runtime metadata for the current turn — date/hour, platform, and working directory.
+
+    The working directory is upstream-injected from ``InputMessage.workspace``;
+    when absent, the directory section is omitted entirely. The version key
+    includes a directory hash so the prompt cache refreshes on workspace change.
+    """
+
+    def __init__(self, working_directory: Path | None = None) -> None:
+        super().__init__()
+        self._working_directory = working_directory
+
+    async def _fetch_version(self) -> str:
+        hour = datetime.now(get_user_timezone()).strftime("%Y-%m-%d-%H")
+        if self._working_directory is None:
+            return f"{hour}:{_NO_DIR_SENTINEL}"
+        directory_version = hashlib.md5(str(self._working_directory).encode()).hexdigest()[:16]
+        return f"{hour}:{directory_version}"
 
     async def _fetch_content(self) -> str:
         current_time = datetime.now(get_user_timezone()).strftime("%Y-%m-%d %Hh")
@@ -187,7 +358,49 @@ class RuntimeProvider(SystemPromptProvider):
             f"Current Time: {current_time} (hour precision, not exact)",
             f"Platform: {platform_name}",
         ]
+        dir_line = format_working_directory_line(self._working_directory)
+        if dir_line is not None:
+            lines.append(dir_line)
         return "\n".join(lines)
+
+
+class ModelInfoProvider(SystemPromptProvider):
+    """Declares the active model's perceptual capabilities to the agent.
+
+    ``ModelInfo`` is supplied at construction (per-turn, threaded from
+    ``runtime_info[RuntimeInfoKey.MODEL_INFO]`` via ``assemble_context`` →
+    ``load``). Content is a generic capability declaration; tools that
+    behave differently per modality (e.g. ``read`` returning image content)
+    are mentioned as examples, not bound. Emits nothing when ``model_info``
+    is ``None``.
+    """
+
+    def __init__(self, model_info: ModelInfo | None) -> None:
+        super().__init__()
+        self._model_info = model_info
+
+    async def _fetch_version(self) -> str:
+        if self._model_info is None:
+            return "model:none"
+        modalities = ",".join(sorted(m.value for m in self._model_info.capabilities.modalities))
+        return f"model:{self._model_info.model_name}:{modalities}"
+
+    async def _fetch_content(self) -> str:
+        if self._model_info is None:
+            return ""
+        caps = self._model_info.capabilities
+        if caps.supports(Modality.IMAGE):
+            return (
+                "## Your Capabilities\n\n"
+                "You can perceive images. Tools that return image content "
+                "(e.g. `read` on an image file) deliver it directly to you."
+            )
+        return (
+            "## Your Capabilities\n\n"
+            "You cannot perceive images. Tools that would return image "
+            "content (e.g. `read` on an image file) will instead return a "
+            "text notice."
+        )
 
 
 class CoreMemoryProvider(SystemPromptProvider):
@@ -358,7 +571,18 @@ class ProviderPrefetchProvider(SystemPromptProvider):
 
 
 class ArchiveProvider(SystemPromptProvider):
-    """Backend-neutral archive summaries that refresh when retrieved content changes."""
+    """Backend-neutral archive summaries that refresh when retrieved content changes.
+
+    The version check is TTL-cached (``_VERSION_TTL_SECONDS``) to avoid
+    rebuilding the injection section on every LLM iteration. The section is
+    rebuilt only when the TTL expires and the version has actually changed.
+
+    TODO(mid-turn-archive-refresh): if cleanup generates a new archive mid-turn
+    within the TTL window, the agent won't see it until the TTL expires. Accepted
+    trade-off — the 5s window is short relative to typical turn duration.
+    """
+
+    _VERSION_TTL_SECONDS: float = 5.0
 
     def __init__(
         self,
@@ -371,32 +595,57 @@ class ArchiveProvider(SystemPromptProvider):
         self._context = context
         self._config = config or ArchiveInjectionConfig()
         self._section = ArchiveInjectionSection(version="0", content="")
+        self._version_cached_at: float = 0.0
+        self._cached_version: str = ""
 
     async def _fetch_version(self) -> str:
+        now = time.monotonic()
+        if now - self._version_cached_at < self._VERSION_TTL_SECONDS:
+            return self._cached_version
         self._section = await build_archive_injection_section(
             self._memory_system,
             self._context,
             self._config,
         )
-        return self._section.version
+        self._cached_version = self._section.version
+        self._version_cached_at = now
+        return self._cached_version
 
     async def _fetch_content(self) -> str:
         return self._section.content
 
 
 class PrunedProvider(SystemPromptProvider):
-    """Pruned memory catalog. Must refresh on cleanup."""
+    """Pruned memory catalog. Must refresh on cleanup.
+
+    The version check is TTL-cached (``_VERSION_TTL_SECONDS``) to avoid
+    querying the manager on every LLM iteration. The version is rechecked
+    only when the TTL expires.
+
+    TODO(mid-turn-pruned-refresh): if cleanup updates the pruned catalog mid-turn
+    within the TTL window, the agent won't see it until the TTL expires. Accepted
+    trade-off — the 5s window is short relative to typical turn duration.
+    """
+
+    _VERSION_TTL_SECONDS: float = 5.0
 
     def __init__(self, pruned_manager: PrunedManager, session_id: str = "") -> None:
         super().__init__()
         self._manager = pruned_manager
         self._session_id = session_id
+        self._version_cached_at: float = 0.0
+        self._cached_version: str = ""
 
     async def _fetch_version(self) -> str:
+        now = time.monotonic()
+        if now - self._version_cached_at < self._VERSION_TTL_SECONDS:
+            return self._cached_version
         try:
-            return self._manager.get_version(session_id=self._session_id)
+            self._cached_version = self._manager.get_version(session_id=self._session_id)
         except Exception:
-            return ""
+            self._cached_version = ""
+        self._version_cached_at = now
+        return self._cached_version
 
     async def _fetch_content(self) -> str:
         try:
@@ -407,7 +656,10 @@ class PrunedProvider(SystemPromptProvider):
 
 
 class OutputMdProvider(SystemPromptProvider):
-    """Dynamic OUTPUT.md path — computed per-turn from session_id.
+    """[DEPRECATED] Dynamic OUTPUT.md path — computed per-turn from session_id.
+
+    OutputMdProvider is no longer registered (subagent deliverable is now
+    reply-text-based, hook owns file writes). Retained for reference.
 
     Every invocation gets the correct OUTPUT.md path, regardless of
     whether the subagent is pool-reused or freshly created.
@@ -424,23 +676,11 @@ class OutputMdProvider(SystemPromptProvider):
     async def _fetch_content(self) -> str:
         output_path = self._output_base_dir / self._session_id / "OUTPUT.md"
         return (
-            "## CRITICAL: Your Output File (OUTPUT.md)\n\n"
-            "You MUST write your final deliverable to this exact file "
-            "using the `write` tool:\n\n"
-            f"  {output_path}\n\n"
-            "**Rules — failure to follow these means your work is lost:**\n\n"
-            "1. **Write to OUTPUT.md before your final message.** "
-            "Use the `write` or `edit` tool with the path above.\n"
-            "2. **What you say in conversation is NOT your deliverable.** "
-            "Only the content of OUTPUT.md reaches your caller.\n"
-            "3. **Do NOT summarise in conversation and skip OUTPUT.md.** "
-            "Your caller reads OUTPUT.md, not your chat messages.\n"
-            "4. **Write the COMPLETE result** — full analysis, code, or report.\n"
-            "5. **You have write access to this path** even if other "
-            "directories are read-only. The `write` or `edit` tool works for this file.\n"
-            "\n"
-            "**Workflow:** do your task → use `write` or `edit` to save OUTPUT.md → "
-            'say briefly "done, see OUTPUT.md" as your final message.'
+            "## Output\n\n"
+            f"Write your final deliverable to `{output_path}` using the `write` or `edit` tool. "
+            "Your caller reads OUTPUT.md, not your conversation messages — "
+            "if it isn't written there, your work is lost. "
+            'After writing, say briefly "done, see OUTPUT.md".'
         )
 
 

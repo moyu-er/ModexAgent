@@ -8,7 +8,10 @@ instances — subagent materialization is owned by ``AgentTemplate.materialize``
 
 from __future__ import annotations
 
+import logging
 import os
+import time
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,6 +35,7 @@ from modex_agent.multi_agent.communication.strategies.subagent_dispatch import (
 )
 from modex_agent.multi_agent.communication.topology import TopologyPolicy
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.registry import AgentRegistry
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
@@ -41,6 +45,8 @@ if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.multi_agent.pool import AgentPool
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_current_traceparent() -> str | None:
@@ -163,9 +169,7 @@ class AgentCommunicationService:
         subclasses based on the target's routing kind."""
         err = TopologyPolicy.check(context.comm_kind, target, context)
         if err is not None:
-            return AgentSendResult.with_error(
-                target.name, target.kind, err
-            )
+            return AgentSendResult.with_error(target.name, target.kind, err)
 
         if target.bus_ref is not None:
             strategy = self._strategies[SendStrategyKind.PEER_NORMAL]

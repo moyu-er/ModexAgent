@@ -37,7 +37,9 @@ class TestAgentDescriptor:
         assert desc.allowed_callers is None
 
     def test_full_fields(self) -> None:
-        addr = AgentAddress(kind="agent", name="reviewer", role="code_reviewer", capabilities=["python"])
+        addr = AgentAddress(
+            kind="agent", name="reviewer", role="code_reviewer", capabilities=["python"]
+        )
         desc = AgentDescriptor(
             address=addr,
             allowed_tools=["read_file", "write_file"],

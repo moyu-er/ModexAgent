@@ -145,7 +145,7 @@ class SummarizerTrajectoryEmitter(ContentEmitter[Any]):
             success = isinstance(tr, ToolResult) and tr.error is None
             error = tr.error if isinstance(tr, ToolResult) else None
             result_preview = (
-                str(tr.result)[:200] if isinstance(tr, ToolResult) and tr.result else ""
+                tr.message_content()[:200] if isinstance(tr, ToolResult) and tr.message_content() else ""
             )
             logger.info(
                 "[%s] tool end: %s success=%s session=%s",

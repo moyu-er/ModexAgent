@@ -22,8 +22,8 @@ Four test groups:
    env equals ``build_full_env()`` (no MODEX_ vars), CommandTool uses
    ``get_default()`` + ``env=None``.
 
-4. **external agent 不变** — the external-coding env builder
-   (``tests/unit/agents/external_coding/test_env_builder.py``) is zero-
+4. **external agent 不变** — the external env builder
+   (``tests/unit/agents/external/test_env_builder.py``) is zero-
    regression. This verification point is covered by Todo 2; this test
    only declares the coverage delegation in its docstring and asserts the
    referenced file exists. It does NOT re-run the unit tests.
@@ -65,7 +65,7 @@ from modex_agent.tools.terminal.managers import BaseTerminalManager
 from modex_agent.tools.terminal.poll_loop import PollOutcome, PollResult
 from modex_agent.tools.terminal.process_registry import ProcessRegistry
 from modex_agent.tools.terminal.results import TerminalRead, TerminalSegment
-from modex_agent.tools.terminal.subprocess_tool import SubprocessExecutor
+from modex_agent.tools.terminal.subprocess_tool import create_subprocess_executor
 from modex_agent.tools.terminal.types import (
     Platform,
     ShellFamily,
@@ -237,7 +237,7 @@ async def test_subprocess_executor_concurrent_isolation(
         token = _modex_env.set({"MODEX_TASK_ID": "task-a"})
         await asyncio.sleep(0)
         try:
-            executor = SubprocessExecutor()
+            executor = create_subprocess_executor()
             await executor.execute("dummy-a")
         finally:
             _modex_env.reset(token)
@@ -246,13 +246,13 @@ async def test_subprocess_executor_concurrent_isolation(
         token = _modex_env.set({"MODEX_TASK_ID": "task-b"})
         await asyncio.sleep(0)
         try:
-            executor = SubprocessExecutor()
+            executor = create_subprocess_executor()
             await executor.execute("dummy-b")
         finally:
             _modex_env.reset(token)
 
     with patch(
-        "modex_agent.tools.terminal.subprocess_tool.asyncio.create_subprocess_shell",
+        "modex_agent.tools.terminal.subprocess_tool.asyncio.create_subprocess_exec",
         new=mock_create,
     ):
         await asyncio.gather(task_a(), task_b())
@@ -386,15 +386,17 @@ async def test_subprocess_executor_fallback_no_contextvar(
     mock_create = AsyncMock(return_value=fake_process)
 
     with patch(
-        "modex_agent.tools.terminal.subprocess_tool.asyncio.create_subprocess_shell",
+        "modex_agent.tools.terminal.subprocess_tool.asyncio.create_subprocess_exec",
         new=mock_create,
     ):
-        executor = SubprocessExecutor()
+        executor = create_subprocess_executor()
         await executor.execute("echo hi")
 
     assert mock_create.await_count == 1
     env_passed = mock_create.call_args.kwargs["env"]
-    assert env_passed == build_full_env()
+    expected = build_full_env()
+    expected["NO_COLOR"] = "1"
+    assert env_passed == expected
     assert not any(k.startswith("MODEX_") for k in env_passed)
 
 
@@ -453,7 +455,7 @@ def test_external_agent_env_builder_coverage_declared() -> None:
     """External-coding env builder is zero-regression.
 
     This verification point is covered by Todo 2:
-    ``tests/unit/agents/external_coding/test_env_builder.py``.
+    ``tests/unit/agents/external/test_env_builder.py``.
 
     Per spec: "已在 Todo 2 覆盖, 此处不重复测试, 只在 docstring 中声明
     此验证点由 Todo 2 覆盖." This test does NOT re-run the unit tests — it
@@ -462,13 +464,13 @@ def test_external_agent_env_builder_coverage_declared() -> None:
 
     To verify zero-regression, run::
 
-        pytest tests/unit/agents/external_coding/test_env_builder.py -v
+        pytest tests/unit/agents/external/test_env_builder.py -v
     """
     referenced = (
         Path(__file__).resolve().parent.parent
         / "unit"
         / "agents"
-        / "external_coding"
+        / "external"
         / "test_env_builder.py"
     )
     assert referenced.exists(), (

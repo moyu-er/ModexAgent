@@ -16,8 +16,6 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.template import AgentTemplate
     from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 
-from modex_agent.core.context import ContextManager
-from modex_graph.exceptions import GraphInterrupt
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo, session_id_prefix_of
 from modex_agent.core.session_registry import SessionRegistry
@@ -26,6 +24,7 @@ from modex_agent.core.types import InputMessage
 from modex_agent.messaging.broker import AddressKind, MessageBroker
 from modex_agent.messaging.broker_bridge import BrokerInputPayload
 from modex_agent.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
+from modex_graph.exceptions import GraphInterrupt
 
 from .address import AgentAddress
 from .bus import AgentMessageBus
@@ -87,7 +86,6 @@ class AgentPool(AgentRegistry):
         self,
         broker: MessageBroker,
         agent_factory: AgentFactory,
-        default_context_manager: ContextManager | None = None,
         agent_bus: AgentMessageBus | None = None,
         inbox_consumer: InboxConsumer | None = None,
         *,
@@ -101,7 +99,6 @@ class AgentPool(AgentRegistry):
         self._status: dict[str, AgentState] = {}
         self._broker = broker
         self._agent_factory = agent_factory
-        self._default_context_manager = default_context_manager
         self._agent_bus = agent_bus
         self._inbox_consumer = inbox_consumer
         self._session_factory = session_factory or SessionIdFactory()
@@ -259,6 +256,7 @@ class AgentPool(AgentRegistry):
             if message.approval_decision is not None
             else None,
             attachments_resolved=[a.to_dict() for a in message.attachments_resolved],
+            workspace=str(message.workspace) if message.workspace is not None else None,
             message_type=AgentMessageType.EXTERNAL_INPUT,  # extra field, allowed by extra="allow"
         )
         payload: dict[str, Any] = payload_model.model_dump(exclude_none=True)
@@ -308,9 +306,7 @@ class AgentPool(AgentRegistry):
             )
         return []
 
-    async def peek_inbox(
-        self, session_id: str, limit: int = 1
-    ) -> list[AgentMessageEnvelope]:
+    async def peek_inbox(self, session_id: str, limit: int = 1) -> list[AgentMessageEnvelope]:
         """Non-destructive read of up to ``limit`` pending envelopes.
 
         Used by the InboxPoller to read the parent link off the first pending
@@ -393,9 +389,7 @@ class AgentPool(AgentRegistry):
         """
         session = SessionInfo(session_id=sid, agent_name=agent_name)
         if envelope.parent_session_id:
-            return session.model_copy(
-                update={"parent_session_id": envelope.parent_session_id}
-            )
+            return session.model_copy(update={"parent_session_id": envelope.parent_session_id})
         if envelope.message_type == AgentMessageType.TASK_REQUEST:
             logger.warning(
                 "dispatch_envelope: TASK_REQUEST for session %s carried no "
@@ -442,9 +436,7 @@ class AgentPool(AgentRegistry):
         single-flight per session, so intra-session mutual exclusion is
         structural. Active-count decrement is a plain dict op.
         """
-        self._active_session_counts[agent_name] = (
-            self._active_session_counts.get(agent_name, 0) + 1
-        )
+        self._active_session_counts[agent_name] = self._active_session_counts.get(agent_name, 0) + 1
         start_time = time.monotonic()
         current_state = self._status.get(agent_name)
         if current_state == AgentState.ERROR:
@@ -516,9 +508,7 @@ class AgentPool(AgentRegistry):
                     pass
             if deadline is not None and token is not None:
                 current_dispatch_deadline.reset(token)
-            remaining = max(
-                0, self._active_session_counts.get(agent_name, 1) - 1
-            )
+            remaining = max(0, self._active_session_counts.get(agent_name, 1) - 1)
             self._active_session_counts[agent_name] = remaining
             elapsed = time.monotonic() - start_time
             if elapsed > self._DISPATCH_WARN_SECONDS:
@@ -595,9 +585,7 @@ class AgentPool(AgentRegistry):
         """
         now = time.monotonic()
         self._session_agents[session_id] = agent_name
-        self._session_activity[session_id] = SessionActivity(
-            created_at=now, last_active=now
-        )
+        self._session_activity[session_id] = SessionActivity(created_at=now, last_active=now)
         self._session_lru_seq += 1
         self._session_lru[session_id] = self._session_lru_seq
         if is_dynamic:
@@ -613,9 +601,7 @@ class AgentPool(AgentRegistry):
         """Refresh activity timestamp. Call inside lock-protected section."""
         activity = self._session_activity.get(session_id)
         if activity is not None:
-            self._session_activity[session_id] = replace(
-                activity, last_active=time.monotonic()
-            )
+            self._session_activity[session_id] = replace(activity, last_active=time.monotonic())
             self._session_lru_seq += 1
             self._session_lru[session_id] = self._session_lru_seq
         if self._session_registry is not None:
@@ -631,9 +617,7 @@ class AgentPool(AgentRegistry):
             f"register session {session}", self._session_registry.register(session)
         )
 
-    def _fire_and_forget_registry(
-        self, description: str, coro: Coroutine[Any, Any, None]
-    ) -> None:
+    def _fire_and_forget_registry(self, description: str, coro: Coroutine[Any, Any, None]) -> None:
         """Schedule a registry operation as a background task, logging failures.
 
         The coroutine is created eagerly by the caller (already guarded by a
@@ -706,8 +690,7 @@ class AgentPool(AgentRegistry):
             (
                 sid
                 for sid in self._session_activity.keys()
-                if self._session_agents.get(sid) == agent_name
-                and sid in self._dynamic_sessions
+                if self._session_agents.get(sid) == agent_name and sid in self._dynamic_sessions
             ),
             key=lambda sid: self._session_lru.get(sid, 0),
         )

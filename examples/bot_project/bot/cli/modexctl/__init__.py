@@ -2,9 +2,9 @@
 
 Re-exports :func:`main` so the console script ``modexctl`` (registered as
 ``bot.cli.modexctl:main`` in :file:`pyproject.toml`) resolves without callers
-needing to reach into the :mod:`bot.cli.modexctl.main` submodule.
+needing to reach into the :mod:`bot.cli.modexctl.app` submodule.
 """
 
-from bot.cli.modexctl.main import main
+from bot.cli.modexctl.app import main
 
 __all__ = ["main"]

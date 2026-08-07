@@ -17,7 +17,7 @@ import { LogoMarkIcon } from "./components/ui/icons";
 
 interface PendingHeroSend {
   content: string;
-  attachments?: OutgoingAttachmentRef[];
+  files?: File[];
   providerName?: string;
   modelName?: string;
 }
@@ -170,12 +170,12 @@ const AppInner: FC = () => {
   const handleHeroSend = useCallback(
     (
       content: string,
-      attachments?: OutgoingAttachmentRef[],
+      files?: File[],
       providerName?: string,
       modelName?: string,
     ): void => {
       createDraftForSend(activePool);
-      pendingHeroSendRef.current = { content, attachments, providerName, modelName };
+      pendingHeroSendRef.current = { content, files, providerName, modelName };
     },
     [createDraftForSend, activePool],
   );
@@ -185,7 +185,7 @@ const AppInner: FC = () => {
     if (!pending || !selectedId) return;
     pendingHeroSendRef.current = null;
     onSent(selectedId);
-    send(pending.content, pending.attachments, pending.providerName, pending.modelName);
+    send(pending.content, undefined, pending.providerName, pending.modelName, pending.files);
   }, [selectedId, onSent, send]);
 
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);

@@ -1,4 +1,4 @@
-// Main-agent fields for external_coding pools. External pools run their agent
+// Main-agent fields for external pools. External pools run their agent
 // in a provider CLI, so the framework no longer owns max steps, terminal,
 // tools, approval, MCP, skills or the system prompt — those are managed by
 // the provider. The Implementation and Provider controls are grouped together
@@ -21,11 +21,11 @@ interface ErrFn {
   (loc: string): string | undefined;
 }
 
-export type ImplementationChoice = "react" | "external_coding";
+export type ImplementationChoice = "react" | "external";
 
 const IMPLEMENTATION_DEFS: { value: ImplementationChoice; labelKey: MessageKey }[] = [
   { value: "react", labelKey: "settings.external.native" },
-  { value: "external_coding", labelKey: "settings.external.external" },
+  { value: "external", labelKey: "settings.external.external" },
 ];
 
 export { IMPLEMENTATION_DEFS };

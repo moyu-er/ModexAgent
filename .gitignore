@@ -52,10 +52,9 @@ references
 !.github
 uv.lock
 bun.lock
-trace
+/trace
 nul
 
-/trace
 /output
 node_modules
 
@@ -63,3 +62,9 @@ node_modules
 # Kept locally for reference but not version-controlled.
 /assets/logo-concepts/
 /assets/logo-explore/
+
+# Subagent artifact
+ModexAgent_深度分析报告.html
+
+# Subagent learning artifacts
+docs/learning/

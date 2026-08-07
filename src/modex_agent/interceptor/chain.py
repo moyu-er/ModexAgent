@@ -93,7 +93,6 @@ class InterceptorChain:
             return ToolResult(
                 tool_name=call.tool_name,
                 call_id=call_id,
-                result=None,
                 error=f"Error: {e}",
             )
 

@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from modex_agent.agents.react.agent import ReActAgent
-from modex_agent.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
@@ -93,7 +93,7 @@ def _make_ctx(store, executed, default_deny_policy=ApprovalDenyPolicy.TOOL_RESUL
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.CREATED,
     )
-    from modex_agent.agents.react.approval import ApprovalRuntime
+    from modex_agent.approval.runtime import ApprovalRuntime
     ctx = AgentContext(
         system_prompt="",
         history=ListMessageHistory(),
@@ -188,3 +188,88 @@ async def test_resume_after_deny_returns_error_results():
     assert batch.status == ToolBatchStatus.FAILED
     for call in batch.calls:
         assert call.decision in (ApprovalDecision.DENIED, ApprovalDecision.PREEMPTED)
+
+
+class _ProviderNoCallId:
+    """Provider whose tool calls carry NO call_id (some providers omit it)."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def chat(self, messages, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(tool_name="record", arguments={"value": "a"}),
+                    ToolCall(tool_name="record", arguments={"value": "b"}),
+                ],
+            )
+        return LLMResponse(content="done")
+
+
+class _RecordingEmitter(_Emitter):
+    def __init__(self):
+        self.events = []
+
+    async def emit(self, event, data=None):
+        self.events.append((event, data))
+
+
+@pytest.mark.asyncio
+async def test_call_id_stable_across_approval_suspend_and_resume():
+    """The id streamed with TOOL_CALL_START before suspension must equal the
+    id carried by TOOL_CALL_END after resume — and both must equal the id in
+    the approval request. This is what lets the WebUI pair a resumed tool's
+    result with the block rendered before the interrupt."""
+    from modex_agent.agents.react.agent import ReActEvent
+
+    store = InMemoryTurnStateStore()
+    executed = []
+    agent = ReActAgent(_ProviderNoCallId())
+    ctx = _make_ctx(store, executed)
+
+    start_emitter = _RecordingEmitter()
+    with pytest.raises(GraphInterrupt):
+        await agent.run(ctx, start_emitter)
+
+    start_ids = [
+        data.call_id
+        for event, data in start_emitter.events
+        if event == ReActEvent.TOOL_CALL_START
+    ]
+    assert len(start_ids) == 2
+    assert all(start_ids)  # canonicalized by the tool node, never empty
+
+    snapshots = await store.list_active_turns(
+        StateQueryScope(session_id="s1", phase=TurnPhase.SUSPENDED, reason=SnapshotReason.TOOL_APPROVAL_REQUIRED)
+    )
+    assert len(snapshots) == 1
+    snapshot = snapshots[0]
+
+    approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
+    assert approval is not None
+    request_ids = [req.tool_call_id for req in approval.requests]
+    # The approval flow references the SAME canonical ids the stream used.
+    assert sorted(request_ids) == sorted(start_ids)
+    for req_id in request_ids:
+        approval.apply_decision(req_id, ApprovalDecision.ALLOWED)
+    await store.save_turn(ReActSnapshotPolicy.replace_approval(snapshot, approval))
+
+    resume_ctx = _make_ctx(store, executed)
+    resume_ctx.identity = snapshot.identity
+    resume_ctx.runtime.state = ReActSnapshotPolicy.state_from_snapshot(
+        ReActSnapshotPolicy.replace_approval(snapshot, approval)
+    )
+
+    end_emitter = _RecordingEmitter()
+    result = await agent.run(resume_ctx, end_emitter)
+
+    assert result.content == "done"
+    end_ids = [
+        data[0].call_id
+        for event, data in end_emitter.events
+        if event == ReActEvent.TOOL_CALL_END
+    ]
+    assert sorted(end_ids) == sorted(start_ids)

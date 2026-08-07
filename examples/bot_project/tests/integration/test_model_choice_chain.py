@@ -63,7 +63,7 @@ def _cfg(tmp_path: Path) -> BotModelConfig:
 
 def _ctx(session_id: str) -> SimpleNamespace:
     """Minimal AgentContext shape consumed by ModelChoiceBindHook.before_turn."""
-    services = SimpleNamespace(model_capabilities=None)
+    services = SimpleNamespace(model_info=None)
     runtime = SimpleNamespace(services=services)
     return SimpleNamespace(session=SimpleNamespace(session_id=session_id), runtime=runtime)
 

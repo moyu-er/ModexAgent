@@ -39,7 +39,7 @@ class TestShortResultPassesThrough:
     @pytest.mark.asyncio
     async def test_short_result_passes_through(self) -> None:
         interceptor = ToolResultLimitInterceptor(overflow_handler=None, max_chars=100)
-        result = ToolResult(tool_name="read_file", result="short")
+        result = ToolResult.from_text("read_file", "short")
 
         async def next_call() -> ToolResult:
             return result
@@ -65,7 +65,7 @@ class TestLongResultOverflows:
 
         interceptor = ToolResultLimitInterceptor(overflow_handler=handler, max_chars=50)
         long_content = "a" * 100
-        result = ToolResult(tool_name="read_file", result=long_content, call_id="tc_1")
+        result = ToolResult.from_text("read_file", long_content, call_id="tc_1")
 
         async def next_call() -> ToolResult:
             return result
@@ -75,7 +75,7 @@ class TestLongResultOverflows:
         out = await interceptor.around_tool_call(ctx, call, next_call)
 
         assert out.overflow_processed is True
-        assert out.result.startswith("<tool_result_overflow")
+        assert out.message_content().startswith("<tool_result_overflow")
         handler.store_overflow.assert_awaited_once()
         handler.schedule_cleanup.assert_called_once()
 
@@ -86,9 +86,9 @@ class TestAlreadyProcessedSkips:
         handler = AsyncMock(spec=ToolResultOverflowHandler)
         interceptor = ToolResultLimitInterceptor(overflow_handler=handler, max_chars=50)
         long_content = "a" * 100
-        result = ToolResult(
-            tool_name="read_file",
-            result=long_content,
+        result = ToolResult.from_text(
+            "read_file",
+            long_content,
             call_id="tc_1",
             overflow_processed=True,
         )
@@ -109,7 +109,7 @@ class TestFallbackTruncationWhenNoHandler:
     async def test_fallback_truncation_when_no_handler(self) -> None:
         interceptor = ToolResultLimitInterceptor(overflow_handler=None, max_chars=50)
         long_content = "a" * 100
-        result = ToolResult(tool_name="read_file", result=long_content, call_id="tc_1")
+        result = ToolResult.from_text("read_file", long_content, call_id="tc_1")
 
         async def next_call() -> ToolResult:
             return result
@@ -119,4 +119,4 @@ class TestFallbackTruncationWhenNoHandler:
         out = await interceptor.around_tool_call(ctx, call, next_call)
 
         assert out.overflow_processed is False
-        assert out.result == "a" * 50 + "\n... (truncated, 100 chars total)"
+        assert out.message_content() == "a" * 50 + "\n... (truncated, 100 chars total)"

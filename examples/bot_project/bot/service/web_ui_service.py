@@ -24,10 +24,17 @@ from bot.persistence.transcript import build_transcript_store_resolver
 from bot.service.core import BotService
 from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.recent_workspaces import RecentWorkspaces
-from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
+from bot.webui.adapter_discovery import import_adapter_registration_modules
 from bot.webui.emitter import CompositeEmitter
-from bot.webui.server import RuntimeStores, WebUIServer
+from bot.webui.server import WebUIServer
+from bot.webui.workspace_providers import (
+    materialize_workspace,
+    resolve_runtime_stores,
+    session_store_for_index,
+    workspace_persistence_for_data_root,
+    workspace_transcript_store_for_sessions,
+)
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.session_store import SessionStore
@@ -43,7 +50,6 @@ if TYPE_CHECKING:
     from bot.workspace.handle import PoolWorkspaceResources
     from modex_agent.memory.core.split_stores import MessageStore
     from modex_agent.multi_agent.communication.service import AgentCommunicationService
-    from modex_agent.persistence.managers import WorkspacePersistenceManager
 
 logger = logging.getLogger(__name__)
 
@@ -119,31 +125,11 @@ class WebUIService(BotService):
     def _import_adapter_registration_modules(channels_module: Any) -> None:
         """Import every ``bot.adapters.register_*`` module to fire @register decorators.
 
-        New IM adapters do not need to be listed here; dropping a
-        ``register_<name>.py`` file into ``bot/adapters/`` is enough.
+        Delegates to :func:`bot.webui.adapter_discovery.import_adapter_registration_modules`.
+        Kept as a thin staticmethod wrapper for backward compatibility with tests
+        that call ``WebUIService._import_adapter_registration_modules`` directly.
         """
-        import importlib.util
-        import sys
-
-        adapters_pkg = Path(channels_module.__file__).parent
-        for path in sorted(adapters_pkg.glob("register_*.py")):
-            module_name = f"bot.adapters.{path.stem}"
-            if module_name in sys.modules:
-                continue
-            try:
-                spec = importlib.util.spec_from_file_location(module_name, path)
-                if spec is None or spec.loader is None:
-                    logger.warning("Cannot load adapter registration module %s", module_name)
-                    continue
-                module = importlib.util.module_from_spec(spec)
-                sys.modules[module_name] = module
-                spec.loader.exec_module(module)
-            except Exception as exc:
-                logger.warning(
-                    "Adapter registration module %s import failed: %s",
-                    module_name,
-                    exc,
-                )
+        import_adapter_registration_modules(channels_module)
 
     def __init__(
         self,
@@ -186,7 +172,9 @@ class WebUIService(BotService):
             data_dir_name=_data_dir_name,
             store_resolver=build_transcript_store_resolver(
                 app_cfg.persistence.backend,
-                self._workspace_transcript_store_for_sessions,
+                lambda sessions_dir: workspace_transcript_store_for_sessions(
+                    self.workspace_stack, sessions_dir
+                ),
             ),
         )
         self._transcript_store = transcript_store
@@ -300,7 +288,8 @@ class WebUIService(BotService):
         from bot.adapters.register_websocket import get_ws_output
 
         ws_output = get_ws_output()
-        output_adapter_factory = lambda: ws_output
+        def output_adapter_factory() -> Any:
+            return ws_output
 
         # on_subagent_created: pre-registers the delta queue so subagent
         # streaming output reaches the browser. The actual SessionInfo record
@@ -388,7 +377,7 @@ class WebUIService(BotService):
         # prompt text (no framework-layer duplicate) — passed into ``PoolStore``
         # so ``create_pool`` seeds main-agent prompt md with the canonical text
         # instead of a framework-hardcoded string.
-        from bot.config.mcp_registry import REGISTRY_PATH as _mcp_registry_path
+        from bot.config.mcp_registry import REGISTRY_PATH as _mcp_registry_path  # noqa: N811
         from bot.config.prompt_store import PromptStore
         from bot.config.skills_store import SkillsStore
         from bot.service.pool_config_controller import PoolConfigController
@@ -446,93 +435,30 @@ class WebUIService(BotService):
             targets = self.workspace_stack.registry.known_targets()
         return [home, *targets]
 
-    def _workspace_persistence_for_data_root(
-        self, data_root: Path
-    ) -> WorkspacePersistenceManager | None:
-        """Return the live persistence owner for one workspace data root."""
-        resources_by_workspace = []
-        if self._home_resources is not None:
-            resources_by_workspace.append(self._home_resources)
-        if self.workspace_stack is not None:
-            resources_by_workspace.extend(
-                self.workspace_stack.registry.iter_materialized_resources()
-            )
-        for resources in resources_by_workspace:
-            if resources.ctx.paths.root == data_root.resolve():
-                return resources.persistence
-        return None
-
-    async def _materialize_workspace(self, ws_root: Path) -> Any:
-        """Get-or-open + materialize a workspace, returning its resources.
-
-        Shared helper for all WebUI endpoints that need to resolve
-        per-workspace stores (session store, transcript store, runtime
-        stores). The registry caches materialized resources, so repeated
-        calls for the same workspace are cheap.
-        """
-        workspace_context = await self.workspace_stack.registry.get_or_open(
-            ws_root
-        )
-        return await self.workspace_stack.registry.materialize(workspace_context)
-
     async def _session_store_for_index(self, index_dir: Path) -> SessionStore:
+        """Delegates to :func:`bot.webui.workspace_providers.session_store_for_index`.
+
+        Kept as a thin method wrapper for backward compatibility with tests
+        that call ``service._session_store_for_index(...)`` directly. The
+        FILE branch passes ``data_dir_name`` + ``pool_resolver``; the SQLITE
+        branch omits them (unused by the module function) to preserve the
+        original lazy-attribute access pattern.
+        """
         app_config = self._app_config
         assert app_config is not None
         if app_config.persistence.backend is PersistenceBackend.FILE:
-            return WorkspacePoolSessionStore(
-                base_dir=index_dir,
-                pool_resolver=lambda session: self._pool_for_agent(session.agent_name),
+            return await session_store_for_index(
+                app_config=app_config,
+                workspace_stack=None,
+                index_dir=index_dir,
                 data_dir_name=self._data_dir_name,
+                pool_resolver=lambda session: self._pool_for_agent(session.agent_name),
             )
-        resources = await self._materialize_workspace(index_dir.parent.parent)
-        return resources.session_index_store
-
-    async def _resolve_runtime_stores(
-        self, ws_root: Path, pool: str
-    ) -> RuntimeStores:
-        """Resolve backend-aware runtime stores for the WebUI endpoints.
-
-        Returns a :class:`RuntimeStores` from the materialized workspace
-        resources when in SQLite mode, or an empty ``RuntimeStores()`` in
-        FILE mode (endpoints fall back to their hardcoded file-based stores).
-        """
-        if (
-            self._app_config is None
-            or self._app_config.persistence.backend is PersistenceBackend.FILE
-        ):
-            return RuntimeStores()
-        # Materialize the workspace on demand (same pattern as
-        # _session_store_for_index) so the resolver works even before the
-        # first agent turn materializes the workspace.
-        resources = await self._materialize_workspace(ws_root)
-        # turn_store comes from PoolDataSnapshot (per-pool).
-        pool_data = resources.pool_data.get(pool)
-        turn_store = pool_data.turn_store if pool_data is not None else None
-        # todo_store is built from the workspace persistence manager
-        # (it is not on PoolDataSnapshot — it lives only in the tool).
-        todo_store = None
-        persistence = resources.persistence
-        if persistence is not None:
-            from bot.scope import BotRecordScope
-            from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
-
-            todo_store = SqliteTodoStore(
-                persistence.connection, BotRecordScope(pool=pool)
-            )
-        return RuntimeStores(todo_store=todo_store, turn_store=turn_store)
-
-    async def _workspace_transcript_store_for_sessions(
-        self,
-        sessions_dir: Path,
-    ) -> TranscriptStore:
-        """Materialize a workspace and return its configured transcript adapter."""
-        resources = await self._materialize_workspace(sessions_dir.parent.parent)
-        transcript_store = resources.workspace_transcript_store
-        if transcript_store is None:
-            raise RuntimeError(
-                f"Database transcript persistence is unavailable for {sessions_dir.parent.parent}"
-            )
-        return transcript_store
+        return await session_store_for_index(
+            app_config=app_config,
+            workspace_stack=self.workspace_stack,
+            index_dir=index_dir,
+        )
 
     def _pool_for_agent(self, agent_name: str) -> str:
         """Return the pool name for *agent_name*, defaulting to ``main``."""
@@ -582,13 +508,13 @@ class WebUIService(BotService):
             config=gc_cfg,
             cleaner_factory=SessionCleanerFactory(
                 backend=app_config.persistence.backend,
-                persistence_resolver=self._workspace_persistence_for_data_root,
+                persistence_resolver=lambda data_root: workspace_persistence_for_data_root(
+                    self._home_resources, self.workspace_stack, data_root
+                ),
             ),
             transcript_store=self._transcript_store,
             session_store_resolver=self._session_store_for_index,
-            session_pool_resolver=lambda session: self._pool_for_agent(
-                session.agent_name
-            ),
+            session_pool_resolver=lambda session: self._pool_for_agent(session.agent_name),
         )
         self._server.set_session_gc(self._session_gc)
         await self._session_gc.start()
@@ -659,7 +585,11 @@ class WebUIService(BotService):
         # (SqliteTodoStore / SqliteTurnStateStore in SQLite mode). In FILE
         # mode the resolver returns None stores, and the endpoints fall back
         # to their hardcoded file-based stores.
-        self._server.set_store_resolver(self._resolve_runtime_stores)
+        self._server.set_store_resolver(
+            lambda ws_root, pool: resolve_runtime_stores(
+                self.workspace_stack, self._app_config, ws_root, pool
+            )
+        )
 
         # Inject recent workspaces store for the recent-workspaces API.
         # RecentWorkspaces lives in the project home data dir (not per-workspace)
@@ -715,7 +645,7 @@ class WebUIService(BotService):
             im_ctx = self._build_input_context(
                 inp,
                 agent_resolver=_agent_resolver,
-                current_ws_provider=lambda: inp.current_ws,
+                current_ws_provider=lambda inp=inp: inp.current_ws,
             )
             raw_out = self._channel_outputs_by_name.get(inp.name)
             inp.configure_input_pipeline(im_pipeline, im_ctx, raw_out)
@@ -733,7 +663,7 @@ class WebUIService(BotService):
         # Constructed with production provider callbacks that navigate the
         # materialized PoolWorkspaceResources to reach the per-session
         # MessageStore (native react path), the workspace TranscriptStore
-        # (external_coding path), and the per-pool AgentCommunicationService
+        # (external path), and the per-pool AgentCommunicationService
         # (send path). Without this injection app["control_facade"] stays
         # None and the control routes return 503.
         from bot.control.facade import BotControlFacade, ControlFacadeError
@@ -743,10 +673,11 @@ class WebUIService(BotService):
         async def _resolve_workspace_for_control(
             root: Path,
         ) -> PoolWorkspaceResources:
-            return await self._materialize_workspace(root)
+            return await materialize_workspace(self.workspace_stack, root)
 
         async def _provide_message_store(
-            scope: BotRecordScope, resources: PoolWorkspaceResources,
+            scope: BotRecordScope,
+            resources: PoolWorkspaceResources,
         ) -> MessageStore:
             pool_name = scope.pool
             if pool_name is None:
@@ -775,10 +706,7 @@ class WebUIService(BotService):
                     500,
                     ControlError(
                         code="memory_system_unavailable",
-                        message=(
-                            f"Memory system is not configured for pool "
-                            f"{pool_name!r}"
-                        ),
+                        message=(f"Memory system is not configured for pool {pool_name!r}"),
                     ),
                 )
             ctx = MemoryContext(session_id=scope.session_id)
@@ -798,16 +726,14 @@ class WebUIService(BotService):
                     422,
                     ControlError(
                         code="transcript_store_unavailable",
-                        message=(
-                            "Transcript store is not configured for this "
-                            "workspace"
-                        ),
+                        message=("Transcript store is not configured for this workspace"),
                     ),
                 )
             return store
 
         async def _provide_communication_service(
-            resources: PoolWorkspaceResources, pool_name: str,
+            resources: PoolWorkspaceResources,
+            pool_name: str,
         ) -> AgentCommunicationService:
             pool_instance = resources.pools.get(pool_name)
             if pool_instance is None:
@@ -853,7 +779,7 @@ class WebUIService(BotService):
 
     def _build_input_context(
         self,
-        inp,
+        inp: Any,
         *,
         agent_resolver: Callable[[str], str],
         current_ws_provider: Callable[[], Path] | None = None,

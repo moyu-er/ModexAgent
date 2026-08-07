@@ -10,9 +10,7 @@ Three test cases:
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
-from unittest.mock import patch
 
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
@@ -77,35 +75,13 @@ def _make_bus(tmpdir: Path) -> LocalAgentMessageBus:
     return LocalAgentMessageBus(producer=producer, consumer=consumer)
 
 
-def _extract_xml_field(xml: str, tag: str) -> str:
-    pattern = rf"<{tag}>(.*?)</{tag}>"
-    m = re.search(pattern, xml, re.DOTALL)
-    return m.group(1).strip() if m else ""
-
-
-def _mock_output_exists(runtime_dir: Path, session_id: str):
-    """Patch Path.exists so that the OUTPUT.md for *session_id* appears to exist.
-
-    Colons in session_id make it illegal as a Windows path component, so we
-    cannot create the real file and must mock instead.
-    """
-    expected = runtime_dir / "output" / session_id / "OUTPUT.md"
-
-    def _exists(self):
-        if self == expected:
-            return True
-        return Path.__exists__(self) if hasattr(Path, "__exists__") else False
-
-    return patch.object(Path, "exists", _exists)
-
-
 # ---------------------------------------------------------------------------
 # Test 1: Full lifecycle — happy path
 # ---------------------------------------------------------------------------
 
 
 class TestFullLifecycleNotification:
-    """Happy path: subagent finishes with result + OUTPUT.md -> trace + XML."""
+    """Happy path: subagent finishes with result -> hook writes OUTPUT_<n>.md + notification."""
 
     async def test_full_lifecycle(self, tmp_path: Path) -> None:
         """Use path-safe session for trace store (Windows colon-in-path issue)."""
@@ -129,9 +105,8 @@ class TestFullLifecycleNotification:
         # Step 1: trace_hook.before_turn -> pre-registers trace_id + root span_id
         await trace_hook.before_turn(ctx)
 
-        # Step 2: auto_hook.finally_turn -> sends XML notification
-        with _mock_output_exists(runtime_dir, session_id):
-            await auto_hook.finally_turn(ctx, result)
+        # Step 2: auto_hook.finally_turn -> writes OUTPUT_1.md + sends notification
+        await auto_hook.finally_turn(ctx, result)
 
         # Step 3: trace_hook.finally_turn -> writes the root invoke_agent span
         await trace_hook.finally_turn(ctx, result)
@@ -141,12 +116,16 @@ class TestFullLifecycleNotification:
         assert len(spans) >= 1
 
         turn_start = next(
-            (s for s in spans if s.name == SpanName.INVOKE_AGENT.value), None,
+            (s for s in spans if s.name == SpanName.INVOKE_AGENT.value),
+            None,
         )
         assert turn_start is not None
-        assert turn_start.attributes[GenAiAttr.SESSION_ID] == session_id
+        assert turn_start.attributes[GenAiAttr.CONVERSATION_ID] == session_id
         assert turn_start.attributes[GenAiAttr.AGENT_NAME] == "worker"
         assert turn_start.status.code == SpanStatusCode.OK
+
+        # --- Verify OUTPUT_1.md was written to disk ---
+        assert (runtime_dir / "output" / session_id / "OUTPUT_1.md").exists()
 
         # --- Verify bus ---
         # The notification is sent to the parent's inbox via parent_session_id.
@@ -155,9 +134,9 @@ class TestFullLifecycleNotification:
         assert len(envelopes) == 1
 
         content = envelopes[0].payload["content"]
-        assert "<subagent_result>" in content
-        assert "<agent>worker</agent>" in content
-        assert "<output_status>written</output_status>" in content
+        assert "Message from subagent" in content
+        assert "subagent 'worker'" in content
+        assert "OUTPUT_1.md" in content
 
 
 # ---------------------------------------------------------------------------
@@ -180,19 +159,20 @@ class TestCrashSendsErrorNotification:
         )
 
         ctx = _make_context()
-        # No OUTPUT.md on disk; error result simulates crash
         result = AgentResult(error="something broke", stop_reason=StopReason.ERROR)
 
         await auto_hook.finally_turn(ctx, result)
+
+        assert (runtime_dir / "output" / str(ctx.session) / "OUTPUT_1.md").exists()
 
         envelopes = await bus.consume("conv123.main", limit=10)
         assert len(envelopes) == 1
 
         content = envelopes[0].payload["content"]
-        assert "<subagent_result>" in content
-        assert _extract_xml_field(content, "success") == "false"
-        assert "crashed" in _extract_xml_field(content, "issue").lower()
-        assert "something broke" in _extract_xml_field(content, "issue")
+        assert "Message from subagent" in content
+        assert "status: failed" in content
+        assert "crashed" in content.lower()
+        assert "something broke" in content
 
 
 # ---------------------------------------------------------------------------
@@ -215,10 +195,10 @@ class TestTraceCollectorRecordsErrorTurnEnd:
 
         # Step 2: finally_turn with error -> no new span (TURN_END is a no-op)
         await trace_hook.finally_turn(
-            ctx, AgentResult(error="timeout", stop_reason=StopReason.ERROR),
+            ctx,
+            AgentResult(error="timeout", stop_reason=StopReason.ERROR),
         )
 
         spans = await store.list_by_session(session_id)
-        # Only the TURN_START span — TURN_END produces no span in OTel format.
-        assert len(spans) == 1
-        assert spans[0].name == SpanName.INVOKE_AGENT.value
+        assert len(spans) == 2
+        assert all(s.name == SpanName.INVOKE_AGENT.value for s in spans)

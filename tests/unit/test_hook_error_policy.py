@@ -40,7 +40,7 @@ class TestHookErrorPolicyIgnore:
         ])
         # Should not raise
         result = await runner.dispatch(HookPoint.BEFORE_TURN, None)
-        assert not result.veto
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_ignore_allows_subsequent_hooks(self):
@@ -72,8 +72,8 @@ class TestHookErrorPolicyLog:
         ])
         with caplog.at_level(logging.WARNING, logger="modex_agent.hook.runner"):
             result = await runner.dispatch(HookPoint.BEFORE_TURN, None)
-        assert not result.veto
-        assert any("BrokenHook" in r.message for r in caplog.records)
+        assert result is None
+        assert any("broken_hook" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_log_allows_subsequent_hooks(self):
@@ -166,4 +166,4 @@ class TestHookErrorPolicyMixed:
             await runner.dispatch(HookPoint.BEFORE_TURN, None)
         assert calls == ["track"]
         # LOG policy should have produced a record
-        assert any("BrokenHook" in r.message for r in caplog.records)
+        assert any("broken_hook" in r.message for r in caplog.records)

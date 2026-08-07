@@ -158,17 +158,15 @@ async def build_pool_data(
         default_agent_id=main_agent,
         default_agent_role="main",
         base_system_prompt=base_system_prompt,
-        injection_policy=FullInjectionPolicy(
-            pruned_manager=memory_system.pruned_manager,
-            archive_config=ArchiveInjectionConfig(
-                count=memory_cfg.archive.max_archive_inject,
-                max_chars=memory_cfg.archive.archive_inject_max_chars,
-                step_chars=memory_cfg.archive.archive_inject_step_chars,
-                min_chars=memory_cfg.archive.archive_inject_min_chars,
-            )
-            if memory_cfg.archive is not None and memory_cfg.archive.enabled
-            else ArchiveInjectionConfig(count=0),
-        ),
+        injection_policy=FullInjectionPolicy(),
+        archive_injection_config=ArchiveInjectionConfig(
+            count=memory_cfg.archive.max_archive_inject,
+            max_chars=memory_cfg.archive.archive_inject_max_chars,
+            step_chars=memory_cfg.archive.archive_inject_step_chars,
+            min_chars=memory_cfg.archive.archive_inject_min_chars,
+        )
+        if memory_cfg.archive is not None and memory_cfg.archive.enabled
+        else ArchiveInjectionConfig(count=0),
         experience_manager=experience_manager,
         roles=list(pool_spec.main.roles),
     )

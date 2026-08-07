@@ -28,17 +28,17 @@ class AgentMessageType(StrEnum):
     #: turn as ``role=AGENT`` history when one is active).
     AGENT_MESSAGE = "agent_message"
 
-    #: Subagent→parent *reply* emitted by ``SubagentAutoSendHook`` /
-    #: ``MaxIterationNotifyHook``. Fold-eligible: a busy parent agent mid-turn
+    #: Subagent→parent *reply* emitted by ``SubagentAutoSendHook``.
+    #: Fold-eligible: a busy parent agent mid-turn
     #: pulls it via ``InboxFlushHook`` so it sees the deliverable promptly; an
     #: idle parent receives it as a fresh between-turn via the poller.
-    #: Distinct from ``SUBAGENT_RESULT`` (an alt label still referenced by the
-    #: router's prompt-modifier path).
+    #: Distinct from ``SUBAGENT_RESULT``, which is retained only as a reserved
+    #: legacy label for old persisted records.
     AGENT_RESULT = "agent_result"
 
-    #: Legacy/alt subagent-result label still referenced by the router's
-    #: prompt-modifier path and the broker-bridge allow-list. Fold-in
-    #: eligible. Do NOT conflate with ``AGENT_RESULT`` (see above).
+    #: Reserved legacy subagent-result label with no current producers. Kept so
+    #: old on-disk inbox records still parse; fold-in eligible. Do NOT conflate
+    #: with ``AGENT_RESULT`` (see above).
     SUBAGENT_RESULT = "subagent_result"
 
     #: Human DM / WebUI / approval decision entering via ``pool.submit_input``.
@@ -57,14 +57,3 @@ class AgentMessageType(StrEnum):
         between-turn (spec P6).
         """
         return frozenset(m for m in cls if m != cls.EXTERNAL_INPUT)
-
-    @classmethod
-    def xml_content(cls) -> frozenset["AgentMessageType"]:
-        """Message kinds whose ``content`` is governance-protected XML.
-
-        All inter-agent/result kinds carry XML-wrapped content; the human
-        ``EXTERNAL_INPUT`` carries plain text.
-        """
-        return frozenset(
-            {cls.AGENT_MESSAGE, cls.SUBAGENT_RESULT, cls.TASK_REQUEST, cls.AGENT_RESULT}
-        )

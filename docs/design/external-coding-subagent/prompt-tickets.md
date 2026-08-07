@@ -1,11 +1,11 @@
 # Tickets: Agent Prompt + Description Implementation-Agnostic Rewrite
 
-Rewrite all bot_project agent system prompts and pool/template descriptions to be implementation-agnostic — no react-specific concepts (OUTPUT.md, trace, spans.jsonl, context_mode, fork) in subagent prompts, no "opencode"/"CLI"/"external_coding" in descriptions. opencode gets two capability-oriented descriptions (peer + subagent) that never expose the underlying implementation.
+Rewrite all bot_project agent system prompts and pool/template descriptions to be implementation-agnostic — no react-specific concepts (OUTPUT.md, trace, spans.jsonl, context_mode, fork) in subagent prompts, no "opencode"/"CLI"/"external" in descriptions. opencode gets two capability-oriented descriptions (peer + subagent) that never expose the underlying implementation.
 
 All content in English.
 
 Source spec: `/prompt-optimizer` output in conversation context.
-Related: ADR-0027 (external coding agent as subagent), S4 (worker.yml → external_coding).
+Related: ADR-0027 (external coding agent as subagent), S4 (worker.yml → external).
 
 Work the **frontier** — strictly serial (P1 → P2 → P3).
 
@@ -47,8 +47,8 @@ Work the **frontier** — strictly serial (P1 → P2 → P3).
 
 **Blocked by:** P2 (all agent prompts must be clean before finalizing descriptions, since descriptions should align with the rewritten prompts)
 
-- [ ] `config/pools/opencode/pool.yml` description: no "OpenCode", "CLI", "external_coding"; focuses on independent coding capability + cross-pool peer collaboration
-- [ ] `config/pools/coder/templates/worker.yml` description: no "OpenCode-powered", "external_coding", "CLI"; focuses on receiving delegated implementation tasks + delivering results
+- [ ] `config/pools/opencode/pool.yml` description: no "OpenCode", "CLI", "external"; focuses on independent coding capability + cross-pool peer collaboration
+- [ ] `config/pools/coder/templates/worker.yml` description: no "OpenCode-powered", "external", "CLI"; focuses on receiving delegated implementation tasks + delivering results
 - [ ] `config/pools/coder/pool.yml` description: confirmed capability-oriented (current text is already good — verify no implementation exposure)
 - [ ] `config/pools/coder/templates/scout.yml` description: confirmed capability-oriented
 - [ ] `config/pools/coder/templates/planner.yml` description: confirmed capability-oriented

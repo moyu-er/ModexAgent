@@ -1,7 +1,7 @@
 # modex_graph
 
 A generalized typed graph engine with sync/async dual mode, Pydantic state,
-channels, a `GraphBubbleUp` exception family, and a pluggable scheduler
+a `GraphBubbleUp` exception family, and a pluggable scheduler
 (`LinearScheduler` default / `ParallelScheduler` opt-in). Framework-agnostic
 sibling of `modex_agent`.
 
@@ -19,17 +19,11 @@ See `__init__.py` for the full export list. Key types:
 
 - `Graph`, `Node`, `CompiledGraph`, `GraphEngine`
 - `GraphContext`, `GraphRuntime`, `GraphState`
-- `NodeResult`, `Command`, `Task`, `DispatchEvent`
-- `BaseChannel`, `LastValue`, `ReducerChannel`, `Codec`, `register_codec`
 - `Scheduler` (ABC), `LinearScheduler`, `ParallelScheduler`,
   `SchedulerKind`, `NodeTrigger`, `NodeInstanceStatus`, `NodeInstance`
-- `DispatchStore`, `InMemoryDispatchStore`, `SqliteDispatchStore`
-- `WriteConflictDetector`, `GenerationWriteTracker`
-- `CheckpointStore`, `CheckpointData`, `MemoryCheckpointStore`, `SqliteCheckpointStore`
-- `GraphBubbleUp`, `GraphInterrupt`, `GraphDrained`, `ParentCommand`,
-  `InvalidUpdateError`
+- `GraphPersistenceCoordinator`, `RecoveryContext`, `GraphMetadata`
+- `GraphBubbleUp`, `GraphInterrupt`, `GraphDrained`, `ParentCommand`
 - `GraphNode` (START/END sentinels), `RoutingError`, `GraphRecursionError`
 
-See `docs/adr/0033-generalized-graph-engine.md` (Phase a) and
-`docs/adr/0034-parallel-scheduling-engine.md` (Phase c parallel scheduling)
-for the authoritative design.
+See `docs/adr/0033-generalized-graph-engine.md` and
+`docs/adr/0034-parallel-scheduling-engine.md` for the authoritative design.

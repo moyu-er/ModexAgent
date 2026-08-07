@@ -17,13 +17,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
 
+from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.scope import MemoryAgentRole
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.memory.injection import RestrictedInjectionPolicy
 from modex_agent.memory.layers.config import (
     MemoryLayerConfigSet,
     SessionMemoryConfig,
-    UserRetentionBufferConfig,
 )
 from modex_agent.memory.registry import MemoryStoreRegistry
 from modex_agent.memory.system import MemorySystemContextManager, create_memory_system
@@ -41,6 +41,7 @@ def build_session_only_memory(
     fork_context_spec: ForkContextSpec | None = None,
     roles: list[str] | None = None,
     store_registry: MemoryStoreRegistry | None = None,
+    comm_kind: AgentCommKind | None = None,
 ) -> MemorySystemContextManager:
     """Create a session-only memory system for a subagent.
 
@@ -54,7 +55,6 @@ def build_session_only_memory(
         session=SessionMemoryConfig(),
         archive=None,
         core=None,
-        user_retention=UserRetentionBufferConfig(enabled=True),
     )
 
     cleanup_config: dict[str, int | float] | None = None
@@ -64,6 +64,7 @@ def build_session_only_memory(
             "max_context_tokens": st.max_context_tokens,
             "max_token_ratio": st.max_token_ratio,
             "keep_ratio": st.keep_ratio,
+            "max_output_tokens": st.max_output_tokens,
         }
 
     memory_system = create_memory_system(
@@ -80,11 +81,12 @@ def build_session_only_memory(
         default_agent_id=agent_id,
         default_agent_role=agent_role,
         base_system_prompt=system_prompt,
-        injection_policy=RestrictedInjectionPolicy(pruned_manager=pruned_manager),
+        injection_policy=RestrictedInjectionPolicy(),
         output_base_dir=output_base_dir,
         parent_prompt_lookup=parent_prompt_lookup,
         fork_context_spec=fork_context_spec,
         roles=roles,
+        comm_kind=comm_kind,
     )
 
 

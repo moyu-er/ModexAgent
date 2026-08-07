@@ -63,9 +63,7 @@ def test_current_model_choice_default_none() -> None:
 
 def _ctx(session_id: str, services: SimpleNamespace | None = None) -> SimpleNamespace:
     runtime = SimpleNamespace(services=services) if services is not None else None
-    return SimpleNamespace(
-        session=SimpleNamespace(session_id=session_id), runtime=runtime
-    )
+    return SimpleNamespace(session=SimpleNamespace(session_id=session_id), runtime=runtime)
 
 
 @pytest.mark.asyncio
@@ -91,10 +89,10 @@ async def test_hook_falls_back_to_default_when_absent(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_hook_overrides_model_capabilities(tmp_path: Path) -> None:
+async def test_hook_overrides_model_info(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     reg = ModelChoiceRegistry()
-    services = SimpleNamespace(model_capabilities=None)
+    services = SimpleNamespace(model_info=None)
     hook = ModelChoiceBindHook(cfg, reg)
     await hook.before_turn(_ctx("s", services=services))
-    assert services.model_capabilities is not None
+    assert services.model_info is not None

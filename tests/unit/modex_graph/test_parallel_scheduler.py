@@ -1,80 +1,66 @@
-"""Tests for ParallelScheduler, NodeInstance, NodeInstanceStatus, DispatchEvent.
+"""Tests for ParallelScheduler, NodeInstance, and NodeInstanceStatus.
 
 Covers the Task 03 acceptance criteria:
 
 - `NodeInstanceStatus` StrEnum: DORMANT / PENDING / READY / RUNNING / COMPLETED.
 - `NodeInstance` regular class with __slots__: instance_id, node_name, seq,
-  status, forked_state, fork_version. instance_id format `{node_name}#{seq}`.
-- `DispatchEvent` frozen Pydantic model (extra="forbid"): source_instance,
-  target, payload.
+  status, upstream_payloads. instance_id format `{node_name}#{seq}`.
 - `ParallelScheduler` execution loop: entry → execute → dispatch →
   downstream → ... → terminate when ready+active empty.
-- Single-node fast path: one READY + no RUNNING → direct main_state.
 - `ctx.dispatch(target, state_update)`: validates target in outgoing edges,
-  creates DispatchEvent, takes effect immediately.
+  and takes effect immediately.
 - `RoutingError` on invalid dispatch target.
 - `max_iterations` per-instance-execution counting.
-- `LinearScheduler` ctx.dispatch raises RuntimeError.
+- `GraphContext.dispatch` works under both LINEAR and PARALLEL (both
+  schedulers register a handler). Raises RuntimeError only if no handler.
 - `GraphEngine._select_scheduler` returns ParallelScheduler for PARALLEL.
 - No bare strings in framework code (all enums via StrEnum).
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
-from helpers import CounterState, make_ctx, make_runtime
-from pydantic import ValidationError
+from helpers import CounterState, make_coordinator, make_ctx, make_runtime
 
 from modex_graph import (
-    DispatchEvent,
     Graph,
     GraphContext,
     GraphEngine,
     GraphNode,
     GraphRecursionError,
+    GraphRuntime,
+    IntegratedInput,
+    InvocationContext,
     LinearScheduler,
     Node,
     NodeInstance,
     NodeInstanceStatus,
-    NodeResult,
     ParallelScheduler,
     RoutingError,
     Scheduler,
     SchedulerKind,
-    Task,
 )
 
 # ── Test helpers ──────────────────────────────────────────────────────────
 
 
 class DispatchAddNode(Node[CounterState]):
-    """Increments count by `amount`, then dispatches to `target` if set."""
+    """Increments count by `amount`, then delivers to `target` if set."""
 
     def __init__(self, amount: int, target: str | None = None) -> None:
         self.amount = amount
         self.target = target
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
         ctx.state.count += self.amount
         if self.target is not None:
-            ctx.dispatch(self.target)
-        return NodeResult()
-
-
-class DispatchAddWithPayloadNode(Node[CounterState]):
-    """Increments count, dispatches to `target` with a payload dict."""
-
-    def __init__(self, amount: int, target: str, payload: dict[str, Any]) -> None:
-        self.amount = amount
-        self.target = target
-        self.payload = payload
-
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
-        ctx.state.count += self.amount
-        ctx.dispatch(self.target, self.payload)
-        return NodeResult()
+            self.deliver(None, self.target, ctx)
+        return None
 
 
 def make_parallel_ctx(state: CounterState | None = None) -> GraphContext[CounterState]:
@@ -82,6 +68,7 @@ def make_parallel_ctx(state: CounterState | None = None) -> GraphContext[Counter
     return GraphContext(
         state=state if state is not None else CounterState(),
         runtime=make_runtime(),
+        coordinator=make_coordinator(),
         scheduler_kind=SchedulerKind.PARALLEL,
     )
 
@@ -126,8 +113,7 @@ class TestNodeInstance:
             "node_name",
             "seq",
             "status",
-            "forked_state",
-            "fork_version",
+            "upstream_payloads",
         }
         assert set(NodeInstance.__slots__) == expected
 
@@ -142,18 +128,7 @@ class TestNodeInstance:
         assert instance.node_name == "llm"
         assert instance.seq == 0
         assert instance.status == NodeInstanceStatus.DORMANT
-        assert instance.forked_state is None
-
-    def test_forked_state_can_be_set(self) -> None:
-        state = CounterState(count=42)
-        instance = NodeInstance(
-            instance_id="tool#1",
-            node_name="tool",
-            seq=1,
-            status=NodeInstanceStatus.READY,
-            forked_state=state,
-        )
-        assert instance.forked_state is state
+        assert instance.upstream_payloads is None
 
     def test_repr(self) -> None:
         instance = NodeInstance(
@@ -165,49 +140,6 @@ class TestNodeInstance:
         r = repr(instance)
         assert "a#0" in r
         assert "completed" in r
-
-
-# ── DispatchEvent ─────────────────────────────────────────────────────────
-
-
-class TestDispatchEvent:
-    def test_is_pydantic_model(self) -> None:
-        from pydantic import BaseModel
-
-        assert issubclass(DispatchEvent, BaseModel)
-
-    def test_frozen(self) -> None:
-        assert DispatchEvent.model_config.get("frozen") is True
-
-    def test_extra_forbid(self) -> None:
-        assert DispatchEvent.model_config.get("extra") == "forbid"
-
-    def test_fields(self) -> None:
-        event = DispatchEvent(
-            source_instance="a#0",
-            target="b",
-            payload={"key": "value"},
-        )
-        assert event.source_instance == "a#0"
-        assert event.target == "b"
-        assert event.payload == {"key": "value"}
-
-    def test_payload_defaults_none(self) -> None:
-        event = DispatchEvent(source_instance="a#0", target="b")
-        assert event.payload is None
-
-    def test_frozen_immutable(self) -> None:
-        event = DispatchEvent(source_instance="a#0", target="b")
-        with pytest.raises(ValidationError):
-            event.target = "c"  # type: ignore[misc]
-
-    def test_extra_field_rejected(self) -> None:
-        with pytest.raises(ValidationError):
-            DispatchEvent(  # type: ignore[call-arg]
-                source_instance="a#0",
-                target="b",
-                extra_field="bad",
-            )
 
 
 # ── ParallelScheduler inheritance ────────────────────────────────────────
@@ -301,12 +233,15 @@ class TestLinearGraphParallel:
         assert result.count == 6
 
     async def test_node_without_dispatch_terminates(self) -> None:
-        """A node that doesn't call dispatch terminates the graph."""
+        """A node that delivers to END terminates the graph."""
 
         class NoDispatchNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
                 ctx.state.count += 10
-                return NodeResult()
+                self.deliver(None, None, ctx)
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("a", NoDispatchNode())
@@ -318,34 +253,12 @@ class TestLinearGraphParallel:
         result = await GraphEngine(compiled).run_async(ctx)
         assert result.count == 10
 
-    async def test_dispatch_with_payload(self) -> None:
-        """dispatch(target, state_update) records payload in DispatchEvent."""
-        g: Graph[CounterState] = Graph()
-        g.add_node(
-            "a",
-            DispatchAddWithPayloadNode(amount=1, target=GraphNode.END, payload={"data": 42}),
-        )
-        g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", GraphNode.END)
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
-        ctx = make_parallel_ctx(CounterState(count=0))
-        engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
-
-        scheduler = engine._scheduler
-        assert isinstance(scheduler, ParallelScheduler)
-        assert len(scheduler._dispatch_log) == 1
-        event = scheduler._dispatch_log[0]
-        assert event.payload == {"data": 42}
-        assert event.target == GraphNode.END
+# ── Single-node execution ────────────────────────────────────────────────
 
 
-# ── Single-node fast path ────────────────────────────────────────────────
-
-
-class TestFastPath:
-    """Single-node fast path: one READY + no RUNNING → direct main_state."""
+class TestSingleNodeExecution:
+    """A single READY instance executes against shared state."""
 
     async def test_single_node_executes(self) -> None:
         g: Graph[CounterState] = Graph()
@@ -358,8 +271,7 @@ class TestFastPath:
         result = await GraphEngine(compiled).run_async(ctx)
         assert result.count == 7
 
-    async def test_fast_path_creates_single_instance(self) -> None:
-        """Fast path: only one instance created, forked_state is None."""
+    async def test_creates_single_instance(self) -> None:
         g: Graph[CounterState] = Graph()
         g.add_node("a", DispatchAddNode(amount=1, target=GraphNode.END))
         g.add_edge(GraphNode.START, "a")
@@ -375,11 +287,10 @@ class TestFastPath:
         # One instance for the entry node.
         assert len(scheduler._instances) == 1
         instance = scheduler._instances["a#0"]
-        assert instance.forked_state is None
         assert instance.status == NodeInstanceStatus.COMPLETED
 
-    async def test_fast_path_iteration_count(self) -> None:
-        """Fast path increments iteration count by 1 per execution."""
+    async def test_iteration_count(self) -> None:
+        """Single-node execution increments iteration count once."""
         g: Graph[CounterState] = Graph()
         g.add_node("a", DispatchAddNode(amount=1, target=GraphNode.END))
         g.add_edge(GraphNode.START, "a")
@@ -399,7 +310,7 @@ class TestFastPath:
 
 
 class TestEndDispatch:
-    async def test_dispatch_to_end_records_source(self) -> None:
+    async def test_dispatch_to_end_creates_no_instance(self) -> None:
         g: Graph[CounterState] = Graph()
         g.add_node("a", DispatchAddNode(amount=1, target=GraphNode.END))
         g.add_edge(GraphNode.START, "a")
@@ -412,10 +323,6 @@ class TestEndDispatch:
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
-        end_sources = {
-            e.source_instance for e in scheduler._dispatch_log if e.target == GraphNode.END
-        }
-        assert "a#0" in end_sources
         # No instance created for END.
         end_instances = [
             inst for inst in scheduler._instances.values() if inst.node_name == GraphNode.END
@@ -431,9 +338,11 @@ class TestRoutingError:
         """ctx.dispatch to a target not in outgoing edges raises RoutingError."""
 
         class BadDispatchNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
                 ctx.dispatch("nonexistent")  # no edge from "a" to "nonexistent"
-                return NodeResult()
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("a", BadDispatchNode())
@@ -456,9 +365,11 @@ class TestRoutingError:
         """
 
         class DispatchToBNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
                 ctx.dispatch("b")  # "b" exists but no direct edge a→b
-                return NodeResult()
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("a", DispatchToBNode())
@@ -484,10 +395,12 @@ class TestMaxIterations:
         """A node that dispatches to itself loops until max_iterations."""
 
         class SelfDispatchNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
                 ctx.state.count += 1
-                ctx.dispatch("loop")
-                return NodeResult()
+                self.deliver(None, "loop", ctx)
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("loop", SelfDispatchNode())
@@ -525,28 +438,93 @@ class TestMaxIterations:
         assert scheduler._iteration_count == 2
         assert len(scheduler._instances) == 2
 
+    async def test_fanout_reserves_iterations_before_tasks_yield(self) -> None:
+        class YieldingRuntime(GraphRuntime):
+            def __init__(self) -> None:
+                self.before_calls: list[str] = []
 
-# ── LinearScheduler ctx.dispatch raises RuntimeError ─────────────────────
+            async def before_node(self, ctx: GraphContext[Any], node_name: str) -> None:
+                self.before_calls.append(node_name)
+                await asyncio.sleep(0)
 
+        class FanOutNode(Node[CounterState]):
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
+                ctx.state.count += 1
+                self.deliver(None, "b", ctx)
+                self.deliver(None, "c", ctx)
+                return None
 
-class TestLinearDispatchRaises:
-    def test_dispatch_under_linear_raises_runtime_error(self) -> None:
-        ctx = make_ctx(CounterState())
-        assert ctx.scheduler_kind == SchedulerKind.LINEAR
-        with pytest.raises(RuntimeError, match="only available under ParallelScheduler"):
-            ctx.dispatch("some_target")
-
-    def test_dispatch_under_explicit_linear_raises(self) -> None:
+        g: Graph[CounterState] = Graph()
+        g.add_node("a", FanOutNode())
+        g.add_node("b", DispatchAddNode(amount=10, target=GraphNode.END))
+        g.add_node("c", DispatchAddNode(amount=100, target=GraphNode.END))
+        g.add_edge(GraphNode.START, "a")
+        g.add_edge("a", "b")
+        g.add_edge("a", "c")
+        g.add_edge("b", GraphNode.END)
+        g.add_edge("c", GraphNode.END)
+        compiled = g.compile(max_iterations=2, scheduler=SchedulerKind.PARALLEL)
+        runtime = YieldingRuntime()
         ctx = GraphContext(
             state=CounterState(),
-            runtime=make_runtime(),
-            scheduler_kind=SchedulerKind.LINEAR,
+            runtime=runtime,
+            coordinator=make_coordinator(),
+            scheduler_kind=SchedulerKind.PARALLEL,
         )
-        with pytest.raises(RuntimeError, match="only available under ParallelScheduler"):
-            ctx.dispatch("some_target")
+        scheduler = ParallelScheduler(compiled)
+
+        with pytest.raises(GraphRecursionError, match="max_iterations=2"):
+            await scheduler.run_async(ctx)
+
+        assert scheduler._iteration_count == compiled.max_iterations
+        assert set(runtime.before_calls) == {"a", "b"}
+
+
+class TestExecutionContextShell:
+    async def test_before_node_does_not_observe_parent_invocation(self) -> None:
+        class InvocationCapturingRuntime(GraphRuntime):
+            def __init__(self) -> None:
+                self.before_invocations: list[InvocationContext | None] = []
+
+            async def before_node(self, ctx: GraphContext[Any], node_name: str) -> None:
+                self.before_invocations.append(ctx.current_invocation)
+
+        g: Graph[CounterState] = Graph()
+        g.add_node("a", DispatchAddNode(amount=1, target=GraphNode.END))
+        g.add_edge(GraphNode.START, "a")
+        g.add_edge("a", GraphNode.END)
+        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
+        runtime = InvocationCapturingRuntime()
+        parent_invocation = InvocationContext(
+            invocation_id=99,
+            node_name="parent",
+            version=1,
+            parent_version=None,
+        )
+        ctx = GraphContext(
+            state=CounterState(),
+            runtime=runtime,
+            coordinator=make_coordinator(),
+            scheduler_kind=SchedulerKind.PARALLEL,
+            current_invocation=parent_invocation,
+        )
+
+        await ParallelScheduler(compiled).run_async(ctx)
+
+        assert runtime.before_invocations == [None]
+
+
+# ── LinearScheduler dispatch works under LINEAR ──────────────────────────
+
+
+class TestLinearDispatchWorks:
+    """LinearScheduler registers a dispatch handler — ctx.dispatch works
+    under LINEAR (rule 15 convergence: no scheduler_kind branch)."""
 
     async def test_linear_scheduler_executes_normally(self) -> None:
-        """LinearScheduler still works for graphs without dispatch calls."""
+        """LinearScheduler still works for graphs without explicit dispatch calls."""
         from helpers import AddNode
 
         g: Graph[CounterState] = Graph()
@@ -565,12 +543,14 @@ class TestLinearDispatchRaises:
 
 class TestGraphContextDispatch:
     def test_parallel_without_handler_raises_runtime_error(self) -> None:
-        """PARALLEL context without a registered handler is a programmer error."""
+        """PARALLEL context with handler explicitly cleared is a programmer error."""
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
+        ctx.set_dispatch_handler(None)  # explicitly clear the default no-op
         with pytest.raises(RuntimeError, match="no dispatch_handler"):
             ctx.dispatch("target")
 
@@ -583,6 +563,7 @@ class TestGraphContextDispatch:
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
             dispatch_handler=handler,
             current_instance="a#0",
@@ -594,6 +575,7 @@ class TestGraphContextDispatch:
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         assert ctx._current_instance is None
@@ -607,6 +589,7 @@ class TestGraphContextDispatch:
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
             dispatch_handler=handler,
         )
@@ -617,37 +600,12 @@ class TestGraphContextDispatch:
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
             current_instance="a#0",
         )
         sub = ctx.fork(state=CounterState())
         assert sub._current_instance is None
-
-
-# ── Dispatch log ──────────────────────────────────────────────────────────
-
-
-class TestDispatchLog:
-    async def test_dispatch_log_records_all_events(self) -> None:
-        g: Graph[CounterState] = Graph()
-        g.add_node("a", DispatchAddNode(amount=1, target="b"))
-        g.add_node("b", DispatchAddNode(amount=2, target=GraphNode.END))
-        g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", "b")
-        g.add_edge("b", GraphNode.END)
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-
-        ctx = make_parallel_ctx(CounterState(count=0))
-        engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
-
-        scheduler = engine._scheduler
-        assert isinstance(scheduler, ParallelScheduler)
-        assert len(scheduler._dispatch_log) == 2
-        assert scheduler._dispatch_log[0].source_instance == "a#0"
-        assert scheduler._dispatch_log[0].target == "b"
-        assert scheduler._dispatch_log[1].source_instance == "b#1"
-        assert scheduler._dispatch_log[1].target == GraphNode.END
 
 
 # ── Architecture guard ────────────────────────────────────────────────────
@@ -668,11 +626,6 @@ class TestArchitectureGuard:
 
         assert ConstantsStatus is NodeInstanceStatus
 
-    def test_dispatch_event_in_result_module(self) -> None:
-        from modex_graph.result import DispatchEvent as ResultDispatch
-
-        assert ResultDispatch is DispatchEvent
-
     def test_public_exports(self) -> None:
         import modex_graph
 
@@ -680,65 +633,30 @@ class TestArchitectureGuard:
             "ParallelScheduler",
             "NodeInstanceStatus",
             "NodeInstance",
-            "DispatchEvent",
         ):
             assert name in modex_graph.__all__, f"{name} not in __all__"
             assert hasattr(modex_graph, name), f"{name} not importable"
 
 
-# ── Routing compilation integration (Task 04) ─────────────────────────────
-
-
-class _TransitionAddNode(Node[CounterState]):
-    """Increments count and returns NodeResult(transition=...)."""
-
-    def __init__(self, amount: int, transition: str) -> None:
-        self.amount = amount
-        self.transition = transition
-
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
-        ctx.state.count += self.amount
-        return NodeResult(transition=self.transition)
-
-
-class _CommandAddNode(Node[CounterState]):
-    """Increments count and returns NodeResult(command=Command(goto=...))."""
-
-    def __init__(self, amount: int, goto: str | list[Task] | None) -> None:
-        self.amount = amount
-        self.goto = goto
-
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
-        from modex_graph import Command
-
-        ctx.state.count += self.amount
-        return NodeResult(command=Command(goto=self.goto))
+# ── Routing compilation integration ─────────────────────────────────────
 
 
 class TestRoutingCompilationIntegration:
-    """Integration tests for routing compilation under ParallelScheduler.
+    """Integration tests for deliver-based dispatch under ParallelScheduler."""
 
-    Dedicated routing tests live in `test_parallel_routing.py`. These
-    tests verify the integration point: ParallelScheduler compiles
-    NodeResult into ctx.dispatch calls after execute returns.
-    """
+    async def test_default_edge_fires_when_no_explicit_target(self) -> None:
+        """Node delivers with next_node=None → default edge fires."""
 
-    async def test_transition_compiles_to_dispatch(self) -> None:
+        class DeliverDefaultNode(Node[CounterState]):
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
+                ctx.state.count += 1
+                self.deliver(None, None, ctx)
+                return None
+
         g: Graph[CounterState] = Graph()
-        g.add_node("a", _TransitionAddNode(amount=1, transition="next"))
-        g.add_node("b", DispatchAddNode(amount=10, target=GraphNode.END))
-        g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", "b", reason="next")
-        g.add_edge("b", GraphNode.END)
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-
-        ctx = make_parallel_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
-        assert result.count == 11
-
-    async def test_command_goto_str_compiles_to_dispatch(self) -> None:
-        g: Graph[CounterState] = Graph()
-        g.add_node("a", _CommandAddNode(amount=1, goto="b"))
+        g.add_node("a", DeliverDefaultNode())
         g.add_node("b", DispatchAddNode(amount=10, target=GraphNode.END))
         g.add_edge(GraphNode.START, "a")
         g.add_edge("a", "b")
@@ -748,41 +666,3 @@ class TestRoutingCompilationIntegration:
         ctx = make_parallel_ctx(CounterState(count=0))
         result = await GraphEngine(compiled).run_async(ctx)
         assert result.count == 11
-
-    async def test_default_edge_fires_when_no_transition_no_command(self) -> None:
-        """Node returns empty NodeResult → default edge auto-dispatches."""
-
-        class EmptyNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
-                ctx.state.count += 1
-                return NodeResult()
-
-        g: Graph[CounterState] = Graph()
-        g.add_node("a", EmptyNode())
-        g.add_node("b", DispatchAddNode(amount=10, target=GraphNode.END))
-        g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", "b", reason=None)
-        g.add_edge("b", GraphNode.END)
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-
-        ctx = make_parallel_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
-        assert result.count == 11
-
-    async def test_silent_skip_when_no_routing(self) -> None:
-        """No dispatch, no transition, no default edge → silent skip."""
-
-        class EmptyNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
-                ctx.state.count += 1
-                return NodeResult()
-
-        g: Graph[CounterState] = Graph()
-        g.add_node("a", EmptyNode())
-        g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", GraphNode.END, reason="explicit")
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-
-        ctx = make_parallel_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
-        assert result.count == 1

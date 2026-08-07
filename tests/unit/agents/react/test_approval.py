@@ -2,7 +2,7 @@
 from pathlib import Path
 
 import pytest
-from modex_agent.agents.react.approval import (
+from modex_agent.approval.runtime import (
     ApprovalClassifier,
     TieredToolApprovalClassifier,
     ApprovalRuntime,

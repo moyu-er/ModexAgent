@@ -15,7 +15,7 @@ from modex_agent.core.context import ContextManager, InMemoryContextManager
 from modex_agent.core.runtime_context import RuntimeContextManager
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.tool_manager import InMemoryToolManager
-from modex_agent.ioc.configs.observability import ObservabilityConfig
+from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
 
 try:
     from modex_agent.providers import LiteLLMProvider
@@ -122,13 +122,11 @@ class DefaultAgentFactory(AgentFactory):
             reasoning_effort=cfg.reasoning_effort,
         )
 
-    def _get_builder(
-        self, execution_strategy: ExecutionStrategyKind
-    ) -> type[Any] | None:
-        if execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
-            from modex_agent.agents.external_coding.builder import ExternalCodingAgentBuilder
+    def _get_builder(self, execution_strategy: ExecutionStrategyKind) -> type[Any] | None:
+        if execution_strategy == ExecutionStrategyKind.EXTERNAL:
+            from modex_agent.agents.external.builder import ExternalAgentBuilder
 
-            return ExternalCodingAgentBuilder
+            return ExternalAgentBuilder
         if execution_strategy in (ExecutionStrategyKind.REACT, ExecutionStrategyKind.PIPELINE):
             from modex_agent.agents.react.builder import ReActAgentBuilder
 
@@ -184,9 +182,18 @@ class DefaultAgentFactory(AgentFactory):
         from modex_agent.pipeline.approval_resumer import ApprovalResumer
         from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
         from modex_agent.pipeline.turn_runner import ReActTurnRunner
+        from modex_agent.runtime.services import AgentRuntimeServices
         from modex_agent.utils.sanitizer import ContentSanitizer
 
         sanitizer = ContentSanitizer.sanitize
+        descriptor_model_info = (
+            descriptor.llm_config.model_info if descriptor.llm_config is not None else None
+        )
+        runtime_services = (
+            AgentRuntimeServices(model_info=descriptor_model_info)
+            if descriptor_model_info is not None
+            else None
+        )
         turn_context_builder = TurnContextBuilder(
             agent=agent,
             tool_manager=filtered_tools,
@@ -197,7 +204,7 @@ class DefaultAgentFactory(AgentFactory):
             agent_descriptor=descriptor,
             max_iterations=descriptor.max_iterations,
             safety=safety,
-            runtime_services=None,
+            runtime_services=runtime_services,
             runtime_context_manager=runtime_context_manager,
             governance=subagent_governance,
             hook_runner=hook_runner,
@@ -369,7 +376,7 @@ class DefaultAgentFactory(AgentFactory):
         from modex_agent.hook.builtin import LoopDetectionHook
         from modex_agent.hook.builtin.checkpoint import CheckpointHook
         from modex_agent.hook.builtin.training_data import TrainingDataHook
-        from modex_agent.trace import TraceCollectorHook
+        from modex_agent.trace import TraceCollectorHook, build_prompt_capture
 
         obs = self._observability_config
         checkpoint_per_iteration = obs.checkpoint_per_iteration if obs is not None else True
@@ -377,8 +384,58 @@ class DefaultAgentFactory(AgentFactory):
         training_max_iterations = obs.training_max_iterations if obs is not None else 20
         training_max_tokens = obs.training_max_tokens if obs is not None else 100_000
 
+        prompt_capture_strategy = (
+            build_prompt_capture(obs.prompt_capture) if obs is not None else None
+        )
+        model_name = descriptor.llm_config.model if descriptor.llm_config is not None else None
+
+        llm_cfg = descriptor.llm_config
+        provider_name = (
+            model_name.split("/")[0] if model_name is not None and "/" in model_name else None
+        )
+        request_params = (
+            {
+                "temperature": llm_cfg.temperature,
+                "max_tokens": llm_cfg.max_output_tokens,
+            }
+            if llm_cfg is not None
+            else None
+        )
+
+        # L2 score injection (Layer 1 eval)
+        score_injector = None
+        if (
+            obs is not None
+            and obs.eval_score_injection
+            and obs.trace_backend == TraceBackend.OTEL_HTTP
+            and obs.otel_endpoint
+        ):
+            try:
+                from urllib.parse import urlparse
+
+                from modex_agent.trace.score_injector import L2ScoreInjector
+
+                parsed = urlparse(obs.otel_endpoint)
+                ingestion_url = f"{parsed.scheme}://{parsed.netloc}/api/public/ingestion"
+                headers = obs.otel_headers or {}
+                score_injector = L2ScoreInjector(
+                    ingestion_url=ingestion_url,
+                    headers=headers,
+                )
+            except Exception:
+                logger.warning(
+                    "L2ScoreInjector creation failed; score injection disabled.",
+                    exc_info=True,
+                )
+
         live_hooks: list[Any] = [
-            TraceCollectorHook(),
+            TraceCollectorHook(
+                prompt_capture=prompt_capture_strategy,
+                model=model_name,
+                provider_name=provider_name,
+                request_params=request_params,
+                score_injector=score_injector,
+            ),
             LoopDetectionHook(),
         ]
         if checkpoint_per_iteration:

@@ -1,7 +1,9 @@
 """SQLite-backed :class:`~modex_agent.memory.core.split_stores.MessageStore`.
 
 Conversation message history with a per-row state machine:
-``normal → pinned → soft_deleted → DELETE``.
+``normal → pinned → soft_deleted → DELETE``, plus ``superseded`` — stale
+physical copies of retained messages after :meth:`retain_messages`
+re-inserts the keep list (invisible to every read path, TTL-purged).
 
 - ``normal`` / ``pinned`` rows are returned by :meth:`load_messages`.
 - :meth:`prune_messages` atomically soft-deletes (``state='soft_deleted'``,
@@ -48,6 +50,7 @@ class MessageRowState(StrEnum):
     NORMAL = "normal"
     PINNED = "pinned"
     SOFT_DELETED = "soft_deleted"
+    SUPERSEDED = "superseded"
 
     @classmethod
     def active(cls) -> tuple[str, ...]:
@@ -55,11 +58,43 @@ class MessageRowState(StrEnum):
 
     @classmethod
     def all_visible(cls) -> tuple[str, ...]:
+        """History-view states. ``superseded`` rows are stale physical copies
+        of re-inserted retained messages — excluded everywhere to avoid
+        duplicates."""
         return (cls.NORMAL.value, cls.PINNED.value, cls.SOFT_DELETED.value)
+
+    @classmethod
+    def deleted(cls) -> tuple[str, ...]:
+        """States eligible for TTL physical purge."""
+        return (cls.SOFT_DELETED.value, cls.SUPERSEDED.value)
 
 
 def _placeholders(count: int) -> str:
     return ", ".join("?" * count)
+
+
+def _coerce_created_at_ms(value: object, default: int) -> int:
+    """Normalize a ``created_at`` value from a message dict to epoch ms.
+
+    Accepts the ADR-0029 int-ms storage form and the ``ChatMessage.to_dict()``
+    string form (``"%Y-%m-%d %H:%M:%S"``, user timezone). Anything else falls
+    back to *default* (the current time).
+    """
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        from datetime import datetime
+
+        from modex_agent.utils.timezone import get_user_timezone
+
+        try:
+            parsed = datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=get_user_timezone()
+            )
+            return int(parsed.timestamp() * 1000)
+        except ValueError:
+            return default
+    return default
 
 
 #: Projection splitting the message dict into typed columns + residual JSON.
@@ -335,21 +370,21 @@ class SqliteMessageStore(MessageStore):
 
     async def cleanup_expired(self) -> int:
         cutoff = now_ms() - int(self._ttl_seconds * 1000)
-        sd = MessageRowState.SOFT_DELETED.value
+        deleted = MessageRowState.deleted()
         async with self._connection.transaction(immediate=True) as tx:
             rows = await tx.query_all(
-                "SELECT COUNT(*) FROM memory_session_messages "
-                "WHERE scope_key = ? AND state = ? "
-                "AND updated_at < ?",
-                (self._scope_json, sd, cutoff),
+                f"SELECT COUNT(*) FROM memory_session_messages "
+                f"WHERE scope_key = ? AND state IN ({_placeholders(len(deleted))}) "
+                f"AND updated_at < ?",
+                (self._scope_json, *deleted, cutoff),
             )
             count = int(rows[0][0]) if rows else 0
             if count:
                 await tx.execute(
-                    "DELETE FROM memory_session_messages "
-                    "WHERE scope_key = ? AND state = ? "
-                    "AND updated_at < ?",
-                    (self._scope_json, sd, cutoff),
+                    f"DELETE FROM memory_session_messages "
+                    f"WHERE scope_key = ? AND state IN ({_placeholders(len(deleted))}) "
+                    f"AND updated_at < ?",
+                    (self._scope_json, *deleted, cutoff),
                 )
         return count
 
@@ -435,26 +470,69 @@ class SqliteMessageStore(MessageStore):
                 (self._scope_json, *active),
             )
 
+            # Classify existing rows: kept content's stale copies become
+            # ``superseded`` (invisible everywhere), the rest ``soft_deleted``
+            # (visible in the history view).
             keep_sigs = {message_signature(m) for m in keep_messages}
-            soft_deleted = 0
             for row in rows:
                 seq = int(row[0])
                 stored_msg = _assemble_message(row, offset=1)
-                if message_signature(stored_msg) not in keep_sigs:
-                    await tx.execute(
-                        "UPDATE memory_session_messages "
-                        "SET state = ? "
-                        "WHERE scope_key = ? AND seq = ?",
-                        (
-                            MessageRowState.SOFT_DELETED.value,
-                            self._scope_json,
-                            seq,
-                        ),
-                    )
-                    soft_deleted += 1
+                new_state = (
+                    MessageRowState.SUPERSEDED
+                    if message_signature(stored_msg) in keep_sigs
+                    else MessageRowState.SOFT_DELETED
+                )
+                await tx.execute(
+                    "UPDATE memory_session_messages "
+                    "SET state = ? "
+                    "WHERE scope_key = ? AND seq = ?",
+                    (new_state.value, self._scope_json, seq),
+                )
 
-            if soft_deleted > 0:
-                await self._bump_revision_tx(tx, count_override=None)
+            # Re-insert the keep list with fresh seqs so physical order matches
+            # logical order — a new head entry (e.g. a compact summary) lands
+            # on top with no read-path adjustment. Per-row fields
+            # (message_id / token_count / created_at / pinned) are preserved
+            # from the incoming dicts; runtime markers are stripped.
+            max_seq_row = await tx.query_one(
+                "SELECT COALESCE(MAX(seq), 0) FROM memory_session_messages WHERE scope_key = ?",
+                (self._scope_json,),
+            )
+            next_seq = int(max_seq_row[0]) if max_seq_row is not None else 0
+            now = now_ms()
+            for message in keep_messages:
+                next_seq += 1
+                stored = {
+                    k: v
+                    for k, v in message.items()
+                    if k not in ("_pinned", "_deleted")
+                }
+                created_at = stored.pop("created_at", None)
+                columns, message_json = _MESSAGE_PROJECTION.split(stored)
+                await tx.execute(
+                    "INSERT INTO memory_session_messages "
+                    "(scope_key, seq, message_id, role, content, is_content_json, "
+                    "token_count, message_json, created_at, state) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        self._scope_json,
+                        next_seq,
+                        columns.get("message_id"),
+                        columns.get("role"),
+                        columns.get("content"),
+                        columns.get("is_content_json", 0),
+                        columns.get("token_count"),
+                        message_json,
+                        _coerce_created_at_ms(created_at, now),
+                        (
+                            MessageRowState.PINNED.value
+                            if message.get("_pinned")
+                            else MessageRowState.NORMAL.value
+                        ),
+                    ),
+                )
+
+            await self._bump_revision_tx(tx, count_override=None)
 
         return await self.get_revision()
 

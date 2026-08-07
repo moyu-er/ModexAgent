@@ -3,57 +3,65 @@
 Fires on FINALLY_TURN (guaranteed) — no communication tool check needed.
 Subagents have no communication tools; this hook is the sole notification path.
 
-The notification XML is consumed **by the parent agent's LLM** (injected as a
-tool-result message into the parent's conversation).  No code parses the XML
-fields programmatically — every field must be self-explanatory to an LLM.
+The notification markdown is consumed **by the parent agent's LLM** (injected as a
+tool-result message into the parent's conversation).  No code parses the fields
+programmatically — every field must be self-explanatory to an LLM.
 
-XML structure (``<subagent_result>``) — native (react) subagent:
+The hook delegates to ``build_agent_comm_message`` from ``message_format.py``
+(convergence — single source of truth for the result markdown format).  The
+``content`` body carries the subagent's last output; result metadata (status,
+stop reason, issue, output path, trace path) is carried by ``ResultMeta`` and
+rendered in the header block.
 
-    <subagent_result>
-      <agent>explore</agent>
-      <invocation_id>638aaa67</invocation_id>
-      <success>true</success>
-      <result>Exploration complete. Found 3 entry points...</result>
-      <output>/path/to/OUTPUT.md</output>
-      <output_status>written</output_status>
-      <trace>/path/to/spans.jsonl</trace>
-    </subagent_result>
+Native (react) subagent — includes output/trace paths::
 
-External coding subagent — ``<replied>`` replaces the file-based artifacts:
+    Message from subagent 'explore':
+    invocation_id: 638aaa67
+    status: success
+    Stop reason: completed
+    Output: /path/to/OUTPUT_1.md
+    Trace: /path/to/spans.jsonl
 
-    <subagent_result>
-      <agent>coder</agent>
-      <invocation_id>638aaa67</invocation_id>
-      <success>true</success>
-      <result>Task finished.</result>
-      <replied>true</replied>
-    </subagent_result>
+    Result:
+    Exploration complete. Found 3 entry points...
 
-On failure an ``<issue>`` element explains the problem and how to resume:
+External coding subagent — no file artifacts::
 
-    <subagent_result>
-      <agent>office-expert</agent>
-      <invocation_id>638aaa67</invocation_id>
-      <success>false</success>
-      <result></result>
-      <issue>Subagent crashed with error: timeout. To continue, send a message with invocation_id=638aaa67.</issue>
-      <output>/path/to/OUTPUT.md</output>
-      <output_status>missing</output_status>
-      <trace>/path/to/spans.jsonl</trace>
-    </subagent_result>
+    Message from subagent 'coder':
+    invocation_id: 638aaa67
+    status: success
+    Stop reason: completed
+
+    Result:
+    Task finished.
+
+On failure an ``Issue:`` line explains the problem and how to resume::
+
+    Message from subagent 'office-expert':
+    invocation_id: 638aaa67
+    status: failed
+    Stop reason: error
+    Issue: Subagent crashed with error: timeout. To continue, send a message with invocation_id=638aaa67.
+    Output: /path/to/OUTPUT_1.md
+    Trace: /path/to/spans.jsonl
+
+    Result:
 
 Design rationale (ADR-0027 evolution):
-- ``success`` replaces the old ``status`` / ``is_normal`` / ``stop_reason``
-  triple.  One boolean is all the parent LLM needs to decide next steps.
-- ``result`` carries the subagent's **real last output** extracted from
+- ``status`` ("success"/"failed") replaces the old ``success`` boolean XML field.
+  ``ResultMeta`` carries it; ``build_agent_comm_message`` renders it in the header.
+- ``result_text`` carries the subagent's **real last output** extracted from
   ``result.messages`` (not ``result.content``, which is a placeholder on
-  non-normal exit paths).  Truncated to ``max_result_chars`` (default 6000).
+  non-normal exit paths).  Notifications are truncated to 300 characters;
+  native deliverable files preserve the full content.
 - ``issue`` merges the old ``error`` + ``hint`` and appears **only** on
   failure, keeping the success notification clean.
-- Native subagents keep ``<output>`` / ``<output_status>`` / ``<trace>`` so
-  the parent can read the full deliverable and trace file.
-- External subagents keep ``<replied>`` (whether the subagent emitted any
-  ``modexctl send`` during the turn) instead of file-based artifacts.
+- Native subagents keep ``Output:`` / ``Trace:`` lines so the parent can read
+  the full deliverable and trace file.
+- External subagents omit file-based artifacts (no OUTPUT.md concept).  The
+  ``Replied:`` line is omitted when ``replied`` is None (the per-session
+  send-tracking mechanism does not exist yet; the parent judges the outcome
+  solely on status, result, and issue).
 """
 
 from __future__ import annotations
@@ -63,7 +71,9 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.constants import ExecutionStrategyKind, StopReason
+from modex_agent.core.message_utils import sanitize_reminder_content
+from modex_agent.core.types import ReminderKind
 from modex_agent.hook.abc import FinallyTurnHook
 
 if TYPE_CHECKING:
@@ -79,16 +89,15 @@ class SubagentAutoSendHook(FinallyTurnHook):
     """Always-fire result notification for subagents.
 
     Fires on FINALLY_TURN (success, error, cancel, max_iterations — always).
-    Sends a ``<subagent_result>`` XML to the parent inbox.
+    Sends a markdown result notification to the parent inbox via
+    ``build_agent_comm_message`` from ``message_format.py``.
 
-    Native (react) subagents include ``<output>``, ``<output_status>``, and
-    ``<trace>`` file paths so the parent can read the full deliverable.
-    External coding subagents include ``<replied>`` instead (whether the
-    subagent sent any ``modexctl send`` during the turn).
+    Native (react) subagents include ``Output:`` and ``Trace:`` file paths so
+    the parent can read the full deliverable.  External coding subagents omit
+    file artifacts.
     """
 
-    #: Default truncation limit for the ``<result>`` field (≈1500 tokens).
-    DEFAULT_MAX_RESULT_CHARS: int = 6000
+    NOTIFY_MAX_RESULT_CHARS: int = 300
 
     @property
     def name(self) -> str:
@@ -112,8 +121,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
         runtime_dir: Path | None = None,
         trace_enabled: bool = True,
         execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
-        external_outbox_path: Path | None = None,
-        max_result_chars: int = DEFAULT_MAX_RESULT_CHARS,
+        max_result_chars: int = NOTIFY_MAX_RESULT_CHARS,
     ) -> None:
         self._agent_bus = agent_bus
         self._self_name = self_name
@@ -121,7 +129,6 @@ class SubagentAutoSendHook(FinallyTurnHook):
         self._runtime_dir = runtime_dir or Path(".")
         self._trace_enabled = trace_enabled
         self._execution_strategy = execution_strategy
-        self._external_outbox_path = external_outbox_path
         self._max_result_chars = max_result_chars
 
     # -- FINALLY_TURN (always fires) ------------------------------------------
@@ -133,113 +140,133 @@ class SubagentAutoSendHook(FinallyTurnHook):
         invocation_id = ctx.session.session_id_prefix
         session_id = str(ctx.session)
 
-        if self._execution_strategy is ExecutionStrategyKind.EXTERNAL_CODING:
-            xml = self._build_external_xml(result, invocation_id)
+        if self._execution_strategy is ExecutionStrategyKind.EXTERNAL:
+            content = self._build_external_content(result, invocation_id)
         else:
-            xml = self._build_native_xml(result, invocation_id, session_id)
+            content = self._build_native_content(result, invocation_id, session_id)
 
-        await self._notify_parent(ctx, session_id, xml)
+        await self._notify_parent(ctx, session_id, content)
 
-    # -- XML construction -----------------------------------------------------
+    # -- content construction -------------------------------------------------
 
-    def _build_native_xml(
+    def _build_native_content(
         self,
         result: AgentResult | None,
         invocation_id: str,
         session_id: str,
     ) -> str:
         stop_reason, error, _content = self._extract_raw_fields(result)
-        result_text = self._extract_result_text(result)
+        full_text = self._extract_full_result_text(result)
+
+        try:
+            output_path, write_error = self._write_output_file(session_id, full_text)
+        except Exception as exc:
+            output_path, write_error = None, str(exc)
 
         trace_path: Path | None = None
         if self._trace_enabled:
             trace_path = self._runtime_dir / "trace" / session_id / "spans.jsonl"
-        output_path = self._runtime_dir / "output" / session_id / "OUTPUT.md"
-        output_status = "written" if output_path.exists() else "missing"
 
         success, issue = self._classify(
             stop_reason, error, invocation_id,
             is_external=False,
-            output_status=output_status,
         )
+        if write_error is not None:
+            write_issue = (
+                f"Deliverable file write failed: {write_error}. "
+                "Full content is in this notification (truncated)."
+            )
+            issue = f"{issue} {write_issue}".strip()
 
-        return self._build_xml(
+        notify_text = self._extract_notify_text(result)
+
+        return self._build_content(
             agent_name=self._self_name,
             invocation_id=invocation_id,
             success=success,
-            result_text=result_text,
+            result_text=notify_text,
             issue=issue,
+            stop_reason=stop_reason,
             trace_path=str(trace_path) if trace_path is not None else None,
-            output_path=str(output_path),
-            output_status=output_status,
+            output_path=str(output_path) if output_path is not None else None,
             replied=None,
         )
 
-    def _build_external_xml(
+    def _build_external_content(
         self,
         result: AgentResult | None,
         invocation_id: str,
     ) -> str:
         stop_reason, error, _content = self._extract_raw_fields(result)
-        result_text = self._extract_result_text(result)
+        # External subagents have no OUTPUT.md fallback — the notification IS
+        # the only delivery. Use the full result text (no truncation) so the
+        # parent receives the complete deliverable.
+        result_text = self._extract_full_result_text(result)
         success, issue = self._classify(
             stop_reason, error, invocation_id,
             is_external=True,
-            output_status=None,
         )
-        replied = self._check_replied()
+        # replied is None — the Replied: line is omitted from the content.
+        # A correct per-session send-tracking mechanism (e.g. modexctl
+        # writing a .sent marker after successful fetch_send) does not
+        # exist yet. The parent agent judges the outcome solely on
+        # status, result, and issue.
+        replied: bool | None = None
 
-        return self._build_xml(
+        return self._build_content(
             agent_name=self._self_name,
             invocation_id=invocation_id,
             success=success,
             result_text=result_text,
             issue=issue,
+            stop_reason=stop_reason,
             trace_path=None,
             output_path=None,
-            output_status=None,
             replied=replied,
         )
 
     @staticmethod
-    def _build_xml(
+    def _build_content(
         *,
         agent_name: str,
         invocation_id: str,
         success: bool,
         result_text: str,
         issue: str,
+        stop_reason: str = "",
         trace_path: str | None = None,
         output_path: str | None = None,
-        output_status: str | None = None,
         replied: bool | None = None,
     ) -> str:
-        from modex_agent.utils.xml import xml_text
+        """Build the markdown result content via ``build_agent_comm_message``.
 
-        lines: list[str] = [
-            "<subagent_result>",
-            f"  <agent>{xml_text(agent_name)}</agent>",
-            f"  <invocation_id>{xml_text(invocation_id)}</invocation_id>",
-            f"  <success>{str(success).lower()}</success>",
-            f"  <result>{xml_text(result_text)}</result>",
-        ]
-        if issue:
-            lines.append(f"  <issue>{xml_text(issue)}</issue>")
+        Delegates to ``build_agent_comm_message`` with ``ResultMeta``
+        (convergence -- single source of truth).  Result metadata fields
+        (status, stop reason, issue, output, trace, replied) render in the
+        header; ``result_text`` is the body under the ``Result:`` heading.
+        """
+        from modex_agent.multi_agent.message_format import (
+            ResultMeta,
+            ResultStatus,
+            SourceLabel,
+            build_agent_comm_message,
+        )
 
-        # Native artifacts: output + output_status + trace
-        if output_path is not None:
-            lines.append(f"  <output>{xml_text(output_path)}</output>")
-        if output_status is not None:
-            lines.append(f"  <output_status>{xml_text(output_status)}</output_status>")
-        if trace_path is not None:
-            lines.append(f"  <trace>{xml_text(trace_path)}</trace>")
-
-        # External artifact: whether the subagent emitted any modexctl send
-        if replied is not None:
-            lines.append(f"  <replied>{str(replied).lower()}</replied>")
-
-        lines.append("</subagent_result>")
-        return "\n".join(lines)
+        return build_agent_comm_message(
+            source_label=SourceLabel.SUBAGENT,
+            source=agent_name,
+            content=result_text,
+            invocation_id=invocation_id,
+            result=ResultMeta(
+                status=ResultStatus.FAILED if not success else ResultStatus.SUCCESS,
+                stop_reason=StopReason(stop_reason) if stop_reason else None,
+                issue=issue or None,
+                output_path=output_path,
+                trace_path=trace_path,
+                replied=replied,
+            ),
+            reply_contract=None,
+        )
 
     # -- field extraction -----------------------------------------------------
 
@@ -256,7 +283,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
             result.content or "",
         )
 
-    def _extract_result_text(self, result: AgentResult | None) -> str:
+    def _extract_full_result_text(self, result: AgentResult | None) -> str:
         """Extract the subagent's real last output.
 
         Prefers the last assistant message from ``result.messages`` (which is
@@ -275,7 +302,34 @@ class SubagentAutoSendHook(FinallyTurnHook):
         if not raw and result is not None:
             raw = result.content or ""
 
-        return self._truncate_content(raw, max_chars=self._max_result_chars)
+        return self._THINK_TAG_RE.sub("", self._THINK_PAIRED_RE.sub("", raw))
+
+    def _extract_notify_text(self, result: AgentResult | None) -> str:
+        return self._truncate_content(
+            self._extract_full_result_text(result),
+            max_chars=min(self._max_result_chars, self.NOTIFY_MAX_RESULT_CHARS),
+        )
+
+    def _write_output_file(
+        self,
+        session_id: str,
+        content: str,
+    ) -> tuple[Path | None, str | None]:
+        try:
+            output_dir = self._runtime_dir / "output" / session_id
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            max_number = 0
+            for path in output_dir.glob("OUTPUT_*.md"):
+                match = re.fullmatch(r"OUTPUT_(\d+)\.md", path.name)
+                if match is not None:
+                    max_number = max(max_number, int(match.group(1)))
+
+            output_path = output_dir / f"OUTPUT_{max_number + 1}.md"
+            output_path.write_text(content, encoding="utf-8")
+        except Exception as exc:
+            return None, str(exc)
+        return output_path, None
 
     @staticmethod
     def _get_role(msg: ChatMessage | dict[str, object]) -> object:
@@ -307,33 +361,26 @@ class SubagentAutoSendHook(FinallyTurnHook):
         invocation_id: str,
         *,
         is_external: bool,
-        output_status: str | None = None,
     ) -> tuple[bool, str]:
         """Classify the subagent outcome as (success, issue).
 
         Returns (True, "") on success, (False, "<issue text>") on failure.
-        On success with a caveat (e.g. native OUTPUT.md missing), returns
-        (True, "<advisory issue>") so the parent is informed.
 
         The ``is_external`` flag refers to the **subagent** (callee) type,
         which affects what failure signals are reliable:
 
         - Native subagent: ``error`` / ``max_iterations`` / ``loop_detected``
           / ``timeout`` / ``turn_cancelled`` are all real failures.
-          ``output_status="missing"`` is an advisory: OUTPUT.md is the
-          primary deliverable, so the parent should be told to read the
-          ``<result>`` field instead (or check the trace).
         - External subagent: the external CLI's stop_reason may be
           unreliable — it may exit cleanly without ``modexctl send``.
           Only ``error`` and ``loop_detected`` count as hard failures;
           other non-normal stops are left for the parent to judge based
-          on ``<result>`` and ``<replied>``.  ``output_status`` is always
-          ``None`` for external (no OUTPUT.md concept).
+          on the result text.
 
         The resume hint does **not** depend on the subagent type — it is
-        advice to the **parent** (the agent receiving this XML).  The hook
-        runs on the subagent side and does not know the parent's type, so
-        it uses the tool-agnostic wording "send a message with
+        advice to the **parent** (the agent receiving this notification).
+        The hook runs on the subagent side and does not know the parent's
+        type, so it uses the tool-agnostic wording "send a message with
         invocation_id=xxx" (matching the original design).  The parent
         already knows which communication tool it has.
         """
@@ -361,28 +408,11 @@ class SubagentAutoSendHook(FinallyTurnHook):
         # External subagents: max_iterations / timeout / turn_cancelled are
         # NOT reliable failure signals — the external CLI may have finished
         # its work without sending a reply.  Let the parent decide based on
-        # ``<result>`` and ``<replied>``.
+        # the result text.
         if not is_external and stop_reason in cls._NON_NORMAL_STOPS:
             return False, (
                 f"Subagent stopped with {stop_reason} — task is incomplete."
                 f"{resume}"
-            )
-
-        # --- Native advisory: OUTPUT.md missing ---
-        # Not a failure (the subagent completed normally), but the primary
-        # deliverable file was not written.  The parent should rely on the
-        # ``<result>`` field or check the trace.
-        if (
-            not is_external
-            and output_status == "missing"
-            and stop_reason not in cls._NON_NORMAL_STOPS
-            and not error
-        ):
-            return True, (
-                "Subagent finished but OUTPUT.md was not written — "
-                "the deliverable file is missing. "
-                "Check the <result> field for the subagent's last output"
-                f" or read the <trace> for details.{resume}"
             )
 
         return True, ""
@@ -406,9 +436,12 @@ class SubagentAutoSendHook(FinallyTurnHook):
         self,
         ctx: AgentContext,
         session_id: str,
-        xml: str,
+        content: str,
     ) -> None:
-        """Send XML notification to parent agent's inbox."""
+        """Send markdown notification to parent agent's inbox."""
+        if self._agent_bus is None:
+            return
+
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.envelope import AgentMessageEnvelope
         from modex_agent.multi_agent.message_type import AgentMessageType
@@ -424,16 +457,13 @@ class SubagentAutoSendHook(FinallyTurnHook):
             return
         inbox_key = parent_session_id
 
-        # Strip think tags from the XML (defense in depth)
-        from modex_agent.hook.builtin.inbox_flush import InboxFlushHook
-
-        xml = InboxFlushHook._sanitize_content(xml)
+        # Strip think tags from the content (defense in depth)
+        content = sanitize_reminder_content(content)
 
         envelope = AgentMessageEnvelope(
             payload={
-                "content": xml,
+                "content": content,
                 "message_type": AgentMessageType.AGENT_RESULT,
-                "metadata": {"agent_type": self._self_name, "format": "xml"},
             },
             source=AgentAddress(name=self._self_name),
             target=AgentAddress(name=self._parent_name),
@@ -441,6 +471,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
             session_id=session_id,
             agent_session_id=inbox_key,
             invocation_id=invocation_id,
+            metadata={"reminder_kind": ReminderKind.SUBAGENT_RESULT},
         )
 
         try:
@@ -459,27 +490,25 @@ class SubagentAutoSendHook(FinallyTurnHook):
 
     # -- content helpers ------------------------------------------------------
 
-    def _check_replied(self) -> bool:
-        """Return True if the external subagent emitted any modexctl send.
-
-        Simplified for T7: checks whether outbox.jsonl has any content at all.
-        Turn-window filtering (entries timestamped within the current turn's
-        start/end window) requires BEFORE_TURN dispatch, which T3 did not add
-        to ExternalTurnRunner; it can be layered in as a future refinement
-        without changing this method's signature.
-        """
-        if self._external_outbox_path is None:
-            return False
-        try:
-            content = self._external_outbox_path.read_text(encoding="utf-8").strip()
-            return bool(content)
-        except OSError:
-            return False
-
     @classmethod
-    def _truncate_content(cls, content: str, max_chars: int = DEFAULT_MAX_RESULT_CHARS) -> str:
+    def _truncate_content(
+        cls,
+        content: str,
+        max_chars: int = NOTIFY_MAX_RESULT_CHARS,
+    ) -> str:
         content = cls._THINK_PAIRED_RE.sub("", content)
         content = cls._THINK_TAG_RE.sub("", content)
         if len(content) <= max_chars:
             return content
-        return content[:max_chars] + f"\n[...truncated, {len(content) - max_chars} more chars]"
+        if max_chars <= 0:
+            return ""
+
+        kept_chars = max_chars
+        while True:
+            omitted_chars = len(content) - kept_chars
+            marker = f"\n[...truncated, {omitted_chars} more chars]"
+            next_kept_chars = max(0, max_chars - len(marker))
+            if next_kept_chars == kept_chars:
+                break
+            kept_chars = next_kept_chars
+        return (content[:kept_chars] + marker)[:max_chars]

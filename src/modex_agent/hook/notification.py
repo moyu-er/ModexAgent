@@ -1,18 +1,18 @@
-"""Agent notification hooks — turn-outcome, max-iteration and missed-communication alerts."""
+"""User-facing turn-outcome notification hooks."""
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from modex_agent.core import AgentCommKind
 from modex_agent.core.constants import StopReason
-from modex_agent.hook.abc import AfterTurnHook, FinallyTurnHook
+from modex_agent.core.types import OutputMessageType
+from modex_agent.hook.abc import FinallyTurnHook
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.emitter import AgentResult
-    from modex_agent.multi_agent.bus import AgentMessageBus
     from modex_agent.pipeline.adapters import OutputAdapter
 
 logger = logging.getLogger(__name__)
@@ -21,35 +21,14 @@ logger = logging.getLogger(__name__)
 #: or compaction). A ChannelRouter fan-outs notices to the originating channel
 #: AND the WebUI observer; other adapters render it as plain text. Notices are
 #: never persisted to session memory/history.
-NOTICE_MESSAGE_TYPE = "notice"
+NOTICE_MESSAGE_TYPE: Final[OutputMessageType] = OutputMessageType.NOTICE
 
 
 class AgentNotificationService:
-    """Unified notification routing by comm_kind.
+    """Deliver transient notices through the configured output adapter."""
 
-    NORMAL → output_adapter (user)
-    SUBAGENT → agent_bus inbox (parent)
-    """
-
-    def __init__(
-        self,
-        output_adapter: OutputAdapter,
-        agent_bus: AgentMessageBus,
-        parent_agent_name: str = "main",
-    ) -> None:
+    def __init__(self, output_adapter: OutputAdapter) -> None:
         self._output_adapter = output_adapter
-        self._agent_bus = agent_bus
-        self._parent_agent_name = parent_agent_name
-
-    async def notify(
-        self,
-        ctx: AgentContext,
-        xml_content: str,
-    ) -> None:
-        if ctx.comm_kind == AgentCommKind.SUBAGENT:
-            await self._notify_parent(ctx, xml_content)
-        else:
-            await self._notify_user(ctx, xml_content)
 
     async def send_notice(self, session_id: str, text: str) -> None:
         """Deliver a transient plain-text notice to the user.
@@ -68,83 +47,6 @@ class AgentNotificationService:
         except Exception:
             logger.exception("send_notice failed: session=%s", session_id)
 
-    async def _notify_user(self, ctx: AgentContext, xml: str) -> None:
-        from modex_agent.core.types import OutputMessage
-
-        await self._output_adapter.send(
-            OutputMessage(content=xml),
-            str(ctx.session),
-        )
-
-    async def _notify_parent(self, ctx: AgentContext, xml: str) -> None:
-        parent_name = self._parent_agent_name
-
-        parent_session_id = ctx.session.parent_session_id
-        if parent_session_id is None:
-            logger.warning(
-                "AgentNotificationService: no parent_session_id for session %s",
-                str(ctx.session),
-            )
-            return
-        inbox_key = parent_session_id
-
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
-        from modex_agent.multi_agent.message_type import AgentMessageType
-
-        envelope = AgentMessageEnvelope(
-            payload={"content": xml, "message_type": AgentMessageType.AGENT_RESULT},
-            source=AgentAddress(name=ctx.session.agent_name),
-            target=AgentAddress(name=parent_name),
-            message_type=AgentMessageType.AGENT_RESULT,
-            session_id=str(ctx.session),
-            agent_session_id=inbox_key,
-        )
-        await self._agent_bus.send(inbox_key, envelope)
-
-
-class MaxIterationNotifyHook(AfterTurnHook):
-    """Sends XML notification to the PARENT when a SUBAGENT hits max_iterations.
-
-    Subagent-only: the user-facing max-iteration notice for NORMAL main agents is
-    owned by :class:`TurnOutcomeNotifyHook` (plain text). This hook retains the
-    structured XML envelope for the subagent→parent result channel.
-    """
-
-    @property
-    def name(self) -> str:
-        return "max_iteration_notify"
-
-    def __init__(self, notification_service: AgentNotificationService | None = None) -> None:
-        self._svc = notification_service
-
-    async def after_turn(self, ctx: AgentContext, result: AgentResult) -> None:
-        if self._svc is None:
-            return
-        if ctx.comm_kind != AgentCommKind.SUBAGENT:
-            return
-        if result.stop_reason != "max_iterations":
-            return
-
-        agent_name = ctx.session.agent_name if ctx.session else "unknown"
-        invocation_id = ctx.session.session_id_prefix if ctx.session else None
-
-        content = result.content or ""
-        truncated = content[:2000]
-        if len(content) > 2000:
-            truncated += "\n... (truncated)"
-
-        from modex_agent.multi_agent.message_xml import build_agent_result
-
-        xml = build_agent_result(
-            source=agent_name,
-            invocation_id=invocation_id,
-            status="max_iterations",
-            stop_reason="max_iterations",
-            content=truncated,
-        )
-        await self._svc.notify(ctx=ctx, xml_content=xml)
-
 
 class TurnOutcomeNotifyHook(FinallyTurnHook):
     """Notifies the user on the two silent abnormal-end cases for main agents:
@@ -162,7 +64,7 @@ class TurnOutcomeNotifyHook(FinallyTurnHook):
     - Normal completion.
 
     Only fires for NORMAL main agents; subagent outcomes go through
-    :class:`MaxIterationNotifyHook` / SubagentAutoSendHook.
+    ``SubagentAutoSendHook``.
     """
 
     _MAX_ITERATIONS_NOTICE = (

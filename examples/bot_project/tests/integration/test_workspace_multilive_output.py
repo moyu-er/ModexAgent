@@ -26,8 +26,8 @@ from typing import Any
 import pytest
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.core import BotService
-from bot.workspace.wiring import build_workspace_stack
 
+from modex_agent.adapters.platform import StreamingMode
 from modex_agent.core.emitter import StreamingAwareEmitter
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionIdFactory
@@ -80,7 +80,7 @@ class _ScriptedProvider(LLMProvider):
         temperature: float = 0.7,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
-        **kwargs: Any,
+        **kwargs: object,
     ) -> LLMResponse:
         self.calls += 1
         content = _last_user_content(messages)
@@ -98,8 +98,8 @@ class _RecordingOutputAdapter(OutputAdapter):
         return "recording"
 
     @property
-    def streaming_mode(self) -> Any:  # None => non-streaming => emitter buffers + flushes
-        return None
+    def streaming_mode(self) -> StreamingMode:
+        return StreamingMode.PSEUDO
 
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
@@ -107,7 +107,12 @@ class _RecordingOutputAdapter(OutputAdapter):
     async def send(self, message: OutputMessage, session_id: str) -> None:
         self.sent.append((session_id, message.content or ""))
 
-    async def send_delta(self, delta: str, session_id: str, metadata: Any = None) -> None: ...
+    async def send_delta(
+        self,
+        delta: str,
+        session_id: str,
+        metadata: dict[str, object] | None = None,
+    ) -> None: ...
     async def flush_deltas(self, session_id: str) -> None: ...
 
 
@@ -185,8 +190,14 @@ tool_preset: minimal
 
 
 @pytest.mark.asyncio
-async def test_every_materialized_workspace_delivers_output(tmp_path: Path) -> None:
+async def test_every_materialized_workspace_delivers_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Home + N non-home workspaces: each turn's output reaches the adapter."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "modexctl.bat").write_text("@echo off\n", encoding="utf-8")
+    monkeypatch.setenv("MODEXBOT_BIN_DIR", str(bin_dir))
     config_dir = _write_minimal_config(tmp_path)
     app_config = AppConfig.from_yaml(config_dir / "bot_config.yml")
 
@@ -212,11 +223,13 @@ async def test_every_materialized_workspace_delivers_output(tmp_path: Path) -> N
     # Mock the LLM everywhere it could be reached: per-pool provider (turns) and
     # the service default provider (memory summarizer / background).
     import bot.service.core as core_mod
-    import bot.service.pool_builder as pool_builder_mod
+    import bot.service.react_strategy as react_strategy_mod
 
-    original_llm_provider = pool_builder_mod._build_llm_provider
+    original_llm_provider = react_strategy_mod.ReactExecutionStrategy._build_llm_provider
     original_default_provider = core_mod.BotService._build_default_provider
-    pool_builder_mod._build_llm_provider = lambda *a, **k: provider
+    react_strategy_mod.ReactExecutionStrategy._build_llm_provider = (
+        lambda self, *a, **k: provider
+    )
     core_mod.BotService._build_default_provider = lambda self: provider  # type: ignore[assignment]
 
     # _project_dir is hard-coded to the bot project source tree; repoint it at
@@ -281,7 +294,7 @@ async def test_every_materialized_workspace_delivers_output(tmp_path: Path) -> N
         # 1. Every non-home workspace was materialized (cached in the registry).
         resolved_targets = {Path(ws).resolve() for ws in ws_targets}
         cached_targets = {
-            Path(t).resolve() for t in registry._resources.keys()  # type: ignore[attr-defined]
+            Path(t).resolve() for t in registry._resources  # type: ignore[attr-defined]
         }
         assert resolved_targets.issubset(cached_targets), (
             f"Not all workspaces materialized: missing={resolved_targets - cached_targets}"
@@ -309,7 +322,7 @@ async def test_every_materialized_workspace_delivers_output(tmp_path: Path) -> N
 
             with contextlib.suppress(BaseException):
                 await router_task
-        pool_builder_mod._build_llm_provider = original_llm_provider
+        react_strategy_mod.ReactExecutionStrategy._build_llm_provider = original_llm_provider
         core_mod.BotService._build_default_provider = original_default_provider  # type: ignore[assignment]
         core_mod.BotService._project_dir = original_project_dir  # type: ignore[assignment]
         with __import__("contextlib").suppress(BaseException):

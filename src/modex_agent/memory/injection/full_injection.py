@@ -9,12 +9,7 @@ from modex_agent.memory.core.models import (
     MemoryBudget,
 )
 from modex_agent.memory.core.system import MemorySystem
-from modex_agent.memory.injection.archive import (
-    ArchiveInjectionConfig,
-    build_archive_injection_section,
-)
 from modex_agent.memory.injection.policy import MemoryInjectionPolicy
-from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.tags import CoreMemoryTag
 from modex_agent.memory.utils import estimate_text_tokens
 from modex_agent.utils.xml import xml_attr, xml_text
@@ -31,51 +26,19 @@ class _PromptSection:
 
 
 class FullInjectionPolicy(MemoryInjectionPolicy):
-    """Main agent policy — core memory + archive + providers + session.
+    """Main agent policy — budget-trimmed core memory assembly.
 
-    Injection order (deterministic, priority-ordered):
-    1. Previous conversations disclaimer → priority=110
-    2. Core memory: identity, user profile, known facts → priority=100
-    3. Archive summaries: older topics → priority=70
-    4. Provider static blocks → priority=60
-    5. Provider prefetch → priority=50
-    6. Session visible messages → messages field of result
+    Only assembles disclaimer + core memory (priority-sorted, token-budget-trimmed).
+    All other content (archive, pruned, provider blocks, prefetch) is handled by
+    dedicated SystemPromptProvider pipeline providers with version-based caching.
     """
 
     def __init__(
         self,
         *,
         budget: MemoryBudget | None = None,
-        max_history_entries: int = 3,
-        pruned_manager: PrunedManager | None = None,
-        archive_inject_count: int = 3,
-        archive_inject_max_chars: int = 20_000,
-        archive_inject_step_chars: int = 5_000,
-        archive_inject_min_chars: int = 5_000,
-        archive_config: ArchiveInjectionConfig | None = None,
     ) -> None:
         self._budget = budget or MemoryBudget()
-        self._max_history = max_history_entries
-        self._pruned_manager = pruned_manager
-        self._archive_config = archive_config or ArchiveInjectionConfig(
-            count=archive_inject_count,
-            max_chars=archive_inject_max_chars,
-            step_chars=archive_inject_step_chars,
-            min_chars=archive_inject_min_chars,
-        )
-
-    def injects_archive(self) -> bool:
-        return self._archive_config.count > 0
-
-    @property
-    def archive_config(self) -> ArchiveInjectionConfig:
-        return self._archive_config
-
-    def get_archive_injection_config(self) -> ArchiveInjectionConfig | None:
-        return self._archive_config if self.injects_archive() else None
-
-    def injects_pruned(self) -> bool:
-        return self._pruned_manager is not None
 
     async def assemble(
         self,
@@ -84,14 +47,13 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         memory_system: MemorySystem,
         query: str = "",
     ) -> InjectionResult:
-        sections: list[_PromptSection] = []
+        core_sections: list[_PromptSection] = []
+        await self._inject_core_memory(core_sections, context, memory_system, query)
 
-        self._inject_disclaimer(sections)
-        await self._inject_core_memory(sections, context, memory_system, query)
-        await self._inject_archive(sections, context, memory_system)
-        self._inject_pruned_catalog(sections, context)
-        await self._inject_provider_blocks(sections, memory_system)
-        await self._inject_provider_prefetch(sections, context, memory_system, query)
+        sections: list[_PromptSection] = []
+        if core_sections:
+            self._inject_disclaimer(sections)
+            sections.extend(core_sections)
 
         sections = self._trim_by_priority(sections)
 
@@ -221,82 +183,6 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 )
         except Exception:
             logger.debug("Core memory injection skipped", exc_info=True)
-
-    async def _inject_archive(
-        self,
-        sections: list[_PromptSection],
-        context: MemoryContext,
-        memory_system: MemorySystem,
-    ) -> None:
-        try:
-            await self._inject_md_archives(sections, memory_system, context)
-        except Exception:
-            logger.debug("Archive injection skipped", exc_info=True)
-
-    async def _inject_md_archives(
-        self,
-        sections: list[_PromptSection],
-        memory_system: MemorySystem,
-        context: MemoryContext,
-    ) -> None:
-        section = await build_archive_injection_section(
-            memory_system,
-            context,
-            self._archive_config,
-        )
-        if section.content:
-            sections.append(_PromptSection(content=section.content, priority=70))
-
-    def _inject_pruned_catalog(
-        self,
-        sections: list[_PromptSection],
-        context: MemoryContext,
-    ) -> None:
-        if self._pruned_manager is None:
-            return
-        session_id: str = context.session_id or ""
-        xml = self._pruned_manager.get_injection_xml(session_id=session_id)
-        if xml:
-            sections.append(_PromptSection(content=xml, priority=85))
-
-    async def _inject_provider_blocks(
-        self,
-        sections: list[_PromptSection],
-        memory_system: MemorySystem,
-    ) -> None:
-        for provider in memory_system.get_providers():
-            try:
-                block = provider.system_prompt_block()
-                if block:
-                    sections.append(
-                        _PromptSection(
-                            content=block,
-                            priority=60,
-                        )
-                    )
-            except Exception:
-                logger.debug("Provider block failed for %s", provider.name, exc_info=True)
-
-    async def _inject_provider_prefetch(
-        self,
-        sections: list[_PromptSection],
-        context: MemoryContext,
-        memory_system: MemorySystem,
-        query: str,
-    ) -> None:
-        if not query:
-            return
-        try:
-            prefetch = await memory_system.prefetch_memories(query, context)
-            if prefetch:
-                sections.append(
-                    _PromptSection(
-                        content=f"<related_facts>\n{xml_text(prefetch)}\n</related_facts>",
-                        priority=50,
-                    )
-                )
-        except Exception:
-            logger.debug("Provider prefetch failed", exc_info=True)
 
     def _trim_by_priority(self, sections: list[_PromptSection]) -> list[_PromptSection]:
         """Sort by priority descending and optionally trim to token budget."""

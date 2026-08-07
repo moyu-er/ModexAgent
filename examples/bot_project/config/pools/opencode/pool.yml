@@ -1,12 +1,11 @@
 main_agent_name: opencode
 description: >-
-  Autonomous coding agent with full file and terminal access — handles
-  implementation, debugging, and refactoring across a complete codebase
-  independently. Operates as a cross-pool peer: receives tasks from other
-  pools, executes them end-to-end, and replies with results. Use for heavy
-  coding work that benefits from a dedicated, self-directed coding context
-  rather than orchestrated subtask delegation.
-execution_strategy: external_coding
+  Autonomous software engineering agent with full file and terminal
+  access. Handles implementation, debugging, refactoring, and
+  verification across a complete codebase end-to-end. Use for heavy
+  coding work that benefits from a dedicated, self-directed coding
+  context.
+execution_strategy: external
 provider_kind: opencode
 peers:
   - default

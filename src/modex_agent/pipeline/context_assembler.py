@@ -7,18 +7,24 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.constants import RuntimeInfoKey
+from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.emitter import AgentResult
-from modex_agent.core.types import InputMessage, MessageRole
+from modex_agent.core.types import InputMessage, MessageRole, ReminderKind
 from modex_agent.memory.history import (
     ListMessageHistory,
     history_to_list,
 )
+from modex_agent.multi_agent.message_format import build_agent_reminder_record
 from modex_agent.multi_agent.message_type import AgentMessageType
 
 if TYPE_CHECKING:
+    from modex_agent.core.capabilities import ModelInfo
     from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
+    from modex_agent.media.media_utils import MediaBlock, MediaProcessor
     from modex_agent.multi_agent import AgentDescriptor
+    from modex_agent.multi_agent.router import RouteResult
     from modex_agent.utils.context_builder import MultiAgentContextBuilder
 
 
@@ -27,10 +33,10 @@ async def assemble_context(
     input_msg: InputMessage,
     input_metadata: dict[str, Any],
     sanitized_content: str | None,
-    media_blocks: list[Any],
-    _media_processor: Any | None,
-    ctx_mgr: Any,
-    route_result: Any | None,
+    media_blocks: list[MediaBlock],
+    _media_processor: MediaProcessor | None,
+    ctx_mgr: ContextManager,
+    route_result: RouteResult | None,
     _is_approval_cmd: bool,
     *,
     agent_descriptor: AgentDescriptor | None = None,
@@ -38,7 +44,8 @@ async def assemble_context(
     skill_manager: SkillManager | None = None,
     context_builder: MultiAgentContextBuilder | None = None,
     append_user_message: bool = True,
-) -> Any:
+    model_info: ModelInfo | None = None,
+) -> ContextState:
     """Assemble context state: load context, write user message,
     and run multi-agent context builder.
 
@@ -46,6 +53,7 @@ async def assemble_context(
     """
     source_agent = input_metadata.get("source_agent")
 
+    multimodal_content: str | list[dict[str, Any]] | None
     # Build multimodal content.
     # NOTE: mechanism A (native multimodal) is implemented via turn-state
     # enrichment in ``LLMNode._build_messages`` (ADR-0014 §2/§7), NOT here.
@@ -54,41 +62,58 @@ async def assemble_context(
     # ``preprocess`` always returns ``[]``/``None`` for ``media_blocks``.
     if media_blocks and _media_processor is not None:
         try:
-            multimodal_content = _media_processor.build_content(sanitized_content, media_blocks)
+            multimodal_content = _media_processor.build_content(
+                sanitized_content or "", media_blocks
+            )
         except Exception:
             multimodal_content = sanitized_content
     else:
         multimodal_content = sanitized_content
 
     if source_agent:
-        user_message = {
-            "role": MessageRole.AGENT,
-            "source_agent": source_agent,
-            "content": multimodal_content,
-        }
+        reminder_kind_raw = input_metadata.get("reminder_kind")
+        reminder_kind = ReminderKind(reminder_kind_raw) if reminder_kind_raw else None
+        message_type_raw = input_metadata.get("message_type")
+        message_type = AgentMessageType(message_type_raw) if message_type_raw else None
+        invocation_id_raw = input_metadata.get("invocation_id")
+        invocation_id = str(invocation_id_raw) if invocation_id_raw else None
+        agent_content = (
+            multimodal_content if isinstance(multimodal_content, str) else sanitized_content
+        )
+        user_message = build_agent_reminder_record(
+            agent_content,
+            source_agent=str(source_agent),
+            reminder_kind=reminder_kind,
+            message_type=message_type,
+            invocation_id=invocation_id,
+        )
     else:
         user_message = {"role": MessageRole.USER, "content": multimodal_content}
-
-    # Propagate content_format / truncatable_paths from input message
-    # so governance can protect XML structure (agent messages, etc.)
-    if input_msg.content_format is not None:
-        user_message["content_format"] = input_msg.content_format
-    if input_msg.truncatable_paths is not None:
-        user_message["truncatable_paths"] = input_msg.truncatable_paths
+        # Propagate skill-command XML structure only for non-agent input.
+        if input_msg.content_format is not None:
+            user_message["content_format"] = input_msg.content_format
+        if input_msg.truncatable_paths is not None:
+            user_message["truncatable_paths"] = input_msg.truncatable_paths
 
     agent_name = agent_descriptor.address.name if agent_descriptor else "main"
-    runtime_info: dict[str, Any] = {"caller_context": {"agent_name": agent_name}}
+
+    runtime_info: dict[str, Any] = {RuntimeInfoKey.CALLER_CONTEXT: {"agent_name": agent_name}}
     if input_metadata:
-        for key in ("user_id", "tenant_id", "channel", "chat_id"):
+        for key in (
+            RuntimeInfoKey.USER_ID,
+            RuntimeInfoKey.TENANT_ID,
+            RuntimeInfoKey.CHANNEL,
+            RuntimeInfoKey.CHAT_ID,
+        ):
             if key in input_metadata:
                 runtime_info[key] = input_metadata[key]
-    # Thread the authoritative parent link (stamped on the session by
-    # dispatch_envelope from the envelope) into the prompt providers, so
-    # APPEND/FORK read it from the turn instead of recovering it from a
-    # workspace-partitioned session store.
     parent_sid = input_msg.session.parent_session_id if input_msg.session else None
     if parent_sid:
-        runtime_info["parent_session_id"] = parent_sid
+        runtime_info[RuntimeInfoKey.PARENT_SESSION_ID] = parent_sid
+    if model_info is not None:
+        runtime_info[RuntimeInfoKey.MODEL_INFO] = model_info
+    if input_msg.workspace is not None:
+        runtime_info[RuntimeInfoKey.WORKING_DIRECTORY] = input_msg.workspace
     context_state = await ctx_mgr.load(
         session_id,
         tool_manager=tool_manager,
@@ -113,17 +138,19 @@ async def assemble_context(
 
     # MultiAgentContextBuilder
     if context_builder is not None and agent_descriptor is not None:
+        from modex_agent.messaging.broker import AddressKind
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 
         envelope = AgentMessageEnvelope(
             payload={"content": multimodal_content},
-            source=AgentAddress(kind="user", name=input_msg.sender_id or "unknown"),
+            source=AgentAddress(kind=AddressKind.USER, name=input_msg.sender_id or "unknown"),
             target=AgentAddress(
-                kind="agent", name=route_result.session.agent_name if route_result else "main"
+                kind=AddressKind.AGENT,
+                name=route_result.session.agent_name if route_result else "main",
             ),
             message_type=(
-                route_result.envelope_metadata.get(
+                (route_result.envelope_metadata or {}).get(
                     "message_type", AgentMessageType.AGENT_MESSAGE
                 )
                 if route_result

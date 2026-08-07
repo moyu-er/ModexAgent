@@ -1,7 +1,7 @@
 """Shared pool-assembly helpers (ADR-0025, ticket 6).
 
 Private mixin hosting the build helpers that both
-:class:`ReactExecutionStrategy` and :class:`ExternalCodingExecutionStrategy`
+:class:`ReactExecutionStrategy` and :class:`ExternalExecutionStrategy`
 need. The helpers moved here from ``pool_builder.py`` so that
 ``pool_builder.create_pool`` is strategy-agnostic (~150 lines, zero
 strategy-specific branching) and the strategies no longer import from
@@ -12,12 +12,12 @@ Why a shared mixin (deviation from the ticket wording):
   The ticket lists the helpers as moving "into ``ReactExecutionStrategy`` as
   private methods". They do — ``ReactExecutionStrategy`` inherits this mixin,
   so the helpers ARE private methods of ``ReactExecutionStrategy`` (and of
-  ``ExternalCodingExecutionStrategy``). A shared mixin avoids duplicating
+  ``ExternalExecutionStrategy``). A shared mixin avoids duplicating
   ~300 lines of build logic in the external strategy, which the ticket also
-  asks to "preserve behavior" for (external_coding still builds a placeholder
+  asks to "preserve behavior" for (external still builds a placeholder
   provider/terminal/tools/skill_manager until a future ticket eliminates
   that). The future elimination will simply override the relevant methods on
-  ``ExternalCodingExecutionStrategy`` to return ``None`` — no other code
+  ``ExternalExecutionStrategy`` to return ``None`` — no other code
   change required.
 
 The helpers are byte-for-byte the implementations that lived in
@@ -56,7 +56,7 @@ from modex_agent.tools.presets import (
     get_preset_tools,
     get_supplement_tools,
 )
-from modex_agent.tools.terminal import SubprocessExecutor, SubprocessTool
+from modex_agent.tools.terminal import SubprocessTool, create_subprocess_executor
 from modex_agent.tools.terminal.backends.factory import (
     UnsupportedVisibilityForTransport,
 )
@@ -258,7 +258,7 @@ class _PoolAssemblyMixin:
         e.g. ast_grep), terminal tools (when ``terminal_manager`` is set), the
         custom send_file_to_user tool, the experience tool (when enabled), todo
         tools, and MCP tools resolved from ``main_spec.mcp`` via the registry.
-        ``send_to_agent`` is registered separately in ``create_pool`` after the
+        ``task`` is registered separately in ``create_pool`` after the
         communication service is wired.
         """
         # Local import to keep the module-level import graph lean and to honor
@@ -281,7 +281,7 @@ class _PoolAssemblyMixin:
         # workspace-scoped SubprocessTool; the terminal manager (when present)
         # registers the richer Command/Process/Terminal tools below.
         def _make_bash() -> Tool:
-            sub = SubprocessTool(executor=SubprocessExecutor(), timeout=300)
+            sub = SubprocessTool(executor=create_subprocess_executor(), timeout=90)
             if root_provider is not None:
                 wrapped = wrap_standard_tools([sub], root_provider)
                 return wrapped[0]
@@ -370,9 +370,7 @@ class _PoolAssemblyMixin:
                     mcp_registry=mcp_registry,
                 )
             except Exception as exc:
-                logger.warning(
-                    "Pool '%s': MCP tool loading failed, skipping: %s", pool_name, exc
-                )
+                logger.warning("Pool '%s': MCP tool loading failed, skipping: %s", pool_name, exc)
 
         for tool in mcp_tools:
             tm.register(tool)
@@ -411,7 +409,10 @@ class _PoolAssemblyMixin:
         )
 
         source = FileSkillSource(
-            directories=found, cache=True, layout="directory", skill_filename="SKILL.md",
+            directories=found,
+            cache=True,
+            layout="directory",
+            skill_filename="SKILL.md",
         )
         cache = DirectorySkillCache(directories=found, layout="directory")
         builder = DefaultSkillBuilder(base_path=project_dir)
@@ -434,9 +435,7 @@ class _PoolAssemblyMixin:
 
     # ── Fallback context manager ─────────────────────────────────────────
 
-    def _fallback_context_manager(
-        self, main_spec: MainAgentSpec, system_prompt: str
-    ) -> Any:
+    def _fallback_context_manager(self, main_spec: MainAgentSpec, system_prompt: str) -> Any:
         """A minimal context_manager for tests / non-workspace wiring.
 
         The main agent's real context manager comes from the workspace pool_data;
@@ -448,7 +447,7 @@ class _PoolAssemblyMixin:
             default_agent_id=main_spec.agent_name,
             default_agent_role="main",
             base_system_prompt=system_prompt,
-            injection_policy=FullInjectionPolicy(pruned_manager=None),
+            injection_policy=FullInjectionPolicy(),
             experience_manager=None,
             roles=list(main_spec.roles),
         )

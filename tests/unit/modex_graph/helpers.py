@@ -1,28 +1,58 @@
+# ruff: noqa: ANN401
 """Shared test state types + node helpers for modex_graph unit tests."""
+
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Any
 
 from modex_graph import (
+    CompiledGraph,
     GraphContext,
+    GraphInstance,
+    GraphInstanceStatus,
+    GraphMetadata,
+    GraphNode,
+    GraphPersistenceCoordinator,
     GraphRuntime,
     GraphState,
-    LastValue,
+    InMemoryNodeStateStore,
+    IntegratedInput,
     Node,
-    NodeResult,
-    ReducerChannel,
+    NullDeliverStoreFactory,
+    NullGraphInstanceStore,
+    create_null_coordinator,
 )
 
 
-class TrackingRuntime(GraphRuntime):
-    """Runtime that records ``before_node`` / ``after_node`` / ``emit`` calls.
+class _AutoRegisterCoordinator(GraphPersistenceCoordinator):
+    """Test-only coordinator that auto-registers nodes on
+    collect_consumable_delivers and route_deliver.
 
-    Used by Task 08 tests to verify concurrent hook invocation is safe
-    (no crash, no race). The lists use ``list.append`` which is GIL-atomic
-    in CPython, so concurrent ``asyncio.gather`` tasks can append safely
-    without an explicit lock — the append runs in a synchronous section
-    between await points.
+    Simplifies test setup so tests don't need to explicitly call
+    register_node before node.run(). NOT for production use.
     """
+
+    def collect_consumable_delivers(
+        self, node_name: str, invocation_id: int
+    ) -> list[Any]:
+        if self.get_deliver_store(node_name) is None:
+            self.register_node(node_name)
+        return super().collect_consumable_delivers(node_name, invocation_id)
+
+    def route_deliver(
+        self,
+        target_node: str,
+        content: Any,
+        source_node: str,
+        source_invocation_id: int,
+    ) -> int | None:
+        if target_node != GraphNode.END and self.get_deliver_store(target_node) is None:
+            self.register_node(target_node)
+        return super().route_deliver(target_node, content, source_node, source_invocation_id)
+
+
+class TrackingRuntime(GraphRuntime):
+    """Runtime that records ``before_node`` / ``after_node`` / ``emit`` calls."""
 
     def __init__(self) -> None:
         self.before_calls: list[str] = []
@@ -32,67 +62,45 @@ class TrackingRuntime(GraphRuntime):
     async def before_node(self, ctx: GraphContext[Any], node_name: str) -> None:
         self.before_calls.append(node_name)
 
-    async def after_node(
-        self, ctx: GraphContext[Any], node_name: str, result: Any
-    ) -> None:
+    async def after_node(self, ctx: GraphContext[Any], node_name: str) -> None:
         self.after_calls.append(node_name)
 
-    async def emit(
-        self, event_type: str, data: Any, ctx: GraphContext[Any]
-    ) -> None:
+    async def emit(self, event_type: str, data: Any, ctx: GraphContext[Any]) -> None:
         self.emit_calls.append((event_type, data))
 
 
 class CounterState(GraphState):
     """Simple state with a counter + message list for testing."""
 
-    count: Annotated[int, LastValue] = 0
-    name: Annotated[str, LastValue] = ""
-    messages: Annotated[list[str], ReducerChannel(reducer=lambda a, b: a + b)] = []
+    count: int = 0
+    name: str = ""
+    messages: list[str] = []
 
 
 class AddNode(Node[CounterState]):
-    """Sync node that increments count by `amount`."""
-
     def __init__(self, amount: int = 1) -> None:
         self.amount = amount
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
         ctx.state.count += self.amount
-        return NodeResult()
+        self.deliver(None, None, ctx)
+        return None
 
 
 class AsyncAddNode(Node[CounterState]):
-    """Async node that increments count by `amount`."""
+    """Async node that increments count by `amount`, delivers to default target."""
 
     def __init__(self, amount: int = 1) -> None:
         self.amount = amount
 
-    async def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
         ctx.state.count += self.amount
-        return NodeResult()
-
-
-class TransitionNode(Node[CounterState]):
-    """Sync node that returns a transition."""
-
-    def __init__(self, transition: str) -> None:
-        self.transition = transition
-
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
-        return NodeResult(transition=self.transition)
-
-
-class CommandNode(Node[CounterState]):
-    """Sync node that returns a Command(goto=...)."""
-
-    def __init__(self, goto: Any) -> None:
-        self.goto = goto
-
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
-        from modex_graph import Command
-
-        return NodeResult(command=Command(goto=self.goto))
+        self.deliver(None, None, ctx)
+        return None
 
 
 class InterruptNode(Node[CounterState]):
@@ -101,21 +109,24 @@ class InterruptNode(Node[CounterState]):
     def __init__(self, value: Any = "interrupted") -> None:
         self.value = value
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
         ctx.interrupt(self.value)
-        # Unreachable — interrupt raises.
-        return NodeResult()
+        return None
 
 
 class RecordNameNode(Node[CounterState]):
-    """Node that records its name into state.messages via state_update."""
-
     def __init__(self, label: str | None = None) -> None:
         self.label = label
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
         label = self.label if self.label is not None else self.name
-        return NodeResult(state_update={"messages": [label]})
+        ctx.state.messages.append(label)
+        self.deliver(None, None, ctx)
+        return None
 
 
 def make_runtime() -> GraphRuntime:
@@ -123,9 +134,84 @@ def make_runtime() -> GraphRuntime:
     return GraphRuntime()
 
 
-def make_ctx(state: CounterState | None = None) -> GraphContext[CounterState]:
-    """Build a GraphContext with a CounterState + no-op runtime."""
-    return GraphContext(
+def make_coordinator(
+    node_names: tuple[str, ...] = (),
+) -> GraphPersistenceCoordinator:
+    """Build a Null-strategy coordinator for tests.
+
+    Uses NullGraphInstanceStore + NullNodeStateStore + NullDeliverStoreFactory
+    (rule 15 Null strategy — no persistence). Returns an
+    ``_AutoRegisterCoordinator`` that auto-registers nodes on
+    ``collect_consumable_delivers``, so tests don't need explicit
+    ``register_node`` calls. Pass ``node_names`` to pre-register specific nodes.
+    """
+    coordinator = _AutoRegisterCoordinator(
+        graph_instance_id=0,
+        instance_store=NullGraphInstanceStore(),
+        node_state_store=InMemoryNodeStateStore(0),
+        default_deliver_store_factory=NullDeliverStoreFactory(),
+    )
+    for name in node_names:
+        coordinator.register_node(name)
+    return coordinator
+
+
+def register_graph_nodes(
+    coordinator: GraphPersistenceCoordinator,
+    compiled: CompiledGraph[Any],
+) -> None:
+    """Register all nodes from a compiled graph with the coordinator."""
+    for name in compiled.nodes:
+        coordinator.register_node(name)
+
+
+def make_ctx(
+    state: CounterState | None = None,
+    *,
+    coordinator: GraphPersistenceCoordinator | None = None,
+    node_names: tuple[str, ...] = (),
+) -> GraphContext[CounterState]:
+    """Build a GraphContext with a CounterState + no-op runtime + coordinator."""
+    coord = coordinator if coordinator is not None else make_coordinator(node_names)
+    ctx = GraphContext(
         state=state if state is not None else CounterState(),
         runtime=make_runtime(),
+        coordinator=coord,
     )
+    ctx.set_dispatch_handler(lambda _src, _tgt, _update: None)
+    return ctx
+
+
+def make_graph_metadata(
+    gid: int = 1,
+    spec_id: int = 999,
+    status: GraphInstanceStatus = GraphInstanceStatus.RUNNING,
+    parent_instance_id: int | None = None,
+    parent_node: str | None = None,
+) -> GraphMetadata:
+    """Build a ``GraphMetadata`` value object for tests."""
+    return GraphMetadata(
+        graph_instance_id=gid,
+        spec_id=spec_id,
+        parent_instance_id=parent_instance_id,
+        parent_node=parent_node,
+        status=status,
+    )
+
+
+def make_graph_instance(
+    gid: int = 1,
+    spec_id: int = 999,
+    status: GraphInstanceStatus = GraphInstanceStatus.RUNNING,
+    parent_instance_id: int | None = None,
+    parent_node: str | None = None,
+) -> GraphInstance:
+    """Build a ``GraphInstance`` with ``GraphMetadata`` + null coordinator."""
+    metadata = make_graph_metadata(
+        gid=gid,
+        spec_id=spec_id,
+        status=status,
+        parent_instance_id=parent_instance_id,
+        parent_node=parent_node,
+    )
+    return GraphInstance(metadata, create_null_coordinator(gid))

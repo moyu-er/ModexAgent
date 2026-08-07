@@ -137,17 +137,19 @@ class TestStoreDescription:
         assert "Coding expert" in desc
         assert "scout" in desc
         assert "Fast recon" in desc
-        assert "normal" in desc
+        assert "peer" in desc.lower()
         assert "subagent" in desc
 
     def test_normal_description_shows_kind_labels(self) -> None:
-        """Normal description MUST label each target as (normal) or (subagent)."""
+        """Normal description MUST separate targets by kind into labeled sections."""
         store = CommunicationTargetStore()
         store.add(_normal("coding"))
         store.add(_subagent("scout"))
         desc = store.description
-        assert "coding (normal)" in desc
-        assert "scout (subagent)" in desc
+        assert "Subagents" in desc
+        assert "Peer targets" in desc
+        assert "scout" in desc
+        assert "coding" in desc
 
     def test_normal_description_empty_targets(self) -> None:
         store = CommunicationTargetStore()
@@ -182,8 +184,8 @@ class TestStoreDescription:
 
 class TestNormalDescriptionTwoKindContract:
     """Description MUST distinguish subagent vs normal targets so the LLM
-    picks the right relationship: subagent = helper to delegate to;
-    normal = independent peer to communicate with as equals."""
+    picks the right relationship: subagent = session to continue;
+    normal = peer to message as an equal."""
 
     def test_empty_store_silent_on_kind(self) -> None:
         store = CommunicationTargetStore()
@@ -192,15 +194,17 @@ class TestNormalDescriptionTwoKindContract:
         assert "normal" not in desc
 
     def test_with_targets_explains_two_kinds(self) -> None:
+        """Description MUST distinguish subagent vs normal targets so the LLM
+        picks the right relationship: subagent = session to continue;
+        normal = peer to message as an equal."""
         store = CommunicationTargetStore()
         store.add(_subagent("scout"))
         store.add(_normal("coding"))
-        desc = store.description
-        assert "(subagent)" in desc
-        assert "(normal)" in desc
-        assert "your helper" in desc.lower()
-        assert "independent peer" in desc.lower()
-        assert "as equals" in desc.lower()
+        desc = store.description.lower()
+        assert "subagents" in desc
+        assert "peer targets" in desc
+        assert "continuing" in desc
+        assert "as an equal" in desc
 
     def test_with_targets_emphasizes_only_channel(self) -> None:
         store = CommunicationTargetStore()
@@ -215,16 +219,15 @@ class TestNormalDescriptionTwoKindContract:
         assert "acknowledge" in desc
 
     def test_content_param_hint_differs_per_kind(self) -> None:
-        """Each kind bullet MUST cover both content style and invocation_id
-        handling — they are inseparable from the relationship itself."""
+        """The description MUST mention both subagent continuation (invocation_id)
+        and peer messaging, so the LLM understands the two relationship kinds."""
         store = CommunicationTargetStore()
         store.add(_subagent("scout"))
         store.add(_normal("coding"))
         desc = store.description.lower()
-        assert "put the task in `content`" in desc
-        assert "colleague" in desc
-        assert "thread `invocation_id`" in desc
-        assert "`invocation_id` is ignored" in desc
+        assert "pass invocation_id" in desc
+        assert "peer agent" in desc
+        assert "`task` tool" in desc
 
 
 class TestStoreSubagentDescription:

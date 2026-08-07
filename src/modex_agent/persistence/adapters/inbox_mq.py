@@ -4,7 +4,7 @@ Implements the full :class:`~modex_agent.multi_agent.inbox.server.InboxMQ`
 contract against the workspace DB schema (T06 / ADR-0031):
 
 - **Async surface** (``receive``/``consume``/``peek``/``count``/``clear``/
-  ``sessions_with_pending``/``wakeup``/``wait_wakeup``/``reap_expired``) goes
+  ``sessions_with_pending``/``reap_expired``) goes
   through :class:`~modex_agent.persistence.connection.ConnectionManager` —
   one shared aiosqlite connection serialized by an operation lock.
 
@@ -34,7 +34,6 @@ Schema notes (ADR-0031):
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import sqlite3
 from datetime import UTC, datetime
@@ -106,7 +105,6 @@ class SqliteInboxMQ(InboxMQ):
         self._scope = scope
         self._owner_scope_key = scope.canonical()
         self._message_ttl_seconds = message_ttl_seconds
-        self._wakeup_events: dict[str, asyncio.Event] = {}
 
     # ------------------------------------------------------------------ #
     # Async MQ surface (server-side, framework process)
@@ -311,28 +309,6 @@ class SqliteInboxMQ(InboxMQ):
             conn.close()
 
     # ------------------------------------------------------------------ #
-    # Wakeup surface (poller latency reduction)
-    # ------------------------------------------------------------------ #
-
-    async def wakeup(self, session_id: str) -> None:
-        """Signal that ``session_id`` has pending work (in-process event)."""
-        self._get_wakeup_event(session_id).set()
-
-    async def wait_wakeup(
-        self,
-        session_id: str,
-        timeout: float | None = None,
-    ) -> bool:
-        """Wait for a wakeup signal. Returns ``True`` if woken, ``False`` on timeout."""
-        event = self._get_wakeup_event(session_id)
-        try:
-            await asyncio.wait_for(event.wait(), timeout=timeout)
-            event.clear()
-            return True
-        except TimeoutError:
-            return False
-
-    # ------------------------------------------------------------------ #
     # Lifecycle maintenance
     # ------------------------------------------------------------------ #
 
@@ -369,13 +345,6 @@ class SqliteInboxMQ(InboxMQ):
                 "only deliver() is available in CLI mode (connection=None)."
             )
         return self._connection
-
-    def _get_wakeup_event(self, session_id: str) -> asyncio.Event:
-        event = self._wakeup_events.get(session_id)
-        if event is None:
-            event = asyncio.Event()
-            self._wakeup_events[session_id] = event
-        return event
 
     def _scope_key(self, session_id: str) -> str:
         session_scope = self._scope.model_copy(update={"session_id": session_id})

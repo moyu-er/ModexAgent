@@ -32,6 +32,11 @@ if TYPE_CHECKING:
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
 
 from bot.plugins.integration import PluginIntegration
+from bot.service._model_config_loader import _apply_bot_model_config, _load_app_config
+from bot.service._runtime_builders import (
+    _build_control_channel,
+    _build_main_command_processor,
+)
 from bot.service.errors import BotServiceShutdownIncompleteError
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
@@ -40,6 +45,9 @@ from bot.utils.config_loader import ConfigLoader
 from bot.workspace.wiring import build_single_workspace_stack, build_workspace_stack
 from modex_agent import (
     LLMProvider,
+)
+from modex_agent.agents.external.providers.opencode.server_manager import (
+    OpenCodeServerManager,
 )
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.emitter import ContentEmitter
@@ -50,8 +58,6 @@ from modex_agent.core.llm_struct import (
 )
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
-from modex_agent.hook.abc import Hook
-from modex_agent.hook.runner import HookRunner
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.pool_router import PoolRoutingStore
@@ -107,7 +113,7 @@ class BotService(AgentBuilderMixin):
             # bot 层 model.yml 后处理，确保 _bot_model_config 在 initialize()/
             # start() 与 server/pipeline 装配读取前就已就位（spec B3）。app_config
             # 为 None 时，initialize() 经 _load_app_config 加载并应用同样的后处理。
-            self._apply_bot_model_config(app_config)
+            self._bot_model_config = _apply_bot_model_config(self.config_dir, app_config)
         self._output_adapter_factory = output_adapter_factory
         self._on_subagent_created = on_subagent_created
 
@@ -147,7 +153,7 @@ class BotService(AgentBuilderMixin):
 
         # Execution-strategy registry (ADR-0025, ticket 3). Built in
         # initialize() with the shipped strategies (react in ticket 3;
-        # external_coding added in ticket 4). Threaded through wiring.py into
+        # external added in ticket 4). Threaded through wiring.py into
         # create_pool so react pools are assembled via
         # ReactExecutionStrategy.assemble() instead of inline _build_* calls.
         self._strategy_registry: Any = None
@@ -158,7 +164,6 @@ class BotService(AgentBuilderMixin):
         # backend is FILE or initialize() hasn't run yet.
         self._registry_persistence: RegistryPersistenceManager | None = None
         self._home_persistence: WorkspacePersistenceManager | None = None
-
 
         # Maintenance
         self._maintenance_task: asyncio.Task | None = None
@@ -209,16 +214,6 @@ class BotService(AgentBuilderMixin):
             return None
         return BotModelProvider(self._bot_model_config)
 
-    def _load_app_config(self) -> AppConfig:
-        """Load IOC AppConfig from bot_config.yml + 多模型后处理。
-
-        框架 AppConfig.from_yaml 不再注入 pool_cfg.llm；模型配置完全由
-        BotModelConfig / BotModelProvider 管理。
-        """
-        app_config = AppConfig.from_yaml(self.config_dir / "bot_config.yml")
-        self._apply_bot_model_config(app_config)
-        return app_config
-
     def _load_bot_model_config_for_listing(self) -> BotModelConfig | None:
         """Re-read config/model.yml fresh for GET /api/models (live refresh).
 
@@ -236,25 +231,6 @@ class BotService(AgentBuilderMixin):
         except (ValidationError, yaml.YAMLError, OSError):
             logger.exception("model.yml parse failed for /api/models listing")
             return None
-
-    def _apply_bot_model_config(self, app_config: AppConfig) -> None:
-        """Bot 层后处理（spec B3）：解析 model.yml 的 models: 块，缓存
-        BotModelConfig。无论 AppConfig 由本服务加载还是子类预加载传入，都
-        必须运行——_bot_model_config 是后续 provider/wiring 的依赖。
-
-        PoolSpec 不再携带 llm；模型配置由 BotModelConfig / BotModelProvider
-        独立管理。max_context_tokens 由 wiring 层注入 PoolAssemblyDeps.memory。
-
-        model.yml 缺失时（如框架单测用 config_dir=Path('.') + 合成 app_config，
-        或首次部署尚未运行 ``modexbot config``）静默跳过，_bot_model_config
-        留 None；``_build_default_provider`` 随之返回 None，bot 以无模型状态启动，
-        供用户在 WebUI 里完成首次配置。
-        """
-        model_yml = self.config_dir / "model.yml"
-        if not model_yml.exists():
-            return
-        model_cfg = BotModelConfig.from_yaml(model_yml)
-        self._bot_model_config = model_cfg
 
     # ------------------------------------------------------------------ #
     # Path helpers
@@ -301,7 +277,7 @@ class BotService(AgentBuilderMixin):
         # ADR-0027 T8: register cooperative SIGTERM/SIGINT handlers that
         # run atexit cleanup (killing any live ``opencode serve``
         # subprocesses) before exit. Idempotent — safe to call every boot.
-        from modex_agent.agents.external_coding.os_layer import (
+        from modex_agent.agents.external.os_layer import (
             register_signal_handlers,
         )
 
@@ -309,7 +285,8 @@ class BotService(AgentBuilderMixin):
 
         # 1. Load config (IOC AppConfig is the only source of truth)
         if self._app_config is None:
-            self._app_config = self._load_app_config()
+            self._app_config = _load_app_config(self.config_dir)
+            self._bot_model_config = _apply_bot_model_config(self.config_dir, self._app_config)
         assert self._app_config is not None, "AppConfig must be loaded before initialize"
         from modex_agent.multi_agent.pool_config import PoolStore
 
@@ -343,9 +320,7 @@ class BotService(AgentBuilderMixin):
                     injector=JsonFileMCPTransportInjector(),
                 )
                 self._mcp_registry.start_connecting(list(servers.keys()))
-                print(
-                    f"[OK] Shared MCP registry: {len(servers)} server(s) connecting concurrently"
-                )
+                print(f"[OK] Shared MCP registry: {len(servers)} server(s) connecting concurrently")
             else:
                 self._mcp_registry = None
         else:
@@ -386,19 +361,19 @@ class BotService(AgentBuilderMixin):
             # True -> full multi-live stack.
             self._model_choice_registry = ModelChoiceRegistry()
             self._default_provider = self._build_default_provider()
-            self.control_channel = self._build_control_channel()
-            self.command_processor = self._build_main_command_processor()
+            self.control_channel = _build_control_channel(self.control_channel)
+            self.command_processor = _build_main_command_processor()
             self.plugin_integration = PluginIntegration(config={"enabled": False})
 
             # ADR-0025 ticket 3: build the execution-strategy registry with
             # the shipped react strategy. Threaded through wiring.py into
             # create_pool so react pools are assembled via
             # ReactExecutionStrategy.assemble() instead of inline _build_*.
-            # ADR-0025 ticket 4: register ExternalCodingExecutionStrategy so
-            # external_coding pools are assembled via strategy.assemble()
-            # (provider-availability gate + external_coding_deps build).
-            from bot.service.external_coding_strategy import (
-                ExternalCodingExecutionStrategy,
+            # ADR-0025 ticket 4: register ExternalExecutionStrategy so
+            # external pools are assembled via strategy.assemble()
+            # (provider-availability gate + external_deps build).
+            from bot.service.external_strategy import (
+                ExternalExecutionStrategy,
             )
             from bot.service.react_strategy import ReactExecutionStrategy
             from modex_agent.multi_agent.execution_strategy import (
@@ -407,7 +382,7 @@ class BotService(AgentBuilderMixin):
 
             self._strategy_registry = ExecutionStrategyRegistry()
             self._strategy_registry.register(ReactExecutionStrategy())
-            self._strategy_registry.register(ExternalCodingExecutionStrategy())
+            self._strategy_registry.register(ExternalExecutionStrategy())
 
             # T26: open the registry DB BEFORE workspace materialization so the
             # registry store is ready when workspaces start using it. The
@@ -428,9 +403,7 @@ class BotService(AgentBuilderMixin):
                 await self._registry_persistence.open()
 
                 home_db_path = (
-                    self._project_dir
-                    / self._app_config.paths.data_dir_name
-                    / WORKSPACE_STATE_DB
+                    self._project_dir / self._app_config.paths.data_dir_name / WORKSPACE_STATE_DB
                 )
                 self._home_persistence = WorkspacePersistenceManager(home_db_path)
                 await self._home_persistence.open()
@@ -529,34 +502,6 @@ class BotService(AgentBuilderMixin):
     # Workspace helpers
     # ------------------------------------------------------------------ #
 
-    async def _close_all_terminals(self, *, suppress_errors: bool = True) -> None:
-        """Close every terminal session across all pools concurrently.
-
-        Used by workspace deactivate and BotService.stop().
-        """
-        tasks: list[asyncio.Task[None]] = []
-        for mgr in [pi.terminal_manager for pi in self._pools.values()]:
-            if mgr is None:
-                continue
-            for name in list(mgr.list_names()):
-                tasks.append(
-                    asyncio.create_task(
-                        self._close_terminal(mgr, name, suppress_errors=suppress_errors)
-                    )
-                )
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def _close_terminal(
-        self, mgr: Any, name: str, *, suppress_errors: bool
-    ) -> None:
-        """Close a single terminal session, optionally swallowing errors."""
-        try:
-            await mgr.close(name)
-        except BaseException:
-            if not suppress_errors:
-                raise
-
     @property
     def safety_policy(self) -> RuntimeSafetyPolicy:
         """Safety policy from IOC config."""
@@ -592,62 +537,6 @@ class BotService(AgentBuilderMixin):
             )
         self._safety_policy_cache = policy
         return policy
-
-    def _collect_run_hooks(self) -> list[Hook[Any]]:  # type: ignore[type-arg]
-        """Collect optional run hooks configured for this bot service."""
-        hooks = self.plugin_integration.collect_hooks()
-        obs = self._app_config.observability
-        if obs is not None and obs.run_logging:
-            from modex_agent.hook.builtin import RunLoggingHook
-
-            level = getattr(logging, obs.level.upper(), logging.INFO)
-            hooks.append(
-                RunLoggingHook(
-                    logger_name="bot.run",
-                    level=level,
-                    max_content_chars=4000,
-                    max_result_chars=4000,
-                )
-            )
-        return hooks
-
-    def _build_hook_runner(self, hooks: list[Hook[Any]]) -> HookRunner[Any]:  # type: ignore[type-arg]
-        """Build HookRunner from collected hooks with default HookSpec.
-
-        Default hooks (always present):
-          - MaxIterationNotifyHook — notify parent/user when max_iterations hit
-
-        Note: SubagentAutoSendHook is wired separately by _wire_subagent_hooks()
-        in AgentCommunicationService, with proper agent_bus and runtime_dir args.
-        """
-        from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
-        from modex_agent.hook.notification import MaxIterationNotifyHook
-
-        runner = HookRunner()
-        runner.add(HookSpec(hook=MaxIterationNotifyHook(), on_error=HookErrorPolicy.LOG))
-        for hook in hooks:
-            runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
-        return runner
-
-    def _build_control_channel(self) -> InMemoryControlChannel:
-        """Build the control channel for control commands."""
-        if self.control_channel is None:
-            self.control_channel = InMemoryControlChannel()
-        return self.control_channel
-
-    def _build_main_command_processor(self) -> SlashCommandProcessor:
-        """Build the slash command processor.
-
-        Wires the default builtin handlers.  Workspace commands (/cd,
-        /exit, /pwd) are handled directly by the IM input pipeline
-        (``EnvironmentControlStage``) so they are removed from the
-        processor — this avoids self-blocking where the command's own
-        dispatch would appear as an "active agent" in pool mode.
-        """
-        from modex_agent.commands.handlers import build_default_builtin_handlers
-        from modex_agent.commands.processor import SlashCommandProcessor
-
-        return SlashCommandProcessor(handlers=list(build_default_builtin_handlers()))
 
     def _iter_workspace_resources(self) -> Iterator[Any]:
         """Yield all materialized workspace resource bundles.
@@ -693,23 +582,26 @@ class BotService(AgentBuilderMixin):
         # materializes — home and non-home alike, so every switched-to /
         # newly-created workspace is fully wired (not just home).
 
-        # Wire the shared control filter BEFORE the input adapter starts so
-        # IM /stop (and the WebUI pause button, which reuses /stop) actually
-        # push CANCEL_TURN through InMemoryControlChannel. Idempotent if a
-        # subclass (e.g. WebUIService) already wired it earlier.
-        self.input_adapter.configure_control_filter(
-            control_channel=self.control_channel,
-            command_processor=self.command_processor,
-            output_adapter=self.output_adapter,
-            session_checker=self._is_session_active,
-            turn_uuid_getter=self._get_active_turn_uuid,
-        )
+        # The shared ``opencode serve`` singleton is bound to this bot's
+        # lifetime — ``async with`` is the sole shutdown trigger.
+        async with OpenCodeServerManager.lifecycle():
+            # Wire the shared control filter BEFORE the input adapter starts so
+            # IM /stop (and the WebUI pause button, which reuses /stop) actually
+            # push CANCEL_TURN through InMemoryControlChannel. Idempotent if a
+            # subclass (e.g. WebUIService) already wired it earlier.
+            self.input_adapter.configure_control_filter(
+                control_channel=self.control_channel,
+                command_processor=self.command_processor,
+                output_adapter=self.output_adapter,
+                session_checker=self._is_session_active,
+                turn_uuid_getter=self._get_active_turn_uuid,
+            )
 
-        await self.input_adapter.start()
+            await self.input_adapter.start()
 
-        self._router_task = asyncio.create_task(self.workspace_stack.dispatcher.run())
-        print(f"[OK] WorkspaceDispatcher running, {len(self._pools)} pools active")
-        await self._shutdown_event.wait()
+            self._router_task = asyncio.create_task(self.workspace_stack.dispatcher.run())
+            print(f"[OK] WorkspaceDispatcher running, {len(self._pools)} pools active")
+            await self._shutdown_event.wait()
 
     async def stop(self) -> None:
         logger.info(
@@ -728,10 +620,7 @@ class BotService(AgentBuilderMixin):
         # Stop EVERY materialized workspace's resources (background + pools +
         # broker + terminals) — not just home, so multi-live workspaces don't
         # leak background tasks/brokers on shutdown.
-        if (
-            self.workspace_stack is not None
-            and not await self.workspace_stack.registry.evict_all()
-        ):
+        if self.workspace_stack is not None and not await self.workspace_stack.registry.evict_all():
             raise BotServiceShutdownIncompleteError(
                 "workspace shutdown incomplete; shared resources retained for retry"
             )

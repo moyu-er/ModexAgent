@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 
@@ -134,6 +135,31 @@ class TestSubagentDispatchStrategy:
         assert envelope.invocation_id == result.invocation_id
 
     @pytest.mark.asyncio
+    async def test_workspace_propagated_in_envelope_payload(self) -> None:
+        bus = _FakeBus()
+        strategy = SubagentDispatchStrategy(_make_deps(bus=bus))
+        ws = Path("D:/projects/demo")
+        ctx = _make_context()
+        ctx.workspace = ws
+        req = SendRequest(
+            target=CommunicationTarget(name="worker", kind=AgentCommKind.SUBAGENT),
+            content="do work",
+            invocation_id=None,
+            context=ctx,
+        )
+
+        result = await strategy.execute(req)
+
+        assert result.error is None
+        _, envelope = bus.sent[0]
+        assert envelope.payload["workspace"] == str(ws)
+
+        reconstructed = envelope.to_input_message(
+            session=SessionInfo.from_str(result.session_id)
+        )
+        assert reconstructed.workspace == ws
+
+    @pytest.mark.asyncio
     async def test_execute_reuses_existing_invocation_id(self) -> None:
         bus = _FakeBus()
         strategy = SubagentDispatchStrategy(_make_deps(bus=bus))
@@ -183,7 +209,8 @@ class TestSubagentDispatchStrategy:
         assert envelope.parent_session_id == str(req.context.session)
         assert envelope.target is not None
         assert envelope.target.name == "worker"
-        assert "task-42" in envelope.payload["content"]
+        assert envelope.invocation_id == "task-42"
+        assert "task-42" not in envelope.payload["content"]
 
 
 class TestBuildResultExecutionStrategyBranch:
@@ -202,7 +229,7 @@ class TestBuildResultExecutionStrategyBranch:
             target=CommunicationTarget(
                 name="worker",
                 kind=AgentCommKind.SUBAGENT,
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
             ),
             content="do work",
             invocation_id="task-1",
@@ -213,18 +240,61 @@ class TestBuildResultExecutionStrategyBranch:
         result = strategy.build_result(req, session, "task-1")
 
         assert result.trace_dir is None
-        assert result.output_path is None
 
-    def test_external_subagent_ack_uses_external_format(self) -> None:
+    def test_native_subagent_result_has_trace_but_no_output(self, tmp_path: Path) -> None:
+        """T4: native _build_native_result sets trace_dir only.
+
+        The strategy owns routing (trace_dir); the hook (T2) owns file
+        writes. The output dir is NOT pre-created at dispatch time.
+        """
+        from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
+
+        resolver = WorkspacePathResolver(
+            workspace_manager=None,
+            pool_name="main",
+            fallback_runtime_dir=tmp_path,
+        )
+        deps = SendDeps(
+            source=AgentAddress(name="main"),
+            broker=_FakeBroker(),
+            session_factory=SessionIdFactory(),
+            agent_bus=_FakeBus(),
+            workspace_path_resolver=resolver,
+        )
+        strategy = SubagentDispatchStrategy(deps)
+        req = _make_request(invocation_id="task-1")
+        session = strategy.build_session(req, "task-1")
+
+        result = strategy.build_result(req, session, "task-1")
+
+        assert result.trace_dir is not None
+        assert result.trace_dir == tmp_path / "trace" / str(session)
+        assert not (tmp_path / "output").exists()
+
+    def test_native_subagent_ack_omits_output_line(self, tmp_path: Path) -> None:
+        """T4: native ack omits Trace and Output — unified subagent ack."""
         from modex_agent.core.constants import ExecutionStrategyKind
         from modex_agent.multi_agent.communication.result import format_send_ack
+        from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
 
-        strategy = SubagentDispatchStrategy(_make_deps())
+        resolver = WorkspacePathResolver(
+            workspace_manager=None,
+            pool_name="main",
+            fallback_runtime_dir=tmp_path,
+        )
+        deps = SendDeps(
+            source=AgentAddress(name="main"),
+            broker=_FakeBroker(),
+            session_factory=SessionIdFactory(),
+            agent_bus=_FakeBus(),
+            workspace_path_resolver=resolver,
+        )
+        strategy = SubagentDispatchStrategy(deps)
         req = SendRequest(
             target=CommunicationTarget(
                 name="worker",
                 kind=AgentCommKind.SUBAGENT,
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.REACT,
             ),
             content="do work",
             invocation_id="task-1",
@@ -235,9 +305,36 @@ class TestBuildResultExecutionStrategyBranch:
         result = strategy.build_result(req, session, "task-1")
         ack = format_send_ack(result)
 
-        assert "modexctl send" in ack
+        assert "Trace" not in ack
+        assert "final deliverable" not in ack
+
+    def test_external_subagent_ack_matches_native(self) -> None:
+        """T4: external and native subagent acks are identical — no implementation details leaked."""
+        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.multi_agent.communication.result import format_send_ack
+
+        strategy = SubagentDispatchStrategy(_make_deps())
+        req = SendRequest(
+            target=CommunicationTarget(
+                name="worker",
+                kind=AgentCommKind.SUBAGENT,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
+            ),
+            content="do work",
+            invocation_id="task-1",
+            context=_make_context(),
+        )
+        session = strategy.build_session(req, "task-1")
+
+        result = strategy.build_result(req, session, "task-1")
+        ack = format_send_ack(result)
+
+        assert "modexctl send" not in ack
         assert "Trace" not in ack
         assert "Output" not in ack
+        assert "automatic_notification: true" in ack
+        assert "next_step:" in ack
+        assert "notification" in ack  # the result arrives as a notification
 
     def test_default_execution_strategy_is_react(self) -> None:
         """CommunicationTarget defaults to REACT — pool_builder must
@@ -250,17 +347,16 @@ class TestBuildResultExecutionStrategyBranch:
 
 
 class TestBuildEnvelopeXmlBranch:
-    """build_envelope must emit peer-format XML (with <reply_contract> +
-    modexctl send) when target is external, agent-format XML (minimal)
-    when target is native.
+    """build_envelope must emit minimal agent-format XML (no reply_contract,
+    no modexctl send) for BOTH external and native subagent dispatch.
 
-    Regression: external subagents received the minimal build_agent_message
-    format — no reply_contract, no modexctl send instructions — so the
-    external CLI had no idea how to reply. Native subagents have
-    SubagentAutoSendHook to auto-deliver replies; external CLIs do not.
+    Subagent replies are auto-delivered by SubagentAutoSendHook (native via
+    the hook's native content path; external via the hook's EXTERNAL content
+    path). Injecting the reply contract would cause a double reply (manual
+    send + hook auto-forward), so build_dispatch_message never injects one.
     """
 
-    def test_external_target_envelope_xml_has_reply_contract_and_modexctl(self) -> None:
+    def test_external_target_envelope_xml_is_minimal_no_reply_contract(self) -> None:
         from modex_agent.core.constants import ExecutionStrategyKind
 
         strategy = SubagentDispatchStrategy(_make_deps())
@@ -268,7 +364,7 @@ class TestBuildEnvelopeXmlBranch:
             target=CommunicationTarget(
                 name="coder",
                 kind=AgentCommKind.SUBAGENT,
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
             ),
             content="implement feature X",
             invocation_id="task-1",
@@ -279,9 +375,10 @@ class TestBuildEnvelopeXmlBranch:
         envelope = strategy.build_envelope(req, session, "task-1")
         xml = envelope.payload["content"]
 
-        assert "<reply_contract>" in xml
-        assert 'modexctl send --to "main"' in xml
-        assert "INVISIBLE" in xml
+        assert "---" not in xml
+        assert "To reply" not in xml
+        assert "modexctl send" not in xml
+        assert "WARNING" not in xml
 
     def test_native_target_envelope_xml_is_minimal_no_reply_contract(self) -> None:
         from modex_agent.core.constants import ExecutionStrategyKind
@@ -304,4 +401,4 @@ class TestBuildEnvelopeXmlBranch:
 
         assert "<reply_contract>" not in xml
         assert "modexctl send" not in xml
-        assert 'invocation_id="task-1"' in xml
+        assert "invocation_id" not in xml

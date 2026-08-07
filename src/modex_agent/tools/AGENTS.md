@@ -31,6 +31,8 @@ Tool subsystem — registry, type definitions, filtering, metadata parsing, MCP 
 | `ast/` | AST-based code analysis — `ast_search.py`, `ast_replace.py`, `engine.py` |
 | `web/` | Web tools — `reader.py` (URL content extraction), `search.py` (web search) |
 | `lsp/` | Language Server Protocol integration — `lsp_navigation.py`, `lsp_diagnostics.py` |
+| `lint/` | Standalone linter subsystem — `core.py` (`FileLinter` ABC, `LintRegistry` multi-match, `LintIssue`/`LintResult`, `run_lint_subprocess`, `RuffLinter`, `default_lint_registry`), `builtins.py` (9 built-in linters: ruff/mypy/biome/shellcheck/golangci-lint/clippy/yamllint/markdownlint/pmd + `CompositeLinter`). Usable independently of ACI |
+| `aci/` | Agent-Computer Interface enhancements — `edit_tool.py` (`AciEditTool`, EditFileTool + post-edit lint). Enabled via `ToolSupplement.ACI`. Consumes `tools/lint/` for linter infrastructure |
 
 ## For AI Agents
 

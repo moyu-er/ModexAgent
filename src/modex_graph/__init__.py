@@ -9,60 +9,107 @@ Public surface (ADR-0033 acceptance criteria):
 
 - **Graph primitives:** `Graph`, `Node`, `CompiledGraph`, `GraphEngine`,
   `GraphNode` (START/END sentinels).
-- **Context + runtime:** `GraphContext`, `GraphRuntime`.
-- **State + channels:** `GraphState`, `BaseChannel`, `LastValue`,
-  `ReducerChannel`, `Codec`, `register_codec`.
-- **Result types:** `NodeResult`, `Command`, `Task`, `DispatchEvent`.
+- **Context + runtime:** `GraphContext`, `GraphRuntime`, `GraphRunControl`.
+- **State:** `GraphState`.
+- **Deliver/submit:** `IntegratedPayload`, `IntegratedInput`,
+  `InputIntegrator`, `DefaultInputIntegrator`, `DeliverStore`,
+  `InMemoryDeliverStore`, `SqliteDeliverStore`, `DeliverRecord`.
 - **Scheduler:** `Scheduler` (ABC), `LinearScheduler`, `ParallelScheduler`,
   `SchedulerKind`, `NodeInstanceStatus`, `NodeInstance`, `NodeTrigger`.
+- **Lifecycle + interrupt:** `GraphInstanceStatus`,
+  `InterruptPolicy` (ABC), `CrashPolicy` (default).
 - **Exceptions:** `GraphBubbleUp`, `GraphInterrupt`, `GraphDrained`,
-  `ParentCommand`, `InvalidUpdateError`, `RoutingError`, `GraphRecursionError`.
+  `ParentCommand`, `RoutingError`, `GraphRecursionError`.
 
 See `docs/adr/0033-generalized-graph-engine.md` for the authoritative design.
 """
 
 from __future__ import annotations
 
-from .channel import (
-    BaseChannel,
-    Codec,
-    JsonValue,
-    LastValue,
-    ReducerChannel,
-    register_codec,
-)
-from .checkpoint_store import (
-    CheckpointData,
-    CheckpointStore,
-    InstanceRecord,
-    MemoryCheckpointStore,
-    SqliteCheckpointStore,
-)
 from .compiled_graph import CompiledGraph
-from .conflict_detector import GenerationWriteTracker, WriteConflictDetector
-from .constants import GraphNode, NodeInstanceStatus, NodeTrigger, SchedulerKind
-from .context import GraphContext
-from .dispatch_store import (
-    DispatchStore,
-    InMemoryDispatchStore,
-    SqliteDispatchStore,
+from .constants import (
+    DeliverConsumptionStatus,
+    GraphInstanceStatus,
+    GraphNode,
+    InvocationStatus,
+    NodeInstanceStatus,
+    NodeTrigger,
+    SchedulerInstanceStatus,
+    SchedulerKind,
 )
+from .context import GraphContext
 from .engine import GraphEngine
 from .exceptions import (
     GraphBubbleUp,
     GraphDrained,
     GraphInterrupt,
     GraphRecursionError,
-    InvalidUpdateError,
+    InvocationStateError,
     ParentCommand,
     RoutingError,
 )
 from .graph import Edge, Graph
+from .id_generator import IdGenerator, SnowflakeIdGenerator, default_id_generator
+from .integration import (
+    DefaultInputIntegrator,
+    InputIntegrator,
+    IntegratedInput,
+    IntegratedPayload,
+)
+from .interrupt_policy import CrashPolicy, InterruptPolicy
 from .node import Node
-from .result import Command, DispatchEvent, NodeResult, Task
+from .node_factory import NodeFactory, NodeRegistry
+from .nodes import (
+    DelayNode,
+    DelayNodeFactory,
+    FunctionNode,
+    FunctionNodeFactory,
+    GraphAsNode,
+    GraphAsNodeFactory,
+    HumanInputNode,
+    HumanInputNodeFactory,
+)
+from .persistence import (
+    CoordinatorFactory,
+    DeliverRecord,
+    DeliverStore,
+    DeliverStoreFactory,
+    GraphInstance,
+    GraphInstanceStore,
+    GraphMetadata,
+    GraphPersistenceCoordinator,
+    GraphStateSnapshot,
+    InMemoryDeliverStore,
+    InMemoryDeliverStoreFactory,
+    InMemoryGraphInstanceStore,
+    InMemoryNodeStateStore,
+    InvocationContext,
+    NodeInvocationRecord,
+    NodeStateStore,
+    NullCoordinatorFactory,
+    NullDeliverStore,
+    NullDeliverStoreFactory,
+    NullGraphInstanceStore,
+    NullNodeStateStore,
+    RecoveryContext,
+    SqliteDeliverStore,
+    SqliteDeliverStoreFactory,
+    SqliteGraphInstanceStore,
+    SqliteNodeStateStore,
+    create_null_coordinator,
+)
+from .run_control import GraphRunControl
 from .runtime import GraphRuntime
 from .scheduler import LinearScheduler, NodeInstance, ParallelScheduler, Scheduler
+from .spec import EdgeSpec, GraphSpec, NodeSpec
+from .spec_compiler import GraphSpecCompiler
+from .spec_store import (
+    GraphSpecStore,
+    InMemoryGraphSpecStore,
+    SqliteGraphSpecStore,
+)
 from .state import GraphState
+from .topology_validator import TopologyError, TopologyValidator
 
 __all__ = [
     # Graph primitives
@@ -75,48 +122,95 @@ __all__ = [
     # Context + runtime
     "GraphContext",
     "GraphRuntime",
-    # State + channels
+    "GraphRunControl",
+    # State
     "GraphState",
-    "BaseChannel",
-    "LastValue",
-    "ReducerChannel",
-    "Codec",
-    "register_codec",
-    "JsonValue",
-    # Result types
-    "NodeResult",
-    "Command",
-    "Task",
-    "DispatchEvent",
-    # Dispatch persistence
-    "DispatchStore",
-    "InMemoryDispatchStore",
-    "SqliteDispatchStore",
-    # Conflict detection
-    "WriteConflictDetector",
-    "GenerationWriteTracker",
-    # Checkpoint persistence
-    "CheckpointStore",
-    "CheckpointData",
-    "InstanceRecord",
-    "MemoryCheckpointStore",
-    "SqliteCheckpointStore",
+    # ID generation
+    "IdGenerator",
+    "SnowflakeIdGenerator",
+    "default_id_generator",
+    # Deliver/submit persistence
+    "DeliverRecord",
+    "DeliverStore",
+    "DeliverStoreFactory",
+    "InMemoryDeliverStore",
+    "InMemoryDeliverStoreFactory",
+    "NullDeliverStore",
+    "NullDeliverStoreFactory",
+    "SqliteDeliverStore",
+    "SqliteDeliverStoreFactory",
+    # Deliver/submit input integration
+    "IntegratedPayload",
+    "IntegratedInput",
+    "InputIntegrator",
+    "DefaultInputIntegrator",
     # Scheduler
     "Scheduler",
     "LinearScheduler",
     "ParallelScheduler",
     "SchedulerKind",
+    "SchedulerInstanceStatus",
     "NodeInstanceStatus",
     "NodeInstance",
     "NodeTrigger",
+    # Lifecycle + interrupt policy
+    "GraphInstanceStatus",
+    "InvocationStatus",
+    "DeliverConsumptionStatus",
+    "InterruptPolicy",
+    "CrashPolicy",
     # Exceptions
     "GraphBubbleUp",
     "GraphInterrupt",
     "GraphDrained",
     "ParentCommand",
-    "InvalidUpdateError",
     "RoutingError",
     "GraphRecursionError",
+    "InvocationStateError",
+    # Declarative graph spec
+    "GraphSpec",
+    "NodeSpec",
+    "EdgeSpec",
+    # Runtime graph instance
+    "GraphInstance",
+    # Graph spec persistence
+    "GraphSpecStore",
+    "InMemoryGraphSpecStore",
+    "SqliteGraphSpecStore",
+    # Graph instance persistence
+    "GraphInstanceStore",
+    "NullGraphInstanceStore",
+    "InMemoryGraphInstanceStore",
+    "SqliteGraphInstanceStore",
+    # Node state persistence (lifecycle + CAS + version chain)
+    "NodeStateStore",
+    "NullNodeStateStore",
+    "InMemoryNodeStateStore",
+    "SqliteNodeStateStore",
+    "NodeInvocationRecord",
+    "GraphMetadata",
+    "InvocationContext",
+    "RecoveryContext",
+    "GraphStateSnapshot",
+    "GraphPersistenceCoordinator",
+    "CoordinatorFactory",
+    "NullCoordinatorFactory",
+    "create_null_coordinator",
+    "NodeFactory",
+    "NodeRegistry",
+    # Generic Node types + factories
+    "FunctionNode",
+    "FunctionNodeFactory",
+    "GraphAsNode",
+    "GraphAsNodeFactory",
+    "DelayNode",
+    "DelayNodeFactory",
+    "HumanInputNode",
+    "HumanInputNodeFactory",
+    # Declarative → imperative bridge
+    "GraphSpecCompiler",
+    "TopologyValidator",
+    "TopologyError",
 ]
 
 __version__ = "1.0.0"

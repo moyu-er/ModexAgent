@@ -3,16 +3,17 @@
 Per ADR-0033 D6 + D9.1: a mutable builder that collects nodes and edges,
 then validates and freezes them via `compile() -> CompiledGraph`.
 
-Two-layer routing (strict priority, resolved by the engine):
+Deliver-only routing (P3.4b convergence): nodes call
+``deliver(content, next_node, ctx)`` during ``execute()`` to route. Edges
+declare topology (which nodes can connect) and are used for:
 
-1. Dynamic layer — `Command(goto=...)`: runtime routing (highest priority).
-2. Static layer — `transition: str` matched against edges added via
-   `add_edge(src, dst, reason=...)`, falling back to the default edge
-   (`add_edge(src, dst, reason=None)`, lowest priority).
+- Compile-time validation (reachability, cycle detection).
+- Runtime ``next_node=None`` resolution via ``_resolve_default_target``
+  (returns all downstream targets from the current node).
 
-The former conditional-edge mechanism (callable-based routing) was removed
-in the two-layer routing cleanup (paving the way for ParallelScheduler).
-Branching is now expressed via `NodeResult(transition=...)` + static edges.
+The former ``reason``-based transition model and ``Command``/``Task``
+dynamic routing were removed as dead code — ``deliver``/``submit`` is the
+sole routing mechanism.
 """
 
 from __future__ import annotations
@@ -34,16 +35,16 @@ S = TypeVar("S", bound="GraphState")
 
 @dataclass(frozen=True)
 class Edge:
-    """Directed edge. `reason=None` means unconditional fallback (default edge).
+    """Directed edge: ``source`` → ``target``.
 
-    Per ADR-0033 D6: edges are matched by exact `reason` first, then by
-    `reason=None` (fallback). The engine tries `transition` (static edge
-    lookup) before default edges.
+    Per ADR-0033 D6: edges declare topology. Routing is deliver-only —
+    nodes call ``deliver(content, next_node, ctx)`` to route at runtime.
+    When ``next_node=None``, ``_resolve_default_target`` returns all
+    downstream edge targets from the current node.
     """
 
     source: str
     target: str
-    reason: str | None = None
 
 
 class Graph[S: "GraphState"]:
@@ -59,8 +60,8 @@ class Graph[S: "GraphState"]:
     g.add_node("start", StartNode())
     g.add_node("llm", LLMNode())
     g.add_edge(GraphNode.START, "start")
-    g.add_edge("start", "llm", reason="begin")
-    g.add_edge("llm", GraphNode.END, reason=None)  # default edge
+    g.add_edge("start", "llm")
+    g.add_edge("llm", GraphNode.END)
     compiled = g.compile(max_iterations=100)
     ```
 
@@ -79,9 +80,7 @@ class Graph[S: "GraphState"]:
 
     def add_node(self, name: str, node: Node[S]) -> None:
         """Register `node` under `name`. Sets `node.name = name`."""
-        # Use object.__setattr__ to support both regular Node instances and
-        # frozen dataclass subclasses (e.g. CompiledGraph used as a subgraph node).
-        object.__setattr__(node, "name", name)
+        node.name = name
         self._nodes[name] = node
 
     def get_node(self, name: str) -> Node[S]:
@@ -95,14 +94,13 @@ class Graph[S: "GraphState"]:
 
     # ── Edges ──────────────────────────────────────────────────────────
 
-    def add_edge(self, source: str, target: str, reason: str | None = None) -> None:
+    def add_edge(self, source: str, target: str) -> None:
         """Add a directed edge.
 
         `source` may be `GraphNode.START` (declares the entry node).
         `target` may be `GraphNode.END` (declares a terminal transition).
-        `reason=None` means unconditional fallback (default edge).
         """
-        self._edges.append(Edge(source=source, target=target, reason=reason))
+        self._edges.append(Edge(source=source, target=target))
 
     @property
     def edges(self) -> list[Edge]:

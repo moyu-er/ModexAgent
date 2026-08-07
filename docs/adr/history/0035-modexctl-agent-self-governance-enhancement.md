@@ -128,7 +128,7 @@ invocation_id is not a concept and the parameter is ignored.
 #### D2.2 鈥?Quadrant-differentiated response output
 
 The `send` command's stdout is differentiated by the combination of
-`MODEX_COMM_KIND` and the target agent's kind (NATIVE vs. EXTERNAL_CODING).
+`MODEX_COMM_KIND` and the target agent's kind (NATIVE vs. EXTERNAL).
 The four quadrants:
 
 **鈶?`normal` (cross-pool peer, target = NATIVE or EXTERNAL)**
@@ -153,7 +153,7 @@ trace_dir: {trace_dir}
 Subagent will run asynchronously 鈥?wait for the <replied> block, do not poll.
 ```
 
-**鈶?`subagent` dispatch, target = EXTERNAL_CODING**
+**鈶?`subagent` dispatch, target = EXTERNAL**
 ```
 Task dispatched to subagent '{to}'.
 invocation_id: {invocation_id}

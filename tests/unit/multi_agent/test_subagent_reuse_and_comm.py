@@ -252,14 +252,15 @@ async def test_pool_holds_one_instance_per_agent_type():
         await pool.shutdown_all()
 
 
-# ── Q1 mitigation: OUTPUT.md path is per-session dynamic ────────────────
+# ── Q1 mitigation: OUTPUT path is per-session dynamic (hook-owned) ───────
 
 
 @pytest.mark.asyncio
 async def test_output_md_path_session_leaf_is_dynamic(tmp_path):
-    """OutputMdProvider is rebuilt every load() with the LIVE session_id, so
-    even a reused instance points each invocation at its own OUTPUT.md leaf.
-    The OUTPUT path is therefore NOT frozen by instance reuse."""
+    """OutputMdProvider is deprecated (T5); the subagent system prompt no
+    longer carries an OUTPUT.md path. The hook (SubagentAutoSendHook) now
+    writes numbered OUTPUT_<n>.md files to ``<runtime>/output/<session_id>/``
+    at turn end — per-session by construction, not via prompt injection."""
     ctx_mgr = build_session_only_memory(
         cfg=None,
         workspace=tmp_path,
@@ -273,8 +274,10 @@ async def test_output_md_path_session_leaf_is_dynamic(tmp_path):
     state_b = await ctx_mgr.load(session_id="invB")
     prompt_b = await state_b.system_prompt_pipeline.get_or_refresh()
 
-    assert "invA" in prompt_a and "invB" not in prompt_a
-    assert "invB" in prompt_b and "invA" not in prompt_b
+    assert "OUTPUT.md" not in prompt_a
+    assert "OUTPUT.md" not in prompt_b
+    assert "invA" not in prompt_a
+    assert "invB" not in prompt_b
 
 
 # ── Q3: cross-workspace reuse bakes the base dir at materialize ──────────
@@ -307,12 +310,12 @@ class _RecordingResolver(WorkspacePathResolver):
 @pytest.mark.asyncio
 async def test_output_base_dir_is_baked_at_materialize_not_per_turn(tmp_path):
     """The OUTPUT *base* dir (workspace runtime dir) is resolved ONCE at
-    materialize and stored on the memory context manager. A later workspace
-    switch (resolver returns a different runtime_dir) does NOT redirect the
-    already-built instance — its OUTPUT still lands under the OLD workspace.
+    materialize. A later workspace switch (resolver returns a different
+    runtime_dir) does NOT redirect the already-built instance.
 
-    This is the cross-workspace drift risk: only the session leaf is dynamic
-    (proven above); the workspace base is frozen."""
+    OutputMdProvider is deprecated (T5) — the output path is no longer
+    injected into the system prompt. The resolver-baking behavior is still
+    verified: the resolver is NOT re-queried during load()."""
     ws_a = tmp_path / "wsA"
     ws_b = tmp_path / "wsB"
     ws_a.mkdir()
@@ -334,9 +337,8 @@ async def test_output_base_dir_is_baked_at_materialize_not_per_turn(tmp_path):
     state = await ctx_mgr.load(session_id="invX")
     prompt = await state.system_prompt_pipeline.get_or_refresh()
 
-    # OUTPUT still points at the OLD workspace (baked), and the resolver was
-    # NOT re-queried during load() — proving the base dir is not live.
-    assert str(ws_a) in prompt
+    # OutputMdProvider deprecated — neither workspace path is in the prompt.
+    assert str(ws_a) not in prompt
     assert str(ws_b) not in prompt
     assert resolver.runtime_calls == runtime_calls_after_materialize  # no new query
 
@@ -420,6 +422,7 @@ async def test_send_to_agent_routes_through_agent_bus():
     ctx = SimpleNamespace(
         session=SessionIdFactory().create(agent_name="main"),
         comm_kind=AgentCommKind.NORMAL,
+        workspace=None,
     )
     await svc._send(
         target=_tgt("scout", AgentCommKind.SUBAGENT),

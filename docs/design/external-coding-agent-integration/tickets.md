@@ -8,9 +8,9 @@ through a `modexctl send` CLI (with `modexbot` as a backward-compatible
 facade) that delivers XML-wrapped `<agent_message>` content through the target
 workspace's `InboxMQ`, reusing ADR-0015's inbox mechanism end-to-end.
 
-Source spec: `docs/design/external-coding-agent-integration/spec.md`
-Parent ADR: `docs/adr/0022-external-coding-agent-integration.md`
-Glossary: `docs/design/external-coding-agent-integration/glossary.md`
+Source spec: `docs/design/external-agent-integration/spec.md`
+Parent ADR: `docs/adr/0022-external-agent-integration.md`
+Glossary: `docs/design/external-agent-integration/glossary.md`
 
 > [!NOTE]
 > Pi integration is paused at the business wiring layer as of 2026-07-13. Framework code (pi_backend.py, pi_parser.py, ProviderKind.PI) is preserved for future re-enablement. To re-enable: re-create examples/bot_project/config/pools/pool_pi/pool.yml and add pool_pi to default pool's peers list.
@@ -51,7 +51,7 @@ including `provider_session(kind)`). `ExternalEnvSpec` (frozen) +
 point for `MODEX_*` vars. `ExecOptions` / `BackendResult` frozen models.
 `SessionMapEntry` for the modex↔provider session map. `OutboxLine` matching
 `LocalFileInboxServer.receive()`'s on-disk JSON shape byte-for-byte.
-`ExternalCodingEvent` StrEnum (TEXT_DELTA, THINKING, TOOL_USE,
+`ExternalEvent` StrEnum (TEXT_DELTA, THINKING, TOOL_USE,
 TOOL_RESULT, ERROR). All models obey type-safety rules 10–16 (frozen,
 no `dict[str, Any]`, discriminated unions over `Union`, etc.).
 
@@ -73,7 +73,7 @@ no `dict[str, Any]`, discriminated unions over `Union`, etc.).
       `LocalFileInboxServer.receive()` writes
       (fields `message_id`, `source`, `content`, `message_type`, `timestamp`,
       `metadata` with `agent_session_id`).
-- [x] `ExternalCodingEvent` StrEnum lists the 5 day-one event kinds.
+- [x] `ExternalEvent` StrEnum lists the 5 day-one event kinds.
 - [x] Unit tests cover every model's frozen + validation + round-trip.
 
 **Done** (commit `c7685767`, 2026-07-12): 87/87 tests pass, ruff+mypy clean.
@@ -164,14 +164,11 @@ mapping, plus the two provider-specific stdout parsers. The
 with fresh/resume/invalidate semantics and concurrent-turn safety (two
 turns of the same modex_session_id must not race the map). The
 `ProviderEventParser` ABC consumes one stdout JSONL line and emits zero
-or more `ExternalCodingEvent` emissions. `PiEventParser` handles Pi's
-8 event types and incrementally strips tool markup
-(`call:ToolName{…}<tool_call|>`, `<|control_token|>`) across delta
-boundaries. `OpenCodeEventParser` handles OpenCode's 5 event types and
+or more `ExternalEvent` emissions. `OpenCodeEventParser` handles OpenCode's 5 event types and
 captures the provider-minted session id from the first event that
 carries it.
 
-**Blocked by:** T1 (uses `ExternalCodingEvent`, `SessionMapEntry`,
+**Blocked by:** T1 (uses `ExternalEvent`, `SessionMapEntry`,
 `ExternalPaths`).
 
 - [x] `ExternalSessionStore.resolve(modex_sid) → (provider_sid, is_resume)`.
@@ -182,9 +179,6 @@ carries it.
       (test with `asyncio.gather` of two `commit` calls).
 - [x] `ProviderEventParser` ABC: `parse_line(line: str) → Iterator[Emission]`.
       (NOTE: ABC already defined in T1's contracts.py — confirmed.)
-- [x] `PiEventParser` handles 8 Pi event types; text_delta markup
-      stripping tolerates split deltas (fixture: markup opens in one
-      delta and closes in the next).
 - [x] `OpenCodeEventParser` handles 5 OpenCode event types and surfaces
       the session id via an out-of-band callback or return channel so
       T5 can commit it.
@@ -192,7 +186,7 @@ carries it.
 
 **Done** (commit `efb60fb1`, 2026-07-13): parsers fixture-driven, all tests pass.
 
-## T5 — ExternalCodingAgent harness + ProviderBackend ABC
+## T5 — ExternalAgent harness + ProviderBackend ABC
 
 > Historical implementation record: turn orchestration remains in the harness,
 > while provider process/network ownership now lives behind
@@ -203,13 +197,13 @@ carries it.
 backend, owning the full per-turn lifecycle. `ProviderBackend` is an
 ABC: `execute(opts: ExecOptions) → BackendResult` (stateless beyond its
 config; session continuity is the caller's job via `opts.resume_session_id`
-and `result.session_id`). `ExternalCodingAgent(Agent[ExternalCodingEvent])`
+and `result.session_id`). `ExternalAgent(Agent[ExternalEvent])`
 implements `run(ctx, emitter) → AgentResult` with the sequence: set
 `current_agent_context` (mirrors `ReActAgent` line 233), resolve session
 via `ExternalSessionStore`, build env via `ExternalEnvBuilder`, render
 system prompt (from `MODEX_TARGETS`) + AGENTS.md statics into the workdir,
 spawn via the T3 OS layer, parse stdout via T4 parser emitting
-`ExternalCodingEvent`s through `ContentEmitter` (and persisting via
+`ExternalEvent`s through `ContentEmitter` (and persisting via
 `ctx.history.append`), drain `modexbot send` intent by calling the T2
 routing function in-process (so the same code path real modexbot uses
 is exercised), and return an `AgentResult` on provider exit. Stale
@@ -220,7 +214,7 @@ fresh retry. This ticket is verified by running one full turn with
 **Blocked by:** T1, T3, T4.
 
 - [x] `ProviderBackend` ABC defined with a single `execute` method.
-- [x] `ExternalCodingAgent.run(ctx, emitter)` sets/resets
+- [x] `ExternalAgent.run(ctx, emitter)` sets/resets
       `current_agent_context` symmetrically (token reset in `finally`).
 - [x] Per-turn sequence: session resolve → env build → system-prompt +
       AGENTS.md render → spawn → stdout loop → drain → exit → AgentResult.
@@ -241,34 +235,34 @@ fresh retry. This ticket is verified by running one full turn with
 ## T6 — Framework hookup: builder, factory branch, MainAgentSpec field, descriptor comment
 
 **What to build:** the strictly-minimal framework footprint that admits
-`external_coding` as a new pool main-agent execution strategy, behind an
+`external` as a new pool main-agent execution strategy, behind an
 opt-in flag. Three changes, all additive: (1) `MainAgentSpec` gains an
 `execution_strategy: str = "react"` field so `pool.yml` can carry
-`execution_strategy: external_coding` (default `react` preserves
+`execution_strategy: external` (default `react` preserves
 byte-for-byte backward compat — `extra="forbid"` is kept, the new field
 is just another optional key); (2) `multi_agent/factory.py`'s
 `_get_builder()` gains a two-line branch returning
-`ExternalCodingAgentBuilder` when `execution_strategy == "external_coding"`;
+`ExternalAgentBuilder` when `execution_strategy == "external"`;
 (3) `multi_agent/descriptor.py`'s comment listing valid strategies gains
-the new value. `ExternalCodingAgentBuilder` (new file under
-`agents/external_coding/`) builds an `ExternalCodingAgent` instance and
+the new value. `ExternalAgentBuilder` (new file under
+`agents/external/`) builds an `ExternalAgent` instance and
 a streaming emitter factory mirroring `ReActAgentBuilder`'s shape. No
 other framework file changes: `subagent_validator.py` is deny-list based
 (only excludes `"pipeline"`) so it admits the new value automatically;
 `pool.py` does not reference `execution_strategy`; pool-config Pydantic
 models are untouched.
 
-**Blocked by:** T5 (needs `ExternalCodingAgent` to construct).
+**Blocked by:** T5 (needs `ExternalAgent` to construct).
 
 - [x] `MainAgentSpec.execution_strategy: str = "react"` field added;
       `extra="forbid"` retained; existing pool.yml files without the
       field continue to validate (default applies).
-- [x] `ExternalCodingAgentBuilder` exists, returns `ExternalCodingAgent`
+- [x] `ExternalAgentBuilder` exists, returns `ExternalAgent`
       from `build_agent`; emitter factory mirrors ReActAgentBuilder shape.
-- [x] `factory.py:_get_builder()` returns `ExternalCodingAgentBuilder`
-      when `execution_strategy == "external_coding"`.
-- [x] `descriptor.py:62` comment lists `external_coding`.
-- [x] Unit tests: `execution_strategy="external_coding"` ⇒ correct
+- [x] `factory.py:_get_builder()` returns `ExternalAgentBuilder`
+      when `execution_strategy == "external"`.
+- [x] `descriptor.py:62` comment lists `external`.
+- [x] Unit tests: `execution_strategy="external"` ⇒ correct
       builder returned; `"react"` behaviour unchanged; missing field
       defaults to `"react"`.
 - [x] No other framework file modified.
@@ -278,14 +272,7 @@ models are untouched.
 ## T7 — Real provider backends: Pi + OpenCode
 
 **What to build:** the two real `ProviderBackend` implementations that
-production deployments register. `PiBackend` constructs
-`pi -p --mode json --session <path> [--provider X --model Y]
-[--append-system-prompt <s>] <prompt>`, spawns via the T3 OS layer with
-`cwd=workdir` and `env=...`, closes stdin immediately (Pi does not read
-it but leaving it open can hang under systemd), reads stdout JSONL,
-hands each line to `PiEventParser`, captures stderr tail into the
-`BackendResult.error` on non-zero exit, detects stale-session errors
-and raises the typed error T5 catches. `OpenCodeBackend` constructs
+production deployments register. `OpenCodeBackend` constructs
 `opencode run --format json --dangerously-skip-permissions --thinking
 --dir <workdir> [--model M] [--session <id>] <prompt>`, injects
 `PWD=<workdir>` into env (OpenCode prefers PWD over cwd for AGENTS.md
@@ -297,10 +284,6 @@ notes that real-CLI verification is a manual operator step.
 **Blocked by:** T5 (needs `ProviderBackend` ABC + harness contract),
 T3 (uses OS layer).
 
-- [x] `PiBackend.execute(opts)` builds correct args, spawns via OS layer,
-      closes stdin immediately, parses stdout via `PiEventParser`.
-- [x] Pi stderr tail captured into `BackendResult.error` on non-zero exit.
-- [x] Pi stale-session detection raises the typed error T5 catches.
 - [x] `OpenCodeBackend.execute(opts)` builds correct args, injects
       `PWD=<workdir>`, spawns via OS layer.
 - [x] OpenCode session id captured from first event and returned in
@@ -353,7 +336,7 @@ real pools with real `LocalFileInboxServer` filesystem workspaces, real
 `AgentCommunicationService`, real ADR-0019 peer wiring. Pool A's main
 agent uses the existing fake-instance pattern (`_make_fake_instance`) and
 records processed `InputMessage`s. The external pool's main agent is a
-real `ExternalCodingAgent` with its backend replaced by
+real `ExternalAgent` with its backend replaced by
 `ScriptedProviderBackend`. The scripted backend plays back a turn that
 includes a "modexbot send" side-effect (calling the T2 routing function
 in-process) targeting pool C. The test asserts the full loop:
@@ -364,11 +347,11 @@ consecutive turns on the same modex_session_id reuse the same provider
 session id), stale-session recovery, self-send rejection, and
 unknown-target error. No real CLI is invoked.
 
-**Blocked by:** T6 (factory must build `ExternalCodingAgent`), T8
+**Blocked by:** T6 (factory must build `ExternalAgent`), T8
 (modexbot routing path exists — invoked in-process by ScriptedProviderBackend).
 
 - [x] Three-pool fixture: pool_A (fake ReAct main), pool_pi (real
-      ExternalCodingAgent + ScriptedProviderBackend), pool_C (fake ReAct
+      ExternalAgent + ScriptedProviderBackend), pool_C (fake ReAct
       main).
 - [x] `send_to_agent(pi)` from pool_A lands in pool_pi's inbox.
 - [x] Harness runs one turn; ScriptedProviderBackend plays back text +
@@ -388,14 +371,14 @@ unknown-target error. No real CLI is invoked.
 ## T10 — Bot integration: pool_builder branch, wiring peers (opt-in), availability gating
 
 **What to build:** the bot-layer wiring that lets a `pool.yml` declare
-`execution_strategy: external_coding` and have the right thing happen at
+`execution_strategy: external` and have the right thing happen at
 startup. `examples/bot_project/bot/service/pool_builder.py` detects the
-new strategy and calls `ExternalCodingAgentBuilder` instead of the ReAct
+new strategy and calls `ExternalAgentBuilder` instead of the ReAct
 builder path. Availability gating: when
-`execution_strategy == "external_coding"`, the builder runs
+`execution_strategy == "external"`, the builder runs
 `shutil.which(provider_executable)`; if missing, the pool is **not
 registered** and other pools are unaffected (a warning is logged). Peer
-wiring is **not automatic** — external_coding pools follow the same
+wiring is **not automatic** — external pools follow the same
 ADR-0019 peer topology rules as any other pool: an explicit
 `peers: [...]` entry in `pool.yml` is required for cross-pool messaging,
 and the bidirectional invariant in `PoolStore._validate_peers` applies.
@@ -407,15 +390,15 @@ the `default` pool lands in pool_pi's inbox.
 the harness to inject its directory into the spawned provider's env).
 
 - [x] `pool_builder.create_pool` dispatches on `execution_strategy`:
-      `"external_coding"` ⇒ `ExternalCodingAgentBuilder`, else current
+      `"external"` ⇒ `ExternalAgentBuilder`, else current
       ReAct path.
 - [x] `shutil.which()` availability gate: missing provider ⇒ pool not
       registered, warning logged, other pools unaffected.
 - [x] Peer wiring is explicit-only: no automatic peering for
-      external_coding pools; the bidirectional `_validate_peers`
+      external pools; the bidirectional `_validate_peers`
       invariant applies unchanged.
 - [ ] Bot integration test: `examples/bot_project/config/pools/pool_pi`
-      with `execution_strategy: external_coding` + `peers: [default]` +
+      with `execution_strategy: external` + `peers: [default]` +
       a reciprocal entry on `default`; boot the bot stack; default main
       agent's `send_to_agent(pi)` lands in pool_pi's inbox.
       (Deferred: T9 integration test already proves end-to-end round-trip.)
@@ -423,11 +406,11 @@ the harness to inject its directory into the spawned provider's env).
       still works. (Deferred: unit test covers availability gate;
       real-boot smoke deferred to T11.)
 
-**Done** (commit `d61d42fa`, 2026-07-13, reduced scope): pool_builder branch + ExternalCodingAwareFactory + _external_coding_wiring helper + availability gate. MainAgentSpec gains provider_kind field. 2 unit tests pass. Bot boot test deferred (T9 proves end-to-end).
+**Done** (commit `d61d42fa`, 2026-07-13, reduced scope): pool_builder branch + ExternalAwareFactory + _external_wiring helper + availability gate. MainAgentSpec gains provider_kind field. 2 unit tests pass. Bot boot test deferred (T9 proves end-to-end).
 
 ## T11 — WebUI visibility verification + documentation
 
-**What to build:** verification that the WebUI shows external_coding
+**What to build:** verification that the WebUI shows external
 sessions with zero code change (per ADR-0022 D8 the harness emits through
 the same `ContentEmitter` every other agent uses), plus the user-facing
 documentation that makes the feature discoverable. Verification is a
@@ -436,10 +419,10 @@ configuration, send a message from the default pool's main agent, watch
 Pi's session appear in the WebUI session list with the `.pi` suffix,
 streaming output rendering the parsed events, transcript replay working
 on session reload. Documentation: `examples/bot_project/AGENTS.md` gains
-a section on external_coding pool configuration;
+a section on external pool configuration;
 `examples/bot_project/config/AGENTS.md` notes the new
 `execution_strategy` field on `pool.yml`; root `AGENTS.md`'s "Multi-Agent
-Communication Rules" notes that external_coding pools participate in
+Communication Rules" notes that external pools participate in
 ADR-0019 peer topology as NORMAL main agents; `README.md` adds a
 quick-start snippet (configure `pool_pi`, install pi CLI, declare
 `peers`).
@@ -453,10 +436,10 @@ quick-start snippet (configure `pool_pi`, install pi CLI, declare
       (Deferred: same as above.)
 - [ ] Manual smoke test: transcript replay works on session reload.
       (Deferred: same as above.)
-- [x] `examples/bot_project/AGENTS.md` documents external_coding pool
+- [x] `examples/bot_project/AGENTS.md` documents external pool
       configuration.
 - [x] Root `AGENTS.md` "Multi-Agent Communication Rules" updated to note
-      external_coding pool participation in ADR-0019 peer topology.
+      external pool participation in ADR-0019 peer topology.
 - [x] `README.md` quick-start snippet for adding a `pool_pi`.
 
 **Done** (commit `ae06ad58`, 2026-07-13): all documentation delivered (root AGENTS.md, examples/bot_project/AGENTS.md, README.md, ADR-0022, spec, glossary, tickets). Manual WebUI smoke tests deferred (require real provider CLI + running deployment; documented as operator verification steps).

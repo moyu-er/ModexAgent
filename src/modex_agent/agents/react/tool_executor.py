@@ -9,10 +9,11 @@ interceptor registration.
 from __future__ import annotations
 
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.tool_manager import ToolExecutionContext, ToolResult
 from modex_agent.core.types import ToolCall
 from modex_agent.interceptor.abc import ToolCallContext
 from modex_agent.interceptor.builtin.tool_timeout import ToolTimeoutInterceptor
+from modex_agent.workspace.runtime import resolve_workspace_root
 
 
 class ToolExecutor:
@@ -33,9 +34,18 @@ class ToolExecutor:
             session_id=str(ctx.session),
         )
 
+        model_info = ctx.runtime.model_info if ctx.runtime is not None else None
+        ws_root = resolve_workspace_root()
+        tool_exec_ctx = ToolExecutionContext(
+            model_info=model_info,
+            workspace_root=ws_root,
+            tool_call_id=tool_call.call_id,
+            session_id=str(ctx.session),
+        )
+
         async def _actual() -> ToolResult:
             return await ctx.tool_manager.execute(
-                tool_call.tool_name, tool_call.arguments or {}
+                tool_call.tool_name, tool_call.arguments or {}, ctx=tool_exec_ctx
             )
 
         async def _timed() -> ToolResult:

@@ -24,7 +24,7 @@ from modex_agent.tools.terminal.pty_keys import (
     strip_smkx_rmkx,
 )
 from modex_agent.tools.terminal.results import TerminalRead, TerminalSegment
-from modex_agent.tools.terminal.types import TerminalCommandStatus
+from modex_agent.tools.terminal.types import ShellFamily, TerminalCommandStatus
 
 if TYPE_CHECKING:
     from modex_agent.tools.terminal.backends.base import TerminalBackend
@@ -161,6 +161,10 @@ class TerminalSession:
             self._needs_restart = False
             self._busy_after_timeout = False
             await self._backend.drain_startup()
+            override = self._prompt_override_command()
+            if override is not None:
+                await self._backend.write(override + "\r")
+                await self._drain_internal_command(timeout=3.0)
             await self._discard_pending_output()
 
     @property
@@ -229,6 +233,28 @@ class TerminalSession:
         from modex_agent.tools.terminal.env import build_full_env
 
         return build_full_env(self._env)
+
+    def _prompt_override_command(self) -> str | None:
+        """Shell command that forces a detectable prompt, or None if not needed.
+
+        Only zsh needs this: oh-my-zsh / Powerlevel10k / Starship set
+        prompts with non-ASCII glyphs (``❯``, ``➜``) that
+        ``is_prompt_ready`` cannot match.  The override runs AFTER the
+        shell's rc files have loaded, so the poll loop can reliably
+        detect prompt-ready state.
+
+        bash and sh do NOT need an override — their default PS1
+        (``user@host:path$`` on WSL/Linux, ``hostname:dir user$`` on
+        macOS) is already matched by ``is_prompt_ready``'s user@host
+        pattern.  Injecting ``export PS1=...`` on bash pollutes the
+        output buffer with the command echo, leaking into
+        ``terminal current`` and the first command's output.
+
+        Returns ``None`` for bash, sh, cmd, and powershell.
+        """
+        if self.shell_info.family is ShellFamily.ZSH:
+            return 'export PROMPT="%n@%m:%~ %# "; export PS1="%n@%m:%~ $ "'
+        return None
 
     def get_state(self) -> dict[str, Any]:
         """Return serializable state for persistence."""
@@ -380,10 +406,7 @@ class TerminalSession:
         # ``_command_started_at`` so a freshly-started long-running command
         # that has not produced output yet is not misclassified.
         raw_idle_ms = (time.monotonic() - self._last_byte_at) * 1000
-        if (
-            self._command_started_at is not None
-            and raw_idle_ms >= cfg.input_wait_idle_ms
-        ):
+        if self._command_started_at is not None and raw_idle_ms >= cfg.input_wait_idle_ms:
             return TerminalCommandStatus.WAITING_INPUT
 
         # 7. No-output timeout → STUCK
@@ -459,6 +482,7 @@ class TerminalSession:
         """
         self._command_started_at = time.monotonic()
         await self._discard_pending_output()
+        self._backend.clear_buffer()
         ending = self.shell_info.family.command_ending()
         await self._backend.write(command + ending)
 

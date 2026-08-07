@@ -4,6 +4,7 @@
 """
 
 from enum import Enum, StrEnum
+from pathlib import Path
 
 
 class ToolCallType(str, Enum):
@@ -67,14 +68,35 @@ class ExecutionStrategyKind(StrEnum):
 
     Renamed from ``ExecutionStrategy`` so the bare name refers exclusively to
     the ABC in ``modex_agent.multi_agent.execution_strategy`` (ADR-0025).
-    Pool.yml string values (``react`` / ``external_coding`` / ...) are
+    Pool.yml string values (``react`` / ``external`` / ...) are
     unchanged — this is a Python-symbol-only rename.
     """
 
     REACT = "react"
     SINGLE_TURN = "single_turn"
     PIPELINE = "pipeline"
-    EXTERNAL_CODING = "external_coding"
+    EXTERNAL = "external"
+
+
+class ProviderKind(StrEnum):
+    """Coding-agent provider families supported by ``ExternalAgent``.
+
+    Day-one values are ``PI`` and ``OPENCODE``. Add a new value when a new
+    CLI family (Claude Code, Codex, Cursor) is integrated — paired with a
+    new ``ProviderBackend`` subclass and a new ``ProviderEventParser``.
+
+    Co-located with ``ExecutionStrategyKind`` because the two are paired in
+    pool-config validation (``_validate_execution_provider_pair`` in
+    ``multi_agent.pool_config.specs``): ``provider_kind`` must be set iff
+    ``execution_strategy`` is ``EXTERNAL``. Keeping them in the same leaf
+    module lets data-layer types (``AgentDescriptor``, ``MainAgentSpec``,
+    ``SubagentSpec``) depend on ``core.constants`` without pulling in
+    ``agents.external.paths`` (which would close a cycle through
+    ``agents.external.__init__``).
+    """
+
+    PI = "pi"
+    OPENCODE = "opencode"
 
 
 class ReasoningEffort(StrEnum):
@@ -165,3 +187,37 @@ class ToolSchemaConstants:
 
     TYPE_FUNCTION = "function"
     PARAM_TYPE_OBJECT = "object"
+
+
+class RuntimeInfoKey(StrEnum):
+    """Canonical keys for the ``runtime_info`` dict passed to ``ContextManager.load``."""
+
+    CALLER_CONTEXT = "caller_context"
+    MESSAGE = "message"
+    PARENT_SESSION_ID = "parent_session_id"
+    MODEL_INFO = "model_info"
+    USER_ID = "user_id"
+    TENANT_ID = "tenant_id"
+    CHANNEL = "channel"
+    CHAT_ID = "chat_id"
+    WORKING_DIRECTORY = "working_directory"
+
+
+# Sentinel for the RuntimeProvider version key when no working directory is bound.
+# Included in the hourly version hash so the cache correctly distinguishes
+# "no directory" from a specific directory within the same hour.
+_NO_DIR_SENTINEL: str = "no-dir"
+
+
+def format_working_directory_line(working_directory: str | Path | None) -> str | None:
+    """Format the working-directory line for the system prompt runtime section.
+
+    Returns ``None`` when *working_directory* is ``None`` so callers can skip
+    the line entirely (preserving the "omit when absent" contract).
+    """
+    if working_directory is None:
+        return None
+    return (
+        f"Working Directory: {working_directory}\n"
+        "Use this directory as the base for relative file paths and shell commands."
+    )

@@ -1,8 +1,7 @@
 ## Task
-Analyze the conversation transcript below and extract ALL valuable information into exactly 3 files in directory {archive_dir}:
+Analyze the conversation transcript below and extract ALL valuable information into exactly 2 files in directory {archive_dir}:
   1. context.md — structured conversation summary (max {context_max_chars} chars)
   2. knowledge.md — categorized durable facts (max {knowledge_max_chars} chars)
-  3. index.md — 1-line topic description (max {index_max_chars} chars)
 
 **The transcript will be deleted after this step. Extract everything valuable now — there is no second chance.**
 
@@ -20,7 +19,7 @@ Pay special attention to:
 - **User instructions**: explicit requests, corrections, preferences
 - **Numerical data**: versions, sizes, line numbers, config values
 
-Write context.md first (most important for continuity), then knowledge.md, then index.md. Use markdown headers and bullet lists for structure.
+Write context.md first (most important for continuity), then knowledge.md. Use markdown headers and bullet lists for structure.
 
 ## Conversation Transcript
 

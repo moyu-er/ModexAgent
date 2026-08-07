@@ -9,6 +9,7 @@ import contextvars
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import TypeVar
@@ -22,6 +23,7 @@ from .message_utils import normalize_agent_messages_for_llm
 from .tool_manager import ToolManager
 
 if TYPE_CHECKING:
+    from modex_agent.core.capabilities import ModelCapabilities
     from modex_agent.core.prompt import SystemPromptPipeline
     from modex_agent.pipeline.snapshot import PoolDataSnapshot
     from modex_agent.runtime.models import TurnIdentity
@@ -29,7 +31,12 @@ if TYPE_CHECKING:
 
 
 class AgentCommKind(StrEnum):
-    """Agent topology kind — normal main agent vs subagent invocation."""
+    """Agent topology kind — internal routing classification.
+
+    ``NORMAL`` is the internal implementation term for a main/peer agent.
+    Agent-facing text (tool descriptions, message bodies) uses **peer**,
+    not "normal" — e.g. "Peer targets", "Message from peer agent 'X'".
+    """
 
     NORMAL = "normal"
     SUBAGENT = "subagent"
@@ -40,7 +47,7 @@ class AgentImplementation(StrEnum):
 
     Topology (NORMAL vs SUBAGENT) decides routing and reply topology.
     Implementation decides how the agent actually runs and how peers
-    should word the reply contract (``send_to_agent`` tool vs ``modexctl
+    should word the reply contract (``task`` tool vs ``modexctl
     send`` CLI vs future mechanisms).
 
     Combinations are valid:
@@ -100,6 +107,13 @@ class AgentContext:
     consumers fall back to their own defaults.
     """
 
+    workspace: Path | None = None
+    """Working directory for the current turn, from ``InputMessage.workspace``.
+
+    Carried so inter-agent communication strategies can propagate it in the
+    envelope payload. ``None`` when no workspace is bound.
+    """
+
     current_input: str | None = None
     """The sanitized user input for the current turn, set by the turn builder.
 
@@ -116,8 +130,8 @@ class AgentContext:
         return self.runtime.turn_uuid
 
     async def to_messages(self) -> list[dict[str, Any]]:
-        history_list = await self.history.to_list()
-        history_list, _has_agent_msgs = normalize_agent_messages_for_llm(history_list)
+        raw_history = await self.history.to_list()
+        history_list = normalize_agent_messages_for_llm(raw_history)
         non_system = [msg for msg in history_list if msg.get("role") != "system"]
 
         def _strip_none(d: dict[str, Any]) -> dict[str, Any]:
@@ -126,7 +140,12 @@ class AgentContext:
         return [_strip_none(msg) for msg in non_system]
 
     def get_tool_descriptions(self) -> list[dict[str, Any]]:
-        return self.tool_manager.get_tool_descriptions()
+        caps: ModelCapabilities | None = (
+            self.runtime.model_info.capabilities
+            if self.runtime is not None and self.runtime.model_info is not None
+            else None
+        )
+        return self.tool_manager.get_tool_descriptions(caps)
 
     def add_attachment(self, path: str) -> None:
         self.attachments.append(path)
@@ -194,7 +213,7 @@ class Agent(ABC, Generic[E]):
         """释放 Agent 持有的资源（子进程、网络连接等）。
 
         默认实现是空操作。持有外部资源的子类（如
-        :class:`ExternalCodingAgent` 管理 ``opencode serve`` 子进程）
+        :class:`ExternalAgent` 管理 ``opencode serve`` 子进程）
         应覆盖此方法。Pool shutdown 时通过
         :meth:`AgentInstance.stop` → ``pipeline.agent.stop()`` 调用。
         """

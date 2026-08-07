@@ -1,22 +1,22 @@
 """ReAct typed turn state, snapshot policy, and runtime state codec.
 
-Per ADR-0033 Stage 2 (ticket 03): ``ReActTurnState`` migrates from a plain
-``TurnStateBase`` dataclass subclass to a ``GraphState(BaseModel)`` subclass
-with per-field ``Annotated[T, LastValue]`` channel declarations.
+``ReActTurnState`` is a ``GraphState(BaseModel)`` subclass with typed ReAct
+turn-state fields.
 ``ReActSnapshotPolicy`` is simplified from ~310 lines of hand-written payload
 flattening to ~50 lines calling ``state.checkpoint()`` /
 ``state.from_checkpoint()``.
 
-ReAct still uses the old ``core/graph/`` engine for execution — only the state
-type and snapshot path changed. Ticket 04 will switch to the new
-``modex_graph`` engine and disassemble the god nodes.
+Migration status (ADR-0033 D13): COMPLETE. ``ReActTurnState`` is now executed
+by the new ``modex_graph.GraphEngine`` — the old ``modex_agent.core.graph``
+directory is deleted (guarded by
+``tests/architecture/test_no_modex_agent_core_graph_imports.py``).
 """
 
 from __future__ import annotations
 
 import time
 from collections.abc import Mapping
-from typing import Annotated, Any
+from typing import Any
 
 from pydantic import Field
 
@@ -55,7 +55,6 @@ from modex_agent.runtime.models import (
     TurnStateBase,
 )
 from modex_agent.runtime.policy import SnapshotPolicy
-from modex_graph.channel import LastValue
 from modex_graph.state import GraphState
 
 from .constants import ReActNode
@@ -74,53 +73,52 @@ class ReActTurnState(GraphState, TurnStateBase):
 
     Inherits ``TurnStateBase`` (for ``isinstance`` compatibility and shared
     methods like ``add_operation`` / ``update_operation``) and ``GraphState``
-    (for per-field channel declaration + ``checkpoint()`` /
-    ``from_checkpoint()``).
+    (for ``checkpoint()`` / ``from_checkpoint()`` serialization).
 
-    All fields are declared with ``Annotated[T, LastValue]`` per ADR-0033 D4.
-    The new explicit ``result`` field replaces the old
+    Fields retain their declared ReAct turn-state content types. The explicit
+    ``result`` field replaces the old
     ``custom[TurnCustomKey.GRAPH_RESULT]`` pattern (ADR-0033 D9.3).
 
-    Inherits ``GraphState.checkpoint()`` / ``from_checkpoint()`` (per-channel
-    codec path) — handles all field types via ``encode_value`` / ``decode_value``
+    Inherits ``GraphState.checkpoint()`` / ``from_checkpoint()`` and handles all
+    field types via ``encode_value`` / ``decode_value``
     (PEP 604 unions + stdlib dataclasses via TypeAdapter, per ADR-0033 D14).
     """
 
     # ---- TurnStateBase fields (re-declared for Pydantic compatibility) ----
     # TurnStateBase is a @dataclass; its fields use dataclasses.field() for
     # defaults, which Pydantic v2 doesn't process when inherited. Re-declaring
-    # with pydantic.Field() ensures correct default handling + Annotated channel
-    # metadata. The types match TurnStateBase exactly.
-    identity: Annotated[TurnIdentity, LastValue] = Field(
+    # with pydantic.Field() ensures correct default handling. The types match
+    # TurnStateBase exactly.
+    identity: TurnIdentity = Field(
         default_factory=lambda: TurnIdentity(
             agent_id="react",
             session=SessionInfo.from_str("default"),
             turn_id="default",
         )
     )
-    agent_kind: Annotated[AgentKind, LastValue] = AgentKind.REACT
-    phase: Annotated[TurnPhase, LastValue] = TurnPhase.CREATED
-    created_at: Annotated[float, LastValue] = Field(default_factory=time.time)
-    updated_at: Annotated[float, LastValue] = Field(default_factory=time.time)
-    message_delta: Annotated[list[MessageDelta], LastValue] = Field(default_factory=list)
-    operations: Annotated[list[OperationState], LastValue] = Field(default_factory=list)
-    cancellation: Annotated[CancellationState | None, LastValue] = None
-    custom: Annotated[dict[str, Any], LastValue] = Field(default_factory=dict)
+    agent_kind: AgentKind = AgentKind.REACT
+    phase: TurnPhase = TurnPhase.CREATED
+    created_at: float = Field(default_factory=time.time)
+    updated_at: float = Field(default_factory=time.time)
+    message_delta: list[MessageDelta] = Field(default_factory=list)
+    operations: list[OperationState] = Field(default_factory=list)
+    cancellation: CancellationState | None = None
+    custom: dict[str, Any] = Field(default_factory=dict)
 
     # ---- ReAct-specific fields ----
-    current_node: Annotated[ReActNode, LastValue] = ReActNode.START
-    iteration: Annotated[int, LastValue] = 0
-    llm_response: Annotated[LLMResponse | None, LastValue] = None
-    tool_batches: Annotated[list[ToolBatchState], LastValue] = Field(default_factory=list)
-    approval: Annotated[ApprovalTransaction | None, LastValue] = None
+    current_node: ReActNode = ReActNode.START
+    iteration: int = 0
+    llm_response: LLMResponse | None = None
+    tool_batches: list[ToolBatchState] = Field(default_factory=list)
+    approval: ApprovalTransaction | None = None
     # NEW (ADR-0033 D9.3): explicit result field replaces
     # custom[TurnCustomKey.GRAPH_RESULT]. Written by EndNode, read by
     # ReActAgent.run() after engine returns.
-    result: Annotated[AgentResult | None, LastValue] = None
+    result: AgentResult | None = None
 
     # ADR-0033 D14: checkpoint() / from_checkpoint() overrides removed — the
-    # inherited GraphState per-channel path handles all field types (PEP 604
-    # unions + stdlib dataclasses via ticket 01's TypeAdapter branch).
+    # inherited GraphState implementation handles all field types (PEP 604
+    # unions + stdlib dataclasses via TypeAdapter).
 
     # ---- tool batch helpers ----
 
@@ -210,8 +208,8 @@ class ReActSnapshotPolicy(SnapshotPolicy):
     ``serialize_approval`` (~30 lines), ``approval_from_snapshot`` (~60 lines),
     and ``state_from_snapshot`` (~80 lines) are collapsed to ~50 lines total.
 
-    ``ApprovalTransaction`` is now a ``LastValue`` channel field that uses
-    Pydantic's built-in serialization — no hand-written codec pair.
+    ``ApprovalTransaction`` uses Pydantic's built-in serialization, with no
+    hand-written codec pair.
     """
 
     def should_capture(self, state: TurnStateBase, reason: SnapshotReason) -> bool:
@@ -345,7 +343,9 @@ class ReActRuntimeStateCodec(RuntimeStateCodec):
             "content": msg.content,
             "source": md.source.value,
             "provider_payload": dict(md.provider_payload) if md.provider_payload else None,
-            "tool_calls": [tc.model_dump(mode="json") for tc in msg.tool_calls] if msg.tool_calls else None,
+            "tool_calls": [tc.model_dump(mode="json") for tc in msg.tool_calls]
+            if msg.tool_calls
+            else None,
             "tool_call_id": msg.tool_call_id,
             "name": msg.name,
         }

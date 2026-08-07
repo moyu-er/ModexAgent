@@ -12,6 +12,7 @@ These tests pin the transport contract: the publish-side helper carries
 ``approval_decision`` in the broker payload, and the dispatch-side helper
 reconstructs it.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -68,9 +69,7 @@ def test_approval_decision_survives_full_broker_round_trip() -> None:
     envelope = AgentMessageEnvelope.from_broker_message(broker_msg)
     assert envelope is not None
 
-    reconstructed = input_message_from_dispatch_envelope(
-        envelope, session=_session()
-    )
+    reconstructed = input_message_from_dispatch_envelope(envelope, session=_session())
     assert reconstructed.approval_decision == ApprovalDecisionInput(
         "call_xyz", ApprovalAction.ALLOW
     )
@@ -82,8 +81,6 @@ def test_normal_message_round_trips_without_approval_decision() -> None:
     envelope = AgentMessageEnvelope.from_broker_message(broker_msg)
     assert envelope is not None
 
-    reconstructed = input_message_from_dispatch_envelope(
-        envelope, session=_session()
-    )
+    reconstructed = input_message_from_dispatch_envelope(envelope, session=_session())
     assert reconstructed.approval_decision is None
     assert reconstructed.content == "hi there"

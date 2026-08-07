@@ -1,18 +1,25 @@
-"""Agent 消息规范化工具。
+"""Agent message normalization and system-reminder wrapping utilities.
 
-处理内部 `role: "agent"` 消息到 LLM 兼容格式的转换。
+Normalizes internal non-standard message roles to LLM-compatible format:
+- ``compact`` -> ``assistant`` (role replacement, content unchanged)
+- ``system_reminder`` -> ``user`` (role replacement, content already wrapped
+  at storage time via :func:`wrap_system_reminder`)
+- ``agent`` -> ``user`` (role replacement, content unchanged)
 
-设计原则：
-- 内部存储使用 `role: "agent"` + `source_agent` 字段，语义清晰
-- 调用 LLM 前映射为 `role: "user"` + `name` 字段 + XML 信封
+:func:`wrap_system_reminder` wraps markdown content in a
+``<system-reminder>`` XML envelope (no attributes) for use by message
+builders and hooks at storage time.
 """
 
+from __future__ import annotations
+
+import re
 from collections.abc import Sequence
 from typing import Any
 
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.types import MessageRole
-from modex_agent.core.message import ChatMessage, ContentFormat
-from modex_agent.utils.xml import xml_attr, xml_text
+
 
 def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
     """将 ChatMessage 或 dict 统一转换为 dict。"""
@@ -21,58 +28,81 @@ def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
     return msg
 
 
-def normalize_agent_messages_for_llm(
-    messages: Sequence[ChatMessage | dict[str, Any]],
-) -> tuple[list[dict[str, Any]], bool]:
-    """将内部 `role: "agent"` 消息转换为 LLM 可识别的 XML 格式。
+def wrap_system_reminder(content: str) -> str:
+    """Wrap free-form reminder content in a ``<system-reminder>`` envelope.
 
-    转换规则：
-    - `role: "agent"` → `role: "user"` with XML <agent_message> envelope
-    - Content wrapped in: <agent_message source="..."><content>...</content></agent_message>
-    - content_format set to "xml" for correct truncation handling
-    - Other role messages are unaffected
+    The reminder tag carries no XML attributes — callers that need to attach
+    provenance metadata (source agent, invocation id, etc.) store it on the
+    ``ChatMessage`` extra fields, not on the tag itself. The content is
+    whitespace-trimmed so stored reminders stay compact regardless of how the
+    upstream caller built the string.
 
     Args:
-        messages: Raw message list (may contain role: "agent"), ChatMessage or dict
+        content: Raw reminder text to wrap.
 
     Returns:
-        (converted_messages, has_agent_messages) tuple:
-        - converted_messages: Converted message list (new list, does not modify original data)
-        - has_agent_messages: Whether agent messages are present (used to decide whether to inject system prompt note)
+        ``<system-reminder>\\n{content.strip()}\\n</system-reminder>``
     """
-    has_agent = False
+    return f"<system-reminder>\n{content.strip()}\n</system-reminder>"
+
+
+def sanitize_reminder_content(content: str) -> str:
+    """Strip nested system envelopes before reminder storage or delivery."""
+    if not content:
+        return content
+    sanitized = re.sub(
+        r"<\s*system(?:-reminder)?\b[^>]*>.*?<\s*/\s*system(?:-reminder)?\s*>",
+        "",
+        content,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return re.sub(r"\n{3,}", "\n\n", sanitized).strip()
+
+
+def normalize_agent_messages_for_llm(
+    messages: Sequence[ChatMessage | dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert internal non-standard role messages to an LLM-compatible form.
+
+    Conversion rules:
+    - ``role: "compact"`` → ``role: "assistant"`` (pure role replacement,
+      content untouched)
+    - ``role: "system_reminder"`` → ``role: "user"`` (pure role replacement,
+      content untouched — the ``<system-reminder>`` envelope is already applied
+      at storage time via ``wrap_system_reminder``)
+    - ``role: "agent"`` → ``role: "user"`` (pure role replacement,
+      content untouched)
+    - Other role messages are passed through unchanged
+
+    Args:
+        messages: Raw message list (may contain non-standard roles),
+            ``ChatMessage`` or ``dict``.
+
+    Returns:
+        Converted message list (a new list; the original data is not mutated).
+    """
     converted: list[dict[str, Any]] = []
 
     for msg in messages:
         msg_dict = _msg_to_dict(msg)
-        if msg_dict.get("role") != MessageRole.AGENT:
-            converted.append(msg_dict)
+        role = msg_dict.get("role")
+
+        # COMPACT → ASSISTANT (pure role replacement, no content change)
+        if role == MessageRole.COMPACT:
+            converted.append({**msg_dict, "role": MessageRole.ASSISTANT})
             continue
 
-        has_agent = True
-        source_agent = msg_dict.get("source_agent", "unknown")
-        original_content = msg_dict.get("content", "")
-        ts = msg_dict.get("created_at", "")
+        # SYSTEM_REMINDER → USER (pure role replacement; content already wrapped)
+        if role == MessageRole.SYSTEM_REMINDER:
+            converted.append({**msg_dict, "role": MessageRole.USER})
+            continue
 
-        xml_content = (
-            f'<agent_message source="{xml_attr(str(source_agent))}"'
-            + (f' timestamp="{ts}"' if ts else "")
-            + ">\n"
-            + f"  <content>{xml_text(str(original_content))}</content>\n"
-            + "</agent_message>"
-        )
+        # AGENT → USER (pure role replacement; content untouched)
+        if role == MessageRole.AGENT:
+            converted.append({**msg_dict, "role": MessageRole.USER})
+            continue
 
-        converted.append(
-            {
-                "role": MessageRole.USER,
-                "content": xml_content,
-                "content_format": ContentFormat.XML,
-                "truncatable_paths": ["content"],
-                "name": msg_dict.get("name"),
-                "tool_calls": msg_dict.get("tool_calls"),
-                "tool_call_id": msg_dict.get("tool_call_id"),
-                "metadata": msg_dict.get("metadata"),
-            }
-        )
+        # Other roles pass through unchanged
+        converted.append(msg_dict)
 
-    return converted, has_agent
+    return converted

@@ -1,4 +1,5 @@
 """Tests for AgentMaterializeDeps — the value object bundling subagent-construction deps."""
+
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
@@ -137,14 +138,14 @@ def test_llm_reasoning_effort_defaults_to_none_and_settable() -> None:
     assert deps_set.llm_reasoning_effort == ReasoningEffort.HIGH
 
 
-def test_subagent_external_coding_builder_defaults_none_and_settable() -> None:
+def test_subagent_external_builder_defaults_none_and_settable() -> None:
     deps_default = AgentMaterializeDeps(
         agent_factory=MagicMock(),
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
     )
-    assert deps_default.subagent_external_coding_builder is None
+    assert deps_default.subagent_external_builder is None
 
     builder = MagicMock()
     deps_set = AgentMaterializeDeps(
@@ -152,9 +153,9 @@ def test_subagent_external_coding_builder_defaults_none_and_settable() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
-        subagent_external_coding_builder=builder,  # type: ignore[arg-type]
+        subagent_external_builder=builder,  # type: ignore[arg-type]
     )
-    assert deps_set.subagent_external_coding_builder is builder
+    assert deps_set.subagent_external_builder is builder
 
 
 def test_control_origin_defaults_empty_and_settable() -> None:

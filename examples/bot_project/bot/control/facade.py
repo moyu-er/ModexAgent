@@ -21,7 +21,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 from bot.control.history import project_history_messages, project_transcript_history
@@ -50,7 +49,6 @@ from modex_agent.multi_agent.communication.service import AgentCommunicationServ
 from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.tools import CommunicationTarget
 
-
 logger = logging.getLogger(__name__)
 
 #: Resolve a workspace root to its ``PoolWorkspaceResources`` bundle.
@@ -66,7 +64,7 @@ MessageStoreProvider = Callable[
 ]
 
 #: Resolve ``PoolWorkspaceResources`` to its ``TranscriptStore`` for
-#: external-coding session history (T05). The production provider reads
+#: external session history (T05). The production provider reads
 #: ``resources.workspace_transcript_store`` and raises
 #: :class:`ControlFacadeError` (422, ``transcript_store_unavailable``) when
 #: the store is ``None`` (database transcript persistence not configured).
@@ -174,10 +172,16 @@ class BotControlFacade:
 
         self._validate_history_target(caller, pool_instance)
 
-        execution_strategy = pool_instance.main_execution_strategy
+        target_agent = self._resolve_target_agent(caller)
+        if target_agent == pool_instance.main_agent_name:
+            execution_strategy = pool_instance.main_execution_strategy
+        else:
+            target = pool_instance.target_store.get(target_agent)
+            assert target is not None
+            execution_strategy = target.execution_strategy
 
         # 5. Branch on execution_strategy.
-        if execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
+        if execution_strategy == ExecutionStrategyKind.EXTERNAL:
             return await self._history_from_transcript(
                 request, resources, execution_strategy
             )
@@ -414,7 +418,7 @@ class BotControlFacade:
         target's ``execution_strategy``, never from environment variables.
         """
         is_external = (
-            target.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
+            target.execution_strategy == ExecutionStrategyKind.EXTERNAL
         )
 
         return SendResult(
@@ -426,7 +430,6 @@ class BotControlFacade:
             requested_invocation_id=requested_invocation_id,
             is_peer_send=result.is_peer_send,
             is_external_target=is_external,
-            output_path=result.output_path,
             trace_dir=result.trace_dir,
         )
 
@@ -460,13 +463,18 @@ class BotControlFacade:
                 ),
             )
 
+    def _resolve_target_agent(self, caller: AgentSessionRef) -> str:
+        return (
+            caller.session_id.rsplit(".", 1)[-1]
+            if "." in caller.session_id
+            else caller.agent_name
+        )
+
     def _validate_history_target(
         self, caller: AgentSessionRef, pool_instance: PoolInstance
     ) -> None:
-        target_agent = caller.session_id.rsplit(".", 1)[-1] if "." in caller.session_id else caller.agent_name
+        target_agent = self._resolve_target_agent(caller)
         if target_agent == caller.agent_name:
-            return
-        if target_agent == pool_instance.main_agent_name:
             return
         known_subagents = {t.name for t in pool_instance.target_store.list()}
         if target_agent not in known_subagents:

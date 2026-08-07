@@ -1,14 +1,19 @@
 """Integration: XML messages survive full governance chain intact."""
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
+from modex_agent.core.agent import AgentContext
 from modex_agent.core.types import MessageRole
 from modex_agent.memory.context_governance import (
     CompositeGovernance,
     LossyContentCompactionGovernance,
     TokenBudgetGovernance,
 )
+
+_CTX: MagicMock = MagicMock(spec=AgentContext)
 
 XML_AGENT_MSG = """<agent_message source="planner" timestamp="2026-05-28 14:30:00">
   <thinking>query data</thinking>
@@ -35,7 +40,7 @@ async def test_xml_agent_message_survives_lossy_truncation():
         "content_format": "xml",
         "truncatable_paths": ["content"],
     })
-    result = await gov.apply(messages)
+    result = await gov.apply(messages, _CTX)
     assert '<agent_message source="planner"' in result[0]["content"]
     assert '<thinking>query data</thinking>' in result[0]["content"]
     assert '</agent_message>' in result[0]["content"]
@@ -51,7 +56,7 @@ async def test_xml_defaults_to_content_path_when_truncatable_paths_empty():
         "content": XML_AGENT_MSG,
         "content_format": "xml",
     })
-    result = await gov.apply(messages)
+    result = await gov.apply(messages, _CTX)
     assert '<agent_message source="planner"' in result[0]["content"]
     assert '<thinking>query data</thinking>' in result[0]["content"]
     assert '</agent_message>' in result[0]["content"]
@@ -78,6 +83,6 @@ async def test_system_messages_skip_all_truncation():
             for _ in range(68)
         ],
     ]
-    result = await gov.apply(messages)
+    result = await gov.apply(messages, _CTX)
     assert result[0]["role"] == "system"
     assert result[0]["content"] == system_content

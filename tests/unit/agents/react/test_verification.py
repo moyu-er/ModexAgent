@@ -5,12 +5,12 @@ event contract, engine routing, and bot_project wiring.
 """
 
 import pytest
-from modex_agent.agents.react.approval import TieredToolApprovalClassifier
+from modex_agent.approval.runtime import TieredToolApprovalClassifier
 from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier, ApprovalStatus
 from modex_agent.approval.response import parse_approval_action
 from modex_agent.approval.types import ApprovalAction
-from modex_agent.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.nodes.start import StartNode
 from modex_agent.agents.react.nodes.llm import LLMNode
@@ -21,7 +21,6 @@ from modex_agent.core.agent import AgentContext
 from modex_graph.engine import GraphEngine
 from modex_graph.graph import Graph
 from modex_graph.exceptions import GraphInterrupt
-from modex_graph.result import NodeResult
 
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import ToolCall

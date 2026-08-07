@@ -7,6 +7,7 @@ a single reusable function.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from enum import StrEnum
@@ -48,15 +49,21 @@ async def poll_until_settled(
     yield_ms: int,
     timeout_seconds: int,
     check_input_wait: bool = False,
+    command: str = "",
 ) -> PollResult:
     """Poll the terminal until a completion condition is met.
 
     Returns a PollResult indicating why the loop ended and all collected output.
+
+    When *command* matches a pattern in ``config.no_output_whitelist`` (e.g.
+    ``sleep``), the STUCK (no-output timeout) check is skipped entirely —
+    such commands are expected to produce no output for extended periods.
     """
     start = time.monotonic()
     output_parts: list[str] = []
     output_received = False
     prompt_stable_since: float | None = None
+    _whitelisted = command and any(re.search(p, command) for p in config.no_output_whitelist)
 
     while True:
         elapsed_ms = int((time.monotonic() - start) * 1000)
@@ -108,12 +115,14 @@ async def poll_until_settled(
 
         # 5. No-output timeout → STUCK only if NOT an idle-based input wait.
         # Silent prompts (e.g. ``read -s``) would otherwise be misclassified.
-        raw_idle_ms = int((time.monotonic() - session.last_byte_at) * 1000)
-        if raw_idle_ms >= config.no_output_timeout_ms:
-            runtime = registry.running_runtime(proc_id)
-            is_input_wait = runtime is not None and runtime.waiting_for_input
-            if not is_input_wait and not is_waiting_for_input("".join(output_parts)):
-                return PollResult(PollOutcome.STUCK, output_parts, elapsed_ms)
+        # Whitelisted commands (e.g. ``sleep``) skip this check entirely.
+        if not _whitelisted:
+            raw_idle_ms = int((time.monotonic() - session.last_byte_at) * 1000)
+            if raw_idle_ms >= config.no_output_timeout_ms:
+                runtime = registry.running_runtime(proc_id)
+                is_input_wait = runtime is not None and runtime.waiting_for_input
+                if not is_input_wait and not is_waiting_for_input("".join(output_parts)):
+                    return PollResult(PollOutcome.STUCK, output_parts, elapsed_ms)
 
         # 5.5 Long-running detection (before yield)
         if elapsed_ms >= config.long_running_threshold_ms:

@@ -9,9 +9,6 @@ Covers the Task 08 acceptance criteria:
 - ``GraphInterrupt`` (a ``GraphBubbleUp`` subclass) raised under
   concurrent execution: propagates immediately, other concurrent
   instances are cancelled by ``asyncio.gather``.
-- ``InvalidUpdateError`` (a ``GraphBubbleUp`` subclass, Task 05)
-  propagates through the same path — raised by
-  ``apply_concurrent_updates`` after the batch completes.
 - ``before_node`` / ``after_node`` hooks are called concurrently under
   ``asyncio.gather``; the implementer guarantees safety (no crash, no
   race on shared mutable state).
@@ -21,15 +18,10 @@ Covers the Task 08 acceptance criteria:
 Implementation notes
 --------------------
 
-The fork-path batch in ``ParallelScheduler.run_async`` executes
-instances concurrently via ``asyncio.gather``. When any task raises,
-``gather`` (with the default ``return_exceptions=False``) cancels all
-other not-yet-completed tasks and re-raises the first exception. This
-satisfies "first exception cancels all concurrent instances" without
-explicit cancellation logic in the scheduler.
+``ParallelScheduler.run_async`` executes instances concurrently and cancels
+the remaining tasks when one raises.
 
-Shared scheduler state (``_dispatch_log``, ``_pending_updates``,
-``_instances``, ``_active``, ``_ready``) is safe under ``gather``
+Shared scheduler state (``_instances``, ``_active``, ``_ready``) is safe
 because all mutations happen in synchronous sections between await
 points. Under CPython's GIL, a synchronous section runs atomically
 with respect to other asyncio tasks — no interleaving can occur
@@ -77,10 +69,9 @@ was NOT modified):
 from __future__ import annotations
 
 import asyncio
-from typing import Annotated, Any
 
 import pytest
-from helpers import TrackingRuntime, make_runtime
+from helpers import TrackingRuntime, make_coordinator, make_runtime
 
 from modex_graph import (
     Graph,
@@ -90,11 +81,8 @@ from modex_graph import (
     GraphInterrupt,
     GraphNode,
     GraphState,
-    InvalidUpdateError,
-    LastValue,
+    IntegratedInput,
     Node,
-    NodeResult,
-    ReducerChannel,
     SchedulerKind,
 )
 
@@ -102,29 +90,29 @@ from modex_graph import (
 
 
 class ErrorState(GraphState):
-    """State with LastValue + ReducerChannel fields for error tests."""
-
-    count: Annotated[int, LastValue] = 0
-    name: Annotated[str, LastValue] = "init"
-    items: Annotated[list[str], ReducerChannel(reducer=lambda a, b: a + b)] = []
+    count: int = 0
+    name: str = "init"
+    items: list[str] = []
 
 
 def make_parallel_ctx(state: ErrorState | None = None) -> GraphContext[ErrorState]:
     return GraphContext(
         state=state if state is not None else ErrorState(),
         runtime=make_runtime(),
+        coordinator=make_coordinator(),
         scheduler_kind=SchedulerKind.PARALLEL,
     )
 
 
-def make_tracking_ctx(state: ErrorState | None = None) -> tuple[
-    GraphContext[ErrorState], TrackingRuntime
-]:
+def make_tracking_ctx(
+    state: ErrorState | None = None,
+) -> tuple[GraphContext[ErrorState], TrackingRuntime]:
     """Build a ctx backed by TrackingRuntime; return (ctx, runtime)."""
     runtime = TrackingRuntime()
     ctx = GraphContext(
         state=state if state is not None else ErrorState(),
         runtime=runtime,
+        coordinator=make_coordinator(),
         scheduler_kind=SchedulerKind.PARALLEL,
     )
     return ctx, runtime
@@ -140,18 +128,22 @@ class FanOutNode(Node[ErrorState]):
         self.target_a = target_a
         self.target_b = target_b
 
-    def execute(self, ctx: GraphContext[ErrorState]) -> NodeResult:
-        ctx.dispatch(self.target_a)
-        ctx.dispatch(self.target_b)
-        return NodeResult()
+    async def execute(
+        self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput
+    ) -> None:
+        self.deliver(None, self.target_a, ctx)
+        self.deliver(None, self.target_b, ctx)
+        return None
 
 
 class DispatchToEndNode(Node[ErrorState]):
     """No-op node that dispatches to END."""
 
-    def execute(self, ctx: GraphContext[ErrorState]) -> NodeResult:
-        ctx.dispatch(GraphNode.END)
-        return NodeResult()
+    async def execute(
+        self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput
+    ) -> None:
+        self.deliver(None, GraphNode.END, ctx)
+        return None
 
 
 class AsyncRaisingNode(Node[ErrorState]):
@@ -168,7 +160,9 @@ class AsyncRaisingNode(Node[ErrorState]):
         self.exc = exc
         self.msg = msg
 
-    async def execute(self, ctx: GraphContext[ErrorState]) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput
+    ) -> None:
         await asyncio.sleep(0)
         raise self.exc(self.msg)
 
@@ -176,13 +170,15 @@ class AsyncRaisingNode(Node[ErrorState]):
 class AsyncInterruptNode(Node[ErrorState]):
     """Async node that calls ``ctx.interrupt(value)`` after yielding."""
 
-    def __init__(self, value: Any = "interrupted") -> None:
+    def __init__(self, value: str = "interrupted") -> None:
         self.value = value
 
-    async def execute(self, ctx: GraphContext[ErrorState]) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput
+    ) -> None:
         await asyncio.sleep(0)
         ctx.interrupt(self.value)
-        return NodeResult()  # Unreachable — interrupt raises.
+        return None  # Unreachable — interrupt raises.
 
 
 class AsyncSlowNode(Node[ErrorState]):
@@ -197,11 +193,14 @@ class AsyncSlowNode(Node[ErrorState]):
         self.started = False
         self.completed = False
 
-    async def execute(self, ctx: GraphContext[ErrorState]) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput
+    ) -> None:
         self.started = True
         await asyncio.sleep(10)
         self.completed = True
-        return NodeResult()
+        self.deliver(None, None, ctx)
+        return None
 
 
 class AsyncEmitNode(Node[ErrorState]):
@@ -211,24 +210,28 @@ class AsyncEmitNode(Node[ErrorState]):
         self.event_type = event_type
         self.count = count
 
-    async def execute(self, ctx: GraphContext[ErrorState]) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput
+    ) -> None:
         # Yield so the sibling task also gets to run emits concurrently.
         await asyncio.sleep(0)
         for i in range(self.count):
             ctx.emit(self.event_type, {"seq": i})
-        ctx.dispatch(GraphNode.END)
-        return NodeResult()
+        self.deliver(None, GraphNode.END, ctx)
+        return None
 
 
-class WriteLastValueNode(Node[ErrorState]):
-    """Returns state_update writing to a LastValue field."""
-
-    def __init__(self, field: str, value: Any) -> None:
+class WriteStateNode(Node[ErrorState]):
+    def __init__(self, field: str, value: int | str) -> None:
         self.field = field
         self.value = value
 
-    def execute(self, ctx: GraphContext[ErrorState]) -> NodeResult:
-        return NodeResult(state_update={self.field: self.value})
+    async def execute(
+        self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput
+    ) -> None:
+        setattr(ctx.state, self.field, self.value)
+        self.deliver(None, None, ctx)
+        return None
 
 
 # ── Graph builder helpers ──────────────────────────────────────────────────
@@ -293,12 +296,7 @@ class TestRuntimeErrorCancelsConcurrent:
         assert not slow.completed
 
     async def test_exception_does_not_corrupt_main_state(self) -> None:
-        """After an exception, main_state is left at its pre-batch value.
-
-        The fork-path batch forks main_state; if the batch fails, the
-        merge (apply_concurrent_updates) is never reached, so main_state
-        is untouched by forked mutations.
-        """
+        """An exception does not alter state when neither branch mutates it."""
         slow = AsyncSlowNode(label="c")
         g = _build_fanout_graph(
             node_b=AsyncRaisingNode(RuntimeError, "fail"),
@@ -310,7 +308,6 @@ class TestRuntimeErrorCancelsConcurrent:
         with pytest.raises(RuntimeError):
             await GraphEngine(compiled).run_async(ctx)
 
-        # main_state.count is still 42 — forked mutations didn't propagate.
         assert ctx.state.count == 42
 
 
@@ -351,41 +348,11 @@ class TestGraphInterruptCancelsConcurrent:
             await GraphEngine(compiled).run_async(ctx)
 
 
-# ── Tests: InvalidUpdateError propagation ──────────────────────────────────
-
-
-class TestInvalidUpdateErrorPropagation:
-    """InvalidUpdateError (GraphBubbleUp) from concurrent writes propagates."""
-
-    async def test_concurrent_writes_same_lastvalue_raises(self) -> None:
-        """Two concurrent instances writing the same LastValue field raise."""
-        g = _build_fanout_graph(
-            node_b=WriteLastValueNode(field="count", value=1),
-            node_c=WriteLastValueNode(field="count", value=2),
-        )
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-
-        ctx = make_parallel_ctx(ErrorState(count=0))
-        with pytest.raises(InvalidUpdateError):
-            await GraphEngine(compiled).run_async(ctx)
-
-    async def test_invalid_update_error_is_graphbubbleup(self) -> None:
-        """InvalidUpdateError is catchable as GraphBubbleUp at the top level."""
-        g = _build_fanout_graph(
-            node_b=WriteLastValueNode(field="count", value=1),
-            node_c=WriteLastValueNode(field="count", value=2),
-        )
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-
-        ctx = make_parallel_ctx(ErrorState(count=0))
-        with pytest.raises(GraphBubbleUp):
-            await GraphEngine(compiled).run_async(ctx)
-
+class TestSharedStateMutation:
     async def test_concurrent_writes_different_fields_succeed(self) -> None:
-        """Two concurrent instances writing different LastValue fields succeed."""
         g = _build_fanout_graph(
-            node_b=WriteLastValueNode(field="count", value=10),
-            node_c=WriteLastValueNode(field="name", value="from_c"),
+            node_b=WriteStateNode(field="count", value=10),
+            node_c=WriteStateNode(field="name", value="from_c"),
         )
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
@@ -487,11 +454,14 @@ class TestConcurrentEmitSafe:
         A node that emits many events should complete just as fast as
         one that emits none (emit is fire-and-forget).
         """
+
         class NoEmitNode(Node[ErrorState]):
-            async def execute(self, ctx: GraphContext[ErrorState]) -> NodeResult:
+            async def execute(
+                self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput
+            ) -> None:
                 await asyncio.sleep(0)
-                ctx.dispatch(GraphNode.END)
-                return NodeResult()
+                self.deliver(None, GraphNode.END, ctx)
+                return None
 
         g = _build_fanout_graph(
             node_b=AsyncEmitNode(event_type="many", count=50),
@@ -595,6 +565,7 @@ class TestReactGraphRuntimeAudit:
         ctx = GraphContext(
             state=ErrorState(),
             runtime=runtime,
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         # Should complete without raising — no-op hooks are safe.

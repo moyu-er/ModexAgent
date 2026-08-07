@@ -1,8 +1,6 @@
 """Tests for AgentMessageBus and LocalAgentMessageBus."""
 
-import asyncio
-
-import pytest
+from unittest.mock import MagicMock
 
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
@@ -10,7 +8,7 @@ from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
-from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.multi_agent.inbox_poller import InboxPoller
 
 
 class TestLocalAgentMessageBus:
@@ -29,15 +27,20 @@ class TestLocalAgentMessageBus:
         await bus.send("s1", envelope)
         assert await server.count("s1") == 1
 
-    async def test_send_signals_broker_wakeup(self):
-        broker = InMemoryMessageBroker()
-        await broker.start()
-        await broker.register_consumer(AgentAddress(kind="agent", name="a2"))
+    async def test_send_signals_poller_wakeup(self):
+        """``send`` must call ``poller.signal_wakeup`` after a successful persist.
 
+        Replaces the old broker ``_inbox_wakeup`` test: the bus now drives the
+        pool poller directly via an in-process Event (single convergence point
+        for every inbox writer) instead of emitting an unconsumed broker
+        message.
+        """
         server = InMemoryInboxServer()
         producer = InboxProducer(server=server)
         consumer = InboxConsumer(server=server)
-        bus = LocalAgentMessageBus(producer=producer, consumer=consumer, broker=broker)
+        bus = LocalAgentMessageBus(producer=producer, consumer=consumer)
+        poller = MagicMock(spec=InboxPoller)
+        bus.set_poller(poller)
 
         envelope = AgentMessageEnvelope(
             payload={"content": "wake up"},
@@ -45,24 +48,26 @@ class TestLocalAgentMessageBus:
             target=AgentAddress(kind="agent", name="a2"),
             message_type="agent_message",
         )
-
-        received = []
-
-        async def _collect():
-            msg = await broker.consume(AgentAddress(kind="agent", name="a2"))
-            received.append(msg)
-
-        collect_task = asyncio.create_task(_collect())
-        await asyncio.sleep(0.05)
-
         await bus.send("s1", envelope)
-        await asyncio.wait_for(collect_task, timeout=1.0)
 
-        assert len(received) == 1
-        assert received[0].payload.get("_inbox_wakeup") is True
-        assert received[0].payload.get("session_id") == "s1"
+        poller.signal_wakeup.assert_called_once()
+        assert await server.count("s1") == 1
 
-        await broker.stop()
+    async def test_send_without_poller_is_persist_only(self):
+        """No poller wired yet → ``send`` persists and relies on the tick fallback."""
+        server = InMemoryInboxServer()
+        producer = InboxProducer(server=server)
+        consumer = InboxConsumer(server=server)
+        bus = LocalAgentMessageBus(producer=producer, consumer=consumer)
+
+        envelope = AgentMessageEnvelope(
+            payload={"content": "hello"},
+            source=AgentAddress(kind="agent", name="a1"),
+            target=AgentAddress(kind="agent", name="a2"),
+            message_type="agent_message",
+        )
+        await bus.send("s1", envelope)  # must not raise
+        assert await server.count("s1") == 1
 
     async def test_wraps_inbox_message_with_defaults(self):
         server = InMemoryInboxServer()
@@ -89,7 +94,7 @@ class TestLocalAgentMessageBus:
         server = InMemoryInboxServer()
         producer = InboxProducer(server=server)
         consumer = InboxConsumer(server=server)
-        bus = LocalAgentMessageBus(producer=producer, consumer=consumer, broker=None)
+        bus = LocalAgentMessageBus(producer=producer, consumer=consumer)
 
         envelope = AgentMessageEnvelope(
             payload={"content": "hi", "message_type": "agent_message"},

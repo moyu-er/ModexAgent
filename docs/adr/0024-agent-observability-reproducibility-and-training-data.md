@@ -647,3 +647,260 @@ same turn overwrite each other — only the last iteration's snapshot survives.
 Full per-iteration history (PRD user stories #26, #27) requires a store
 schema change (multi-snapshot-per-turn support). The `list_iteration_checkpoints`
 helper is forward-compatible when the store supports it.
+
+## Implementation Notes (2026-07-27) — Phase 2: Span gap remediation + Langfuse integration
+
+A harness-engineering review (cross-referenced against the open-source
+hermes-agent project and the OSS AI-observability landscape) identified that
+the 2026-07-17 implementation has **5 blocking-level span gaps** where ticket
+status claimed completion but code emission is absent or broken. Phase 2
+remediates these gaps and confirms the Langfuse integration route. All
+decisions below merge into the original D-numbers they affect; no new ADR
+is created (per ADR governance: "merge refinements into the original").
+
+### IN9 — OTLP-only route confirmed (reinforces D7, rejects SDK route)
+
+**Decision**: Langfuse integration uses **OTLP-only** — the framework emits
+standard `gen_ai.*` OTel spans via the existing `OtelSpanTraceStore` dual-path
+(local `spans.jsonl` + optional OTLP export). Langfuse receives traces via its
+native OTLP HTTP endpoint (`/api/public/otel`). The `langfuse` Python SDK is
+**never** a framework dependency.
+
+**Rejected alternative**: hermes-agent's plugin route (`LangfuseTraceHook`
+using the `langfuse` SDK directly, parallel to OTel). Rejected because (a)
+ModexAgent already has a complete OTel infrastructure (ADR-0024 D7/D10) —
+hermes's SDK route exists because hermes has no native OTel; (b) the SDK
+route creates double-write (two serialization paths), which D10 explicitly
+opposed; (c) the SDK route loses the local `spans.jsonl` agent-self-read
+path (D6), which is a harness-engineering advantage: the agent process can
+read its own trace to drive runtime decisions (loop detection, error
+recovery, predictive compression).
+
+**Harness advantage of OTLP-only**: fixing the 5 span gaps (IN10) serves two
+goals simultaneously — (1) Langfuse receives complete traces for human
+analysis, (2) the local `spans.jsonl` becomes complete enough for the agent
+to self-read in Phase 3 (`TraceDrivenLoopDetectorHook`, IN13). One fix, two
+consumers. This dual-use is unique to the OTLP-only route.
+
+**Configuration**: `bot_config.yml` sets `otel_endpoint` to Langfuse's OTLP
+URL. `trace_backend=otel_http` (or `file` + `otel_endpoint` set) activates
+dual-path: local `spans.jsonl` (agent self-read) + OTLP to Langfuse (human
+analysis). Default remains `file` (local-only, zero external dependency).
+
+**Langfuse deployment**: not bundled with the framework. The bot project
+(`examples/bot_project/`) carries a Docker Compose reference + teaching
+documentation. Framework code is Langfuse-agnostic.
+
+### IN10 — Span gap remediation (fixes D4/D7/D10 implementation偏差)
+
+Code audit found 5 blocking gaps where 2026-07-17 tickets claimed completion
+but emission code is absent or broken. These are not new design — they are
+the completion of already-designed ADR-0024 work.
+
+| Gap | ADR claim | Code reality | Fix |
+|-----|-----------|-------------|-----|
+| **G1** | `chat` span covers LLM call | `chat` span written at `after_llm_response` with `end_time=None` — **LLM duration invisible** | New `BeforeLLMHook` ABC; `TraceCollectorHook` implements pre/post pair to capture `start_time` + `end_time` + `api_duration_s` |
+| **G2** | `chat` span records LLM request | Only output recorded; no `gen_ai.request.model`, no input messages — **prompt content invisible** | `BeforeLLMHook` captures `gen_ai.request.model` + input messages via `PromptCaptureStrategy` (IN11). System prompt excluded (too long, per-turn identical); full prompt via Cassette (D5) |
+| **G3** | `human.review` span covers approval (D7 ATSC draft) | `SpanName.HUMAN_REVIEW` defined but **never emitted** — `TraceCollectorHook` inherits no approval hook ABC. DPO export path broken (depends on approval = chosen/rejected) | New `AfterApprovalHook` ABC; `TraceCollectorHook` emits `human.review` span with decision + deny_reason |
+| **G5** | D4 "per-iteration checkpoint via AfterIterationHook" | `TraceCollectorHook` does **not** implement `AfterIterationHook`; `CheckpointHook` does but stores snapshot, emits no span — **ReAct iteration boundaries invisible in trace** (flat span list under `invoke_agent`) | `TraceCollectorHook` implements `AfterIterationHook`, emits `iteration.start`/`iteration.end` boundary spans. Solves OTel Issue #94 (the problem D4 claimed to solve) |
+| **G10** | D7 "agent.handoff span" | `send_to_agent` propagates traceparent but **emits no span** — multi-agent trace tree broken (child `invoke_agent` root has no parent link) | Emit `agent.handoff` span at `send_to_agent` dispatch point, linking parent turn to child turn |
+| **G11** | D8 "subprocess trace propagation" | `otel_store._build_otlp_tracer` creates local `TracerProvider` but never calls `trace.set_tracer_provider()` — external coding agent CLIENT spans may not export | Call `trace.set_tracer_provider()` in `_build_otlp_tracer` |
+
+**Additional attributes** (not gaps, but required for analysis):
+- `gen_ai.usage.cache_read_input_tokens` + `gen_ai.usage.cache_creation_input_tokens` — **cache hit rate** (prompt-cache effectiveness, hermes prompt_caching.py reference)
+- `gen_ai.request.model` on every `chat` span — **per-model performance breakdown**
+- Tool `success`/`fail`/`error_type` attributes on `execute_tool` span — **tool correctness rate**
+- `execute_tool_batch` span `end_time` — batch duration (currently missing)
+
+### IN11 — PromptCaptureStrategy ABC (pluggable G2 capture scope)
+
+**Decision**: G2's input-message capture is pluggable via a strategy ABC,
+not hard-coded in `TraceCollectorHook`. This enables future capture-scope
+tiers without modifying hook code.
+
+```
+src/modex_agent/trace/prompt_capture.py
+├── PromptCaptureStrategy(ABC)              # extension point
+│   └── capture(messages, model) -> dict    # returns span attribute payload
+└── SummaryPromptCapture                    # sole implementation (default)
+    # last N messages (default 6), each truncated to 2KB text / 1KB tool args
+    # system prompt excluded (records hash + length only)
+```
+
+- `ObservabilityConfig.prompt_capture: str = "summary"` — currently accepts
+  only `"summary"`; other values raise `ValueError` with guidance to
+  implement a `PromptCaptureStrategy` subclass.
+- `TraceCollectorHook` holds a `PromptCaptureStrategy` instance; calls
+  `strategy.capture(...)` in `before_llm` to populate `chat` span's
+  `gen_ai.request.messages` attribute.
+- **Not pre-implemented**: `MinimalPromptCapture` (model + count only) and
+  `FullPromptCapture` (all messages, cassette-redundant) are deferred — the
+  ABC is the extension point declaration; add subclasses when needed.
+- **System prompt**: never captured in G2 (too long, per-turn identical,
+  low analysis value). System-prompt analysis via Cassette (D5) or
+  `gen_ai.system.prompt_hash` + `gen_ai.system.prompt_length` attributes.
+
+**Rationale**: User requirement — "implementation must support future
+extension / flexible switching to other tiers." ABC-first per architecture
+rule 4/10. Deletion test: inlining truncation logic in the hook is shorter
+but loses the extension point → ABC retained.
+
+### IN12 — SQLite trace path deferred (jsonl + OTLP dual path retained)
+
+**Decision**: The trace storage architecture remains the 2026-07-17 design:
+local `spans.jsonl` (D6, agent self-read) + optional OTLP export (D7,
+external backend). **No SQLite trace store** is added in Phase 2.
+
+**Considered and rejected**: A SQLite trace path (third `TraceQuery`
+implementation alongside `JsonlSpanQuery`) was considered for cross-session
+SQL aggregation. Rejected because: (a) agent self-read is satisfied by
+`JsonlSpanQuery.list_by_session()` / `list_by_trace_id()`; (b) human
+cross-session analysis is satisfied by Langfuse's dashboard/score/dataset;
+(c) a SQLite trace store is an ADR-level schema decision (coexist with
+State DB? independent DB? migration strategy?) that doesn't unlock new
+harness capabilities; (d) the only beneficiary is air-gapped cross-session
+SQL analysis without Langfuse, which can be met by an offline
+`jsonl → SQLite` import script.
+
+**Code annotation**: `ObservabilityConfig.trace_backend` and
+`OtelSpanTraceStore` carry comments documenting this deferral and the
+future `TraceQuery` ABC extension point for SQLite if the air-gapped
+analysis scenario materializes.
+
+### IN13 — TraceDrivenLoopDetectorHook placeholder (Phase 3, not registered)
+
+**Decision**: A `TraceDrivenLoopDetectorHook` class is added to
+`src/modex_agent/hook/builtin/` as a **placeholder** — class body contains
+only docstring + `name` property + `pass`. It is **not registered** in any
+factory and has **no configuration** and **no tests**.
+
+**Purpose**: Documents the Phase 3 harness-engineering entry point — an
+agent-self-read hook that consumes local `spans.jsonl` to drive runtime
+decisions (loop detection via tool-call fingerprint hashing, error
+recovery strategy selection, predictive compression). Implementation is
+deferred until Phase 2 data is available to observe actual agent behavior
+patterns (where does the agent loop? where do tools fail? what's the
+latency breakdown?). Reference: hermes-agent's `chat_completion_helpers.py`
+stale-call circuit breaker (#58962) and `error_classifier.py` 27-reason
+taxonomy are the migration targets, but their strategies should be
+calibrated against real trace data first.
+
+**Inheritance**: `AfterToolExecutionHook` + `AfterIterationHook` (the two
+hook points a loop detector needs). Not `BeforeToolExecutionHook` —
+detection happens after execution, intervention happens at the next
+iteration boundary.
+
+### IN16 — Phase 3 direction: harness intelligence via trace-driven decisions
+
+**Status: FUTURE** — not yet planned for implementation. Recorded here to
+preserve direction; detailed design will be written when Phase 2 data is
+available to calibrate strategies.
+
+**Current state after Phase 2:** Traces are complete enough for both human
+analysis (Langfuse via OTLP) and agent self-read (local `spans.jsonl` via
+`TraceQuery`). The `TraceDrivenLoopDetectorHook` placeholder exists (IN13).
+No trace-consuming harness logic exists yet.
+
+**Four directions** (reference: hermes-agent cross-reference):
+
+1. **Loop/stuck detection** — implement `TraceDrivenLoopDetectorHook`
+   consuming `spans.jsonl`: tool fingerprint hashing, output similarity,
+   oscillation, stale-call circuit breaker. Hermes #58962 incident (494
+   consecutive failures, 3+ days) shows the cost of not having this.
+
+2. **Error recovery taxonomy** — replace overflow-only `error_recovery.py`
+   with classification-driven recovery (rate limit / billing / content
+   policy / network / overflow / SSL / thinking-signature). Hermes
+   `error_classifier.py` 27-reason taxonomy is the reference.
+
+3. **Truth enforcement** — verification gate in `EndNode`: intercept "code
+   edit without verification", force test/lint/build. Hermes
+   `verification_stop.py` + `verification_evidence.py` SQLite ledger is the
+   reference. Highest-ROI intelligence boost.
+
+4. **Experience review upgrade** — upgrade `ExperienceReviewAgent` to
+   hermes `background_review.py` pattern: fork-daemon with prefix cache
+   inheritance, tool whitelist, trace-driven context.
+
+**Prerequisite:** Phase 2 must run in production to observe real agent
+behavior patterns. Strategies must be calibrated against data, not
+implemented blind. This is why Phase 3 is FUTURE, not PLANNED.
+
+### IN14 — trace_backend tier refinement deferred
+
+**Decision**: The existing three tiers (`off` / `file` / `otel_http`) are
+retained. Future refinement tiers are **documented in code comments** but
+not implemented:
+
+- `file_lite` — local JSONL, excludes G2 request prompt + reasoning content
+  (structured attributes only). Lowers IO for always-on local tracing.
+- `otel_only` — OTLP export only, no local JSONL. Saves local IO when
+  Langfuse is the analysis surface.
+- `file_debug` — local JSONL + full prompt + reasoning content
+  (cassette-redundant). Troubleshooting only.
+
+**Rationale**: The three existing tiers cover 90% of scenarios. `spans.jsonl`
+is session-isolated (`<session_id>/spans.jsonl`) and cleaned by
+`SessionArtifactCleaner` on session deletion, so long-term accumulation
+pressure is bounded. The real IO lever is G2's prompt truncation threshold
+(IN11), not a new tier. Tier refinement is low priority.
+
+### IN15 — Langfuse as analysis surface, not framework dependency
+
+**Deployment boundary**: Langfuse deployment (Docker Compose, config,
+dashboards) lives in `examples/bot_project/` as teaching documentation, not
+in the framework. The framework's only Langfuse-aware code is
+`OtelSpanTraceStore`'s OTLP exporter (which is vendor-neutral — any OTLP
+endpoint works).
+
+**Analysis workflow** (documented in bot, not coded in framework):
+1. `bot_config.yml` sets `otel_endpoint` to Langfuse OTLP URL
+2. Langfuse receives `gen_ai.*` spans, renders trace tree (turn → iteration
+   → LLM call → tool execution, with `agent.handoff` linking multi-agent)
+3. Cache hit rate = `cache_read_input_tokens / total_input_tokens` per
+   `chat` span — Langfuse dashboard aggregation
+4. Tool correctness rate = `success` count / total per `execute_tool` span
+   — Langfuse dashboard aggregation
+5. Trajectory analysis = trace tree visualization (per-iteration boundary
+   spans make ReAct structure visible)
+6. Flagged traces (circuit-breaker trip / max_iterations / consecutive tool
+   errors / P90+ iteration count) → Langfuse dataset → eval (DeepEval /
+   Inspect AI, Phase 3+)
+
+**Framework delivers data; Langfuse delivers analysis.** The framework
+does not consume its own trace for analysis — that is Langfuse's job. The
+framework's self-read path (D6 `spans.jsonl`) is reserved for Phase 3
+harness runtime decisions (IN13), not analysis.
+
+### IN17 — OTel GenAI semconv compliance
+
+**Decision**: All trace attributes follow the
+[OpenTelemetry GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai).
+Attribute names use the standard `gen_ai.*` namespace with correct
+hierarchy (e.g. `gen_ai.usage.cache_read.input_tokens`, not
+`gen_ai.usage.cache_read_input_tokens`). Required attributes
+(`gen_ai.operation.name`, `gen_ai.provider.name`) are emitted on every
+span. Message content uses the OTel parts-based format
+(`{role, parts: [{type, content}]}`).
+
+**Dual emission for Langfuse compatibility**: Langfuse maps `input`/`output`
+from `gen_ai.prompt` / `gen_ai.completion` (legacy names), not from the
+current OTel standard `gen_ai.input.messages` / `gen_ai.output.messages`.
+Both are emitted:
+- `gen_ai.input.messages` (OTel standard, parts-based) — for standards-compliant OTLP consumers
+- `gen_ai.prompt` (Langfuse legacy, JSON string) — for Langfuse `input` field
+- `gen_ai.output.messages` (OTel standard, parts-based) — for standards-compliant OTLP consumers
+- `gen_ai.completion` (Langfuse legacy, string) — for Langfuse `output` field
+
+Langfuse trace-level fields mapped via `langfuse.*` namespace:
+- `langfuse.session.id` — full session ID (subagents are independent sessions)
+- `langfuse.user.id` — from `metadata['user_id']`, falls back to `"default"` (temporary, framework has no first-class user concept)
+- `langfuse.observation.type` — `"generation"` on LLM spans
+
+**OTLP trace tree**: `_emit_span_via_otel_sdk` injects `SpanContext` with
+the framework's `trace_id` and `parent_span_id` via `NonRecordingSpan` +
+`set_span_in_context`, so the OTel SDK exports linked trace trees. Span IDs
+are truncated to 16 hex chars (OTel 64-bit; framework uses 32-char UUID hex).
+
+**Reference docs**: `docs/otel/README.md` (attribute audit),
+`docs/langfuse/README.md` (Langfuse OTLP mapping).

@@ -782,10 +782,13 @@ Three defenses, in order:
   Before ADR-0015, `_dispatch_raw_broker_message` also ferried human DMs; per
   D9, human DMs now go through `AgentPool.submit_external_input` straight into
   the `SessionInputQueue`, and the broker no longer mixes DM payloads. The
-  broker remains usable for cross-process inter-agent wakeup
-  (`LocalAgentMessageBus.send` still sends an `_inbox_wakeup` broker message as
-  a cross-process signal); within one process the `SessionInputQueue` is taken
-  directly.
+  broker's former `_inbox_wakeup` signal (emitted from
+  `LocalAgentMessageBus.send`) was **removed** in the event-driven poller
+  refactor: between-turn wakeup is now an in-process `asyncio.Event` on
+  `InboxPoller`, signalled directly from `LocalAgentMessageBus.send` (the single
+  convergence point of all inbox writers). The broker retains only its
+  cross-pool peer-routing role (ADR-0019 `bus_ref`); within one process the
+  `SessionInputQueue` is taken directly.
 
 #### Drainer-spawner materialize-on-drain protocol (D3 details)
 
@@ -948,7 +951,7 @@ follower turns) recovers the prefix without needing a side-channel store.
   payload, and `message_type` (to an enum) move to frozen `BaseModel`; broker
   serialization goes through `model_dump_json` / `model_validate_json`. This is
   a self-contained follow-up that does not change the model above.
-- **XML render relocation.** `build_agent_message` wrapping content into XML
+- **XML render relocation.** `build_agent_comm_message` wrapping content into XML
   moves from send-side to receive-side rendering in `InboxFlushHook`: the
   payload carries structured fields, and the model-facing text is rendered at
   injection time. Wire format and presentation decouple; pairs with the

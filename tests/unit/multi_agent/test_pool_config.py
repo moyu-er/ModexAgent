@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.agents.external_coding.paths import ProviderKind
+from modex_agent.agents.external.paths import ProviderKind
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.multi_agent.pool_config import (
@@ -86,13 +86,13 @@ class TestSubagentSpec:
         assert spec.execution_strategy == ExecutionStrategyKind.REACT
         assert spec.provider_kind is None
 
-    def test_subagent_spec_round_trip_external_coding(self) -> None:
+    def test_subagent_spec_round_trip_external(self) -> None:
         spec = SubagentSpec(
             agent_name="worker",
-            execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            execution_strategy=ExecutionStrategyKind.EXTERNAL,
             provider_kind=ProviderKind.OPENCODE,
         )
-        assert spec.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
+        assert spec.execution_strategy == ExecutionStrategyKind.EXTERNAL
         assert spec.provider_kind == ProviderKind.OPENCODE
         assert spec.agent_name == "worker"
 
@@ -207,7 +207,7 @@ class TestPoolAssemblyDeps:
 
 
 class TestExecutionStrategyValidator:
-    """Cross-field validator: provider_kind set iff execution_strategy==EXTERNAL_CODING.
+    """Cross-field validator: provider_kind set iff execution_strategy==EXTERNAL.
 
     Covers both :class:`SubagentSpec` (new field) and :class:`MainAgentSpec`
     (backfilled validator). The same rule applies to both, so the cases are
@@ -233,13 +233,11 @@ class TestExecutionStrategyValidator:
         [SubagentSpec, MainAgentSpec],
         ids=["subagent", "main"],
     )
-    def test_rejects_external_coding_without_provider_kind(
-        self, spec_cls: type
-    ) -> None:
+    def test_rejects_external_without_provider_kind(self, spec_cls: type) -> None:
         with pytest.raises(ValidationError) as exc:
             spec_cls(
                 agent_name="x",
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
                 provider_kind=None,
             )
         assert "provider_kind" in str(exc.value)
@@ -249,13 +247,13 @@ class TestExecutionStrategyValidator:
         [SubagentSpec, MainAgentSpec],
         ids=["subagent", "main"],
     )
-    def test_accepts_external_coding_with_provider_kind(self, spec_cls: type) -> None:
+    def test_accepts_external_with_provider_kind(self, spec_cls: type) -> None:
         spec = spec_cls(
             agent_name="x",
-            execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            execution_strategy=ExecutionStrategyKind.EXTERNAL,
             provider_kind=ProviderKind.OPENCODE,
         )
-        assert spec.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
+        assert spec.execution_strategy == ExecutionStrategyKind.EXTERNAL
         assert spec.provider_kind == ProviderKind.OPENCODE
 
     @pytest.mark.parametrize(

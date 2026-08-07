@@ -20,6 +20,7 @@ from modex_agent.memory.archive_models import (
 )
 from modex_agent.memory.cleanup import cleanup_session
 from modex_agent.memory.core.models import ArchiveEntry
+from modex_agent.memory.injection.archive import ArchiveInjectionConfig
 from modex_agent.memory.layers.config import ArchiveMemoryConfig, MemoryLayerConfigSet
 from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
@@ -162,7 +163,9 @@ async def test_hybrid_archive_prompt_omits_file_path_metadata(
             context,
             ArchiveEntry(summary="SQLite-backed archive summary"),
         )
-        manager = MemorySystemContextManager(system)
+        manager = MemorySystemContextManager(
+            system, archive_injection_config=ArchiveInjectionConfig()
+        )
         state = await manager.load("session-1")
         assert state.system_prompt_pipeline is not None
         prompt = await state.system_prompt_pipeline.get_or_refresh()
@@ -230,14 +233,13 @@ async def test_sqlite_cleanup_commits_generated_archive_and_injects_context(
         assert state_count == 1
         entries = await system.get_history_entries(context)
         assert [entry["summary"] for entry in entries] == ["SQLite cleanup context"]
-        prompt = await MemorySystemContextManager(system).load("cleanup-session")
+        prompt = await MemorySystemContextManager(
+            system, archive_injection_config=ArchiveInjectionConfig()
+        ).load("cleanup-session")
         assert prompt.system_prompt_pipeline is not None
         injected = await prompt.system_prompt_pipeline.get_or_refresh()
         assert "SQLite cleanup context" in injected
         assert "file=" not in injected
-        assert pruned._get_storage(context.session_id or "").read_index()[-1].topic == (
-            "SQLite Cleanup Topic"
-        )
     finally:
         await system.close()
         await persistence.close()

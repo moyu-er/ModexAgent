@@ -1,5 +1,6 @@
 """Tests for HookRunner dispatching and error handling."""
 
+import json
 import logging
 
 import pytest
@@ -60,7 +61,7 @@ class TestHookRunnerLogging:
 
         assert len(caplog.records) == 5
         for record in caplog.records:
-            assert "BrokenHook" in record.message
+            assert "broken_hook" in record.message
 
     @pytest.mark.asyncio
     async def test_other_hooks_still_run_after_exception(self):
@@ -206,7 +207,7 @@ class TestRunLoggingHook:
             await hook.before_tool_execution(ctx, [tool_call])
             await hook.after_tool_execution(
                 ctx,
-                [ToolResult(tool_name="search", result={"temp": 21}, call_id="call-1")],
+                [ToolResult.from_text("search", json.dumps({"temp": 21}), call_id="call-1")],
             )
 
         messages = [record.message for record in caplog.records]
@@ -215,7 +216,7 @@ class TestRunLoggingHook:
         assert any("session_id=chat-b" in msg for msg in messages)
         assert any("tool=search" in msg for msg in messages)
         assert any('"query": "weather"' in msg for msg in messages)
-        assert any('"temp": 21' in msg for msg in messages)
+        assert any('\\"temp\\": 21' in msg for msg in messages)
 
     @pytest.mark.asyncio
     async def test_collapses_newlines_and_truncates_long_content(self, caplog):
@@ -244,7 +245,7 @@ class TestRunLoggingHook:
             await hook.before_tool_execution(ctx, [tool_call])
             await hook.after_tool_execution(
                 ctx,
-                [ToolResult(tool_name="write", result="result1\nresult2\n" + "z" * 50, call_id="call-2")],
+                [ToolResult.from_text("write", "result1\nresult2\n" + "z" * 50, call_id="call-2")],
             )
 
         for record in caplog.records:

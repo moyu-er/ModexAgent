@@ -1,13 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useWebUIStream } from "./useWebUIStream";
-import { fetchMessages } from "../lib/api";
+import { fetchMessages, uploadAttachment } from "../lib/api";
 
 vi.mock("../lib/api", () => ({
   fetchMessages: vi.fn().mockResolvedValue([]),
   fetchTodos: vi.fn().mockResolvedValue([]),
   fetchApprovals: vi.fn().mockResolvedValue([]),
   submitApproval: vi.fn().mockResolvedValue({ accepted: true }),
+  uploadAttachment: vi.fn().mockResolvedValue({
+    local_path: "/tmp/uploads/fake.png",
+    filename: "fake.png",
+    size: 100,
+    mime: "image/png",
+  }),
 }));
 
 class FakeWebSocket {
@@ -230,5 +236,118 @@ describe("useWebUIStream hero-send (draft → attached → fullId)", () => {
       expect(userMsgs.length).toBeGreaterThanOrEqual(1);
       expect(userMsgs[0]?.blocks[0]).toMatchObject({ kind: "text", text: "hero message" });
     });
+  });
+
+  it("hero-mode lazy upload: files are uploaded on attached then sent as refs", async () => {
+    const pendingUuid = "abc123";
+    const getPoolForUuid = (uuid: string): string | undefined =>
+      uuid === pendingUuid ? "main" : undefined;
+
+    const { result } = renderHook(() =>
+      useWebUIStream(pendingUuid, getPoolForUuid),
+    );
+
+    act(() => {
+      result.current.connect();
+    });
+
+    await waitFor(() => expect(sockets.length).toBeGreaterThan(0));
+
+    const fakeFile = new File([new Uint8Array(100)], "pic.png", { type: "image/png" });
+
+    act(() => {
+      result.current.send("with attachment", undefined, undefined, undefined, [fakeFile]);
+    });
+
+    expect(findSendMessage()).toBeUndefined();
+
+    vi.mocked(uploadAttachment).mockClear();
+    vi.mocked(uploadAttachment).mockResolvedValue({
+      local_path: "/tmp/uploads/abc.png",
+      filename: "pic.png",
+      size: 100,
+      mime: "image/png",
+    });
+
+    act(() => {
+      getSocket().receive({
+        event_type: "attached",
+        session_id: "abc123.main",
+        agent_name: "main",
+        pool: "main",
+        parent_session_id: null,
+        metadata: {},
+        payload: {},
+      });
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(uploadAttachment)).toHaveBeenCalledWith(
+        "abc123.main",
+        fakeFile,
+        undefined,
+      );
+    });
+
+    await waitFor(() => {
+      const sent = findSendMessage();
+      expect(sent).toBeDefined();
+      expect(sent?.session_id).toBe("abc123.main");
+      expect(sent?.content).toBe("with attachment");
+      expect(sent?.attachments).toEqual([
+        {
+          local_path: "/tmp/uploads/abc.png",
+          filename: "pic.png",
+          mime: "image/png",
+        },
+      ]);
+    });
+  });
+
+  it("hero-mode lazy upload failure drops optimistic message and aborts send", async () => {
+    const pendingUuid = "abc123";
+    const getPoolForUuid = (uuid: string): string | undefined =>
+      uuid === pendingUuid ? "main" : undefined;
+
+    const { result } = renderHook(() =>
+      useWebUIStream(pendingUuid, getPoolForUuid),
+    );
+
+    act(() => {
+      result.current.connect();
+    });
+
+    await waitFor(() => expect(sockets.length).toBeGreaterThan(0));
+
+    const fakeFile = new File([new Uint8Array(100)], "pic.png", { type: "image/png" });
+
+    act(() => {
+      result.current.send("with attachment", undefined, undefined, undefined, [fakeFile]);
+    });
+
+    vi.mocked(uploadAttachment).mockClear();
+    vi.mocked(uploadAttachment).mockRejectedValue(new Error("network error"));
+
+    act(() => {
+      getSocket().receive({
+        event_type: "attached",
+        session_id: "abc123.main",
+        agent_name: "main",
+        pool: "main",
+        parent_session_id: null,
+        metadata: {},
+        payload: {},
+      });
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(uploadAttachment)).toHaveBeenCalled();
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(findSendMessage()).toBeUndefined();
+    const userMsgs = result.current.messages.filter((m) => m.role === "user");
+    expect(userMsgs).toHaveLength(0);
   });
 });

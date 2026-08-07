@@ -48,7 +48,6 @@ class MemoryLayerName(StrEnum):
     ARCHIVE = "archive"
     CORE = "core"
     PROVIDER = "provider"
-    USER_RETENTION = "user_retention"
 
 
 class MemoryContext(BaseModel):

@@ -36,10 +36,12 @@ async def test_coder_and_planner_history_isolation():
     )
 
     coder_instance = await factory.create_agent(
-        coder_descriptor, session_id=session_id,
+        coder_descriptor,
+        session_id=session_id,
     )
     planner_instance = await factory.create_agent(
-        planner_descriptor, session_id=session_id,
+        planner_descriptor,
+        session_id=session_id,
     )
 
     # 各自使用独立的 session_id

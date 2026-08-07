@@ -135,7 +135,8 @@ class TestAddMessagesPreservesSoftDeletedTombstones:
 
         time.sleep(0.01)
         removed = await message_store.cleanup_expired()
-        assert removed == 2
+        # m1/m2 soft-deleted tombstones + the stale superseded copy of m3.
+        assert removed == 3
         assert len(await message_store.load_all_messages()) == 2
 
     async def test_tombstones_survive_replace_messages(

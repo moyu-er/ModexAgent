@@ -129,6 +129,10 @@ class TestPoolModeInitializeNoTopLevelLlm:
         self, pool_mode_config_dir: Path
     ) -> None:
         """BotService construction in pool mode doesn't crash."""
+        from bot.service._model_config_loader import (
+            _apply_bot_model_config,
+            _load_app_config,
+        )
         from bot.service.core import BotService
 
         bot = BotService(
@@ -137,7 +141,8 @@ class TestPoolModeInitializeNoTopLevelLlm:
             output_adapter=_StubOutput(),
             emitter_factory=lambda s: None,
         )
-        bot._app_config = bot._load_app_config()
+        bot._app_config = _load_app_config(bot.config_dir)
+        bot._bot_model_config = _apply_bot_model_config(bot.config_dir, bot._app_config)
         assert bot._app_config is not None
         assert "pools" not in bot._app_config.model_fields
 

@@ -79,7 +79,7 @@ async def _make_poller_pool(interval: float = 0.02):
     server = InMemoryInboxServer()
     producer = InboxProducer(server=server)
     consumer = InboxConsumer(server=server)
-    bus = LocalAgentMessageBus(producer=producer, consumer=consumer, broker=None)
+    bus = LocalAgentMessageBus(producer=producer, consumer=consumer)
     pool = AgentPool(
         broker=_FakeBroker(),
         agent_factory=_MockAgentFactory(),

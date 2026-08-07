@@ -14,15 +14,15 @@ Business half of the workspace mechanism — pool-scoped resource bundle and Bot
 | `factory.py` | `PoolResourceFactory` — orchestrates workspace resource build/evict via injected closures |
 | `dispatch.py` | `WorkspaceMessageDispatcher` — per-message workspace routing, contextvar binding |
 | `pool_data.py` | `PoolData` (frozen dataclass) + `build_pool_data` — bundles per-pool stores |
-| `wiring.py` | `build_workspace_stack` / `build_single_workspace_stack` — workspace assembly (imports service layer) |
+| `wiring/` | `build_workspace_stack` / `build_single_workspace_stack` — workspace assembly (imports service layer). Split into `__init__.py` (re-exports), `stack.py`, `resources.py`, `pool_wiring.py` |
 | `background.py` | `BackgroundTaskRunner` — per-workspace background tasks (dream, curation, retention) |
 
 ## For AI Agents
 
 ### Working In This Directory
-- `wiring.py` is the assembly hub — read it to understand how workspaces are built end-to-end.
+- `wiring/` is the assembly hub — read it to understand how workspaces are built end-to-end.
 - `pool_data.py` is a pure data transformation — no framework imports, easily testable.
-- `factory.py` uses dependency injection (closures) for testability — the real build logic lives in `wiring.py`.
+- `factory.py` uses dependency injection (closures) for testability — the real build logic lives in `wiring/`.
 
 ### Common Patterns
 - Resource factory pattern: `PoolResourceFactory` implements `ResourceFactory[PoolWorkspaceResources]` from `modex_agent.workspace`
@@ -33,6 +33,6 @@ Business half of the workspace mechanism — pool-scoped resource bundle and Bot
 
 ### Internal
 - `modex_agent/workspace/` — generic workspace mechanism (registry, resolver, context, paths, control, store)
-- `bot/service/pool_builder.py` — pool construction (via wiring)
+- `bot/service/pool/` — pool construction (via wiring)
 
 <!-- MANUAL -->

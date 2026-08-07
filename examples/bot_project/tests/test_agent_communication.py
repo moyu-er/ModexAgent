@@ -5,7 +5,7 @@ from pathlib import Path
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.pool_config import PoolStore
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
-from modex_agent.multi_agent.tools import SendToAgentTool
+from modex_agent.multi_agent.tools import SendToAgentTool, TaskDispatchTool
 
 _BOT_PROJECT_DIR = Path(__file__).resolve().parent.parent
 
@@ -25,6 +25,8 @@ def test_bot_project_new_tool_names_are_available_and_old_names_removed() -> Non
     import modex_agent.multi_agent.tools as tools
 
     assert SendToAgentTool.__name__ == "SendToAgentTool"
+    assert TaskDispatchTool.__name__ == "TaskDispatchTool"
+    assert hasattr(tools, "TaskDispatchTool")
     assert not hasattr(tools, "SendMessageTool")
     assert not hasattr(tools, "SendMessageAsyncTool")
     assert not hasattr(tools, "DispatchTaskTool")

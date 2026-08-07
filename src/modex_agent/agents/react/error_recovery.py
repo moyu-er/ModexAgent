@@ -11,22 +11,21 @@ dict for the governance call.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.governance import ContextGovernance
+from modex_agent.core.llm_struct import is_context_overflow_text
 from modex_agent.core.message import ChatMessage
 
-# Markers that indicate a context-length / payload-too-large error.
-_OVERFLOW_MARKERS: tuple[str, ...] = (
-    "413",
-    "context_length",
-    "maximum context",
-    "too long",
-    "payload too large",
-    "token limit",
-)
+if TYPE_CHECKING:
+    from modex_agent.core.agent import AgentContext
+
+
+def is_context_overflow_error(exc: Exception) -> bool:
+    """Return *True* if *exc* indicates a context-length / payload-too-large error."""
+    return is_context_overflow_text(str(exc).lower())
 
 
 class ErrorRecoveryConfig(BaseModel):
@@ -49,7 +48,11 @@ class EmergencyCompactionGovernance(ContextGovernance):
     def __init__(self, keep_messages: int) -> None:
         self._keep_messages = keep_messages
 
-    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    async def apply(
+        self,
+        messages: list[dict[str, Any]],
+        ctx: AgentContext,
+    ) -> list[dict[str, Any]]:
         if len(messages) <= self._keep_messages + 1:
             # Not enough to trim — return as-is (still a copy).
             return list(messages)
@@ -80,11 +83,6 @@ class EmergencyCompactionGovernance(ContextGovernance):
         return system_msgs + trimmed
 
 
-def is_context_overflow_error(exc: Exception) -> bool:
-    """Return *True* if *exc* indicates a context-length / payload-too-large error."""
-    text = str(exc).lower()
-    return any(marker in text for marker in _OVERFLOW_MARKERS)
-
 
 class RecoveryAttempt(BaseModel):
     """Result of a single recovery attempt."""
@@ -101,6 +99,7 @@ async def attempt_recovery(
     error: Exception,
     attempt_count: int,
     config: ErrorRecoveryConfig,
+    ctx: AgentContext,
 ) -> RecoveryAttempt:
     """Decide whether to retry after *error* and produce trimmed messages if so.
 
@@ -114,7 +113,7 @@ async def attempt_recovery(
         governance = EmergencyCompactionGovernance(keep_messages=keep)
         # Convert to dict for the governance layer (still dict-based).
         dict_messages = [m.to_dict() for m in messages]
-        trimmed_dicts = await governance.apply(dict_messages)
+        trimmed_dicts = await governance.apply(dict_messages, ctx)
         # Convert back to ChatMessage for the provider (post-B6).
         trimmed = [ChatMessage.coerce(d) for d in trimmed_dicts]
         return RecoveryAttempt(

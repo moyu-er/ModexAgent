@@ -13,7 +13,7 @@ The four quadrant output templates (exact formatting) are defined in the spec un
 **Status:** done
 
 - [x] `send --to X --content Y` (no `--invocation-id`, `MODEX_COMM_KIND=subagent`, target = NATIVE) → quadrant ② output with `status: new_task`, plus `invocation_id`, `session_id`, `output_path`, `trace_dir`, and the "wait for `<replied>`" footer.
-- [x] `send --to X --content Y` (no `--invocation-id`, `MODEX_COMM_KIND=subagent`, target = EXTERNAL_CODING) → quadrant ③ output with `status: new_task`, plus `invocation_id`, `session_id`, NO `output_path`/`trace_dir`, and the "wait for `<replied>`" footer.
+- [x] `send --to X --content Y` (no `--invocation-id`, `MODEX_COMM_KIND=subagent`, target = EXTERNAL) → quadrant ③ output with `status: new_task`, plus `invocation_id`, `session_id`, NO `output_path`/`trace_dir`, and the "wait for `<replied>`" footer.
 - [x] `send --to X --content Y --invocation-id foo123` (session `foo123.X` exists in `sessions` table) → `status: resumed`, `invocation_id: foo123`.
 - [x] `send --to X --content Y --invocation-id foo123` (session `foo123.X` does NOT exist in `sessions` table) → mints a NEW uuid (not `foo123`), `status: new_task (provided 'foo123' not found, created new)`, and the `invocation_id:` line shows the new uuid (not `foo123`).
 - [x] `send --to X --content Y` (`MODEX_COMM_KIND=normal`, cross-pool peer) → quadrant ① output: `Message delivered to '{to}'.\nPeer will process asynchronously. No wait needed.` — no `session_id`, no `invocation_id`.
@@ -23,7 +23,7 @@ The four quadrant output templates (exact formatting) are defined in the spec un
 - [x] `--invocation-id` is silently ignored (not an error, no effect on output) when `MODEX_COMM_KIND=normal`.
 - [x] The session-existence check uses a short-lived stdlib `sqlite3` connection to `<workspace>/.modex/state.db` with `SELECT 1 FROM sessions WHERE session_id = ?` (same cross-process pattern as `SqliteInboxMQ.deliver()`).
 - [x] Existing same-pool subagent dispatch behavior (mint invocation_id, write `task_request` to inbox with `parent_session_id` + `invocation_id` metadata) is preserved — only the CLI's stdout reporting changes, not the inbox write.
-- [x] Existing cross-pool peer send behavior (prefix-reuse, `build_peer_agent_message` XML with `<reply_contract>`) is preserved — only the CLI's stdout reporting changes.
+- [x] Existing cross-pool peer send behavior (prefix-reuse, `build_agent_comm_message` XML with `<reply_contract>`) is preserved — only the CLI's stdout reporting changes.
 - [x] Existing subagent → parent reply behavior (`MODEX_PARENT_SESSION_ID` verbatim as target_sid) is preserved — only the CLI's stdout reporting changes.
 - [x] The `TestStaleAppFailClosed` suite (fail-closed when env vars removed/emptied after build) still passes for `send`.
 
@@ -37,9 +37,9 @@ The D2 acceptance criteria include assertions about `send --help` output shape (
 
 The CLI determines the quadrant from two inputs already available without new env vars:
 1. `MODEX_COMM_KIND` env var (`normal` vs. `subagent`) — already set by `ExternalEnvBuilder`.
-2. Target agent kind (NATIVE vs. EXTERNAL_CODING) — derivable from `MODEX_AGENT_POOL_MAP` + the existing pool/agent registry, OR from whether `MODEX_TARGETS` lists the agent as external. The implementation should reuse whatever signal the existing `send` command already uses to decide `build_dispatch_xml` vs. `build_peer_agent_message`.
+2. Target agent kind (NATIVE vs. EXTERNAL) — derivable from `MODEX_AGENT_POOL_MAP` + the existing pool/agent registry, OR from whether `MODEX_TARGETS` lists the agent as external. The implementation should reuse whatever signal the existing `send` command already uses to decide `build_dispatch_message` vs. `build_agent_comm_message`.
 
-If the target kind cannot be determined at CLI time (e.g., the agent is not in `MODEX_TARGETS`), the implementation should default to NATIVE (the more informative quadrant — includes `output_path`/`trace_dir`). This is a safe default because external-coding subagents are a configured minority.
+If the target kind cannot be determined at CLI time (e.g., the agent is not in `MODEX_TARGETS`), the implementation should default to NATIVE (the more informative quadrant — includes `output_path`/`trace_dir`). This is a safe default because external subagents are a configured minority.
 
 ### Not-found race (accepted)
 

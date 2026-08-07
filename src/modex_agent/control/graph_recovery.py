@@ -1,0 +1,248 @@
+"""`GraphRecoveryService` — recovery for graph instances.
+
+Two recovery types share the SAME flow (rule 15: converge — single
+recovery path, no per-type branches):
+
+- **Fault recovery** (`recover_crashed`) — auto-pick `CRASHED` instances
+  on startup, reload via coordinator, re-dispatch.
+- **Manual recovery** (`resume`) — reload a `PAUSED` instance on
+  external `resume()`. `STOPPED` is terminal (manual termination) and
+  cannot be resumed.
+
+The shared per-instance flow is:
+
+1. Load `GraphMetadata` from `GraphInstanceStore`.
+2. Reconstruct the coordinator via `coordinator_factory.create(gid,
+   instance_store)` — the factory assembles the node state store and
+   deliver store factory internally. The framework default is
+   `NullCoordinatorFactory` (no-op persistence); a SQLite-backed factory
+   would recover state from DB.
+3. Create `GraphInstance(metadata, coordinator)`.
+4. Set status to `RUNNING` (in `GraphInstanceStore`).
+5. Call `engine_factory.create_and_run(instance)` — the factory (wired to
+   `GraphOrchestrator._run_existing_instance` via `_EngineFactoryAdapter`)
+   handles eviction, node registration, registry insertion, and
+   `_execute`. The scheduler's `run_async` calls
+   `coordinator.load_for_recovery → _restore_from_recovery → re-dispatch`.
+
+`GraphEngineFactory` is an ABC (rule 7) because actual engine creation
+depends on business wiring (node registries, state classes, etc.) which
+lives in the bot factory. It is the second consumer of
+`GraphInstance` after `GraphSpecCompiler` — a real seam (rule 6).
+
+Recovery state loading happens INSIDE `ParallelScheduler.run_async`
+(called by the engine factory) — the scheduler calls
+`ctx.coordinator.load_for_recovery()` at the top of `run_async`, which
+returns a `RecoveryContext` with metadata + node_states + rebuilt
+main_state. The scheduler rebuilds its in-memory state from this context.
+"""
+
+from __future__ import annotations
+
+import logging
+from abc import ABC, abstractmethod
+
+from modex_graph import (
+    CoordinatorFactory,
+    GraphInstance,
+    GraphInstanceStatus,
+    GraphInstanceStore,
+    NullCoordinatorFactory,
+)
+
+logger = logging.getLogger(__name__)
+
+_NULL_COORDINATOR_FACTORY = NullCoordinatorFactory()
+
+
+class GraphEngineFactory(ABC):
+    """ABC for creating and running a `GraphEngine` for a recovered instance.
+
+    The factory is the business-wiring seam (rule 6: the second consumer
+    of `GraphInstance` after `GraphSpecCompiler` — a real seam, not a
+    hypothetical one). The actual engine creation depends on
+    node registries, state classes, `GraphSpecStore`, etc., which live in
+    the bot factory. The framework provides the contract; the bot
+    factory provides the implementation.
+
+    The implementation must:
+
+    - Load the `GraphSpec` from `instance.spec_id` via `GraphSpecStore`.
+    - Compile it via `GraphSpecCompiler` to get a `CompiledGraph`.
+    - Construct a `GraphEngine` and a `GraphContext` with a coordinator
+      wired to the same persistence stores used in the original run.
+    - Call `engine.run_async(ctx)` so the scheduler's `run_async` calls
+      `coordinator.load_for_recovery()` and restores state.
+    """
+
+    @abstractmethod
+    async def create_and_run(self, instance: GraphInstance) -> None:
+        """Create a `GraphEngine` for the instance and run it.
+
+        Recovery = `run_async` with the existing `graph_instance_id`.
+        The scheduler's `run_async` calls `coordinator.load_for_recovery()`
+        at the top; if prior state exists, state is rebuilt via
+        `_restore_from_recovery` and pending dispatches are re-dispatched.
+        If no prior state exists, fresh start.
+
+        Args:
+            instance: The `GraphInstance` to recover. Its
+                `graph_instance_id` is the persistence key.
+        """
+        ...
+
+
+class GraphRecoveryService:
+    """Recovery service for graph instances.
+
+    Two recovery types sharing the same flow (rule 15: converge —
+    single recovery path for both auto and manual):
+
+    - **Fault recovery** (`recover_crashed`) — auto-pick `CRASHED`
+      instances on startup, reload via coordinator, re-dispatch.
+    - **Manual recovery** (`resume`) — reload a `PAUSED` instance on
+      external `resume()`. `STOPPED` is terminal (manual termination)
+      and cannot be resumed; `CRASHED` is recovered via
+      `recover_crashed()`; `COMPLETED`/`FAILED` are terminal.
+
+    The only difference between the two types is the trigger condition
+    and the status filter. The per-instance recovery flow is identical:
+    load metadata → reconstruct coordinator → create GraphInstance →
+    set status to `RUNNING` → call `engine_factory.create_and_run`.
+
+    The engine factory (wired to `GraphOrchestrator._run_existing_instance`
+    via `_EngineFactoryAdapter`) handles eviction, node registration,
+    registry insertion, and `_execute`. Recovery state loading is
+    delegated to `ParallelScheduler.run_async` inside the engine factory's
+    `create_and_run` call, which calls `coordinator.load_for_recovery()`.
+    """
+
+    def __init__(
+        self,
+        instance_store: GraphInstanceStore,
+        engine_factory: GraphEngineFactory,
+        *,
+        coordinator_factory: CoordinatorFactory = _NULL_COORDINATOR_FACTORY,
+    ) -> None:
+        self._instance_store = instance_store
+        self._engine_factory = engine_factory
+        self._coordinator_factory = coordinator_factory
+
+    async def recover_crashed(self) -> list[int]:
+        """Fault recovery: find all non-terminal crashed instances, reload, re-dispatch.
+
+        Called on startup (or on-demand by an operator) to auto-recover
+        instances that crashed mid-execution. Picks up both explicit
+        ``CRASHED`` instances and orphan ``RUNNING`` instances — a process
+        kill leaves the graph in ``RUNNING`` because the in-process
+        exception handler never runs.
+
+        ``PAUSED`` is NOT auto-recovered (requires explicit ``resume()``);
+        ``STOPPED``/``COMPLETED``/``FAILED`` are terminal.
+
+        Returns:
+            The list of recovered ``graph_instance_id``s. Callers (e.g.
+            the bot factory) may log or expose this for observability.
+        """
+        crashed = self._instance_store.load_by_status(
+            GraphInstanceStatus.CRASHED
+        )
+        orphaned = self._instance_store.load_by_status(
+            GraphInstanceStatus.RUNNING
+        )
+        instances = [
+            GraphInstance(
+                m,
+                self._coordinator_factory.create(m.graph_instance_id, self._instance_store),
+            )
+            for m in crashed + orphaned
+        ]
+        return await self._recover_instances(instances)
+
+    async def resume(self, graph_instance_id: int) -> None:
+        """Manual recovery: reload a `PAUSED` instance, re-dispatch.
+
+        Triggered by external `resume()` (REST/CLI via
+        `GraphControlService`). Only `PAUSED` instances can be manually
+        resumed — `STOPPED` is a terminal status (manual termination)
+        and cannot be resumed; `CRASHED` instances are auto-recovered by
+        `recover_crashed()`; `COMPLETED`/`FAILED` are terminal;
+        `RUNNING` means the instance is already active.
+
+        Args:
+            graph_instance_id: The instance to resume.
+
+        Raises:
+            ValueError: If the instance does not exist, or its status
+                is not `PAUSED`.
+        """
+        metadata = self._instance_store.load(graph_instance_id)
+        if metadata is None:
+            raise ValueError(
+                f"Graph instance {graph_instance_id} not found; "
+                "cannot resume"
+            )
+        if metadata.status == GraphInstanceStatus.STOPPED:
+            raise ValueError(
+                f"Cannot resume instance {graph_instance_id}: "
+                f"STOPPED is a terminal status (manual termination); "
+                "only PAUSED instances can be resumed."
+            )
+        if metadata.status != GraphInstanceStatus.PAUSED:
+            raise ValueError(
+                f"Cannot resume instance {graph_instance_id}: "
+                f"status is {metadata.status!r}; only PAUSED instances "
+                "can be resumed (STOPPED/COMPLETED/FAILED are terminal, "
+                "CRASHED is auto-recovered via recover_crashed(), "
+                "RUNNING means already active)."
+            )
+        instance = GraphInstance(
+            metadata,
+            self._coordinator_factory.create(graph_instance_id, self._instance_store),
+        )
+        await self._recover_instances([instance])
+
+    async def _recover_instances(
+        self, instances: list[GraphInstance]
+    ) -> list[int]:
+        """Shared recovery flow (rule 15: single path for both types).
+
+        For each instance (already constructed with a reconstructed
+        coordinator via ``coordinator_factory.create``):
+
+        1. Set status to `RUNNING` (in `GraphInstanceStore`).
+        2. Call `engine_factory.create_and_run(instance)` — the factory
+           (wired to ``GraphOrchestrator._run_existing_instance``) handles
+           eviction, node registration, registry insertion, and
+           `_execute`. The engine loads recovery state via
+           `coordinator.load_for_recovery()` and re-dispatches.
+
+        Per-instance failures are isolated: if one instance raises, the
+        remaining are still attempted. Failed instances are left in
+        CRASHED status (set by the orchestrator's ``except Exception``
+        handler) and are NOT included in the returned list.
+
+        Returns the list of successfully recovered ``graph_instance_id``s.
+        """
+        recovered: list[int] = []
+        for instance in instances:
+            self._instance_store.update_status(
+                instance.graph_instance_id,
+                GraphInstanceStatus.RUNNING,
+            )
+            try:
+                await self._engine_factory.create_and_run(instance)
+                recovered.append(instance.graph_instance_id)
+            except Exception:
+                logger.exception(
+                    "Recovery failed for graph instance %s; "
+                    "continuing to next candidate",
+                    instance.graph_instance_id,
+                )
+        return recovered
+
+
+__all__ = [
+    "GraphEngineFactory",
+    "GraphRecoveryService",
+]

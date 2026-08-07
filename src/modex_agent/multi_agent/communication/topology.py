@@ -32,14 +32,14 @@ class TopologyPolicy:
             return None
         if target.kind == AgentCommKind.SUBAGENT:
             return (
-                "Subagents can only reply to normal agents; send subagent-to-"
-                "subagent requests through a normal agent."
+                "Subagents can only reply to peer agents; send subagent-to-"
+                "subagent requests through a peer agent."
             )
         parent_name = resolve_parent_name(sender_context)
         if parent_name is not None and target.name != parent_name:
             return (
                 f"Subagents can only address the agent that assigned their task "
-                f"({parent_name!r}); routing to other normal agents "
+                f"({parent_name!r}); routing to other peer agents "
                 f"({target.name!r}) is not allowed. Send the request through "
                 f"your parent."
             )

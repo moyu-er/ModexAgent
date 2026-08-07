@@ -481,18 +481,15 @@ class TestCheckpointRoundTrip:
         Regression: ADR-0034 D1 Stage 2 migrated ToolCallState to BaseModel,
         but ToolResult was a plain class with arbitrary_types_allowed=True.
         model_dump(mode="json") raised PydanticSerializationError on
-        ToolResult. Fix: ToolResult migrated to BaseModel with a
-        field_serializer for the result: Any field.
+        ToolResult. Fix: ToolResult migrated to BaseModel with content
+        as the source of truth (list[ContentPart]).
         """
         from modex_agent.core.tool_manager import ToolResult
 
         state = _make_state()
         batch = state.tool_batches[0]
-        batch.calls[0].result = ToolResult(
-            tool_name="read_file",
-            result="file contents here",
-            execution_time=0.05,
-            call_id="call-1",
+        batch.calls[0].result = ToolResult.from_text(
+            "read_file", "file contents here", execution_time=0.05, call_id="call-1"
         )
         batch.calls[0].status = ToolCallStatus.COMPLETED
 
@@ -501,7 +498,7 @@ class TestCheckpointRoundTrip:
         r_call = r_batch.calls[0]
         assert r_call.result is not None
         assert r_call.result.tool_name == "read_file"
-        assert r_call.result.result == "file contents here"
+        assert r_call.result.message_content() == "file contents here"
         assert r_call.result.execution_time == 0.05
         assert r_call.result.call_id == "call-1"
         assert r_call.result.success is True

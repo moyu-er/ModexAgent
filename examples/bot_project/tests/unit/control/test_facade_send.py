@@ -87,7 +87,6 @@ def _make_send_result(
     invocation_id: str | None = "inv456",
     created_new_task: bool = True,
     is_peer_send: bool = False,
-    output_path: Path | None = Path("/data/output.md"),
     trace_dir: Path | None = Path("/data/trace"),
 ) -> AgentSendResult:
     return AgentSendResult(
@@ -97,7 +96,6 @@ def _make_send_result(
         invocation_id=invocation_id,
         created_new_task=created_new_task,
         is_peer_send=is_peer_send,
-        output_path=output_path,
         trace_dir=trace_dir,
     )
 
@@ -266,7 +264,6 @@ class TestPeerNormalSend:
             is_peer_send=True,
             created_new_task=False,
             invocation_id=None,
-            output_path=None,
             trace_dir=None,
         )
         facade, _ = _make_facade(target=target, send_result=result)
@@ -275,7 +272,6 @@ class TestPeerNormalSend:
         assert send_result.dispatch_outcome == DispatchOutcome.NOT_APPLICABLE
         assert send_result.is_peer_send is True
         assert send_result.is_external_target is False
-        assert send_result.output_path is None
         assert send_result.trace_dir is None
         assert send_result.invocation_id is None
 
@@ -308,7 +304,6 @@ class TestParentReply:
             is_peer_send=False,
             created_new_task=False,
             invocation_id=None,
-            output_path=None,
             trace_dir=None,
             session_id="parent.session",
         )
@@ -348,24 +343,7 @@ class TestNativeSubagentDispatch:
         assert send_result.is_external_target is False
         assert send_result.invocation_id == "inv789"
         assert send_result.session_id == "inv789.coder"
-        assert send_result.output_path == Path("/data/output.md")
         assert send_result.trace_dir == Path("/data/trace")
-
-    @pytest.mark.asyncio
-    async def test_output_path_sourced_from_agent_send_result(self) -> None:
-        target = _make_target(kind=AgentCommKind.SUBAGENT)
-        expected_output = Path("/custom/output.md")
-        expected_trace = Path("/custom/trace")
-        result = _make_send_result(
-            created_new_task=True,
-            output_path=expected_output,
-            trace_dir=expected_trace,
-        )
-        facade, _ = _make_facade(target=target, send_result=result)
-        send_result = await facade.send(_make_request())
-
-        assert send_result.output_path == expected_output
-        assert send_result.trace_dir == expected_trace
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +356,7 @@ class TestExternalSubagentDispatch:
     async def test_external_target_derived_from_execution_strategy(self) -> None:
         target = _make_target(
             kind=AgentCommKind.SUBAGENT,
-            execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            execution_strategy=ExecutionStrategyKind.EXTERNAL,
         )
         result = _make_send_result(
             target_kind=AgentCommKind.SUBAGENT,
@@ -598,7 +576,7 @@ class TestInvocationIdExistence:
     async def test_external_subagent_with_invocation_id_still_checks(self) -> None:
         target = _make_target(
             kind=AgentCommKind.SUBAGENT,
-            execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            execution_strategy=ExecutionStrategyKind.EXTERNAL,
         )
         result = _make_send_result(
             target_kind=AgentCommKind.SUBAGENT,

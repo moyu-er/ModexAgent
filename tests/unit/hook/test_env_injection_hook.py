@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.agents.external_coding.types import ExternalEnvSpec
+from modex_agent.agents.external.types import ExternalEnvSpec
 from modex_agent.core.agent import AgentCommKind, AgentContext
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig

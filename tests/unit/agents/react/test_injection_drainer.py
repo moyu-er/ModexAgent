@@ -6,14 +6,19 @@ the call site changed from `agent._drain_injections(ctx)` to
 `InjectionDrainer().drain(ctx)`.
 """
 
+from __future__ import annotations
+
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from modex_agent.agents.react.injection_drainer import InjectionDrainer
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity, TurnStateBase
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.core.session_id import SessionInfo
+
+if TYPE_CHECKING:
+    from modex_agent.core.capabilities import ModelCapabilities
 
 
 class _FakeHistory:
@@ -59,7 +64,7 @@ class _FakeContext:
     async def to_messages(self):
         return list(self.messages)
 
-    def get_tool_descriptions(self):
+    def get_tool_descriptions(self, caps: ModelCapabilities | None = None):
         return None
 
 

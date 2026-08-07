@@ -70,7 +70,7 @@ async def test_human_dm_round_trips_approval_and_attachments() -> None:
     server = InMemoryInboxServer()
     producer = InboxProducer(server=server)
     consumer = InboxConsumer(server=server)
-    bus = LocalAgentMessageBus(producer=producer, consumer=consumer, broker=broker)
+    bus = LocalAgentMessageBus(producer=producer, consumer=consumer)
 
     factory = MagicMock()
     factory.create_agent = AsyncMock()
@@ -101,9 +101,7 @@ async def test_human_dm_round_trips_approval_and_attachments() -> None:
     try:
         # Build a REAL InputMessage carrying both an approval decision and a
         # resolved attachment — the full C2 payload surface.
-        decision = ApprovalDecisionInput(
-            tool_call_id="call_abc123", action=ApprovalAction.ALLOW
-        )
+        decision = ApprovalDecisionInput(tool_call_id="call_abc123", action=ApprovalAction.ALLOW)
         attachment = Attachment(
             id="att-1",
             kind=Kind.IMAGE,

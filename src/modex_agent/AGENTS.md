@@ -24,8 +24,8 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | Module | Files | Subdirectories | Purpose |
 |--------|-------|----------------|---------|
 | `core/` | 25 py | `skills/`, `experience/` | ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, `SessionArtifactCleaner`/`SessionDatabaseCleaner`, types (see `core/AGENTS.md`). The graph engine was extracted to `modex_graph` (ADR-0033). |
-| `agents/` | 2 py | `react/`, `external_coding/`, `experience/`, `summarizer/` | Agent implementations — `ReActAgent` (built on `modex_graph`), `ExternalCodingAgent` (Pi/OpenCode CLI harness), `ExperienceReviewAgent`. The deprecated `SummarizerAgent` was removed (ADR-0033 D10). (see `agents/AGENTS.md`) |
-| `memory/` | 17 py | `consolidation/`, `core/`, `injection/`, `layers/`, `pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Three-layer memory — session/archive/core, compaction, consolidation, governance, injection. Split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) + `MemoryStoreBundle` (see `memory/AGENTS.md`) |
+| `agents/` | 2 py | `react/`, `external/`, `experience/`, `summarizer/` | Agent implementations — `ReActAgent` (built on `modex_graph`), `ExternalAgent` (Pi/OpenCode CLI harness), `ExperienceReviewAgent`, `SessionCompactorAgent` (tool-less single-LLM-call compact summary). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). (see `agents/AGENTS.md`) |
+| `memory/` | 18 py | `consolidation/`, `core/`, `injection/`, `layers/`, `pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Three-layer memory — session/archive/core, compaction, consolidation, governance, injection. Split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) + `MemoryStoreBundle` (see `memory/AGENTS.md`) |
 | `persistence/` | 26 py | `adapters/`, `managers/`, `migrations/` | Hybrid persistence layer (ADR-0023, ADR-0028~0031). `ConnectionManager` + `MigrationRunner` (per-workspace SQLite), `PersistenceBackend`/`PersistenceConfig`, `ColumnProjection` (ADR-0030), `SqliteSessionDatabaseCleaner`, SQLite adapters for the split store + runtime-state ABCs. All timestamps are INTEGER ms (ADR-0029) |
 | `multi_agent/` | 20 py | `inbox/` | Star-topology orchestration — `AgentPool`, inbox (`InboxMQ`), `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
 | `tools/` | 8 py | `ast/`, `lsp/`, `mcp/`, `overflow/`, `standard/`, `terminal/`, `web/` | Tool subsystem — registry, executor, MCP, terminal (pexpect/tmux/winpty), overflow, standard tools (see `tools/AGENTS.md`) |
@@ -34,7 +34,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `runtime/` | 9 py | — | `AgentRuntime`, `AgentRuntimeServices`, `TurnStateStore`, codec, snapshot policy (see `runtime/AGENTS.md`) |
 | `commands/` | 7 py | — | Slash command processor — parse, two-stage dispatch, approval/continue/transform actions (see `commands/AGENTS.md`) |
 | `control/` | 6 py | — | Control transport — `InMemoryControlChannel` (the live `/stop` + pause mechanism), `ControlCommand`, `AgentControlError` exceptions (see `control/AGENTS.md`) |
-| `hook/` | 4 py | `builtin/` | Lifecycle hooks — `HookRunner`, `HookPoint`, 7 builtin hooks (see `hook/AGENTS.md`) |
+| `hook/` | 4 py | `builtin/` | Lifecycle hooks — `HookRunner`, `HookPoint`, 6 builtin hooks (see `hook/AGENTS.md`) |
 | `interceptor/` | 4 py | `builtin/` | AOP interceptor chain — `InterceptorChain`, 3 builtin interceptors (see `interceptor/AGENTS.md`) |
 | `ioc/` | 2 py | `configs/`, `factories/` | `AppConfig` (Pydantic), 13 typed configs, 8 factory modules (see `ioc/AGENTS.md`) |
 | `approval/` | 6 py | — | Tiered tool approval — tiers, decisions, response parsing (see `approval/AGENTS.md`) |

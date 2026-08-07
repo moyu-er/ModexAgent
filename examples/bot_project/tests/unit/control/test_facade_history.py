@@ -5,7 +5,7 @@ mocked ``TranscriptStore`` returns sample events, mocked ``SessionStore``
 returns sample ``SessionInfo``, mocked ``PoolInstance`` carries ``execution_strategy``
 with the appropriate ``execution_strategy``. Verifies the facade produces the
 correct :class:`HistoryResult` for both native (``react``) and external coding
-(``external_coding``) strategies — projection, ordering, limit, soft-delete
+(``external``) strategies — projection, ordering, limit, soft-delete
 inclusion, error paths.
 
 The workspace resolver, message-store provider, and transcript-store provider
@@ -169,8 +169,8 @@ def _make_pool_spec(
     strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
 ) -> PoolSpec:
     kwargs: dict[str, Any] = {"agent_name": _AGENT_NAME, "execution_strategy": strategy}
-    if strategy == ExecutionStrategyKind.EXTERNAL_CODING:
-        from modex_agent.agents.external_coding.paths import ProviderKind
+    if strategy == ExecutionStrategyKind.EXTERNAL:
+        from modex_agent.agents.external.paths import ProviderKind
 
         kwargs["provider_kind"] = ProviderKind.PI
     return PoolSpec(
@@ -216,7 +216,7 @@ def _make_facade(
     empty-map case (the default is ``{_AGENT_NAME: _POOL}``).
 
     Pass ``transcript_events`` to seed the mock ``TranscriptStore.load`` return
-    value (used by external_coding tests). Pass ``transcript_store_none=True``
+    value (used by external tests). Pass ``transcript_store_none=True``
     to make the transcript-store provider raise ``ControlFacadeError(422,
     code="transcript_store_unavailable")``.
     """
@@ -248,6 +248,11 @@ def _make_facade(
     mock_pool_instance.main_execution_strategy = effective_pool_spec.main.execution_strategy
     mock_pool_instance.main_agent_name = effective_pool_spec.main_agent_name
     mock_pool_instance.target_store.list = MagicMock(return_value=[])
+    mock_pool_instance.target_store.get = MagicMock(
+        return_value=MagicMock(
+            execution_strategy=effective_pool_spec.main.execution_strategy
+        )
+    )
 
     mock_resources = MagicMock()
     mock_resources.session_index_store = mock_session_store
@@ -502,17 +507,17 @@ class TestErrorPaths:
 
 
 class TestTranscriptHistory:
-    """Seam 1 — external_coding strategy reads from the observable transcript."""
+    """Seam 1 — external strategy reads from the observable transcript."""
 
     @pytest.mark.asyncio
     async def test_returns_observable_transcript_source(self) -> None:
-        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL_CODING)
+        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL)
         facade, _, _ = _make_facade(
             pool_spec=spec, transcript_events=_make_transcript_events()
         )
         result = await facade.history(_make_request())
         assert result.source == HistorySource.OBSERVABLE_TRANSCRIPT
-        assert result.execution_strategy == "external_coding"
+        assert result.execution_strategy == "external"
         assert result.session_id == _SESSION_ID
         assert result.agent_name == _AGENT_NAME
         assert result.pool == _POOL
@@ -520,7 +525,7 @@ class TestTranscriptHistory:
 
     @pytest.mark.asyncio
     async def test_loads_exact_session_id_no_prefix_fanin(self) -> None:
-        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL_CODING)
+        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL)
         facade, _, mock_transcript = _make_facade(
             pool_spec=spec, transcript_events=_make_transcript_events()
         )
@@ -529,7 +534,7 @@ class TestTranscriptHistory:
 
     @pytest.mark.asyncio
     async def test_materializes_events_before_limiting(self) -> None:
-        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL_CODING)
+        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL)
         facade, _, _ = _make_facade(
             pool_spec=spec, transcript_events=_make_transcript_events()
         )
@@ -540,7 +545,7 @@ class TestTranscriptHistory:
 
     @pytest.mark.asyncio
     async def test_coalesces_text_blocks_per_turn(self) -> None:
-        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL_CODING)
+        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL)
         facade, _, _ = _make_facade(
             pool_spec=spec, transcript_events=_make_transcript_events()
         )
@@ -551,7 +556,7 @@ class TestTranscriptHistory:
 
     @pytest.mark.asyncio
     async def test_pairs_tool_calls_with_results_by_call_id(self) -> None:
-        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL_CODING)
+        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL)
         facade, _, _ = _make_facade(
             pool_spec=spec, transcript_events=_make_transcript_events()
         )
@@ -563,7 +568,7 @@ class TestTranscriptHistory:
 
     @pytest.mark.asyncio
     async def test_message_id_absent_from_transcript_records(self) -> None:
-        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL_CODING)
+        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL)
         facade, _, _ = _make_facade(
             pool_spec=spec, transcript_events=_make_transcript_events()
         )
@@ -575,7 +580,7 @@ class TestTranscriptHistory:
 
     @pytest.mark.asyncio
     async def test_no_fabricated_fields(self) -> None:
-        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL_CODING)
+        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL)
         facade, _, _ = _make_facade(
             pool_spec=spec, transcript_events=_make_transcript_events()
         )
@@ -588,7 +593,7 @@ class TestTranscriptHistory:
 
     @pytest.mark.asyncio
     async def test_limit_applied_to_logical_records_not_events(self) -> None:
-        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL_CODING)
+        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL)
         facade, _, mock_transcript = _make_facade(
             pool_spec=spec, transcript_events=_make_transcript_events()
         )
@@ -601,7 +606,7 @@ class TestTranscriptHistory:
 
     @pytest.mark.asyncio
     async def test_ordering_newest_first(self) -> None:
-        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL_CODING)
+        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL)
         facade, _, _ = _make_facade(
             pool_spec=spec, transcript_events=_make_transcript_events()
         )
@@ -613,7 +618,7 @@ class TestTranscriptHistory:
 
     @pytest.mark.asyncio
     async def test_reasoning_blocks_discarded(self) -> None:
-        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL_CODING)
+        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL)
         facade, _, _ = _make_facade(
             pool_spec=spec, transcript_events=_make_transcript_events()
         )
@@ -625,7 +630,7 @@ class TestTranscriptHistory:
 class TestTranscriptEmpty:
     @pytest.mark.asyncio
     async def test_empty_transcript_returns_empty_items(self) -> None:
-        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL_CODING)
+        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL)
         facade, _, _ = _make_facade(pool_spec=spec, transcript_events=[])
         result = await facade.history(_make_request())
         assert result.items == []
@@ -635,7 +640,7 @@ class TestTranscriptEmpty:
 class TestTranscriptStoreUnavailable:
     @pytest.mark.asyncio
     async def test_transcript_store_none_raises_422(self) -> None:
-        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL_CODING)
+        spec = _make_pool_spec(strategy=ExecutionStrategyKind.EXTERNAL)
         facade, _, _ = _make_facade(
             pool_spec=spec, transcript_store_none=True
         )

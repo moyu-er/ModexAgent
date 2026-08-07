@@ -24,6 +24,12 @@ _ANSI_PATTERN = re.compile(
     r"|\?\d+[hl])"  # DECSET/DECRST like \x1b[?25l
 )
 
+# Non-CSI escape sequences: ESC + single char (e.g. \x1b= enter keypad,
+# \x1b> exit keypad, \x1bD index, \x1bM reverse index).  These are
+# emitted by less/vim/etc. on entry/exit and leak into model-facing
+# output if not stripped.
+_ESC_CHAR_PATTERN = re.compile(r"\x1b[=>DMEcZ78]")
+
 # OSC title sequences: \x1b]0;title\x07 or \x1b]0;title\x1b\\
 _OSC_PATTERN = re.compile(r"\x1b\][^\x07]*\x07|\x1b\][^\x1b]*\x1b\\")
 
@@ -36,6 +42,7 @@ def _strip_ansi_and_da1(text: str) -> str:
     """
     text = _DA1_PATTERN.sub("", text)
     text = _ANSI_PATTERN.sub("", text)
+    text = _ESC_CHAR_PATTERN.sub("", text)
     return text
 
 
@@ -43,12 +50,14 @@ def sanitize_terminal_output(text: str) -> str:
     """Strip terminal control protocols from PTY output for model-facing tool results.
 
     Removes DA1, CSI (cursor/color/erase/DEC private), OSC title sequences,
-    and carriage-return repaint noise.  Preserves Unicode text, real command
-    output, intentional line breaks, and literal escaped text.
+    non-CSI escape chars (keypad mode etc.), and carriage-return repaint
+    noise.  Preserves Unicode text, real command output, intentional line
+    breaks, and literal escaped text.
     """
     text = _OSC_PATTERN.sub("", text)
     text = _ANSI_PATTERN.sub("", text)
     text = _DA1_PATTERN.sub("", text)
+    text = _ESC_CHAR_PATTERN.sub("", text)
     # Normalize real line endings first, then handle standalone \r repaint.
     text = text.replace("\r\n", "\n")
     # Standalone \r repaint: per logical line, keep only text after the last \r.
@@ -160,6 +169,7 @@ def is_waiting_for_input(output: str) -> bool:
                 continue
         return True
     return False
+
 
 PROMPT_SUFFIXES: tuple[str, ...] = (
     "$ ",

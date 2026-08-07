@@ -94,10 +94,10 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/input_pipeline/stages/set_channel.py` | S4 — conversation channel tagging (runs first in IM pipeline) |
 | `bot/service/core.py` | `BotService` — initialization, workspace context, pool creation, pipeline wiring |
 | `bot/service/builders.py` | Tool registration, MCP tools, subagent memory/skill construction, terminal setup |
-| `bot/service/pool_builder.py` | Pool mode assembly — creates `AgentPool`, subagent descriptors |
+| `bot/service/pool/` | Pool mode assembly — creates `AgentPool`, subagent descriptors (split into 11 focused modules) |
 | `bot/service/pool_router.py` | `PoolRouter` — session→pool dispatch, `PoolSessionStore` persistence |
 | `bot/service/pool_instance.py` | `PoolInstance` — pool runtime holder (config, pool, main_agent_name) |
-| `bot/workspace/wiring.py` | `build_workspace_stack` / `build_single_workspace_stack` — workspace assembly |
+| `bot/workspace/wiring/` | `build_workspace_stack` / `build_single_workspace_stack` — workspace assembly (split into 4 modules) |
 | `bot/workspace/handle.py` | `PoolWorkspaceResources` — per-workspace resource bundle |
 | `bot/workspace/dispatch.py` | `WorkspaceMessageDispatcher` — per-message workspace routing |
 | `bot/workspace/pool_data.py` | `PoolData` — frozen per-pool data bundle |
@@ -105,7 +105,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `modex_agent/workspace/routing.py` | `SessionWorkspaceMap` — per-session workspace pointer |
 | `bot/service/web_ui_service.py` | `WebUIService` — the single IM + WebUI entry point; auto-discovers every `bot/adapters/register_*.py` (QQ / Telegram / WebSocket), assembles and starts the HTTP/WS server |
 | `bot/service/qq_service.py` | `QQBotService` — standalone QQ-only `BotService` variant (the CLI start path uses `WebUIService`) |
-| `bot/adapters/qq.py` | QQ platform input/output adapters (C2C + group + file upload) |
+| `bot/adapters/qq/` | QQ platform input/output adapters (C2C + group + file upload) — split into 5 modules |
 | `bot/adapters/telegram.py` | Telegram input/output adapters (long-polling inbound, HTML chunked outbound) |
 | `bot/adapters/web_socket.py` | WebSocket input adapter for WebUI real-time chat |
 | `bot/adapters/fan_in.py` | Multi-agent output fan-in for WebUI (merges agents' streams to one WS) |
@@ -113,7 +113,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/webui/server.py` | aiohttp REST+WS server (sessions, pools, workspace APIs) |
 | `bot/webui/transcript_store.py` | Per-agent transcript persistence (JSONL) for history replay |
 | `bot/webui/events.py` | WebUI event types (model deltas, tool calls, turn lifecycle) |
-| `bot/webui/emitter.py` | Emits WebUI events via fan-in adapter |
+| `bot/webui/emitter/` | Emits WebUI events via fan-in adapter — split into 4 modules |
 | `modexbot/cli.py` | CLI entry point — 3-layer process discovery for start/stop/restart |
 | `modexbot/main.py` | CLI→service bootstrap |
 | `config/bot_config.yml` | Agent, memory, tool, runtime, observability config. `${ENV_VAR}` interpolation |
@@ -123,20 +123,20 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 ## Multi-Agent Setup
 
 - `default` pool: General-purpose assistant with file/shell tools, MCP tools (playwright), communication tools + subagents (office-expert).
-- `coder` pool: Main agent (orchestrator) + subagents (explore, coder). Orchestrator handles exploration/planning/review directly; delegates deep investigation to explore and code modification to coder (external_coding).
+- `coder` pool: Main agent (orchestrator) + subagents (explore, coder). Orchestrator handles exploration/planning/review directly; delegates deep investigation to explore and code modification to coder (external).
 - Communication: `send_to_agent` (async inbox-based).
 - `SubagentAutoSendHook` auto-forwards subagent output to parent.
 - Session ID format: `{conversation_id}.{agent_name}[.{invocation_id}]` (via `DefaultSessionIdStrategy`).
 
 ### External coding agent pools (Pi, OpenCode)
 
-External CLI coding agents (Pi, OpenCode) can be registered as NORMAL main agents of their own dedicated pools. A framework-side harness (`ExternalCodingAgent`) executes them through provider backends, and they communicate back through the `modexctl send` CLI. The CLI sends XML-wrapped `<agent_message>` content through the target workspace's `InboxMQ.deliver()` implementation; `modexbot` is a backward-compatible facade over `modexctl`.
+External CLI coding agents (Pi, OpenCode) can be registered as NORMAL main agents of their own dedicated pools. A framework-side harness (`ExternalAgent`) executes them through provider backends, and they communicate back through the `modexctl send` CLI. The CLI sends markdown message content through the target workspace's `InboxMQ.deliver()` implementation; `modexbot` is a backward-compatible facade over `modexctl`.
 
 **Pool configuration** (`config/pools/<name>/pool.yml`):
 
 ```yaml
 main_agent_name: opencode
-execution_strategy: external_coding   # opt-in; default is "react"
+execution_strategy: external   # opt-in; default is "react"
 provider_kind: opencode               # "pi" or "opencode"
 peers:
   - default                           # explicit peer declaration required
@@ -157,26 +157,31 @@ is unavailable. Pi remains per-turn. Cancellation, failed startup, pool
 shutdown, and workspace eviction terminate and reap complete provider process
 trees; normal OpenCode turns retain the warm server for reuse.
 
-**WebUI:** external_coding sessions appear in the WebUI session list with their `.pi` / `.opencode` suffix, alongside every other session. Streaming output (text, reasoning, tool calls/results, errors) is rendered through the canonical `TurnEvent` seam → `WebBotEmitter` projection into existing `ServerEvent`/transcript types. The `PoolEditor` settings view supports configuring external coding provider pools.
+**WebUI:** external sessions appear in the WebUI session list with their `.pi` / `.opencode` suffix, alongside every other session. Streaming output (text, reasoning, tool calls/results, errors) is rendered through the canonical `TurnEvent` seam → `WebBotEmitter` projection into existing `ServerEvent`/transcript types. The `PoolEditor` settings view supports configuring external coding provider pools.
 
-See ADR-0022 and `docs/design/external-coding-agent-integration/` for the full design.
+See ADR-0022 and `docs/design/external-agent-integration/` for the full design.
 
 ## Memory + Experience Presets (Target State)
 
-All native agents receive **baked, non-user-editable** memory + experience
-configuration from a single converged source: `bot/config/memory_defaults.py`.
-Neither `pool.yml` nor `templates/*.yml` may carry a `memory:` or
-`experience:` block — the framework's `MainAgentSpec` / `SubagentSpec` use
-`extra="forbid"` and reject them. Configuration is uniform across all pools;
-per-pool override is not supported.
+All native agents receive memory + experience configuration from the single
+converged source `bot/config/memory_defaults.py`. A main agent's archive/core
+toggle (`MemoryToggle`) is user-editable per pool through the WebUI or the
+`memory:` block in `pool.yml`. The schema enforces the AND relationship: core
+memory can be enabled only when archive memory is enabled.
+
+Detailed configuration remains baked: `ArchiveConfig`/`CoreMemoryConfig`
+internals, dream-engine derivation, session, governance, pruned, and experience
+settings are not per-pool overrides. `templates/*.yml` cannot carry memory or
+experience configuration: `SubagentSpec` has no memory field, so subagents stay
+session-only, and there is no user-editable experience block.
 
 ### Preset surface (`bot/config/memory_defaults.py`)
 
 | Preset | Used by | Contents |
 |---|---|---|
-| `main_agent_memory(max_context_tokens)` | every native main agent | session (token-budget compression, `max_context_tokens` from `model.yml`) + archive (global scope, FIFO 20) + core (global scope, `templates/core`) + dream_engine (600s interval) + governance (tool_chain_repair + lossy_compaction) + pruned + user_retention (default on) |
+| `main_agent_memory(max_context_tokens, archive_enabled, core_enabled)` | every native main agent | session (token-budget compression, `max_context_tokens` from `model.yml`) + governance (tool_chain_repair + lossy_compaction) + pruned. archive/core follow the per-pool `MemoryToggle`; dream is enabled only when both are on. |
 | `main_agent_experience()` | every native main agent | `ExperienceConfig(enabled=True)` — fires `ExperienceReviewHook` |
-| `subagent_memory()` | every native subagent | session + governance (tool_chain_repair only, NO lossy_compaction) + pruned + user_retention (default on). archive/core/dream = None. No experience preset — review is main-agent-only. |
+| `subagent_memory()` | every native subagent | session + governance (tool_chain_repair only, NO lossy_compaction) + pruned. archive/core/dream = None. No experience preset — review is main-agent-only. |
 
 ### Wiring chain (consumers perform NO additional config construction)
 
@@ -207,15 +212,50 @@ pool_builder.create_pool()
             └─ resolver.pruned_manager()               → reuses the parent pool's PrunedManager
 ```
 
-### External (external_coding) exclusion — structural, not config-based
+### Memory lifecycle hooks
+
+Memory cleanup dispatches lifecycle events through a dedicated
+`MemoryHookRunner` (separate from the ReAct `HookRunner`) — no ReAct
+coupling. Two hooks are registered in deterministic order at pool assembly
+(`factory.py`):
+
+1. **`UserNoticeCleanupHook`** (`CleanupTriggeredHook` +
+   `CleanupFinishedHook`) — sends transient user-facing notices
+   ("Consolidating conversation memory, please wait…" / "Memory
+   consolidated.") via `AgentNotificationService.send_notice`. Notices are
+   never written to session memory.
+2. **`TodoReorientationHook`** (`CleanupFinishedHook`, in
+   `modex_agent.memory.cleanup_hooks`) — persists a `<system-reminder>` USER
+   message so the agent re-orients after compaction prunes messages.
+
+Both register via `memory_system.add_cleanup_hook(hook)` on the shared
+`DefaultMemorySystem._hook_runner` (one runner per memory system, passed by
+reference to every `ScopedMessageHistory` — late registration is visible to
+all histories).
+
+**Event flow**: `cleanup_session()` dispatches `CLEANUP_TRIGGERED` (after
+early-return checks, before compact generation) and `CLEANUP_FINISHED`
+(before every `triggered=True` return). Dispatch uses a tuple-snapshot of
+registered hooks with 10s per-hook timeout and log-and-continue error
+isolation — cleanup never aborts due to a hook failure.
+
+**Todo reorientation persistence**: `TodoReorientationHook` detects cleanup
+purely via `cleanup_result.messages_pruned > 0` (event-driven, no heuristic
+history-diff). It persists the reminder through
+`SessionMemoryManager.add_messages` directly (Path A) — NOT
+`ScopedMessageHistory.append` — bypassing `MemoryAppendRecorder` /
+`MemoryProvider` fan-out and preventing cleanup recursion. The reminder is
+visible on the next iteration via `ScopedMessageHistory.to_list()`.
+
+### External (external) exclusion — structural, not config-based
 
 External main agents and subagents are excluded at **three** independent
 points, so the presets never reach them regardless of config:
 
 1. **Subagent**: `AgentTemplate.materialize` (`template.py:100`) early-dispatches
-   to `_materialize_external` when `execution_strategy == EXTERNAL_CODING` —
+   to `_materialize_external` when `execution_strategy == EXTERNAL` —
    skips native memory/tool/skill/hooks assembly entirely.
-2. **Main agent pipeline**: `pool_builder.create_pool` (`pool_builder.py:389`)
+2. **Main agent pipeline**: `pool.create_pool` (`pool/factory.py`)
    takes the external branch, skipping `_wire_main_pipeline` (no governance,
    no hooks, no approval renderer).
 3. **Experience hook**: `wiring._wire_pool_to_resources` (`wiring.py:534`)
@@ -262,7 +302,7 @@ If any of these three is missing, experience degrades silently:
 
 Governance is **derived from memory config**, never configured independently:
 
-- **Main agent**: `pool_builder.py:1105` calls `create_governance(memory)` →
+- **Main agent**: `pool/pipeline_wiring.py` calls `create_governance(memory)` →
   `CompositeGovernance` with `LossyContentCompactionGovernance` (truncates
   oversized tool_results/assistant/user content per `LossyConfig`) +
   `ToolChainRepairGovernance` (repairs broken tool_call/tool_result pairing
@@ -354,14 +394,3 @@ cd examples/bot_project/webui && npm test -- --run
 Backend tests cover WebUI endpoints, streaming isolation, pool routing, input pipeline stages, and transcript store. Frontend tests cover the `useWebUIStream` reducer for per-conversation event filtering and `request_id`-based message dedup.
 
 <!-- MANUAL -->
-
-<!-- BEGIN MODEX-RUNTIME (auto-managed; do not edit) -->
-## ModexAgent runtime
-
-You are running inside ModexAgent as an external coding agent.
-
-- Send messages to other agents with `modexctl send --to <name> --content <text>`.
-- Discover routable agents at any time with `modexctl agents`.
-- Your stdout is observed but not delivered; use `modexctl send` for any output that must reach another agent.
-- The `.modex/` directory is framework-managed internal state. Do NOT read, modify, or delete anything under `.modex/`.
-<!-- END MODEX-RUNTIME -->
