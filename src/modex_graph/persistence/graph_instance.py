@@ -28,7 +28,6 @@ these delegate to ``metadata`` via properties.
 Methods:
 
 - ``get_state()`` → delegates to ``coordinator.get_graph_state``.
-- ``load_for_recovery()`` → delegates to ``coordinator.load_for_recovery``.
 
 Status transitions are routed directly through the ``GraphInstanceStore``
 (``store.update_status(gid, status)``) by the orchestrator / recovery /
@@ -45,9 +44,16 @@ Lifecycle status uses the `GraphInstanceStatus` StrEnum
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from ..constants import GraphInstanceStatus
-from .graph_metadata import GraphMetadata, GraphStateSnapshot, RecoveryContext
+from .graph_metadata import GraphMetadata, GraphStateSnapshot
 from .persistence_coordinator import GraphPersistenceCoordinator
+
+if TYPE_CHECKING:
+    from ..compiled_graph import CompiledGraph
+    from ..integration import GraphPayload
+    from ..state import GraphState
 
 __all__ = ["GraphInstance"]
 
@@ -74,17 +80,43 @@ class GraphInstance:
         coordinator: The `GraphPersistenceCoordinator` for this instance.
             Provides node invocation persistence, deliver routing, and
             recovery state loading.
+        compiled: The `CompiledGraph` for this instance. Survives the
+            create→run gap so ``run_instance`` can execute without
+            recompiling. Set by ``create_instance`` and
+            ``_run_existing_instance`` (after node_id recovery).
+        user_input: The typed ``GraphPayload`` from the caller. Survives the
+            create→run gap so ``run_instance`` can construct the
+            ``GraphContext`` with the original user input.
+        initial_state: Optional pre-built ``GraphState``. Survives the
+            create→run gap so ``create_and_run`` can pass a test-provided
+            state through the split. ``None`` means ``run_instance`` creates
+            fresh state from ``state_classes``.
     """
 
-    def __init__(self, metadata: GraphMetadata, coordinator: GraphPersistenceCoordinator) -> None:
+    def __init__(
+        self,
+        metadata: GraphMetadata,
+        coordinator: GraphPersistenceCoordinator,
+        *,
+        compiled: CompiledGraph[Any] | None = None,
+        user_input: GraphPayload | None = None,
+        initial_state: GraphState | None = None,
+    ) -> None:
         """Initialize the runtime graph instance.
 
         Args:
             metadata: The serializable `GraphMetadata` value object.
             coordinator: The persistence coordinator bound to this instance.
+            compiled: The compiled graph; survives the create→run gap.
+            user_input: The caller's typed payload; survives the create→run
+                gap.
+            initial_state: Optional pre-built state for test injection.
         """
         self.metadata = metadata
         self.coordinator = coordinator
+        self.compiled = compiled
+        self.user_input = user_input
+        self.initial_state = initial_state
 
     # ── Properties delegating to metadata ───────────────────────────────
 
@@ -121,11 +153,4 @@ class GraphInstance:
         Delegates to ``coordinator.get_graph_state``.
         """
         return self.coordinator.get_graph_state()
-
-    def load_for_recovery(self) -> RecoveryContext:
-        """Load recovery context: metadata + node states + rebuilt main_state.
-
-        Delegates to ``coordinator.load_for_recovery``.
-        """
-        return self.coordinator.load_for_recovery()
 

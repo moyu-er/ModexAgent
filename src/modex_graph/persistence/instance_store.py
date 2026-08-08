@@ -10,14 +10,14 @@ Provides:
 - `InMemoryGraphInstanceStore` — dict-backed default. In-process only.
 - `SqliteGraphInstanceStore` — SQLite adapter. `CREATE TABLE IF NOT EXISTS
   graph_instances` with the SAME DDL as `001_initial.sql` table 17
-  (idempotent). Field-by-field column mapping for the 5
-  identity/status fields (NOT `model_dump_json` — the table has individual
-  columns for column-level queries). Uses `UPDATE ... SET status = ? WHERE
-  graph_instance_id = ?` for `update_status`.
+  (idempotent). Field-by-field column mapping for identity/status fields plus
+  a JSON column for the node name-to-ID map. Uses `UPDATE ... SET status = ?
+  WHERE graph_instance_id = ?` for `update_status`.
 
-The store persists the 5 ``GraphMetadata`` identity/status fields
+The store persists the ``GraphMetadata`` identity/status fields
 (``graph_instance_id``, ``spec_id``, ``parent_instance_id``,
-``parent_node``, ``status``) as individual columns. Scheduler bookkeeping
+``parent_node``, ``status``) as individual columns and ``node_id_map`` as JSON.
+Scheduler bookkeeping
 (``instance_seq``, ``iteration_count``, ``activated_sources``,
 ``pending_dispatches``) is NOT persisted — it is derived at recovery time
 from the node_states and deliver stores. Callers that need a
@@ -39,6 +39,8 @@ import sqlite3
 from abc import ABC, abstractmethod
 from typing import Any
 
+from pydantic import TypeAdapter
+
 from ..constants import GraphInstanceStatus
 from ._time import now_ms
 from .graph_metadata import GraphMetadata
@@ -50,12 +52,17 @@ _COL_SPEC_ID = "spec_id"
 _COL_PARENT_INSTANCE_ID = "parent_instance_id"
 _COL_PARENT_NODE = "parent_node"
 _COL_STATUS = "status"
+_COL_NODE_ID_MAP_JSON = "node_id_map_json"
 _COL_CREATED_AT = "created_at"
 _COL_UPDATED_AT = "updated_at"
 
+_NODE_ID_MAP_ADAPTER = TypeAdapter(dict[str, str])
+
 # Allowed status values (matches the CHECK constraint in 001_initial.sql
 # table 17). Kept as a module-level constant for parity with the migration.
-_ALLOWED_STATUSES = frozenset({"running", "paused", "stopped", "crashed", "completed", "failed"})
+_ALLOWED_STATUSES = frozenset(
+    {"pending", "running", "paused", "stopped", "crashed", "completed", "failed"}
+)
 
 
 class GraphInstanceStore(ABC):
@@ -155,8 +162,8 @@ class NullGraphInstanceStore(GraphInstanceStore):
     """No-op `GraphInstanceStore` — `load` returns None, writes are silent.
 
     The Null strategy for the persistence coordinator: every method is a
-    no-op and ``load`` returns ``None`` so the coordinator's
-    ``load_for_recovery`` falls back to a fresh default `GraphMetadata`.
+    no-op and ``load`` returns ``None`` so callers fall back to a fresh
+    default `GraphMetadata`.
     """
 
     def save(self, metadata: GraphMetadata) -> None:
@@ -246,10 +253,21 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
     def _init_schema(self) -> None:
         """Create the `graph_instances` table + indexes if they don't exist.
 
+        Detects old-schema tables (missing ``node_id_map_json`` column) and
+        rebuilds them from scratch — SQLite ``ALTER TABLE`` cannot change
+        CHECK constraints (e.g. adding ``'pending'`` to the status CHECK),
+        so a full rebuild is the only correct path. Safe because there is
+        no production data to preserve.
+
         The DDL matches `001_initial.sql` table 17. The `status` CHECK
         constraint is included for parity with the migration.
         """
         conn = self._conn
+        existing = {
+            row[1] for row in conn.execute(f"PRAGMA table_info({_INSTANCE_TABLE})").fetchall()
+        }
+        if existing and _COL_NODE_ID_MAP_JSON not in existing:
+            conn.execute(f"DROP TABLE IF EXISTS {_INSTANCE_TABLE}")
         statuses = ", ".join(f"'{s}'" for s in sorted(_ALLOWED_STATUSES))
         conn.execute(
             f"CREATE TABLE IF NOT EXISTS {_INSTANCE_TABLE} ("
@@ -259,6 +277,8 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
             f"{_COL_PARENT_NODE} TEXT, "
             f"{_COL_STATUS} TEXT NOT NULL DEFAULT 'running' "
             f"CHECK ({_COL_STATUS} IN ({statuses})), "
+            f"{_COL_NODE_ID_MAP_JSON} TEXT NOT NULL DEFAULT '{{}}' "
+            f"CHECK (json_valid({_COL_NODE_ID_MAP_JSON})), "
             f"{_COL_CREATED_AT} INTEGER NOT NULL, "
             f"{_COL_UPDATED_AT} INTEGER NOT NULL"
             f")"
@@ -286,14 +306,15 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
             f"INSERT INTO {_INSTANCE_TABLE} "
             f"({_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
             f"{_COL_PARENT_INSTANCE_ID}, {_COL_PARENT_NODE}, "
-            f"{_COL_STATUS}, "
+            f"{_COL_STATUS}, {_COL_NODE_ID_MAP_JSON}, "
             f"{_COL_CREATED_AT}, {_COL_UPDATED_AT}) "
-            f"VALUES (?, ?, ?, ?, ?, ?, ?) "
+            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             f"ON CONFLICT({_COL_GRAPH_INSTANCE_ID}) DO UPDATE SET "
             f"{_COL_SPEC_ID} = excluded.{_COL_SPEC_ID}, "
             f"{_COL_PARENT_INSTANCE_ID} = excluded.{_COL_PARENT_INSTANCE_ID}, "
             f"{_COL_PARENT_NODE} = excluded.{_COL_PARENT_NODE}, "
             f"{_COL_STATUS} = excluded.{_COL_STATUS}, "
+            f"{_COL_NODE_ID_MAP_JSON} = excluded.{_COL_NODE_ID_MAP_JSON}, "
             f"{_COL_UPDATED_AT} = excluded.{_COL_UPDATED_AT}",
             (
                 metadata.graph_instance_id,
@@ -301,6 +322,7 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
                 metadata.parent_instance_id,
                 metadata.parent_node,
                 metadata.status.value,
+                _NODE_ID_MAP_ADAPTER.dump_json(metadata.node_id_map).decode("utf-8"),
                 ts,
                 ts,
             ),
@@ -310,7 +332,8 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
     def load(self, graph_instance_id: int) -> GraphMetadata | None:
         row = self._conn.execute(
             f"SELECT {_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
-            f"{_COL_PARENT_INSTANCE_ID}, {_COL_PARENT_NODE}, {_COL_STATUS} "
+            f"{_COL_PARENT_INSTANCE_ID}, {_COL_PARENT_NODE}, {_COL_STATUS}, "
+            f"{_COL_NODE_ID_MAP_JSON} "
             f"FROM {_INSTANCE_TABLE} "
             f"WHERE {_COL_GRAPH_INSTANCE_ID} = ?",
             (graph_instance_id,),
@@ -322,7 +345,8 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
     def load_by_status(self, status: GraphInstanceStatus) -> list[GraphMetadata]:
         rows = self._conn.execute(
             f"SELECT {_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
-            f"{_COL_PARENT_INSTANCE_ID}, {_COL_PARENT_NODE}, {_COL_STATUS} "
+            f"{_COL_PARENT_INSTANCE_ID}, {_COL_PARENT_NODE}, {_COL_STATUS}, "
+            f"{_COL_NODE_ID_MAP_JSON} "
             f"FROM {_INSTANCE_TABLE} "
             f"WHERE {_COL_STATUS} = ? "
             f"ORDER BY {_COL_GRAPH_INSTANCE_ID}",
@@ -333,7 +357,8 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
     def load_by_parent(self, parent_instance_id: int) -> list[GraphMetadata]:
         rows = self._conn.execute(
             f"SELECT {_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
-            f"{_COL_PARENT_INSTANCE_ID}, {_COL_PARENT_NODE}, {_COL_STATUS} "
+            f"{_COL_PARENT_INSTANCE_ID}, {_COL_PARENT_NODE}, {_COL_STATUS}, "
+            f"{_COL_NODE_ID_MAP_JSON} "
             f"FROM {_INSTANCE_TABLE} "
             f"WHERE {_COL_PARENT_INSTANCE_ID} = ? "
             f"ORDER BY {_COL_GRAPH_INSTANCE_ID}",
@@ -361,7 +386,8 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
     def _row_to_metadata(row: tuple[Any, ...]) -> GraphMetadata:
         """Construct a `GraphMetadata` from a DB row.
 
-        The 5 identity/status fields come from individual columns.
+        Identity/status fields come from individual columns; the node ID map
+        comes from its typed JSON column.
         """
         (
             graph_instance_id,
@@ -369,6 +395,7 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
             parent_instance_id,
             parent_node,
             status,
+            node_id_map_json,
         ) = row
         return GraphMetadata(
             graph_instance_id=graph_instance_id,
@@ -376,6 +403,7 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
             parent_instance_id=parent_instance_id,
             parent_node=parent_node,
             status=GraphInstanceStatus(status),
+            node_id_map=_NODE_ID_MAP_ADAPTER.validate_json(node_id_map_json),
         )
 
 

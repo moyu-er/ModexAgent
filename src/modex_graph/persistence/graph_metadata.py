@@ -24,6 +24,7 @@ class GraphMetadata(BaseModel):
     parent_instance_id: int | None
     parent_node: str | None
     status: GraphInstanceStatus
+    node_id_map: dict[str, str] = {}
 
 
 class InvocationContext(BaseModel):
@@ -32,7 +33,7 @@ class InvocationContext(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     invocation_id: int
-    node_name: str
+    node_id: str
     version: int
     parent_version: int | None
 
@@ -40,7 +41,7 @@ class InvocationContext(BaseModel):
 class NodeInvocationRecord(BaseModel):
     """Persistent record for one node invocation.
 
-    One row per ``(graph_instance_id, node_name, version)`` in the
+    One row per ``(graph_instance_id, node_id, version)`` in the
     ``node_states`` table. The record tracks the invocation lifecycle:
     ``status`` transitions from ``RUNNING`` (initial) to a terminal state
     (``COMPLETED`` / ``CANCELED`` / ``CRASHED``). ``suspended=True``
@@ -52,7 +53,7 @@ class NodeInvocationRecord(BaseModel):
 
     invocation_id: int
     graph_instance_id: int
-    node_name: str
+    node_id: str
     version: int
     parent_version: int | None
     status: InvocationStatus
@@ -60,16 +61,6 @@ class NodeInvocationRecord(BaseModel):
     suspended: bool = False
     created_at: int
     updated_at: int
-
-
-class RecoveryContext(BaseModel):
-    """State used to recover a graph instance."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    metadata: GraphMetadata
-    node_states: dict[str, NodeInvocationRecord | None]
-    rebuilt_main_state: dict[str, Any]
 
 
 class GraphStateSnapshot(BaseModel):
@@ -85,6 +76,5 @@ __all__ = [
     "GraphMetadata",
     "InvocationContext",
     "NodeInvocationRecord",
-    "RecoveryContext",
     "GraphStateSnapshot",
 ]

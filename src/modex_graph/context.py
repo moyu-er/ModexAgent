@@ -38,6 +38,7 @@ from typing_extensions import TypeVar
 
 from .constants import SchedulerKind
 from .exceptions import GraphInterrupt
+from .integration import GraphPayload
 from .run_control import GraphRunControl
 from .runtime import GraphRuntime
 
@@ -52,8 +53,8 @@ S = TypeVar("S", bound="GraphState")
 # `set_dispatch_handler`. Under PARALLEL, the handler routes the deliver and
 # queues a new `NodeInstance` according to its trigger mode. Under LINEAR, the
 # handler records the target + payload for the scheduler to pick up as the next
-# node. Raises `RoutingError` if `target` is not in the source node's outgoing
-# edges (PARALLEL only — LINEAR does not validate edges).
+# node. Both schedulers validate that `target` is in the source node's outgoing
+# edges (topology enforcement via `_dispatch_utils.validate_dispatch_target`).
 type DispatchHandler = Callable[[str, str, "dict[str, Any] | None"], None]
 
 
@@ -93,7 +94,7 @@ class GraphContext[S: "GraphState"]:
     ``coordinator`` is REQUIRED (no None fallback). It drives
     the node invocation lifecycle (begin/integrate/complete/cancel/suspend/
     crash/finalize) via ``Node.run()``. ``current_invocation`` is set by
-    ``Node.run()`` step 1 to the current ``InvocationContext``; it is ``None``
+    the first step of ``Node.run()`` to the current ``InvocationContext``; it is ``None``
     until a node begins executing.
     """
 
@@ -103,6 +104,7 @@ class GraphContext[S: "GraphState"]:
         state: S,
         runtime: GraphRuntime,
         coordinator: GraphPersistenceCoordinator,
+        user_input: GraphPayload | None = None,
         user_data: Any = None,
         scheduler_kind: SchedulerKind = SchedulerKind.LINEAR,
         dispatch_handler: DispatchHandler | None = None,
@@ -116,6 +118,7 @@ class GraphContext[S: "GraphState"]:
         # Coordinator: deliver routing + recovery queries. Lifecycle is
         # on ctx.node_state_store (property delegating to coordinator).
         self.coordinator: GraphPersistenceCoordinator = coordinator
+        self.user_input: GraphPayload | None = user_input
         self.user_data: Any = user_data
         self.scheduler_kind: SchedulerKind = scheduler_kind
         # Default to the no-op handler so direct node.run(ctx) calls in
@@ -131,7 +134,7 @@ class GraphContext[S: "GraphState"]:
         # (in-memory accumulation). Set by the scheduler when wiring deliver/submit
         # into the execution loop.
         self.graph_instance_id: int | None = graph_instance_id
-        # Current invocation context, set by Node.run() step 1.
+        # Current invocation context, set by the first step of Node.run().
         # None until a node begins executing.
         self.current_invocation: InvocationContext | None = current_invocation
         self.control: GraphRunControl = control if control is not None else GraphRunControl()
@@ -188,12 +191,13 @@ class GraphContext[S: "GraphState"]:
         - **`current_invocation` NOT inherited** (defaults to `None`): each
           forked context is a different execution scope; it should not
           claim the parent's invocation identity. `Node.run()` sets this
-          on its own ctx at step 1.
+          on its own ctx at the first step of Node.run().
         """
         return GraphContext(
             state=state if state is not None else self.state,
             runtime=runtime if runtime is not None else self.runtime,
             coordinator=coordinator if coordinator is not None else self.coordinator,
+            user_input=self.user_input,
             user_data=user_data if user_data is not None else self.user_data,
             scheduler_kind=scheduler_kind if scheduler_kind is not None else self.scheduler_kind,
             dispatch_handler=dispatch_handler

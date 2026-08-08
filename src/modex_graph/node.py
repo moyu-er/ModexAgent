@@ -36,7 +36,12 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypeVar
 
-from .constants import DeliverConsumptionStatus, GraphNode, NodeTrigger
+from .constants import (
+    DeliverConsumptionStatus,
+    FrameworkPayloadSource,
+    GraphNode,
+    NodeTrigger,
+)
 from .exceptions import GraphBubbleUp, GraphInterrupt, RoutingError
 from .integration import (
     DefaultInputIntegrator,
@@ -48,6 +53,8 @@ from .integration import (
 if TYPE_CHECKING:
     from .compiled_graph import CompiledGraph
     from .context import GraphContext
+    from .persistence.graph_metadata import InvocationContext
+    from .persistence.persistence_coordinator import GraphPersistenceCoordinator
     from .state import GraphState
 
 S = TypeVar("S", bound="GraphState")
@@ -73,6 +80,7 @@ class Node[S: "GraphState"](ABC):
     """
 
     name: str = ""
+    node_id: str = ""
     trigger: NodeTrigger | None = None
 
     # ── Deliver/submit attributes ───────────────────────────────────
@@ -187,72 +195,26 @@ class Node[S: "GraphState"](ABC):
         # suspend — use the snapshot as integrated input base, then
         # append any PENDING delivers that arrived after suspend
         # (CONSUMED_PENDING are skipped — already consumed pre-suspend).
-        prev = store.load_latest(self.name)
+        prev = store.load_latest(self.node_id)
         is_resume = prev is not None and prev.suspended
 
         # Begin invocation (parent_version computed internally).
-        invocation = store.begin_invocation(self.name)
+        invocation = store.begin_invocation(self.node_id)
         ctx.current_invocation = invocation
 
         self._submit_result = {}
         self._graph_ref = graph
 
         try:
+            resume_snapshot: dict[str, Any] | None = None
             if is_resume:
                 assert prev is not None
-                integrated = self.input_integrator.integrate(
-                    [
-                        IntegratedPayload(
-                            source_node="__resume__",
-                            content=prev.state_json,
-                        )
-                    ]
-                )
-                new_delivers = [
-                    d for d in coordinator.collect_consumable_delivers(
-                        self.name, invocation.invocation_id
-                    )
-                    if d.status == DeliverConsumptionStatus.PENDING
-                ]
-                if new_delivers:
-                    coordinator.mark_delivers_consumed(
-                        self.name,
-                        [r.deliver_id for r in new_delivers],
-                        invocation.invocation_id,
-                    )
-                    new_payloads = [
-                        IntegratedPayload(
-                            source_node=r.source_node,
-                            content=r.content,
-                        )
-                        for r in new_delivers
-                    ]
-                    integrated = self.input_integrator.integrate(
-                        [IntegratedPayload(
-                            source_node="__resume__",
-                            content=prev.state_json,
-                        )] + new_payloads
-                    )
-            else:
-                delivers = coordinator.collect_consumable_delivers(
-                    self.name, invocation.invocation_id
-                )
-                if delivers:
-                    coordinator.mark_delivers_consumed(
-                        self.name,
-                        [r.deliver_id for r in delivers],
-                        invocation.invocation_id,
-                    )
-                    payloads = [
-                        IntegratedPayload(
-                            source_node=r.source_node,
-                            content=r.content,
-                        )
-                        for r in delivers
-                    ]
-                    integrated = self.input_integrator.integrate(payloads)
-                else:
-                    integrated = self.input_integrator.integrate([])
+                resume_snapshot = prev.state_json
+            integrated = self._integrate_upstream(
+                coordinator,
+                invocation,
+                resume_snapshot=resume_snapshot,
+            )
 
             # Execute with undelivered detection retry.
             retry_count = 0
@@ -266,6 +228,9 @@ class Node[S: "GraphState"](ABC):
                 if collected:
                     break
 
+                if self.name == GraphNode.END:
+                    break
+
                 if retry_count >= self.max_retry:
                     raise RoutingError(
                         f"Node {self.name!r} produced no delivers after "
@@ -275,7 +240,7 @@ class Node[S: "GraphState"](ABC):
 
                 retry_count += 1
                 error_feedback = IntegratedPayload(
-                    source_node="__framework__",
+                    source_node=FrameworkPayloadSource.FRAMEWORK,
                     content={
                         "error": "undelivered",
                         "message": (
@@ -291,11 +256,12 @@ class Node[S: "GraphState"](ABC):
                 integrated = self.input_integrator.integrate([error_feedback])
 
             # Submit (framework auto-dispatch by next_node grouping).
-            self.submit(ctx)
+            if self.name != GraphNode.END:
+                self.submit(ctx)
 
             # Complete: save COMPLETED + promote delivers.
             store.complete_invocation(invocation, ctx.state.checkpoint())
-            coordinator.promote_delivers(self.name, invocation.invocation_id)
+            coordinator.promote_delivers(self.node_id, invocation.invocation_id)
             return None
 
         except GraphInterrupt:
@@ -314,12 +280,59 @@ class Node[S: "GraphState"](ABC):
         finally:
             store.finalize_invocation(invocation)
 
+    def _integrate_upstream(
+        self,
+        coordinator: GraphPersistenceCoordinator,
+        invocation: InvocationContext,
+        *,
+        resume_snapshot: dict[str, Any] | None,
+    ) -> IntegratedInput:
+        """Collect upstream delivers, mark consumed, and integrate into input.
+
+        Converged pipeline for both normal and resume paths (rule 15).
+        When ``resume_snapshot`` is provided (resume from suspend), only
+        PENDING delivers are consumed (CONSUMED_PENDING were already
+        consumed pre-suspend) and the snapshot is prepended to the
+        integrated payloads.
+        """
+        is_resume = resume_snapshot is not None
+        delivers = coordinator.collect_consumable_delivers(
+            self.node_id, invocation.invocation_id
+        )
+        if is_resume:
+            delivers = [
+                d for d in delivers if d.status == DeliverConsumptionStatus.PENDING
+            ]
+        if delivers:
+            coordinator.mark_delivers_consumed(
+                self.node_id,
+                [r.deliver_id for r in delivers],
+                invocation.invocation_id,
+            )
+            payloads = [
+                IntegratedPayload(
+                    source_node=r.source_node_id,
+                    content=r.content,
+                )
+                for r in delivers
+            ]
+        else:
+            payloads = []
+        if is_resume:
+            payloads = [
+                IntegratedPayload(
+                    source_node=FrameworkPayloadSource.RESUME,
+                    content=resume_snapshot,
+                )
+            ] + payloads
+        return self.input_integrator.integrate(payloads)
+
     def _deliver(
         self,
         content: Any,
         next_node: str | None,
         ctx: GraphContext[S],
-    ) -> int | None:
+    ) -> None:
         """Framework: accumulate a deliver in-memory.
 
         The ``deliver_store`` / ``graph_instance_id`` persistence
@@ -334,7 +347,6 @@ class Node[S: "GraphState"](ABC):
         if self._pending_delivers is None:
             self._pending_delivers = []
         self._pending_delivers.append((content, next_node))
-        return None
 
     def deliver(
         self,
@@ -394,9 +406,9 @@ class Node[S: "GraphState"](ABC):
         Payload shaping: a group with one entry dispatches the content
         directly; a group with multiple entries dispatches a list.
 
-        `self._submit_result` is also set (LINEAR-only fallback for
-        next-node selection when a custom `submit` override doesn't call
-        `_submit`; PARALLEL uses `ctx.dispatch` exclusively).
+        `self._submit_result` is also set (test-observation seam — no
+        production code reads it; tests inspect it to verify dispatch
+        grouping without mocking the scheduler).
         """
         delivers = self._collect_delivers(ctx)
         groups: dict[str, list[Any]] = {}
@@ -412,7 +424,7 @@ class Node[S: "GraphState"](ABC):
                 target,
                 state_update={
                     "delivered": payload,
-                    "_source_node": inv_ctx.node_name if inv_ctx else self.name,
+                    "_source_node": inv_ctx.node_id if inv_ctx else self.node_id,
                     "_source_inv_id": inv_ctx.invocation_id if inv_ctx else 0,
                 },
             )

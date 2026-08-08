@@ -25,8 +25,7 @@ Modules:
 - ``node_state_store`` — ``NodeStateStore`` ABC + Null / InMemory / Sqlite
   impls (lifecycle + CAS + version chain).
 - ``graph_metadata`` — ``GraphMetadata`` / ``InvocationContext`` /
-  ``NodeInvocationRecord`` / ``RecoveryContext`` / ``GraphStateSnapshot``
-  value objects.
+  ``NodeInvocationRecord`` / ``GraphStateSnapshot`` value objects.
 - ``instance_store`` — ``GraphInstanceStore`` ABC + Null / InMemory / Sqlite.
 - ``persistence_coordinator`` — ``GraphPersistenceCoordinator`` +
   ``create_null_coordinator`` factory.
@@ -52,7 +51,6 @@ from .graph_metadata import (
     GraphStateSnapshot,
     InvocationContext,
     NodeInvocationRecord,
-    RecoveryContext,
 )
 from .instance_store import (
     GraphInstanceStore,
@@ -93,7 +91,6 @@ __all__ = [
     "GraphMetadata",
     "InvocationContext",
     "NodeInvocationRecord",
-    "RecoveryContext",
     "GraphStateSnapshot",
     # Graph instance store
     "GraphInstanceStore",
