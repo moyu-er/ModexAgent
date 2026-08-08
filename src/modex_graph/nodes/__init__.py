@@ -1,7 +1,7 @@
-"""Generic `Node` implementations + their `NodeFactory` classes (ticket 02).
+"""Generic `Node` implementations + their `NodeFactory` classes.
 
 Framework-provided reusable node types that use the deliver/submit model
-from ticket 07 (P1A). Each module pairs a `Node` subclass with a matching
+from the deliver/submit design. Each module pairs a `Node` subclass with a matching
 `NodeFactory` for declarative construction via `NodeRegistry`.
 
 Modules:
@@ -22,14 +22,19 @@ in `create()`. Register them with `NodeRegistry.register(...)` at startup;
 from __future__ import annotations
 
 from .delay_node import DelayNode, DelayNodeConfig, DelayNodeFactory
+from .end_node import DefaultEndNodeFactory, EndNode
 from .function_node import FunctionNode, FunctionNodeConfig, FunctionNodeFactory
 from .graph_as_node import GraphAsNode, GraphAsNodeConfig, GraphAsNodeFactory
 from .human_input_node import HumanInputNode, HumanInputNodeConfig, HumanInputNodeFactory
+from .start_node import DefaultStartNodeFactory, StartNode
 
 __all__ = [
     "DelayNode",
     "DelayNodeConfig",
     "DelayNodeFactory",
+    "DefaultEndNodeFactory",
+    "DefaultStartNodeFactory",
+    "EndNode",
     "FunctionNode",
     "FunctionNodeConfig",
     "FunctionNodeFactory",
@@ -39,4 +44,5 @@ __all__ = [
     "HumanInputNode",
     "HumanInputNodeConfig",
     "HumanInputNodeFactory",
+    "StartNode",
 ]

@@ -1,7 +1,7 @@
 # ruff: noqa: ANN401
 """`HumanInputNode` + `HumanInputNodeFactory` — suspend for human input.
 
-Ticket 02 (P2.10): a generic node that suspends graph execution for human
+A generic node that suspends graph execution for human
 input via `GraphInterrupt`. On first entry, `execute()` raises
 `GraphInterrupt` with a prompt payload. On resume (re-entry), the node
 delivers a "human_input_resumed" signal.
@@ -46,7 +46,7 @@ class HumanInputNodeConfig(BaseModel):
 
 
 class HumanInputNode(Node[Any]):
-    """Suspends for human input via `GraphInterrupt` (ticket 02).
+    """Suspends for human input via `GraphInterrupt`.
 
     `execute()`:
 
@@ -96,7 +96,7 @@ class HumanInputNode(Node[Any]):
 
 
 class HumanInputNodeFactory(NodeFactory):
-    """Creates `HumanInputNode` from config (ticket 02).
+    """Creates `HumanInputNode` from config.
 
     `NodeSpec.config = {"prompt": <str>, "next_node": <str> (optional)}`.
 

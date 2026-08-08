@@ -34,7 +34,6 @@ from .constants import (
     InvocationStatus,
     NodeInstanceStatus,
     NodeTrigger,
-    SchedulerInstanceStatus,
     SchedulerKind,
 )
 from .context import GraphContext
@@ -52,6 +51,7 @@ from .graph import Edge, Graph
 from .id_generator import IdGenerator, SnowflakeIdGenerator, default_id_generator
 from .integration import (
     DefaultInputIntegrator,
+    GraphPayload,
     InputIntegrator,
     IntegratedInput,
     IntegratedPayload,
@@ -60,15 +60,20 @@ from .interrupt_policy import CrashPolicy, InterruptPolicy
 from .node import Node
 from .node_factory import NodeFactory, NodeRegistry
 from .nodes import (
+    DefaultEndNodeFactory,
+    DefaultStartNodeFactory,
     DelayNode,
     DelayNodeFactory,
+    EndNode,
     FunctionNode,
     FunctionNodeFactory,
     GraphAsNode,
     GraphAsNodeFactory,
     HumanInputNode,
     HumanInputNodeFactory,
+    StartNode,
 )
+from .output_adapter import GraphOutput, GraphOutputAdapter, GraphOutputKind
 from .persistence import (
     CoordinatorFactory,
     DeliverRecord,
@@ -91,7 +96,6 @@ from .persistence import (
     NullDeliverStoreFactory,
     NullGraphInstanceStore,
     NullNodeStateStore,
-    RecoveryContext,
     SqliteDeliverStore,
     SqliteDeliverStoreFactory,
     SqliteGraphInstanceStore,
@@ -108,8 +112,9 @@ from .spec_store import (
     InMemoryGraphSpecStore,
     SqliteGraphSpecStore,
 )
-from .state import GraphState
+from .state import DefaultGraphState, GraphState
 from .topology_validator import TopologyError, TopologyValidator
+from .utils import generate_id
 
 __all__ = [
     # Graph primitives
@@ -123,12 +128,17 @@ __all__ = [
     "GraphContext",
     "GraphRuntime",
     "GraphRunControl",
+    "GraphOutput",
+    "GraphOutputAdapter",
+    "GraphOutputKind",
     # State
     "GraphState",
+    "DefaultGraphState",
     # ID generation
     "IdGenerator",
     "SnowflakeIdGenerator",
     "default_id_generator",
+    "generate_id",
     # Deliver/submit persistence
     "DeliverRecord",
     "DeliverStore",
@@ -144,12 +154,12 @@ __all__ = [
     "IntegratedInput",
     "InputIntegrator",
     "DefaultInputIntegrator",
+    "GraphPayload",
     # Scheduler
     "Scheduler",
     "LinearScheduler",
     "ParallelScheduler",
     "SchedulerKind",
-    "SchedulerInstanceStatus",
     "NodeInstanceStatus",
     "NodeInstance",
     "NodeTrigger",
@@ -190,7 +200,6 @@ __all__ = [
     "NodeInvocationRecord",
     "GraphMetadata",
     "InvocationContext",
-    "RecoveryContext",
     "GraphStateSnapshot",
     "GraphPersistenceCoordinator",
     "CoordinatorFactory",
@@ -205,8 +214,12 @@ __all__ = [
     "GraphAsNodeFactory",
     "DelayNode",
     "DelayNodeFactory",
+    "DefaultEndNodeFactory",
+    "DefaultStartNodeFactory",
+    "EndNode",
     "HumanInputNode",
     "HumanInputNodeFactory",
+    "StartNode",
     # Declarative → imperative bridge
     "GraphSpecCompiler",
     "TopologyValidator",

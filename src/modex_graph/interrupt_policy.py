@@ -16,8 +16,7 @@ Design:
 - `CrashPolicy` is the default. Its observed behavior is: the graph
   instance transitions to `crashed`, other running instances are
   cancelled (asyncio task cancellation), and the instance waits for
-  external recovery (reload via `graph_instance_id` + restore via
-  `coordinator.load_for_recovery`).
+  external recovery (reload via `graph_instance_id`).
 
 `CrashPolicy.handle_interrupt` is intentionally a no-op. The actual
 crash behavior — instance cancellation and status transition — is
@@ -84,8 +83,7 @@ class CrashPolicy(InterruptPolicy):
        status transitions to `crashed`.
     2. Other running instances are cancelled (asyncio task
        cancellation — handled by the scheduler's exception propagation).
-    3. Wait for external recovery (`graph_instance_id` reload +
-       `coordinator.load_for_recovery`).
+    3. Wait for external recovery (`graph_instance_id` reload).
     4. On recovery: re-enter the interrupted node + re-dispatch other
        interrupted nodes.
 

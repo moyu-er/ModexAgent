@@ -1,7 +1,7 @@
 # ruff: noqa: ANN401
 """`GraphSpec` + `NodeSpec` + `EdgeSpec` — declarative graph specification.
 
-Per ticket 08: `GraphSpec` is the declarative, fully-serializable graph
+`GraphSpec` is the declarative, fully-serializable graph
 description — the persistence unit. The full chain is:
 
     GraphSpec → GraphSpecCompiler → CompiledGraph → GraphInstance → GraphEngine
@@ -60,7 +60,7 @@ class NodeSpec(BaseModel):
 class EdgeSpec(BaseModel):
     """Declarative edge specification — topology only.
 
-    Per ticket 07: the deliver/submit model replaces the transition model.
+    The deliver/submit model replaces the transition model.
     Edges define topology (which nodes can connect), NOT conditional routing.
     Conditional routing is done by the node's `deliver(content, target, ctx)`
     call at runtime — the engine routes the delivered payload to the named
@@ -80,7 +80,7 @@ class EdgeSpec(BaseModel):
 class GraphSpec(BaseModel):
     """Declarative graph specification — fully serializable, the persistence unit.
 
-    Per ticket 08: `GraphSpec` is what gets persisted to the `graph_specs`
+    `GraphSpec` is what gets persisted to the `graph_specs`
     table. The full chain is
     `GraphSpec → GraphSpecCompiler → CompiledGraph → GraphInstance →
     GraphEngine`. `GraphSpecCompiler` and `TopologyValidator` are P2 (out
@@ -111,15 +111,11 @@ class GraphSpec(BaseModel):
     def _validate_structure(self) -> GraphSpec:
         """Basic structural checks (full topology validation is P2).
 
-        - At least one node.
         - No duplicate node names.
-        - At least one entry edge from `GraphNode.START` to a real node.
+        - At least one entry edge from `GraphNode.START`.
         - `max_iterations` > 0.
         - Edge endpoints are either sentinels or reference declared nodes.
         """
-        if not self.nodes:
-            raise ValueError("GraphSpec must declare at least one node (got empty nodes list).")
-
         # No duplicate node names.
         names = [n.name for n in self.nodes]
         duplicates = {n for n in names if names.count(n) > 1}
@@ -132,15 +128,17 @@ class GraphSpec(BaseModel):
         if self.max_iterations <= 0:
             raise ValueError(f"GraphSpec.max_iterations must be > 0 (got {self.max_iterations}).")
 
-        # At least one entry edge from GraphNode.START to a real node.
+        # At least one entry edge from GraphNode.START to a declared node or END.
         node_name_set = set(names)
         has_entry = any(
-            e.source == GraphNode.START and e.target in node_name_set for e in self.edges
+            e.source == GraphNode.START
+            and (e.target == GraphNode.END or e.target in node_name_set)
+            for e in self.edges
         )
         if not has_entry:
             raise ValueError(
                 f"GraphSpec must declare at least one entry edge from "
-                f"{GraphNode.START!r} to a real node. Found edges: "
+                f"{GraphNode.START!r}. Found edges: "
                 f"{[(e.source, e.target) for e in self.edges]}."
             )
 

@@ -21,9 +21,12 @@ See `__init__.py` for the full export list. Key types:
 - `GraphContext`, `GraphRuntime`, `GraphState`
 - `Scheduler` (ABC), `LinearScheduler`, `ParallelScheduler`,
   `SchedulerKind`, `NodeTrigger`, `NodeInstanceStatus`, `NodeInstance`
-- `GraphPersistenceCoordinator`, `RecoveryContext`, `GraphMetadata`
+- `GraphPersistenceCoordinator`, `GraphMetadata`
 - `GraphBubbleUp`, `GraphInterrupt`, `GraphDrained`, `ParentCommand`
-- `GraphNode` (START/END sentinels), `RoutingError`, `GraphRecursionError`
+- `GraphNode` (START/END), `RoutingError`, `GraphRecursionError`
+
+See `AGENTS.md` for scheduling convergence design (G8: unified `bootstrap`
+entry point, no separate recovery engine).
 
 See `docs/adr/0033-generalized-graph-engine.md` and
 `docs/adr/0034-parallel-scheduling-engine.md` for the authoritative design.

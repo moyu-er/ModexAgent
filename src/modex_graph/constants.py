@@ -126,21 +126,13 @@ class GraphInstanceStatus(StrEnum):
     - `completed` / `failed`: terminal — no recovery.
     """
 
+    PENDING = "pending"
     RUNNING = "running"
     PAUSED = "paused"
     STOPPED = "stopped"
     CRASHED = "crashed"
     COMPLETED = "completed"
     FAILED = "failed"
-
-
-class SchedulerInstanceStatus(StrEnum):
-    """Scheduler state for whether an instance is ready to execute."""
-
-    DORMANT = "dormant"
-    READY = "ready"
-    RUNNING = "running"
-    COMPLETED = "completed"
 
 
 class InvocationStatus(StrEnum):
@@ -165,3 +157,24 @@ class DeliverConsumptionStatus(StrEnum):
     CONSUMED = "consumed"
     CONSUMED_PENDING = "consumed_pending"
     CONSUMED_COMPLETED = "consumed_completed"
+
+
+# ── Framework-injected payload source sentinels ──────────────────────────
+# Used as ``IntegratedPayload.source_node`` when the payload is injected by
+# the framework (resume snapshot, undelivered-retry error feedback) rather
+# than by a real upstream node. StrEnum so they never collide with real
+# node IDs (which are ``node_`` prefixed IDs from ``generate_id``).
+
+
+class FrameworkPayloadSource(StrEnum):
+    """Sentinel ``source_node`` values for framework-injected payloads.
+
+    These are NOT real nodes — they mark payloads injected by the engine
+    during resume (``RESUME``) or undelivered-retry feedback
+    (``FRAMEWORK``). Using a StrEnum instead of bare strings prevents
+    collision with real node IDs and satisfies type-safety rule 1
+    (constants over raw strings).
+    """
+
+    RESUME = "__resume__"
+    FRAMEWORK = "__framework__"

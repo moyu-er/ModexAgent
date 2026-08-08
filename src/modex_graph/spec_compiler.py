@@ -1,7 +1,7 @@
 # ruff: noqa: ANN401
 """`GraphSpecCompiler` — bridge between declarative `GraphSpec` and `CompiledGraph`.
 
-Per ticket 08: the full chain is
+The full chain is
 
     GraphSpec → GraphSpecCompiler → CompiledGraph → GraphInstance → GraphEngine
 
@@ -23,9 +23,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from .compiled_graph import CompiledGraph
+from .constants import GraphNode
 from .graph import Graph
 from .node_factory import NodeRegistry
-from .spec import GraphSpec
+from .spec import GraphSpec, NodeSpec
 from .state import GraphState
 from .topology_validator import TopologyValidator
 
@@ -44,7 +45,7 @@ def _default_validator() -> TopologyValidator:
 
 
 class GraphSpecCompiler:
-    """Compiles `GraphSpec` → `CompiledGraph` (ticket 08).
+    """Compiles `GraphSpec` → `CompiledGraph`.
 
     Full chain: `GraphSpec → GraphSpecCompiler → CompiledGraph →
     GraphInstance → GraphEngine`.
@@ -89,6 +90,11 @@ class GraphSpecCompiler:
         self._state_classes = state_classes
         self._validator = validator
 
+    def validate(self, spec: GraphSpec) -> None:
+        """Validate topology without materializing graph nodes or edges."""
+        validator = self._validator if self._validator is not None else _default_validator()
+        validator.validate(spec)
+
     def compile(self, spec: GraphSpec) -> CompiledGraph[Any]:
         """Compile a `GraphSpec` into a `CompiledGraph`.
 
@@ -108,8 +114,18 @@ class GraphSpecCompiler:
         # State type is selected at runtime, so the graph is typed Any.
         graph: Graph[Any] = Graph(name=spec.name)
 
-        # 3. Create and register nodes from NodeSpecs.
-        for node_spec in spec.nodes:
+        node_specs = {node_spec.name: node_spec for node_spec in spec.nodes}
+        node_specs.setdefault(
+            GraphNode.START,
+            NodeSpec(name=GraphNode.START, node_type="start"),
+        )
+        node_specs.setdefault(
+            GraphNode.END,
+            NodeSpec(name=GraphNode.END, node_type="end"),
+        )
+
+        # 3. Create and register all nodes, including executable START/END.
+        for node_spec in node_specs.values():
             node = self._node_registry.create(node_spec)
             graph.add_node(node_spec.name, node)
 
@@ -119,8 +135,7 @@ class GraphSpecCompiler:
 
         # 5. Validate topology (runs BEFORE graph.compile() to fail fast
         # on topology issues before the Graph builder's own checks).
-        validator = self._validator if self._validator is not None else _default_validator()
-        validator.validate(spec)
+        self.validate(spec)
 
         # 6. Compile. default_trigger is passed through from the spec so
         # PARALLEL scheduler graphs respect the spec's trigger default.

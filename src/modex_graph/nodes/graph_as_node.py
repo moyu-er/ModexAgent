@@ -1,7 +1,7 @@
 # ruff: noqa: ANN401
 """`GraphAsNode` + `GraphAsNodeFactory` — a `CompiledGraph` wrapped as a Node.
 
-Ticket 02 (P2.8): per ADR-0033 D8 (Graph-is-a-Node), a `CompiledGraph` is
+Per ADR-0033 D8 (Graph-is-a-Node), a `CompiledGraph` is
 already a `Node` subclass. This module provides a thin *wrapper* that:
 
 - holds a `CompiledGraph` instance,
@@ -90,7 +90,7 @@ class GraphAsNode(Node[Any]):
 
 
 class GraphAsNodeFactory(NodeFactory):
-    """Creates `GraphAsNode` from an inline `GraphSpec` in config (ticket 02).
+    """Creates `GraphAsNode` from an inline `GraphSpec` in config.
 
     `NodeSpec.config = {"graph_spec": <GraphSpec dict>, "next_node": <str>}`.
 
