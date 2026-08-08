@@ -35,7 +35,7 @@ operation but has structural problems in several stores:
 
 A naive "replace everything with SQLite" is wrong: Markdown Core Memory files
 (`SOUL.md`, `USER.md`, `MEMORY.md`; the layer was renamed from "Knowledge" to
-"Core Memory" per ADR-0035 — the file *names* are unchanged), `EXPERIENCE.md`
+"Core Memory" — the file *names* are unchanged), `EXPERIENCE.md`
 trees, media bytes, tool overflow chunks, pruned JSONL (agent file-tool
 access), and config YAML are correctly file-based. Their semantics require
 human editability, directory structure, streaming, or path-based discovery

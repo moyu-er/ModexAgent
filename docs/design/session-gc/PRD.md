@@ -2,6 +2,11 @@
 
 Status: ready-for-agent
 
+> **Correction (2026-08-08):** ADR-0023 D7 simplified `ContextForkBuilder`
+> to pure computation, removing the `fork_contexts` artifact. The per-session
+> artifact count is **nine**, not ten. References to "ten artifacts" and
+> `fork_contexts` below are historical.
+
 Related: ADR-0018 (crash-safe session garbage collection); `CONTEXT.md` →
 "Session lifecycle domain language".
 

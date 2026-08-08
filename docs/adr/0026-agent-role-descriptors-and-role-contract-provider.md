@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-07-19). Under design — implementation not started.
+Accepted (2026-07-19; implemented). `AgentRole` enum, `AgentRoleContractProvider`, and `roles` field on agent specs are all shipped.
 
 ## Context
 

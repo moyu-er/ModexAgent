@@ -47,7 +47,7 @@ practice has only one consumer (`ReActAgent`). Other agents bypass it:
 `SummarizerAgent` is deprecated and unused (separate removal tracked below).
 Tool-using agents that need the graph (`ArchiveSummarizer` /
 `KnowledgeConsolidator` / `ExperienceReviewAgent` — `KnowledgeConsolidator`
-was renamed to `CoreMemoryConsolidator` per ADR-0035; the new name is used
+was renamed to `CoreMemoryConsolidator`; the new name is used
 in code) inherit `ScopedFileAgent` and internally construct a `ReActAgent`
 in clean mode — they use the graph indirectly through ReAct, never as a
 standalone engine.
@@ -135,10 +135,11 @@ The graph engine has three structural defects that block generalization:
    outer turn graph embeds inner agent graph; `Command(goto=..., graph=...)`
    cross-graph routing; `ParentCommand` exception for subgraph→parent
    routing.
-3. **`GraphDrained` cooperative shutdown.** The exception class exists but
-   is not raised. ADR-0034 realized Phase c via continuous scheduling (no
-   superstep boundaries), so `GraphDrained` wiring is deferred until a
-   SIGTERM-style cooperative shutdown requirement materializes.
+3. **`GraphDrained` cooperative shutdown.** Now raised at scheduler safe
+   points — `LiveGraphEngineController` wires pause/stop via
+   `ctx.control.check()` (both `LinearScheduler` and `ParallelScheduler`
+   call it). See `docs/design/graph-orchestration/external-control.md`
+   (tickets 34-35 landed).
 4. **Additional channel types.** Only `LastValue` + `ReducerChannel` ship
    in Phase a. Phase c adds channels when real second use cases appear:
    `Topic` (PubSub with dedup, for `Task` fan-out), `EphemeralValue`
@@ -682,7 +683,7 @@ All current ReAct exit mechanisms are preserved through the migration:
 | `max_iterations` | LLMNode checks, returns `transition="max_iterations"` → static edge to END | Same; `max_iterations` configured at `compile()` time | a ✅ |
 | `turn_cancelled` | ToolNode checks, returns `transition="turn_cancelled"` → static edge to END | Same | a ✅ |
 | `llm_error` | LLMNode checks, returns `transition="llm_error"` → static edge to END | Same | a ✅ |
-| `GraphDrained` (cooperative shutdown) | N/A | `GraphBubbleUp` subclass; class exists, never raised (wiring deferred) | c (deferred) |
+| `GraphDrained` (cooperative shutdown) | N/A | `GraphBubbleUp` subclass; now raised at scheduler safe points via `ctx.control.check()` (see `external-control.md`) | c ✅ |
 | `ParentCommand` (subgraph→parent routing) | N/A | `GraphBubbleUp` subclass | c |
 
 **`GraphInterrupt` suspend-without-re-execution model is preserved.**
@@ -805,7 +806,7 @@ end-to-end example is NOT required for Phase-a merge.
 | Subroutine (call subgraph as a node) | Graph-is-a-Node type wiring | a (wired) / c (exercised) |
 | Graph-of-graphs (outer turn graph embeds inner agent graph) | Graph-is-a-Node + `Command(goto=..., graph=...)` | c |
 | HITL suspend/resume (approval) | `GraphInterrupt` + `Command(resume=...)` | a ✅ |
-| Cooperative shutdown (SIGTERM) | `GraphDrained` (class exists, wiring deferred) | c (deferred) |
+| Cooperative shutdown (SIGTERM) | `GraphDrained` (now raised via `ctx.control.check()`) | c ✅ |
 | Parallel fan-out with multi-write detection | `Task` parallel + `LastValue` multi-write guard | c → [ADR-0034](0034-parallel-scheduling-engine.md) |
 
 **Phase-a validation criterion**: the engine API must be capable of

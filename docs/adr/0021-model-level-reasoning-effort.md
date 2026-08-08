@@ -1,6 +1,6 @@
 # Model-level reasoning effort configuration
 
-Status: proposed (2026-07-12)
+Status: accepted (2026-07-12; implemented)
 
 ## Context
 

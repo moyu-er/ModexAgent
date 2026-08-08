@@ -160,7 +160,7 @@ ModexAgent/
 
 | Document | Description |
 | --- | --- |
-| [ADR index](docs/adr/) | Architecture Decision Records (ADR-0001 ~ 0035) |
+| [ADR index](docs/adr/) | Architecture Decision Records (ADR-0001 ~ 0036) |
 | [Docs overview](docs/AGENTS.md) | Index of `docs/` — ADRs, design docs, agent docs |
 | [CONTEXT.md](CONTEXT.md) | Domain glossary — Pool, Workspace, ReAct Agent, Graph, GraphInterrupt, Assembly, etc. |
 | [Bot local setup](docs/bot-local-setup.md) | Step-by-step bot setup from source (prerequisites, venv, config wizard, troubleshooting) |

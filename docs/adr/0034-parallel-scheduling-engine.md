@@ -523,6 +523,14 @@ recovery is fully wired via the deliver scan. The
 `ConcurrentWriteTracker` state was never persisted (it was a runtime
 safety mechanism); with the tracker removed, this is moot.
 
+**Bootstrap convergence (post-ADR):** Both `LinearScheduler` and
+`ParallelScheduler` now share a unified `bootstrap(ctx, graph)` entry
+point (`scheduler/bootstrap.py`) that wraps the recovery steps above.
+The named methods (`_restore_from_recovery`, `_redispatch_from_recovery`,
+`_rebuild_pending_from_delivers`) were consolidated into `bootstrap` +
+`_recheck_pending`. See `src/modex_graph/AGENTS.md` "Scheduling
+Convergence" section.
+
 ### D20 — Extensibility seams
 
 The continuous scheduler retains ABC-first seams where they still

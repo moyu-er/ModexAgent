@@ -2,7 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Delete a conversation's full cascade (root + all subagent descendants via `parent_session_id`) and all ten per-session artifact types, crash-recoverably, with a periodic backstop sweep.
+> **Correction (2026-08-08):** ADR-0023 D7 simplified `ContextForkBuilder`
+> to pure computation, removing the `fork_contexts` artifact. The per-session
+> artifact count is **nine**, not ten. Code sketches below that list
+> `fork_contexts` and assert `len(ap) == 10` are historical; the shipped
+> implementation derives nine paths.
+
+**Goal:** Delete a conversation's full cascade (root + all subagent descendants via `parent_session_id`) and all nine per-session artifact types, crash-recoverably, with a periodic backstop sweep.
 
 **Architecture:** A bot-side `SessionGarbageCollector` deep module. A session is live iff its index record exists. The idempotent unit `clean_session` removes a session's record + transcript + ten artifacts (index first), then enqueues its children found via `parent_session_id`. Two triggers feed one single-worker pool: foreground `delete_session_tree` (sync-removes root record, then enqueues) and `sweep_once` (finds orphans from disk). The sweep is the sole retry authority; an in-memory non-persistent dedup set suppresses concurrent duplicates and is cleared on any task end so the backstop is never blocked. No tombstone, no OS-lock reliance, no framework changes. See ADR-0018 and `docs/design/session-gc/PRD.md`.
 
