@@ -321,7 +321,8 @@ async def _assemble_resources(
     coordinator_factory = SqliteCoordinatorFactory(connection=graph_conn)
 
     graph_event_store: dict[int, list[GraphOutput]] = {}
-    output_adapter = WebUIGraphOutputAdapter(graph_event_store)
+    graph_event_subscribers: dict[int, list[asyncio.Queue[GraphOutput]]] = {}
+    output_adapter = WebUIGraphOutputAdapter(graph_event_store, graph_event_subscribers)
 
     graph_orchestrator = GraphOrchestrator(
         node_registry=node_registry,
@@ -348,6 +349,7 @@ async def _assemble_resources(
     resources.graph_orchestrator = graph_orchestrator
     resources.graph_output_adapter = output_adapter
     resources.graph_event_store = graph_event_store
+    resources.graph_event_subscribers = graph_event_subscribers
     resources.graph_conn = graph_conn
 
     default_pool = service._default_pool_name

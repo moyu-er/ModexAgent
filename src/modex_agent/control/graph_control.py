@@ -260,10 +260,10 @@ class GraphControlService:
         metadata = self._instance_store.load(gid)
         if metadata is None:
             raise ValueError(f"Graph instance {gid} not found")
-        if metadata.status not in {GraphInstanceStatus.RUNNING, GraphInstanceStatus.PAUSED}:
+        if metadata.status not in {GraphInstanceStatus.RUNNING, GraphInstanceStatus.PAUSED, GraphInstanceStatus.PENDING}:
             raise ValueError(
                 f"Cannot deliver to instance {gid}: status is "
-                f"{metadata.status.value}, must be RUNNING or PAUSED"
+                f"{metadata.status.value}, must be RUNNING, PAUSED, or PENDING"
             )
         if node_name not in metadata.node_id_map:
             raise RoutingError(f"Node {node_name!r} has no deliver_store")

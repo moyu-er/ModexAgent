@@ -49,6 +49,7 @@ from .integration import (
     IntegratedInput,
     IntegratedPayload,
 )
+from .output_adapter import GraphOutputKind
 
 if TYPE_CHECKING:
     from .compiled_graph import CompiledGraph
@@ -201,6 +202,12 @@ class Node[S: "GraphState"](ABC):
         # Begin invocation (parent_version computed internally).
         invocation = store.begin_invocation(self.node_id)
         ctx.current_invocation = invocation
+        coordinator.emit_output(
+            GraphOutputKind.NODE_STARTED,
+            node_id=self.node_id,
+            node_name=self.name,
+            invocation_id=invocation.invocation_id,
+        )
 
         self._submit_result = {}
         self._graph_ref = graph
@@ -262,6 +269,12 @@ class Node[S: "GraphState"](ABC):
             # Complete: save COMPLETED + promote delivers.
             store.complete_invocation(invocation, ctx.state.checkpoint())
             coordinator.promote_delivers(self.node_id, invocation.invocation_id)
+            coordinator.emit_output(
+                GraphOutputKind.NODE_COMPLETED,
+                node_id=self.node_id,
+                node_name=self.name,
+                invocation_id=invocation.invocation_id,
+            )
             return None
 
         except GraphInterrupt:
@@ -274,8 +287,15 @@ class Node[S: "GraphState"](ABC):
             # caught above (suspend path).
             store.cancel_invocation(invocation)
             raise
-        except Exception:
+        except Exception as exc:
             store.crash_invocation(invocation)
+            coordinator.emit_output(
+                GraphOutputKind.NODE_CRASHED,
+                node_id=self.node_id,
+                node_name=self.name,
+                invocation_id=invocation.invocation_id,
+                error=str(exc),
+            )
             raise
         finally:
             store.finalize_invocation(invocation)

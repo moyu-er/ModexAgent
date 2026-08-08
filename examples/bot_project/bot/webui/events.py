@@ -41,6 +41,8 @@ class WebSocketAction(str, Enum):
     SEND_MESSAGE = "send_message"
     DELETE_CONVERSATION = "delete_conversation"
     PAUSE = "pause"
+    SUBSCRIBE_GRAPH = "subscribe_graph"
+    UNSUBSCRIBE_GRAPH = "unsubscribe_graph"
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

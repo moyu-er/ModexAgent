@@ -73,7 +73,7 @@ All three implement the same `NodeStateStore` / `DeliverStore` / `GraphInstanceS
 | `context.py` | `GraphContext[S]` — state, runtime, coordinator, dispatch handler, user_input |
 | `persistence/node_state_store.py` | `NodeStateStore` ABC + Null/InMemory/Sqlite implementations, version chain + CAS |
 | `persistence/deliver_store.py` | `DeliverStore` ABC + Null/InMemory/Sqlite, accumulate/query_consumable/mark_consumed/promote |
-| `persistence/persistence_coordinator.py` | `GraphPersistenceCoordinator` — route_deliver, collect_consumable_delivers, rebuild_main_state |
+| `persistence/persistence_coordinator.py` | `GraphPersistenceCoordinator` — route_deliver, collect_consumable_delivers, rebuild_main_state; single emission seam for node-level `GraphOutput` events (`emit_output` / `set_output_adapter` / `drain_output_events`) |
 | `persistence/graph_metadata.py` | `GraphMetadata`, `NodeInvocationRecord`, `InvocationContext` |
 | `persistence/instance_store.py` | `GraphInstanceStore` ABC + Null/InMemory/Sqlite, `node_id_map` JSON column |
 | `integration.py` | `GraphPayload` (static-graph deliver content), `IntegratedPayload`, `IntegratedInput` |
@@ -81,7 +81,7 @@ All three implement the same `NodeStateStore` / `DeliverStore` / `GraphInstanceS
 | `nodes/end_node.py` | `EndNode` — aggregates delivers to `ctx.state.result` (ON_ALL_PREDS trigger) |
 | `state/state.py` | `GraphState` ABC (frozen=False, mutable) |
 | `state/default_state.py` | `DefaultGraphState` — `result: list[GraphPayload]` for static graphs |
-| `output_adapter.py` | `GraphOutputAdapter` ABC, `GraphOutput`, `GraphOutputKind` |
+| `output_adapter.py` | `GraphOutputAdapter` ABC, `GraphOutput`, `GraphOutputKind` (terminal + node-level events) |
 | `constants.py` | `GraphNode` (START/END), `InvocationStatus`, `NodeTrigger`, `SchedulerKind`, `GraphInstanceStatus` |
 | `spec.py` | `GraphSpec`, `NodeSpec`, `EdgeSpec` |
 | `spec_compiler.py` | `GraphSpecCompiler` — `compile()` always creates START/END, `validate()` runs TopologyValidator |

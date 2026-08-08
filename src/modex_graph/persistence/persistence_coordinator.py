@@ -37,6 +37,9 @@ State query methods:
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -46,6 +49,7 @@ from ..constants import (
     InvocationStatus,
 )
 from ..exceptions import RoutingError
+from ..output_adapter import GraphOutput, GraphOutputAdapter, GraphOutputKind
 from .deliver_store import DeliverRecord, DeliverStore, DeliverStoreFactory, NullDeliverStoreFactory
 from .graph_metadata import (
     GraphMetadata,
@@ -55,6 +59,8 @@ from .graph_metadata import (
 from .instance_store import GraphInstanceStore, NullGraphInstanceStore
 from .node_state_store import NodeStateStore, NullNodeStateStore
 
+logger = logging.getLogger(__name__)
+
 
 class GraphPersistenceCoordinator:
     """Persistence routing + recovery coordinator.
@@ -62,6 +68,13 @@ class GraphPersistenceCoordinator:
     The scheduler is unaware of persistence stores; the coordinator holds
     the instance store + node state store + per-node DeliverStore references
     and routes deliver/consumption/recovery calls.
+
+    The coordinator is also the single emission seam for node-level
+    ``GraphOutput`` events (``node_started`` / ``node_completed`` /
+    ``node_crashed`` / ``deliver_dispatched``): it is the one object
+    reachable from both ``Node.run`` (via ``ctx.coordinator``) and
+    ``route_deliver``. The adapter is wired post-construction via
+    ``set_output_adapter`` by the assembler that owns it.
 
     Three implementation strategies:
 
@@ -99,11 +112,92 @@ class GraphPersistenceCoordinator:
         self._node_state_store = node_state_store
         self._default_deliver_store_factory = default_deliver_store_factory
         self._deliver_stores: dict[str, DeliverStore] = {}
+        self._output_adapter: GraphOutputAdapter | None = None
+        self._emit_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def node_state_store(self) -> NodeStateStore:
         """The node state store (lifecycle + version chain + CAS authority)."""
         return self._node_state_store
+
+    # ── Output events ────────────────────────────────────────────────
+
+    def set_output_adapter(self, adapter: GraphOutputAdapter | None) -> None:
+        """Wire the graph output adapter for node-level events.
+
+        Called post-construction by the assembler that owns the adapter
+        (``GraphOrchestrator``) — the coordinator is created by a
+        ``CoordinatorFactory`` that knows nothing about output adapters.
+        ``None`` (the default) disables emission.
+        """
+        self._output_adapter = adapter
+
+    def emit_output(
+        self,
+        kind: GraphOutputKind,
+        *,
+        result: Any = None,
+        error: str | None = None,
+        node_id: str | None = None,
+        node_name: str | None = None,
+        invocation_id: int | None = None,
+        target_node_id: str | None = None,
+    ) -> None:
+        """Emit a ``GraphOutput`` event — the single seam for node-level events.
+
+        Sync fire-and-forget: usable from both async (``Node.run``) and sync
+        (``route_deliver``) call sites. The adapter's async ``emit`` is
+        scheduled on the running event loop; emit failures are logged, never
+        raised (log-and-continue — emission must not affect graph execution).
+        No-op when no adapter is wired or no event loop is running.
+        ``graph_instance_id`` and ``timestamp`` are stamped here so every
+        event carries them.
+        """
+        adapter = self._output_adapter
+        if adapter is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        output = GraphOutput(
+            kind=kind,
+            graph_instance_id=self._graph_instance_id,
+            result=result,
+            error=error,
+            node_id=node_id,
+            node_name=node_name,
+            invocation_id=invocation_id,
+            target_node_id=target_node_id,
+            timestamp=time.time_ns() // 1_000_000,
+        )
+        task = loop.create_task(self._emit_safe(adapter, output))
+        self._emit_tasks.add(task)
+        task.add_done_callback(self._emit_tasks.discard)
+
+    async def drain_output_events(self) -> None:
+        """Await all pending fire-and-forget emit tasks.
+
+        Called by the assembler (``GraphOrchestrator._finalize_instance``)
+        before emitting the terminal output, so node-level events reach the
+        adapter before ``graph_completed`` / ``graph_crashed`` — the event
+        stream stays causally ordered even when nothing in the graph body
+        yielded to the event loop.
+        """
+        if self._emit_tasks:
+            await asyncio.gather(*self._emit_tasks, return_exceptions=True)
+
+    async def _emit_safe(self, adapter: GraphOutputAdapter, output: GraphOutput) -> None:
+        """Await ``adapter.emit`` with log-and-continue error isolation."""
+        try:
+            await adapter.emit(output)
+        except Exception:
+            logger.warning(
+                "graph output adapter emit failed for instance %s (kind=%s)",
+                self._graph_instance_id,
+                output.kind,
+                exc_info=True,
+            )
 
     # ── Registration + routing ───────────────────────────────────────
 
@@ -155,13 +249,19 @@ class GraphPersistenceCoordinator:
         store = self._deliver_stores.get(target_node_id)
         if store is None:
             raise RoutingError(f"Node {target_node_id!r} has no deliver_store registered.")
-        return store.accumulate(
+        deliver_id = store.accumulate(
             graph_instance_id=self._graph_instance_id,
             node_id=target_node_id,
             source_node_id=source_node_id,
             source_invocation_id=source_invocation_id,
             content=content,
         )
+        self.emit_output(
+            GraphOutputKind.DELIVER_DISPATCHED,
+            node_id=source_node_id,
+            target_node_id=target_node_id,
+        )
+        return deliver_id
 
     # ── Consumption methods ─────────────────────────────────────────────
 

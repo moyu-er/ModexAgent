@@ -15,6 +15,7 @@ from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.resources import WorkspaceResources
 
 if TYPE_CHECKING:
+    import asyncio
     import sqlite3
 
     # These live in bot.service, whose package __init__ imports BotService,
@@ -127,6 +128,10 @@ class PoolWorkspaceResources(WorkspaceResources):
     graph_orchestrator: GraphOrchestrator | None = None
     graph_output_adapter: GraphOutputAdapter | None = None
     graph_event_store: dict[int, list[GraphOutput]] | None = None
+    # WS graph-event subscriptions (subscribe_graph action): instance id ->
+    # subscriber queues. Assembled alongside graph_event_store; the
+    # WebUIGraphOutputAdapter fans out to these queues on emit.
+    graph_event_subscribers: dict[int, list[asyncio.Queue[GraphOutput]]] | None = None
     graph_conn: sqlite3.Connection | None = None
 
     def resolve_workspace(self) -> PoolWorkspaceResources:

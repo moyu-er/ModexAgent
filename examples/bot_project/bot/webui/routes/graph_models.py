@@ -7,6 +7,8 @@ response serialization.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict
 
 from modex_graph import GraphPayload
@@ -78,24 +80,34 @@ class GraphSpecListResponse(BaseModel):
 
 
 class NodeStatusInfo(BaseModel):
-    """Per-node status in a graph instance response (L2: both name and id)."""
+    """Per-node status in a graph instance response (L2: both name and id).
+
+    ``result`` carries the completed node's output summary (§11.4). Populated
+    only for completed nodes whose state checkpoint contains a ``result`` key
+    (e.g. END nodes using ``DefaultGraphState``). ``None`` for non-completed
+    nodes or nodes whose state has no result field.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     node_name: str
     node_id: str
     status: str
+    result: GraphPayload | None = None
 
 
 class GraphInstanceResponse(BaseModel):
     """``GET /api/graphs/instances/{id}`` — instance state + node statuses.
 
     ``graph_instance_id`` is ``str`` to avoid JS precision loss (see
-    :class:`GraphSpecSummary`).
+    :class:`GraphSpecSummary`). ``spec_id`` is ``str`` for the same reason;
+    the frontend uses it to fetch the spec YAML for MiniTopology rendering
+    (graph visualization redesign G06).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    spec_id: str
     graph_instance_id: str
     status: str
     nodes: list[NodeStatusInfo]
@@ -135,7 +147,46 @@ class GraphEventListResponse(BaseModel):
     events: list[GraphEventItem]
 
 
+class NodeTopologyInfo(BaseModel):
+    """Per-node topology info (§11.3) — name, type, config, trigger."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    node_type: str
+    config: dict[str, Any] = {}
+    trigger: str | None = None
+
+
+class EdgeTopologyInfo(BaseModel):
+    """Per-edge topology info (§11.3) — source → target."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    source: str
+    target: str
+
+
+class GraphTopologyResponse(BaseModel):
+    """``GET /api/graphs/specs/{spec_id}/topology`` — compiled topology (§11.3).
+
+    ``spec_id`` is ``str`` to avoid JS precision loss (see
+    :class:`GraphSpecSummary`). ``entry_node`` is always ``"__start__"``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    spec_id: str
+    name: str
+    scheduler: str
+    default_trigger: str
+    nodes: list[NodeTopologyInfo]
+    edges: list[EdgeTopologyInfo]
+    entry_node: str
+
+
 __all__ = [
+    "EdgeTopologyInfo",
     "GraphDeliverRequest",
     "GraphEventItem",
     "GraphEventListResponse",
@@ -146,5 +197,7 @@ __all__ = [
     "GraphSpecResponse",
     "GraphSpecSummary",
     "GraphSpecUpdateRequest",
+    "GraphTopologyResponse",
     "NodeStatusInfo",
+    "NodeTopologyInfo",
 ]

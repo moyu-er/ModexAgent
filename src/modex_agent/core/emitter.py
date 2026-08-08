@@ -47,7 +47,7 @@ class AgentResult(BaseModel):
     @classmethod
     def _coerce_messages(cls, v: Any) -> Any:
         if isinstance(v, list):
-            return [ChatMessage(**item) if isinstance(item, dict) else item for item in v]
+            return [ChatMessage.from_dict(item) if isinstance(item, dict) else item for item in v]
         return v
 
     def __repr__(self) -> str:

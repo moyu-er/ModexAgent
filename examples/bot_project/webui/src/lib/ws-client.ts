@@ -5,6 +5,32 @@ import { unwrapEnvelope } from "../types/events";
 type EventHandler = (event: ServerEventUnion) => void;
 type CloseHandler = () => void;
 type OpenHandler = () => void;
+type ConnectionListener = (connected: boolean) => void;
+
+// ── Graph WS message types (G10/G11, PRD §11.2) ────────────────────────────
+
+/** One node-level event payload inside a `graph_event` WS message (G09). */
+export interface GraphOutputEvent {
+  kind: string;
+  node_id?: string;
+  node_name?: string;
+  invocation_id?: number;
+  target_node_id?: string;
+  source_node_id?: string;
+  timestamp?: number;
+  result?: unknown;
+  error?: string | null;
+}
+
+/** Any WS message whose `type` starts with `graph_` — intercepted before the
+ *  chat reducer so graph traffic never enters `onEvent`. */
+export type GraphWsMessage =
+  | { type: "graph_event"; graph_instance_id: string; event: GraphOutputEvent }
+  | { type: "graph_subscribed"; graph_instance_id: string }
+  | { type: "graph_unsubscribed"; graph_instance_id: string }
+  | { type: "graph_error"; message: string };
+
+type GraphHandler = (msg: GraphWsMessage) => void;
 
 const WS_PATH = "/ws";
 
@@ -22,6 +48,13 @@ function isEnvelope(data: unknown): data is DeltaEnvelope {
          typeof d["payload"] === "object";
 }
 
+/** Check whether incoming JSON is a graph-channel message (`graph_*` type). */
+function isGraphMessage(data: unknown): data is GraphWsMessage {
+  if (typeof data !== "object" || data === null) return false;
+  const type = (data as Record<string, unknown>)["type"];
+  return typeof type === "string" && type.startsWith("graph_");
+}
+
 export class WebSocketClient {
   private ws: WebSocket | null = null;
   private readonly url: string;
@@ -36,6 +69,13 @@ export class WebSocketClient {
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /** Consecutive reconnect attempts since the last successful open. */
   private _reconnectAttempts: number = 0;
+  /** Graph-channel handler — set by ``useGraphExecution`` to receive
+   *  ``graph_event`` / ``graph_error`` / ack messages. When null, graph
+   *  messages fall through to ``onEvent`` (legacy passthrough). */
+  private _graphHandler: GraphHandler | null = null;
+  /** External connection-state listeners (e.g. useGraphExecution's
+   *  WS-disconnect → polling fallback). */
+  private _connectionListeners: Set<ConnectionListener> = new Set();
 
   constructor(
     url: string,
@@ -51,6 +91,23 @@ export class WebSocketClient {
 
   get connected(): boolean {
     return this._connected;
+  }
+
+  /** Register a handler for graph-channel messages. Pass ``null`` to
+   *  unregister. While a handler is set, ``graph_*`` messages are intercepted
+   *  before ``onEvent`` and never enter the chat reducer. */
+  setGraphHandler(handler: GraphHandler | null): void {
+    this._graphHandler = handler;
+  }
+
+  /** Register a connection-state listener. Called with ``true`` on open,
+   *  ``false`` on close. Use for WS-disconnect → polling fallback. */
+  addConnectionListener(listener: ConnectionListener): void {
+    this._connectionListeners.add(listener);
+  }
+
+  removeConnectionListener(listener: ConnectionListener): void {
+    this._connectionListeners.delete(listener);
   }
 
   connect(): void {
@@ -75,12 +132,14 @@ export class WebSocketClient {
       // close starts a fresh reconnect sequence.
       this._reconnectAttempts = 0;
       this.onOpen?.();
+      this._connectionListeners.forEach((l) => l(true));
     };
 
     this.ws.onclose = (): void => {
       this._connected = false;
       this.ws = null;
       this.onClose?.();
+      this._connectionListeners.forEach((l) => l(false));
       if (!this._manualClose) {
         this._scheduleReconnect();
       }
@@ -93,6 +152,11 @@ export class WebSocketClient {
     this.ws.onmessage = (msg: MessageEvent<string>): void => {
       try {
         const data: unknown = JSON.parse(msg.data);
+        // Graph channel (G10/G11) — intercept before the chat reducer.
+        if (isGraphMessage(data)) {
+          this._graphHandler?.(data);
+          return;
+        }
         // Structured envelope (new) — unwrap to flat event.
         if (isEnvelope(data)) {
           this.onEvent(unwrapEnvelope(data));

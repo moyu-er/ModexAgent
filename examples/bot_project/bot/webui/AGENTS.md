@@ -21,6 +21,7 @@ WebUI backend — aiohttp server with REST API, WebSocket, and transcript storag
 | `routes/websocket/attach.py` | WS ATTACH action — session registration, pool switching, deferred materialize |
 | `routes/websocket/messaging.py` | WS SEND_MESSAGE action — user message → input pipeline → enqueue |
 | `routes/websocket/control.py` | WS PAUSE + DELETE_CONVERSATION actions |
+| `routes/websocket/graph.py` | WS SUBSCRIBE_GRAPH + UNSUBSCRIBE_GRAPH actions — graph event subscription, per-instance queue registry + `forward_graph_events` drain loop |
 | `routes/websocket/streaming.py` | Delta forwarding — `forward_deltas`, `watch_new_queues`, queue connection filtering |
 | `events.py` | WebUI event types — `ModelContentDelta`, `ModelReasoningDelta`, `ToolCallStart/End`, `TurnEnd`, `UserMessage` |
 | `transcript_store.py` | `TranscriptStore` — per-agent JSONL transcript persistence for history replay |
@@ -57,6 +58,13 @@ Each WebSocket connection is tracked by `_WsConnectionState`:
 - Registers the main session plus all pool-agent / subagent sessions for the attached conversation.
 - On `attach` to a new conversation, **all previous sessions are unregistered and their forward tasks cancelled** — this prevents stale sessions from forwarding another conversation's stream after switching.
 - On disconnect, all attached sessions and forward tasks are cleaned up.
+
+## WebSocket Graph Event Subscriptions
+
+`subscribe_graph` / `unsubscribe_graph` (PRD §11.2, graph-visualization-redesign) open an instance-scoped event channel on the same connection:
+- Subscribe registers a per-connection `asyncio.Queue` in the workspace's `graph_event_subscribers[instance_id]` (on `PoolWorkspaceResources`, assembled with `graph_event_store`) and starts a `forward_graph_events` drain loop; events arrive as `{"type": "graph_event", "graph_instance_id": "<str>", "event": <GraphOutput.model_dump(mode="json")>}` (id as `str` — snowflake ids exceed JS `MAX_SAFE_INTEGER`).
+- The only event source is `WebUIGraphOutputAdapter.emit()` (dual channel: event store for REST polling + fan-out to subscriber queues). WS handlers never emit events themselves.
+- Graph subscriptions are orthogonal to `attach`: switching conversations does NOT clear them (`cleanup(include_graphs=False)`); unsubscribe and disconnect deregister queue + cancel task via `cleanup_graph_subscriptions()`.
 
 ## For AI Agents
 

@@ -7,10 +7,10 @@ import { useWebUIStream } from "./hooks/useWebUIStream";
 import { useSessions } from "./hooks/useSessions";
 import { useBackendReady } from "./hooks/useBackendReady";
 import { useHashRoute } from "./hooks/useHashRoute";
-import { GraphConfigPage } from "./components/graphs/GraphConfigPage";
+import { GraphSpecListPage } from "./components/graphs/GraphSpecListPage";
 import { GraphSpecEditor } from "./components/graphs/GraphSpecEditor";
 import { GraphExecutionViewer } from "./components/graphs/GraphExecutionViewer";
-import { GraphListPage } from "./components/graphs/GraphListPage";
+import { GraphInstanceListPage } from "./components/graphs/GraphInstanceListPage";
 import BootScreen from "./components/BootScreen";
 import { DISPERSE_MS } from "./lib/particles";
 import { buildTree } from "./lib/sessionTree";
@@ -96,6 +96,7 @@ const AppInner: FC = () => {
     pendingApprovals,
     isApprovingBatch,
     isConnected,
+    wsClient,
     submitApproval,
     connect,
     disconnect,
@@ -260,10 +261,11 @@ const AppInner: FC = () => {
 
   const onSelect = useCallback(
     (sessionId: string): void => {
+      navigate("");
       selectSession(sessionId);
       setSidebarMobileOpen(false);
     },
-    [selectSession],
+    [navigate, selectSession],
   );
 
   return (
@@ -326,7 +328,7 @@ const AppInner: FC = () => {
 
         <main className="flex flex-1 flex-col min-w-0">
           {route.kind === "graphs" ? (
-            <GraphConfigPage
+            <GraphSpecListPage
               workspaceId={streamWs}
               onEditSpec={(specId): void => navigate(`/graphs/${specId}/edit`)}
               onOpenInstances={(): void => navigate("/graphs/instances")}
@@ -339,7 +341,7 @@ const AppInner: FC = () => {
               onRun={(instanceId): void => navigate(`/graphs/instances/${instanceId}`)}
             />
           ) : route.kind === "graphInstances" ? (
-            <GraphListPage
+            <GraphInstanceListPage
               workspaceId={streamWs}
               onOpenInstance={(instanceId): void => navigate(`/graphs/instances/${instanceId}`)}
               onBack={(): void => navigate("/graphs")}
@@ -348,6 +350,7 @@ const AppInner: FC = () => {
             <GraphExecutionViewer
               workspaceId={streamWs}
               instanceId={route.instanceId}
+              wsClient={wsClient ?? undefined}
               onBack={(): void => navigate("/graphs/instances")}
               onJumpToSession={handleJumpToSession}
             />

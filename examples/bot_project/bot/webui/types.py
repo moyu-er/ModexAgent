@@ -20,6 +20,7 @@ from aiohttp import web
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.webui.events import ServerEvent
 from modex_agent.core.session_id import SessionInfo
+from modex_graph import GraphOutput
 
 logger = logging.getLogger(__name__)
 
@@ -40,17 +41,69 @@ async def _safe_send_json(ws: web.WebSocketResponse, data: dict[str, object]) ->
 
 
 @dataclass
+class _GraphSubscription:
+    """One (connection, graph instance) event subscription.
+
+    Holds the workspace subscriber-registry reference and this connection's
+    own queue so teardown can deregister the queue without server access.
+    ``registry`` is the workspace's ``graph_event_subscribers`` dict (the same
+    object the ``WebUIGraphOutputAdapter`` fans out to).
+    """
+
+    instance_id: int
+    registry: dict[int, list[asyncio.Queue[GraphOutput]]]
+    queue: asyncio.Queue[GraphOutput]
+    task: asyncio.Task[None]
+
+
+@dataclass
 class _WsConnectionState:
     """Tracks all sessions and forward tasks bound to one WebSocket connection."""
 
     attached_sessions: list[str] = field(default_factory=list)
     forward_tasks: list[asyncio.Task[None]] = field(default_factory=list)
+    # Graph event subscriptions (subscribe_graph action), keyed by instance
+    # id. Orthogonal to attached_sessions: re-attaching a conversation does
+    # NOT clear them (cleanup callers pass include_graphs=False on attach).
+    graph_subscriptions: dict[int, _GraphSubscription] = field(default_factory=dict)
     # Set by cleanup() before cancelling tasks so the queue watcher stops
     # appending sessions / spawning forward tasks that would escape cancellation.
     _stopped: bool = False
 
-    async def cleanup(self, input_adapter: WebSocketInputAdapter) -> None:
-        """Drain queues, cancel forward tasks, and unregister all sessions."""
+    @property
+    def subscribed_graphs(self) -> list[int]:
+        """Graph instance ids this connection is currently subscribed to."""
+        return list(self.graph_subscriptions)
+
+    async def cleanup_graph_subscriptions(self) -> None:
+        """Deregister every graph subscription owned by this connection.
+
+        Cancels each forward task and removes its queue from the workspace
+        subscriber registry, so a closed/unsubscribed connection never leaves
+        a queue behind for the adapter to fan out to.
+        """
+        for sub in self.graph_subscriptions.values():
+            queues = sub.registry.get(sub.instance_id)
+            if queues is not None and sub.queue in queues:
+                queues.remove(sub.queue)
+            if not sub.task.done():
+                sub.task.cancel()
+                try:
+                    await sub.task
+                except asyncio.CancelledError:
+                    pass
+        self.graph_subscriptions.clear()
+
+    async def cleanup(
+        self, input_adapter: WebSocketInputAdapter, *, include_graphs: bool = True
+    ) -> None:
+        """Drain queues, cancel forward tasks, and unregister all sessions.
+
+        ``include_graphs=False`` is used by the ATTACH handler: switching
+        conversations must not clear graph subscriptions (the two lifecycles
+        are orthogonal). The disconnect path uses the default and tears down
+        sessions and graph subscriptions together.
+        """
         # Signal the queue watcher to stop BEFORE cancelling tasks so it does
         # not append a new session / spawn a forward task between our clear()
         # and task cancellation (which would orphan that task forever).
@@ -77,6 +130,8 @@ class _WsConnectionState:
         for session_id in self.attached_sessions:
             input_adapter.unregister_connection(session_id)
         self.attached_sessions.clear()
+        if include_graphs:
+            await self.cleanup_graph_subscriptions()
 
 
 # ── Constants ──────────────────────────────────────────────────────────────

@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -222,6 +223,7 @@ class GraphOrchestrator:
         )
         self._instance_store.save(metadata)
         coordinator = self._coordinator_factory.create(graph_instance_id, self._instance_store)
+        self._attach_output_adapter(coordinator)
         for node in compiled.nodes.values():
             coordinator.register_node(node.node_id)
         instance = GraphInstance(
@@ -297,13 +299,10 @@ class GraphOrchestrator:
                 kind=GraphOutputKind.COMPLETED,
                 graph_instance_id=gid,
                 result=dict(final_state).get("result"),
+                timestamp=time.time_ns() // 1_000_000,
             )
         except GraphInterrupt:
             status = GraphInstanceStatus.PAUSED
-            self._instance_store.update_status(gid, status)
-            raise
-        except asyncio.CancelledError:
-            status = GraphInstanceStatus.STOPPED
             self._instance_store.update_status(gid, status)
             raise
         except GraphDrained:
@@ -320,6 +319,7 @@ class GraphOrchestrator:
                 kind=GraphOutputKind.CRASHED,
                 graph_instance_id=gid,
                 error=str(exc),
+                timestamp=time.time_ns() // 1_000_000,
             )
             raise
         finally:
@@ -537,6 +537,11 @@ class GraphOrchestrator:
         """
         self._control_service.unregister_engine(graph_instance_id)
         if output is not None and self._output_adapter is not None:
+            instance = self._active_instances.get(graph_instance_id)
+            if instance is not None:
+                # Flush pending fire-and-forget node-level events so the
+                # terminal event is emitted last (causal ordering).
+                await instance.coordinator.drain_output_events()
             try:
                 await self._output_adapter.emit(output)
             except Exception:
@@ -575,6 +580,7 @@ class GraphOrchestrator:
             self.unregister_instance(gid)
         spec = self._load_spec(instance.spec_id)
         compiled = self._compiler.compile(spec)
+        self._attach_output_adapter(instance.coordinator)
         for node in compiled.nodes.values():
             node.node_id = instance.metadata.node_id_map[node.name]
         for node in compiled.nodes.values():
@@ -584,6 +590,16 @@ class GraphOrchestrator:
         await self.run_instance(gid)
 
     # ── Internal: coordinator lookup ────────────────────────────
+
+    def _attach_output_adapter(self, coordinator: GraphPersistenceCoordinator) -> None:
+        """Wire this orchestrator's output adapter into a coordinator.
+
+        Single post-assembly wiring point for node-level ``GraphOutput``
+        events — called by both ``create_instance`` and the recovery path
+        (``_run_existing_instance``) so every runnable instance emits
+        through the same seam (rule 15).
+        """
+        coordinator.set_output_adapter(self._output_adapter)
 
     def _lookup_coordinator(self, graph_instance_id: int) -> GraphPersistenceCoordinator | None:
         """Look up the coordinator for an active graph instance.

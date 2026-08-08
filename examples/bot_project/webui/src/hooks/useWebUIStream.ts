@@ -28,6 +28,10 @@ export interface UseWebUIStreamResult {
   isApprovingBatch: boolean;
   /** Live WebSocket connection state — drives the statusline signal dot. */
   isConnected: boolean;
+  /** The live WebSocketClient instance (null before connect / after disconnect).
+   *  Passed to graph components so they can subscribe to graph_event messages
+   *  on the same connection (G11). */
+  wsClient: WebSocketClient | null;
   connect: () => void;
   disconnect: () => void;
   send: (
@@ -66,6 +70,7 @@ export function useWebUIStream(
    *  decision POST is in flight. Keyed by tool_call_id. */
   const [submittingApprovals, setSubmittingApprovals] = useState<Record<string, boolean>>({});
   const [isConnected, setIsConnected] = useState(false);
+  const [wsClient, setWsClient] = useState<WebSocketClient | null>(null);
   const clientRef = useRef<WebSocketClient | null>(null);
   /** ID of the most recent optimistically-added user message.  The server
    * echoes it back via ``_request_id`` in the envelope metadata so the
@@ -328,6 +333,7 @@ export function useWebUIStream(
       },
     );
     clientRef.current = client;
+    setWsClient(client);
     client.connect();
   }, [wsHandleEvent]);
 
@@ -335,6 +341,7 @@ export function useWebUIStream(
     if (clientRef.current) {
       clientRef.current.disconnect();
       clientRef.current = null;
+      setWsClient(null);
       setIsConnected(false);
     }
   }, []);
@@ -613,6 +620,7 @@ export function useWebUIStream(
     pendingApprovals: sessionId ? state.pendingApprovals[sessionId] ?? [] : [],
     isApprovingBatch: Object.keys(submittingApprovals).length > 0,
     isConnected,
+    wsClient,
     connect,
     disconnect,
     send,

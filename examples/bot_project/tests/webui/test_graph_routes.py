@@ -712,3 +712,235 @@ async def test_p1_3_resume_evicted_instance_via_recovery_path(
 
     # Instance should be back in _active_instances (recovery rebuilt it)
     assert gid in orch._active_instances  # type: ignore[attr-defined]
+
+
+# ── G12: Topology endpoint (§11.3) ─────────────────────────────────────────────
+
+
+def _save_spec_with_nodes(spec_store: InMemoryGraphSpecStore) -> int:
+    """Save a spec with real functional nodes for topology/result tests."""
+    from modex_graph import NodeSpec, NodeTrigger
+
+    spec = GraphSpec(
+        name="topo-graph",
+        state_class="default",
+        scheduler="parallel",
+        default_trigger=NodeTrigger.ON_RECEIVE,
+        nodes=[
+            NodeSpec(
+                name="designer",
+                node_type="agent",
+                config={"agent": "design", "pool": "review"},
+            ),
+            NodeSpec(
+                name="reviewer",
+                node_type="agent",
+                config={"agent": "review"},
+                trigger=NodeTrigger.ON_ALL_PREDS,
+            ),
+        ],
+        edges=[
+            EdgeSpec(source="__start__", target="designer"),
+            EdgeSpec(source="designer", target="reviewer"),
+            EdgeSpec(source="reviewer", target="designer"),  # loop back
+            EdgeSpec(source="reviewer", target="__end__"),
+        ],
+    )
+    return spec_store.save(spec)
+
+
+@pytest.mark.asyncio
+async def test_get_topology_returns_structure(tmp_path: Path) -> None:
+    orch, _, spec_store = _make_orchestrator()
+    spec_id = _save_spec_with_nodes(spec_store)
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get(f"/api/graphs/specs/{spec_id}/topology")
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        assert data["spec_id"] == str(spec_id)
+        assert data["name"] == "topo-graph"
+        assert data["scheduler"] == "parallel"
+        assert data["default_trigger"] == "on_receive"
+        assert data["entry_node"] == "__start__"
+        # 2 declared functional nodes
+        node_names = [n["name"] for n in data["nodes"]]
+        assert node_names == ["designer", "reviewer"]
+        # designer node
+        designer = data["nodes"][0]
+        assert designer["node_type"] == "agent"
+        assert designer["config"]["agent"] == "design"
+        assert designer["config"]["pool"] == "review"
+        assert designer["trigger"] is None  # uses graph default
+        # reviewer node has per-node trigger override
+        reviewer = data["nodes"][1]
+        assert reviewer["trigger"] == "on_all_preds"
+        # edges include loop back
+        edge_pairs = [(e["source"], e["target"]) for e in data["edges"]]
+        assert ("__start__", "designer") in edge_pairs
+        assert ("reviewer", "designer") in edge_pairs  # loop back
+        assert ("reviewer", "__end__") in edge_pairs
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_get_topology_404_when_not_found(tmp_path: Path) -> None:
+    orch, _, _ = _make_orchestrator()
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get("/api/graphs/specs/999999/topology")
+        assert resp.status == 404
+    finally:
+        await client.close()
+
+
+# ── G12: Node result (§11.4) ──────────────────────────────────────────────────
+
+
+def _make_orchestrator_with_inmemory_state() -> tuple[
+    GraphOrchestrator, dict[int, list[GraphOutput]], InMemoryGraphSpecStore
+]:
+    """Build an orchestrator backed by InMemoryNodeStateStore so that
+    NodeInvocationRecords survive after instance eviction.
+
+    The factory caches the InMemoryNodeStateStore per graph_instance_id so
+    that the recovery path (``get_state`` for evicted instances) sees the
+    same store that was populated during the run.
+    """
+    from modex_graph import (
+        DefaultGraphState,
+        InMemoryDeliverStoreFactory,
+        InMemoryNodeStateStore,
+        NodeRegistry,
+    )
+    from modex_graph.persistence.persistence_coordinator import (
+        CoordinatorFactory,
+        GraphPersistenceCoordinator,
+    )
+
+    spec_store = InMemoryGraphSpecStore()
+    instance_store = InMemoryGraphInstanceStore()
+    event_store: dict[int, list[GraphOutput]] = {}
+    _state_stores: dict[int, InMemoryNodeStateStore] = {}
+
+    class _InMemoryCoordinatorFactory(CoordinatorFactory):
+        def create(self, graph_instance_id, instance_store):
+            store = _state_stores.get(graph_instance_id)
+            if store is None:
+                store = InMemoryNodeStateStore(graph_instance_id)
+                _state_stores[graph_instance_id] = store
+            return GraphPersistenceCoordinator(
+                graph_instance_id=graph_instance_id,
+                instance_store=instance_store,
+                node_state_store=store,
+                default_deliver_store_factory=InMemoryDeliverStoreFactory(),
+            )
+
+    orchestrator = GraphOrchestrator(
+        node_registry=NodeRegistry(),
+        state_classes={"default": DefaultGraphState},
+        spec_store=spec_store,
+        instance_store=instance_store,
+        coordinator_factory=_InMemoryCoordinatorFactory(),
+        output_adapter=WebUIGraphOutputAdapter(event_store),
+    )
+    return orchestrator, event_store, spec_store
+
+
+@pytest.mark.asyncio
+async def test_get_instance_node_result_completed(tmp_path: Path) -> None:
+    orch, event_store, spec_store = _make_orchestrator_with_inmemory_state()
+    spec_id = _save_spec(spec_store)  # __start__ → __end__
+    gid = await orch.create_and_run(spec_id)
+    client = _make_client(orch, event_store, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get(f"/api/graphs/instances/{gid}")
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        # At least the __end__ node should be completed with a result
+        # (END node collects upstream delivers into state.result)
+        end_node = next(
+            (n for n in data["nodes"] if n["node_name"] == "__end__"), None
+        )
+        assert end_node is not None, "expected __end__ node in response"
+        assert end_node["status"] == "completed"
+        assert end_node["result"] is not None
+        assert "content" in end_node["result"]
+    finally:
+        await orch.cleanup()
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_get_instance_node_result_none_for_pending(tmp_path: Path) -> None:
+    """Non-completed nodes should have result=None."""
+    orch, _, spec_store = _make_orchestrator_with_inmemory_state()
+    spec_id = _save_spec(spec_store)
+    gid = await orch.create_instance(spec_id)  # not run — stays pending
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get(f"/api/graphs/instances/{gid}")
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        for node in data["nodes"]:
+            assert node["result"] is None
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_get_instance_node_result_truncation(tmp_path: Path) -> None:
+    """Long result content must be truncated to 500 chars + '...' suffix."""
+    from modex_graph import InvocationStatus, NodeInvocationRecord
+
+    orch, _, spec_store = _make_orchestrator_with_inmemory_state()
+    spec_id = _save_spec(spec_store)
+    gid = await orch.create_instance(spec_id)
+
+    # Access the live coordinator (instance not evicted — no run)
+    instance = orch._active_instances.get(gid)
+    assert instance is not None
+    coordinator = instance.coordinator
+    # Find the __end__ node_id from metadata
+    metadata = orch._instance_store.load(gid)
+    assert metadata is not None
+    end_id = metadata.node_id_map.get("__end__")
+    assert end_id is not None
+
+    # Inject a completed invocation with a very long result
+    long_content = "x" * 1000
+    fake_record = NodeInvocationRecord(
+        invocation_id=1,
+        graph_instance_id=gid,
+        node_id=end_id,
+        version=1,
+        parent_version=None,
+        status=InvocationStatus.COMPLETED,
+        state_json={"result": [{"content": long_content}]},
+        suspended=False,
+        created_at=0,
+        updated_at=0,
+    )
+    coordinator._node_state_store._records[end_id] = [fake_record]
+
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get(f"/api/graphs/instances/{gid}")
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        end_node = next(
+            (n for n in data["nodes"] if n["node_name"] == "__end__"), None
+        )
+        assert end_node is not None
+        assert end_node["result"] is not None
+        content = end_node["result"]["content"]
+        assert len(content) == 503  # 500 + "..."
+        assert content.endswith("...")
+    finally:
+        await client.close()

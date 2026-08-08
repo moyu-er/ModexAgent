@@ -136,6 +136,7 @@ describe("graphsApi", () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(
         makeResponse(200, {
+          spec_id: "3",
           graph_instance_id: "4",
           status: "running",
           nodes: [{ node_name: "researcher", node_id: "node_ab", status: "running" }],
@@ -146,6 +147,7 @@ describe("graphsApi", () => {
     vi.stubGlobal("fetch", fetchMock);
     const out = await getInstance("", "4");
     expect(out.nodes).toHaveLength(1);
+    expect(out.spec_id).toBe("3");
     const [url] = call(fetchMock, 0);
     expect(url).toBe("/api/graphs/instances/4");
   });

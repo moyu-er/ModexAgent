@@ -81,6 +81,27 @@ export default {
           im: v("cat-im"),
           prompts: v("cat-prompts"),
         },
+
+        // Graph 可视化语义 token（graph PRD §7.3）— 全部映射 var()，
+        // 不要加 /alpha 修饰用法（var() token 上不生成 CSS）。
+        graph: {
+          "node-fill": v("graph-node-fill"),
+          "node-fill-done": v("graph-node-fill-done"),
+          "node-border": v("graph-node-border"),
+          "node-border-active": v("graph-node-border-active"),
+          edge: v("graph-edge"),
+          "edge-active": v("graph-edge-active"),
+          arrow: v("graph-arrow"),
+          "arrow-active": v("graph-arrow-active"),
+          deliver: v("graph-deliver"),
+          "deliver-glow": v("graph-deliver-glow"),
+          "deliver-trail": v("graph-deliver-trail"),
+          "active-ring": v("graph-active-ring"),
+          "mini-node": v("graph-mini-node"),
+          "mini-edge": v("graph-mini-edge"),
+          "mini-start": v("graph-mini-start"),
+          "mini-end": v("graph-mini-end"),
+        },
       },
       fontFamily: {
         // Single-family system (DESIGN.md §3): Inter carries both display and
@@ -164,11 +185,18 @@ export default {
       transitionTimingFunction: {
         app: "var(--ease)",
         out: "var(--ease-out)",
+        // Graph 动效（graph PRD §7.2）
+        deliver: "var(--ease-deliver)",
+        "ring-pulse": "var(--ease-ring-pulse)",
       },
       transitionDuration: {
         fast: "var(--dur-fast)",
         app: "var(--dur)",
         slow: "var(--dur-slow)",
+        // Graph 动效（graph PRD §7.2）
+        deliver: "var(--dur-deliver)",
+        "ring-pulse": "var(--dur-ring-pulse)",
+        layout: "var(--dur-layout)",
       },
     },
   },

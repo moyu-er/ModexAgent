@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-07-18 -->
+<!-- Updated: 2026-08-08 -->
 
 # webui
 
@@ -52,11 +52,33 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 | `components/settings/ConfigForm.tsx` | Generic field renderer for singleton config domains |
 | `components/ui/SectionLabel.tsx` | Shared section eyebrow (Geist Mono 10px uppercase) — used across all settings tabs |
 | `components/ui/KeyValueEditor.tsx` | Postman-style key/value row editor (controlled component) |
+| `components/graphs/GraphSpecListPage.tsx` | Graph spec list — MiniTopology thumbnail + metadata per row |
+| `components/graphs/GraphSpecEditor.tsx` | Split-pane spec editor — CodeMirror YAML + live topology preview + run |
+| `components/graphs/GraphInstanceListPage.tsx` | Instance list — status-colored MiniTopology + progress + elapsed |
+| `components/graphs/GraphExecutionViewer.tsx` | Core execution viewer — full-canvas topology + context sidebar + control bar |
+| `components/graphs/DeliverDialog.tsx` | Deliver-to-node modal — node selector + content input |
+| `components/graphs/shared.tsx` | Shared graph UI — GraphStatusBadge + formatGraphApiError |
+| `components/graphs/topology/TopologyCanvas.tsx` | SVG canvas — viewBox auto-fit, wheel zoom, drag pan, legend overlay |
+| `components/graphs/topology/GraphNode.tsx` | SVG node — glyph + name + sub-label + status dot, dual-channel status coloring |
+| `components/graphs/topology/GraphEdge.tsx` | SVG edge — border-strong stroke + arrowhead + highlight state |
+| `components/graphs/topology/DeliverPulse.tsx` | Deliver pulse animation — brand-bright dot travels along edge path, reduced-motion fallback |
+| `components/graphs/topology/ActiveNodeRing.tsx` | Running-node pulsing ring — outer rect stroke, CSS `graph-ring-pulse` animation |
+| `components/graphs/topology/MiniTopology.tsx` | 80×24px thumbnail — simplified topology, >8 nodes fold to `···` |
+| `components/graphs/topology/layout.ts` | dagre TB layout — spec → node positions + edge paths |
+| `components/graphs/topology/miniLayout.ts` | Simplified layout for MiniTopology (fixed 80×24 coordinate space) |
+| `components/graphs/detail/NodeDetailPanel.tsx` | Sidebar — selected node details (type, pool, status, invocation, open session) |
+| `components/graphs/detail/InstanceSummary.tsx` | Sidebar — instance summary + progress ring + graph-level result |
+| `components/graphs/detail/EventTimeline.tsx` | Sidebar — vertical event timeline with inferred/real events |
+| `components/graphs/yaml/YamlCodeEditor.tsx` | CodeMirror 6 wrapper — lazy import, YAML highlight, lint gutter, Teal & Ember theme |
+| `components/graphs/yaml/parseGraphSpec.ts` | YAML → structured topology model (ParsedGraphTopology), structured parse errors |
 | `hooks/useWebUIStream.ts` | WebSocket hook — manages connection, `request_id`-based optimistic message dedup, streaming events, message history |
 | `hooks/useWebUIStream.reducer.ts` | Pure reducer — session-scoped event filtering, `error` event → system notice, `user_message` echo dedup via `_request_id` metadata |
 | `hooks/useWebUIStream.reducer.test.ts` | Reducer unit tests (session isolation, error handling, request_id matching) |
+| `hooks/useGraphExecution.ts` | Graph execution hook — 2s polling + WS mode, node status diff, deliver pulse triggers, derived event timeline |
+| `hooks/useGraphExecution.diff.ts` | Pure diff logic — `diffNodeStatuses` transition table (§9.3), separated from React lifecycle |
 | `lib/api.ts` | REST API client (fetchSessions, fetchPools, createConversation, etc.) |
 | `lib/ws-client.ts` | WebSocket client with action/attach protocol |
+| `lib/graphsApi.ts` | Graph REST API client — specs CRUD, instance lifecycle, events, deliver, topology |
 | `types/events.ts` | TypeScript event type definitions matching backend events.py |
 
 ## Scripts
@@ -66,14 +88,14 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 | `npm run dev` | Start Vite dev server with backend proxy |
 | `npm run build` | Production build to `dist/` |
 | `npm run preview` | Preview production build |
-| `npm test` | Run Vitest unit tests (currently reducer tests) |
+| `npm test` | Run Vitest unit tests — 927 tests across 93 files |
 
 ## For AI Agents
 
 ### Working In This Directory
 - `npm run dev` starts the dev server with proxy to backend.
 - `npm run build` outputs to `dist/`, which is served by the backend at `/webui/`.
-- `npm test` runs Vitest — 563 tests across 67 files covering hooks, reducers, UI primitives, dropdowns, boot, and all settings views.
+- `npm test` runs Vitest — 927 tests across 93 files covering hooks, reducers, UI primitives, dropdowns, boot, settings views, and all graph visualization components (topology, deliver pulse, diff, YAML editor, execution viewer, spec editor, instance/spec list pages).
 - The frontend has **no direct pool switching** for existing conversations — it's purely a display filter in the sidebar dropdown.
 - Workspace switching is done via `WorkspaceBrowser` → `POST /api/workspace/cd`.
 - `useWebUIStream.ts` is the core hook — it handles WebSocket lifecycle, optimistic messages (`request_id`-based dedup), and streaming state.

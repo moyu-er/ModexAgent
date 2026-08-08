@@ -23,10 +23,35 @@ export interface GraphSpecResponse {
   yaml_content: string;
 }
 
+// ── Topology (§11.3) ─────────────────────────────────────────────────────────
+
+export interface NodeTopologyInfo {
+  name: string;
+  node_type: string;
+  config: Record<string, unknown>;
+  trigger?: string | null;
+}
+
+export interface EdgeTopologyInfo {
+  source: string;
+  target: string;
+}
+
+export interface GraphTopology {
+  spec_id: string;
+  name: string;
+  scheduler: string;
+  default_trigger: string;
+  nodes: NodeTopologyInfo[];
+  edges: EdgeTopologyInfo[];
+  entry_node: string;
+}
+
 export interface GraphNodeStatus {
   node_name: string;
   node_id: string;
   status: string;
+  result?: GraphPayload | null;
 }
 
 export interface GraphPayload {
@@ -34,6 +59,7 @@ export interface GraphPayload {
 }
 
 export interface GraphInstance {
+  spec_id: string;
   graph_instance_id: string;
   status: string;
   nodes: GraphNodeStatus[];
@@ -135,6 +161,19 @@ export async function getSpecYaml(
   });
   await assertOk(resp);
   return resp.text();
+}
+
+/** Structured topology (§11.3) — compiler-validated nodes/edges/scheduler.
+ *  Optional optimization; parseGraphSpecYaml remains the fallback. */
+export async function getTopology(
+  workspaceId: string,
+  specId: string,
+): Promise<GraphTopology> {
+  const resp = await fetch(`${API_BASE}/graphs/specs/${specId}/topology`, {
+    headers: workspaceHeaders(workspaceId),
+  });
+  await assertOk(resp);
+  return resp.json() as Promise<GraphTopology>;
 }
 
 // ── Instances ───────────────────────────────────────────────────────────────

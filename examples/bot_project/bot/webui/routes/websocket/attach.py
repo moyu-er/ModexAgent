@@ -173,8 +173,10 @@ async def handle_attach(
     # Unregister any previous sessions and cancel their forward tasks.
     # cleanup() sets state._stopped (to halt the previous watcher); reset
     # it here because this state is being reused for a fresh attach cycle
-    # and the new watcher spawned below must run.
-    await state.cleanup(server._input)
+    # and the new watcher spawned below must run. Graph subscriptions are
+    # orthogonal to the attached conversation -- switching sessions must
+    # NOT clear them, so they are excluded from this cleanup.
+    await state.cleanup(server._input, include_graphs=False)
     state._stopped = False
 
     server._input.register_connection(session_id, ws)

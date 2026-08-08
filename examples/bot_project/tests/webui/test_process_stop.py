@@ -31,14 +31,16 @@ def proc_module():
 
 def _make_cp(
     returncode: int = 0,
-    stdout: str = "",
-    stderr: str = "",
+    stdout: bytes = b"",
+    stderr: bytes = b"",
+    *,
+    text: bool = False,
 ) -> MagicMock:
-    """Create a CompletedProcess mock — stdout/stderr are str (text=True)."""
+    """Create a CompletedProcess mock — stdout/stderr are bytes (decoded when text=True)."""
     cp = MagicMock(spec=subprocess.CompletedProcess)
     cp.returncode = returncode
-    cp.stdout = stdout
-    cp.stderr = stderr
+    cp.stdout = stdout.decode("utf-8", errors="replace") if text else stdout
+    cp.stderr = stderr.decode("utf-8", errors="replace") if text else stderr
     return cp
 
 
@@ -51,15 +53,17 @@ def test_find_processes_by_port_windows(proc_module, monkeypatch) -> None:
         pytest.skip("Windows-specific test")
 
     def mock_run(args, **kwargs):
+        text = kwargs.get("text", False)
         if isinstance(args, list) and args[0] == "netstat":
             return _make_cp(
                 returncode=0,
                 stdout=(
-                    "  TCP    0.0.0.0:21800           0.0.0.0:0              LISTENING       12345\r\n"
-                    "  TCP    0.0.0.0:21800           0.0.0.0:0              LISTENING       12346\r\n"
+                    b"  TCP    0.0.0.0:21800           0.0.0.0:0              LISTENING       12345\r\n"
+                    b"  TCP    0.0.0.0:21800           0.0.0.0:0              LISTENING       12346\r\n"
                 ),
+                text=text,
             )
-        return _make_cp(returncode=1, stdout="")
+        return _make_cp(returncode=1, stdout=b"", text=text)
 
     monkeypatch.setattr(subprocess, "run", mock_run)
     pids = proc_module._find_processes_by_port(21800)
@@ -74,7 +78,7 @@ def test_find_processes_by_port_empty(proc_module, monkeypatch) -> None:
         pytest.skip("Windows-specific test")
 
     def mock_run(args, **kwargs):
-        return _make_cp(returncode=1, stdout="")
+        return _make_cp(returncode=1, stdout=b"", text=kwargs.get("text", False))
 
     monkeypatch.setattr(subprocess, "run", mock_run)
     pids = proc_module._find_processes_by_port(21800)
@@ -90,12 +94,14 @@ def test_find_processes_by_command_windows(proc_module, monkeypatch) -> None:
         pytest.skip("Windows-specific test")
 
     def mock_run(args, **kwargs):
+        text = kwargs.get("text", False)
         if isinstance(args, list) and "powershell" in str(args).lower():
             return _make_cp(
                 returncode=0,
-                stdout="12345\r\n12346\r\n",
+                stdout=b"12345\r\n12346\r\n",
+                text=text,
             )
-        return _make_cp(returncode=1, stdout="")
+        return _make_cp(returncode=1, stdout=b"", text=text)
 
     monkeypatch.setattr(subprocess, "run", mock_run)
     pids = proc_module._find_processes_by_command("modexbot.cli")
@@ -132,7 +138,10 @@ def test_get_command_line_windows(proc_module, monkeypatch) -> None:
         pytest.skip("Windows-specific test")
 
     def mock_run(args, **kwargs):
-        return _make_cp(stdout="python -m modexbot.cli start\n")
+        return _make_cp(
+            stdout=b"python -m modexbot.cli start\n",
+            text=kwargs.get("text", False),
+        )
 
     monkeypatch.setattr(subprocess, "run", mock_run)
     assert proc_module._get_command_line(12345) == "python -m modexbot.cli start"
@@ -184,7 +193,7 @@ def test_kill_process_windows(proc_module, monkeypatch) -> None:
 
     def mock_run(args, **kwargs):
         calls.append(list(args) if isinstance(args, list) else [str(args)])
-        return _make_cp(returncode=0, stdout="SUCCESS")
+        return _make_cp(returncode=0, stdout=b"SUCCESS", text=kwargs.get("text", False))
 
     monkeypatch.setattr(subprocess, "run", mock_run)
     result = proc_module._kill_process(12345)

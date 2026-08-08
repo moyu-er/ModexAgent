@@ -1,5 +1,7 @@
-"""Graph REST API (12 endpoints). per-workspace resolution via header/query.
+"""Graph REST API (13 endpoints). per-workspace resolution via header/query.
 spec store returns records with id+metadata for spec responses. PUT validates before save.
+Topology endpoint (§11.3) returns compiler-validated structured topology. Node result (§11.4)
+extracts completed node output from state checkpoint with truncation.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from aiohttp import web
 from pydantic import ValidationError
 
 from bot.webui.routes.graph_models import (
+    EdgeTopologyInfo,
     GraphDeliverRequest,
     GraphEventItem,
     GraphEventListResponse,
@@ -24,10 +27,12 @@ from bot.webui.routes.graph_models import (
     GraphSpecResponse,
     GraphSpecSummary,
     GraphSpecUpdateRequest,
+    GraphTopologyResponse,
     NodeStatusInfo,
+    NodeTopologyInfo,
 )
 from modex_agent.orchestration import GraphOrchestrator
-from modex_graph import GraphInstanceStatus, GraphOutput, GraphSpec, TopologyError
+from modex_graph import GraphInstanceStatus, GraphOutput, GraphPayload, GraphSpec, NodeSpec, TopologyError
 
 if TYPE_CHECKING:
     from bot.webui.server import WebUIServer
@@ -208,6 +213,50 @@ async def handle_get_spec_yaml(request: web.Request) -> web.Response:
     return web.Response(text=_yaml(spec), content_type="text/yaml")
 
 
+async def handle_get_topology(request: web.Request) -> web.Response:
+    r = _resolve_resources(request)
+    if isinstance(r, web.Response):
+        return r
+    orch, _, _ = r
+    sid = _int_param(request, "spec_id")
+    if isinstance(sid, web.Response):
+        return sid
+    store = orch._spec_store
+    record = store.get_by_id(sid)
+    if record is None:
+        return web.json_response({"error": f"spec {sid} not found"}, status=404)
+    spec = store.load_by_id(sid)
+    if spec is None:
+        return web.json_response({"error": "spec content missing"}, status=500)
+    try:
+        orch._compiler.validate(spec)
+    except TopologyError as exc:
+        return web.json_response(
+            {"error": "topology validation failed", "detail": str(exc)}, status=400
+        )
+    return web.json_response(
+        GraphTopologyResponse(
+            spec_id=str(sid),
+            name=spec.name,
+            scheduler=spec.scheduler.value,
+            default_trigger=spec.default_trigger.value,
+            nodes=[
+                NodeTopologyInfo(
+                    name=n.name,
+                    node_type=n.node_type,
+                    config=dict(n.config),
+                    trigger=n.trigger.value if n.trigger is not None else None,
+                )
+                for n in spec.nodes
+            ],
+            edges=[
+                EdgeTopologyInfo(source=e.source, target=e.target) for e in spec.edges
+            ],
+            entry_node="__start__",
+        ).model_dump(mode="json")
+    )
+
+
 async def _control_instance(
     request: web.Request,
     action: str,
@@ -283,6 +332,35 @@ async def handle_deliver_to_node(request: web.Request) -> web.Response:
     )
 
 
+_RESULT_MAX_CHARS = 500
+
+
+def _extract_node_result(state_json: dict[str, Any]) -> GraphPayload | None:
+    """Extract a completed node's output from its ``state_json`` checkpoint.
+
+    For ``DefaultGraphState`` the END node stores ``result: list[GraphPayload]``.
+    We take the first payload and truncate ``content`` to ``_RESULT_MAX_CHARS``.
+    Returns ``None`` when no result is available.
+    """
+    raw = state_json.get("result")
+    if raw is None:
+        return None
+    # result is list[GraphPayload] (serialized as list[dict])
+    if isinstance(raw, list) and raw:
+        first = raw[0]
+        if isinstance(first, dict) and "content" in first:
+            content = str(first["content"])
+            if len(content) > _RESULT_MAX_CHARS:
+                content = content[:_RESULT_MAX_CHARS] + "..."
+            return GraphPayload(content=content)
+    elif isinstance(raw, dict) and "content" in raw:
+        content = str(raw["content"])
+        if len(content) > _RESULT_MAX_CHARS:
+            content = content[:_RESULT_MAX_CHARS] + "..."
+        return GraphPayload(content=content)
+    return None
+
+
 async def handle_get_instance(request: web.Request) -> web.Response:
     r = _resolve_resources(request)
     if isinstance(r, web.Response):
@@ -301,11 +379,15 @@ async def handle_get_instance(request: web.Request) -> web.Response:
             node_name=id_to_name.get(nid, nid),
             node_id=nid,
             status=inv[-1].status.value if inv else "unknown",
+            result=_extract_node_result(inv[-1].state_json)
+            if inv and inv[-1].status.value == "completed"
+            else None,
         )
         for nid, inv in snapshot.nodes.items()
     ]
     return web.json_response(
         GraphInstanceResponse(
+            spec_id=str(snapshot.metadata.spec_id),
             graph_instance_id=str(snapshot.metadata.graph_instance_id),
             status=snapshot.metadata.status.value,
             nodes=nodes,
@@ -331,6 +413,7 @@ async def handle_list_instances(request: web.Request) -> web.Response:
     return web.json_response(
         [
             GraphInstanceResponse(
+                spec_id=str(m.spec_id),
                 graph_instance_id=str(m.graph_instance_id), status=m.status.value, nodes=[]
             ).model_dump(mode="json")
             for m in metadatas
@@ -373,6 +456,7 @@ def register_graph_routes(
     app.router.add_put("/api/graphs/specs/{spec_id}", handle_put_spec)
     app.router.add_post("/api/graphs/specs/{spec_id}/run", handle_run_spec)
     app.router.add_get("/api/graphs/specs/{spec_id}/yaml", handle_get_spec_yaml)
+    app.router.add_get("/api/graphs/specs/{spec_id}/topology", handle_get_topology)
     app.router.add_get("/api/graphs/instances", handle_list_instances)
     app.router.add_get("/api/graphs/instances/{instance_id}", handle_get_instance)
     app.router.add_get("/api/graphs/instances/{instance_id}/events", handle_get_events)

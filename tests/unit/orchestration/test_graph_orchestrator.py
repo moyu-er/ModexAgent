@@ -60,6 +60,7 @@ from modex_graph import (
     NodeRegistry,
     NodeSpec,
     NullCoordinatorFactory,
+    RoutingError,
     create_null_coordinator,
 )
 
@@ -942,8 +943,9 @@ class TestRunInstance:
         gid = await orch.create_instance(spec_id)
         await orch.run_instance(gid)
 
-        assert len(adapter.outputs) == 1
-        assert adapter.outputs[0].kind is GraphOutputKind.COMPLETED
+        terminal = [o for o in adapter.outputs if o.kind is GraphOutputKind.COMPLETED]
+        assert len(terminal) == 1
+        assert terminal[0].graph_instance_id == gid
 
     async def test_crashed_instance_evicted_from_registry(self) -> None:
         """M1: CRASHED instances removed from _active_instances."""
@@ -1190,9 +1192,11 @@ class TestP0LifecycleHardening:
 
         await asyncio.sleep(3)
 
-    async def test_p0_5_deliver_to_pending_instance_rejected(self) -> None:
+    async def test_p0_5_deliver_to_pending_instance_accepted(self) -> None:
         """P0-5: deliver_to_node on a PENDING instance (not yet RUNNING)
-        must be rejected with ValueError.
+        must be accepted — PENDING instances already have a coordinator
+        and registered deliver stores. Deliver to a non-existent node
+        must still raise RoutingError.
         """
         orch, spec_store, instance_store = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
@@ -1200,8 +1204,10 @@ class TestP0LifecycleHardening:
 
         assert _load_status(instance_store, gid) == GraphInstanceStatus.PENDING.value
 
-        with pytest.raises(ValueError, match="must be RUNNING or PAUSED"):
-            await orch.deliver_to_node(gid, "entry", "test content")
+        # Deliver to a non-existent node on a PENDING instance: status
+        # check passes (PENDING is accepted), node check raises RoutingError.
+        with pytest.raises(RoutingError, match="has no deliver_store"):
+            await orch.deliver_to_node(gid, "nonexistent_node", "test content")
 
 
 # -- P1: Lifecycle hardening (TDD) --------------------------------------
@@ -1210,13 +1216,17 @@ class TestP0LifecycleHardening:
 class TestP1LifecycleHardening:
     """P1-2/P1-4/P1-5: turn lifecycle convergence, cancellation, session cleanup."""
 
-    async def test_p1_4_cancellederror_writes_stopped_not_running(self) -> None:
+    async def test_p1_4_cancellederror_leaves_running_for_recovery(self) -> None:
         """P1-4: when run_instance is cancelled (workspace eviction),
-        status must be STOPPED, not left as RUNNING.
+        status must be left as RUNNING so that recover_crashed can pick
+        it up as an orphan on the next startup.
 
-        Without the fix, CancelledError bypasses except Exception,
-        finally runs with status=RUNNING, _finalize_instance does not
-        evict (RUNNING is not terminal), instance leaks.
+        CancelledError inherits BaseException (Python 3.9+), so it
+        bypasses ``except Exception`` and reaches ``finally`` with
+        status still RUNNING (set before the try block). RUNNING is
+        non-terminal, so _finalize_instance does not evict — the
+        instance stays in _active_instances and the store as an orphan
+        RUNNING, exactly the state recover_crashed scans for.
         """
         node_registry = NodeRegistry()
         node_registry.register("slow", _SlowFactory())
@@ -1241,6 +1251,6 @@ class TestP1LifecycleHardening:
         with pytest.raises(asyncio.CancelledError):
             await task
 
-        # P1-4 assertions: status STOPPED, instance evicted
-        assert _load_status(instance_store, gid) == GraphInstanceStatus.STOPPED.value
-        assert gid not in orch._active_instances
+        # P1-4 assertions: status stays RUNNING (orphan for recovery),
+        # instance NOT evicted (RUNNING is non-terminal)
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.RUNNING.value

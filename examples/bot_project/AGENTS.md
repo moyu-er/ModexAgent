@@ -1,4 +1,4 @@
-<!-- Updated: 2026-06-22 | WorkspaceManager refactor -->
+<!-- Updated: 2026-08-08 | G08 graph visualization audit -->
 
 # bot_project
 
@@ -114,11 +114,14 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/webui/transcript_store.py` | Per-agent transcript persistence (JSONL) for history replay |
 | `bot/webui/events.py` | WebUI event types (model deltas, tool calls, turn lifecycle) |
 | `bot/webui/emitter/` | Emits WebUI events via fan-in adapter — split into 4 modules |
+| `bot/graph/` | Graph scheduling bridge — `BotAgentNode` (agent-backed graph node), `BotAgentNodeFactory` (spec → node), `GraphSpecLoader` (YAML → compiled spec store), `WebUIGraphOutputAdapter` (dual-channel event emission: REST store + WS fan-out) |
+| `bot/webui/routes/graph_routes.py` | Graph REST API — specs CRUD, instance lifecycle (run/pause/resume/stop), events, deliver, topology endpoint |
 | `modexbot/cli.py` | CLI entry point — 3-layer process discovery for start/stop/restart |
 | `modexbot/main.py` | CLI→service bootstrap |
 | `config/bot_config.yml` | Agent, memory, tool, runtime, observability config. `${ENV_VAR}` interpolation |
 | `config/mcp/*.json` | MCP server configs per agent (stdio/SSE/streamable_http) |
 | `config/pools/*.yml` | Pool definitions — agents, roles, subagent templates |
+| `config/graphs/*.yml` | Declarative graph specifications (DAG workflows) — loaded by `GraphSpecLoader` at startup |
 
 ## Multi-Agent Setup
 
@@ -391,6 +394,6 @@ python -m pytest examples/bot_project/tests -q
 cd examples/bot_project/webui && npm test -- --run
 ```
 
-Backend tests cover WebUI endpoints, streaming isolation, pool routing, input pipeline stages, and transcript store. Frontend tests cover the `useWebUIStream` reducer for per-conversation event filtering and `request_id`-based message dedup.
+Backend tests cover WebUI endpoints, streaming isolation, pool routing, input pipeline stages, transcript store, graph scheduling (node-level events, WS subscription protocol, topology endpoint), and graph REST routes. Frontend tests cover the `useWebUIStream` reducer, `request_id`-based message dedup, graph topology components (deliver pulse, active ring, diff logic, YAML editor, execution viewer, spec/instance list pages), and i18n/token coverage.
 
 <!-- MANUAL -->

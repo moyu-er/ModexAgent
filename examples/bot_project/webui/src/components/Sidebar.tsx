@@ -187,7 +187,7 @@ export const Sidebar: FC<SidebarProps> = ({
               onOpenGraphs();
               onCloseMobile();
             }}
-            className={`h-auto w-full justify-start gap-2 rounded-sm px-2 py-1.5 text-base ${
+            className={`-ml-2 h-auto w-full justify-start gap-2 rounded-sm px-2 py-1.5 text-base ${
               graphsActive
                 ? "bg-hairline-soft text-ink"
                 : "text-body hover:bg-hairline-soft hover:text-ink"

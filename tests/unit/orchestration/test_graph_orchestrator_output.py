@@ -81,13 +81,19 @@ async def test_empty_graph_emits_user_input_as_completed_result() -> None:
 
     graph_instance_id = await orchestrator.create_and_run(spec_id, user_input=user_input)
 
-    assert output_adapter.outputs == [
-        GraphOutput(
-            kind=GraphOutputKind.COMPLETED,
-            graph_instance_id=graph_instance_id,
-            result=[user_input],
-        )
+    kinds = [o.kind for o in output_adapter.outputs]
+    assert kinds == [
+        GraphOutputKind.NODE_STARTED,
+        GraphOutputKind.DELIVER_DISPATCHED,
+        GraphOutputKind.NODE_COMPLETED,
+        GraphOutputKind.NODE_STARTED,
+        GraphOutputKind.NODE_COMPLETED,
+        GraphOutputKind.COMPLETED,
     ]
+    assert all(o.timestamp is not None for o in output_adapter.outputs)
+    terminal = output_adapter.outputs[-1]
+    assert terminal.graph_instance_id == graph_instance_id
+    assert terminal.result == [user_input]
 
 
 async def test_crashed_graph_emits_output_before_reraising() -> None:
@@ -118,10 +124,16 @@ async def test_crashed_graph_emits_output_before_reraising() -> None:
     with pytest.raises(_GraphCrashError, match="boom"):
         await orchestrator.create_and_run(spec_id)
 
-    assert len(output_adapter.outputs) == 1
-    output = output_adapter.outputs[0]
-    assert output.kind is GraphOutputKind.CRASHED
-    assert output.error == "boom"
+    terminal = [o for o in output_adapter.outputs if o.kind is GraphOutputKind.CRASHED]
+    assert len(terminal) == 1
+    assert terminal[0].error == "boom"
+    node_crashed = [
+        o for o in output_adapter.outputs if o.kind is GraphOutputKind.NODE_CRASHED
+    ]
+    assert len(node_crashed) == 1
+    assert node_crashed[0].node_name == "entry"
+    assert node_crashed[0].error == "boom"
+    assert node_crashed[0].invocation_id is not None
 
 
 async def test_completed_output_uses_state_returned_by_scheduler(

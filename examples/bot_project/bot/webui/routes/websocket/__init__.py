@@ -6,6 +6,7 @@ text messages. Sub-modules own the per-action handlers:
 - :mod:`bot.webui.routes.websocket.attach` -- ATTACH action.
 - :mod:`bot.webui.routes.websocket.messaging` -- SEND_MESSAGE action.
 - :mod:`bot.webui.routes.websocket.control` -- PAUSE / DELETE_CONVERSATION actions.
+- :mod:`bot.webui.routes.websocket.graph` -- SUBSCRIBE_GRAPH / UNSUBSCRIBE_GRAPH actions.
 - :mod:`bot.webui.routes.websocket.streaming` -- delta forwarding + queue watcher.
 
 Module-level async functions take ``server`` as first parameter (not ``self``);
@@ -107,6 +108,14 @@ async def dispatch_ws_message(
         from bot.webui.routes.websocket.control import handle_delete_conversation
 
         await handle_delete_conversation(server, ws, data)
+    elif action == WebSocketAction.SUBSCRIBE_GRAPH:
+        from bot.webui.routes.websocket.graph import handle_subscribe_graph
+
+        await handle_subscribe_graph(server, ws, data, state)
+    elif action == WebSocketAction.UNSUBSCRIBE_GRAPH:
+        from bot.webui.routes.websocket.graph import handle_unsubscribe_graph
+
+        await handle_unsubscribe_graph(server, ws, data, state)
     else:
         logger.warning("Unknown WebSocket action: %s", action)
 

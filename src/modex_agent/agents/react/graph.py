@@ -77,6 +77,7 @@ def build_react_graph(
     # Topology edges — nodes route at runtime via deliver().
     # Former duplicate LLM→END edges (3 reasons) collapsed to 1.
     g.add_edge(ReActNode.START, ReActNode.LLM)
+    g.add_edge(ReActNode.START, ReActNode.TOOL)
     g.add_edge(ReActNode.LLM, ReActNode.TOOL)
     g.add_edge(ReActNode.LLM, ReActNode.END)
     g.add_edge(ReActNode.TOOL, ReActNode.LLM)
