@@ -95,6 +95,14 @@ def build_app() -> typer.Typer:
         build_deliver_command(ctx)
     )
 
+    # -- kb ------------------------------------------------------------------
+
+    from bot.cli.modexctl.commands.kb import build_kb_command
+
+    app.command(name="kb", help="Search, store, and manage persistent knowledge.")(
+        build_kb_command(ctx)
+    )
+
     # -- history --------------------------------------------------------------
 
     if ctx.is_subagent:

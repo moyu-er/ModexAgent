@@ -33,6 +33,7 @@ from bot.webui.model_fetch import (
     fetch_provider_models,  # noqa: F401 — re-export; tests monkeypatch bot.webui.server.fetch_provider_models
 )
 from bot.webui.routes.graph_routes import register_graph_routes
+from bot.webui.routes.kb_routes import register_kb_routes
 from bot.webui.routes.models import register_models_routes
 from bot.webui.routes.pool_config import register_pool_config_routes
 from bot.webui.routes.sessions import register_sessions_routes
@@ -479,6 +480,7 @@ class WebUIServer:
         # the resolver is not yet injected (matches the degradation pattern
         # for ConfigController / PoolConfigController).
         register_graph_routes(self, self._graph_workspace_resolver)
+        register_kb_routes(self)
 
         # Control API (T04). The handler checks ``app["control_facade"]`` and
         # returns 503 when the facade is not wired (matches the
