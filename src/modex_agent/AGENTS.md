@@ -97,6 +97,15 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 - `control/` — Control transport: the live `/stop` + pause channel (`CANCEL_TURN` → drain → interceptors → `AgentCancelled`); plus `AgentControlError` exceptions. A separate busy-INTERRUPT path uses `asyncio.Task.cancel()` directly.
 - `ioc/` — Dependency injection configuration and factories.
 
+## Graph Scheduling Convergence
+
+The graph engine (`modex_graph`) uses a unified scheduling path for normal execution, pause recovery, and crash recovery — no separate recovery engine. See `src/modex_graph/AGENTS.md` for the full design (`bootstrap` entry point, version chain, deliver admission, persistence tradeoff).
+
+From `modex_agent`'s perspective:
+- **`GraphOrchestrator`** (`orchestration/graph_orchestrator.py`) owns the lifecycle: `create_instance` (PENDING) → `start_run` / `run_instance` → `bootstrap` → normal scheduling. `pause` / `resume` / `stop` only change status; the scheduler handles the rest.
+- **`GraphRecoveryService`** (`control/graph_recovery.py`) calls `_run_existing_instance` (eviction + spec compile + node_id restore + node register) → `run_instance` → `bootstrap` → normal scheduling. No independent execution engine.
+- **`_run_existing_instance`** is the recovery core path — preserved, not deleted. It does what `start_run` cannot: re-register a crashed instance (evicted from `_active_instances`) before running.
+
 ## Dependencies
 
 ### Internal
