@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     import asyncio
     import sqlite3
 
+    from bot.kb.provider import KbProvider
+
     # These live in bot.service, whose package __init__ imports BotService,
     # which imports the bundle via wiring; deferring them to TYPE_CHECKING
     # keeps the import graph acyclic (handle is the low-level bundle module).
@@ -125,6 +127,7 @@ class PoolWorkspaceResources(WorkspaceResources):
     owned_pool_routing_store: PoolRoutingStore | None = None
     transcript_store: WorkspaceScopedTranscriptStore | None = None
     workspace_transcript_store: TranscriptStore | None = None
+    kb_provider: KbProvider | None = None
     graph_orchestrator: GraphOrchestrator | None = None
     graph_output_adapter: GraphOutputAdapter | None = None
     graph_event_store: dict[int, list[GraphOutput]] | None = None

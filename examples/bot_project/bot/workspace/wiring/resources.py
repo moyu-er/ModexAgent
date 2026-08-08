@@ -9,6 +9,7 @@ import shutil
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from bot.kb.provider import KbProvider
     from bot.service.core import BotService
     from modex_agent.persistence.managers import WorkspacePersistenceManager
 
@@ -164,6 +165,11 @@ async def _assemble_resources(
         from bot.persistence.transcript import build_database_transcript_store
 
         workspace_transcript_store = await build_database_transcript_store(persistence.connection)
+    kb_provider: KbProvider | None = None
+    if persistence is not None:
+        from bot.kb.builder import build_default_kb_provider
+
+        kb_provider = await build_default_kb_provider(persistence.connection)
     resources = PoolWorkspaceResources(
         target=ctx.target,
         ctx=ctx,
@@ -178,6 +184,7 @@ async def _assemble_resources(
         owns_persistence=owns_persistence,
         transcript_store=service._transcript_store,
         workspace_transcript_store=workspace_transcript_store,
+        kb_provider=kb_provider,
     )
     state.resources = resources
     # 3. Per-workspace interceptor chain, rooted at THIS workspace's overflow dir.
@@ -251,6 +258,7 @@ async def _assemble_resources(
             mcp_registry=service._mcp_registry,
             persistence=persistence,
             app_config=app_config,
+            kb_provider=resources.kb_provider,
             strategy_registry=service._strategy_registry,
         )
 

@@ -169,7 +169,7 @@ class PoolAssemblyContext:
 
     Bot-side-only types (``workspace_handle``, ``workspace_resolver``,
     ``persistence``, ``bot_model_config``, ``model_choice_registry``,
-    ``transcript_store``) are typed as ``Any`` — these are bot-layer objects
+    ``transcript_store``, ``kb_provider``) are typed as ``Any`` — these are bot-layer objects
     the framework does not import; ``Any`` is the documented escape hatch at
     the framework/bot boundary.
     """
@@ -216,6 +216,7 @@ class PoolAssemblyContext:
 
     pool_data: PoolDataSnapshot | None = None
     transcript_store: Any | None = None
+    kb_provider: Any | None = None
 
     on_session_start: Callable[[str], Awaitable[None]] | None = None
     on_session_end: Callable[[str], Awaitable[None]] | None = None
