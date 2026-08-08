@@ -66,22 +66,28 @@ class ContextForkBuilder:
                     if (
                         template_memory is not None
                         and template_memory.governance is not None
-                        and template_memory.governance.lossy_compaction is not None
+                        and template_memory.governance.budget is not None
                     ):
                         from modex_agent.memory.context_governance import (
-                            LossyContentCompactionGovernance,
+                            ContextBudgetGovernance,
                         )
 
-                        lc = template_memory.governance.lossy_compaction
-                        governor = LossyContentCompactionGovernance(
-                            tool_result_head_chars=lc.tool_result_head_chars,
-                            assistant_head_chars=lc.assistant_head_chars,
-                            agent_head_chars=lc.agent_head_chars,
-                            user_head_chars=lc.user_head_chars,
-                            tool_args_head_chars=lc.tool_args_head_chars,
+                        b = template_memory.governance.budget
+                        max_ctx = (
+                            template_memory.session.max_context_tokens
+                            if template_memory.session
+                            else 200_000
+                        )
+                        governor = ContextBudgetGovernance(
+                            max_context_tokens=max_ctx,
+                            governance_ratio=b.governance_ratio,
+                            protect_tokens=b.protect_tokens,
+                            min_gain_tokens=b.min_gain_tokens,
+                            keep_recent=b.keep_recent,
+                            whitelist_tools=frozenset(b.whitelist_tools) if b.whitelist_tools else None,
                         )
                         msg_dicts: list[dict[str, Any]] = [m.model_dump() for m in truncated]
-                        compacted = governor._compact_messages(msg_dicts)
+                        compacted = await governor.apply(msg_dicts, None)  # type: ignore[arg-type]
                         truncated = [ChatMessage(**m) for m in compacted]
                     fork_xml = format_snapshot_xml(truncated, parent_name)
             else:

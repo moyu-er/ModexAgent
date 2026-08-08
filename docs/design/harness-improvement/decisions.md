@@ -2,7 +2,7 @@
 
 > ModexAgent harness 改进——缓存命中率、上下文管理、Agent 引导
 > 创建时间：2026-08-04
-> 最后更新：2026-08-04（全部探索完成，第一批实施完成）
+> 最后更新：2026-08-07（governance 收敛：Lossy+Microcompact+TokenBudget → ContextBudgetGovernance）
 
 ---
 
@@ -14,7 +14,7 @@
 | 2 | Version 操作简化 | ✅ 已实施 | 中 | TTL 缓存替代每次 SHA256/版本查询 |
 | 3 | URB 插入位置改尾部追加 | ✅ 已实施 | 中 | 尾部追加 + system-reminder 包装 + turn 内缓存 |
 | 4 | 媒体注入（用户附件路径） | 📋 待办 | 低 | 用户附件路径 MODIFIES 现有消息，cache-unfriendly；价值有限 |
-| 5 | LossyContent 改稳定占位符 | ✅ 已实施 | 最高 | 固定常量 `[Old tool result content cleared]` |
+| 5 | LossyContent 改稳定占位符 | ✅ 已实施→🔄 已重构 | 最高 | 固定常量 `[Old tool result content cleared]`；详见决策 #17 |
 | 6 | 压缩后 head+tail 结构 | 📋 待办（后续设计） | — | 重要但需大量决策 |
 | 7 | 摘要迭代更新 | 📋 待办（后续设计） | — | 当前 archive 是独立多份注入，非全局一份 |
 | 8 | 输出 token 预留 | ✅ 已实施 | 中 | threshold 减去 max_output_tokens |
@@ -26,6 +26,7 @@
 | 14 | 系统提示顺序调整 | 📋 待办 | — | — |
 | 15 | 压缩提示加诚实约束 | 📋 待办 | — | — |
 | 16 | Provider blocks/prefetch 重复注入修复 | ✅ 已实施（收敛） | 中 | 已通过收敛统一为单一组装路径 |
+| 17 | Governance 收敛：ContextBudgetGovernance | ✅ 已实施 | 最高 | 3 策略→1 策略；token-window prune；详见下方 |
 
 ---
 
@@ -284,3 +285,75 @@ ModexAgent 原始实现：`UserRetentionBufferInjectionGovernance` 插入 positi
 - **Path 2（工具媒体）**：APPEND — 追加新合成 user 消息到尾部，cache-friendly
 - 两条路径在同一个 `enrich_inline_media()` 调用中顺序执行
 - Path 1 每轮 ReAct 迭代都重新注入（持久化历史存 text-only）
+
+---
+
+### 17. Governance 收敛：ContextBudgetGovernance — ✅ 已实施
+
+**问题**：原 governance 链有三个内容修改策略（`LossyContentCompactionGovernance`、`MicrocompactGovernance`、`TokenBudgetGovernance`），存在以下系统性问题：
+
+1. **char 阈值截断盲目触发**：统一 1200 chars 阈值，不评估总 token 量是否超预算，不评估截断收益
+2. **step-based 分块导致批量突变**：消息数跨 step 边界时 50 条消息同时从原始变为截断——巨大的前缀突变
+3. **多策略串联叠加修改**：Lossy + Microcompact 对同一批 tool result 做两遍操作
+4. **与 ToolResultLimitInterceptor 职责重叠**：overflow 机制已在 50K chars 处处理单消息过大，governance 的 1200 chars 截断是重复操作
+5. **TokenBudgetGovernance 未接入工厂**：缺少 proactive 硬预算防线
+6. **per-call tool args 截断**：每次 LLM call 重新截断，修改 assistant 消息的 tool_calls 字段（缓存前缀的一部分）
+
+**参考项目方案**：
+- **opencode** `prune`：token 窗口（保留最近 40K tokens tool output）+ 最小收益门槛（< 20K 不执行）+ 持久化标记防重复
+- **kimi-code** `contextProjector`：per-call 完全不修改内容，只做结构修复；内容截断在 append 时完成
+
+**决策**：借鉴 opencode 的 token 窗口 + 最小收益门槛，去掉持久化标记（ModexAgent 的 governance 不修改持久化，确定性保证跨 call 一致）。
+
+**实施**：
+
+移除 3 个旧策略 + `_compact_xml_content`，新增 `ContextBudgetGovernance`：
+
+```
+Per-call governance 链 (2 个策略):
+  ContextBudgetGovernance
+    ├── 零修改路径 (total ≤ governance_ratio × max_context_tokens → return copy)
+    ├── Phase 1: token-window 占位符替换
+    │   ├── 从尾部向前累加 tool result tokens 到 protect_tokens → 窗口边界
+    │   ├── 窗口外的 tool result 一次性替换为 _CLEARED_PLACEHOLDER
+    │   ├── min_gain_tokens 门槛：可替换量 < min_gain → 不执行
+    │   ├── keep_recent 结构保护：至少保留最近 N 条 tool result
+    │   └── idempotency guard: meta_context_lossy → 已修改则 SKIP
+    └── 不丢弃消息（尾部保留/硬截断交给 cleanup_session + EmergencyCompactionGovernance）
+  →
+  ToolChainRepairGovernance (结构修复, 不动)
+```
+
+**关键设计点**：
+
+| 维度 | 旧设计 | 新设计 |
+|------|-------|-------|
+| 触发依据 | char 阈值 + step 位置 | token 预算 (governance_ratio=0.60) |
+| 选择依据 | step-based 位置 | token 窗口 (protect_tokens=40K) |
+| 收益评估 | ❌ 无 | ✅ min_gain_tokens=20K 门槛 |
+| 替换方式 | 逐条+多遍 | 一次性单遍 |
+| 消息丢弃 | TokenBudgetGovernance 硬截断 | ❌ 不丢弃（交给 cleanup） |
+| char 阈值截断 | ✅ 1200 chars | ❌ 移除（overflow 机制已处理） |
+| XML-aware 截断 | ✅ truncate_xml_safe | ❌ 移除（固定占位符替代） |
+| tool args 截断 | ✅ per-call | ❌ 移除（后续可移到 build_assistant_message） |
+
+**前缀稳定性保证**：
+- governance_ratio (0.60) < max_token_ratio (0.85)：governance 在 compact 之前渐进介入
+- compact 周期内 total 单调增长 → 窗口只扩展不收缩 → 已有占位符不变
+- 占位符是固定常量 → 相同消息→相同替换 → 跨 call 确定性
+- idempotency guard → 修改后的消息不会被同一 governance 的后续判断命中
+- 不丢弃消息 → 消息条数和顺序稳定 → 前缀只扩展不突变
+
+**配置变化**：
+```python
+# 旧: LossyConfig (6 个 char 阈值 + step 参数)
+# 新: BudgetConfig (3 个语义化参数)
+class BudgetConfig(BaseModel):
+    governance_ratio: float = 0.60    # governance 介入阈值
+    protect_tokens: int = 40_000      # 保护最近 N tokens 的 tool output
+    min_gain_tokens: int = 20_000     # 最小替换收益
+    keep_recent: int = 10             # 结构保护
+    whitelist_tools: set[str] = set() # 不裁剪的工具
+```
+
+**compact_msg token_count 打戳**（cleanup.py `_commit_session_phase`）：compact summary 消息现在在 commit 时通过 estimator 打 `token_count`，下次 boundary 计算不再需要临时重算。

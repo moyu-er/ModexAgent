@@ -1,8 +1,8 @@
 from modex_agent.ioc.configs.memory import (
+    BudgetConfig,
     DreamEngineConfig,
     GovernanceConfig,
     LongTermConfig,
-    LossyConfig,
     MemoryConfig,
     SessionConfig,
     ShortTermConfig,
@@ -25,14 +25,14 @@ class TestMemoryConfig:
             long_term=LongTermConfig(enabled=True),
             dream_engine=DreamEngineConfig(enabled=True, interval=300),
             governance=GovernanceConfig(
-                lossy_compaction=LossyConfig(tool_result_head_chars=800, tool_args_head_chars=2048),
+                budget=BudgetConfig(governance_ratio=0.55, protect_tokens=30_000),
             ),
         )
         assert cfg.session.max_context_tokens == 50000
         assert cfg.long_term.enabled is True
         assert cfg.dream_engine.interval == 300
-        assert cfg.governance.lossy_compaction.tool_result_head_chars == 800
-        assert cfg.governance.lossy_compaction.tool_args_head_chars == 2048
+        assert cfg.governance.budget.governance_ratio == 0.55
+        assert cfg.governance.budget.protect_tokens == 30_000
 
     def test_session_defaults(self) -> None:
         """SessionConfig token-budget defaults; no message-count fields."""

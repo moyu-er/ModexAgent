@@ -1,19 +1,36 @@
-"""ContextGovernance implementations for pre-LLM context trimming and injection.
+"""ContextGovernance implementations for pre-LLM context trimming.
 
 Governance runs on a COPY of the model-visible message list; persisted history
 is never modified.
+
+Design (ADR-0009 + harness-improvement decisions):
+
+The per-call governance chain is exactly two strategies:
+
+1. ``ContextBudgetGovernance`` — token-window tool-result pruning.
+   Replaces the former ``LossyContentCompactionGovernance``,
+   ``MicrocompactGovernance``, and ``TokenBudgetGovernance`` (all removed).
+
+2. ``ToolChainRepairGovernance`` — structural repair (backfill / orphan
+   cleanup).  Does not modify content.
+
+``EmergencyCompactionGovernance`` (in ``agents/react/error_recovery.py``)
+remains as a reactive last-resort when the provider rejects a request for
+context overflow.
+
+Single-message overflow (tool results > 50 K chars) is handled at tool
+execution time by ``ToolResultLimitInterceptor`` — governance does NOT
+duplicate that work.
 """
 
 from __future__ import annotations
 
 import logging
-from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.governance import ContextGovernance
 from modex_agent.core.types import MessageRole
 from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
-from modex_agent.memory.xml_truncate import truncate_xml_safe
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -21,17 +38,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# ── Metadata keys ───────────────────────────────────────────────────────────
+
 META_CONTEXT_LOSSY = "meta_context_lossy"
 META_ORIGINAL_CHARS = "meta_original_chars"
 META_CONTEXT_REDUCTION = "meta_context_reduction"
 
 # Fixed placeholder for cleared tool result content.
-# Cache-friendly: every compacted tool result becomes identical.
+# Cache-friendly: every compacted tool result becomes identical regardless
+# of the original content length.
 _CLEARED_PLACEHOLDER = "[Old tool result content cleared]"
+
+# Reduction type recorded in META_CONTEXT_REDUCTION for tool-result pruning.
+_TOOL_RESULT_PRUNED = "tool_result_pruned"
+
+
+# ── Composite ───────────────────────────────────────────────────────────────
 
 
 class CompositeGovernance(ContextGovernance):
-    """按顺序组合多个治理策略。"""
+    """Run multiple governance strategies in sequence."""
 
     def __init__(self, strategies: list[ContextGovernance]) -> None:
         self._strategies = strategies
@@ -45,6 +71,9 @@ class CompositeGovernance(ContextGovernance):
         for strategy in self._strategies:
             result = await strategy.apply(result, ctx)
         return result
+
+
+# ── Tool-chain repair (structural, no content modification) ─────────────────
 
 
 class ToolChainRepairGovernance(ContextGovernance):
@@ -77,306 +106,85 @@ class ToolChainRepairGovernance(ContextGovernance):
         return result.messages
 
 
-_COMPACT_BUFFER = 20
+# ── Context budget governance (token-window tool-result pruning) ────────────
 
 
-class LossyContentCompactionGovernance(ContextGovernance):
-    """Apply deterministic lossy reductions to LLM context copies only.
+def _resolve_message_tokens(
+    message: dict[str, Any],
+    estimator: TokenEstimator,
+) -> int:
+    """Return a message's token count: cached if valid, else recompute.
 
-    Compaction happens in fixed-size steps.  When the conversation length
-    exceeds ``n * compact_range_count + _COMPACT_BUFFER``, the oldest
-    ``n * compact_range_count`` messages become candidates for compaction.
-    Within a step the set of compacted messages does not change, so the
-    prefix stabilizes and prompt caches can warm up.
+    Mirrors ``cleanup._resolve_message_tokens`` — the same estimator stamps
+    ``token_count`` at append time, so the cache is authoritative.
     """
-
-    def __init__(
-        self,
-        tool_result_head_chars: int = 1200,
-        assistant_head_chars: int = 1200,
-        agent_head_chars: int = 1200,
-        user_head_chars: int = 1200,
-        tool_args_head_chars: int = 2048,
-        compact_range_count: int = 50,
-        compact_buffer: int = _COMPACT_BUFFER,
-    ) -> None:
-        self._limits = {
-            str(MessageRole.TOOL): tool_result_head_chars
-            if isinstance(tool_result_head_chars, int)
-            else None,
-            str(MessageRole.ASSISTANT): assistant_head_chars
-            if isinstance(assistant_head_chars, int)
-            else None,
-            str(MessageRole.AGENT): agent_head_chars if isinstance(agent_head_chars, int) else None,
-            str(MessageRole.USER): user_head_chars if isinstance(user_head_chars, int) else None,
-        }
-        self._tool_args_head_chars = tool_args_head_chars
-        self.compact_range_count = max(20, compact_range_count)
-        self.compact_buffer = max(5, compact_buffer)
-
-    async def apply(
-        self,
-        messages: list[dict[str, Any]],
-        ctx: AgentContext,
-    ) -> list[dict[str, Any]]:
-        return self._compact_messages(messages)
-
-    def _compact_messages(
-        self,
-        messages: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        length = len(messages)
-        buffer = self.compact_buffer
-        if length <= buffer:
-            return list(messages)
-
-        # Step-based compaction: only touch whole blocks of compact_range_count
-        # oldest messages.  The same block stays untouched until the next step.
-        n = (length - buffer) // self.compact_range_count
-        compact_count = n * self.compact_range_count
-        if compact_count <= 0:
-            return list(messages)
-
-        result: list[dict[str, Any]] = []
-        for i, msg in enumerate(messages):
-            updated = dict(msg)
-            role = str(updated.get("role", ""))
-
-            # system messages: never truncated
-            if role == "system":
-                result.append(updated)
-                continue
-
-            # Only the oldest compact_count messages are candidates.
-            if i >= compact_count:
-                result.append(updated)
-                continue
-
-            limit = self._limits.get(role)
-            content = updated.get("content")
-            if (
-                limit is not None
-                and limit > 0
-                and isinstance(content, str)
-                and len(content) > limit
-            ):
-                fmt = str(updated.get("content_format", "plain"))
-                if fmt == "xml":
-                    paths: list[str] = updated.get("truncatable_paths") or ["content"]
-                    updated["content"] = truncate_xml_safe(content, limit, paths)
-                else:
-                    updated["content"] = self._truncate_content(
-                        content,
-                        limit,
-                        role,
-                        source_agent=str(updated.get("source_agent", "")),
-                    )
-                updated[META_CONTEXT_LOSSY] = True
-                updated[META_ORIGINAL_CHARS] = len(content)
-                updated[META_CONTEXT_REDUCTION] = self._reduction_name(role)
-            # Truncate oversized tool_calls arguments
-            if self._tool_args_head_chars > 0:
-                updated = self._truncate_tool_args(updated)
-            result.append(updated)
-        return result
-
-    def _truncate_tool_args(self, msg: dict[str, Any]) -> dict[str, Any]:
-        """Truncate oversized tool call arguments with JSON-aware replacement.
-
-        Long string values are shortened to a head prefix.  Instead of
-        embedding a truncation note inside the value (which would produce
-        invalid JSON), this method adds ``_gv_truncated`` and
-        ``_gv_truncation_info`` metadata fields to the arguments object
-        so the whole payload stays valid JSON.
-
-        If the arguments string is not valid JSON it is left untouched.
-        """
-        import json
-
-        tool_calls = msg.get("tool_calls")
-        if not isinstance(tool_calls, list):
-            return msg
-        truncated = False
-        new_tool_calls: list[dict[str, Any]] = []
-        for tc in tool_calls:
-            if not isinstance(tc, dict):
-                new_tool_calls.append(tc)
-                continue
-            fn = tc.get("function")
-            if not isinstance(fn, dict):
-                new_tool_calls.append(tc)
-                continue
-            args = fn.get("arguments")
-            if not isinstance(args, str) or len(args) <= self._tool_args_head_chars:
-                new_tool_calls.append(tc)
-                continue
-
-            try:
-                obj = json.loads(args)
-            except json.JSONDecodeError:
-                new_tool_calls.append(tc)
-                continue
-
-            if not isinstance(obj, dict):
-                new_tool_calls.append(tc)
-                continue
-
-            replaced = self._replace_long_values(obj, len(args), self._tool_args_head_chars)
-            if replaced is None:
-                new_tool_calls.append(tc)
-                continue
-
-            truncated = True
-            new_fn = dict(fn)
-            new_fn["arguments"] = json.dumps(replaced, ensure_ascii=False)
-            new_tc = dict(tc)
-            new_tc["function"] = new_fn
-            new_tool_calls.append(new_tc)
-        if truncated:
-            msg = dict(msg)
-            msg["tool_calls"] = new_tool_calls
-            msg[META_CONTEXT_LOSSY] = True
-            msg[META_CONTEXT_REDUCTION] = ContextReductionType.CONTENT_TRUNCATED
-        return msg
-
-    @staticmethod
-    def _replace_long_values(
-        obj: dict[str, Any],
-        original_chars: int,
-        max_chars: int,
-    ) -> dict[str, Any] | None:
-        """Replace the longest string value in *obj* with a shortened
-        head copy and add ``_gv_truncated`` / ``_gv_truncation_info``
-        metadata fields.
-
-        Returns a new dict, or None when no string value needs truncation.
-        """
-        import json
-
-        longest_key: str | None = None
-        longest_val: str = ""
-        longest_len = 0
-        for k, v in obj.items():
-            if isinstance(v, str) and len(v) > longest_len:
-                longest_key = k
-                longest_val = v
-                longest_len = len(v)
-
-        if longest_key is None or longest_len == 0:
-            return None
-
-        excess = original_chars - max_chars
-        if excess <= 0:
-            return None
-
-        # Compute how much of the longest value to keep.
-        # The replacement dict adds _gv_truncated + _gv_truncation_info
-        # fields which consume some of the saved budget.
-        info = (
-            f"Field '{longest_key}' truncated: "
-            f"{longest_len:,} → ~{max(0, longest_len - excess):,} chars"
-        )
-        metadata_overhead = (
-            len(
-                json.dumps({"_gv_truncated": True, "_gv_truncation_info": info}, ensure_ascii=False)
-            )
-            + 40
-        )  # safety margin for JSON escaping
-
-        new_val_len = longest_len - excess - metadata_overhead
-        new_val_len = max(200, min(new_val_len, longest_len))
-
-        result = dict(obj)
-        result[longest_key] = longest_val[:new_val_len]
-        result["_gv_truncated"] = True
-        result["_gv_truncation_info"] = info
-        return result
-
-    @staticmethod
-    def _truncate_content(
-        content: str,
-        limit: int,
-        role: str,
-        *,
-        source_agent: str = "",
-    ) -> str:
-        # Tool results: replace entirely with fixed placeholder (cache-friendly).
-        if role == str(MessageRole.TOOL):
-            return _CLEARED_PLACEHOLDER
-
-        # Other roles: keep head-truncation + role-specific suffix.
-        suffix = f"\n[Context content truncated for role={role}]"
-        prefix = (
-            f"[From Agent {source_agent}]\n"
-            if role == str(MessageRole.AGENT) and source_agent
-            else ""
-        )
-        body = content
-        if prefix and body.startswith(prefix):
-            body = body[len(prefix) :]
-        reserved = len(prefix) + len(suffix)
-        if prefix and reserved >= limit:
-            return prefix + suffix.lstrip()
-        if prefix:
-            head_limit = max(0, limit - reserved)
-            return prefix + body[:head_limit] + suffix
-        head_limit = max(0, limit - len(suffix))
-        return body[:head_limit] + suffix
-
-    @staticmethod
-    def _reduction_name(role: str) -> ContextReductionType:
-        if role == str(MessageRole.TOOL):
-            return ContextReductionType.TOOL_RESULT_TRUNCATED
-        if role == str(MessageRole.ASSISTANT):
-            return ContextReductionType.ASSISTANT_TRUNCATED
-        if role == str(MessageRole.AGENT):
-            return ContextReductionType.AGENT_INPUT_TRUNCATED
-        if role == str(MessageRole.USER):
-            return ContextReductionType.USER_INPUT_TRUNCATED
-        return ContextReductionType.CONTENT_TRUNCATED
+    cached = message.get("token_count")
+    if isinstance(cached, int) and cached > 0:
+        return cached
+    return estimator.estimate_message(message)
 
 
-def _compact_xml_content(content: str, paths: list[str]) -> str:
-    """Replace text inside truncatable_paths elements with fixed placeholder.
+class ContextBudgetGovernance(ContextGovernance):
+    """Token-window tool-result pruning.
 
-    Uses xml.etree.ElementTree for correct nested-element handling.
-    Falls back to fixed placeholder on parse failure.
+    Borrowed from opencode's ``prune`` design, adapted for ModexAgent's
+    "governance doesn't persist" principle:
+
+    - **Protect window**: the most recent ``protect_tokens`` of tool-result
+      output are always kept verbatim.
+    - **Min-gain gate**: if the replaceable tokens (those outside the
+      protect window) total less than ``min_gain_tokens``, the entire
+      pass is skipped — not worth the prefix change.
+    - **One-shot replacement**: every tool result outside the window is
+      replaced with the fixed ``_CLEARED_PLACEHOLDER`` in a single pass.
+      No per-message re-estimation loop.
+
+    Threshold (``governance_ratio``) is intentionally **below** the
+    persistent-compaction threshold (``max_token_ratio``, default 0.85)
+    so governance intervenes *before* a compact is triggered:
+
+    ::
+
+      0% ─────── governance_ratio (0.60) ──── max_token_ratio (0.85) ── 100%
+      │  zero-mutation                        │  placeholder pruning   │  compact  │
+
+    Within one compact cycle (30 % → 85 % → compact → 30 %) total tokens
+    are monotonically increasing, so the protect window only grows: new
+    tool results enter the window, old ones outside are deterministically
+    replaced with the same constant placeholder.  The prefix is
+    **expansion-only** — existing placeholders never change, each call may
+    only add a few more at the head.
+
+    **Idempotency**: ``meta_context_lossy`` guard runs *before* any content
+    evaluation.  A message already marked lossy (defence-in-depth; should
+    not exist in a fresh copy but guards against composite chains) is
+    skipped entirely.  The placeholder (35 chars) can never trigger a
+    length threshold because the guard short-circuits first.
+
+    **No message dropping**: this governance never removes messages from
+    the list — that is the responsibility of persistent compaction
+    (``cleanup_session``) and emergency compaction
+    (``EmergencyCompactionGovernance``).  Keeping the message count and
+    ordering stable is what makes the prefix cache-friendly.
     """
-    from xml.etree import ElementTree as ET
-
-    try:
-        root = ET.fromstring(content)
-        for path in paths:
-            for elem in root.iter(path):
-                if elem.text and len(elem.text) > 0:
-                    elem.text = _CLEARED_PLACEHOLDER
-        return ET.tostring(root, encoding="unicode")
-    except ET.ParseError:
-        return _CLEARED_PLACEHOLDER
-
-
-class ContextReductionType(StrEnum):
-    """Standardized names for context-reduction metadata."""
-
-    TOOL_RESULT_TRUNCATED = "tool_result_truncated"
-    ASSISTANT_TRUNCATED = "assistant_truncated"
-    AGENT_INPUT_TRUNCATED = "agent_input_truncated"
-    USER_INPUT_TRUNCATED = "user_input_truncated"
-    CONTENT_TRUNCATED = "content_truncated"
-
-
-class TokenBudgetGovernance(ContextGovernance):
-    """当消息列表超 token 预算时从开头截断，保留 system 和最近消息。"""
 
     def __init__(
         self,
         max_context_tokens: int,
-        safety_buffer: int = 1024,
         token_estimator: TokenEstimator | None = None,
+        governance_ratio: float = 0.60,
+        protect_tokens: int = 40_000,
+        min_gain_tokens: int = 20_000,
+        keep_recent: int = 10,
+        whitelist_tools: frozenset[str] | None = None,
     ) -> None:
         self._max_context_tokens = max_context_tokens
-        self._safety_buffer = safety_buffer
-        self._estimator: TokenEstimator = token_estimator or CharTokenEstimator()
+        self._estimator = token_estimator or CharTokenEstimator()
+        self._threshold = int(max_context_tokens * governance_ratio)
+        self._protect_tokens = protect_tokens
+        self._min_gain = min_gain_tokens
+        self._keep_recent = keep_recent
+        self._whitelist = whitelist_tools or frozenset()
 
     async def apply(
         self,
@@ -386,91 +194,73 @@ class TokenBudgetGovernance(ContextGovernance):
         if not messages:
             return []
 
-        system_messages = [
-            dict(msg) for msg in messages if msg.get("role") == str(MessageRole.SYSTEM)
-        ][:1]
-        non_system = [dict(msg) for msg in messages if msg.get("role") != str(MessageRole.SYSTEM)]
+        # Step 0: estimate total tokens (cached token_count preferred).
+        msg_tokens = [_resolve_message_tokens(m, self._estimator) for m in messages]
+        total = sum(msg_tokens)
 
-        if not non_system:
-            return system_messages
-
-        system_tokens = self._estimator.estimate_messages(system_messages)
-        remaining_budget = max(128, self._max_context_tokens - system_tokens - self._safety_buffer)
-
-        # 从尾部向前累加，直到预算耗尽
-        kept: list[dict[str, Any]] = []
-        kept_tokens = 0
-        for msg in reversed(non_system):
-            msg_tokens = self._estimator.estimate_message(msg)
-            if kept and kept_tokens + msg_tokens > remaining_budget:
-                break
-            kept.append(msg)
-            kept_tokens += msg_tokens
-        kept.reverse()
-
-        # 确保保留的消息以 user 消息开头（满足多数 LLM API 的交替要求）
-        if kept:
-            for i, msg in enumerate(kept):
-                if msg.get("role") == str(MessageRole.USER):
-                    kept = kept[i:]
-                    break
-            else:
-                # 找不到 user 消息，回退到保留最近一条 user
-                for msg in reversed(non_system):
-                    if msg.get("role") == str(MessageRole.USER):
-                        kept = [dict(msg)]
-                        break
-
-        return system_messages + kept
-
-
-class MicrocompactGovernance(ContextGovernance):
-    """将旧的可压缩 tool result 替换为一行摘要，保留最近 N 个。"""
-
-    def __init__(
-        self,
-        keep_recent: int = 10,
-        min_chars: int = 200,
-        whitelist_tools: set[str] | None = None,
-    ) -> None:
-        self._keep_recent = keep_recent
-        self._min_chars = min_chars
-        self._whitelist_tools = (
-            frozenset(whitelist_tools) if whitelist_tools is not None else frozenset()
-        )
-
-    async def apply(
-        self,
-        messages: list[dict[str, Any]],
-        ctx: AgentContext,
-    ) -> list[dict[str, Any]]:
-        compactable_indices: list[int] = []
-        for idx, msg in enumerate(messages):
-            if (
-                msg.get("role") == str(MessageRole.TOOL)
-                and msg.get("name") not in self._whitelist_tools
-            ):
-                compactable_indices.append(idx)
-
-        if len(compactable_indices) <= self._keep_recent:
+        # Step 1: zero-mutation path — under budget, touch nothing.
+        if total <= self._threshold:
             return list(messages)
 
-        stale = compactable_indices[: len(compactable_indices) - self._keep_recent]
-        updated: list[dict[str, Any]] | None = None
-        for idx in stale:
-            msg = messages[idx]
-            content = msg.get("content")
-            if not isinstance(content, str) or len(content) < self._min_chars:
-                continue
-            fmt = str(msg.get("content_format", "plain"))
-            if fmt == "xml":
-                paths: list[str] = msg.get("truncatable_paths") or ["content"]
-                if updated is None:
-                    updated = [dict(m) for m in messages]
-                updated[idx]["content"] = _compact_xml_content(content, paths)
-            else:
-                if updated is None:
-                    updated = [dict(m) for m in messages]
-                updated[idx]["content"] = _CLEARED_PLACEHOLDER
+        # Step 2: token-window pruning.
+        return self._prune_by_window(messages, msg_tokens)
 
-        return updated if updated is not None else list(messages)
+    def _prune_by_window(
+        self,
+        messages: list[dict[str, Any]],
+        msg_tokens: list[int],
+    ) -> list[dict[str, Any]]:
+        # 1. Collect compactable tool-result entries (index, tokens).
+        tool_entries: list[tuple[int, int]] = []
+        for i, m in enumerate(messages):
+            if (
+                m.get("role") == str(MessageRole.TOOL)
+                and m.get("name") not in self._whitelist
+            ):
+                tool_entries.append((i, msg_tokens[i]))
+
+        # Structural floor: keep at least ``keep_recent`` tool results.
+        if len(tool_entries) <= self._keep_recent:
+            return list(messages)
+
+        # 2. Walk newest→oldest within eligible (beyond keep_recent floor),
+        #    starting from the floor's token total so keep_recent and
+        #    protect_tokens compose: floor guarantees a minimum count,
+        #    protect_tokens caps the total retained tool-output size.
+        floor_start = len(tool_entries) - self._keep_recent
+        floor_tokens = sum(tok for _, tok in tool_entries[floor_start:])
+        accumulated = floor_tokens
+        window_start = 0  # default: nothing pruned (all fit)
+        for j in range(floor_start - 1, -1, -1):
+            accumulated += tool_entries[j][1]
+            if accumulated > self._protect_tokens:
+                window_start = j + 1
+                break
+
+        # 3. Candidates outside the window (oldest entries beyond floor).
+        outside = tool_entries[:window_start]
+
+        # 4. Min-gain gate: skip if the replaceable amount is too small.
+        outside_tokens = sum(tok for _, tok in outside)
+        if outside_tokens < self._min_gain:
+            return list(messages)
+
+        # 5. One-shot replacement of every tool result outside the window.
+        result = [dict(m) for m in messages]
+        for idx, _tok in outside:
+            msg = result[idx]
+            # Idempotency guard — defence-in-depth.
+            if msg.get(META_CONTEXT_LOSSY, False):
+                continue
+            content = msg.get("content")
+            if not isinstance(content, str) or not content:
+                continue
+            result[idx] = {
+                **msg,
+                "content": _CLEARED_PLACEHOLDER,
+                META_CONTEXT_LOSSY: True,
+                META_ORIGINAL_CHARS: len(content),
+                META_CONTEXT_REDUCTION: _TOOL_RESULT_PRUNED,
+            }
+
+        return result

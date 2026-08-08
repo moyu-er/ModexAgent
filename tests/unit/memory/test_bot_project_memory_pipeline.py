@@ -627,7 +627,7 @@ async def test_injection_preserves_tool_messages_by_default(tmp_path: Path):
     """Injection preserves tool messages for governance to handle.
 
     The simplified design has no message filtering during injection.
-    Governance (MicrocompactGovernance, ToolChainRepair) handles
+    Governance (ContextBudgetGovernance, ToolChainRepair) handles
     tool message management at the LLM call boundary.
     """
     from modex_agent.memory.injection import FullInjectionPolicy

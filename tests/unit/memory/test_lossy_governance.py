@@ -1,4 +1,4 @@
-"""Tests for LossyContentCompactionGovernance."""
+"""Tests for ContextBudgetGovernance (formerly LossyContentCompactionGovernance)."""
 
 from __future__ import annotations
 
@@ -9,123 +9,160 @@ from modex_agent.core.types import MessageRole
 from modex_agent.memory.context_governance import (
     META_CONTEXT_LOSSY,
     META_CONTEXT_REDUCTION,
-    ContextReductionType,
-    LossyContentCompactionGovernance,
+    META_ORIGINAL_CHARS,
+    _CLEARED_PLACEHOLDER,
+    ContextBudgetGovernance,
 )
+from modex_agent.memory.token_estimator import TokenEstimator
 
 _CTX: MagicMock = MagicMock(spec=AgentContext)
 
 
-def _with_fillers(target: dict[str, object], total: int = 70) -> list[dict[str, object]]:
-    """Return a list starting with *target* and enough fillers to trigger
-    the default compaction step (compact_range_count=50, compact_buffer=20).
+class _CharEstimator(TokenEstimator):
+    """1 char = 1 token."""
+
+    def estimate_text(self, text: str) -> int:
+        return len(text)
+
+
+def _make_tool_messages(count: int, content_size: int = 5000) -> list[dict]:
+    """Build [system] + N×(assistant + tool_result) messages."""
+    msgs: list[dict] = [{"role": str(MessageRole.SYSTEM), "content": "sys"}]
+    for i in range(count):
+        msgs.append({"role": str(MessageRole.ASSISTANT), "content": f"call_{i}"})
+        msgs.append({
+            "role": str(MessageRole.TOOL),
+            "tool_call_id": f"c{i}",
+            "name": "search",
+            "content": "t" * content_size,
+        })
+    return msgs
+
+
+async def test_budget_prunes_tool_results() -> None:
+    """Old tool results outside the protect window are replaced with placeholder.
+
+    15 tool results × ~5015 tokens, keep_recent=5 → floor covers j=10..14
+    (5×5015=25075 accumulated).  j=9: 30090 > 20000 → window_start=10.
+    outside=10 entries, ~50150 > min_gain(15000) → execute.
+    Result: 10 pruned, 5 kept (keep_recent only).
     """
-    return [target] + [
-        {"role": str(MessageRole.USER), "content": "filler"} for _ in range(total - 1)
-    ]
-
-
-async def test_lossy_compaction_truncates_tool_result() -> None:
-    messages = _with_fillers(
-        {"role": MessageRole.TOOL, "tool_call_id": "t1", "name": "search", "content": "t" * 500}
-    )
-    messages.insert(
-        0,
-        {"role": MessageRole.AGENT, "source_agent": "subagent", "content": "[From Agent subagent]\n" + "a" * 200},
-    )
-    # Now index 0=agent, index 1=tool, both within first compaction step.
-    gov = LossyContentCompactionGovernance(
-        tool_result_head_chars=20,
-        assistant_head_chars=20,
-        agent_head_chars=80,
-        user_head_chars=120,
+    messages = _make_tool_messages(15, content_size=5000)
+    gov = ContextBudgetGovernance(
+        max_context_tokens=50_000,
+        token_estimator=_CharEstimator(),
+        governance_ratio=0.60,
+        protect_tokens=20_000,
+        min_gain_tokens=15_000,
+        keep_recent=5,
     )
 
     result = await gov.apply(messages, _CTX)
 
-    tool = result[1]
-    agent = result[0]
-    assert tool[META_CONTEXT_LOSSY] is True
-    assert tool[META_CONTEXT_REDUCTION] == ContextReductionType.TOOL_RESULT_TRUNCATED
-    assert len(str(tool["content"])) < len("t" * 500)
-    assert agent["content"].startswith("[From Agent subagent]\n")
+    tool_msgs = [(i, m) for i, m in enumerate(result) if m.get("role") == str(MessageRole.TOOL)]
+    pruned = [(i, m) for i, m in tool_msgs if m["content"] == _CLEARED_PLACEHOLDER]
+    intact = [(i, m) for i, m in tool_msgs if m["content"] == "t" * 5000]
+
+    assert len(pruned) == 10
+    assert len(intact) == 5  # keep_recent only
+    # Pruned are older (lower indices) than intact
+    assert max(i for i, _ in pruned) < min(i for i, _ in intact)
 
 
-async def test_lossy_does_not_mutate_input() -> None:
-    messages = _with_fillers(
-        {"role": MessageRole.TOOL, "tool_call_id": "t1", "name": "search", "content": "t" * 500}
+async def test_budget_does_not_mutate_input() -> None:
+    messages = _make_tool_messages(15, content_size=5000)
+    original = [m.get("content") for m in messages]
+
+    gov = ContextBudgetGovernance(
+        max_context_tokens=50_000,
+        token_estimator=_CharEstimator(),
+        keep_recent=5,
     )
-    original_content = messages[0]["content"]
-    gov = LossyContentCompactionGovernance(tool_result_head_chars=20)
+    result = await gov.apply(messages, _CTX)
+
+    assert messages[0]["content"] == original[0]
+    for i in range(2, len(messages), 2):
+        assert messages[i]["content"] == original[i]
+
+
+async def test_budget_zero_mutation_under_threshold() -> None:
+    """When total tokens are within budget, nothing changes."""
+    messages = _make_tool_messages(3, content_size=100)
+    gov = ContextBudgetGovernance(
+        max_context_tokens=100_000,
+        token_estimator=_CharEstimator(),
+    )
+    result = await gov.apply(messages, _CTX)
+
+    assert result == messages
+    assert result is not messages
+
+
+async def test_budget_sets_lossy_metadata() -> None:
+    messages = _make_tool_messages(15, content_size=5000)
+    gov = ContextBudgetGovernance(
+        max_context_tokens=50_000,
+        token_estimator=_CharEstimator(),
+        protect_tokens=20_000,
+        min_gain_tokens=15_000,
+        keep_recent=5,
+    )
 
     result = await gov.apply(messages, _CTX)
 
-    assert messages[0]["content"] == original_content
-    assert result[0]["content"] != original_content
+    pruned = [m for m in result if m.get("content") == _CLEARED_PLACEHOLDER]
+    assert len(pruned) == 10
+    for m in pruned:
+        assert m[META_CONTEXT_LOSSY] is True
+        assert m[META_ORIGINAL_CHARS] == 5000
+        assert m[META_CONTEXT_REDUCTION] == "tool_result_pruned"
 
 
-async def test_lossy_truncates_tool_args_json_aware() -> None:
-    """Oversized tool_calls JSON arguments: long values shortened, metadata fields added."""
-    import json
-
-    huge_value = "x" * 5000
-    args = json.dumps({"content": huge_value, "path": "/tmp/out.md"})
-    target = {
-        "role": MessageRole.ASSISTANT,
-        "content": "let me write",
-        "tool_calls": [
-            {"id": "call_1", "type": "function", "function": {"name": "write_file", "arguments": args}},
-        ],
-    }
-    messages = _with_fillers(target)
-
-    gov = LossyContentCompactionGovernance(tool_args_head_chars=200)
-
+async def test_budget_system_messages_never_pruned() -> None:
+    messages = _make_tool_messages(15, content_size=5000)
+    gov = ContextBudgetGovernance(
+        max_context_tokens=50_000,
+        token_estimator=_CharEstimator(),
+        protect_tokens=20_000,
+        min_gain_tokens=15_000,
+        keep_recent=5,
+    )
     result = await gov.apply(messages, _CTX)
 
-    truncated_args = result[0]["tool_calls"][0]["function"]["arguments"]
-    assert len(truncated_args) < len(args)
-    parsed = json.loads(truncated_args)
-    assert isinstance(parsed, dict)
-    assert parsed["path"] == "/tmp/out.md"  # short value untouched
-    assert parsed["_gv_truncated"] is True
-    assert "truncated" in parsed["_gv_truncation_info"]
-    assert len(parsed["content"]) < len(huge_value)  # content shortened
-    assert META_CONTEXT_LOSSY in result[0]
+    assert result[0]["role"] == str(MessageRole.SYSTEM)
+    assert result[0]["content"] == "sys"
 
 
-async def test_lossy_skips_invalid_json_tool_args() -> None:
-    """Non-JSON tool call arguments are left untouched (don't make them worse)."""
-    bad_args = "{not valid json at all"
-    target = {
-        "role": MessageRole.ASSISTANT,
-        "content": "",
-        "tool_calls": [
-            {"id": "call_1", "type": "function", "function": {"name": "bad_tool", "arguments": bad_args}},
-        ],
-    }
-    messages = _with_fillers(target)
-    gov = LossyContentCompactionGovernance(tool_args_head_chars=10)
+async def test_budget_skips_when_min_gain_not_met() -> None:
+    """Not enough replaceable tokens → skip entirely.
 
+    10 tool results × ~5015 tokens, keep_recent=8 → floor covers j=2..9
+    (8×5015=40120 accumulated).  j=1: 45135 > 20000 → window_start=2.
+    outside=2, 2×5015≈10030 < min_gain(15000) → skip.
+    """
+    messages = _make_tool_messages(10, content_size=5000)
+    gov = ContextBudgetGovernance(
+        max_context_tokens=50_000,
+        token_estimator=_CharEstimator(),
+        protect_tokens=20_000,
+        min_gain_tokens=15_000,
+        keep_recent=8,
+    )
     result = await gov.apply(messages, _CTX)
 
-    assert result[0]["tool_calls"][0]["function"]["arguments"] == bad_args
-    assert META_CONTEXT_LOSSY not in result[0]
+    tool_msgs = [m for m in result if m.get("role") == str(MessageRole.TOOL)]
+    for m in tool_msgs:
+        assert m["content"] == "t" * 5000
 
 
-async def test_lossy_skips_small_tool_args() -> None:
-    """Small tool_calls arguments below the limit are left untouched."""
-    target = {
-        "role": MessageRole.ASSISTANT,
-        "content": "let me search",
-        "tool_calls": [
-            {"id": "call_1", "type": "function", "function": {"name": "search", "arguments": '{"query": "ok"}'}},
-        ],
-    }
-    messages = _with_fillers(target)
-    gov = LossyContentCompactionGovernance(tool_args_head_chars=2048)
-
-    result = await gov.apply(messages, _CTX)
-
-    assert result[0]["tool_calls"][0]["function"]["arguments"] == '{"query": "ok"}'
-    assert META_CONTEXT_LOSSY not in result[0]
+async def test_budget_deterministic_across_calls() -> None:
+    """Same input → same output."""
+    messages = _make_tool_messages(15, content_size=5000)
+    gov = ContextBudgetGovernance(
+        max_context_tokens=50_000,
+        token_estimator=_CharEstimator(),
+        keep_recent=5,
+    )
+    r1 = await gov.apply(messages, _CTX)
+    r2 = await gov.apply(messages, _CTX)
+    assert r1 == r2

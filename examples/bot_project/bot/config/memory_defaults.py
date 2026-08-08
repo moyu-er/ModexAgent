@@ -25,10 +25,10 @@ from __future__ import annotations
 
 from modex_agent.ioc.configs.memory import (
     ArchiveConfig,
+    BudgetConfig,
     CoreMemoryConfig,
     DreamEngineConfig,
     GovernanceConfig,
-    LossyConfig,
     MemoryConfig,
     PrunedCatalogConfig,
     SessionConfig,
@@ -71,12 +71,7 @@ def main_agent_memory(
         dream_engine=dream,
         governance=GovernanceConfig(
             tool_chain_repair=True,
-            lossy_compaction=LossyConfig(
-                tool_result_head_chars=1200,
-                assistant_head_chars=1200,
-                agent_head_chars=2000,
-                user_head_chars=4000,
-            ),
+            budget=BudgetConfig(),
         ),
         pruned=PrunedCatalogConfig(enabled=True, max_files=50, topic_max_chars=200),
     )

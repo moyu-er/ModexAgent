@@ -595,13 +595,13 @@ async def test_resume_with_tool_chain_governance_feeds_llm_well_formed_history(
     assistant ``tool_calls`` and no matching tool message -> 400."""
     from modex_agent.memory.context_governance import (
         CompositeGovernance,
-        LossyContentCompactionGovernance,
+        ContextBudgetGovernance,
         ToolChainRepairGovernance,
     )
 
     governance = CompositeGovernance(
         [
-            LossyContentCompactionGovernance(),
+            ContextBudgetGovernance(max_context_tokens=200_000),
             ToolChainRepairGovernance(),
         ]
     )
@@ -672,7 +672,7 @@ async def test_post_construction_governance_mirrors_and_backfills_dangling_toolc
     from modex_agent.core.context import InMemoryContextManager
     from modex_agent.memory.context_governance import (
         CompositeGovernance,
-        LossyContentCompactionGovernance,
+        ContextBudgetGovernance,
         ToolChainRepairGovernance,
     )
 
@@ -706,7 +706,7 @@ async def test_post_construction_governance_mirrors_and_backfills_dangling_toolc
         context_manager=ctx_mgr,
     )
     governance = CompositeGovernance(
-        [LossyContentCompactionGovernance(), ToolChainRepairGovernance()]
+        [ContextBudgetGovernance(max_context_tokens=200_000), ToolChainRepairGovernance()]
     )
     pipeline._turn_runner._builder._governance = governance  # type: ignore[attr-defined]
 

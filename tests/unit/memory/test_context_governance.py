@@ -9,11 +9,12 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.governance import ContextGovernance
 from modex_agent.core.types import MessageRole
 from modex_agent.memory.context_governance import (
+    META_CONTEXT_LOSSY,
+    META_CONTEXT_REDUCTION,
+    META_ORIGINAL_CHARS,
     _CLEARED_PLACEHOLDER,
     CompositeGovernance,
-    LossyContentCompactionGovernance,
-    MicrocompactGovernance,
-    TokenBudgetGovernance,
+    ContextBudgetGovernance,
     ToolChainRepairGovernance,
 )
 from modex_agent.memory.token_estimator import TokenEstimator
@@ -21,14 +22,14 @@ from modex_agent.memory.token_estimator import TokenEstimator
 _CTX: Any = MagicMock(spec=AgentContext)
 
 
-class _LenStrEstimator(TokenEstimator):
-    """Replicates the legacy fake_estimate: len(str(message)) per message."""
+class _CharEstimator(TokenEstimator):
+    """1 char = 1 token, for deterministic tests."""
 
     def estimate_text(self, text: str) -> int:
         return len(text)
 
-    def estimate_message(self, message):
-        return len(str(message))
+
+# ── ToolChainRepairGovernance ──────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -97,267 +98,13 @@ async def test_tool_chain_repair_preserves_complete_chain():
 
 
 @pytest.mark.asyncio
-async def test_microcompact_omits_stale_results():
-    """旧的可压缩 tool result 被替换为摘要."""
-    messages = [
-        {"role": str(MessageRole.ASSISTANT), "content": "call"},
-        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "A" * 1000, "tool_call_id": "c1"},
-        {"role": str(MessageRole.ASSISTANT), "content": "call2"},
-        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "B" * 1000, "tool_call_id": "c2"},
-    ]
-    gov = MicrocompactGovernance(keep_recent=1, min_chars=500)
-    result = await gov.apply(messages, _CTX)
-
-    assert len(result) == 4
-    assert result[1]["content"] == _CLEARED_PLACEHOLDER
-    assert result[3]["content"] == "B" * 1000
-
-
-@pytest.mark.asyncio
-async def test_microcompact_skips_short_content():
-    """长度不足 min_chars 的内容不压缩."""
-    messages = [
-        {"role": str(MessageRole.ASSISTANT), "content": "call"},
-        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "short", "tool_call_id": "c1"},
-    ]
-    gov = MicrocompactGovernance(keep_recent=0, min_chars=500)
-    result = await gov.apply(messages, _CTX)
-
-    assert len(result) == 2
-    assert result[1]["content"] == "short"
-
-
-@pytest.mark.asyncio
-async def test_microcompact_skips_whitelisted_tools():
-    """白名单中的 tool result 不被替换."""
-    messages = [
-        {"role": str(MessageRole.ASSISTANT), "content": "call"},
-        {"role": str(MessageRole.TOOL), "name": "custom_tool", "content": "A" * 1000, "tool_call_id": "c1"},
-    ]
-    gov = MicrocompactGovernance(keep_recent=0, min_chars=500, whitelist_tools={"custom_tool"})
-    result = await gov.apply(messages, _CTX)
-
-    assert len(result) == 2
-    assert result[1]["content"] == "A" * 1000
-
-
-@pytest.mark.asyncio
-async def test_microcompact_returns_copy_when_no_change():
-    """无需压缩时返回副本."""
-    messages = [
-        {"role": str(MessageRole.ASSISTANT), "content": "hello"},
-    ]
-    gov = MicrocompactGovernance(keep_recent=10)
-    result = await gov.apply(messages, _CTX)
-
-    assert result == messages
-    assert result is not messages
-
-
-@pytest.mark.asyncio
-async def test_token_budget_snips_from_start():
-    """超预算时从开头截断，保留 system 和最近消息."""
-    messages = [
-        {"role": str(MessageRole.SYSTEM), "content": "sys"},
-        {"role": str(MessageRole.USER), "content": "x" * 500},
-        {"role": str(MessageRole.ASSISTANT), "content": "y" * 500},
-        {"role": str(MessageRole.USER), "content": "z" * 500},
-    ]
-    gov = TokenBudgetGovernance(
-        max_context_tokens=200, safety_buffer=0, token_estimator=_LenStrEstimator()
-    )
-    result = await gov.apply(messages, _CTX)
-
-    # system 必须保留
-    assert result[0]["role"] == str(MessageRole.SYSTEM)
-    # 最老的消息被截断
-    contents = [m.get("content", "") for m in result]
-    assert "x" * 500 not in contents
-    # 最近的消息保留
-    assert "z" * 500 in contents
-
-
-@pytest.mark.asyncio
-async def test_token_budget_keeps_user_start():
-    """截断后确保以 user 消息开头."""
-    messages = [
-        {"role": str(MessageRole.SYSTEM), "content": "sys"},
-        {"role": str(MessageRole.ASSISTANT), "content": "a"},
-        {"role": str(MessageRole.ASSISTANT), "content": "b"},
-        {"role": str(MessageRole.USER), "content": "u"},
-    ]
-    gov = TokenBudgetGovernance(
-        max_context_tokens=30, safety_buffer=0, token_estimator=_LenStrEstimator()
-    )
-    result = await gov.apply(messages, _CTX)
-
-    # 第一条非 system 必须是 user
-    non_system = [m for m in result if m["role"] != str(MessageRole.SYSTEM)]
-    assert non_system[0]["role"] == str(MessageRole.USER)
-
-
-@pytest.mark.asyncio
-async def test_token_budget_empty_input():
-    """空消息列表返回空列表."""
-    gov = TokenBudgetGovernance(max_context_tokens=100)
-    result = await gov.apply([], _CTX)
-    assert result == []
-
-
-@pytest.mark.asyncio
-async def test_composite_runs_strategies_in_order():
-    """CompositeGovernance 按顺序执行多个策略."""
-    class AddTag(ContextGovernance):
-        def __init__(self, tag: str) -> None:
-            self.tag = tag
-
-        async def apply(
-            self, messages: list[dict[str, Any]], ctx: AgentContext,
-        ) -> list[dict[str, Any]]:
-            result = list(messages)
-            result.append({"role": str(MessageRole.USER), "content": self.tag})
-            return result
-
-    composite = CompositeGovernance([AddTag("a"), AddTag("b")])
-    result = await composite.apply([{"role": str(MessageRole.USER), "content": "base"}], _CTX)
-
-    assert len(result) == 3
-    assert result[1]["content"] == "a"
-    assert result[2]["content"] == "b"
-
-
-# ── LossyContentCompactionGovernance ─────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_lossy_compaction_not_triggered_below_first_step():
-    """At length == buffer + count - 1 the first step has not started."""
-    messages = [
-        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "A" * 2000, "tool_call_id": "c1"},
-        *[
-            {"role": str(MessageRole.USER), "content": "filler"}
-            for _ in range(68)
-        ],
-    ]
-    # length=69, compact_range_count=50, buffer=20 -> 69 <= 69, no compaction
-    gov = LossyContentCompactionGovernance(tool_result_head_chars=1200)
-    result = await gov.apply(messages, _CTX)
-
-    assert len(result) == 69
-    assert result[0]["content"] == "A" * 2000
-
-
-@pytest.mark.asyncio
-async def test_lossy_compaction_triggers_at_first_step():
-    """At length == buffer + count the first step compacts one block."""
-    messages = [
-        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "A" * 2000, "tool_call_id": "c1"},
-        *[
-            {"role": str(MessageRole.USER), "content": "filler"}
-            for _ in range(69)
-        ],
-    ]
-    # length=70, compact_range_count=50, buffer=20 -> compact_count=50
-    gov = LossyContentCompactionGovernance(tool_result_head_chars=1200)
-    result = await gov.apply(messages, _CTX)
-
-    assert result[0]["content"] == _CLEARED_PLACEHOLDER
-    assert result[50]["content"] == "filler"
-
-
-@pytest.mark.asyncio
-async def test_lossy_compaction_stays_stable_within_step():
-    """Adding messages within the same step does not change compact_count."""
-    base = [
-        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "A" * 2000, "tool_call_id": "c1"},
-        *[
-            {"role": str(MessageRole.USER), "content": "filler"}
-            for _ in range(69)
-        ],
-    ]
-    # length=70, compact_count=50: tool A compacted.
-    gov = LossyContentCompactionGovernance(tool_result_head_chars=1200)
-
-    result_70 = await gov.apply(base, _CTX)
-    assert result_70[0]["content"] == _CLEARED_PLACEHOLDER
-
-    # Add messages up to the next step boundary (length=119), compact_count still 50
-    for extra in range(49):
-        messages = base + [{"role": str(MessageRole.USER), "content": "extra"} for _ in range(extra + 1)]
-        result = await gov.apply(messages, _CTX)
-        assert result[0]["content"] == result_70[0]["content"]
-
-    # Next step: length=120 -> compact_count=100, add a long tool message at index 70
-    messages = base + [{"role": str(MessageRole.TOOL), "name": "read_file", "content": "B" * 2000, "tool_call_id": "c2"}] + [{"role": str(MessageRole.USER), "content": "extra"} for _ in range(49)]
-    result_120 = await gov.apply(messages, _CTX)
-    assert result_120[70]["content"] == _CLEARED_PLACEHOLDER
-
-
-@pytest.mark.asyncio
-async def test_lossy_compaction_stable_suffix():
-    """Truncated output must not contain dynamic content that breaks caches."""
-    messages = [
-        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "A" * 2000, "tool_call_id": "c1"},
-        *[
-            {"role": str(MessageRole.USER), "content": "filler"}
-            for _ in range(69)
-        ],
-    ]
-    gov = LossyContentCompactionGovernance(tool_result_head_chars=1200)
-    result = await gov.apply(messages, _CTX)
-
-    assert "original chars=" not in result[0]["content"]
-    assert result[0]["content"] == _CLEARED_PLACEHOLDER
-
-
-@pytest.mark.asyncio
-async def test_lossy_compaction_returns_copy():
-    """Must return a new list and not mutate the input."""
-    original = [
-        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "A" * 2000, "tool_call_id": "c1"},
-        *[
-            {"role": str(MessageRole.USER), "content": "filler"}
-            for _ in range(69)
-        ],
-    ]
-    gov = LossyContentCompactionGovernance(tool_result_head_chars=1200)
-    result = await gov.apply(original, _CTX)
-
-    assert result is not original
-    assert original[0]["content"] == "A" * 2000
-
-
-@pytest.mark.asyncio
-async def test_lossy_compaction_system_never_compacted():
-    """System messages are never compacted regardless of length."""
-    messages = [
-        {"role": "system", "content": "S" * 2000},
-        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "A" * 2000, "tool_call_id": "c1"},
-        *[
-            {"role": str(MessageRole.USER), "content": "filler"}
-            for _ in range(69)
-        ],
-    ]
-    gov = LossyContentCompactionGovernance(tool_result_head_chars=1200)
-    result = await gov.apply(messages, _CTX)
-
-    assert result[0]["content"] == "S" * 2000
-    assert result[1]["content"] == _CLEARED_PLACEHOLDER
-
-
-@pytest.mark.asyncio
 async def test_tool_chain_repair_cleans_up_orphans_in_model_context() -> None:
-    """ToolChainRepairGovernance removes orphan tool results when no matching
-    assistant tool_call declaration exists in the message list."""
     messages: list[dict] = [
         {"role": "user", "content": "do something"},
         {"role": "tool", "tool_call_id": "call_orphan", "content": "orphan result"},
         {"role": "user", "content": "next"},
     ]
-
     result = await ToolChainRepairGovernance().apply(messages, _CTX)
-
-    # Orphan removed; both user messages preserved
     assert len(result) == 2
     assert result[0]["role"] == "user"
     assert result[0]["content"] == "do something"
@@ -367,8 +114,6 @@ async def test_tool_chain_repair_cleans_up_orphans_in_model_context() -> None:
 
 @pytest.mark.asyncio
 async def test_tool_chain_repair_backfills_last_incomplete_assistant_for_model_visible_context() -> None:
-    """A partially-answered assistant tool_call group is repaired in place:
-    existing tool(a) reused, missing tool(b) backfilled."""
     from modex_agent.memory.sanitizer import BACKFILL_LOST_TOOL_CONTENT
 
     messages = [
@@ -406,6 +151,359 @@ async def test_tool_chain_repair_backfills_last_incomplete_assistant_for_model_v
         {"role": str(MessageRole.USER), "content": "next"},
     ]
 
+
+# ── CompositeGovernance ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_composite_runs_strategies_in_order():
+    """CompositeGovernance 按顺序执行多个策略."""
+    class AddTag(ContextGovernance):
+        def __init__(self, tag: str) -> None:
+            self.tag = tag
+
+        async def apply(
+            self, messages: list[dict[str, Any]], ctx: AgentContext,
+        ) -> list[dict[str, Any]]:
+            result = list(messages)
+            result.append({"role": str(MessageRole.USER), "content": self.tag})
+            return result
+
+    composite = CompositeGovernance([AddTag("a"), AddTag("b")])
+    result = await composite.apply([{"role": str(MessageRole.USER), "content": "base"}], _CTX)
+
+    assert len(result) == 3
+    assert result[1]["content"] == "a"
+    assert result[2]["content"] == "b"
+
+
+# ── ContextBudgetGovernance ────────────────────────────────────────────────
+#
+# Helper: build a message list with N tool results.
+# Each tool message with content of C chars → ~C+overhead tokens with _CharEstimator.
+# The overhead is ~17 tokens (MESSAGE_OVERHEAD=4 + name + tool_call_id fields).
+# For simplicity in tests we use content sizes large enough that the overhead
+# is negligible relative to the parameter values.
+
+def _make_messages(tool_count: int, content_size: int = 5000) -> list[dict[str, Any]]:
+    """Build [system] + tool_count×(assistant + tool_result)."""
+    msgs: list[dict[str, Any]] = [{"role": str(MessageRole.SYSTEM), "content": "sys"}]
+    for i in range(tool_count):
+        msgs.append({"role": str(MessageRole.ASSISTANT), "content": f"call_{i}"})
+        msgs.append({
+            "role": str(MessageRole.TOOL),
+            "name": "read_file",
+            "content": "x" * content_size,
+            "tool_call_id": f"c{i}",
+        })
+    return msgs
+
+
+@pytest.mark.asyncio
+async def test_budget_zero_mutation_under_threshold():
+    """Total tokens ≤ threshold → return copy, no modification."""
+    messages = [
+        {"role": str(MessageRole.SYSTEM), "content": "sys"},
+        {"role": str(MessageRole.USER), "content": "hello"},
+        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "result", "tool_call_id": "c1"},
+    ]
+    gov = ContextBudgetGovernance(
+        max_context_tokens=10_000,
+        token_estimator=_CharEstimator(),
+        governance_ratio=0.60,
+    )
+    result = await gov.apply(messages, _CTX)
+
+    assert result == messages
+    assert result is not messages  # must be a copy
+
+
+@pytest.mark.asyncio
+async def test_budget_zero_mutation_empty_input():
+    """Empty messages → empty list."""
+    gov = ContextBudgetGovernance(max_context_tokens=100)
+    result = await gov.apply([], _CTX)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_budget_prunes_old_tool_results_outside_window():
+    """When over threshold, old tool results outside the protect window are
+    replaced with the fixed placeholder.
+
+    Semantics:
+      keep_recent = structural floor: last N tool results are NEVER pruned.
+      protect_tokens = budget cap on TOTAL retained tool-output tokens,
+        including the keep_recent tail.  Window walks newest→oldest over
+        ALL tool entries; keep_recent entries always kept but their tokens
+        still accumulate.  Only entries beyond the floor are pruned when
+        the accumulated total exceeds protect_tokens.
+
+    Setup:
+      15 tool results × ~5015 tokens each.
+      keep_recent=5 → floor covers j=10..14 (5×5015=25075 tokens accumulated).
+      j=9 (first beyond floor): accumulated=30089 > protect_tokens(20000)
+        → window_start=10, outside=10.
+      10×5015≈50150 > min_gain(15000) → execute.
+      Result: 10 pruned (all eligible), 5 kept (keep_recent only).
+    """
+    messages = _make_messages(15, content_size=5000)
+    gov = ContextBudgetGovernance(
+        max_context_tokens=50_000,  # threshold = 50000 × 0.60 = 30000
+        token_estimator=_CharEstimator(),
+        governance_ratio=0.60,
+        protect_tokens=20_000,
+        min_gain_tokens=15_000,
+        keep_recent=5,
+    )
+    result = await gov.apply(messages, _CTX)
+
+    tool_indices = [i for i, m in enumerate(result) if m.get("role") == str(MessageRole.TOOL)]
+    pruned = [i for i in tool_indices if result[i].get("content") == _CLEARED_PLACEHOLDER]
+    intact = [i for i in tool_indices if result[i].get("content") == "x" * 5000]
+
+    assert len(pruned) == 10  # all eligible entries pruned
+    assert len(intact) == 5   # keep_recent only
+    # Pruned are the oldest (lowest indices)
+    assert max(pruned) < min(intact)
+
+
+@pytest.mark.asyncio
+async def test_budget_skips_when_gain_below_minimum():
+    """If replaceable tokens < min_gain, skip entirely (zero-mutation).
+
+    Setup: 10 tool results × ~5015 tokens.
+      keep_recent=5 → floor covers j=5..9 (5×5015=25075 accumulated).
+      j=4: accumulated=30090 > protect_tokens(20000) → window_start=5.
+      outside = tool_entries[:5] = 5 entries, 5×5015≈25075 > min_gain(15000) → execute!
+
+    To make it skip: need outside_tokens < min_gain.
+    Use keep_recent=8 → floor covers j=2..9 (8×5015=40120 accumulated).
+      j=1: accumulated=45135 > 20000 → window_start=2.
+      outside = tool_entries[:2] = 2 entries, 2×5015≈10030 < min_gain(15000) → skip.
+    """
+    messages = _make_messages(10, content_size=5000)
+    gov = ContextBudgetGovernance(
+        max_context_tokens=50_000,
+        token_estimator=_CharEstimator(),
+        governance_ratio=0.60,
+        protect_tokens=20_000,
+        min_gain_tokens=15_000,
+        keep_recent=8,
+    )
+    result = await gov.apply(messages, _CTX)
+
+    tool_indices = [i for i, m in enumerate(result) if m.get("role") == str(MessageRole.TOOL)]
+    for i in tool_indices:
+        assert result[i]["content"] == "x" * 5000
+
+
+@pytest.mark.asyncio
+async def test_budget_respects_keep_recent():
+    """keep_recent floor is honored: last N tool results are NEVER pruned
+    even if window math would include them."""
+    # Only 3 tool results → keep_recent=10 means none are eligible.
+    messages: list[dict[str, Any]] = [
+        {"role": str(MessageRole.SYSTEM), "content": "sys"},
+        {"role": str(MessageRole.ASSISTANT), "content": "c0"},
+        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "x" * 50000, "tool_call_id": "c0"},
+        {"role": str(MessageRole.ASSISTANT), "content": "c1"},
+        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "y" * 50000, "tool_call_id": "c1"},
+        {"role": str(MessageRole.ASSISTANT), "content": "c2"},
+        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "z" * 50000, "tool_call_id": "c2"},
+    ]
+    gov = ContextBudgetGovernance(
+        max_context_tokens=10_000,
+        token_estimator=_CharEstimator(),
+        governance_ratio=0.60,
+        protect_tokens=1000,
+        min_gain_tokens=100,
+        keep_recent=10,
+    )
+    result = await gov.apply(messages, _CTX)
+
+    # Only 3 tool results → ≤ keep_recent(10) → no pruning.
+    tool_indices = [i for i, m in enumerate(result) if m.get("role") == str(MessageRole.TOOL)]
+    for i in tool_indices:
+        assert result[i]["content"] != _CLEARED_PLACEHOLDER
+
+
+@pytest.mark.asyncio
+async def test_budget_keep_recent_floor_separate_from_window():
+    """keep_recent and protect_tokens compose: the keep_recent tail's tokens
+    count toward protect_tokens, so the window only covers entries beyond
+    the floor whose accumulated total (including floor) still fits.
+
+    Setup: 8 tool results × ~5015 tokens.
+      keep_recent=3 → floor covers j=5..7 (3×5015=15045 accumulated).
+      j=4: accumulated=20060 ≤ protect_tokens(30000) → keep.
+      j=3: accumulated=25075 ≤ 30000 → keep.
+      j=2: accumulated=30090 > 30000 → window_start=3.
+      outside = tool_entries[:3] = 3 entries, 3×5015≈15045 > min_gain(5000) → execute.
+      Result: 3 pruned (oldest), 2 kept (window), 3 kept (keep_recent).
+    """
+    messages = _make_messages(8, content_size=5000)
+    gov = ContextBudgetGovernance(
+        max_context_tokens=50_000,
+        token_estimator=_CharEstimator(),
+        governance_ratio=0.60,
+        protect_tokens=30_000,
+        min_gain_tokens=5_000,
+        keep_recent=3,
+    )
+    result = await gov.apply(messages, _CTX)
+
+    tool_indices = [i for i, m in enumerate(result) if m.get("role") == str(MessageRole.TOOL)]
+    pruned = [i for i in tool_indices if result[i].get("content") == _CLEARED_PLACEHOLDER]
+    intact = [i for i in tool_indices if result[i].get("content") == "x" * 5000]
+
+    assert len(pruned) == 3
+    assert len(intact) == 5  # 2 window + 3 keep_recent
+
+
+@pytest.mark.asyncio
+async def test_budget_whitelist_tools_protected():
+    """Whitelisted tool results are never pruned.
+
+    Setup: 15 tool results, first is whitelisted. keep_recent=5.
+      Eligible = 10 non-whitelisted entries (indices 1-9 in tool_entries).
+      Window covers some, outside gets pruned — but whitelisted entry at
+      message index 2 is untouched.
+    """
+    messages: list[dict[str, Any]] = [{"role": str(MessageRole.SYSTEM), "content": "sys"}]
+    for i in range(15):
+        tool_name = "protected_tool" if i == 0 else "read_file"
+        messages.append({"role": str(MessageRole.ASSISTANT), "content": f"call_{i}"})
+        messages.append({
+            "role": str(MessageRole.TOOL),
+            "name": tool_name,
+            "content": "x" * 5000,
+            "tool_call_id": f"c{i}",
+        })
+
+    gov = ContextBudgetGovernance(
+        max_context_tokens=50_000,
+        token_estimator=_CharEstimator(),
+        governance_ratio=0.60,
+        protect_tokens=20_000,
+        min_gain_tokens=15_000,
+        keep_recent=5,
+        whitelist_tools=frozenset({"protected_tool"}),
+    )
+    result = await gov.apply(messages, _CTX)
+
+    # The whitelisted tool result (message index 2) should NOT be placeholder.
+    assert result[2]["content"] == "x" * 5000
+    # But other old tool results should be pruned.
+    pruned = [
+        i for i, m in enumerate(result)
+        if m.get("content") == _CLEARED_PLACEHOLDER
+    ]
+    assert len(pruned) > 0
+    assert 2 not in pruned
+
+
+@pytest.mark.asyncio
+async def test_budget_does_not_mutate_input():
+    """Governance must return a new list and not modify the original."""
+    messages = _make_messages(15, content_size=5000)
+    original_contents = [m.get("content") for m in messages]
+
+    gov = ContextBudgetGovernance(
+        max_context_tokens=50_000,
+        token_estimator=_CharEstimator(),
+        governance_ratio=0.60,
+        protect_tokens=20_000,
+        min_gain_tokens=15_000,
+        keep_recent=5,
+    )
+    result = await gov.apply(messages, _CTX)
+
+    assert result is not messages
+    assert [m.get("content") for m in messages] == original_contents
+
+
+@pytest.mark.asyncio
+async def test_budget_sets_metadata_on_pruned():
+    """Pruned messages carry META_CONTEXT_LOSSY, META_ORIGINAL_CHARS, META_CONTEXT_REDUCTION."""
+    messages = _make_messages(15, content_size=5000)
+    gov = ContextBudgetGovernance(
+        max_context_tokens=50_000,
+        token_estimator=_CharEstimator(),
+        governance_ratio=0.60,
+        protect_tokens=20_000,
+        min_gain_tokens=15_000,
+        keep_recent=5,
+    )
+    result = await gov.apply(messages, _CTX)
+
+    pruned = [m for m in result if m.get("content") == _CLEARED_PLACEHOLDER]
+    assert len(pruned) > 0
+    for m in pruned:
+        assert m[META_CONTEXT_LOSSY] is True
+        assert m[META_ORIGINAL_CHARS] == 5000
+        assert m[META_CONTEXT_REDUCTION] == "tool_result_pruned"
+
+
+@pytest.mark.asyncio
+async def test_budget_prefix_stability_across_calls():
+    """Same input → same output (deterministic)."""
+    messages = _make_messages(15, content_size=5000)
+    gov = ContextBudgetGovernance(
+        max_context_tokens=50_000,
+        token_estimator=_CharEstimator(),
+        governance_ratio=0.60,
+        protect_tokens=20_000,
+        min_gain_tokens=15_000,
+        keep_recent=5,
+    )
+    result_1 = await gov.apply(messages, _CTX)
+    result_2 = await gov.apply(messages, _CTX)
+
+    assert result_1 == result_2
+
+
+@pytest.mark.asyncio
+async def test_budget_no_message_dropping():
+    """Governance never drops messages — only replaces content."""
+    messages = _make_messages(15, content_size=5000)
+    gov = ContextBudgetGovernance(
+        max_context_tokens=50_000,
+        token_estimator=_CharEstimator(),
+        governance_ratio=0.60,
+        protect_tokens=20_000,
+        min_gain_tokens=15_000,
+        keep_recent=5,
+    )
+    result = await gov.apply(messages, _CTX)
+
+    assert len(result) == len(messages)  # no messages dropped
+
+
+@pytest.mark.asyncio
+async def test_budget_uses_cached_token_count():
+    """When token_count is cached on the message, governance uses it
+    instead of re-estimating."""
+    messages: list[dict[str, Any]] = [
+        {"role": str(MessageRole.SYSTEM), "content": "sys", "token_count": 3},
+        {"role": str(MessageRole.ASSISTANT), "content": "c0", "token_count": 2},
+        {
+            "role": str(MessageRole.TOOL),
+            "name": "read_file",
+            "content": "x" * 50000,  # huge content but cached token_count=1
+            "tool_call_id": "c0",
+            "token_count": 1,
+        },
+    ]
+    gov = ContextBudgetGovernance(
+        max_context_tokens=10,  # threshold = 6 → total cached = 3+2+1 = 6 ≤ 6 → no pruning
+        token_estimator=_CharEstimator(),
+        governance_ratio=0.60,
+    )
+    result = await gov.apply(messages, _CTX)
+    assert result[2]["content"] == "x" * 50000
+
+
 @pytest.mark.asyncio
 async def test_all_strategies_return_copies():
     """所有策略都不应修改原始输入."""
@@ -413,13 +511,10 @@ async def test_all_strategies_return_copies():
         {"role": str(MessageRole.ASSISTANT), "content": "hello"},
     ]
 
-    configs = {
+    for Gov, kwargs in {
         ToolChainRepairGovernance: {},
-        MicrocompactGovernance: {},
-        TokenBudgetGovernance: {"max_context_tokens": 100},
-        LossyContentCompactionGovernance: {"tool_result_head_chars": 10},
-    }
-    for Gov, kwargs in configs.items():
+        ContextBudgetGovernance: {"max_context_tokens": 100},
+    }.items():
         gov = Gov(**kwargs)
         result = await gov.apply(original, _CTX)
         assert result is not original
@@ -427,15 +522,16 @@ async def test_all_strategies_return_copies():
 
 
 @pytest.mark.asyncio
-async def test_token_budget_governance_uses_injected_estimator() -> None:
-    from modex_agent.memory.context_governance import TokenBudgetGovernance
-    from modex_agent.memory.token_estimator import TokenEstimator
-
+async def test_budget_governance_uses_injected_estimator() -> None:
+    """Custom estimator is used for token resolution."""
     class FixedEst(TokenEstimator):
         def estimate_text(self, text: str) -> int:
             return 5
 
-    gov = TokenBudgetGovernance(max_context_tokens=100, token_estimator=FixedEst())
+    gov = ContextBudgetGovernance(
+        max_context_tokens=100,
+        token_estimator=FixedEst(),
+    )
     msgs = [{"role": "user", "content": "x"}, {"role": "user", "content": "y"}]
     out = await gov.apply(msgs, _CTX)
     assert isinstance(out, list)

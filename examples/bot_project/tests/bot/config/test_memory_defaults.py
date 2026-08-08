@@ -47,7 +47,7 @@ def test_main_memory_defaults_all_long_term_layers_off() -> None:
     assert m.pruned is not None and m.pruned.enabled is True
     assert m.governance is not None
     assert m.governance.tool_chain_repair is True
-    assert m.governance.lossy_compaction is not None
+    assert m.governance.budget is not None
 
 
 def test_main_memory_defaults_byte_for_byte_identical_to_no_params() -> None:
