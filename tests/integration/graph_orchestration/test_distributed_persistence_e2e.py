@@ -44,7 +44,6 @@ from modex_graph import (
     NodeFactory,
     NodeRegistry,
     NodeSpec,
-    RecoveryContext,
     RoutingError,
     SqliteGraphInstanceStore,
     create_null_coordinator,
@@ -284,11 +283,11 @@ class TestScenario1NormalExecution:
 
         # GraphInstance status = COMPLETED (persisted in instance_store).
         assert _load_status(instance_store, gid) == GraphInstanceStatus.COMPLETED.value
-        # GraphInstance stays in registry for state queries.
-        assert gid in orch._active_instances
-        # Coordinator has the node registered (at construction time).
-        coordinator = _get_coordinator(orch, gid)
-        assert coordinator.get_deliver_store("entry") is not None
+        # COMPLETED instances are evicted from _active_instances (M1).
+        assert gid not in orch._active_instances
+        # State queries still work via the store for evicted instances.
+        state = orch.get_state(gid)
+        assert state.metadata.graph_instance_id == gid
 
     async def test_state_mutated_by_function_node(self) -> None:
         """The function node mutates state through the full execution chain."""
@@ -407,9 +406,8 @@ class TestScenario3CrashRecoverySqlite:
 
     SQLite strategy provides crash recovery (data persists across process
     restarts). The test simulates: execute -> crash -> new coordinator with
-    same connection (process restart) -> load_for_recovery -> verify
-    RecoveryContext with rebuilt_main_state + CRASHED node identified for
-    re-dispatch.
+    same connection (process restart) -> rebuild_main_state -> verify
+    CRASHED node identified for re-dispatch.
     """
 
     async def test_crash_recovery_sqlite_coordinator(self) -> None:
@@ -429,18 +427,13 @@ class TestScenario3CrashRecoverySqlite:
         coord2, _, _ = _sqlite_coordinator(conn=conn, db_path=db_path)
         coord2.register_node("worker")
 
-        # load_for_recovery -> RecoveryContext with rebuilt_main_state.
-        ctx = coord2.load_for_recovery()
-        assert isinstance(ctx, RecoveryContext)
-        assert ctx.metadata.graph_instance_id == GID
+        # rebuild_main_state -> verify state restoration.
+        assert coord2.rebuild_main_state() == {}
 
         # The CRASHED node is identified for re-dispatch.
-        node_state = ctx.node_states.get("worker")
+        node_state = coord2.node_state_store.load_latest("worker")
         assert node_state is not None
         assert node_state.status == InvocationStatus.CRASHED
-
-        # rebuilt_main_state is empty (no COMPLETED invocations).
-        assert ctx.rebuilt_main_state == {}
 
         # Re-dispatch: new coordinator creates a new invocation.
         inv_new = coord2.node_state_store.begin_invocation("worker")
@@ -451,10 +444,10 @@ class TestScenario3CrashRecoverySqlite:
         coord2.node_state_store.complete_invocation(inv_new, {"result": "recovered"})
 
         # Verify: the graph now has COMPLETED state.
-        ctx2 = coord2.load_for_recovery()
-        assert ctx2.rebuilt_main_state == {"result": "recovered"}
-        assert ctx2.node_states["worker"] is not None
-        assert ctx2.node_states["worker"].status == InvocationStatus.COMPLETED
+        assert coord2.rebuild_main_state() == {"result": "recovered"}
+        worker_state = coord2.node_state_store.load_latest("worker")
+        assert worker_state is not None
+        assert worker_state.status == InvocationStatus.COMPLETED
 
     async def test_crash_after_partial_completion(self) -> None:
         """Crash after one node COMPLETED, before another finishes.
@@ -476,15 +469,16 @@ class TestScenario3CrashRecoverySqlite:
         coord2.register_node("node_a")
         coord2.register_node("node_b")
 
-        ctx = coord2.load_for_recovery()
-        # rebuilt_main_state includes node_a's COMPLETED state.
-        assert ctx.rebuilt_main_state == {"a_value": 1}
+        # rebuild_main_state includes node_a's COMPLETED state.
+        assert coord2.rebuild_main_state() == {"a_value": 1}
         # node_a is COMPLETED (skip on re-dispatch).
-        assert ctx.node_states["node_a"] is not None
-        assert ctx.node_states["node_a"].status == InvocationStatus.COMPLETED
+        node_a_state = coord2.node_state_store.load_latest("node_a")
+        assert node_a_state is not None
+        assert node_a_state.status == InvocationStatus.COMPLETED
         # node_b is CRASHED (re-dispatch).
-        assert ctx.node_states["node_b"] is not None
-        assert ctx.node_states["node_b"].status == InvocationStatus.CRASHED
+        node_b_state = coord2.node_state_store.load_latest("node_b")
+        assert node_b_state is not None
+        assert node_b_state.status == InvocationStatus.CRASHED
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -496,7 +490,7 @@ class TestScenario5F2CrashBetween:
     """Crash between save COMPLETED and promote_delivers.
 
     Simulate: begin -> route_deliver -> mark_consumed -> save COMPLETED
-    (skip promote_delivers) -> crash. Recovery: load_for_recovery ->
+    (skip promote_delivers) -> crash. Recovery: promote_delivers ->
     auto-promote CONSUMED_PENDING -> CONSUMED_COMPLETED.
     """
 
@@ -531,7 +525,7 @@ class TestScenario5F2CrashBetween:
         coord2.register_node("worker")
 
         # Recovery: auto-promote CONSUMED_PENDING -> CONSUMED_COMPLETED.
-        coord2.load_for_recovery()
+        coord2.promote_delivers("worker", inv.invocation_id)
 
         # Verify: no CONSUMED_PENDING remains.
         consumable_after = store.query_consumable(GID, "worker")
@@ -540,7 +534,7 @@ class TestScenario5F2CrashBetween:
 
         # Verify: delivers are now CONSUMED_COMPLETED.
         rows = conn.execute(
-            "SELECT status FROM deliver_states WHERE graph_instance_id = ? AND node_name = ?",
+            "SELECT status FROM deliver_states WHERE graph_instance_id = ? AND node_id = ?",
             (GID, "worker"),
         ).fetchall()
         statuses = [row[0] for row in rows]
@@ -575,9 +569,9 @@ class TestScenario6SelfLoop:
 
         # A delivers to itself (self-loop).
         d1 = coord.route_deliver(
-            target_node="node_a",
+            target_node_id="node_a",
             content={"step": 1},
-            source_node="node_a",
+            source_node_id="node_a",
             source_invocation_id=inv0.invocation_id,
         )
         assert d1 is not None
@@ -600,7 +594,7 @@ class TestScenario6SelfLoop:
         consumable = coord.collect_consumable_delivers("node_a", inv1.invocation_id)
         assert len(consumable) == 1
         assert consumable[0].content == {"step": 1}
-        assert consumable[0].source_node == "node_a"
+        assert consumable[0].source_node_id == "node_a"
 
         coord.mark_delivers_consumed(
             "node_a", [r.deliver_id for r in consumable], inv1.invocation_id
@@ -666,7 +660,7 @@ class TestScenario7DualPath:
         """ReActAgent path: Null coordinator suspend is a no-op.
 
         The Null coordinator's suspend_invocation discards the record
-        (NullNodeStateStore). load_for_recovery returns empty context. This is
+        (NullNodeStateStore). rebuild_main_state returns empty dict. This is
         correct — AgentContext holds the turn state, not the coordinator.
         """
         coord = create_null_coordinator(GID)
@@ -683,9 +677,8 @@ class TestScenario7DualPath:
         latest = coord.node_state_store.load_latest("llm_node")
         assert latest is None
 
-        # load_for_recovery returns empty context.
-        ctx = coord.load_for_recovery()
-        assert ctx.rebuilt_main_state == {}
+        # rebuild_main_state returns empty dict.
+        assert coord.rebuild_main_state() == {}
 
     async def test_graph_orchestrator_path_suspend_persists(self) -> None:
         """GraphOrchestrator path: GraphInterrupt -> PAUSED status.
@@ -741,7 +734,7 @@ class TestScenario7DualPath:
         # is available via load_latest. The snapshot enters
         # rebuild_main_state as the newest record for the node (suspended
         # RUNNING is a valid rebuild source).
-        assert null_coord.load_for_recovery().rebuilt_main_state == {}
+        assert null_coord.rebuild_main_state() == {}
         mem_coord.node_state_store.begin_invocation("worker")
         mem_state = mem_coord.rebuild_main_state()
         assert mem_state.get("target") == "tool"
@@ -763,17 +756,18 @@ class TestScenario8DeliverConvergence:
     async def test_deliver_routes_through_coordinator(self) -> None:
         orch, spec_store, _ = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
-        gid = await orch.create_and_run(spec_id)
+        gid = await orch.create_instance(spec_id)
 
         await orch.deliver_to_node(gid, "entry", "hello")
 
         coordinator = _get_coordinator(orch, gid)
-        store = coordinator.get_deliver_store("entry")
+        node_id = orch._active_instances[gid].metadata.node_id_map["entry"]
+        store = coordinator.get_deliver_store(node_id)
         assert store is not None
-        pending = store.query_consumable(gid, "entry")
+        pending = store.query_consumable(gid, node_id)
         assert len(pending) == 1
         assert pending[0].content == "hello"
-        assert pending[0].source_node == "__external__"
+        assert pending[0].source_node_id == "__external__"
         assert pending[0].source_invocation_id == 0
 
     async def test_no_shared_deliver_store(self) -> None:
@@ -798,20 +792,21 @@ class TestScenario8DeliverConvergence:
             state_class="counter",
         )
         spec_id = _save_spec(spec_store, spec)
-        gid = await orch.create_and_run(spec_id)
+        gid = await orch.create_instance(spec_id)
 
         coordinator = _get_coordinator(orch, gid)
-        store_a = coordinator.get_deliver_store("a")
-        store_b = coordinator.get_deliver_store("b")
+        node_ids = orch._active_instances[gid].metadata.node_id_map
+        store_a = coordinator.get_deliver_store(node_ids["a"])
+        store_b = coordinator.get_deliver_store(node_ids["b"])
         assert store_a is not None
         assert store_b is not None
         assert store_a is not store_b
 
         # Deliver to node A.
         await orch.deliver_to_node(gid, "a", "data_for_a")
-        assert len(store_a.query_consumable(gid, "a")) == 1
+        assert len(store_a.query_consumable(gid, node_ids["a"])) == 1
         # Node B's store is empty (no shared store).
-        assert len(store_b.query_consumable(gid, "b")) == 0
+        assert len(store_b.query_consumable(gid, node_ids["b"])) == 0
 
     async def test_deliver_to_unknown_instance_raises(self) -> None:
         """Deliver to unknown gid raises ValueError (no active coordinator)."""
@@ -824,7 +819,7 @@ class TestScenario8DeliverConvergence:
         """Delivering to a node not in the graph raises RoutingError."""
         orch, spec_store, _ = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
-        gid = await orch.create_and_run(spec_id)
+        gid = await orch.create_instance(spec_id)
 
         with pytest.raises(RoutingError, match="no deliver_store"):
             await orch.deliver_to_node(gid, "nonexistent_node", "data")
@@ -849,7 +844,7 @@ class TestScenario9GraphInstanceEviction:
         """unregister_instance removes from _active_instances."""
         orch, spec_store, _ = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
-        gid = await orch.create_and_run(spec_id)
+        gid = await orch.create_instance(spec_id)
 
         assert gid in orch._active_instances
         orch.unregister_instance(gid)
@@ -859,7 +854,7 @@ class TestScenario9GraphInstanceEviction:
         """unregister_instance calls coordinator.close()."""
         orch, spec_store, _ = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
-        gid = await orch.create_and_run(spec_id)
+        gid = await orch.create_instance(spec_id)
 
         coordinator = _get_coordinator(orch, gid)
         close_called = False
@@ -931,9 +926,6 @@ class TestScenario9GraphInstanceEviction:
         # Create + execute.
         gid = await orch.create_and_run(spec_id)
         assert _load_status(instance_store, gid) == GraphInstanceStatus.COMPLETED.value
-        assert gid in orch._active_instances
-
-        # Evict.
-        orch.unregister_instance(gid)
+        # COMPLETED -> evicted from _active_instances (M1).
         assert gid not in orch._active_instances
         assert orch._lookup_coordinator(gid) is None

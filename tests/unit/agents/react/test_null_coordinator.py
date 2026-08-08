@@ -5,7 +5,7 @@ Verifies the formalized NullCoordinator factory and its behavior:
 - Factory returns a ``GraphPersistenceCoordinator`` wired with Null stores.
 - Lifecycle methods (begin/complete/cancel/crash/suspend/finalize) are on
   ``coord.node_state_store`` — NullNodeStateStore discards all saves.
-- ``load_for_recovery`` returns a fresh ``RecoveryContext`` (empty state).
+- ``rebuild_main_state`` returns empty dict (no persisted snapshots).
 - Deliver-only routing through ``NullDeliverStore`` in-memory queue.
 - Suspend/resume: ``suspend_invocation`` is a no-op; the coordinator holds no
   state across suspend/resume — AgentContext is the orthogonal turn-state layer.
@@ -20,7 +20,6 @@ from modex_graph import (
     GraphNode,
     GraphPersistenceCoordinator,
     NullNodeStateStore,
-    RecoveryContext,
     RoutingError,
     create_null_coordinator,
 )
@@ -59,7 +58,7 @@ class TestNullLifecycleNoOp:
         store = coord.node_state_store
         inv = store.begin_invocation("llm")
         assert inv.invocation_id > 0
-        assert inv.node_name == "llm"
+        assert inv.node_id == "llm"
         assert inv.version == 0
         assert inv.parent_version is None
 
@@ -107,25 +106,19 @@ class TestNullLifecycleNoOp:
 
 
 class TestNullRecovery:
-    def test_load_for_recovery_returns_empty_state(self) -> None:
+    def test_rebuild_main_state_returns_empty_state(self) -> None:
         coord = create_null_coordinator()
         coord.register_node("llm")
         coord.register_node("tool")
-        ctx = coord.load_for_recovery()
-        assert isinstance(ctx, RecoveryContext)
-        assert ctx.rebuilt_main_state == {}
-        assert ctx.node_states["llm"] is None
-        assert ctx.node_states["tool"] is None
+        assert coord.rebuild_main_state() == {}
 
-    def test_load_for_recovery_after_complete_still_empty(self) -> None:
+    def test_rebuild_main_state_after_complete_still_empty(self) -> None:
         coord = create_null_coordinator()
         coord.register_node("llm")
         store = coord.node_state_store
         inv = store.begin_invocation("llm")
         store.complete_invocation(inv, {"result": "done"})
-        ctx = coord.load_for_recovery()
-        assert ctx.rebuilt_main_state == {}
-        assert ctx.node_states["llm"] is None
+        assert coord.rebuild_main_state() == {}
 
     def test_get_graph_state_returns_empty_node_lists(self) -> None:
         coord = create_null_coordinator()
@@ -136,10 +129,16 @@ class TestNullRecovery:
 
 
 class TestNullDeliverOnlyRouting:
-    def test_route_deliver_to_end_returns_none(self) -> None:
+    def test_route_deliver_to_end_accumulates(self) -> None:
         coord = create_null_coordinator()
         coord.register_node("llm")
-        assert coord.route_deliver(GraphNode.END, {"data": 1}, "llm", 1) is None
+        coord.register_node(GraphNode.END)
+        deliver_id = coord.route_deliver(GraphNode.END, {"data": 1}, "llm", 1)
+        assert deliver_id is not None
+        records = coord.collect_consumable_delivers(GraphNode.END, 2)
+        assert len(records) == 1
+        assert records[0].content == {"data": 1}
+        assert records[0].source_node_id == "llm"
 
     def test_route_deliver_to_unregistered_node_raises(self) -> None:
         coord = create_null_coordinator()
@@ -162,7 +161,7 @@ class TestNullDeliverOnlyRouting:
         assert len(records) == 2
         assert records[0].content == {"args": 1}
         assert records[1].content == {"args": 2}
-        assert records[0].source_node == "llm"
+        assert records[0].source_node_id == "llm"
         assert records[0].source_invocation_id == 100
         assert records[0].status == DeliverConsumptionStatus.PENDING
 
@@ -213,15 +212,18 @@ class TestNullDeliverOnlyRouting:
         coord = create_null_coordinator()
         for name in ("start", "llm", "tool", "end"):
             coord.register_node(name)
+        coord.register_node(GraphNode.END)
 
         d1 = coord.route_deliver("llm", None, "start", 1)
         d2 = coord.route_deliver("tool", {"result": "ok"}, "llm", 2)
         assert d1 is not None and d2 is not None
 
-        assert coord.route_deliver(GraphNode.END, {}, "tool", 3) is None
+        d3 = coord.route_deliver(GraphNode.END, {}, "tool", 3)
+        assert d3 is not None
 
         assert len(coord.collect_consumable_delivers("llm", 0)) == 1
         assert len(coord.collect_consumable_delivers("tool", 0)) == 1
+        assert len(coord.collect_consumable_delivers(GraphNode.END, 0)) == 1
 
 
 class TestNullSuspendResume:

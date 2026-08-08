@@ -20,8 +20,8 @@ Covers:
 - **Error handling:** engine exceptions set status to CRASHED;
   ``GraphInterrupt`` sets status to PAUSED.
 - **Spec-not-found:** raises ``ValueError`` for unknown spec_id.
-- **Engine factory adapter:** the internal adapter delegates to
-  ``_run_existing_instance`` for the recovery path.
+- **Recovery path:** ``_run_existing_instance`` handles eviction, spec
+  compile, node_id restore, and re-registration for crashed instances.
 """
 
 from __future__ import annotations
@@ -44,9 +44,14 @@ from modex_graph import (
     GraphInstanceStore,
     GraphMetadata,
     GraphNode,
+    GraphOutput,
+    GraphOutputAdapter,
+    GraphOutputKind,
+    GraphPayload,
     GraphPersistenceCoordinator,
     GraphSpec,
     GraphState,
+    GraphStateSnapshot,
     InMemoryGraphInstanceStore,
     InMemoryGraphSpecStore,
     IntegratedInput,
@@ -291,11 +296,11 @@ class TestCreateAndRun:
 class TestRegistry:
     """``_active_instances`` registry lifecycle."""
 
-    async def test_instance_registered_after_create_and_run(self) -> None:
+    async def test_instance_registered_after_create_instance(self) -> None:
         orch, spec_store, _ = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
 
-        gid = await orch.create_and_run(spec_id)
+        gid = await orch.create_instance(spec_id)
 
         assert gid in orch._active_instances
         instance = orch._active_instances[gid]
@@ -303,30 +308,31 @@ class TestRegistry:
         assert instance.spec_id == spec_id
 
     async def test_registered_coordinator_has_nodes_registered(self) -> None:
-        """Nodes are registered on the coordinator at construction time."""
+        """Nodes are registered on the coordinator at create_instance time."""
         orch, spec_store, _ = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
 
-        gid = await orch.create_and_run(spec_id)
+        gid = await orch.create_instance(spec_id)
 
         coordinator = _get_coordinator(orch, gid)
-        store = coordinator.get_deliver_store("entry")
+        metadata = orch._active_instances[gid].metadata
+        store = coordinator.get_deliver_store(metadata.node_id_map["entry"])
         assert store is not None
 
-    async def test_instance_stays_in_registry_after_completion(self) -> None:
-        """Terminal status does NOT auto-evict — stays for state queries."""
+    async def test_terminal_instance_removed_after_run_instance(self) -> None:
+        """M1: COMPLETED instances are auto-evicted from _active_instances."""
         orch, spec_store, _ = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
 
         gid = await orch.create_and_run(spec_id)
 
-        assert gid in orch._active_instances
+        assert gid not in orch._active_instances
 
     async def test_unregister_instance_removes_from_registry(self) -> None:
         """unregister_instance removes from _active_instances."""
         orch, spec_store, _ = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
-        gid = await orch.create_and_run(spec_id)
+        gid = await orch.create_instance(spec_id)
 
         assert gid in orch._active_instances
         orch.unregister_instance(gid)
@@ -342,7 +348,7 @@ class TestRegistry:
         """unregister_instance calls coordinator.close()."""
         orch, spec_store, _ = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
-        gid = await orch.create_and_run(spec_id)
+        gid = await orch.create_instance(spec_id)
 
         coordinator = _get_coordinator(orch, gid)
         close_called = False
@@ -370,23 +376,27 @@ class TestCrashRecoveryEviction:
         orch, spec_store, instance_store = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
 
-        gid = await orch.create_and_run(spec_id)
-        old_coordinator = _get_coordinator(orch, gid)
+        # Use create_instance so the PENDING instance stays in the registry.
+        # M1 only evicts terminal (COMPLETED/CRASHED/STOPPED) instances.
+        gid = await orch.create_instance(spec_id)
         instance_store.update_status(gid, GraphInstanceStatus.CRASHED)
 
         recovered = await orch.recover_crashed()
 
         assert gid in recovered
-        assert gid in orch._active_instances
-        new_coordinator = _get_coordinator(orch, gid)
-        assert new_coordinator is not old_coordinator
+        # After recovery + run_instance, M1 evicts the COMPLETED instance.
+        assert gid not in orch._active_instances
+        # The old coordinator was closed during _run_existing_instance eviction.
+        new_metadata = instance_store.load(gid)
+        assert new_metadata is not None
+        assert new_metadata.status == GraphInstanceStatus.COMPLETED
 
     async def test_recovery_evicts_and_closes_old_coordinator(self) -> None:
         """The old coordinator's close() is called during eviction."""
         orch, spec_store, instance_store = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
 
-        gid = await orch.create_and_run(spec_id)
+        gid = await orch.create_instance(spec_id)
         old_coordinator = _get_coordinator(orch, gid)
         close_called = False
         original_close = old_coordinator.close
@@ -414,22 +424,18 @@ class TestE2ELifecycle:
         orch, spec_store, instance_store = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
 
-        # Create + execute
+        # Create + execute (M1 evicts COMPLETED from _active_instances)
         gid = await orch.create_and_run(spec_id)
         assert _load_status(instance_store, gid) == GraphInstanceStatus.COMPLETED.value
-        assert gid in orch._active_instances
+        assert gid not in orch._active_instances
 
         # Simulate crash
         instance_store.update_status(gid, GraphInstanceStatus.CRASHED)
 
-        # Recover (evicts old, registers new)
+        # Recover (creates fresh instance, runs, M1 evicts again)
         recovered = await orch.recover_crashed()
         assert gid in recovered
         assert _load_status(instance_store, gid) == GraphInstanceStatus.COMPLETED.value
-        assert gid in orch._active_instances
-
-        # Explicit eviction
-        orch.unregister_instance(gid)
         assert gid not in orch._active_instances
 
 
@@ -476,7 +482,8 @@ class TestControlDelegation:
     async def test_pause_sets_status_to_paused(self) -> None:
         orch, spec_store, instance_store = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
-        gid = await orch.create_and_run(spec_id)
+        gid = await orch.create_instance(spec_id)
+        instance_store.update_status(gid, GraphInstanceStatus.RUNNING)
 
         await orch.pause(gid)
 
@@ -485,7 +492,8 @@ class TestControlDelegation:
     async def test_stop_sets_status_to_stopped(self) -> None:
         orch, spec_store, instance_store = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
-        gid = await orch.create_and_run(spec_id)
+        gid = await orch.create_instance(spec_id)
+        instance_store.update_status(gid, GraphInstanceStatus.RUNNING)
 
         await orch.stop(gid)
 
@@ -512,19 +520,44 @@ class TestControlDelegation:
 
     async def test_deliver_to_node_routes_through_coordinator(self) -> None:
         """Deliver routes through coordinator.route_deliver."""
-        orch, spec_store, _ = _make_orchestrator()
-        spec_id = _save_spec(spec_store, _simple_spec())
-        gid = await orch.create_and_run(spec_id)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        node_registry = NodeRegistry()
+        node_registry.register("blocking", _BlockingFactory(entered, release))
+        node_registry.register("function", FunctionNodeFactory({"increment": _increment}))
+        orch, spec_store, instance_store = _make_orchestrator(node_registry=node_registry)
+        spec = GraphSpec(
+            name="deliver_target_graph",
+            nodes=[
+                NodeSpec(name="entry", node_type="blocking"),
+                NodeSpec(name="tail", node_type="function", config={"function": "increment"}),
+            ],
+            edges=[
+                EdgeSpec(source=GraphNode.START, target="entry"),
+                EdgeSpec(source="entry", target="tail"),
+                EdgeSpec(source="tail", target=GraphNode.END),
+            ],
+            state_class="counter",
+        )
+        spec_id = _save_spec(spec_store, spec)
+        gid = await orch.create_instance(spec_id)
+        orch.start_run(gid)
+        await asyncio.wait_for(entered.wait(), timeout=5.0)
 
         await orch.deliver_to_node(gid, "entry", "hello")
 
         coordinator = _get_coordinator(orch, gid)
-        store = coordinator.get_deliver_store("entry")
+        metadata = orch._active_instances[gid].metadata
+        node_id = metadata.node_id_map["entry"]
+        store = coordinator.get_deliver_store(node_id)
         assert store is not None
-        pending = store.query_consumable(gid, "entry")
+        pending = store.query_consumable(gid, node_id)
         assert len(pending) == 1
         assert pending[0].content == "hello"
-        assert pending[0].source_node == "__external__"
+        assert pending[0].source_node_id == "__external__"
+
+        release.set()
+        await asyncio.sleep(0.1)
 
     async def test_deliver_to_node_unknown_instance_raises(self) -> None:
         """Deliver to unknown gid raises ValueError (no active coordinator)."""
@@ -663,16 +696,10 @@ class TestErrorHandling:
         assert gids[0] in orch._active_instances
 
 
-# -- Engine factory adapter (recovery path) ------------------------------
+# -- _run_existing_instance (recovery path) ------------------------------
 
 
-class TestEngineFactoryAdapter:
-    async def test_adapter_is_graph_engine_factory(self) -> None:
-        from modex_agent.control.graph_recovery import GraphEngineFactory
-
-        orch, _, _ = _make_orchestrator()
-        assert isinstance(orch._engine_factory, GraphEngineFactory)
-
+class TestRunExistingInstance:
     async def test_run_existing_instance_loads_spec_and_runs(self) -> None:
         orch, spec_store, instance_store = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
@@ -687,7 +714,8 @@ class TestEngineFactoryAdapter:
         await orch._run_existing_instance(instance)
 
         assert _load_status(instance_store, gid) == GraphInstanceStatus.COMPLETED.value
-        assert gid in orch._active_instances
+        # M1: terminal instance evicted after run_instance completes
+        assert gid not in orch._active_instances
 
     async def test_run_existing_instance_registers_nodes_on_coordinator(self) -> None:
         """_run_existing_instance registers nodes on the coordinator."""
@@ -700,11 +728,12 @@ class TestEngineFactoryAdapter:
         orch.unregister_instance(gid)
 
         instance = GraphInstance(metadata, create_null_coordinator(gid))
-        assert instance.coordinator.get_deliver_store("entry") is None
+        entry_node_id = metadata.node_id_map["entry"]
+        assert instance.coordinator.get_deliver_store(entry_node_id) is None
 
         await orch._run_existing_instance(instance)
 
-        assert instance.coordinator.get_deliver_store("entry") is not None
+        assert instance.coordinator.get_deliver_store(entry_node_id) is not None
 
     async def test_run_existing_instance_unknown_spec_raises(self) -> None:
         orch, _, _ = _make_orchestrator()
@@ -815,3 +844,403 @@ class TestCoordinatorFactoryInjection:
         assert factory.calls[1][0] == gid
         assert factory.calls[0][1] is instance_store
         assert factory.calls[1][1] is instance_store
+
+
+# -- create_instance / run_instance split (M5/M8/M6/M1) ------------------
+
+
+class TestCreateInstance:
+    """``create_instance`` returns immediately (PENDING) without executing."""
+
+    async def test_returns_immediately_with_pending_status(self) -> None:
+        """M5: create_instance sets PENDING, not RUNNING."""
+        orch, spec_store, instance_store = _make_orchestrator()
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_instance(spec_id)
+
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.PENDING.value
+        assert gid in orch._active_instances
+
+    async def test_does_not_execute_graph(self) -> None:
+        """create_instance returns without running the engine."""
+        orch, spec_store, instance_store = _make_orchestrator()
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_instance(spec_id)
+
+        # Status remains PENDING — no engine was started
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.PENDING.value
+        # No engine controller registered
+        assert gid not in orch._control_service._engines
+
+    async def test_stores_compiled_and_user_input_on_instance(self) -> None:
+        """M8: compiled + user_input survive the create→run gap."""
+        orch, spec_store, _ = _make_orchestrator()
+        spec_id = _save_spec(spec_store, _simple_spec())
+        user_input = GraphPayload(content="hello")
+
+        gid = await orch.create_instance(spec_id, user_input=user_input)
+
+        instance = orch._active_instances[gid]
+        assert instance.compiled is not None
+        assert "entry" in instance.compiled.nodes
+        assert instance.user_input == user_input
+
+    async def test_node_id_map_populated_from_compiled_nodes(self) -> None:
+        """F7: node_id_map maps node names to compiled node_ids."""
+        orch, spec_store, _ = _make_orchestrator()
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_instance(spec_id)
+
+        instance = orch._active_instances[gid]
+        assert instance.compiled is not None
+        compiled_entry_id = instance.compiled.nodes["entry"].node_id
+        assert instance.metadata.node_id_map["entry"] == compiled_entry_id
+
+
+class TestRunInstance:
+    """``run_instance`` executes a created instance."""
+
+    async def test_executes_and_completes(self) -> None:
+        orch, spec_store, instance_store = _make_orchestrator()
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_instance(spec_id)
+        await orch.run_instance(gid)
+
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.COMPLETED.value
+
+    async def test_raises_for_unknown_instance(self) -> None:
+        orch, _, _ = _make_orchestrator()
+
+        with pytest.raises(ValueError, match="not in _active_instances"):
+            await orch.run_instance(999999)
+
+    async def test_emits_graph_output_on_completion(self) -> None:
+        """M6: run_instance emits GraphOutput in finally."""
+
+        class _RecordingAdapter(GraphOutputAdapter):
+            def __init__(self) -> None:
+                self.outputs: list[GraphOutput] = []
+
+            async def emit(self, output: GraphOutput) -> None:
+                self.outputs.append(output)
+
+        spec_store = InMemoryGraphSpecStore()
+        adapter = _RecordingAdapter()
+        orch = GraphOrchestrator(
+            node_registry=_function_registry(),
+            state_classes=_state_classes(),
+            spec_store=spec_store,
+            instance_store=InMemoryGraphInstanceStore(),
+            output_adapter=adapter,
+        )
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_instance(spec_id)
+        await orch.run_instance(gid)
+
+        assert len(adapter.outputs) == 1
+        assert adapter.outputs[0].kind is GraphOutputKind.COMPLETED
+
+    async def test_crashed_instance_evicted_from_registry(self) -> None:
+        """M1: CRASHED instances removed from _active_instances."""
+        node_registry = NodeRegistry()
+        node_registry.register("failing", _FailingFactory())
+        orch, spec_store, instance_store = _make_orchestrator(node_registry=node_registry)
+
+        spec = GraphSpec(
+            name="failing_graph",
+            nodes=[NodeSpec(name="entry", node_type="failing")],
+            edges=[
+                EdgeSpec(source=GraphNode.START, target="entry"),
+                EdgeSpec(source="entry", target=GraphNode.END),
+            ],
+            state_class="counter",
+        )
+        spec_id = _save_spec(spec_store, spec)
+
+        gid = await orch.create_instance(spec_id)
+        with pytest.raises(RuntimeError, match="boom"):
+            await orch.run_instance(gid)
+
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.CRASHED.value
+        assert gid not in orch._active_instances
+
+    async def test_paused_instance_retained_in_registry(self) -> None:
+        """M1: PAUSED instances stay in _active_instances for resume."""
+        node_registry = NodeRegistry()
+        node_registry.register("interrupt", _InterruptFactory())
+        orch, spec_store, instance_store = _make_orchestrator(node_registry=node_registry)
+
+        spec = GraphSpec(
+            name="interrupt_graph",
+            nodes=[NodeSpec(name="entry", node_type="interrupt")],
+            edges=[
+                EdgeSpec(source=GraphNode.START, target="entry"),
+                EdgeSpec(source="entry", target=GraphNode.END),
+            ],
+            state_class="counter",
+        )
+        spec_id = _save_spec(spec_store, spec)
+
+        gid = await orch.create_instance(spec_id)
+        from modex_graph import GraphInterrupt
+
+        with pytest.raises(GraphInterrupt):
+            await orch.run_instance(gid)
+
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.PAUSED.value
+        assert gid in orch._active_instances
+
+
+# -- get_state (H7) ------------------------------------------------------
+
+
+class TestGetState:
+    """``get_state`` delegates to coordinator for active, store for inactive."""
+
+    async def test_active_instance_returns_snapshot(self) -> None:
+        orch, spec_store, _ = _make_orchestrator()
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_instance(spec_id)
+
+        snapshot = orch.get_state(gid)
+
+        assert isinstance(snapshot, GraphStateSnapshot)
+        assert snapshot.metadata.graph_instance_id == gid
+        assert snapshot.metadata.spec_id == spec_id
+
+    async def test_inactive_instance_loads_from_store(self) -> None:
+        """M1-evicted instance: get_state loads metadata from instance_store."""
+        orch, spec_store, _ = _make_orchestrator()
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_and_run(spec_id)
+        # M1 evicted the COMPLETED instance
+        assert gid not in orch._active_instances
+
+        snapshot = orch.get_state(gid)
+
+        assert isinstance(snapshot, GraphStateSnapshot)
+        assert snapshot.metadata.graph_instance_id == gid
+        assert snapshot.metadata.status == GraphInstanceStatus.COMPLETED
+
+    async def test_unknown_instance_raises(self) -> None:
+        orch, _, _ = _make_orchestrator()
+
+        with pytest.raises(ValueError, match="not found"):
+            orch.get_state(999999)
+
+
+# -- M4: node_id recovery ------------------------------------------------
+
+
+class TestNodeIdRecovery:
+    """M4: _run_existing_instance restores node_ids from node_id_map."""
+
+    async def test_node_ids_restored_from_metadata(self) -> None:
+        orch, spec_store, instance_store = _make_orchestrator()
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_instance(spec_id)
+        original_node_id = orch._active_instances[gid].metadata.node_id_map["entry"]
+        orch.unregister_instance(gid)
+        instance_store.update_status(gid, GraphInstanceStatus.CRASHED)
+
+        metadata = instance_store.load(gid)
+        assert metadata is not None
+        instance = GraphInstance(metadata, create_null_coordinator(gid))
+        await orch._run_existing_instance(instance)
+
+        # M4: compiled nodes have restored node_ids
+        assert instance.compiled is not None
+        restored_node_id = instance.compiled.nodes["entry"].node_id
+        assert restored_node_id == original_node_id
+
+
+# -- P0: Lifecycle hardening (TDD) ---------------------------------------
+
+
+class _SlowNode(Node[CounterState]):
+    """Node that sleeps briefly to keep the graph running."""
+
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
+        await asyncio.sleep(2)
+        self.deliver(None, None, ctx)
+
+
+class _SlowFactory(NodeFactory):
+    def create(self, spec: NodeSpec) -> Node[Any]:
+        return _SlowNode()
+
+    def config_schema(self) -> type[BaseModel] | None:
+        return None
+
+
+class TestP0LifecycleHardening:
+    """P0-1~P0-5: lifecycle guard, finalization convergence, status checks."""
+
+    async def test_p0_1_setup_failure_writes_crashed_and_evicts(self) -> None:
+        """P0-1: run_instance setup failure must write CRASHED and evict
+        the instance from _active_instances.
+
+        Triggers failure by deleting the spec from the store after
+        create_instance (compile succeeds) but before run_instance
+        (_load_spec inside run_instance fails).
+        """
+        orch, spec_store, instance_store = _make_orchestrator()
+        spec_id = _save_spec(spec_store, _simple_spec())
+        gid = await orch.create_instance(spec_id)
+
+        # Delete spec so _load_spec fails inside run_instance
+        spec_store.delete(spec_id)
+
+        with pytest.raises(ValueError, match="not found"):
+            await orch.run_instance(gid)
+
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.CRASHED.value
+        assert gid not in orch._active_instances
+
+    async def test_p0_2_emit_failure_does_not_prevent_eviction(self) -> None:
+        """P0-2: if output adapter emit raises, the instance must still be
+        evicted from _active_instances.
+        """
+
+        class _FailingAdapter(GraphOutputAdapter):
+            async def emit(self, output: GraphOutput) -> None:
+                raise RuntimeError("adapter broken")
+
+        spec_store = InMemoryGraphSpecStore()
+        adapter = _FailingAdapter()
+        orch = GraphOrchestrator(
+            node_registry=_function_registry(),
+            state_classes=_state_classes(),
+            spec_store=spec_store,
+            instance_store=InMemoryGraphInstanceStore(),
+            output_adapter=adapter,
+        )
+        spec_id = _save_spec(spec_store, _simple_spec())
+        gid = await orch.create_instance(spec_id)
+
+        await orch.run_instance(gid)
+
+        meta = orch._instance_store.load(gid)
+        assert meta is not None
+        assert meta.status is GraphInstanceStatus.COMPLETED
+        assert gid not in orch._active_instances
+
+    async def test_p0_3_stop_paused_instance_evicts_from_registry(self) -> None:
+        """P0-3: stopping a PAUSED instance (no engine running) must evict
+        it from _active_instances and close the coordinator.
+        """
+        node_registry = NodeRegistry()
+        node_registry.register("interrupt", _InterruptFactory())
+        orch, spec_store, instance_store = _make_orchestrator(node_registry=node_registry)
+        spec = GraphSpec(
+            name="interrupt_graph",
+            nodes=[NodeSpec(name="entry", node_type="interrupt")],
+            edges=[
+                EdgeSpec(source=GraphNode.START, target="entry"),
+                EdgeSpec(source="entry", target=GraphNode.END),
+            ],
+            state_class="counter",
+        )
+        spec_id = _save_spec(spec_store, spec)
+        gid = await orch.create_instance(spec_id)
+        with pytest.raises(Exception, match="approval_needed"):
+            await orch.run_instance(gid)
+
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.PAUSED.value
+        assert gid in orch._active_instances
+
+        await orch.stop(gid)
+
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.STOPPED.value
+        assert gid not in orch._active_instances
+
+    async def test_p0_4_duplicate_start_run_raises(self) -> None:
+        """P0-4: calling start_run on an already-running instance must
+        raise ValueError instead of allowing concurrent execution.
+        """
+        node_registry = NodeRegistry()
+        node_registry.register("slow", _SlowFactory())
+        orch, spec_store, instance_store = _make_orchestrator(node_registry=node_registry)
+        spec = GraphSpec(
+            name="slow_graph",
+            nodes=[NodeSpec(name="entry", node_type="slow")],
+            edges=[
+                EdgeSpec(source=GraphNode.START, target="entry"),
+                EdgeSpec(source="entry", target=GraphNode.END),
+            ],
+            state_class="counter",
+        )
+        spec_id = _save_spec(spec_store, spec)
+        gid = await orch.create_instance(spec_id)
+        orch.start_run(gid)
+        await asyncio.sleep(0.2)
+
+        with pytest.raises(ValueError, match="already running"):
+            await orch.run_instance(gid)
+
+        await asyncio.sleep(3)
+
+    async def test_p0_5_deliver_to_pending_instance_rejected(self) -> None:
+        """P0-5: deliver_to_node on a PENDING instance (not yet RUNNING)
+        must be rejected with ValueError.
+        """
+        orch, spec_store, instance_store = _make_orchestrator()
+        spec_id = _save_spec(spec_store, _simple_spec())
+        gid = await orch.create_instance(spec_id)
+
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.PENDING.value
+
+        with pytest.raises(ValueError, match="must be RUNNING or PAUSED"):
+            await orch.deliver_to_node(gid, "entry", "test content")
+
+
+# -- P1: Lifecycle hardening (TDD) --------------------------------------
+
+
+class TestP1LifecycleHardening:
+    """P1-2/P1-4/P1-5: turn lifecycle convergence, cancellation, session cleanup."""
+
+    async def test_p1_4_cancellederror_writes_stopped_not_running(self) -> None:
+        """P1-4: when run_instance is cancelled (workspace eviction),
+        status must be STOPPED, not left as RUNNING.
+
+        Without the fix, CancelledError bypasses except Exception,
+        finally runs with status=RUNNING, _finalize_instance does not
+        evict (RUNNING is not terminal), instance leaks.
+        """
+        node_registry = NodeRegistry()
+        node_registry.register("slow", _SlowFactory())
+        orch, spec_store, instance_store = _make_orchestrator(node_registry=node_registry)
+        spec = GraphSpec(
+            name="slow_graph",
+            nodes=[NodeSpec(name="entry", node_type="slow")],
+            edges=[
+                EdgeSpec(source=GraphNode.START, target="entry"),
+                EdgeSpec(source="entry", target=GraphNode.END),
+            ],
+            state_class="counter",
+        )
+        spec_id = _save_spec(spec_store, spec)
+        gid = await orch.create_instance(spec_id)
+        orch.start_run(gid)
+        await asyncio.sleep(0.2)
+
+        # Cancel the running task (simulates workspace eviction)
+        task = next(t for t in orch._run_tasks if not t.done())
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # P1-4 assertions: status STOPPED, instance evicted
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.STOPPED.value
+        assert gid not in orch._active_instances

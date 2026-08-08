@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from modex_graph.constants import GraphNode
@@ -43,10 +44,18 @@ class TestBuildReActGraph:
         assert ReActNode.TOOL in g.nodes
         assert ReActNode.END in g.nodes
 
+    def test_all_nodes_receive_unique_node_ids(self) -> None:
+        g = _make_graph("full")
+
+        node_ids = [node.node_id for node in g.nodes.values()]
+
+        assert all(re.fullmatch(r"node_[0-9a-f]{12}[0-9A-Za-z]{14}", value) for value in node_ids)
+        assert len(set(node_ids)) == len(node_ids)
+
     def test_compile_succeeds(self) -> None:
         g = _make_graph("full")
         compiled = g.compile(max_iterations=100)
-        assert compiled.entry_node == ReActNode.START
+        assert compiled.entry_node == GraphNode.START
 
     def test_all_topology_edges_present(self) -> None:
         g = _make_graph("full")
@@ -71,7 +80,7 @@ class TestBuildReActGraph:
     def test_entry_edge_declares_start_node(self) -> None:
         g = _make_graph("full")
         compiled = g.compile(max_iterations=100)
-        assert compiled.entry_node == ReActNode.START
+        assert compiled.entry_node == GraphNode.START
 
     def test_clean_mode_same_topology(self) -> None:
         g = _make_graph("clean")
