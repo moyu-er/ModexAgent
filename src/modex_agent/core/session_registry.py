@@ -33,6 +33,11 @@ class SessionRegistry(ABC):
     async def load_all(self) -> None:
         ...
 
+    @abstractmethod
+    async def cleanup(self, session_id: str) -> None:
+        """Remove a session from the cache and persistent store."""
+        ...
+
 
 class InMemorySessionRegistry(SessionRegistry):
     """In-memory cache backed by an optional SessionStore."""
@@ -105,3 +110,9 @@ class InMemorySessionRegistry(SessionRegistry):
                 self._cache[session_id] = updated
                 if self._store is not None:
                     await self._store.save(updated)
+
+    async def cleanup(self, session_id: str) -> None:
+        async with self._lock:
+            self._cache.pop(session_id, None)
+            if self._store is not None:
+                await self._store.delete(session_id)

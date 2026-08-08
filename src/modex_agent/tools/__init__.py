@@ -7,6 +7,16 @@ tool registry seam.
 
 from __future__ import annotations
 
+from modex_agent.tools.graph_deliver import (
+    GraphDeliverTarget,
+    GraphDeliverTargetStore,
+    GraphDeliverTool,
+)
 from modex_agent.tools.registry import ToolRegistry
 
-__all__ = ["ToolRegistry"]
+__all__ = [
+    "GraphDeliverTarget",
+    "GraphDeliverTargetStore",
+    "GraphDeliverTool",
+    "ToolRegistry",
+]

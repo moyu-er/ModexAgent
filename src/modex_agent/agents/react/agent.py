@@ -284,8 +284,8 @@ class ReActAgent(Agent[ReActEvent]):
             from modex_graph import create_null_coordinator
 
             coordinator = create_null_coordinator()
-            for node_name in graph.nodes:
-                coordinator.register_node(node_name)
+            for node in graph.nodes.values():
+                coordinator.register_node(node.node_id)
             graph_ctx = ReActGraphContext(
                 state=react_state,
                 runtime=graph_runtime,

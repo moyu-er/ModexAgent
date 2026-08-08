@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import TypeVar
 
-from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.history import MessageHistory
+from modex_agent.core.session_id import SessionInfo
 
 from .emitter import AgentResult, ContentEmitter
 from .events import AgentEvent
@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from modex_agent.pipeline.snapshot import PoolDataSnapshot
     from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime
+    from modex_graph.context import GraphContext
 
 
 class AgentCommKind(StrEnum):
@@ -97,6 +98,7 @@ class AgentContext:
     attachments: list[str] = field(default_factory=list)
     emitter: ContentEmitter | None = None
     runtime: AgentRuntime | None = None
+    graph_context: GraphContext[Any] | None = None
     identity: TurnIdentity | None = None
     system_prompt_pipeline: SystemPromptPipeline | None = None
     workspace_snapshot: PoolDataSnapshot | None = None

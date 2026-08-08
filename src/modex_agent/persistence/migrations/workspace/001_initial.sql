@@ -426,7 +426,8 @@ CREATE TABLE IF NOT EXISTS graph_instances (
     parent_instance_id  BIGINT,
     parent_node         TEXT,
     status              TEXT    NOT NULL DEFAULT 'running'
-                        CHECK (status IN ('running', 'paused', 'stopped', 'crashed', 'completed', 'failed')),
+                        CHECK (status IN ('pending', 'running', 'paused', 'stopped', 'crashed', 'completed', 'failed')),
+    node_id_map_json    TEXT    NOT NULL DEFAULT '{}' CHECK (json_valid(node_id_map_json)),
     created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
     updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
 );
@@ -453,7 +454,7 @@ END;
 
 -- ---------------------------------------------------------------------------
 -- 18. node_states — per-node invocation version chain.
---     One row per (graph_instance_id, node_name, version). All versions
+--     One row per (graph_instance_id, node_id, version). All versions
 --     retained for MVCC rollback. `status` tracks the InvocationStatus
 --     lifecycle (running → completed/canceled/crashed); no pending or
 --     superseded states. `invocation_id` links the version to its producing
@@ -467,7 +468,8 @@ END;
 CREATE TABLE IF NOT EXISTS node_states (
     node_state_id       BIGINT  PRIMARY KEY,
     graph_instance_id   BIGINT  NOT NULL,
-    node_name           TEXT    NOT NULL,
+    node_name           TEXT,
+    node_id             TEXT    NOT NULL,
     version             INTEGER NOT NULL DEFAULT 0,
     parent_version      INTEGER,
     status              TEXT    NOT NULL DEFAULT 'running'
@@ -478,28 +480,28 @@ CREATE TABLE IF NOT EXISTS node_states (
     suspended           INTEGER NOT NULL DEFAULT 0,
     created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
     updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
-    UNIQUE (graph_instance_id, node_name, version)
+    UNIQUE (graph_instance_id, node_id, version)
 );
 
 CREATE INDEX IF NOT EXISTS idx_node_states_latest
-    ON node_states (graph_instance_id, node_name, version DESC);
+    ON node_states (graph_instance_id, node_id, version DESC);
 
 CREATE INDEX IF NOT EXISTS idx_node_states_node
-    ON node_states (graph_instance_id, node_name);
+    ON node_states (graph_instance_id, node_id);
 
 CREATE INDEX IF NOT EXISTS idx_node_states_status
-    ON node_states (graph_instance_id, node_name, status);
+    ON node_states (graph_instance_id, node_id, status);
 
 CREATE INDEX IF NOT EXISTS idx_node_states_cross
-    ON node_states (graph_instance_id, node_name, invocation_id);
+    ON node_states (graph_instance_id, node_id, invocation_id);
 
 CREATE INDEX IF NOT EXISTS idx_node_states_global
     ON node_states (graph_instance_id, invocation_id DESC);
 
 -- ---------------------------------------------------------------------------
 -- 19. deliver_states — accumulated deliver payloads with consumption state machine.
---     node_name is the accumulating node; next_node is the target downstream.
---     `source_node` / `source_invocation_id` record the delivering node;
+--     node_id is the accumulating node; next_node_id is the target downstream.
+--     `source_node_id` / `source_invocation_id` record the delivering node;
 --     `consumed_by_invocation_id` records the consumer (NULL until consumed).
 --     `status` transitions: PENDING → CONSUMED_PENDING → CONSUMED_COMPLETED
 --     (three-state machine). Default is 'pending'.
@@ -508,9 +510,12 @@ CREATE INDEX IF NOT EXISTS idx_node_states_global
 CREATE TABLE IF NOT EXISTS deliver_states (
     deliver_id          BIGINT  PRIMARY KEY,
     graph_instance_id   BIGINT  NOT NULL,
-    node_name           TEXT    NOT NULL,
-    next_node           TEXT    NOT NULL,
+    node_name           TEXT,
+    node_id             TEXT    NOT NULL,
+    next_node           TEXT,
+    next_node_id        TEXT    NOT NULL,
     source_node         TEXT    NOT NULL DEFAULT '',
+    source_node_id      TEXT    NOT NULL DEFAULT '',
     source_invocation_id INTEGER NOT NULL DEFAULT 0,
     consumed_by_invocation_id INTEGER,
     content_json        TEXT    NOT NULL CHECK (json_valid(content_json)),
@@ -522,10 +527,13 @@ CREATE TABLE IF NOT EXISTS deliver_states (
 );
 
 CREATE INDEX IF NOT EXISTS idx_deliver_states_node
-    ON deliver_states (graph_instance_id, node_name, status);
+    ON deliver_states (graph_instance_id, node_id, status);
 
 CREATE INDEX IF NOT EXISTS idx_deliver_states_target
-    ON deliver_states (graph_instance_id, next_node, status);
+    ON deliver_states (graph_instance_id, next_node_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_deliver_states_source
+    ON deliver_states (graph_instance_id, source_node_id, source_invocation_id);
 
 CREATE TRIGGER IF NOT EXISTS trg_deliver_states_auto_updated_at
 AFTER UPDATE ON deliver_states
