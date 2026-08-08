@@ -1,4 +1,4 @@
-"""Framework-level graph orchestration service (ticket 10 §3.6).
+"""Framework-level graph orchestration service.
 
 Provides `GraphOrchestrator` — wires `GraphSpec` → `CompiledGraph` →
 `GraphInstance` → `GraphEngine` execution, with external control via

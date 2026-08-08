@@ -18,7 +18,7 @@ class ControlCommandType(str, Enum):
     INJECT_USER_MESSAGE = "inject_user_message"
     APPROVAL_RESPONSE = "approval_response"
     INJECT_STEER = "inject_steer"
-    # Graph instance lifecycle control (ticket 10 §3.3).
+    # Graph instance lifecycle control.
     PAUSE_GRAPH = "pause_graph"
     STOP_GRAPH = "stop_graph"
     RESUME_GRAPH = "resume_graph"
