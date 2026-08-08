@@ -1,0 +1,12 @@
+agent_name: reviewer
+description: >-
+  Code review agent. Receives an implementation from the implementer,
+  reviews it for correctness and quality, and either approves it
+  (delivers to end) or requests revisions (delivers back to
+  implementer with feedback).
+max_steps: 30
+tool_preset: none
+context_mode: fresh
+system_prompt_mode: append
+roles:
+- reviewer

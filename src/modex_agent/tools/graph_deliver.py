@@ -31,10 +31,23 @@ class GraphDeliverTargetStore:
         self._current = current_node
 
     def list(self) -> list[GraphDeliverTarget]:
-        """Return downstream nodes in edge declaration order, excluding END."""
+        """Return downstream targets in edge declaration order, including END.
+
+        END is listed as ``"__end__"`` so agents can explicitly deliver to
+        it to terminate the workflow. Without this, a node with both a
+        real-node back-edge and an END edge (e.g. reviewer→implementer,
+        reviewer→END) cannot route to END via the deliver tool — the LLM
+        sees only the back-edge target and loops indefinitely.
+        """
         targets: list[GraphDeliverTarget] = []
         for edge in self._graph.edges_from(self._current):
             if edge.target == GraphNode.END:
+                targets.append(
+                    GraphDeliverTarget(
+                        name=GraphNode.END,
+                        description="Terminal node — deliver here to end the workflow.",
+                    )
+                )
                 continue
             node = self._graph.nodes[edge.target]
             description = (

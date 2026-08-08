@@ -95,7 +95,7 @@ def test_target_is_frozen_and_forbids_extra_fields() -> None:
         target.name = "writer"
 
 
-def test_store_lists_downstream_targets_without_end() -> None:
+def test_store_lists_downstream_targets_including_end() -> None:
     compiled, _ = _compiled_graph()
     store = GraphDeliverTargetStore(compiled, "planner")
 
@@ -104,9 +104,13 @@ def test_store_lists_downstream_targets_without_end() -> None:
     assert targets == [
         GraphDeliverTarget(name="researcher", description="Research agent"),
         GraphDeliverTarget(name="formatter", description="Graph node 'formatter'"),
+        GraphDeliverTarget(
+            name=GraphNode.END,
+            description="Terminal node — deliver here to end the workflow.",
+        ),
     ]
     assert store.get("researcher") == targets[0]
-    assert store.get(GraphNode.END) is None
+    assert store.get(GraphNode.END) == targets[2]
 
 
 def test_store_resolves_target_node_id() -> None:
@@ -141,6 +145,7 @@ def test_dynamic_schema_binds_target_enum_to_downstream_names() -> None:
     assert schema["function"]["parameters"]["properties"]["target"]["enum"] == [
         "researcher",
         "formatter",
+        "__end__",
     ]
     assert schema["function"]["parameters"]["required"] == ["content"]
 
@@ -190,7 +195,7 @@ async def test_execute_rejects_unknown_target() -> None:
 
     assert result == (
         "Error: 'invented' is not a valid downstream node. "
-        "Available: researcher, formatter"
+        "Available: researcher, formatter, __end__"
     )
     assert current._pending_delivers is None
 
