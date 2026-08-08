@@ -15,6 +15,8 @@ from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.resources import WorkspaceResources
 
 if TYPE_CHECKING:
+    import sqlite3
+
     # These live in bot.service, whose package __init__ imports BotService,
     # which imports the bundle via wiring; deferring them to TYPE_CHECKING
     # keeps the import graph acyclic (handle is the low-level bundle module).
@@ -23,7 +25,9 @@ if TYPE_CHECKING:
     from bot.workspace.background import BackgroundTaskRunner
     from modex_agent.multi_agent.pool_instance import PoolInstance
     from modex_agent.multi_agent.pool_router import PoolRouter, PoolRoutingStore
+    from modex_agent.orchestration import GraphOrchestrator
     from modex_agent.persistence.managers import WorkspacePersistenceManager
+    from modex_graph import GraphOutput, GraphOutputAdapter
 
 
 class WorkspaceHandleRootProvider(WorkspaceRootProvider):
@@ -120,6 +124,10 @@ class PoolWorkspaceResources(WorkspaceResources):
     owned_pool_routing_store: PoolRoutingStore | None = None
     transcript_store: WorkspaceScopedTranscriptStore | None = None
     workspace_transcript_store: TranscriptStore | None = None
+    graph_orchestrator: GraphOrchestrator | None = None
+    graph_output_adapter: GraphOutputAdapter | None = None
+    graph_event_store: dict[int, list[GraphOutput]] | None = None
+    graph_conn: sqlite3.Connection | None = None
 
     def resolve_workspace(self) -> PoolWorkspaceResources:
         """Resolver entry point the framework pipeline calls.

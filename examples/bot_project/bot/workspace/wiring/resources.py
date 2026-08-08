@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import shutil
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -285,6 +286,70 @@ async def _assemble_resources(
         # their output never leaves the broker (the agent looks silent).
         await pi.broker_bridge.start()
 
+    # 8. Graph orchestrator -- static graph scheduling subsystem.
+    #    The graph uses its OWN sync sqlite3.Connection pointing to the same
+    #    state.db file as the workspace async aiosqlite connection. Graph
+    #    stores manage their own schema on this connection, separate from the
+    #    workspace's message/kv/cursor/archive tables.
+    import sqlite3 as _sqlite3
+
+    from bot.graph.agent_node_factory import BotAgentNodeFactory
+    from bot.graph.output_adapter import WebUIGraphOutputAdapter
+    from bot.graph.spec_loader import GraphSpecLoader
+    from modex_agent.orchestration import GraphOrchestrator, SqliteCoordinatorFactory
+    from modex_graph import (
+        DefaultGraphState,
+        DelayNodeFactory,
+        FunctionNodeFactory,
+        GraphOutput,
+        HumanInputNodeFactory,
+        NodeRegistry,
+        SqliteGraphInstanceStore,
+        SqliteGraphSpecStore,
+    )
+
+    node_registry = NodeRegistry()
+    node_registry.register("agent", BotAgentNodeFactory(resolver_cell))
+    node_registry.register("function", FunctionNodeFactory())
+    node_registry.register("delay", DelayNodeFactory())
+    node_registry.register("human_input", HumanInputNodeFactory())
+    state_classes = {"default": DefaultGraphState}
+
+    graph_conn = _sqlite3.connect(str(ctx.paths.state_db), check_same_thread=False)
+    graph_spec_store = SqliteGraphSpecStore(graph_conn)
+    graph_instance_store = SqliteGraphInstanceStore(graph_conn)
+    coordinator_factory = SqliteCoordinatorFactory(connection=graph_conn)
+
+    graph_event_store: dict[int, list[GraphOutput]] = {}
+    output_adapter = WebUIGraphOutputAdapter(graph_event_store)
+
+    graph_orchestrator = GraphOrchestrator(
+        node_registry=node_registry,
+        state_classes=state_classes,
+        spec_store=graph_spec_store,
+        instance_store=graph_instance_store,
+        coordinator_factory=coordinator_factory,
+        output_adapter=output_adapter,
+    )
+
+    # Per-workspace config/graphs: first materialize copies from the global
+    # template; subsequent boots load the workspace-local copy so PUT edits
+    # survive restart. ctx.target (== resources.target) converges with
+    # handle_put_spec; ctx.paths.root would be the .modex data subdir instead.
+    workspace_graphs_dir = ctx.target / "config" / "graphs"
+    global_graphs_dir = service._project_dir / "config" / "graphs"
+    if not workspace_graphs_dir.exists() and global_graphs_dir.exists():
+        shutil.copytree(global_graphs_dir, workspace_graphs_dir)
+    if workspace_graphs_dir.exists():
+        GraphSpecLoader(graph_spec_store, compiler=graph_orchestrator._compiler).load_from_dir(
+            workspace_graphs_dir
+        )
+
+    resources.graph_orchestrator = graph_orchestrator
+    resources.graph_output_adapter = output_adapter
+    resources.graph_event_store = graph_event_store
+    resources.graph_conn = graph_conn
+
     default_pool = service._default_pool_name
     if default_pool is None:
         # No nominated default — derive from the runtime pools dict (first
@@ -355,10 +420,35 @@ async def _stop_resources(resources: PoolWorkspaceResources) -> None:
     """Tear down one workspace's resources (re-home of _on_workspace_deactivate).
 
     Stop order: background tasks → terminals → pools (MCP release + shutdown +
-    broker bridges) → broker. The workspace DB closes LAST (after all
-    DB-writing producers have stopped and final flushes complete) so no write
-    races a closing connection.
+    broker bridges) → broker → graph orchestrator → graph connection. The
+    workspace DB closes LAST (after all DB-writing producers have stopped and
+    final flushes complete) so no write races a closing connection.
     """
+    pools_ok = False
+    try:
+        await _stop_pools(resources)
+        pools_ok = True
+    finally:
+        try:
+            if resources.graph_orchestrator is not None:
+                try:
+                    await resources.graph_orchestrator.pause_all_active()
+                finally:
+                    await resources.graph_orchestrator.cleanup()
+        finally:
+            try:
+                if resources.graph_conn is not None:
+                    resources.graph_conn.close()
+            finally:
+                if (
+                    resources.persistence is not None
+                    and resources.owns_persistence
+                    and pools_ok
+                ):
+                    await resources.persistence.close()
+
+
+async def _stop_pools(resources: PoolWorkspaceResources) -> None:
     if resources.background is not None:
         with contextlib.suppress(BaseException):
             await resources.background.stop()
@@ -398,9 +488,6 @@ async def _stop_resources(resources: PoolWorkspaceResources) -> None:
     if resources.owned_pool_routing_store is not None:
         with contextlib.suppress(BaseException):
             resources.owned_pool_routing_store.close()
-    if resources.persistence is not None and resources.owns_persistence:
-        with contextlib.suppress(BaseException):
-            await resources.persistence.close()
 
 
 async def _close_terminal(mgr: TerminalManagerBase, name: str) -> None:

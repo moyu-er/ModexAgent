@@ -1,0 +1,11 @@
+agent_name: explore
+description: >-
+  Read-only codebase search and analysis agent. Searches, reads, and
+  analyzes code, tracing dependencies and returning structured findings
+  with exact file paths and line numbers. Cannot modify files.
+max_steps: 60
+tool_preset: read_only
+context_mode: fresh
+system_prompt_mode: append
+roles:
+- scout

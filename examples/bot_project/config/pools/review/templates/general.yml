@@ -1,0 +1,10 @@
+agent_name: general
+description: >-
+  General-purpose assistant for non-code tasks. Handles documentation,
+  research, web lookups, and cross-domain questions.
+max_steps: 50
+tool_preset: full
+context_mode: fresh
+system_prompt_mode: append
+roles:
+- assistant

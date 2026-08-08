@@ -288,6 +288,7 @@ class WebUIService(BotService):
         from bot.adapters.register_websocket import get_ws_output
 
         ws_output = get_ws_output()
+
         def output_adapter_factory() -> Any:
             return ws_output
 
@@ -590,6 +591,24 @@ class WebUIService(BotService):
                 self.workspace_stack, self._app_config, ws_root, pool
             )
         )
+
+        # Inject the graph workspace resolver (T13 wiring) so the graph REST
+        # API can resolve workspace_id → PoolWorkspaceResources. Sync resolver:
+        # searches already-materialized resources (home is always materialized
+        # at boot via BotService.initialize). Non-home workspaces not yet
+        # materialized return None — the graph routes return 503 in that case.
+        def _resolve_graph_workspace(ws_id: str) -> PoolWorkspaceResources | None:
+            if not ws_id:
+                return self._home_resources
+            if self.workspace_stack is not None:
+                root = self._server._ws_root_of(ws_id)
+                resolved = Path(root).resolve()
+                for resources in self.workspace_stack.registry.iter_materialized_resources():
+                    if Path(resources.target).resolve() == resolved:
+                        return resources
+            return None
+
+        self._server.set_graph_workspace_resolver(_resolve_graph_workspace)
 
         # Inject recent workspaces store for the recent-workspaces API.
         # RecentWorkspaces lives in the project home data dir (not per-workspace)

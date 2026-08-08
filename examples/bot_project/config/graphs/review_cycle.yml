@@ -1,0 +1,34 @@
+name: review_cycle
+version: "1.0"
+state_class: default
+scheduler: parallel
+max_iterations: 50
+default_trigger: on_receive
+metadata:
+  description: >-
+    Reviewer ↔ Coder cyclic workflow. The reviewer inspects code changes
+    and either approves (deliver to END) or delegates revisions back to
+    the coder pool's orchestrator. The coder implements fixes and
+    delivers the result back to the reviewer for re-review.
+nodes:
+  - name: reviewer
+    node_type: agent
+    config:
+      agent: reviewer
+      pool: review
+    trigger: on_receive
+  - name: coder
+    node_type: agent
+    config:
+      agent: orchestrator
+      pool: coder
+    trigger: on_receive
+edges:
+  - source: __start__
+    target: reviewer
+  - source: reviewer
+    target: coder
+  - source: coder
+    target: reviewer
+  - source: reviewer
+    target: __end__
