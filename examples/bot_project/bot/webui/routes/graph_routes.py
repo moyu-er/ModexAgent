@@ -1,0 +1,385 @@
+"""Graph REST API (12 endpoints). per-workspace resolution via header/query.
+spec store returns records with id+metadata for spec responses. PUT validates before save.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import yaml
+from aiohttp import web
+from pydantic import ValidationError
+
+from bot.webui.routes.graph_models import (
+    GraphDeliverRequest,
+    GraphEventItem,
+    GraphEventListResponse,
+    GraphInstanceResponse,
+    GraphRunRequest,
+    GraphRunResponse,
+    GraphSpecListResponse,
+    GraphSpecResponse,
+    GraphSpecSummary,
+    GraphSpecUpdateRequest,
+    NodeStatusInfo,
+)
+from modex_agent.orchestration import GraphOrchestrator
+from modex_graph import GraphInstanceStatus, GraphOutput, GraphSpec, TopologyError
+
+if TYPE_CHECKING:
+    from bot.webui.server import WebUIServer
+    from bot.workspace.handle import PoolWorkspaceResources
+
+
+def _resolve_resources(
+    request: web.Request,
+) -> tuple[GraphOrchestrator, dict[int, list[GraphOutput]] | None, PoolWorkspaceResources] | web.Response:
+    server: WebUIServer = request.app["server"]
+    resolver = server._graph_workspace_resolver
+    if resolver is None:
+        return web.json_response({"error": "graph workspace manager not configured"}, status=503)
+    ws_id = request.headers.get("X-Workspace-Id") or request.query.get("ws", "")
+    resources = resolver(ws_id)
+    if resources is None or resources.graph_orchestrator is None:
+        return web.json_response({"error": "graph orchestrator not configured"}, status=503)
+    return resources.graph_orchestrator, resources.graph_event_store, resources
+
+
+def _int_param(request: web.Request, name: str) -> int | web.Response:
+    raw = request.match_info.get(name, "")
+    try:
+        return int(raw)
+    except ValueError:
+        return web.json_response({"error": f"invalid {name}: {raw!r}"}, status=400)
+
+
+def _yaml(spec: GraphSpec) -> str:
+    return yaml.dump(spec.model_dump(mode="json"), sort_keys=False, allow_unicode=True)
+
+
+async def _json_body(request: web.Request) -> dict[str, Any] | web.Response:
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, web.HTTPException):
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+    return (
+        body
+        if isinstance(body, dict)
+        else web.json_response({"error": "JSON body must be an object"}, status=400)
+    )
+
+
+async def handle_list_specs(request: web.Request) -> web.Response:
+    r = _resolve_resources(request)
+    if isinstance(r, web.Response):
+        return r
+    orch, _, _ = r
+    records = orch._spec_store.list_records()
+    return web.json_response(
+        GraphSpecListResponse(
+            specs=[
+                GraphSpecSummary(spec_id=str(rec.spec_id), name=rec.name, version=rec.version)
+                for rec in records
+            ]
+        ).model_dump(mode="json")
+    )
+
+
+async def handle_get_spec(request: web.Request) -> web.Response:
+    r = _resolve_resources(request)
+    if isinstance(r, web.Response):
+        return r
+    orch, _, _ = r
+    sid = _int_param(request, "spec_id")
+    if isinstance(sid, web.Response):
+        return sid
+    store = orch._spec_store
+    record = store.get_by_id(sid)
+    if record is None:
+        return web.json_response({"error": f"spec {sid} not found"}, status=404)
+    spec = store.load_by_id(sid)
+    if spec is None:
+        return web.json_response({"error": "spec content missing"}, status=500)
+    return web.json_response(
+        GraphSpecResponse(
+            spec_id=str(record.spec_id),
+            name=record.name,
+            version=record.version,
+            yaml_content=_yaml(spec),
+        ).model_dump(mode="json")
+    )
+
+
+async def handle_put_spec(request: web.Request) -> web.Response:
+    r = _resolve_resources(request)
+    if isinstance(r, web.Response):
+        return r
+    orch, _, resources = r
+    sid = _int_param(request, "spec_id")
+    if isinstance(sid, web.Response):
+        return sid
+    store = orch._spec_store
+    record = store.get_by_id(sid)
+    if record is None:
+        return web.json_response({"error": f"spec {sid} not found"}, status=404)
+    body = await _json_body(request)
+    if isinstance(body, web.Response):
+        return body
+    try:
+        update_req = GraphSpecUpdateRequest.model_validate(body)
+    except ValidationError as exc:
+        return web.json_response({"error": "validation", "detail": exc.errors()}, status=400)
+    try:
+        spec_dict = yaml.safe_load(update_req.yaml_content)
+        if not isinstance(spec_dict, dict):
+            return web.json_response({"error": "YAML root must be a mapping"}, status=400)
+        spec = GraphSpec.model_validate(spec_dict)
+        if spec.name != record.name or spec.version != record.version:
+            return web.json_response({"error": "spec name and version are immutable"}, status=400)
+        orch._compiler.validate(spec)
+    except (yaml.YAMLError, ValidationError) as exc:
+        return web.json_response(
+            {
+                "error": "invalid spec",
+                "detail": exc.errors() if isinstance(exc, ValidationError) else str(exc),
+            },
+            status=400,
+        )
+    except TopologyError as exc:
+        return web.json_response(
+            {"error": "topology validation failed", "detail": str(exc)}, status=400
+        )
+    store.save(spec)
+    graphs_dir = Path(resources.target) / "config" / "graphs"
+    graphs_dir.mkdir(parents=True, exist_ok=True)
+    (graphs_dir / f"{spec.name}.yml").write_text(update_req.yaml_content, encoding="utf-8")
+    saved_spec = store.load_by_id(sid)
+    if saved_spec is None:
+        return web.json_response({"error": "save succeeded but load failed"}, status=500)
+    return web.json_response(
+        GraphSpecResponse(
+            spec_id=str(sid),
+            name=saved_spec.name,
+            version=saved_spec.version,
+            yaml_content=_yaml(saved_spec),
+        ).model_dump(mode="json")
+    )
+
+
+async def handle_run_spec(request: web.Request) -> web.Response:
+    r = _resolve_resources(request)
+    if isinstance(r, web.Response):
+        return r
+    orch, _, _ = r
+    sid = _int_param(request, "spec_id")
+    if isinstance(sid, web.Response):
+        return sid
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, web.HTTPException):
+        body = {}
+    run_req = GraphRunRequest.model_validate(body if isinstance(body, dict) else {})
+    try:
+        gid = await orch.create_instance(sid, user_input=run_req.user_input)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=404)
+    orch.start_run(gid)
+    return web.json_response(
+        GraphRunResponse(
+            graph_instance_id=str(gid), status=GraphInstanceStatus.PENDING.value
+        ).model_dump(mode="json")
+    )
+
+
+async def handle_get_spec_yaml(request: web.Request) -> web.Response:
+    r = _resolve_resources(request)
+    if isinstance(r, web.Response):
+        return r
+    orch, _, _ = r
+    sid = _int_param(request, "spec_id")
+    if isinstance(sid, web.Response):
+        return sid
+    spec = orch._spec_store.load_by_id(sid)
+    if spec is None:
+        return web.json_response({"error": f"spec {sid} not found"}, status=404)
+    return web.Response(text=_yaml(spec), content_type="text/yaml")
+
+
+async def _control_instance(
+    request: web.Request,
+    action: str,
+    fn: Callable[[GraphOrchestrator, int], Any],
+) -> web.Response:
+    r = _resolve_resources(request)
+    if isinstance(r, web.Response):
+        return r
+    orch, _, _ = r
+    gid = _int_param(request, "instance_id")
+    if isinstance(gid, web.Response):
+        return gid
+    if orch._instance_store.load(gid) is None:
+        return web.json_response({"error": f"instance {gid} not found"}, status=404)
+    try:
+        await fn(orch, gid)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=404)
+    return web.json_response({"graph_instance_id": str(gid), "status": action})
+
+
+async def handle_pause_instance(request: web.Request) -> web.Response:
+    return await _control_instance(request, GraphInstanceStatus.PAUSED.value, GraphOrchestrator.pause)
+
+
+async def handle_resume_instance(request: web.Request) -> web.Response:
+    r = _resolve_resources(request)
+    if isinstance(r, web.Response):
+        return r
+    orch, _, _ = r
+    gid = _int_param(request, "instance_id")
+    if isinstance(gid, web.Response):
+        return gid
+    metadata = orch._instance_store.load(gid)
+    if metadata is None:
+        return web.json_response({"error": f"instance {gid} not found"}, status=404)
+    if metadata.status != GraphInstanceStatus.PAUSED:
+        return web.json_response(
+            {
+                "error": f"Cannot resume instance {gid}: status is {metadata.status.value}, must be PAUSED"
+            },
+            status=400,
+        )
+    orch.start_resume(gid)
+    return web.json_response({"graph_instance_id": str(gid), "status": GraphInstanceStatus.RUNNING.value})
+
+
+async def handle_stop_instance(request: web.Request) -> web.Response:
+    return await _control_instance(request, GraphInstanceStatus.STOPPED.value, GraphOrchestrator.stop)
+
+
+async def handle_deliver_to_node(request: web.Request) -> web.Response:
+    r = _resolve_resources(request)
+    if isinstance(r, web.Response):
+        return r
+    orch, _, _ = r
+    gid = _int_param(request, "instance_id")
+    if isinstance(gid, web.Response):
+        return gid
+    body = await _json_body(request)
+    if isinstance(body, web.Response):
+        return body
+    try:
+        deliver_req = GraphDeliverRequest.model_validate(body)
+    except ValidationError as exc:
+        return web.json_response({"error": "validation", "detail": exc.errors()}, status=400)
+    try:
+        await orch.deliver_to_node(gid, deliver_req.node_name, deliver_req.content)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=404)
+    return web.json_response(
+        {"graph_instance_id": str(gid), "node_name": deliver_req.node_name, "status": "delivered"}
+    )
+
+
+async def handle_get_instance(request: web.Request) -> web.Response:
+    r = _resolve_resources(request)
+    if isinstance(r, web.Response):
+        return r
+    orch, _, _ = r
+    gid = _int_param(request, "instance_id")
+    if isinstance(gid, web.Response):
+        return gid
+    try:
+        snapshot = orch.get_state(gid)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=404)
+    id_to_name = {nid: name for name, nid in snapshot.metadata.node_id_map.items()}
+    nodes = [
+        NodeStatusInfo(
+            node_name=id_to_name.get(nid, nid),
+            node_id=nid,
+            status=inv[-1].status.value if inv else "unknown",
+        )
+        for nid, inv in snapshot.nodes.items()
+    ]
+    return web.json_response(
+        GraphInstanceResponse(
+            graph_instance_id=str(snapshot.metadata.graph_instance_id),
+            status=snapshot.metadata.status.value,
+            nodes=nodes,
+        ).model_dump(mode="json")
+    )
+
+
+async def handle_list_instances(request: web.Request) -> web.Response:
+    r = _resolve_resources(request)
+    if isinstance(r, web.Response):
+        return r
+    orch, _, _ = r
+    store = orch._instance_store
+    sf = request.query.get("status")
+    try:
+        metadatas = (
+            store.load_by_status(GraphInstanceStatus(sf))
+            if sf
+            else [m for st in GraphInstanceStatus for m in store.load_by_status(st)]
+        )
+    except ValueError:
+        return web.json_response({"error": f"invalid status: {sf!r}"}, status=400)
+    return web.json_response(
+        [
+            GraphInstanceResponse(
+                graph_instance_id=str(m.graph_instance_id), status=m.status.value, nodes=[]
+            ).model_dump(mode="json")
+            for m in metadatas
+        ]
+    )
+
+
+async def handle_get_events(request: web.Request) -> web.Response:
+    r = _resolve_resources(request)
+    if isinstance(r, web.Response):
+        return r
+    _, event_store, _ = r
+    gid = _int_param(request, "instance_id")
+    if isinstance(gid, web.Response):
+        return gid
+    raw_events = (
+        [o.model_dump(mode="json") for o in event_store.get(gid, [])] if event_store else []
+    )
+    events = [
+        GraphEventItem(
+            graph_instance_id=str(ev.get("graph_instance_id", "")),
+            kind=str(ev.get("kind", "")),
+            **{k: v for k, v in ev.items() if k not in ("graph_instance_id", "kind")},
+        )
+        for ev in raw_events
+    ]
+    return web.json_response(GraphEventListResponse(events=events).model_dump(mode="json"))
+
+
+def register_graph_routes(
+    server: WebUIServer,
+    workspace_manager: Callable[[str], PoolWorkspaceResources | None] | None,
+) -> None:
+    app = server.app
+    if "server" not in app:
+        app["server"] = server
+    server._graph_workspace_resolver = workspace_manager
+    app.router.add_get("/api/graphs/specs", handle_list_specs)
+    app.router.add_get("/api/graphs/specs/{spec_id}", handle_get_spec)
+    app.router.add_put("/api/graphs/specs/{spec_id}", handle_put_spec)
+    app.router.add_post("/api/graphs/specs/{spec_id}/run", handle_run_spec)
+    app.router.add_get("/api/graphs/specs/{spec_id}/yaml", handle_get_spec_yaml)
+    app.router.add_get("/api/graphs/instances", handle_list_instances)
+    app.router.add_get("/api/graphs/instances/{instance_id}", handle_get_instance)
+    app.router.add_get("/api/graphs/instances/{instance_id}/events", handle_get_events)
+    app.router.add_post("/api/graphs/instances/{instance_id}/pause", handle_pause_instance)
+    app.router.add_post("/api/graphs/instances/{instance_id}/resume", handle_resume_instance)
+    app.router.add_post("/api/graphs/instances/{instance_id}/stop", handle_stop_instance)
+    app.router.add_post("/api/graphs/instances/{instance_id}/deliver", handle_deliver_to_node)
+
+
+__all__ = ["register_graph_routes"]

@@ -6,6 +6,11 @@ import { ToastProvider } from "./components/ToastContext";
 import { useWebUIStream } from "./hooks/useWebUIStream";
 import { useSessions } from "./hooks/useSessions";
 import { useBackendReady } from "./hooks/useBackendReady";
+import { useHashRoute } from "./hooks/useHashRoute";
+import { GraphConfigPage } from "./components/graphs/GraphConfigPage";
+import { GraphSpecEditor } from "./components/graphs/GraphSpecEditor";
+import { GraphExecutionViewer } from "./components/graphs/GraphExecutionViewer";
+import { GraphListPage } from "./components/graphs/GraphListPage";
 import BootScreen from "./components/BootScreen";
 import { DISPERSE_MS } from "./lib/particles";
 import { buildTree } from "./lib/sessionTree";
@@ -69,6 +74,19 @@ const AppInner: FC = () => {
   // Home is its own workspace partition; pass ws only for non-home so home
   // reads/writes use the canonical home dir (matching the no-ws behavior).
   const streamWs = isHome ? "" : workspace;
+
+  const { route, navigate } = useHashRoute();
+
+  // Agent-node click in the graph execution viewer: session id is
+  // "{node_id}.{node_name}" (AgentNode._ensure_session). Jump back to chat
+  // and select that session's transcript.
+  const handleJumpToSession = useCallback(
+    (sessionId: string): void => {
+      navigate("");
+      selectSession(sessionId);
+    },
+    [navigate, selectSession],
+  );
 
   const {
     messages,
@@ -287,6 +305,8 @@ const AppInner: FC = () => {
           onPoolChange={handlePoolChange}
           revealSessionId={revealSessionId}
           onOpenSettings={() => setSettingsOpen(true)}
+          graphsActive={route.kind !== "chat"}
+          onOpenGraphs={() => navigate("/graphs")}
         />
 
         {/* Resize handle — desktop only */}
@@ -305,6 +325,33 @@ const AppInner: FC = () => {
         </div>
 
         <main className="flex flex-1 flex-col min-w-0">
+          {route.kind === "graphs" ? (
+            <GraphConfigPage
+              workspaceId={streamWs}
+              onEditSpec={(specId): void => navigate(`/graphs/${specId}/edit`)}
+              onOpenInstances={(): void => navigate("/graphs/instances")}
+            />
+          ) : route.kind === "graphSpecEdit" ? (
+            <GraphSpecEditor
+              workspaceId={streamWs}
+              specId={route.specId}
+              onBack={(): void => navigate("/graphs")}
+              onRun={(instanceId): void => navigate(`/graphs/instances/${instanceId}`)}
+            />
+          ) : route.kind === "graphInstances" ? (
+            <GraphListPage
+              workspaceId={streamWs}
+              onOpenInstance={(instanceId): void => navigate(`/graphs/instances/${instanceId}`)}
+              onBack={(): void => navigate("/graphs")}
+            />
+          ) : route.kind === "graphInstance" ? (
+            <GraphExecutionViewer
+              workspaceId={streamWs}
+              instanceId={route.instanceId}
+              onBack={(): void => navigate("/graphs/instances")}
+              onJumpToSession={handleJumpToSession}
+            />
+          ) : (
           <ChatView
             messages={messages}
             isStreaming={isStreaming}
@@ -325,6 +372,7 @@ const AppInner: FC = () => {
             pool={chatPool}
             heroFocusNonce={newConvNonce}
           />
+          )}
         </main>
 
         <SettingsModal

@@ -58,6 +58,7 @@ def _noop_callback() -> None:
 
 def build_app() -> typer.Typer:
     from bot.cli.modexctl.commands.agents import build_agents_command
+    from bot.cli.modexctl.commands.deliver import build_deliver_command
     from bot.cli.modexctl.commands.history import build_history_command
     from bot.cli.modexctl.commands.send import build_send_command
 
@@ -86,6 +87,12 @@ def build_app() -> typer.Typer:
 
     app.command(name="send", help="Send a message to another agent.")(
         build_send_command(ctx)
+    )
+
+    # -- deliver --------------------------------------------------------------
+
+    app.command(name="deliver", help="Deliver content to a graph instance node.")(
+        build_deliver_command(ctx)
     )
 
     # -- history --------------------------------------------------------------
