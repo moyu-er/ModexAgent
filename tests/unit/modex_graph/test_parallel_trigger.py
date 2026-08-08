@@ -844,10 +844,8 @@ class TestOnReceiveSerialGate:
         b_instances = [i for i in scheduler._instances.values() if i.node_name == "b"]
         assert len(b_instances) == 1
         assert b_instances[0].status == NodeInstanceStatus.READY
-        assert b_instances[0].upstream_payloads is not None
-        assert b_instances[0].upstream_payloads[0].content == "data"
 
-    def test_queue_drains_fifo_order(self) -> None:
+    def test_queue_drains_one_dispatch_per_completion(self) -> None:
         scheduler = self._make_scheduler()
 
         b_iid = scheduler._create_instance("b")
@@ -870,8 +868,6 @@ class TestOnReceiveSerialGate:
             key=lambda i: i.seq,
         )
         assert len(b_instances) == 2
-        assert b_instances[1].upstream_payloads is not None
-        assert b_instances[1].upstream_payloads[0].content == "first"
 
         b1_iid = b_instances[1].instance_id
         scheduler._instances[b1_iid].status = NodeInstanceStatus.COMPLETED
@@ -883,8 +879,6 @@ class TestOnReceiveSerialGate:
             key=lambda i: i.seq,
         )
         assert len(b_instances) == 3
-        assert b_instances[2].upstream_payloads is not None
-        assert b_instances[2].upstream_payloads[0].content == "second"
 
         b2_iid = b_instances[2].instance_id
         scheduler._instances[b2_iid].status = NodeInstanceStatus.COMPLETED
@@ -896,8 +890,6 @@ class TestOnReceiveSerialGate:
             key=lambda i: i.seq,
         )
         assert len(b_instances) == 4
-        assert b_instances[3].upstream_payloads is not None
-        assert b_instances[3].upstream_payloads[0].content == "third"
 
         assert "b" not in scheduler._on_receive_queue
 

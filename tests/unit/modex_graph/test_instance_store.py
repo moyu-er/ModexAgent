@@ -299,6 +299,25 @@ class TestGraphInstanceStoreCRUD:
 
 
 class TestSqliteGraphInstanceStoreSpecifics:
+    def test_node_id_map_round_trip(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        store = SqliteGraphInstanceStore(conn)
+        metadata = GraphMetadata(
+            graph_instance_id=_GRAPH_INSTANCE_ID,
+            spec_id=_SPEC_ID,
+            parent_instance_id=None,
+            parent_node=None,
+            status=GraphInstanceStatus.RUNNING,
+            node_id_map={"plan": "node-101", "execute": "node-202"},
+        )
+
+        store.save(metadata)
+
+        loaded = store.load(_GRAPH_INSTANCE_ID)
+        assert loaded is not None
+        assert loaded.node_id_map == {"plan": "node-101", "execute": "node-202"}
+        conn.close()
+
     def test_create_table_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "instances.db")
@@ -317,6 +336,7 @@ class TestSqliteGraphInstanceStoreSpecifics:
         from modex_graph.persistence.instance_store import (
             _COL_CREATED_AT,
             _COL_GRAPH_INSTANCE_ID,
+            _COL_NODE_ID_MAP_JSON,
             _COL_PARENT_INSTANCE_ID,
             _COL_PARENT_NODE,
             _COL_SPEC_ID,
@@ -327,6 +347,7 @@ class TestSqliteGraphInstanceStoreSpecifics:
 
         assert _INSTANCE_TABLE == "graph_instances"
         assert _COL_GRAPH_INSTANCE_ID == "graph_instance_id"
+        assert _COL_NODE_ID_MAP_JSON == "node_id_map_json"
         assert _COL_SPEC_ID == "spec_id"
         assert _COL_PARENT_INSTANCE_ID == "parent_instance_id"
         assert _COL_PARENT_NODE == "parent_node"

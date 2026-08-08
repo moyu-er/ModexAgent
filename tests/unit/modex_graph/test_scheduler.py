@@ -35,6 +35,7 @@ from modex_graph import (
     IntegratedInput,
     LinearScheduler,
     Node,
+    RoutingError,
     Scheduler,
     SchedulerKind,
 )
@@ -185,6 +186,60 @@ class TestLinearSchedulerExecution:
 
         with pytest.raises(GraphRecursionError, match="max_iterations=5"):
             await scheduler.run_async(ctx)
+
+
+class TestLinearSchedulerTopologyEnforcement:
+    """G3: LinearScheduler validates deliver targets against declared edges.
+
+    Mirrors ParallelScheduler._handle_dispatch validation (parallel.py:460-466).
+    """
+
+    async def test_rejects_deliver_to_non_downstream_node(self) -> None:
+        class BadDeliverNode(Node[CounterState]):
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
+                self.deliver(None, "b", ctx)
+                return None
+
+        g: Graph[CounterState] = Graph()
+        g.add_node("a", BadDeliverNode())
+        g.add_node("c", AddNode(amount=1))
+        g.add_node("b", AddNode(amount=1))
+        g.add_edge(GraphNode.START, "a")
+        g.add_edge("a", "c")
+        g.add_edge("c", "b")
+        g.add_edge("b", GraphNode.END)
+        compiled = g.compile()
+        ctx = make_ctx(CounterState(count=0))
+        scheduler = LinearScheduler(compiled)
+
+        with pytest.raises(RoutingError, match="not in the outgoing edges"):
+            await scheduler.run_async(ctx)
+
+    async def test_allows_deliver_to_downstream_node(self) -> None:
+        class GoodDeliverNode(Node[CounterState]):
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
+                ctx.state.count += 1
+                self.deliver(None, "c", ctx)
+                return None
+
+        g: Graph[CounterState] = Graph()
+        g.add_node("a", GoodDeliverNode())
+        g.add_node("c", AddNode(amount=1))
+        g.add_node("b", AddNode(amount=1))
+        g.add_edge(GraphNode.START, "a")
+        g.add_edge("a", "c")
+        g.add_edge("c", "b")
+        g.add_edge("b", GraphNode.END)
+        compiled = g.compile()
+        ctx = make_ctx(CounterState(count=0))
+        scheduler = LinearScheduler(compiled)
+
+        result = await scheduler.run_async(ctx)
+        assert result.count == 3
 
 
 class TestGraphEngineDelegation:

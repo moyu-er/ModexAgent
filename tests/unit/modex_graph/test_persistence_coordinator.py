@@ -10,7 +10,6 @@ Covers:
 - Lifecycle methods are on ``node_state_store``, not coordinator.
 - promote_delivers upgrades ALL CONSUMED_PENDING for node.
 - rebuild_main_state picks single newest snapshot per node.
-- load_for_recovery returns RecoveryContext with rebuilt_main_state.
 - Crash between save COMPLETED + promote → recovery → auto-promote.
 - close() is a safe-to-call no-op (coordinator owns no connections).
 - Null strategy via create_null_coordinator.
@@ -29,7 +28,6 @@ from modex_graph import (
     DeliverConsumptionStatus,
     GraphInstanceStatus,
     GraphMetadata,
-    GraphNode,
     GraphPersistenceCoordinator,
     GraphStateSnapshot,
     InMemoryDeliverStore,
@@ -41,7 +39,6 @@ from modex_graph import (
     NullCoordinatorFactory,
     NullDeliverStore,
     NullNodeStateStore,
-    RecoveryContext,
     RoutingError,
     SqliteDeliverStoreFactory,
     SqliteGraphInstanceStore,
@@ -144,21 +141,23 @@ class TestConstructorAndRegistration:
 
 
 class TestRouteDeliver:
-    def test_end_target_returns_none_without_storing_deliver(self) -> None:
+    def test_end_target_accumulates_in_registered_store(self) -> None:
         coord = _memory_coordinator()
-        coord.register_node("worker")
-        store = coord.get_deliver_store("worker")
+        coord.register_node("end-node-id")
+        store = coord.get_deliver_store("end-node-id")
         assert store is not None
 
         result = coord.route_deliver(
-            target_node=GraphNode.END,
+            target_node_id="end-node-id",
             content={"data": 1},
-            source_node="worker",
+            source_node_id="worker",
             source_invocation_id=1001,
         )
 
-        assert result is None
-        assert store.query_consumable(GID, "worker") == []
+        assert result is not None
+        records = store.query_consumable(GID, "end-node-id")
+        assert len(records) == 1
+        assert records[0].content == {"data": 1}
 
     def test_route_to_registered_node_accumulates_deliver(self) -> None:
         coord = _memory_coordinator()
@@ -167,9 +166,9 @@ class TestRouteDeliver:
         assert store is not None
 
         deliver_id = coord.route_deliver(
-            target_node="worker",
+            target_node_id="worker",
             content={"data": 1},
-            source_node="source",
+            source_node_id="source",
             source_invocation_id=1001,
         )
         assert deliver_id is not None
@@ -179,8 +178,8 @@ class TestRouteDeliver:
         assert len(records) == 1
         assert records[0].deliver_id == deliver_id
         assert records[0].graph_instance_id == GID
-        assert records[0].node_name == "worker"
-        assert records[0].source_node == "source"
+        assert records[0].node_id == "worker"
+        assert records[0].source_node_id == "source"
         assert records[0].source_invocation_id == 1001
         assert records[0].content == {"data": 1}
         assert records[0].status == DeliverConsumptionStatus.PENDING
@@ -190,9 +189,9 @@ class TestRouteDeliver:
         coord.register_node("worker")
         with pytest.raises(RoutingError, match="no deliver_store"):
             coord.route_deliver(
-                target_node="unknown",
+                target_node_id="unknown",
                 content={},
-                source_node="source",
+                source_node_id="source",
                 source_invocation_id=1001,
             )
 
@@ -443,72 +442,6 @@ class TestRebuildMainState:
         assert coord.rebuild_main_state() == {}
 
 
-# ── load_for_recovery ──────────────────────────────────────────────────────
-
-
-class TestLoadForRecovery:
-    def test_returns_recovery_context_with_rebuilt_main_state(self) -> None:
-        coord = _memory_coordinator()
-        coord.register_node("worker")
-        coord._instance_store.save(_metadata())
-        store = coord.node_state_store
-
-        inv = store.begin_invocation("worker")
-        store.complete_invocation(inv, {"result": "done"})
-
-        ctx = coord.load_for_recovery()
-        assert isinstance(ctx, RecoveryContext)
-        assert ctx.metadata.graph_instance_id == GID
-        assert "worker" in ctx.node_states
-        assert ctx.node_states["worker"] is not None
-        assert ctx.node_states["worker"].status == InvocationStatus.COMPLETED
-        assert ctx.rebuilt_main_state == {"result": "done"}
-
-    def test_fresh_graph_returns_minimal_context(self) -> None:
-        coord = _memory_coordinator()
-        coord.register_node("worker")
-
-        ctx = coord.load_for_recovery()
-        assert ctx.metadata.status == GraphInstanceStatus.RUNNING
-        assert ctx.rebuilt_main_state == {}
-        assert "worker" in ctx.node_states
-
-    def test_auto_promote_on_recovery(self) -> None:
-        coord, conn, db_path = _sqlite_coordinator()
-        coord.register_node("worker")
-        coord._instance_store.save(_metadata())
-        store = coord.node_state_store
-
-        inv = store.begin_invocation("worker")
-
-        d1 = coord.route_deliver("worker", {"data": 1}, "source", 9999)
-        assert d1 is not None
-        deliver_store = coord.get_deliver_store("worker")
-        assert deliver_store is not None
-        deliver_store.mark_consumed([d1], inv.invocation_id)
-
-        store.complete_invocation(inv, {"result": "done"})
-        # Simulate crash between complete and promote: manually re-mark
-        # the delivers as CONSUMED_PENDING (promote wasn't called).
-        # Actually, complete_invocation already set COMPLETED; we just
-        # skip calling promote_delivers. The delivers stay CONSUMED_PENDING.
-
-        consumable_before = deliver_store.query_consumable(GID, "worker")
-        consumed_pending = [
-            r for r in consumable_before if r.status == DeliverConsumptionStatus.CONSUMED_PENDING
-        ]
-        assert len(consumed_pending) == 1
-
-        coord2, _, _ = _sqlite_coordinator(conn=conn, db_path=db_path)
-        coord2.register_node("worker")
-
-        coord2.load_for_recovery()
-
-        consumable_after = deliver_store.query_consumable(GID, "worker")
-        for r in consumable_after:
-            assert r.status != DeliverConsumptionStatus.CONSUMED_PENDING
-
-
 # ── get_graph_state ────────────────────────────────────────────────────────
 
 
@@ -640,10 +573,10 @@ class TestSqliteLifecycle:
         coord2, _, _ = _sqlite_coordinator(conn=conn, db_path=db_path)
         coord2.register_node("worker")
 
-        ctx = coord2.load_for_recovery()
-        assert ctx.rebuilt_main_state == {"result": "persisted"}
-        assert ctx.node_states["worker"] is not None
-        assert ctx.node_states["worker"].status == InvocationStatus.COMPLETED
+        assert coord2.rebuild_main_state() == {"result": "persisted"}
+        latest = coord2.node_state_store.load_latest("worker")
+        assert latest is not None
+        assert latest.status == InvocationStatus.COMPLETED
 
 
 # ── close ──────────────────────────────────────────────────────────────────
@@ -680,13 +613,12 @@ class TestNullStrategy:
         latest = store.load_latest("worker")
         assert latest is None
 
-        ctx = coord.load_for_recovery()
-        assert ctx.rebuilt_main_state == {}
+        assert coord.rebuild_main_state() == {}
 
-    def test_null_route_deliver_to_end(self) -> None:
+    def test_null_route_deliver_to_registered_end(self) -> None:
         coord = create_null_coordinator(GID)
-        coord.register_node("worker")
-        assert coord.route_deliver(GraphNode.END, {}, "src", 1) is None
+        coord.register_node("end-node-id")
+        assert coord.route_deliver("end-node-id", {}, "src", 1) is not None
 
     def test_null_route_deliver_accumulates(self) -> None:
         coord = create_null_coordinator(GID)
@@ -717,8 +649,9 @@ class TestCoordinatorFactory:
         store = InMemoryGraphInstanceStore()
         store.save(_metadata(gid=GID))
         coord = NullCoordinatorFactory().create(GID, store)
-        ctx = coord.load_for_recovery()
-        assert ctx.metadata.graph_instance_id == GID
+        metadata = coord._instance_store.load(GID)
+        assert metadata is not None
+        assert metadata.graph_instance_id == GID
 
     def test_null_factory_uses_null_node_state_store(self) -> None:
         store = InMemoryGraphInstanceStore()
@@ -734,8 +667,8 @@ class TestCoordinatorFactory:
         assert isinstance(ds, NullDeliverStore)
         deliver_id = ds.accumulate(
             graph_instance_id=GID,
-            target_node="worker",
-            source_node="src",
+            node_id="worker",
+            source_node_id="src",
             source_invocation_id=1,
             content={"x": 1},
         )
@@ -751,10 +684,10 @@ class TestCoordinatorFactory:
         factory_coord = NullCoordinatorFactory().create(GID, store)
         null_coord = create_null_coordinator(GID)
 
-        factory_ctx = factory_coord.load_for_recovery()
-        assert factory_ctx.metadata.graph_instance_id == GID
+        # Factory shares the caller's instance_store: metadata is available.
+        factory_metadata = factory_coord._instance_store.load(GID)
+        assert factory_metadata is not None
+        assert factory_metadata.graph_instance_id == GID
 
-        # NullGraphInstanceStore.load returns None; load_for_recovery
-        # synthesizes a default metadata with spec_id=0.
-        null_ctx = null_coord.load_for_recovery()
-        assert null_ctx.metadata.spec_id == 0
+        # create_null_coordinator uses NullGraphInstanceStore: load returns None.
+        assert null_coord._instance_store.load(GID) is None

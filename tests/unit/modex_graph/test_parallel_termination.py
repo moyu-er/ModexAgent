@@ -95,13 +95,10 @@ class NoDispatchNode(Node[CounterState]):
         return None
 
 
-# ── END sentinel: no instance created, no execution ──────────────────────
-
-
 class TestEndSentinel:
-    """GraphNode.END is a sentinel — no instance created, no execution."""
+    """GraphNode.END is an executable terminal node."""
 
-    async def test_end_has_no_instance(self) -> None:
+    async def test_end_has_completed_instance(self) -> None:
         g: Graph[CounterState] = Graph()
         g.add_node("a", DispatchAddNode(amount=1, target=GraphNode.END))
         g.add_edge(GraphNode.START, "a")
@@ -114,13 +111,13 @@ class TestEndSentinel:
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
-        # No instance created for END.
         end_instances = [
             inst for inst in scheduler._instances.values() if inst.node_name == GraphNode.END
         ]
-        assert len(end_instances) == 0
+        assert len(end_instances) == 1
+        assert end_instances[0].status == NodeInstanceStatus.COMPLETED
 
-    async def test_multiple_sources_complete_without_end_instances(self) -> None:
+    async def test_multiple_sources_complete_with_end_instance(self) -> None:
         g: Graph[CounterState] = Graph()
         g.add_node("a", FanOutDispatchNode(amount=1, target_a="b", target_b="c"))
         g.add_node("b", DispatchAddNode(amount=10, target=GraphNode.END))
@@ -143,10 +140,7 @@ class TestEndSentinel:
             for instance in scheduler._instances.values()
             if instance.status == NodeInstanceStatus.COMPLETED
         }
-        assert completed == {"a", "b", "c"}
-        assert all(
-            instance.node_name != GraphNode.END for instance in scheduler._instances.values()
-        )
+        assert completed == {GraphNode.START, "a", "b", "c", GraphNode.END}
 
 
 # ── END ON_ALL_PREDS: all dispatch-to-END sources COMPLETED -> terminate ─
@@ -408,7 +402,7 @@ class TestStartReachability:
         g.add_edge("a", "b")
         g.add_edge("b", GraphNode.END)
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-        assert compiled.entry_node == "a"
+        assert compiled.entry_node == GraphNode.START
 
     def test_diamond_all_reachable(self) -> None:
         """Diamond A->[B,C]->D->END: all reachable from A."""
@@ -424,7 +418,14 @@ class TestStartReachability:
         g.add_edge("c", "d")
         g.add_edge("d", GraphNode.END)
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-        assert set(compiled.nodes.keys()) == {"a", "b", "c", "d"}
+        assert set(compiled.nodes.keys()) == {
+            GraphNode.START,
+            "a",
+            "b",
+            "c",
+            "d",
+            GraphNode.END,
+        }
 
 
 # ── Compile validation: END reachability (PARALLEL only) ─────────────────
@@ -479,7 +480,7 @@ class TestEndReachability:
         g.add_edge("a", "b")
         g.add_edge("b", GraphNode.END)
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-        assert compiled.entry_node == "a"
+        assert compiled.entry_node == GraphNode.START
 
     def test_node_with_only_end_edge_compiles_ok(self) -> None:
         """Node with only an edge to END (no other outgoing edges)

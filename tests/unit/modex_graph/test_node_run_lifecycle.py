@@ -58,6 +58,16 @@ def _make_ctx(
     return ctx
 
 
+def _set_identity(
+    node: Node[CounterState],
+    name: str,
+    *,
+    node_id: str | None = None,
+) -> None:
+    node.name = name
+    node.node_id = node_id if node_id is not None else name
+
+
 class _DeliverNode(Node[CounterState]):
     async def execute(
         self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
@@ -113,40 +123,42 @@ class _RecordingNode(Node[CounterState]):
 
 class TestLifecycleComplete:
     async def test_normal_execution_completes_invocation(self) -> None:
-        coord = _make_inspectable_coordinator(("test_node",))
+        node_id = "node_persistence_identity"
+        coord = _make_inspectable_coordinator((node_id,))
         node = _DeliverNode()
-        node.name = "test_node"
+        _set_identity(node, "human_readable_name", node_id=node_id)
         ctx = _make_ctx(coord)
 
         result = await node.run(ctx)
 
         assert result is None
-        latest = coord.node_state_store.load_latest("test_node")
+        latest = coord.node_state_store.load_latest(node_id)
         assert latest is not None
         assert latest.status == InvocationStatus.COMPLETED
         assert latest.state_json == ctx.state.model_dump(mode="json")
         assert latest.state_json["count"] == 1
+        assert coord.node_state_store.load_latest(node.name) is None
         assert ctx.current_invocation is not None
-        assert ctx.current_invocation.node_name == "test_node"
+        assert ctx.current_invocation.node_id == node_id
 
     async def test_begin_sets_current_invocation(self) -> None:
         coord = _make_inspectable_coordinator(("n",))
         node = _DeliverNode()
-        node.name = "n"
+        _set_identity(node, "n")
         ctx = _make_ctx(coord)
         assert ctx.current_invocation is None
 
         await node.run(ctx)
 
         assert ctx.current_invocation is not None
-        assert ctx.current_invocation.node_name == "n"
+        assert ctx.current_invocation.node_id == "n"
 
 
 class TestLifecycleSuspend:
     async def test_graph_interrupt_suspends_invocation(self) -> None:
         coord = _make_inspectable_coordinator(("suspend_node",))
         node = _InterruptNode()
-        node.name = "suspend_node"
+        _set_identity(node, "suspend_node")
         ctx = _make_ctx(coord)
 
         with pytest.raises(GraphInterrupt):
@@ -161,7 +173,7 @@ class TestLifecycleSuspend:
     async def test_graph_interrupt_checkpoints_state(self) -> None:
         coord = _make_inspectable_coordinator(("sn",))
         node = _InterruptNode()
-        node.name = "sn"
+        _set_identity(node, "sn")
         ctx = _make_ctx(coord)
         ctx.state.count = 42
 
@@ -177,7 +189,7 @@ class TestLifecycleCancel:
     async def test_graph_bubble_up_cancels_invocation(self) -> None:
         coord = _make_inspectable_coordinator(("cancel_node",))
         node = _CancelNode()
-        node.name = "cancel_node"
+        _set_identity(node, "cancel_node")
         ctx = _make_ctx(coord)
 
         with pytest.raises(GraphDrained):
@@ -192,7 +204,7 @@ class TestLifecycleCrash:
     async def test_exception_crashes_invocation(self) -> None:
         coord = _make_inspectable_coordinator(("crash_node",))
         node = _CrashNode()
-        node.name = "crash_node"
+        _set_identity(node, "crash_node")
         ctx = _make_ctx(coord)
 
         with pytest.raises(ValueError, match="boom"):
@@ -207,7 +219,7 @@ class TestLifecycleFinalize:
     async def test_finalize_called_on_success(self) -> None:
         coord = _make_inspectable_coordinator(("fn",))
         node = _DeliverNode()
-        node.name = "fn"
+        _set_identity(node, "fn")
         ctx = _make_ctx(coord)
 
         await node.run(ctx)
@@ -219,7 +231,7 @@ class TestLifecycleFinalize:
     async def test_finalize_called_on_crash(self) -> None:
         coord = _make_inspectable_coordinator(("fn",))
         node = _CrashNode()
-        node.name = "fn"
+        _set_identity(node, "fn")
         ctx = _make_ctx(coord)
 
         with pytest.raises(ValueError):
@@ -237,7 +249,7 @@ class TestLifecycleFinalize:
                 raise RuntimeError("integrator broke")
 
         node = _DeliverNode()
-        node.name = "intg_fail"
+        _set_identity(node, "intg_fail")
         node.input_integrator = _CrashIntegrator()  # type: ignore[assignment]
         ctx = _make_ctx(coord)
 
@@ -261,14 +273,14 @@ class TestI16Resume:
         assert deliver_store is not None
         deliver_store.accumulate(
             graph_instance_id=0,
-            target_node="resume_node",
-            source_node="upstream",
+            node_id="resume_node",
+            source_node_id="upstream",
             source_invocation_id=100,
             content="upstream_data",
         )
 
         node = _RecordingNode()
-        node.name = "resume_node"
+        _set_identity(node, "resume_node")
         ctx = _make_ctx(coord)
 
         await node.run(ctx)
@@ -288,25 +300,26 @@ class TestI16Resume:
         assert latest.status == InvocationStatus.COMPLETED
 
     async def test_non_resume_consumes_delivers(self) -> None:
-        coord = _make_inspectable_coordinator(("consumer",))
+        node_id = "node_consumer_identity"
+        coord = _make_inspectable_coordinator((node_id,))
 
-        deliver_store = coord.get_deliver_store("consumer")
+        deliver_store = coord.get_deliver_store(node_id)
         assert deliver_store is not None
         deliver_store.accumulate(
             graph_instance_id=0,
-            target_node="consumer",
-            source_node="producer",
+            node_id=node_id,
+            source_node_id="producer",
             source_invocation_id=200,
             content="data_payload",
         )
 
         node = _RecordingNode()
-        node.name = "consumer"
+        _set_identity(node, "consumer", node_id=node_id)
         ctx = _make_ctx(coord)
 
         await node.run(ctx)
 
-        consumable = coord.collect_consumable_delivers("consumer", 0)
+        consumable = coord.collect_consumable_delivers(node_id, 0)
         assert len(consumable) == 0
 
         assert len(node.seen_payloads) == 1

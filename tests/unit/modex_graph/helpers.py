@@ -33,22 +33,24 @@ class _AutoRegisterCoordinator(GraphPersistenceCoordinator):
     """
 
     def collect_consumable_delivers(
-        self, node_name: str, invocation_id: int
+        self, node_id: str, invocation_id: int
     ) -> list[Any]:
-        if self.get_deliver_store(node_name) is None:
-            self.register_node(node_name)
-        return super().collect_consumable_delivers(node_name, invocation_id)
+        if self.get_deliver_store(node_id) is None:
+            self.register_node(node_id)
+        return super().collect_consumable_delivers(node_id, invocation_id)
 
     def route_deliver(
         self,
-        target_node: str,
+        target_node_id: str,
         content: Any,
-        source_node: str,
+        source_node_id: str,
         source_invocation_id: int,
     ) -> int | None:
-        if target_node != GraphNode.END and self.get_deliver_store(target_node) is None:
-            self.register_node(target_node)
-        return super().route_deliver(target_node, content, source_node, source_invocation_id)
+        if target_node_id != GraphNode.END and self.get_deliver_store(target_node_id) is None:
+            self.register_node(target_node_id)
+        return super().route_deliver(
+            target_node_id, content, source_node_id, source_invocation_id
+        )
 
 
 class TrackingRuntime(GraphRuntime):
@@ -161,8 +163,8 @@ def register_graph_nodes(
     compiled: CompiledGraph[Any],
 ) -> None:
     """Register all nodes from a compiled graph with the coordinator."""
-    for name in compiled.nodes:
-        coordinator.register_node(name)
+    for node in compiled.nodes.values():
+        coordinator.register_node(node.node_id)
 
 
 def make_ctx(

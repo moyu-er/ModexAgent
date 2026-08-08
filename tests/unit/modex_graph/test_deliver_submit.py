@@ -252,21 +252,22 @@ class TestExecuteBasic:
     async def test_execute_with_upstream_payloads(self) -> None:
         node = _ReadIntegratedInputNode()
         node.name = "read_integrated"
+        node.node_id = "node-read-integrated"
         ctx = _make_linear_ctx(CounterState(name=""))
-        ctx.coordinator.register_node("read_integrated")
-        store = ctx.coordinator.get_deliver_store("read_integrated")
+        ctx.coordinator.register_node(node.node_id)
+        store = ctx.coordinator.get_deliver_store(node.node_id)
         assert store is not None
         store.accumulate(
             graph_instance_id=0,
-            target_node="read_integrated",
-            source_node="up_a",
+            node_id=node.node_id,
+            source_node_id="up_a",
             source_invocation_id=1,
             content="hello",
         )
         store.accumulate(
             graph_instance_id=0,
-            target_node="read_integrated",
-            source_node="up_b",
+            node_id=node.node_id,
+            source_node_id="up_b",
             source_invocation_id=2,
             content="world",
         )
@@ -276,6 +277,7 @@ class TestExecuteBasic:
     async def test_execute_with_no_upstream_payloads(self) -> None:
         node = _ReadIntegratedInputNode()
         node.name = "read_integrated"
+        node.node_id = "node-read-integrated"
         ctx = _make_linear_ctx(CounterState(name="initial"))
         await node.run(ctx)
         # Default integrator on empty list -> integrated_content = []
@@ -286,20 +288,20 @@ class TestExecuteBasic:
         node.name = "read_integrated"
         node.input_integrator = _JoinIntegrator()
         ctx = _make_linear_ctx(CounterState(name=""))
-        ctx.coordinator.register_node("read_integrated")
-        store = ctx.coordinator.get_deliver_store("read_integrated")
+        ctx.coordinator.register_node(node.node_id)
+        store = ctx.coordinator.get_deliver_store(node.node_id)
         assert store is not None
         store.accumulate(
             graph_instance_id=0,
-            target_node="read_integrated",
-            source_node="up_a",
+            node_id=node.node_id,
+            source_node_id="up_a",
             source_invocation_id=1,
             content="hello",
         )
         store.accumulate(
             graph_instance_id=0,
-            target_node="read_integrated",
-            source_node="up_b",
+            node_id=node.node_id,
+            source_node_id="up_b",
             source_invocation_id=2,
             content="world",
         )
@@ -651,21 +653,22 @@ class TestFullFlowWithStore:
 
         node = _TransformNode()
         node.name = "transform"
+        node.node_id = "node-transform"
         ctx = _make_linear_ctx()
-        ctx.coordinator.register_node("transform")
-        store = ctx.coordinator.get_deliver_store("transform")
+        ctx.coordinator.register_node(node.node_id)
+        store = ctx.coordinator.get_deliver_store(node.node_id)
         assert store is not None
         store.accumulate(
             graph_instance_id=0,
-            target_node="transform",
-            source_node="up_a",
+            node_id=node.node_id,
+            source_node_id="up_a",
             source_invocation_id=1,
             content="input1",
         )
         store.accumulate(
             graph_instance_id=0,
-            target_node="transform",
-            source_node="up_b",
+            node_id=node.node_id,
+            source_node_id="up_b",
             source_invocation_id=2,
             content="input2",
         )
@@ -967,7 +970,7 @@ class TestUpstreamPayloadsFlow:
         assert len(sink.seen_inputs) == 1
         integrated = sink.seen_inputs[0]
         assert len(integrated.payloads) == 1
-        assert integrated.payloads[0].source_node == "a"
+        assert integrated.payloads[0].source_node == compiled.nodes["a"].node_id
         assert integrated.payloads[0].content == "from_a"
         assert integrated.integrated_content == ["from_a"]
 
@@ -1002,7 +1005,7 @@ class TestUpstreamPayloadsFlow:
         # _submit groups multiple delivers to the same target into one
         # dispatch with a list payload → one IntegratedPayload.
         assert len(integrated.payloads) == 1
-        assert integrated.payloads[0].source_node == "a"
+        assert integrated.payloads[0].source_node == compiled.nodes["a"].node_id
         assert integrated.payloads[0].content == ["first", "second"]
         assert integrated.integrated_content == [["first", "second"]]
 
@@ -1038,7 +1041,7 @@ class TestUpstreamPayloadsFlow:
         assert len(sink.seen_inputs) == 1
         integrated = sink.seen_inputs[0]
         assert len(integrated.payloads) == 1
-        assert integrated.payloads[0].source_node == "a"
+        assert integrated.payloads[0].source_node == compiled.nodes["a"].node_id
         assert integrated.payloads[0].content == {"data": 42}
 
     async def test_flow_under_parallel_on_all_preds(self) -> None:
@@ -1089,10 +1092,12 @@ class TestUpstreamPayloadsFlow:
         # Two different sources (b, c) → two IntegratedPayloads.
         assert len(integrated.payloads) == 2
         by_source = {p.source_node: p.content for p in integrated.payloads}
-        assert by_source == {"b": "from_b", "c": "from_c"}
+        assert by_source == {
+            compiled.nodes["b"].node_id: "from_b",
+            compiled.nodes["c"].node_id: "from_c",
+        }
 
-    async def test_entry_node_receives_empty_integrated_input(self) -> None:
-        """The entry node has no upstream — integrated_input is empty (not None)."""
+    async def test_entry_node_receives_start_payload(self) -> None:
         from modex_graph import Graph, LinearScheduler
 
         sink = _RecordingSinkNode()
@@ -1107,5 +1112,6 @@ class TestUpstreamPayloadsFlow:
 
         assert len(sink.seen_inputs) == 1
         integrated = sink.seen_inputs[0]
-        assert integrated.payloads == []
-        assert integrated.integrated_content == []
+        assert len(integrated.payloads) == 1
+        assert integrated.payloads[0].source_node == compiled.nodes[GraphNode.START].node_id
+        assert integrated.integrated_content == [None]

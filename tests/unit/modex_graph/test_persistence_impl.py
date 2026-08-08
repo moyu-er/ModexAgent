@@ -76,15 +76,15 @@ def test_null_deliver_store_uses_queue_without_consumption_state() -> None:
     store = modex_graph.NullDeliverStore()
     first_id = store.accumulate(
         graph_instance_id=101,
-        target_node="worker",
-        source_node="start",
+        node_id="worker",
+        source_node_id="start",
         source_invocation_id=1000,
         content="first",
     )
     store.accumulate(
         graph_instance_id=101,
-        target_node="worker",
-        source_node="start",
+        node_id="worker",
+        source_node_id="start",
         source_invocation_id=1000,
         content="second",
     )
@@ -95,3 +95,62 @@ def test_null_deliver_store_uses_queue_without_consumption_state() -> None:
     records = store.query_consumable(101, "worker")
     assert [record.content for record in records] == ["second"]
     assert records[0].status is DeliverConsumptionStatus.PENDING
+
+
+def test_sqlite_deliver_store_rebuilds_old_schema_without_node_id() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE deliver_states ("
+        "deliver_id INTEGER PRIMARY KEY, "
+        "graph_instance_id INTEGER NOT NULL, "
+        "content_json TEXT NOT NULL, "
+        "status TEXT NOT NULL DEFAULT 'pending', "
+        "created_at INTEGER NOT NULL, "
+        "updated_at INTEGER NOT NULL)"
+    )
+    modex_graph.SqliteDeliverStore(conn)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(deliver_states)").fetchall()}
+    assert "node_id" in columns
+    assert "source_node_id" in columns
+    assert "consumed_by_invocation_id" in columns
+    conn.close()
+
+
+def test_sqlite_graph_instance_store_rebuilds_old_schema_and_accepts_pending() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE graph_instances ("
+        "graph_instance_id INTEGER PRIMARY KEY, "
+        "spec_id INTEGER NOT NULL, "
+        "parent_instance_id INTEGER, "
+        "parent_node TEXT, "
+        "status TEXT NOT NULL DEFAULT 'running', "
+        "created_at INTEGER NOT NULL, "
+        "updated_at INTEGER NOT NULL)"
+    )
+    store = modex_graph.SqliteGraphInstanceStore(conn)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(graph_instances)").fetchall()}
+    assert "node_id_map_json" in columns
+    store.save(_metadata(status=GraphInstanceStatus.PENDING))
+    loaded = store.load(101)
+    assert loaded is not None
+    assert loaded.status == GraphInstanceStatus.PENDING
+    conn.close()
+
+
+def test_sqlite_node_state_store_rebuilds_old_schema_without_node_id() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE node_states ("
+        "node_state_id INTEGER PRIMARY KEY, "
+        "graph_instance_id INTEGER NOT NULL, "
+        "version INTEGER NOT NULL, "
+        "status TEXT NOT NULL DEFAULT 'running', "
+        "state_json TEXT NOT NULL, "
+        "created_at INTEGER NOT NULL, "
+        "updated_at INTEGER NOT NULL)"
+    )
+    modex_graph.SqliteNodeStateStore(conn, 1001)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(node_states)").fetchall()}
+    assert "node_id" in columns
+    conn.close()

@@ -163,15 +163,15 @@ class TestGraphSpec:
 
     # ── Structural validation ──────────────────────────────────────────
 
-    def test_validation_empty_nodes_rejected(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            GraphSpec(
-                name="g1",
-                nodes=[],
-                edges=[EdgeSpec(source=GraphNode.START, target="entry")],
-                state_class="counter_state",
-            )
-        assert "at least one node" in str(exc_info.value)
+    def test_empty_nodes_with_direct_start_to_end_is_valid(self) -> None:
+        spec = GraphSpec(
+            name="g1",
+            nodes=[],
+            edges=[EdgeSpec(source=GraphNode.START, target=GraphNode.END)],
+            state_class="counter_state",
+        )
+
+        assert spec.nodes == []
 
     def test_validation_duplicate_node_names_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:

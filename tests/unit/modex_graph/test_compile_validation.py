@@ -63,8 +63,7 @@ class TestCompileValidation:
         g.add_edge("a", GraphNode.END)
         compiled = g.compile()
         assert "a" in compiled.nodes
-        # Only one entry for "a" (dict semantics).
-        assert len(compiled.nodes) == 1
+        assert len(compiled.nodes) == 3
 
     def test_cycle_warn_does_not_raise(self) -> None:
         g: Graph[CounterState] = Graph()
@@ -77,7 +76,7 @@ class TestCompileValidation:
             warnings.simplefilter("always")
             compiled = g.compile(cycle_detection="warn")
             assert any("cycle" in str(warning.message).lower() for warning in w)
-        assert compiled.entry_node == "a"
+        assert compiled.entry_node == GraphNode.START
 
     def test_cycle_raise_raises(self) -> None:
         g: Graph[CounterState] = Graph()
@@ -107,7 +106,7 @@ class TestCompileValidation:
         g.add_edge(GraphNode.START, "a")
         g.add_edge("a", GraphNode.END)
         compiled = g.compile(max_iterations=50)
-        assert compiled.entry_node == "a"
+        assert compiled.entry_node == GraphNode.START
         assert compiled.max_iterations == 50
 
     def test_max_iterations_default_100(self) -> None:
