@@ -57,6 +57,8 @@ from modex_graph import (
     GraphContext,
     GraphDrained,
     GraphEngine,
+    GraphIORecord,
+    GraphIORecordStore,
     GraphInstance,
     GraphInstanceStatus,
     GraphInstanceStore,
@@ -75,8 +77,10 @@ from modex_graph import (
     GraphStateSnapshot,
     NodeRegistry,
     NullCoordinatorFactory,
+    NullGraphIORecordStore,
     default_id_generator,
 )
+from modex_graph.persistence._time import now_ms
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +141,7 @@ class GraphOrchestrator:
         instance_store: GraphInstanceStore,
         coordinator_factory: CoordinatorFactory = _NULL_COORDINATOR_FACTORY,
         output_adapter: GraphOutputAdapter | None = None,
+        io_store: GraphIORecordStore = NullGraphIORecordStore(),
     ) -> None:
         """Initialize the orchestrator with the required registries + stores.
 
@@ -154,6 +159,13 @@ class GraphOrchestrator:
                 SQLite-backed factory for crash recovery.
             output_adapter: optional adapter notified when execution completes
                 or crashes.
+            io_store: persistence for ``GraphIORecord`` (input/output payloads
+                per graph instance). A record is saved on ``create_instance``
+                with the ``user_input``; its ``output`` is updated when
+                ``run_instance`` completes. Defaults to
+                ``NullGraphIORecordStore`` (no-op); business layers substitute
+                an ``InMemoryGraphIORecordStore`` or
+                ``SqliteGraphIORecordStore`` for I/O tracking.
         """
         self._node_registry = node_registry
         self._state_classes = state_classes
@@ -161,6 +173,7 @@ class GraphOrchestrator:
         self._instance_store = instance_store
         self._coordinator_factory = coordinator_factory
         self._output_adapter = output_adapter
+        self._io_store = io_store
         self._compiler = GraphSpecCompiler(node_registry, state_classes)
         self._runtime = GraphRuntime()
         self._active_instances: dict[int, GraphInstance] = {}
@@ -222,6 +235,16 @@ class GraphOrchestrator:
             node_id_map=node_id_map,
         )
         self._instance_store.save(metadata)
+        self._io_store.save(
+            GraphIORecord(
+                record_id=default_id_generator().generate(),
+                graph_instance_id=graph_instance_id,
+                spec_id=spec_id,
+                user_input=user_input,
+                output=None,
+                created_at=now_ms(),
+            )
+        )
         coordinator = self._coordinator_factory.create(graph_instance_id, self._instance_store)
         self._attach_output_adapter(coordinator)
         for node in compiled.nodes.values():
@@ -295,10 +318,17 @@ class GraphOrchestrator:
             final_state = await engine.run_async(ctx)
             status = GraphInstanceStatus.COMPLETED
             self._instance_store.update_status(gid, status)
+            result = dict(final_state).get("result")
+            io_record = self._io_store.get_by_instance(gid)
+            if io_record is not None:
+                # result is Any (dict extraction); narrow at the state boundary.
+                self._io_store.update_output(
+                    io_record.record_id, result if isinstance(result, list) else None,
+                )
             output = GraphOutput(
                 kind=GraphOutputKind.COMPLETED,
                 graph_instance_id=gid,
-                result=dict(final_state).get("result"),
+                result=result,
                 timestamp=time.time_ns() // 1_000_000,
             )
         except GraphInterrupt:

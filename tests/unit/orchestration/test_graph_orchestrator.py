@@ -36,12 +36,15 @@ from modex_agent.control.graph_control import LiveGraphEngineController
 from modex_agent.orchestration import GraphOrchestrator
 from modex_graph import (
     CoordinatorFactory,
+    DefaultGraphState,
     EdgeSpec,
     FunctionNodeFactory,
     GraphContext,
     GraphInstance,
     GraphInstanceStatus,
     GraphInstanceStore,
+    GraphIORecord,
+    GraphIORecordStore,
     GraphMetadata,
     GraphNode,
     GraphOutput,
@@ -52,6 +55,7 @@ from modex_graph import (
     GraphSpec,
     GraphState,
     GraphStateSnapshot,
+    InMemoryGraphIORecordStore,
     InMemoryGraphInstanceStore,
     InMemoryGraphSpecStore,
     IntegratedInput,
@@ -60,6 +64,7 @@ from modex_graph import (
     NodeRegistry,
     NodeSpec,
     NullCoordinatorFactory,
+    NullGraphIORecordStore,
     RoutingError,
     create_null_coordinator,
 )
@@ -184,6 +189,7 @@ def _make_orchestrator(
     state_classes: dict[str, type[GraphState]] | None = None,
     spec_store: InMemoryGraphSpecStore | None = None,
     instance_store: InMemoryGraphInstanceStore | None = None,
+    io_store: GraphIORecordStore | None = None,
 ) -> tuple[GraphOrchestrator, InMemoryGraphSpecStore, InMemoryGraphInstanceStore]:
     """Build an orchestrator with in-memory stores + the test registries."""
     spec_store = spec_store if spec_store is not None else InMemoryGraphSpecStore()
@@ -193,6 +199,7 @@ def _make_orchestrator(
         state_classes=state_classes if state_classes is not None else _state_classes(),
         spec_store=spec_store,
         instance_store=instance_store,
+        io_store=io_store if io_store is not None else NullGraphIORecordStore(),
     )
     return orchestrator, spec_store, instance_store
 
@@ -1254,3 +1261,106 @@ class TestP1LifecycleHardening:
         # P1-4 assertions: status stays RUNNING (orphan for recovery),
         # instance NOT evicted (RUNNING is non-terminal)
         assert _load_status(instance_store, gid) == GraphInstanceStatus.RUNNING.value
+
+
+# -- I/O record lifecycle (GraphIORecordStore injection) -----------------
+
+
+def _echo_payload(ctx: GraphContext[Any]) -> GraphPayload:
+    content = ctx.user_input.content if ctx.user_input is not None else ""
+    return GraphPayload(content=f"echo: {content}")
+
+
+def _result_spec() -> GraphSpec:
+    return GraphSpec(
+        name="result_graph",
+        nodes=[
+            NodeSpec(name="entry", node_type="function", config={"function": "echo"}),
+        ],
+        edges=[
+            EdgeSpec(source=GraphNode.START, target="entry"),
+            EdgeSpec(source="entry", target=GraphNode.END),
+        ],
+        state_class="default",
+    )
+
+
+class TestIORecordLifecycle:
+    """io_record lifecycle: created on create_instance, output updated on completion."""
+
+    async def test_io_record_created_on_create_instance(self) -> None:
+        """After create_instance, an io_record exists with user_input and output=None."""
+        io_store = InMemoryGraphIORecordStore()
+        orch, spec_store, _ = _make_orchestrator(io_store=io_store)
+        spec_id = _save_spec(spec_store, _simple_spec())
+        user_input = GraphPayload(content="test input")
+
+        gid = await orch.create_instance(spec_id, user_input=user_input)
+
+        record = io_store.get_by_instance(gid)
+        assert record is not None
+        assert record.graph_instance_id == gid
+        assert record.spec_id == spec_id
+        assert record.user_input is not None
+        assert record.user_input.content == "test input"
+        assert record.output is None
+
+    async def test_io_record_created_with_none_user_input(self) -> None:
+        """When user_input is None, the io_record still exists with user_input=None."""
+        io_store = InMemoryGraphIORecordStore()
+        orch, spec_store, _ = _make_orchestrator(io_store=io_store)
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_instance(spec_id)
+
+        record = io_store.get_by_instance(gid)
+        assert record is not None
+        assert record.user_input is None
+        assert record.output is None
+
+    async def test_io_record_output_updated_on_completion(self) -> None:
+        """After create_and_run with DefaultGraphState, output is populated with the result."""
+        io_store = InMemoryGraphIORecordStore()
+        registry = NodeRegistry()
+        registry.register("function", FunctionNodeFactory({"echo": _echo_payload}))
+        orch, spec_store, _ = _make_orchestrator(
+            io_store=io_store,
+            node_registry=registry,
+            state_classes={"default": DefaultGraphState},
+        )
+        spec_id = _save_spec(spec_store, _result_spec())
+        user_input = GraphPayload(content="hello")
+
+        gid = await orch.create_and_run(spec_id, user_input=user_input)
+
+        record = io_store.get_by_instance(gid)
+        assert record is not None
+        assert record.user_input is not None
+        assert record.user_input.content == "hello"
+        assert record.output is not None
+        assert len(record.output) == 1
+        assert record.output[0].content == "echo: hello"
+
+    async def test_io_record_output_remains_none_when_state_has_no_result(self) -> None:
+        """CounterState has no result field; output stays None after completion."""
+        io_store = InMemoryGraphIORecordStore()
+        orch, spec_store, _ = _make_orchestrator(io_store=io_store)
+        spec_id = _save_spec(spec_store, _simple_spec())
+        user_input = GraphPayload(content="test")
+
+        gid = await orch.create_and_run(spec_id, user_input=user_input)
+
+        record = io_store.get_by_instance(gid)
+        assert record is not None
+        assert record.user_input is not None
+        assert record.user_input.content == "test"
+        assert record.output is None
+
+    async def test_null_io_store_does_not_break_lifecycle(self) -> None:
+        """Default NullGraphIORecordStore: create + run works without errors."""
+        orch, spec_store, instance_store = _make_orchestrator()
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_and_run(spec_id)
+
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.COMPLETED.value
