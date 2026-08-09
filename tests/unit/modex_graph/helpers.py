@@ -45,11 +45,12 @@ class _AutoRegisterCoordinator(GraphPersistenceCoordinator):
         content: Any,
         source_node_id: str,
         source_invocation_id: int,
+        source_node_name: str | None = None,
     ) -> int | None:
         if target_node_id != GraphNode.END and self.get_deliver_store(target_node_id) is None:
             self.register_node(target_node_id)
         return super().route_deliver(
-            target_node_id, content, source_node_id, source_invocation_id
+            target_node_id, content, source_node_id, source_invocation_id, source_node_name
         )
 
 

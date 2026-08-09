@@ -297,8 +297,8 @@ export const GraphExecutionViewer: FC<GraphExecutionViewerProps> = ({
   const handleOpenSession = useCallback(
     (nodeName: string): void => {
       const node = instance?.nodes.find((n) => n.node_name === nodeName);
-      if (node) {
-        onJumpToSession(`${node.node_id}.${node.node_name}`);
+      if (node?.session_id) {
+        onJumpToSession(node.session_id);
       }
     },
     [instance?.nodes, onJumpToSession],
@@ -529,9 +529,11 @@ export const GraphExecutionViewer: FC<GraphExecutionViewerProps> = ({
                 <button
                   key={node.node_id}
                   type="button"
-                  onClick={(): void =>
-                    onJumpToSession(`${node.node_id}.${node.node_name}`)
-                  }
+                  onClick={(): void => {
+                    if (node.session_id) {
+                      onJumpToSession(node.session_id);
+                    }
+                  }}
                   title={t("graphs.openSession")}
                   className="flex items-center justify-between gap-2 px-4 py-2.5 text-left hover:bg-hairline-soft"
                 >

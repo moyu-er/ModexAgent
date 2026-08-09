@@ -9,6 +9,7 @@
 // extracted from GraphWsMessage payloads.
 
 import type { GraphEvent, GraphInstance, GraphNodeStatus } from "../lib/graphsApi";
+import type { GraphOutputEvent } from "../lib/ws-client";
 
 /**
  * Minimal topology edge, keyed by node name (matches GraphSpec edges).
@@ -169,7 +170,23 @@ export function mergeTimelineEvents(
   for (const event of incoming) {
     if (!byKey.has(event.key)) byKey.set(event.key, event);
   }
-  return [...byKey.values()].sort((a, b) => a.timestamp - b.timestamp);
+  const merged = [...byKey.values()].sort((a, b) => a.timestamp - b.timestamp);
+
+  // Secondary dedupe: same kind + nodeId + timestamp → keep the richer entry.
+  // REST entries (no nodeId) are keyed by primary key to avoid collapsing
+  // distinct same-kind events that share a single observedAt timestamp.
+  const seen = new Map<string, GraphTimelineEvent>();
+  for (const e of merged) {
+    const secKey =
+      e.nodeId !== undefined
+        ? `${e.kind}:${e.nodeId}:${e.timestamp}`
+        : e.key;
+    const prev = seen.get(secKey);
+    if (!prev || (e.event && !prev.event)) {
+      seen.set(secKey, e);
+    }
+  }
+  return [...seen.values()];
 }
 
 // ── G11: WS-mode helpers (PRD §6.1 Phase 2, §11.2) ──────────────────────────
@@ -212,6 +229,7 @@ export function wsTimelineEvent(
   nodeId: string | undefined,
   nodeName: string | undefined,
   timestamp: number,
+  event?: GraphOutputEvent,
 ): GraphTimelineEvent {
   return {
     key: `ws:${kind}:${nodeId ?? ""}:${timestamp}`,
@@ -220,6 +238,7 @@ export function wsTimelineEvent(
     derived: false,
     nodeId,
     nodeName,
+    event,
   };
 }
 

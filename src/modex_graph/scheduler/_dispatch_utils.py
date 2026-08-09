@@ -70,7 +70,7 @@ def route_deliver_from_dispatch[S: "GraphState"](
     source_inv_id = state_update.get("_source_inv_id", 0) if state_update else 0
     target_node_id = graph.nodes[target].node_id
     return ctx.coordinator.route_deliver(
-        target_node_id, content, source_node_id, source_inv_id
+        target_node_id, content, source_node_id, source_inv_id, source_node_name
     )
 
 

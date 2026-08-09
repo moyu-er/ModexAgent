@@ -94,6 +94,7 @@ class NodeStatusInfo(BaseModel):
     node_id: str
     status: str
     result: GraphPayload | None = None
+    session_id: str | None = None
 
 
 class GraphInstanceResponse(BaseModel):

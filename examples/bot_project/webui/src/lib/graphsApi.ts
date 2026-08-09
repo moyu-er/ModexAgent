@@ -52,6 +52,7 @@ export interface GraphNodeStatus {
   node_id: string;
   status: string;
   result?: GraphPayload | null;
+  session_id?: string | null;
 }
 
 export interface GraphPayload {

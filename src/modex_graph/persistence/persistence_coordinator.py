@@ -231,6 +231,7 @@ class GraphPersistenceCoordinator:
         content: Any,
         source_node_id: str,
         source_invocation_id: int,
+        source_node_name: str | None = None,
     ) -> int | None:
         """Route a deliver to the target node's deliver_store.
 
@@ -239,6 +240,8 @@ class GraphPersistenceCoordinator:
             content: The delivered content (JSON-serializable).
             source_node_id: The delivering node ID.
             source_invocation_id: The deliverer's invocation_id.
+            source_node_name: The delivering node's name (for event emission).
+                ``None`` for external delivers (no source node).
 
         Returns:
             The ``deliver_id`` (Snowflake).
@@ -259,6 +262,7 @@ class GraphPersistenceCoordinator:
         self.emit_output(
             GraphOutputKind.DELIVER_DISPATCHED,
             node_id=source_node_id,
+            node_name=source_node_name,
             target_node_id=target_node_id,
         )
         return deliver_id

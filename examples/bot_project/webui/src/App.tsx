@@ -77,9 +77,10 @@ const AppInner: FC = () => {
 
   const { route, navigate } = useHashRoute();
 
-  // Agent-node click in the graph execution viewer: session id is
-  // "{node_id}.{node_name}" (AgentNode._ensure_session). Jump back to chat
-  // and select that session's transcript.
+  // Agent-node click in the graph execution viewer: session_id comes from
+  // NodeStatusInfo, populated by the orchestrator from BotAgentNode._session
+  // (CACHED strategy) or the last executed session. Jump back to chat and
+  // select that session's transcript.
   const handleJumpToSession = useCallback(
     (sessionId: string): void => {
       navigate("");

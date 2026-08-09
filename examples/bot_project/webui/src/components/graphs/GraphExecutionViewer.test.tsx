@@ -77,7 +77,7 @@ function makeInstance(overrides: Partial<GraphInstance> = {}): GraphInstance {
     graph_instance_id: "12345",
     status: "running",
     nodes: [
-      { node_name: "designer", node_id: "node_1", status: "completed" },
+      { node_name: "designer", node_id: "node_1", status: "completed", session_id: "abc123.designer" },
       { node_name: "implementer", node_id: "node_2", status: "running" },
     ],
     result: null,
@@ -247,7 +247,7 @@ describe("GraphExecutionViewer — node selection", () => {
     expect(within(panel).queryByText("Open session transcript")).toBeNull();
   });
 
-  it("calls onJumpToSession with {node_id}.{node_name} when agent node is clicked", async () => {
+  it("calls onJumpToSession with node.session_id when agent node is clicked", async () => {
     const onJumpToSession = vi.fn();
     renderViewer({ onJumpToSession });
     await waitForCanvas();
@@ -255,7 +255,7 @@ describe("GraphExecutionViewer — node selection", () => {
     // Agent node: single click → direct jump to session
     fireEvent.click(screen.getByTestId("graph-node-designer"));
 
-    expect(onJumpToSession).toHaveBeenCalledWith("node_1.designer");
+    expect(onJumpToSession).toHaveBeenCalledWith("abc123.designer");
   });
 });
 

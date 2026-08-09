@@ -32,8 +32,7 @@ interface TimelineRowProps {
 const TimelineRow: FC<TimelineRowProps> = ({ event, inferredLabel }) => {
   const [expanded, setExpanded] = useState(false);
   const hasPayload = Boolean(
-    event.event?.result !== undefined ||
-      event.event?.result !== null ||
+    (event.event?.result !== undefined && event.event?.result !== null) ||
       event.event?.error,
   );
   const resultStr = event.event?.result

@@ -17,6 +17,7 @@ import {
   getInstance,
   type GraphInstance,
   type GraphNodeStatus,
+  type GraphPayload,
 } from "../lib/graphsApi";
 import type {
   GraphOutputEvent,
@@ -266,7 +267,7 @@ export function useGraphExecution(
           );
           setTimeline((current) =>
             mergeTimelineEvents(current, [
-              wsTimelineEvent("node_started", event.node_id, event.node_name, ts),
+              wsTimelineEvent("node_started", event.node_id, event.node_name, ts, event),
             ]),
           );
           break;
@@ -303,7 +304,7 @@ export function useGraphExecution(
           }
           setTimeline((current) =>
             mergeTimelineEvents(current, [
-              wsTimelineEvent("node_completed", event.node_id, event.node_name, ts),
+              wsTimelineEvent("node_completed", event.node_id, event.node_name, ts, event),
             ]),
           );
           break;
@@ -325,7 +326,7 @@ export function useGraphExecution(
           }
           setTimeline((current) =>
             mergeTimelineEvents(current, [
-              wsTimelineEvent("node_crashed", event.node_id, event.node_name, ts),
+              wsTimelineEvent("node_crashed", event.node_id, event.node_name, ts, event),
             ]),
           );
           break;
@@ -351,15 +352,22 @@ export function useGraphExecution(
               ]);
             }
           }
+          setTimeline((current) =>
+            mergeTimelineEvents(current, [
+              wsTimelineEvent("deliver_dispatched", event.node_name, event.node_name, ts, event),
+            ]),
+          );
           break;
         }
         case "graph_completed": {
           setInstance((prev) =>
-            prev ? { ...prev, status: "completed" } : prev,
+            prev
+              ? { ...prev, status: "completed", result: (event.result as GraphPayload[] | null) ?? null }
+              : prev,
           );
           setTimeline((current) =>
             mergeTimelineEvents(current, [
-              wsTimelineEvent("graph_completed", undefined, undefined, ts),
+              wsTimelineEvent("graph_completed", undefined, undefined, ts, event),
             ]),
           );
           break;
@@ -370,7 +378,7 @@ export function useGraphExecution(
           );
           setTimeline((current) =>
             mergeTimelineEvents(current, [
-              wsTimelineEvent("graph_crashed", undefined, undefined, ts),
+              wsTimelineEvent("graph_crashed", undefined, undefined, ts, event),
             ]),
           );
           break;

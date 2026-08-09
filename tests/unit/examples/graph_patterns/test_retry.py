@@ -57,10 +57,11 @@ class _AutoRegCoord(GraphPersistenceCoordinator):
         content: Any,
         source_node: str,
         source_invocation_id: int,
+        source_node_name: str | None = None,
     ) -> int | None:
         if target_node != GraphNode.END and self.get_deliver_store(target_node) is None:
             self.register_node(target_node)
-        return super().route_deliver(target_node, content, source_node, source_invocation_id)
+        return super().route_deliver(target_node, content, source_node, source_invocation_id, source_node_name)
 
 
 def _make_coordinator() -> _AutoRegCoord:

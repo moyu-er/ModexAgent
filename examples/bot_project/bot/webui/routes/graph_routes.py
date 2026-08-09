@@ -31,8 +31,9 @@ from bot.webui.routes.graph_models import (
     NodeStatusInfo,
     NodeTopologyInfo,
 )
+from modex_agent.agents.agent_node import AgentNode
 from modex_agent.orchestration import GraphOrchestrator
-from modex_graph import GraphInstanceStatus, GraphOutput, GraphPayload, GraphSpec, NodeSpec, TopologyError
+from modex_graph import GraphInstanceStatus, GraphNode, GraphOutput, GraphPayload, GraphSpec, NodeSpec, TopologyError
 
 if TYPE_CHECKING:
     from bot.webui.server import WebUIServer
@@ -382,6 +383,12 @@ async def handle_get_instance(request: web.Request) -> web.Response:
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=404)
     id_to_name = {nid: name for name, nid in snapshot.metadata.node_id_map.items()}
+    session_id_map: dict[str, str] = {}
+    instance = orch._active_instances.get(gid)
+    if instance is not None and instance.compiled is not None:
+        for node in instance.compiled.nodes.values():
+            if isinstance(node, AgentNode) and node._session is not None:
+                session_id_map[node.node_id] = node._session.session_id
     nodes = [
         NodeStatusInfo(
             node_name=id_to_name.get(nid, nid),
@@ -390,15 +397,34 @@ async def handle_get_instance(request: web.Request) -> web.Response:
             result=_extract_node_result(inv[-1].state_json)
             if inv and inv[-1].status.value == "completed"
             else None,
+            session_id=session_id_map.get(nid),
         )
         for nid, inv in snapshot.nodes.items()
     ]
+    # Extract instance-level result from END node's state checkpoint.
+    # Converges with the WS path: GraphOrchestrator emits GraphOutput(COMPLETED,
+    # result=dict(final_state).get("result")) which is the same list[GraphPayload]
+    # that EndNode wrote to state.result. REST polling reads it from the END
+    # node's persisted state_json; WS receives it via graph_completed event.
+    end_result: list[GraphPayload] | None = None
+    end_nid = snapshot.metadata.node_id_map.get(GraphNode.END)
+    if end_nid and end_nid in snapshot.nodes:
+        end_inv = snapshot.nodes[end_nid]
+        if end_inv and end_inv[-1].status.value == "completed":
+            raw = end_inv[-1].state_json.get("result")
+            if isinstance(raw, list) and raw:
+                end_result = [
+                    GraphPayload(content=str(item["content"]))
+                    for item in raw
+                    if isinstance(item, dict) and "content" in item
+                ] or None
     return web.json_response(
         GraphInstanceResponse(
             spec_id=str(snapshot.metadata.spec_id),
             graph_instance_id=str(snapshot.metadata.graph_instance_id),
             status=snapshot.metadata.status.value,
             nodes=nodes,
+            result=end_result,
         ).model_dump(mode="json")
     )
 
