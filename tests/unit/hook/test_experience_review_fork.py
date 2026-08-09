@@ -16,24 +16,34 @@ from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.experience.meta import PerFileExperienceMetaStore
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.types import ToolCall
+from modex_agent.core.scope import MemoryContext
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import MessageRole, ToolCall
 from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
+from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.history import ListMessageHistory
 
 
 def _make_messages() -> list[ChatMessage]:
     """Build a realistic conversation with tool_calls + tool_results."""
     return [
-        ChatMessage(role="user", content="How do I configure the memory system?"),
+        ChatMessage(role=MessageRole.USER, content="How do I configure the memory system?"),
         ChatMessage(
-            role="assistant",
+            role=MessageRole.ASSISTANT,
             content=None,
             tool_calls=[
                 ToolCall(tool_name="read", arguments={"path": "config.yml"}, call_id="tc_1"),
             ],
         ),
-        ChatMessage(role="tool", tool_call_id="tc_1", content="memory: {enabled: true}"),
-        ChatMessage(role="assistant", content="Set memory.enabled=true in config.yml."),
+        ChatMessage(
+            role=MessageRole.TOOL,
+            tool_call_id="tc_1",
+            content="memory: {enabled: true}",
+        ),
+        ChatMessage(
+            role=MessageRole.ASSISTANT,
+            content="Set memory.enabled=true in config.yml.",
+        ),
     ]
 
 
@@ -134,13 +144,18 @@ class TestExperienceReviewHookPassesForkHistory:
 
         review_agent = MagicMock(spec=ExperienceReviewAgent)
         review_agent.review = AsyncMock(return_value=True)
+        full_history = _make_messages()[1:]
+        memory_system = MagicMock(spec=MemorySystem)
+        memory_system.get_full_history = AsyncMock(return_value=full_history)
 
         hook = ExperienceReviewHook(
             review_agent=review_agent,
+            memory_system=memory_system,
             experience_dir=exp_dir,
             meta_store=meta,
             min_messages=2,
             exp_cooldown_turns=3,
+            snapshot_max_messages=3,
         )
         hook._turn_counter = 10
 
@@ -163,6 +178,7 @@ class TestExperienceReviewHookPassesForkHistory:
         ]
         ctx = MagicMock()
         ctx.history = ListMessageHistory(history_messages)
+        ctx.session = SessionInfo.from_str("fork-review.main")
 
         result = AgentResult(
             content="Found the issue", stop_reason=StopReason.COMPLETED, messages=[]
@@ -178,7 +194,11 @@ class TestExperienceReviewHookPassesForkHistory:
             f"Got kwargs: {list(call_kwargs.keys())}"
         )
         forked = call_kwargs["conversation_messages"]
-        assert len(forked) == 4, f"Expected 4 forked messages, got {len(forked)}"
+        assert forked == full_history
+        memory_system.get_full_history.assert_awaited_once_with(
+            MemoryContext(session_id="fork-review.main"),
+            limit=3,
+        )
         # Tool messages must be preserved (not flattened to text)
         roles = [
             getattr(m, "role", None) or (m.get("role") if isinstance(m, dict) else None)

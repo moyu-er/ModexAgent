@@ -183,7 +183,6 @@ class AgentTemplate:
                     builder=deps.context_fork_builder,
                     agent_type=name,
                     fork_max_messages=self.spec.fork_max_messages,
-                    template_memory=self.memory,
                 )
 
         subagent_ctx = build_session_only_memory(

@@ -92,6 +92,7 @@ def _wire_pool_to_resources(
     )
     hook = ExperienceReviewHook(
         review_agent=review_agent,
+        memory_system=pool_data.context_manager.memory_system,
         experience_dir=pool_data.experience_dir,
         meta_store=pool_data.experience_meta,
         min_messages=exp_cfg.min_messages,

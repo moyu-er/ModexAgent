@@ -114,7 +114,9 @@ class _MockMemory(MemorySystem):
     async def get_history(self, context: MemoryContext) -> list[ChatMessage]:
         return []
 
-    async def get_full_history(self, context: MemoryContext) -> list[ChatMessage]:
+    async def get_full_history(
+        self, context: MemoryContext, *, limit: int | None = None
+    ) -> list[ChatMessage]:
         return []
 
     async def search(
@@ -175,7 +177,6 @@ def _spec(builder) -> ForkContextSpec:
         builder=builder,
         agent_type="planner",
         fork_max_messages=10,
-        template_memory=None,
     )
 
 

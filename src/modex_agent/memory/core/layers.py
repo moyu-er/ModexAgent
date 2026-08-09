@@ -60,11 +60,18 @@ class SessionMemoryManager(ABC):
         pass
 
     @abstractmethod
-    async def get_all_messages_raw(self, context: MemoryContext) -> list[ChatMessage]:
+    async def get_all_messages_raw(
+        self,
+        context: MemoryContext,
+        *,
+        limit: int | None = None,
+    ) -> list[ChatMessage]:
         """Return all messages including soft-deleted ones.
 
         Soft-deleted messages carry ``_deleted: True``.  Backends without
         soft-delete (FILE) return the same set as ``get_all_messages``.
+        COMPACT role messages are excluded at the store layer.  When *limit*
+        is provided, returns only the most recent *limit* non-COMPACT messages.
         """
         pass
 

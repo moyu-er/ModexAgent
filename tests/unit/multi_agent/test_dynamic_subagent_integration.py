@@ -105,7 +105,7 @@ def test_multiple_templates_per_pool():
         assert types == {"a", "b"}
 
 
-def test_template_memory_is_baked_not_from_yaml():
+def test_subagent_memory_is_baked_not_from_yaml():
     """A ``memory:`` block on disk is ignored by PoolStore; subagent memory is
     baked from the caller's default (sub-minimal, immutable, spec §9). The
     factory's default is the sole source of truth; a stale/hand-edited rich
@@ -126,7 +126,7 @@ memory:
         assert t.memory is None  # on-disk memory ignored; caller's default wins
 
 
-def test_template_memory_baked_from_factory_default():
+def test_subagent_memory_baked_from_factory_default():
     """A template WITHOUT a memory block gets the factory's baked preset,
     identity-equal (the loader stores it directly, never re-validates)."""
     from modex_agent.ioc.configs.memory import MemoryConfig

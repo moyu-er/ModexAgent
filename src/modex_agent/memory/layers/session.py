@@ -95,9 +95,14 @@ class ScopedSessionMemoryManager(SessionMemoryManager):
         raw = await bundle.messages.load_messages()
         return ChatMessage.from_dicts(raw)
 
-    async def get_all_messages_raw(self, context: MemoryContext) -> list[ChatMessage]:
+    async def get_all_messages_raw(
+        self,
+        context: MemoryContext,
+        *,
+        limit: int | None = None,
+    ) -> list[ChatMessage]:
         bundle = await self._storage_factory(context)
-        raw = await bundle.messages.load_all_messages()
+        raw = await bundle.messages.load_all_messages(limit=limit)
         return ChatMessage.from_dicts(raw)
 
     async def retain_messages(

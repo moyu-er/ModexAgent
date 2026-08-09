@@ -709,7 +709,6 @@ class ForkContextSpec:
     builder: Any
     agent_type: str
     fork_max_messages: int
-    template_memory: Any
 
 
 class AppendParentPromptProvider(SystemPromptProvider):
@@ -782,7 +781,6 @@ class ForkContextProvider(SystemPromptProvider):
                 agent_type=self._spec.agent_type,
                 invocation_id=invocation_id,
                 fork_max_messages=self._spec.fork_max_messages,
-                template_memory=self._spec.template_memory,
                 subagent_memory_system=self._memory_system,
                 parent_name=parent_name,
             )

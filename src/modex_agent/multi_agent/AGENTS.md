@@ -89,7 +89,7 @@ per invocation by pipeline providers, so reuse is safe.)
 | `template.py` | `AgentTemplate` — subagent preset + the **only** construction path (`materialize`). Builds the tool manager, session-only memory, subagent hooks; wires per-invocation APPEND/FORK prompt providers. |
 | `template_registry.py` | `AgentTemplateRegistry` — scans/loads per-pool subagent templates (`config/pools/<pool>/templates/*.yml`). |
 | `materialize_deps.py` | `AgentMaterializeDeps` — frozen value object of construction deps (factory, broker, pool, path resolver, fork builder, …); replaces ~30 scattered ctor params. |
-| `context_fork.py` | `ContextForkBuilder` — builds the FORK context XML from parent message history (pure computation, T18). `build()` queries the parent session's `MessageStore`, applies lossy compaction, returns the XML string. No fork files written to disk; `register_for_cleanup`/`cleanup` are retained as no-ops for caller compatibility. |
+| `context_fork.py` | `ContextForkBuilder` — builds the FORK context XML from parent message history (pure computation, T18). `build()` queries the parent session's messages via `MemorySystem.get_full_history(limit=)`, returns the XML string. No fork files written to disk; no cleanup methods (file I/O removed in T17/T18). |
 | `workspace_paths.py` | `WorkspacePathResolver` — resolves `runtime_dir` / `memory_dir` / `output_path(session_id)` / `trace_dir(session_id)` / `pruned_manager` from the active workspace's pool_data. |
 | `router.py` | `DefaultMeshRouter` — session identity resolved via `InputMessage.session` (no string parsing). |
 | `envelope.py` | `AgentMessageEnvelope` — source, target, session id, agent_session_id, invocation id, message_type, payload. |

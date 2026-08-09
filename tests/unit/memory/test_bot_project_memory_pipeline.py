@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from modex_agent.agents.summarizer.abc import ArchiveGenerator
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.scope import MemoryContext
 from modex_agent.core.types import MessageRole
 from modex_agent.memory.archive_models import (
@@ -116,7 +117,9 @@ class _FakeInjectableMemorySystem(MemorySystem):
     async def get_history(self, context: Any, max_messages: int | None = None) -> list:
         return []
 
-    async def get_full_history(self, context: Any) -> list:
+    async def get_full_history(
+        self, context: MemoryContext, *, limit: int | None = None
+    ) -> list[ChatMessage]:
         return []
 
     async def retrieve_core_memory(self, context: Any, query: str = "") -> Any:
