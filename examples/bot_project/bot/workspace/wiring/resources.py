@@ -317,6 +317,7 @@ async def _assemble_resources(
         GraphOutput,
         HumanInputNodeFactory,
         NodeRegistry,
+        SqliteGraphIORecordStore,
         SqliteGraphInstanceStore,
         SqliteGraphSpecStore,
     )
@@ -331,6 +332,7 @@ async def _assemble_resources(
     graph_conn = _sqlite3.connect(str(ctx.paths.state_db), check_same_thread=False)
     graph_spec_store = SqliteGraphSpecStore(graph_conn)
     graph_instance_store = SqliteGraphInstanceStore(graph_conn)
+    graph_io_store = SqliteGraphIORecordStore(graph_conn)
     coordinator_factory = SqliteCoordinatorFactory(connection=graph_conn)
 
     graph_event_store: dict[int, list[GraphOutput]] = {}
@@ -344,6 +346,7 @@ async def _assemble_resources(
         instance_store=graph_instance_store,
         coordinator_factory=coordinator_factory,
         output_adapter=output_adapter,
+        io_store=graph_io_store,
     )
 
     # Per-workspace config/graphs: first materialize copies from the global

@@ -103,7 +103,8 @@ class GraphInstanceResponse(BaseModel):
     ``graph_instance_id`` is ``str`` to avoid JS precision loss (see
     :class:`GraphSpecSummary`). ``spec_id`` is ``str`` for the same reason;
     the frontend uses it to fetch the spec YAML for MiniTopology rendering
-    (graph visualization redesign G06).
+    (graph visualization redesign G06). ``created_at`` / ``updated_at``
+    are epoch ms (ADR-0029), sourced from ``GraphMetadata``.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -113,6 +114,28 @@ class GraphInstanceResponse(BaseModel):
     status: str
     nodes: list[NodeStatusInfo]
     result: list[GraphPayload] | None = None
+    created_at: int = 0
+    updated_at: int = 0
+
+
+class GraphRunRecordResponse(BaseModel):
+    """``GET /api/graphs/specs/{spec_id}/runs`` — one run's I/O + status.
+
+    Joins ``GraphIORecord`` (``user_input``, ``output``, ``created_at``)
+    with ``GraphMetadata`` (``status``, ``updated_at``). ``record_id`` and
+    ``graph_instance_id`` are ``str`` to avoid JS precision loss (see
+    :class:`GraphSpecSummary`).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    record_id: str
+    graph_instance_id: str
+    user_input: GraphPayload | None = None
+    output: list[GraphPayload] | None = None
+    status: str
+    created_at: int = 0
+    updated_at: int = 0
 
 
 class GraphRunResponse(BaseModel):
@@ -192,6 +215,7 @@ __all__ = [
     "GraphEventItem",
     "GraphEventListResponse",
     "GraphInstanceResponse",
+    "GraphRunRecordResponse",
     "GraphRunRequest",
     "GraphRunResponse",
     "GraphSpecListResponse",

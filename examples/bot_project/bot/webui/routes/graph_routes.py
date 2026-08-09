@@ -21,6 +21,7 @@ from bot.webui.routes.graph_models import (
     GraphEventItem,
     GraphEventListResponse,
     GraphInstanceResponse,
+    GraphRunRecordResponse,
     GraphRunRequest,
     GraphRunResponse,
     GraphSpecListResponse,
@@ -425,6 +426,8 @@ async def handle_get_instance(request: web.Request) -> web.Response:
             status=snapshot.metadata.status.value,
             nodes=nodes,
             result=end_result,
+            created_at=snapshot.metadata.created_at,
+            updated_at=snapshot.metadata.updated_at,
         ).model_dump(mode="json")
     )
 
@@ -444,15 +447,53 @@ async def handle_list_instances(request: web.Request) -> web.Response:
         )
     except ValueError:
         return web.json_response({"error": f"invalid status: {sf!r}"}, status=400)
+    spec_id_raw = request.query.get("spec_id")
+    if spec_id_raw is not None:
+        try:
+            spec_id = int(spec_id_raw)
+        except ValueError:
+            return web.json_response({"error": f"invalid spec_id: {spec_id_raw!r}"}, status=400)
+        metadatas = [m for m in metadatas if m.spec_id == spec_id]
     return web.json_response(
         [
             GraphInstanceResponse(
                 spec_id=str(m.spec_id),
-                graph_instance_id=str(m.graph_instance_id), status=m.status.value, nodes=[]
+                graph_instance_id=str(m.graph_instance_id),
+                status=m.status.value,
+                nodes=[],
+                created_at=m.created_at,
+                updated_at=m.updated_at,
             ).model_dump(mode="json")
             for m in metadatas
         ]
     )
+
+
+async def handle_list_runs(request: web.Request) -> web.Response:
+    r = _resolve_resources(request)
+    if isinstance(r, web.Response):
+        return r
+    orch, _, _ = r
+    sid = _int_param(request, "spec_id")
+    if isinstance(sid, web.Response):
+        return sid
+    records = orch._io_store.list_by_spec(sid)
+    instance_store = orch._instance_store
+    runs: list[GraphRunRecordResponse] = []
+    for record in records:
+        metadata = instance_store.load(record.graph_instance_id)
+        runs.append(
+            GraphRunRecordResponse(
+                record_id=str(record.record_id),
+                graph_instance_id=str(record.graph_instance_id),
+                user_input=record.user_input,
+                output=record.output,
+                status=metadata.status.value if metadata is not None else "unknown",
+                created_at=record.created_at,
+                updated_at=metadata.updated_at if metadata is not None else 0,
+            )
+        )
+    return web.json_response([run.model_dump(mode="json") for run in runs])
 
 
 async def handle_get_events(request: web.Request) -> web.Response:
@@ -491,6 +532,7 @@ def register_graph_routes(
     app.router.add_post("/api/graphs/specs/{spec_id}/run", handle_run_spec)
     app.router.add_get("/api/graphs/specs/{spec_id}/yaml", handle_get_spec_yaml)
     app.router.add_get("/api/graphs/specs/{spec_id}/topology", handle_get_topology)
+    app.router.add_get("/api/graphs/specs/{spec_id}/runs", handle_list_runs)
     app.router.add_get("/api/graphs/instances", handle_list_instances)
     app.router.add_get("/api/graphs/instances/{instance_id}", handle_get_instance)
     app.router.add_get("/api/graphs/instances/{instance_id}/events", handle_get_events)

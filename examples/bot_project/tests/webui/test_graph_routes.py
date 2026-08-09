@@ -26,7 +26,9 @@ from modex_graph import (
     EdgeSpec,
     GraphInstanceStatus,
     GraphOutput,
+    GraphPayload,
     GraphSpec,
+    InMemoryGraphIORecordStore,
     InMemoryGraphInstanceStore,
     InMemoryGraphSpecStore,
     NodeRegistry,
@@ -61,6 +63,7 @@ def _make_orchestrator() -> tuple[
         instance_store=instance_store,
         coordinator_factory=NullCoordinatorFactory(),
         output_adapter=WebUIGraphOutputAdapter(event_store),
+        io_store=InMemoryGraphIORecordStore(),
     )
     return orchestrator, event_store, spec_store
 
@@ -943,5 +946,139 @@ async def test_get_instance_node_result_truncation(tmp_path: Path) -> None:
         content = end_node["result"]["content"]
         assert len(content) == 503  # 500 + "..."
         assert content.endswith("...")
+    finally:
+        await client.close()
+
+
+# ── T4: /runs endpoint + spec_id filter + time fields ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_runs_returns_empty_list(tmp_path: Path) -> None:
+    orch, _, spec_store = _make_orchestrator()
+    spec_id = _save_spec(spec_store)
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get(f"/api/graphs/specs/{spec_id}/runs")
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        assert data == []
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_list_runs_returns_records_after_run(tmp_path: Path) -> None:
+    orch, _, spec_store = _make_orchestrator()
+    spec_id = _save_spec(spec_store)
+    gid = await orch.create_and_run(spec_id, user_input=GraphPayload(content="hello"))
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get(f"/api/graphs/specs/{spec_id}/runs")
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        assert len(data) == 1
+        run = data[0]
+        assert run["graph_instance_id"] == str(gid)
+        assert run["user_input"] is not None
+        assert run["user_input"]["content"] == "hello"
+        assert run["output"] is not None
+        assert run["output"][0]["content"] == "hello"
+        assert run["status"] == "completed"
+        assert run["created_at"] > 0
+        assert run["updated_at"] >= 0
+    finally:
+        await orch.cleanup()
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_list_runs_400_on_invalid_spec_id(tmp_path: Path) -> None:
+    orch, _, _ = _make_orchestrator()
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get("/api/graphs/specs/notanint/runs")
+        assert resp.status == 400
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_list_instances_with_spec_id_filter(tmp_path: Path) -> None:
+    orch, _, spec_store = _make_orchestrator()
+    spec_id = _save_spec(spec_store)
+    other_spec = GraphSpec(
+        name="other-graph",
+        state_class="default",
+        edges=[EdgeSpec(source="__start__", target="__end__")],
+    )
+    other_spec_id = spec_store.save(other_spec)
+    gid1 = await orch.create_instance(spec_id)
+    gid2 = await orch.create_instance(other_spec_id)
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get(f"/api/graphs/instances?spec_id={spec_id}")
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        ids = {item["graph_instance_id"] for item in data}
+        assert str(gid1) in ids
+        assert str(gid2) not in ids
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_list_instances_400_on_invalid_spec_id(tmp_path: Path) -> None:
+    orch, _, spec_store = _make_orchestrator()
+    _save_spec(spec_store)
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get("/api/graphs/instances?spec_id=notanint")
+        assert resp.status == 400
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_get_instance_includes_time_fields(tmp_path: Path) -> None:
+    orch, _, spec_store = _make_orchestrator()
+    spec_id = _save_spec(spec_store)
+    gid = await orch.create_instance(spec_id)
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get(f"/api/graphs/instances/{gid}")
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        assert "created_at" in data
+        assert "updated_at" in data
+        assert isinstance(data["created_at"], int)
+        assert isinstance(data["updated_at"], int)
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_list_instances_includes_time_fields(tmp_path: Path) -> None:
+    orch, _, spec_store = _make_orchestrator()
+    spec_id = _save_spec(spec_store)
+    await orch.create_instance(spec_id)
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get("/api/graphs/instances")
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        assert len(data) >= 1
+        for item in data:
+            assert "created_at" in item
+            assert "updated_at" in item
+            assert isinstance(item["created_at"], int)
+            assert isinstance(item["updated_at"], int)
     finally:
         await client.close()
