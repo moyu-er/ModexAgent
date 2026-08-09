@@ -65,6 +65,18 @@ export interface GraphInstance {
   status: string;
   nodes: GraphNodeStatus[];
   result: GraphPayload[] | null;
+  created_at?: number;
+  updated_at?: number;
+}
+
+export interface GraphRunRecord {
+  record_id: string;
+  graph_instance_id: string;
+  user_input: GraphPayload | null;
+  output: GraphPayload[] | null;
+  status: string;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface GraphRunResponse {
@@ -177,16 +189,30 @@ export async function getTopology(
   return resp.json() as Promise<GraphTopology>;
 }
 
+export async function getRuns(
+  workspaceId: string,
+  specId: string,
+): Promise<GraphRunRecord[]> {
+  const resp = await fetch(`${API_BASE}/graphs/specs/${specId}/runs`, {
+    headers: workspaceHeaders(workspaceId),
+  });
+  await assertOk(resp);
+  return resp.json() as Promise<GraphRunRecord[]>;
+}
+
 // ── Instances ───────────────────────────────────────────────────────────────
 
 export async function listInstances(
   workspaceId: string,
   status?: string,
+  specId?: string,
 ): Promise<GraphInstance[]> {
-  const params = status ? `?status=${encodeURIComponent(status)}` : "";
-  const resp = await fetch(`${API_BASE}/graphs/instances${params}`, {
-    headers: workspaceHeaders(workspaceId),
-  });
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (specId) params.set("spec_id", specId);
+  const query = params.toString();
+  const url = `${API_BASE}/graphs/instances${query ? `?${query}` : ""}`;
+  const resp = await fetch(url, { headers: workspaceHeaders(workspaceId) });
   await assertOk(resp);
   return resp.json() as Promise<GraphInstance[]>;
 }

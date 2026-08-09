@@ -1,7 +1,7 @@
 // GraphExecutionViewer.test.tsx — integration tests for the hero view (G05).
 //
 // Tests how the viewer orchestrates TopologyCanvas, sidebar panels,
-// DeliverDialog, and control buttons. useGraphExecution is mocked to return
+// inline deliver panel, and control buttons. useGraphExecution is mocked to return
 // controlled state; getSpec is mocked to return YAML that parseGraphSpecYaml
 // parses for real (testing the real spec→topology→canvas pipeline).
 
@@ -180,7 +180,6 @@ describe("GraphExecutionViewer — layout", () => {
     // Control buttons
     expect(within(bar).getByText("Pause")).toBeTruthy();
     expect(within(bar).getByText("Stop")).toBeTruthy();
-    expect(within(bar).getByText("Deliver")).toBeTruthy();
   });
 
   it("renders topology canvas, sidebar, and bottom summary bar", async () => {
@@ -260,7 +259,7 @@ describe("GraphExecutionViewer — node selection", () => {
 });
 
 describe("GraphExecutionViewer — control button state machine", () => {
-  it("shows Pause, Stop, Deliver when running", async () => {
+  it("shows Pause and Stop when running (no Resume)", async () => {
     mockHook({ instance: makeInstance({ status: "running" }) });
     renderViewer();
     await waitForCanvas();
@@ -268,11 +267,10 @@ describe("GraphExecutionViewer — control button state machine", () => {
     const bar = screen.getByTestId("control-bar");
     expect(within(bar).getByText("Pause")).toBeTruthy();
     expect(within(bar).getByText("Stop")).toBeTruthy();
-    expect(within(bar).getByText("Deliver")).toBeTruthy();
     expect(within(bar).queryByText("Resume")).toBeNull();
   });
 
-  it("shows Resume, Stop, Deliver when paused (no Pause)", async () => {
+  it("shows Resume and Stop when paused (no Pause)", async () => {
     mockHook({
       instance: makeInstance({
         status: "paused",
@@ -288,7 +286,6 @@ describe("GraphExecutionViewer — control button state machine", () => {
     const bar = screen.getByTestId("control-bar");
     expect(within(bar).getByText("Resume")).toBeTruthy();
     expect(within(bar).getByText("Stop")).toBeTruthy();
-    expect(within(bar).getByText("Deliver")).toBeTruthy();
     expect(within(bar).queryByText("Pause")).toBeNull();
   });
 
@@ -310,7 +307,6 @@ describe("GraphExecutionViewer — control button state machine", () => {
     expect(within(bar).queryByText("Pause")).toBeNull();
     expect(within(bar).queryByText("Resume")).toBeNull();
     expect(within(bar).queryByText("Stop")).toBeNull();
-    expect(within(bar).queryByText("Deliver")).toBeNull();
   });
 
   it("calls pauseGraph when Pause is clicked", async () => {
@@ -327,43 +323,88 @@ describe("GraphExecutionViewer — control button state machine", () => {
   });
 });
 
-describe("GraphExecutionViewer — DeliverDialog", () => {
-  it("opens DeliverDialog when Deliver button is clicked", async () => {
+describe("GraphExecutionViewer — inline deliver panel", () => {
+  it("renders inline deliver panel when running", async () => {
     mockHook({ instance: makeInstance({ status: "running" }) });
     renderViewer();
     await waitForCanvas();
 
-    const bar = screen.getByTestId("control-bar");
-    fireEvent.click(within(bar).getByText("Deliver"));
-
     await waitFor(() => {
-      expect(screen.getByTestId("deliver-dialog")).toBeTruthy();
+      expect(screen.getByTestId("deliver-inline-panel")).toBeTruthy();
     });
   });
 
-  it("calls deliverToNode and closes dialog on confirm", async () => {
+  it("renders inline deliver panel when paused", async () => {
+    mockHook({
+      instance: makeInstance({
+        status: "paused",
+        nodes: [
+          { node_name: "designer", node_id: "node_1", status: "completed" },
+          { node_name: "implementer", node_id: "node_2", status: "pending" },
+        ],
+      }),
+    });
+    renderViewer();
+    await waitForCanvas();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("deliver-inline-panel")).toBeTruthy();
+    });
+  });
+
+  it.each(["completed", "crashed", "stopped"])(
+    "hides inline deliver panel when terminal (%s)",
+    async (status) => {
+      mockHook({
+        instance: makeInstance({
+          status,
+          nodes: [
+            { node_name: "designer", node_id: "node_1", status: "completed" },
+            { node_name: "implementer", node_id: "node_2", status: "completed" },
+          ],
+        }),
+      });
+      renderViewer();
+      await waitForCanvas();
+
+      expect(screen.queryByTestId("deliver-inline-panel")).toBeNull();
+    },
+  );
+
+  it("Send button disabled when content is empty", async () => {
     mockHook({ instance: makeInstance({ status: "running" }) });
     renderViewer();
     await waitForCanvas();
 
-    // Open dialog via control bar Deliver button
-    const bar = screen.getByTestId("control-bar");
-    fireEvent.click(within(bar).getByText("Deliver"));
-
     await waitFor(() => {
-      expect(screen.getByTestId("deliver-dialog")).toBeTruthy();
+      expect(screen.getByTestId("deliver-inline-panel")).toBeTruthy();
     });
 
-    const dialog = screen.getByTestId("deliver-dialog");
+    const panel = screen.getByTestId("deliver-inline-panel");
+    const sendButton = within(panel).getByText("Deliver").closest("button");
+    expect(sendButton).toBeTruthy();
+    expect(sendButton?.disabled).toBe(true);
+  });
+
+  it("calls deliverToNode when content is entered and Send is clicked", async () => {
+    mockHook({ instance: makeInstance({ status: "running" }) });
+    renderViewer();
+    await waitForCanvas();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("deliver-inline-panel")).toBeTruthy();
+    });
+
+    const panel = screen.getByTestId("deliver-inline-panel");
 
     // Enter content in the textarea
-    const textarea = dialog.querySelector("textarea");
+    const textarea = panel.querySelector("textarea");
     expect(textarea).toBeTruthy();
     fireEvent.change(textarea!, { target: { value: "hello world" } });
 
-    // Click the confirm button (the "Deliver" button inside the dialog)
-    const confirmBtn = within(dialog).getByText("Deliver");
-    fireEvent.click(confirmBtn);
+    const sendButton = within(panel).getByText("Deliver").closest("button");
+    expect(sendButton?.disabled).toBe(false);
+    fireEvent.click(sendButton!);
 
     await waitFor(() => {
       expect(mockDeliverToNode).toHaveBeenCalledWith(
@@ -373,29 +414,30 @@ describe("GraphExecutionViewer — DeliverDialog", () => {
         "hello world",
       );
     });
-
-    // Dialog closes after confirm
-    await waitFor(() => {
-      expect(screen.queryByTestId("deliver-dialog")).toBeNull();
-    });
   });
 
-  it("closes dialog on Cancel", async () => {
+  it("clears content after successful deliver", async () => {
     mockHook({ instance: makeInstance({ status: "running" }) });
     renderViewer();
     await waitForCanvas();
 
-    const bar = screen.getByTestId("control-bar");
-    fireEvent.click(within(bar).getByText("Deliver"));
-
     await waitFor(() => {
-      expect(screen.getByTestId("deliver-dialog")).toBeTruthy();
+      expect(screen.getByTestId("deliver-inline-panel")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByText("Cancel"));
+    const panel = screen.getByTestId("deliver-inline-panel");
+    const textarea = panel.querySelector("textarea") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "hello world" } });
+
+    const sendButton = within(panel).getByText("Deliver").closest("button")!;
+    fireEvent.click(sendButton);
 
     await waitFor(() => {
-      expect(screen.queryByTestId("deliver-dialog")).toBeNull();
+      expect(mockDeliverToNode).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      expect(textarea.value).toBe("");
     });
   });
 });

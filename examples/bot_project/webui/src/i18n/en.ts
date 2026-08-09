@@ -597,6 +597,7 @@ export const en = {
     yamlConfig: "YAML Configuration",
     // 执行查看器 §6.1 / §16
     deliver: "Deliver",
+    deliverInline: "Deliver to node",
     deliverDialogTitle: "Deliver to node",
     deliverNodeLabel: "Node",
     deliverContentLabel: "Content",

@@ -61,8 +61,9 @@ import {
   type ParsedGraphTopology,
 } from "./yaml/parseGraphSpec";
 import { formatGraphApiError, GraphStatusBadge } from "./shared";
-import { DeliverDialog } from "./DeliverDialog";
 import { NodeDetailPanel } from "./detail/NodeDetailPanel";
+import { DropdownPanel } from "../ui/DropdownPanel";
+import { Textarea } from "../ui/Textarea";
 import { InstanceSummary } from "./detail/InstanceSummary";
 import { EventTimeline } from "./detail/EventTimeline";
 
@@ -139,7 +140,8 @@ export const GraphExecutionViewer: FC<GraphExecutionViewerProps> = ({
   } | null>(null);
   const [topologyError, setTopologyError] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [deliverOpen, setDeliverOpen] = useState(false);
+  const [deliverNodeName, setDeliverNodeName] = useState("");
+  const [deliverContent, setDeliverContent] = useState("");
   const [controlBusy, setControlBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [runStartTime, setRunStartTime] = useState<number | null>(null);
@@ -252,6 +254,8 @@ export const GraphExecutionViewer: FC<GraphExecutionViewerProps> = ({
     setSpecInfo(null);
     setTopologyError(null);
     setSelectedNodeId(null);
+    setDeliverNodeName("");
+    setDeliverContent("");
     setRunStartTime(null);
     setElapsedSeconds(0);
     setActionError(null);
@@ -316,21 +320,19 @@ export const GraphExecutionViewer: FC<GraphExecutionViewerProps> = ({
     [workspaceId, instanceId, refresh],
   );
 
-  const handleDeliver = useCallback(
-    (nodeName: string, content: string): void => {
-      setDeliverOpen(false);
-      setActionError(null);
-      deliverToNode(workspaceId, instanceId, nodeName, content)
-        .then(() => {
-          refresh();
-          toast.show({
-            message: t("graphs.deliverSuccess", { name: nodeName }),
-          });
-        })
-        .catch((err) => setActionError(formatGraphApiError(err)));
-    },
-    [workspaceId, instanceId, refresh, toast, t],
-  );
+  const handleDeliverInline = useCallback((): void => {
+    if (!deliverNodeName || !deliverContent.trim() || controlBusy) return;
+    setActionError(null);
+    deliverToNode(workspaceId, instanceId, deliverNodeName, deliverContent)
+      .then(() => {
+        refresh();
+        toast.show({
+          message: t("graphs.deliverSuccess", { name: deliverNodeName }),
+        });
+        setDeliverContent("");
+      })
+      .catch((err) => setActionError(formatGraphApiError(err)));
+  }, [workspaceId, instanceId, deliverNodeName, deliverContent, controlBusy, refresh, toast, t]);
 
   // ── Computed ──────────────────────────────────────────────────────────────
 
@@ -352,7 +354,7 @@ export const GraphExecutionViewer: FC<GraphExecutionViewerProps> = ({
     ? (nodeStatuses[selectedNodeId] ?? "pending")
     : "pending";
 
-  // Deliver dialog node options (functional nodes from instance).
+  // Deliver node options (functional nodes from instance).
   const deliverNodeNames = useMemo(
     () =>
       instance?.nodes
@@ -364,6 +366,13 @@ export const GraphExecutionViewer: FC<GraphExecutionViewerProps> = ({
         .map((n) => n.node_name) ?? [],
     [instance?.nodes],
   );
+
+  // Auto-select the first functional node when deliver becomes available.
+  useEffect(() => {
+    if (canDeliver && !deliverNodeName && deliverNodeNames.length > 0) {
+      setDeliverNodeName(deliverNodeNames[0] ?? "");
+    }
+  }, [canDeliver, deliverNodeName, deliverNodeNames]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -426,20 +435,6 @@ export const GraphExecutionViewer: FC<GraphExecutionViewerProps> = ({
               <Square size={14} />
               {t("graphs.stop")}
             </Button>
-          ) : null}
-          {canDeliver ? (
-            <>
-              <div className="mx-1 h-5 w-px bg-hairline" />
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={controlBusy}
-                onClick={(): void => setDeliverOpen(true)}
-              >
-                <Send size={14} />
-                {t("graphs.deliver")}
-              </Button>
-            </>
           ) : null}
         </div>
       </div>
@@ -605,17 +600,44 @@ export const GraphExecutionViewer: FC<GraphExecutionViewerProps> = ({
           <div className="max-h-[35%] overflow-y-auto border-t border-hairline">
             <EventTimeline events={timeline} />
           </div>
+
+          {/* Inline deliver panel (shown when running/paused) */}
+          {canDeliver ? (
+            <div
+              className="border-t border-hairline p-3"
+              data-testid="deliver-inline-panel"
+            >
+              <SectionLabel>{t("graphs.deliverInline")}</SectionLabel>
+              <div className="mt-2 flex flex-col gap-2">
+                <DropdownPanel
+                  options={deliverNodeNames.map((n) => ({ value: n, label: n }))}
+                  value={deliverNodeName}
+                  onChange={setDeliverNodeName}
+                  label={t("graphs.deliverNodeLabel")}
+                  listboxLabel={t("graphs.deliverNodeLabel")}
+                />
+                <Textarea
+                  value={deliverContent}
+                  onChange={(e): void => setDeliverContent(e.target.value)}
+                  placeholder={t("graphs.deliverContentPlaceholder")}
+                  rows={2}
+                />
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={handleDeliverInline}
+                  disabled={!deliverNodeName || !deliverContent.trim() || controlBusy}
+                  loading={controlBusy}
+                  className="gap-1.5 self-end"
+                >
+                  <Send size={14} />
+                  {t("graphs.deliverConfirm")}
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </aside>
       </div>
-
-      {/* E. Deliver dialog */}
-      {deliverOpen ? (
-        <DeliverDialog
-          nodeNames={deliverNodeNames}
-          onConfirm={handleDeliver}
-          onCancel={(): void => setDeliverOpen(false)}
-        />
-      ) : null}
     </div>
   );
 };
