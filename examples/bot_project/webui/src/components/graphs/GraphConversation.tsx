@@ -390,7 +390,9 @@ const RunEntry: FC<RunEntryProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isActive, run.graph_instance_id, workspaceId]);
+    // run.updated_at re-triggers getInstance on each poll cycle (parent refreshes runs every 2s).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive, run.graph_instance_id, workspaceId, run.updated_at]);
 
   const statusMap = nodeStatuses ? buildNodeStatusMap(nodeStatuses) : undefined;
   const totalNodes = topology ? functionalNodeCount(topology) : 0;

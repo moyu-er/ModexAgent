@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import { GraphConversation } from "./GraphConversation";
 import {
   getSpec,
@@ -279,5 +279,45 @@ describe("GraphConversation", () => {
     });
     fireEvent.click(screen.getByText("View execution details"));
     expect(onOpenInstance).toHaveBeenCalledWith("inst-1");
+  });
+
+  it("refreshes instance node statuses on each poll cycle", async () => {
+    vi.useFakeTimers();
+    try {
+      mockGetSpec.mockResolvedValue(SPEC_RESPONSE);
+      mockGetRuns
+        .mockResolvedValueOnce([makeRun({ status: "running", updated_at: 1000 })])
+        .mockResolvedValue([makeRun({ status: "running", updated_at: 2000 })]);
+      mockGetInstance
+        .mockResolvedValueOnce(RUNNING_INSTANCE)
+        .mockResolvedValue({
+          ...RUNNING_INSTANCE,
+          nodes: [{ node_name: "worker", node_id: "node_1", status: "completed" }],
+        });
+
+      render(
+        <GraphConversation
+          workspaceId=""
+          specId="42"
+          onBack={vi.fn()}
+          onOpenInstance={vi.fn()}
+          onEditYaml={vi.fn()}
+          onOpenInstances={vi.fn()}
+        />,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(screen.getByText("0/1 nodes")).toBeTruthy();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(screen.getByText("1/1 nodes")).toBeTruthy();
+      expect(mockGetInstance).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
