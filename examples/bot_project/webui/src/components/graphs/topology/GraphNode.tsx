@@ -84,7 +84,7 @@ interface StatusStyle {
 /** §5.2 状态着色表(Rev 2 双通道版,含"节点底色"列)。 */
 const STATUS_STYLES: Readonly<Record<GraphNodeVisualStatus, StatusStyle>> = {
   pending: {
-    dotFill: "fill-faint",
+    dotFill: "fill-graph-dot-pending",
     dotHollow: false,
     bodyFill: "fill-graph-node-fill",
     bodyStroke: "stroke-graph-node-border",
@@ -112,7 +112,7 @@ const STATUS_STYLES: Readonly<Record<GraphNodeVisualStatus, StatusStyle>> = {
     dashed: false,
   },
   canceled: {
-    dotFill: "fill-mute",
+    dotFill: "fill-graph-dot-canceled",
     dotHollow: false,
     bodyFill: "fill-graph-node-fill",
     bodyStroke: "stroke-graph-node-border",

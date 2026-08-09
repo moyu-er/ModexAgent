@@ -87,6 +87,8 @@ export default {
         graph: {
           "node-fill": v("graph-node-fill"),
           "node-fill-done": v("graph-node-fill-done"),
+          "dot-pending": v("graph-dot-pending"),
+          "dot-canceled": v("graph-dot-canceled"),
           "node-border": v("graph-node-border"),
           "node-border-active": v("graph-node-border-active"),
           edge: v("graph-edge"),

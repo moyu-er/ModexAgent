@@ -6,10 +6,14 @@ Sub-package grouping the persistence model:
    SQLite). Persists ``GraphMetadata`` (5 identity/status fields as
    individual columns). Scheduler bookkeeping is derived at recovery
    time, not persisted.
-2. **Node invocation** — ``NodeStateStore`` (Null / InMemory / Sqlite) —
+2. **Graph I/O records** — ``GraphIORecordStore`` (Null / InMemory /
+   SQLite). Persists ``GraphIORecord`` (input + output payloads per
+   graph instance, as JSON columns). Status/updated_at come from the
+   instance table via join, not duplicated here.
+3. **Node invocation** — ``NodeStateStore`` (Null / InMemory / Sqlite) —
    lifecycle + version chain + CAS authority, scoped to one
    ``graph_instance_id``.
-3. **Deliver** — per-node ``DeliverStore`` (Null / InMemory / Sqlite) with
+4. **Deliver** — per-node ``DeliverStore`` (Null / InMemory / Sqlite) with
    consumption state machine.
 
 ``GraphPersistenceCoordinator`` is the central orchestrator that unifies
@@ -26,6 +30,8 @@ Modules:
   impls (lifecycle + CAS + version chain).
 - ``graph_metadata`` — ``GraphMetadata`` / ``InvocationContext`` /
   ``NodeInvocationRecord`` / ``GraphStateSnapshot`` value objects.
+- ``graph_io_store`` — ``GraphIORecordStore`` ABC + Null / InMemory / Sqlite +
+  ``GraphIORecord`` value object.
 - ``instance_store`` — ``GraphInstanceStore`` ABC + Null / InMemory / Sqlite.
 - ``persistence_coordinator`` — ``GraphPersistenceCoordinator`` +
   ``create_null_coordinator`` factory.
@@ -46,6 +52,13 @@ from .deliver_store import (
     SqliteDeliverStoreFactory,
 )
 from .graph_instance import GraphInstance
+from .graph_io_store import (
+    GraphIORecord,
+    GraphIORecordStore,
+    InMemoryGraphIORecordStore,
+    NullGraphIORecordStore,
+    SqliteGraphIORecordStore,
+)
 from .graph_metadata import (
     GraphMetadata,
     GraphStateSnapshot,
@@ -92,6 +105,12 @@ __all__ = [
     "InvocationContext",
     "NodeInvocationRecord",
     "GraphStateSnapshot",
+    # Graph I/O record store
+    "GraphIORecord",
+    "GraphIORecordStore",
+    "NullGraphIORecordStore",
+    "InMemoryGraphIORecordStore",
+    "SqliteGraphIORecordStore",
     # Graph instance store
     "GraphInstanceStore",
     "NullGraphInstanceStore",

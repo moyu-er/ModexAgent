@@ -203,7 +203,7 @@ describe("Teal & Ember design tokens (index.css)", () => {
       // Node/edge derive from existing canvas/hairline/border-strong tokens —
       // no new color values may be introduced for the graph language.
       expect(block).toContain("--color-graph-node-fill: var(--color-canvas-elevated)");
-      expect(block).toContain("--color-graph-node-fill-done: var(--color-brand-soft)");
+      expect(block).toContain("--color-graph-node-fill-done: color-mix(in srgb, var(--color-brand) 18%, transparent)");
       expect(block).toContain("--color-graph-node-border: var(--color-hairline)");
       expect(block).toContain("--color-graph-node-border-active: var(--color-brand)");
       // Rev 2 §C.3: edges/arrows use border-strong, not hairline.

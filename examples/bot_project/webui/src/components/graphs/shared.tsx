@@ -8,7 +8,7 @@ const STATUS_CLS: Record<string, string> = {
   pending: "text-mute border-hairline",
   running: "text-brand border-brand",
   paused: "text-warning border-warning",
-  stopped: "text-mute border-hairline",
+  stopped: "text-faint border-hairline line-through",
   crashed: "text-danger border-danger",
   completed: "text-success border-success",
   failed: "text-danger border-danger",

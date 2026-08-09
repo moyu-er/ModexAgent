@@ -395,6 +395,38 @@ class TestSqliteGraphInstanceStoreSpecifics:
         assert ts > 1_700_000_000_000
         conn.close()
 
+    def test_save_load_populates_metadata_timestamps(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        store = SqliteGraphInstanceStore(conn)
+        store.save(_make_metadata(status=GraphInstanceStatus.RUNNING))
+        loaded = store.load(_GRAPH_INSTANCE_ID)
+        assert loaded is not None
+        assert loaded.created_at > 0
+        assert loaded.updated_at > 0
+        conn.close()
+
+    def test_load_by_status_populates_metadata_timestamps(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        store = SqliteGraphInstanceStore(conn)
+        store.save(_make_metadata(status=GraphInstanceStatus.RUNNING))
+        loaded = store.load_by_status(GraphInstanceStatus.RUNNING)
+        assert len(loaded) == 1
+        assert loaded[0].created_at > 0
+        assert loaded[0].updated_at > 0
+        conn.close()
+
+    def test_load_by_parent_populates_metadata_timestamps(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        store = SqliteGraphInstanceStore(conn)
+        store.save(
+            _make_metadata(parent_instance_id=_PARENT_INSTANCE_ID, parent_node="child")
+        )
+        loaded = store.load_by_parent(_PARENT_INSTANCE_ID)
+        assert len(loaded) == 1
+        assert loaded[0].created_at > 0
+        assert loaded[0].updated_at > 0
+        conn.close()
+
     def test_status_check_constraint_rejects_invalid(self) -> None:
         from modex_graph.persistence.instance_store import _INSTANCE_TABLE
 

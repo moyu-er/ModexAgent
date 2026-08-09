@@ -333,7 +333,7 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
         row = self._conn.execute(
             f"SELECT {_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
             f"{_COL_PARENT_INSTANCE_ID}, {_COL_PARENT_NODE}, {_COL_STATUS}, "
-            f"{_COL_NODE_ID_MAP_JSON} "
+            f"{_COL_NODE_ID_MAP_JSON}, {_COL_CREATED_AT}, {_COL_UPDATED_AT} "
             f"FROM {_INSTANCE_TABLE} "
             f"WHERE {_COL_GRAPH_INSTANCE_ID} = ?",
             (graph_instance_id,),
@@ -346,7 +346,7 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
         rows = self._conn.execute(
             f"SELECT {_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
             f"{_COL_PARENT_INSTANCE_ID}, {_COL_PARENT_NODE}, {_COL_STATUS}, "
-            f"{_COL_NODE_ID_MAP_JSON} "
+            f"{_COL_NODE_ID_MAP_JSON}, {_COL_CREATED_AT}, {_COL_UPDATED_AT} "
             f"FROM {_INSTANCE_TABLE} "
             f"WHERE {_COL_STATUS} = ? "
             f"ORDER BY {_COL_GRAPH_INSTANCE_ID}",
@@ -358,7 +358,7 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
         rows = self._conn.execute(
             f"SELECT {_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
             f"{_COL_PARENT_INSTANCE_ID}, {_COL_PARENT_NODE}, {_COL_STATUS}, "
-            f"{_COL_NODE_ID_MAP_JSON} "
+            f"{_COL_NODE_ID_MAP_JSON}, {_COL_CREATED_AT}, {_COL_UPDATED_AT} "
             f"FROM {_INSTANCE_TABLE} "
             f"WHERE {_COL_PARENT_INSTANCE_ID} = ? "
             f"ORDER BY {_COL_GRAPH_INSTANCE_ID}",
@@ -396,6 +396,8 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
             parent_node,
             status,
             node_id_map_json,
+            created_at,
+            updated_at,
         ) = row
         return GraphMetadata(
             graph_instance_id=graph_instance_id,
@@ -404,6 +406,8 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
             parent_node=parent_node,
             status=GraphInstanceStatus(status),
             node_id_map=_NODE_ID_MAP_ADAPTER.validate_json(node_id_map_json),
+            created_at=created_at,
+            updated_at=updated_at,
         )
 
 

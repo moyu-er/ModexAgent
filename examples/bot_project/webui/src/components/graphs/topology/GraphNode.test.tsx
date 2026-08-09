@@ -94,9 +94,9 @@ describe("GraphNode", () => {
       };
     }
 
-    it("pending: faint dot, hairline border, default fill", () => {
+    it("pending: graph-dot-pending dot, hairline border, default fill", () => {
       const { body, dot, ring } = bodyAndDot("pending");
-      expect(dot.getAttribute("class")).toContain("fill-faint");
+      expect(dot.getAttribute("class")).toContain("fill-graph-dot-pending");
       expect(body.getAttribute("class")).toContain("stroke-graph-node-border");
       expect(body.getAttribute("class")).toContain("fill-graph-node-fill");
       expect(ring).toBeNull();
@@ -129,9 +129,9 @@ describe("GraphNode", () => {
       expect(body.getAttribute("class")).toContain("stroke-danger");
     });
 
-    it("canceled: mute dot, hairline border", () => {
+    it("canceled: graph-dot-canceled dot, hairline border", () => {
       const { body, dot } = bodyAndDot("canceled");
-      expect(dot.getAttribute("class")).toContain("fill-mute");
+      expect(dot.getAttribute("class")).toContain("fill-graph-dot-canceled");
       expect(body.getAttribute("class")).toContain("stroke-graph-node-border");
     });
 

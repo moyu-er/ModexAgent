@@ -25,6 +25,8 @@ class GraphMetadata(BaseModel):
     parent_node: str | None
     status: GraphInstanceStatus
     node_id_map: dict[str, str] = {}
+    created_at: int = 0
+    updated_at: int = 0
 
 
 class InvocationContext(BaseModel):

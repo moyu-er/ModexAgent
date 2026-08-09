@@ -8,6 +8,7 @@ import type { FC } from "react";
 import { useT } from "../../../i18n";
 import { SectionLabel } from "../../ui/SectionLabel";
 import type { GraphPayload } from "../../../lib/graphsApi";
+import { mergeGraphOutput } from "./mergeOutput";
 
 export interface InstanceSummaryProps {
   specName: string;
@@ -84,7 +85,8 @@ function ResultDisplay({
   noResultLabel: string;
   resultLabel: string;
 }): React.ReactElement | null {
-  if (!result || result.length === 0) {
+  const merged = mergeGraphOutput(result);
+  if (merged === "") {
     return (
       <div>
         <SectionLabel>{resultLabel}</SectionLabel>
@@ -95,17 +97,12 @@ function ResultDisplay({
   return (
     <div>
       <SectionLabel>{resultLabel}</SectionLabel>
-      <div className="flex flex-col gap-1">
-        {result.map((payload, i) => (
-          <pre
-            key={i}
-            className="whitespace-pre-wrap break-words rounded-sm border border-hairline bg-canvas px-2 py-1.5 font-mono text-xs text-body"
-            data-testid="graph-result-item"
-          >
-            {payload.content}
-          </pre>
-        ))}
-      </div>
+      <pre
+        className="whitespace-pre-wrap break-words rounded-sm border border-hairline bg-canvas px-2 py-1.5 font-mono text-xs text-body"
+        data-testid="graph-result-item"
+      >
+        {merged}
+      </pre>
     </div>
   );
 }

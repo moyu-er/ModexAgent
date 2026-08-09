@@ -56,7 +56,13 @@ def test_sqlite_graph_instance_store_round_trips_full_metadata_and_updates_statu
 
     loaded = store.load(101)
     assert loaded is not None
-    assert loaded == metadata.model_copy(update={"status": GraphInstanceStatus.CRASHED})
+    assert loaded.graph_instance_id == metadata.graph_instance_id
+    assert loaded.spec_id == metadata.spec_id
+    assert loaded.parent_instance_id == metadata.parent_instance_id
+    assert loaded.parent_node == metadata.parent_node
+    assert loaded.status == GraphInstanceStatus.CRASHED
+    assert loaded.created_at > 0
+    assert loaded.updated_at > 0
     conn.close()
 
 
