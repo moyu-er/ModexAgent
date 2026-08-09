@@ -19,19 +19,25 @@ import { ArrowLeft, Code2, ExternalLink, ListTree, SendHorizonal } from "lucide-
 import {
   getRuns,
   getSpec,
+  getInstance,
   runGraph,
   type GraphRunRecord,
+  type GraphNodeStatus,
 } from "../../lib/graphsApi";
 import type { WebSocketClient } from "../../lib/ws-client";
 import { useT } from "../../i18n";
 import { formatClock } from "../../lib/timezone";
 import { Button } from "../ui/Button";
 import { IconButton } from "../ui/IconButton";
+import { MarkdownRenderer } from "../MarkdownRenderer";
 import { GraphStatusBadge, formatGraphApiError } from "./shared";
 import { statusLabelKey } from "./GraphExecutionViewer";
 import { mergeGraphOutput } from "./detail/mergeOutput";
 import { MiniTopology } from "./topology/MiniTopology";
+import type { GraphNodeVisualStatus } from "./topology/GraphNode";
 import {
+  GRAPH_NODE_END,
+  GRAPH_NODE_START,
   parseGraphSpecYaml,
   type ParsedGraphTopology,
 } from "./yaml/parseGraphSpec";
@@ -293,6 +299,7 @@ export const GraphConversation: FC<GraphConversationProps> = ({
                   key={run.record_id}
                   run={run}
                   topology={topology}
+                  workspaceId={workspaceId}
                   onOpenInstance={onOpenInstance}
                 />
               ))
@@ -314,19 +321,107 @@ export const GraphConversation: FC<GraphConversationProps> = ({
 interface RunEntryProps {
   run: GraphRunRecord;
   topology: ParsedGraphTopology | null;
+  workspaceId: string;
   onOpenInstance: (instanceId: string) => void;
 }
 
-const RunEntry: FC<RunEntryProps> = ({ run, topology, onOpenInstance }) => {
+/** Map backend node status string → GraphNodeVisualStatus for MiniTopology. */
+function toVisualStatus(status: string): GraphNodeVisualStatus {
+  switch (status) {
+    case "running":
+      return "running";
+    case "completed":
+      return "completed";
+    case "crashed":
+      return "crashed";
+    case "canceled":
+    case "cancelled":
+      return "canceled";
+    case "suspended":
+      return "suspended";
+    default:
+      return "pending";
+  }
+}
+
+function buildNodeStatusMap(
+  nodes: GraphNodeStatus[],
+): Record<string, GraphNodeVisualStatus> {
+  const map: Record<string, GraphNodeVisualStatus> = {};
+  for (const n of nodes) {
+    map[n.node_name] = toVisualStatus(n.status);
+  }
+  return map;
+}
+
+function functionalNodeCount(topology: ParsedGraphTopology): number {
+  return topology.nodes.filter(
+    (n) => n.nodeType !== GRAPH_NODE_START && n.nodeType !== GRAPH_NODE_END,
+  ).length;
+}
+
+const RunEntry: FC<RunEntryProps> = ({
+  run,
+  topology,
+  workspaceId,
+  onOpenInstance,
+}) => {
   const t = useT();
+  const [nodeStatuses, setNodeStatuses] = useState<GraphNodeStatus[] | null>(
+    null,
+  );
+
   const userInput = run.user_input?.content ?? null;
   const output = mergeGraphOutput(run.output);
   const timeStr = formatClock(run.created_at);
   const isActive = ACTIVE_STATUSES.has(run.status);
   const isCrashed = run.status === "crashed" || run.status === "failed";
 
+  useEffect(() => {
+    if (!isActive || !run.graph_instance_id) return;
+    let cancelled = false;
+    getInstance(workspaceId, run.graph_instance_id)
+      .then((inst) => {
+        if (!cancelled) setNodeStatuses(inst.nodes);
+      })
+      .catch(() => {
+        // Instance may not exist yet (optimistic run) — leave nodeStatuses null.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isActive, run.graph_instance_id, workspaceId]);
+
+  const statusMap = nodeStatuses ? buildNodeStatusMap(nodeStatuses) : undefined;
+  const totalNodes = topology ? functionalNodeCount(topology) : 0;
+  const completedCount = nodeStatuses
+    ? nodeStatuses.filter(
+        (n) =>
+          n.status === "completed" &&
+          n.node_name !== GRAPH_NODE_START &&
+          n.node_name !== GRAPH_NODE_END,
+      ).length
+    : 0;
+
+  const clickable = Boolean(run.graph_instance_id);
+
   return (
-    <div className="mb-6 flex w-full flex-col gap-2">
+    <div
+      className="mb-6 flex w-full flex-col gap-2"
+      {...(clickable
+        ? {
+            role: "button" as const,
+            tabIndex: 0,
+            onClick: (): void => onOpenInstance(run.graph_instance_id),
+            onKeyDown: (e: KeyboardEvent<HTMLDivElement>): void => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onOpenInstance(run.graph_instance_id);
+              }
+            },
+          }
+        : {})}
+    >
       {userInput !== null && (
         <div className="flex justify-end">
           <div className="bubble-user">
@@ -343,22 +438,38 @@ const RunEntry: FC<RunEntryProps> = ({ run, topology, onOpenInstance }) => {
       )}
 
       <div className="flex justify-start">
-        <div className={`bubble-assistant ${isCrashed ? "border-danger" : ""}`}>
+        <div
+          className={`bubble-assistant ${isCrashed ? "border-danger bg-canvas-elevated" : ""}`}
+        >
           {run.status === "completed" ? (
             output ? (
-              <pre className="whitespace-pre-wrap break-words text-md leading-relaxed">
-                {output}
-              </pre>
+              <MarkdownRenderer content={output} />
             ) : (
               <span className="text-mute">{t("graphs.noOutput")}</span>
             )
           ) : isActive ? (
             <div className="flex items-center gap-3">
-              {topology && <MiniTopology topology={topology} className="shrink-0" />}
-              <GraphStatusBadge
-                status={run.status}
-                label={t(statusLabelKey(run.status))}
-              />
+              {topology && (
+                <MiniTopology
+                  topology={topology}
+                  nodeStatuses={statusMap}
+                  className="shrink-0"
+                />
+              )}
+              <div className="flex flex-col gap-1">
+                <GraphStatusBadge
+                  status={run.status}
+                  label={t(statusLabelKey(run.status))}
+                />
+                {totalNodes > 0 && (
+                  <span className="font-mono text-xs text-mute">
+                    {t("graphs.progress", {
+                      completed: completedCount,
+                      total: totalNodes,
+                    })}
+                  </span>
+                )}
+              </div>
               <span className="typing-dots" aria-hidden="true">
                 <span className="typing-dot" />
                 <span className="typing-dot" />
@@ -389,14 +500,10 @@ const RunEntry: FC<RunEntryProps> = ({ run, topology, onOpenInstance }) => {
       <div className="flex items-center gap-2 px-1">
         <span className="text-xs text-mute">{timeStr}</span>
         {run.graph_instance_id && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onOpenInstance(run.graph_instance_id)}
-          >
+          <span className="inline-flex items-center gap-1 text-xs text-brand">
             <ExternalLink size={14} />
             {t("graphs.viewExecution")}
-          </Button>
+          </span>
         )}
       </div>
     </div>

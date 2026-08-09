@@ -317,8 +317,8 @@ async def _assemble_resources(
         GraphOutput,
         HumanInputNodeFactory,
         NodeRegistry,
-        SqliteGraphIORecordStore,
         SqliteGraphInstanceStore,
+        SqliteGraphIORecordStore,
         SqliteGraphSpecStore,
     )
 

@@ -7,6 +7,7 @@
 import type { FC } from "react";
 import { useT } from "../../../i18n";
 import { SectionLabel } from "../../ui/SectionLabel";
+import { MarkdownRenderer } from "../../MarkdownRenderer";
 import type { GraphPayload } from "../../../lib/graphsApi";
 import { mergeGraphOutput } from "./mergeOutput";
 
@@ -94,15 +95,25 @@ function ResultDisplay({
       </div>
     );
   }
+  const isMarkdown = /(^|\n)(#{1,6}\s|[*-]\s|```|\d+\.\s)/.test(merged);
   return (
     <div>
       <SectionLabel>{resultLabel}</SectionLabel>
-      <pre
-        className="whitespace-pre-wrap break-words rounded-sm border border-hairline bg-canvas px-2 py-1.5 font-mono text-xs text-body"
-        data-testid="graph-result-item"
-      >
-        {merged}
-      </pre>
+      {isMarkdown ? (
+        <div
+          className="rounded-sm border border-hairline bg-canvas px-2 py-1.5 text-xs text-body"
+          data-testid="graph-result-item"
+        >
+          <MarkdownRenderer content={merged} />
+        </div>
+      ) : (
+        <pre
+          className="whitespace-pre-wrap break-words rounded-sm border border-hairline bg-canvas px-2 py-1.5 font-mono text-xs text-body"
+          data-testid="graph-result-item"
+        >
+          {merged}
+        </pre>
+      )}
     </div>
   );
 }

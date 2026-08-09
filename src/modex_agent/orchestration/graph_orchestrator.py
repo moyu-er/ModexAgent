@@ -57,12 +57,12 @@ from modex_graph import (
     GraphContext,
     GraphDrained,
     GraphEngine,
-    GraphIORecord,
-    GraphIORecordStore,
     GraphInstance,
     GraphInstanceStatus,
     GraphInstanceStore,
     GraphInterrupt,
+    GraphIORecord,
+    GraphIORecordStore,
     GraphMetadata,
     GraphOutput,
     GraphOutputAdapter,
@@ -90,6 +90,7 @@ logger = logging.getLogger(__name__)
 # ControlScope dataclass but unused for graph-scoped commands.
 _ORCHESTRATOR_SESSION_ID = "_orchestrator"
 _NULL_COORDINATOR_FACTORY = NullCoordinatorFactory()
+_NULL_IO_STORE = NullGraphIORecordStore()
 
 
 class GraphOrchestrator:
@@ -141,7 +142,7 @@ class GraphOrchestrator:
         instance_store: GraphInstanceStore,
         coordinator_factory: CoordinatorFactory = _NULL_COORDINATOR_FACTORY,
         output_adapter: GraphOutputAdapter | None = None,
-        io_store: GraphIORecordStore = NullGraphIORecordStore(),
+        io_store: GraphIORecordStore = _NULL_IO_STORE,
     ) -> None:
         """Initialize the orchestrator with the required registries + stores.
 

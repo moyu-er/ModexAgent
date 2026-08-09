@@ -4,19 +4,23 @@ import { GraphConversation } from "./GraphConversation";
 import {
   getSpec,
   getRuns,
+  getInstance,
   runGraph,
   type GraphRunRecord,
   type GraphSpecResponse,
+  type GraphInstance,
 } from "../../lib/graphsApi";
 
 vi.mock("../../lib/graphsApi", () => ({
   getSpec: vi.fn(),
   getRuns: vi.fn(),
+  getInstance: vi.fn(),
   runGraph: vi.fn(),
 }));
 
 const mockGetSpec = vi.mocked(getSpec);
 const mockGetRuns = vi.mocked(getRuns);
+const mockGetInstance = vi.mocked(getInstance);
 const mockRunGraph = vi.mocked(runGraph);
 
 const SPEC_YAML = `
@@ -56,6 +60,16 @@ function makeRun(overrides: Partial<GraphRunRecord> = {}): GraphRunRecord {
     ...overrides,
   };
 }
+
+const RUNNING_INSTANCE: GraphInstance = {
+  spec_id: "42",
+  graph_instance_id: "inst-1",
+  status: "running",
+  nodes: [
+    { node_name: "worker", node_id: "node_1", status: "running" },
+  ],
+  result: null,
+};
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -108,6 +122,7 @@ describe("GraphConversation", () => {
   it("disables composer when a run is active", async () => {
     mockGetSpec.mockResolvedValue(SPEC_RESPONSE);
     mockGetRuns.mockResolvedValue([makeRun({ status: "running" })]);
+    mockGetInstance.mockResolvedValue(RUNNING_INSTANCE);
 
     render(
       <GraphConversation

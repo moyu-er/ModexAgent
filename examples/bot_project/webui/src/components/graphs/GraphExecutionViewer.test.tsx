@@ -381,9 +381,8 @@ describe("GraphExecutionViewer — inline deliver panel", () => {
     });
 
     const panel = screen.getByTestId("deliver-inline-panel");
-    const sendButton = within(panel).getByText("Deliver").closest("button");
-    expect(sendButton).toBeTruthy();
-    expect(sendButton?.disabled).toBe(true);
+    const sendButton = within(panel).getByRole("button", { name: "Deliver" }) as HTMLButtonElement;
+    expect(sendButton.disabled).toBe(true);
   });
 
   it("calls deliverToNode when content is entered and Send is clicked", async () => {
@@ -402,9 +401,9 @@ describe("GraphExecutionViewer — inline deliver panel", () => {
     expect(textarea).toBeTruthy();
     fireEvent.change(textarea!, { target: { value: "hello world" } });
 
-    const sendButton = within(panel).getByText("Deliver").closest("button");
-    expect(sendButton?.disabled).toBe(false);
-    fireEvent.click(sendButton!);
+    const sendButton = within(panel).getByRole("button", { name: "Deliver" }) as HTMLButtonElement;
+    expect(sendButton.disabled).toBe(false);
+    fireEvent.click(sendButton);
 
     await waitFor(() => {
       expect(mockDeliverToNode).toHaveBeenCalledWith(
@@ -429,7 +428,7 @@ describe("GraphExecutionViewer — inline deliver panel", () => {
     const textarea = panel.querySelector("textarea") as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: "hello world" } });
 
-    const sendButton = within(panel).getByText("Deliver").closest("button")!;
+    const sendButton = within(panel).getByRole("button", { name: "Deliver" });
     fireEvent.click(sendButton);
 
     await waitFor(() => {

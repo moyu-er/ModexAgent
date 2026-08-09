@@ -400,6 +400,19 @@ class TestSqliteGraphIORecordStoreSpecifics:
         assert "idx_graph_io_records_spec" in index_names
         conn.close()
 
+    def test_foreign_key_declared(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        store = SqliteGraphIORecordStore(conn)
+        fks = store._conn.execute(
+            "PRAGMA foreign_key_list(graph_io_records)"
+        ).fetchall()
+        # PRAGMA foreign_key_list row: (id, seq, table, from, to, on_update, on_delete, match)
+        fk_targets = {fk[2] for fk in fks}
+        assert "graph_instances" in fk_targets, (
+            f"Expected FK to graph_instances, got: {fks}"
+        )
+        conn.close()
+
     def test_file_based_persistence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "io_records.db")

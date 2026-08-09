@@ -63,7 +63,7 @@ import {
 import { formatGraphApiError, GraphStatusBadge } from "./shared";
 import { NodeDetailPanel } from "./detail/NodeDetailPanel";
 import { DropdownPanel } from "../ui/DropdownPanel";
-import { Textarea } from "../ui/Textarea";
+import { IconButton } from "../ui/IconButton";
 import { InstanceSummary } from "./detail/InstanceSummary";
 import { EventTimeline } from "./detail/EventTimeline";
 
@@ -146,6 +146,7 @@ export const GraphExecutionViewer: FC<GraphExecutionViewerProps> = ({
   const [actionError, setActionError] = useState<string | null>(null);
   const [runStartTime, setRunStartTime] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const deliverTaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // ── Derived: edges for the hook ───────────────────────────────────────────
 
@@ -322,6 +323,7 @@ export const GraphExecutionViewer: FC<GraphExecutionViewerProps> = ({
 
   const handleDeliverInline = useCallback((): void => {
     if (!deliverNodeName || !deliverContent.trim() || controlBusy) return;
+    setControlBusy(true);
     setActionError(null);
     deliverToNode(workspaceId, instanceId, deliverNodeName, deliverContent)
       .then(() => {
@@ -331,8 +333,21 @@ export const GraphExecutionViewer: FC<GraphExecutionViewerProps> = ({
         });
         setDeliverContent("");
       })
-      .catch((err) => setActionError(formatGraphApiError(err)));
+      .catch((err) => setActionError(formatGraphApiError(err)))
+      .finally(() => setControlBusy(false));
   }, [workspaceId, instanceId, deliverNodeName, deliverContent, controlBusy, refresh, toast, t]);
+
+  const autosizeDeliver = useCallback((): void => {
+    const ta = deliverTaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.max(44, Math.min(ta.scrollHeight, 160))}px`;
+  }, []);
+
+  useEffect(() => {
+    autosizeDeliver();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deliverContent]);
 
   // ── Computed ──────────────────────────────────────────────────────────────
 
@@ -616,23 +631,24 @@ export const GraphExecutionViewer: FC<GraphExecutionViewerProps> = ({
                   label={t("graphs.deliverNodeLabel")}
                   listboxLabel={t("graphs.deliverNodeLabel")}
                 />
-                <Textarea
+                <textarea
+                  ref={deliverTaRef}
                   value={deliverContent}
                   onChange={(e): void => setDeliverContent(e.target.value)}
+                  onInput={autosizeDeliver}
                   placeholder={t("graphs.deliverContentPlaceholder")}
-                  rows={2}
+                  rows={1}
+                  className="w-full resize-none overflow-y-auto rounded-sm border border-hairline bg-canvas-elevated px-3 py-2 text-base text-ink placeholder:text-faint focus:border-brand focus:ring-2 focus:ring-brand focus:outline-none min-h-[44px] max-h-[160px]"
                 />
-                <Button
+                <IconButton
+                  icon={<Send size={18} />}
+                  label={t("graphs.deliverConfirm")}
                   variant="primary"
-                  size="sm"
-                  onClick={handleDeliverInline}
+                  size="md"
                   disabled={!deliverNodeName || !deliverContent.trim() || controlBusy}
-                  loading={controlBusy}
-                  className="gap-1.5 self-end"
-                >
-                  <Send size={14} />
-                  {t("graphs.deliverConfirm")}
-                </Button>
+                  onClick={handleDeliverInline}
+                  className="self-end"
+                />
               </div>
             </div>
           ) : null}

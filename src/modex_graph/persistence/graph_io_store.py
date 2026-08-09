@@ -32,7 +32,6 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from ..integration import GraphPayload
-from ._time import now_ms
 
 # -- Table / column name constants -----------------------------------------
 _IO_TABLE = "graph_io_records"
@@ -287,7 +286,8 @@ class SqliteGraphIORecordStore(GraphIORecordStore):
         conn.execute(
             f"CREATE TABLE IF NOT EXISTS {_IO_TABLE} ("
             f"{_COL_RECORD_ID} INTEGER PRIMARY KEY, "
-            f"{_COL_GRAPH_INSTANCE_ID} INTEGER NOT NULL, "
+            f"{_COL_GRAPH_INSTANCE_ID} INTEGER NOT NULL "
+            f"REFERENCES graph_instances(graph_instance_id), "
             f"{_COL_SPEC_ID} INTEGER NOT NULL, "
             f"{_COL_USER_INPUT_JSON} TEXT, "
             f"{_COL_OUTPUT_JSON} TEXT, "
