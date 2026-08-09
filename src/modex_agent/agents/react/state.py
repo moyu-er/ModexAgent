@@ -108,6 +108,10 @@ class ReActTurnState(GraphState, TurnStateBase):
     # ---- ReAct-specific fields ----
     current_node: ReActNode = ReActNode.START
     iteration: int = 0
+    turn_attempt: int = Field(
+        default=0,
+        description="Current turn attempt number (1=first, 2=first continuation, etc.)",
+    )
     llm_response: LLMResponse | None = None
     tool_batches: list[ToolBatchState] = Field(default_factory=list)
     approval: ApprovalTransaction | None = None

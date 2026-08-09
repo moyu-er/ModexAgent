@@ -12,7 +12,7 @@ from modex_graph.node import Node
 
 
 class StartNode(Node[ReActTurnState]):
-    """Routes to LLM normally, or to ``state.resume_target`` when resuming."""
+    """Routes to BEFORE normally, or to ``state.resume_target`` when resuming."""
 
     def __init__(self) -> None:
         self.name = ReActNode.START
@@ -35,7 +35,7 @@ class StartNode(Node[ReActTurnState]):
         state.iteration = 0
 
         await ctx.runtime.emit(GraphReActEvent.START, None, ctx)
-        self.deliver(None, ReActNode.LLM, ctx)
+        self.deliver(None, ReActNode.BEFORE, ctx)
         return None
 
 

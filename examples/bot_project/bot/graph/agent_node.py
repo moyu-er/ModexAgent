@@ -16,6 +16,7 @@ from modex_agent.agents.agent_node import AgentNode, SessionStrategy
 from modex_agent.core.message_utils import wrap_system_reminder
 from modex_agent.core.types import InputMessage, MessageRole
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
+from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.tools.graph_deliver import GraphDeliverTargetStore, GraphDeliverTool
 from modex_agent.tools.graph_tool_preset import GraphToolPreset
 from modex_graph.integration import GraphPayload
@@ -132,13 +133,14 @@ class BotAgentNode(AgentNode):
                 pool_data=pool_data,
             )
 
-            # Inject integrated input as system-reminder.
+            sections: list[str] = []
+            if ctx.user_input is not None and ctx.user_input.content:
+                sections.append("[Origin Request]:\n" + str(ctx.user_input.content))
             if integrated_input.payloads:
-                reminder = self._format_integrated_input(integrated_input)
-            elif ctx.user_input is not None:
-                reminder = wrap_system_reminder(str(ctx.user_input.content))
-            else:
-                reminder = ""
+                upstream = self._format_integrated_input(integrated_input)
+                if upstream:
+                    sections.append(upstream)
+            reminder = wrap_system_reminder("\n\n".join(sections)) if sections else ""
             if reminder:
                 await agent_context.history.append(
                     {"role": MessageRole.SYSTEM_REMINDER, "content": reminder}
@@ -181,6 +183,17 @@ class BotAgentNode(AgentNode):
                     f"Agent {self._agent_name!r} requires a ReAct turn runner, "
                     f"got {type(runner).__name__}"
                 )
+
+            assert agent_context.runtime is not None, (
+                "BotAgentNode requires agent_context.runtime to be set"
+            )
+            assert agent_context.runtime.state is not None, (
+                "BotAgentNode requires agent_context.runtime.state to be set"
+            )
+            agent_context.runtime.state.custom[TurnCustomKey.MAX_TURNS] = 3
+            agent_context.runtime.state.custom[TurnCustomKey.GRAPH_NODE_DESCRIPTION] = (
+                self.resolve_description()
+            )
             result = await runner.execute_turn(
                 agent_context,
                 emitter,
@@ -189,15 +202,14 @@ class BotAgentNode(AgentNode):
                 input_metadata={},
                 ctx_mgr=ctx_mgr,
             )
-            # approval=None above prevents GraphInterrupt, so execute_turn
-            # always returns AgentResult, never None.
             assert result is not None
 
             # Auto-deliver if the agent did not explicitly deliver.
             if not self._has_pending_delivers():
                 output = self._extract_auto_deliver_content(result)
                 if output:
-                    self.deliver(GraphPayload(content=output), None, ctx)
+                    resolved = self._resolve_default_target(ctx, policy="graceful")
+                    self.deliver(GraphPayload(content=output), resolved[0], ctx)
         finally:
             if self._session_strategy is SessionStrategy.PER_INVOCATION:
                 registry = await self._resolve_session_registry()
@@ -210,14 +222,13 @@ class BotAgentNode(AgentNode):
         for payload in integrated_input.payloads:
             source_name = self._resolve_source_name(payload.source_node)
             content = payload.content
-            # GraphPayload exposes .content; other payloads use str().
             text = content.content if hasattr(content, "content") else str(content)
             groups.setdefault(source_name, []).append(text)
         lines: list[str] = []
         for source_name, texts in groups.items():
             combined = "\n".join(texts)
             lines.append(f"[Input from graph node '{source_name}']:\n{combined}")
-        return wrap_system_reminder("\n\n".join(lines))
+        return "\n\n".join(lines)
 
     def _resolve_source_name(self, node_id: str) -> str:
         # reverse-lookup node_id -> name via the compiled graph topology.

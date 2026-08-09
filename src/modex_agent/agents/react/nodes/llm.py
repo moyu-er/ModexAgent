@@ -175,10 +175,10 @@ class LLMNode(Node[ReActTurnState]):
         # engine-level ``compile(max_iterations=N)`` safety net (layer 1) is
         # larger than this and raises ``GraphRecursionError`` only on runaway
         # loops — the normal max-iterations exit routes through this static
-        # edge to END.
+        # edge to AFTER.
         if state.iteration > agent_ctx.max_iterations:
             await ctx.runtime.emit(GraphReActEvent.MAX_ITERATIONS, None, ctx)
-            self.deliver(state.llm_response, ReActNode.END, ctx)
+            self.deliver(state.llm_response, ReActNode.AFTER, ctx)
             return None
 
         agent_runtime = agent_ctx.runtime
@@ -266,7 +266,7 @@ class LLMNode(Node[ReActTurnState]):
 
         response = state.llm_response
         if response is not None and response.finish_reason == FinishReason.ERROR.value:
-            self.deliver(response, ReActNode.END, ctx)
+            self.deliver(response, ReActNode.AFTER, ctx)
             return None
 
         if response is not None and response.tool_calls:
@@ -278,7 +278,7 @@ class LLMNode(Node[ReActTurnState]):
             {"iteration": state.iteration, "has_tool_calls": False},
             ctx,
         )
-        self.deliver(response, ReActNode.END, ctx)
+        self.deliver(response, ReActNode.AFTER, ctx)
         return None
 
     async def _build_messages(

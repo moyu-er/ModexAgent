@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.agent import AgentCommKind
+from modex_agent.core.agent import AgentCommKind, AgentContext, current_agent_context
 from modex_agent.core.capabilities import Modality, ModelInfo
 from modex_agent.core.constants import (
     _NO_DIR_SENTINEL,
@@ -797,3 +797,64 @@ class ForkContextProvider(SystemPromptProvider):
         except Exception:
             logger.warning("ForkContextProvider: failed for %s", self._session_id, exc_info=True)
             return ""
+
+
+class GraphWorkflowProvider(SystemPromptProvider):
+    """Graph workflow guidance — deliver-tool routing instructions.
+
+    Fires only when the agent is running inside a graph workflow
+    (``AgentContext.graph_context`` is set by the graph node before
+    the turn starts). In normal sessions ``graph_context`` is
+    ``None`` so version is ``no-graph`` and content is empty — the
+    pipeline skips it entirely.
+    """
+
+    async def _fetch_version(self) -> str:
+        ctx = _get_agent_context()
+        if ctx is None or ctx.graph_context is None:
+            return "no-graph"
+        return "graph"
+
+    async def _fetch_content(self) -> str:
+        ctx = _get_agent_context()
+        if ctx is None or ctx.graph_context is None:
+            return ""
+        parts = [
+            "## Graph Workflow\n\n"
+            "You are a node in a graph workflow. Your regular text output "
+            "is NOT delivered to anyone — it stays in your local context "
+            "only. The ONLY way to route your work to downstream nodes is "
+            "the `deliver` tool.\n\n"
+            "You MUST call `deliver` before finishing. Check the `deliver` "
+            "tool description for available targets and their roles.\n\n"
+            "### Deliver Content Guidelines\n\n"
+            "Your deliver `content` is the ONLY information downstream nodes "
+            "receive from you. They cannot see your reasoning, tool calls, "
+            "or intermediate steps. Write it as a handoff to the next "
+            "agent — enough context to continue, not a full transcript.\n\n"
+            "Recommended structure:\n"
+            "- **Task**: What you were asked to do (one or two sentences).\n"
+            "- **Result**: What you produced or found. Reference files by "
+            "path instead of pasting full content. Include key decisions "
+            "and their rationale.\n"
+            "- **Status**: Done / partial / blocked. If partial, state "
+            "what remains. If blocked, state the obstacle.\n\n"
+            "If you deliver multiple times, later delivers can be short "
+            "fragments — but your final deliver should be self-contained "
+            "enough for the downstream node to act on without re-reading "
+            "your inputs."
+        ]
+        if (
+            ctx.runtime is not None
+            and ctx.runtime.state is not None
+        ):
+            from modex_agent.runtime.enums import TurnCustomKey
+
+            desc = ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_NODE_DESCRIPTION)
+            if desc:
+                parts.append(f"\n\n## Your Role\n\n{desc}")
+        return "".join(parts)
+
+
+def _get_agent_context() -> AgentContext | None:
+    return current_agent_context.get(None)

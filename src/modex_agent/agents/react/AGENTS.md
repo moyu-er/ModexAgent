@@ -13,28 +13,34 @@ approval suspend/resume, and integration points for hooks, interceptors, and con
 | File | Description |
 |------|-------------|
 | `agent.py` | `ReActAgent(Agent[ReActEvent])` — event enum, turn context setup, constructs `Graph` via `build_react_graph().compile()`, wraps in `GraphEngine`, executes via `engine.run_async(ReActGraphContext(...))`. |
-| `graph.py` | `build_react_graph()` — builds `Graph[ReActTurnState]` (from `modex_graph`) with 4 nodes + 8 edges. |
+| `graph.py` | `build_react_graph()` — builds `Graph[ReActTurnState]` (from `modex_graph`) with 6 ReAct nodes + 11 edges (8 total with engine sentinels). |
 | `context.py` | `ReActGraphContext(GraphContext[ReActTurnState])` — type-safe accessors (`agent_ctx`, `tool_manager`, `context_manager`). |
 | `runtime.py` | `ReactGraphRuntime(GraphRuntime)` — AOP bridge mapping ReAct StrEnums to framework enums, bridging `GraphContext.user_data` → `AgentContext`. |
 | `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy`, and `ReActRuntimeStateCodec`. |
 | `builder.py` | `ReActAgentBuilder` -- `build_agent()` + `build_emitter_factory()` from `AgentDescriptor`. |
 | `approval.py` | *(removed — migrated to `modex_agent.approval.runtime`)* |
 | `constants.py` | `ReActNode`, `ReActHookPoint`, `ReActScope`, `ReActEvent`, `InterruptReason` (B1) StrEnums. |
-| `nodes/start.py` | `StartNode` -- routes to LLM (fresh) or stored `current_node` (resume from suspended). |
+| `nodes/start.py` | `StartNode` -- routes to BEFORE (fresh) or TOOL (resume from approval). |
+| `nodes/before_turn.py` | `BeforeTurnNode` -- mechanical only: `turn_attempt += 1`, `iteration = 0`, route to LLM. NO hook dispatch (BEFORE_TURN stays in `actual_turn()`). |
 | `nodes/llm.py` | `LLMNode` -- calls LLM, handles streaming, dispatches hooks/interceptors via `ctx.runtime.*`, emits iteration events. |
 | `nodes/tool.py` | `ToolNode` -- classify all -> suspend for approval via `ctx.interrupt(tx)` -> batch execute -> route. |
-| `nodes/end.py` | `EndNode` -- assembles `AgentResult` (normal/error/cancelled), writes `ctx.state.result`. |
+| `nodes/after_turn.py` | `AfterTurnNode` -- mechanical only: construct `AgentResult`, write `state.result`, check `CONTINUATION_REQUEST`, route to BEFORE/END. NO hook dispatch (AFTER_TURN stays in `actual_turn()`). |
+| `nodes/end.py` | `EndNode` -- reads `state.result` (raises `RuntimeError` if None), emits completion events. |
 
 ## Graph Edges
 
 Edges are plain topology — nodes route at runtime via `deliver()`.
 
 ```
-START → LLM
+START → BEFORE
+START → TOOL
+BEFORE → LLM
 LLM   → TOOL
-LLM   → END
+LLM   → AFTER
 TOOL  → LLM
-TOOL  → END
+TOOL  → AFTER
+AFTER → END
+AFTER → BEFORE
 END   → GraphNode.END
 ```
 
@@ -68,7 +74,9 @@ Deny policy: default `TOOL_RESULT_ONLY` (loop continues); override to `CANCEL_TU
 - ReAct runs on the `modex_graph` engine (ADR-0033). `ReActAgent.run()` constructs
   `Graph` + `GraphEngine` + `ReActGraphContext` per turn and calls `engine.run_async()`.
   Turn-level hooks (`BEFORE_TURN`/`AFTER_TURN`/`FINALLY_TURN`) and `around_turn`
-  interceptor remain in `ReActAgent.run()`, NOT in the graph runtime.
+  interceptor remain in `ReActAgent.run()`'s `actual_turn()`, NOT in the graph runtime.
+  `BeforeTurnNode` and `AfterTurnNode` are mechanical only — they handle turn-attempt
+  counting, result construction, and continuation routing; they do NOT dispatch hooks.
 - Node-level AOP (hooks, interceptors, governance, control drain, snapshot, emit) is
   routed through `ReactGraphRuntime` via `ctx.runtime.*`. Iteration-level hooks
   (`BEFORE_ITERATION`/`AFTER_ITERATION`) are dispatched explicitly by nodes, NOT

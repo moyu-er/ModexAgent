@@ -78,9 +78,7 @@ class ReActEvent(AgentEvent, Enum):
 
 def _get_turn_messages(ctx: AgentContext) -> list[dict[str, Any]]:
     """Extract current-turn messages from typed state or metadata fallback."""
-    from modex_agent.agents.react.state import get_react_state as _grs
-
-    state = _grs(ctx)
+    state = get_react_state(ctx)
     if state is not None:
         return [
             md.message.to_dict() if hasattr(md.message, "to_dict") else md.message
@@ -269,13 +267,21 @@ class ReActAgent(Agent[ReActEvent]):
             # (D9.3 layer 1) — N is larger than the business max
             # (``context.max_iterations``) so the node-level check in
             # ``LLMNode`` routes to END via a static edge before this fires.
+            max_turns = 1
+            if context.runtime and context.runtime.state:
+                max_turns = context.runtime.state.custom.get(
+                    TurnCustomKey.MAX_TURNS,
+                    1,
+                )
             graph = build_react_graph(
                 llm_client=self._llm_client,
                 injection_drainer=self._injection_drainer,
                 tool_executor=self._tool_executor,
                 mode=self.mode,
                 deduplicator=ToolCallDeduplicator(),
-            ).compile(max_iterations=context.max_iterations * 4 + 10)
+            ).compile(
+                max_iterations=context.max_iterations * max_turns * 4 + 10
+            )
             engine = GraphEngine(graph)
             react_state = get_react_state(context)
             assert react_state is not None  # constructed just above if previously None

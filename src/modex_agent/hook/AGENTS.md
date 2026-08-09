@@ -20,7 +20,7 @@ Lifecycle extension points — lightweight observation and context injection. Ho
 
 | Directory | Purpose |
 |-----------|---------|
-| `builtin/` | Built-in hook implementations — `logging.py`, `runtime_context.py`, `inbox_flush.py`, `subagent_auto_send.py`, `env_injection.py`, `loop_detection.py`, `control_drain.py` (interceptors, not hooks), `experience_review.py`. See `hook/builtin/AGENTS.md`. |
+| `builtin/` | Built-in hook implementations — `logging.py`, `runtime_context.py`, `inbox_flush.py`, `subagent_auto_send.py`, `env_injection.py`, `loop_detection.py`, `deliver_retry.py` (`DeliverRetryHook` — `AfterLLMResponseHook`, fires when LLM returns stop to inject deliver-reminder + set `CONTINUATION_REQUEST`; not `AfterTurnHook`), `control_drain.py` (interceptors, not hooks), `experience_review.py`. See `hook/builtin/AGENTS.md`. |
 
 ## HookPoint Dispatch
 

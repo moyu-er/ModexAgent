@@ -215,6 +215,7 @@ class MemorySystemContextManager(ContextManager):
             BasePromptProvider,
             CoreMemoryProvider,
             ExperienceProvider,
+            GraphWorkflowProvider,
             ModelInfoProvider,
             ProviderBlocksProvider,
             ProviderPrefetchProvider,
@@ -337,6 +338,9 @@ class MemorySystemContextManager(ContextManager):
         # 10. Agent role contracts (after business providers; near end).
         if self._roles:
             providers.append(AgentRoleContractProvider(self._roles))
+
+        # 11. Graph workflow guidance (only fires when graph_context is set).
+        providers.append(GraphWorkflowProvider())
 
         pipeline = SystemPromptPipeline(providers)
 

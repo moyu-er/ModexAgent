@@ -161,3 +161,7 @@ class TurnCustomKey(StrEnum):
     # SyntheticUserMessageStrategy — Path B) to inject a synthetic user message
     # after tool results.
     TOOL_MEDIA_CACHE = "_tool_media_cache"
+    CONTINUATION_REQUEST = "_continuation_request"
+    GRAPH_DELIVER_COUNT = "_graph_deliver_count"
+    MAX_TURNS = "_max_turns"
+    GRAPH_NODE_DESCRIPTION = "_graph_node_description"
