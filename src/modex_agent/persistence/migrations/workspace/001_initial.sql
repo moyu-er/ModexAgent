@@ -421,15 +421,17 @@ END;
 --     FK enforcement is off by default).
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS graph_instances (
-    graph_instance_id   BIGINT  PRIMARY KEY,
+    graph_instance_id   BIGINT  NOT NULL,
     spec_id             BIGINT  NOT NULL,
+    version             INTEGER NOT NULL DEFAULT 0,
     parent_instance_id  BIGINT,
     parent_node         TEXT,
-    status              TEXT    NOT NULL DEFAULT 'running'
+    status              TEXT    NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending', 'running', 'paused', 'stopped', 'crashed', 'completed', 'failed')),
     node_id_map_json    TEXT    NOT NULL DEFAULT '{}' CHECK (json_valid(node_id_map_json)),
     created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
-    updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+    updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    PRIMARY KEY (graph_instance_id, version)
 );
 
 CREATE INDEX IF NOT EXISTS idx_graph_instances_spec

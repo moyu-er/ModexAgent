@@ -46,6 +46,7 @@ _PARENT_INSTANCE_ID = 3003
 def _make_metadata(
     graph_instance_id: int = _GRAPH_INSTANCE_ID,
     spec_id: int = _SPEC_ID,
+    version: int = 0,
     parent_instance_id: int | None = None,
     parent_node: str | None = None,
     status: GraphInstanceStatus = GraphInstanceStatus.RUNNING,
@@ -53,6 +54,7 @@ def _make_metadata(
     return GraphMetadata(
         graph_instance_id=graph_instance_id,
         spec_id=spec_id,
+        version=version,
         parent_instance_id=parent_instance_id,
         parent_node=parent_node,
         status=status,
@@ -83,7 +85,7 @@ class TestGraphInstanceStoreABC:
         with pytest.raises(TypeError):
             GraphInstanceStore()  # type: ignore[abstract]
 
-    def test_six_abstract_methods(self) -> None:
+    def test_abstract_methods(self) -> None:
         expected = {
             "save",
             "load",
@@ -91,6 +93,11 @@ class TestGraphInstanceStoreABC:
             "load_by_parent",
             "update_status",
             "delete",
+            "begin_invocation",
+            "complete_invocation",
+            "suspend_invocation",
+            "crash_invocation",
+            "finalize_invocation",
         }
         assert set(GraphInstanceStore.__abstractmethods__) == expected
 
@@ -169,12 +176,13 @@ class TestGraphInstanceStoreCRUD:
         store = _store_factory(kind)()
         assert store.load(99999) is None
 
-    def test_save_is_upsert(self, kind: str) -> None:
+    def test_save_inserts_version_rows(self, kind: str) -> None:
         store = _store_factory(kind)()
-        store.save(_make_metadata(status=GraphInstanceStatus.RUNNING))
-        store.save(_make_metadata(status=GraphInstanceStatus.COMPLETED))
+        store.save(_make_metadata(version=0, status=GraphInstanceStatus.RUNNING))
+        store.save(_make_metadata(version=1, status=GraphInstanceStatus.COMPLETED))
         loaded = store.load(_GRAPH_INSTANCE_ID)
         assert loaded is not None
+        assert loaded.version == 1
         assert loaded.status == GraphInstanceStatus.COMPLETED
 
     def test_load_by_status(self, kind: str) -> None:
@@ -435,9 +443,9 @@ class TestSqliteGraphInstanceStoreSpecifics:
         with pytest.raises(sqlite3.IntegrityError):
             store._conn.execute(
                 f"INSERT INTO {_INSTANCE_TABLE} "
-                f"(graph_instance_id, spec_id, parent_instance_id, parent_node, "
+                f"(graph_instance_id, spec_id, version, parent_instance_id, parent_node, "
                 f"status, created_at, updated_at) "
-                f"VALUES (999, 1, NULL, NULL, 'invalid_status', 0, 0)"
+                f"VALUES (999, 1, 0, NULL, NULL, 'invalid_status', 0, 0)"
             )
         conn.close()
 
@@ -465,20 +473,21 @@ class TestSqliteGraphInstanceStoreSpecifics:
         assert updated_row[0] >= original_ts
         conn.close()
 
-    def test_upsert_via_on_conflict(self) -> None:
+    def test_insert_creates_version_chain(self) -> None:
         conn = sqlite3.connect(":memory:")
         store = SqliteGraphInstanceStore(conn)
-        store.save(_make_metadata(status=GraphInstanceStatus.RUNNING))
-        store.save(_make_metadata(status=GraphInstanceStatus.COMPLETED))
-        store.save(_make_metadata(status=GraphInstanceStatus.FAILED))
+        store.save(_make_metadata(version=0, status=GraphInstanceStatus.RUNNING))
+        store.save(_make_metadata(version=1, status=GraphInstanceStatus.COMPLETED))
+        store.save(_make_metadata(version=2, status=GraphInstanceStatus.FAILED))
         loaded = store.load(_GRAPH_INSTANCE_ID)
         assert loaded is not None
+        assert loaded.version == 2
         assert loaded.status == GraphInstanceStatus.FAILED
         rows = store._conn.execute(
             "SELECT COUNT(*) FROM graph_instances WHERE graph_instance_id = ?",
             (_GRAPH_INSTANCE_ID,),
         ).fetchone()
-        assert rows[0] == 1
+        assert rows[0] == 3
         conn.close()
 
 
@@ -491,19 +500,19 @@ class TestInMemoryGraphInstanceStoreSpecifics:
         store.save(_make_metadata())
         assert _GRAPH_INSTANCE_ID in store._instances
 
-    def test_update_status_replaces_with_new_instance(self) -> None:
+    def test_update_status_replaces_latest_version(self) -> None:
         store = InMemoryGraphInstanceStore()
-        store.save(_make_metadata(status=GraphInstanceStatus.RUNNING))
-        original = store._instances[_GRAPH_INSTANCE_ID]
+        store.save(_make_metadata(version=0, status=GraphInstanceStatus.RUNNING))
+        original = store._instances[_GRAPH_INSTANCE_ID][-1]
         store.update_status(_GRAPH_INSTANCE_ID, GraphInstanceStatus.CRASHED)
-        updated = store._instances[_GRAPH_INSTANCE_ID]
+        updated = store._instances[_GRAPH_INSTANCE_ID][-1]
         assert updated.status == GraphInstanceStatus.CRASHED
         assert original.status == GraphInstanceStatus.RUNNING
         assert updated is not original
 
-    def test_save_upsert_replaces(self) -> None:
+    def test_save_appends_version_rows(self) -> None:
         store = InMemoryGraphInstanceStore()
-        store.save(_make_metadata(status=GraphInstanceStatus.RUNNING))
-        store.save(_make_metadata(status=GraphInstanceStatus.COMPLETED))
-        assert len(store._instances) == 1
-        assert store._instances[_GRAPH_INSTANCE_ID].status == GraphInstanceStatus.COMPLETED
+        store.save(_make_metadata(version=0, status=GraphInstanceStatus.RUNNING))
+        store.save(_make_metadata(version=1, status=GraphInstanceStatus.COMPLETED))
+        assert len(store._instances[_GRAPH_INSTANCE_ID]) == 2
+        assert store._instances[_GRAPH_INSTANCE_ID][-1].status == GraphInstanceStatus.COMPLETED

@@ -60,6 +60,7 @@ from .graph_io_store import (
     SqliteGraphIORecordStore,
 )
 from .graph_metadata import (
+    GraphInvocationContext,
     GraphMetadata,
     GraphStateSnapshot,
     InvocationContext,
@@ -102,6 +103,7 @@ __all__ = [
     "SqliteNodeStateStore",
     # Graph metadata
     "GraphMetadata",
+    "GraphInvocationContext",
     "InvocationContext",
     "NodeInvocationRecord",
     "GraphStateSnapshot",

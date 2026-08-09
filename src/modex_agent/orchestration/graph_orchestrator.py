@@ -61,6 +61,7 @@ from modex_graph import (
     GraphInstanceStatus,
     GraphInstanceStore,
     GraphInterrupt,
+    GraphInvocationContext,
     GraphIORecord,
     GraphIORecordStore,
     GraphMetadata,
@@ -259,70 +260,89 @@ class GraphOrchestrator:
         self._active_instances[graph_instance_id] = instance
         return graph_instance_id
 
-    async def run_instance(self, graph_instance_id: int) -> None:
-        """Execute a created ``GraphInstance``.
+    async def run_instance(
+        self, graph_instance_id: int, *, user_input: GraphPayload | None = None
+    ) -> None:
+        """Execute a graph instance with version-chain lifecycle.
 
-        Sets status to ``RUNNING``, creates state + ``GraphContext``
-        (with ``user_input`` from the instance), runs the engine, and
-        in ``finally`` emits ``GraphOutput`` + removes terminal
-        instances from ``_active_instances`` (COMPLETED/CRASHED/STOPPED
-        removed, PAUSED retained for resume).
+        Loads latest metadata from store, resumes a paused version or begins
+        a new one, rebuilds coordinator + compiled graph, runs the engine,
+        and finalizes via invocation methods (complete/suspend/crash).
 
         Raises:
-            ValueError: if the instance is not in ``_active_instances``.
-            GraphInterrupt: if a node suspends (HITL). Instance status is
-                set to ``PAUSED`` before re-raising.
-            Exception: any engine exception. Instance status is set to
-                ``CRASHED`` before re-raising.
+            ValueError: if the instance is not in the store or is already running.
+            GraphInterrupt: if a node suspends (HITL).
+            Exception: any engine exception.
         """
-        instance = self._active_instances.get(graph_instance_id)
-        if instance is None:
-            raise ValueError(
-                f"Graph instance {graph_instance_id} not in _active_instances; "
-                "call create_instance first."
-            )
-        if instance.compiled is None:
-            raise ValueError(
-                f"Graph instance {graph_instance_id} has no compiled graph; "
-                "this should not happen after create_instance."
-            )
         gid = graph_instance_id
-        if gid in self._running_gids:
-            raise ValueError(
-                f"Graph instance {gid} is already running; "
-                "wait for it to complete or pause before re-running."
-            )
+        latest = self._instance_store.load(gid)
+        if latest is None:
+            existing_inst = self._active_instances.get(gid)
+            if existing_inst is not None:
+                latest = existing_inst.metadata
+        if latest is None:
+            raise ValueError(f"Graph instance {gid} not found in store.")
+        if latest.status == GraphInstanceStatus.RUNNING and gid in self._running_gids:
+            raise ValueError(f"Graph instance {gid} is already running.")
+
+        if latest.status == GraphInstanceStatus.PAUSED:
+            invocation = GraphInvocationContext(graph_instance_id=gid, version=latest.version)
+        else:
+            invocation = self._instance_store.begin_invocation(gid)
+
+        existing = self._active_instances.get(gid)
+        initial_state = existing.initial_state if existing is not None else None
+        if user_input is None and existing is not None:
+            user_input = existing.user_input
+        if gid in self._active_instances:
+            self.unregister_instance(gid)
         self._running_gids.add(gid)
-        self._instance_store.update_status(gid, GraphInstanceStatus.RUNNING)
         output: GraphOutput | None = None
         status = GraphInstanceStatus.RUNNING
         ctx: GraphContext[Any] | None = None
         try:
-            spec = self._load_spec(instance.spec_id)
-            state = (
-                instance.initial_state
-                if instance.initial_state is not None
-                else self._create_state(spec)
+            coordinator = self._coordinator_factory.create(gid, self._instance_store)
+            spec = self._load_spec(latest.spec_id)
+            compiled = self._compiler.compile(spec)
+            self._attach_output_adapter(coordinator)
+            for node in compiled.nodes.values():
+                node.node_id = latest.node_id_map[node.name]
+            for node in compiled.nodes.values():
+                coordinator.register_node(node.node_id)
+
+            effective_input = user_input
+            if effective_input is None:
+                io_record = self._io_store.get_by_instance(gid)
+                effective_input = io_record.user_input if io_record is not None else None
+
+            state = initial_state if initial_state is not None else self._create_state(spec)
+
+            instance = GraphInstance(
+                latest.model_copy(
+                    update={"version": invocation.version, "status": GraphInstanceStatus.RUNNING}
+                ),
+                coordinator,
+                compiled=compiled,
+                user_input=effective_input,
             )
-            compiled = instance.compiled
-            engine: GraphEngine[Any] = GraphEngine(compiled)
+            self._active_instances[gid] = instance
+
             ctx = GraphContext(
                 state=state,
                 runtime=self._runtime,
-                coordinator=instance.coordinator,
-                user_input=instance.user_input,
+                coordinator=coordinator,
+                user_input=effective_input,
                 graph_instance_id=gid,
             )
             controller = LiveGraphEngineController(gid, ctx.control)
             self._control_service.register_engine(controller)
 
-            final_state = await engine.run_async(ctx)
+            final_state = await GraphEngine(compiled).run_async(ctx)
             status = GraphInstanceStatus.COMPLETED
-            self._instance_store.update_status(gid, status)
+            self._instance_store.complete_invocation(invocation)
             result = dict(final_state).get("result")
             io_record = self._io_store.get_by_instance(gid)
             if io_record is not None:
-                # result is Any (dict extraction); narrow at the state boundary.
                 self._io_store.update_output(
                     io_record.record_id, result if isinstance(result, list) else None,
                 )
@@ -334,18 +354,18 @@ class GraphOrchestrator:
             )
         except GraphInterrupt:
             status = GraphInstanceStatus.PAUSED
-            self._instance_store.update_status(gid, status)
+            self._instance_store.suspend_invocation(invocation)
             raise
         except GraphDrained:
-            status = (
-                GraphInstanceStatus.STOPPED
-                if ctx is not None and ctx.control.stop_requested
-                else GraphInstanceStatus.PAUSED
-            )
-            self._instance_store.update_status(gid, status)
+            if ctx is not None and ctx.control.stop_requested:
+                status = GraphInstanceStatus.STOPPED
+                self._instance_store.update_status(gid, GraphInstanceStatus.STOPPED)
+            else:
+                status = GraphInstanceStatus.PAUSED
+                self._instance_store.suspend_invocation(invocation)
         except Exception as exc:
             status = GraphInstanceStatus.CRASHED
-            self._instance_store.update_status(gid, status)
+            self._instance_store.crash_invocation(invocation)
             output = GraphOutput(
                 kind=GraphOutputKind.CRASHED,
                 graph_instance_id=gid,
@@ -354,6 +374,7 @@ class GraphOrchestrator:
             )
             raise
         finally:
+            self._instance_store.finalize_invocation(invocation)
             await self._finalize_instance(gid, status, output=output)
             self._running_gids.discard(gid)
 
@@ -377,11 +398,13 @@ class GraphOrchestrator:
         )
         if initial_state is not None:
             self._active_instances[gid].initial_state = initial_state
-        task = self.start_run(gid)
+        task = self.start_run(gid, user_input=user_input)
         await task  # sync wait for tests; task is tracked in _run_tasks
         return gid
 
-    def start_run(self, graph_instance_id: int) -> asyncio.Task[None]:
+    def start_run(
+        self, graph_instance_id: int, *, user_input: GraphPayload | None = None
+    ) -> asyncio.Task[None]:
         """Launch ``run_instance`` as a tracked background task (non-blocking).
 
         The task is stored in ``_run_tasks`` so ``cleanup`` can cancel and
@@ -393,7 +416,9 @@ class GraphOrchestrator:
         await it for synchronous completion while still tracking it in
         ``_run_tasks``.
         """
-        task = asyncio.create_task(self.run_instance(graph_instance_id))
+        task = asyncio.create_task(
+            self.run_instance(graph_instance_id, user_input=user_input)
+        )
         self._run_tasks.add(task)
         task.add_done_callback(self._run_tasks.discard)
         return task

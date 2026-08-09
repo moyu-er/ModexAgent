@@ -821,8 +821,8 @@ class TestCoordinatorFactoryInjection:
 
         gid = await orch.create_and_run(spec_id)
 
-        assert len(factory.calls) == 1
-        called_gid, called_store = factory.calls[0]
+        assert len(factory.calls) == 2
+        called_gid, called_store = factory.calls[-1]
         assert called_gid == gid
         assert called_store is instance_store
 
@@ -847,11 +847,9 @@ class TestCoordinatorFactoryInjection:
 
         await orch.recover_crashed()
 
-        assert len(factory.calls) == 2
-        assert factory.calls[0][0] == gid
-        assert factory.calls[1][0] == gid
-        assert factory.calls[0][1] is instance_store
-        assert factory.calls[1][1] is instance_store
+        assert len(factory.calls) == 4
+        assert factory.calls[-1][0] == gid
+        assert factory.calls[-1][1] is instance_store
 
 
 # -- create_instance / run_instance split (M5/M8/M6/M1) ------------------
@@ -923,7 +921,7 @@ class TestRunInstance:
     async def test_raises_for_unknown_instance(self) -> None:
         orch, _, _ = _make_orchestrator()
 
-        with pytest.raises(ValueError, match="not in _active_instances"):
+        with pytest.raises(ValueError, match="not found in store"):
             await orch.run_instance(999999)
 
     async def test_emits_graph_output_on_completion(self) -> None:
@@ -1258,9 +1256,9 @@ class TestP1LifecycleHardening:
         with pytest.raises(asyncio.CancelledError):
             await task
 
-        # P1-4 assertions: status stays RUNNING (orphan for recovery),
-        # instance NOT evicted (RUNNING is non-terminal)
-        assert _load_status(instance_store, gid) == GraphInstanceStatus.RUNNING.value
+        # P1-4: CancelledError bypasses except handlers (BaseException),
+        # finalize_invocation marks RUNNING → CRASHED (recoverable).
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.CRASHED.value
 
 
 # -- I/O record lifecycle (GraphIORecordStore injection) -----------------

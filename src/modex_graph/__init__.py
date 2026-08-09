@@ -83,6 +83,7 @@ from .persistence import (
     GraphIORecordStore,
     GraphInstance,
     GraphInstanceStore,
+    GraphInvocationContext,
     GraphMetadata,
     GraphPersistenceCoordinator,
     GraphStateSnapshot,

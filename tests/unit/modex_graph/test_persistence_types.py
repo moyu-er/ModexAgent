@@ -117,6 +117,11 @@ def test_persistence_interfaces_are_abstract_with_the_specified_methods() -> Non
         "load_by_parent",
         "update_status",
         "delete",
+        "begin_invocation",
+        "complete_invocation",
+        "suspend_invocation",
+        "crash_invocation",
+        "finalize_invocation",
     }
     assert set(DeliverStoreFactory.__abstractmethods__) == {"create"}
 

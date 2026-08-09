@@ -10,23 +10,38 @@ from ..constants import GraphInstanceStatus, InvocationStatus
 
 
 class GraphMetadata(BaseModel):
-    """Graph instance metadata — basic identity and lifecycle status.
+    """Graph instance metadata — identity, version chain, and lifecycle status.
 
-    Scheduler bookkeeping (instance_seq, iteration_count,
-    activated_sources, pending_dispatches) is derived at recovery time
-    from the node_states and deliver stores, not persisted here.
+    One ``graph_instance_id`` per spec; each execution creates a new
+    ``version`` row. ``node_id_map`` is frozen at v0 and copied
+    across versions.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     graph_instance_id: int
     spec_id: int
-    parent_instance_id: int | None
-    parent_node: str | None
+    version: int = 0
+    parent_instance_id: int | None = None
+    parent_node: str | None = None
     status: GraphInstanceStatus
     node_id_map: dict[str, str] = {}
     created_at: int = 0
     updated_at: int = 0
+
+
+class GraphInvocationContext(BaseModel):
+    """Context returned when a graph instance invocation begins.
+
+    Carries ``(graph_instance_id, version)`` for CAS on subsequent
+    ``complete_invocation`` / ``suspend_invocation`` / ``crash_invocation``
+    / ``finalize_invocation`` calls.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    graph_instance_id: int
+    version: int
 
 
 class InvocationContext(BaseModel):
@@ -76,6 +91,7 @@ class GraphStateSnapshot(BaseModel):
 
 __all__ = [
     "GraphMetadata",
+    "GraphInvocationContext",
     "InvocationContext",
     "NodeInvocationRecord",
     "GraphStateSnapshot",
