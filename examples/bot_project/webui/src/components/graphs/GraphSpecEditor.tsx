@@ -1,13 +1,12 @@
 // GraphSpecEditor — full-canvas topology preview with slide-out YAML editor panel.
-// The canvas occupies the full area; a header bar has Back + spec name + Edit YAML + Run.
+// The canvas occupies the full area; a header bar has Back + spec name + Edit YAML.
 // Clicking "Edit YAML" slides out a right-side panel with CodeMirror + Cancel/Save.
 
 import { useEffect, useState, type FC } from "react";
-import { ArrowLeft, Code2, Play } from "lucide-react";
-import { getSpec, runGraph, updateSpec } from "../../lib/graphsApi";
+import { ArrowLeft, Code2 } from "lucide-react";
+import { getSpec, updateSpec } from "../../lib/graphsApi";
 import { useT } from "../../i18n";
 import { Button } from "../ui/Button";
-import { Input } from "../ui/Input";
 import { formatGraphApiError } from "./shared";
 import { YamlCodeEditor } from "./yaml/YamlCodeEditor";
 import {
@@ -22,7 +21,6 @@ export interface GraphSpecEditorProps {
   workspaceId: string;
   specId: string;
   onBack: () => void;
-  onRun: (instanceId: string) => void;
 }
 
 const PREVIEW_DEBOUNCE_MS = 300;
@@ -54,16 +52,13 @@ export const GraphSpecEditor: FC<GraphSpecEditorProps> = ({
   workspaceId,
   specId,
   onBack,
-  onRun,
 }) => {
   const t = useT();
   const [name, setName] = useState("");
   const [yamlContent, setYamlContent] = useState("");
   const [panelYaml, setPanelYaml] = useState("");
-  const [userInput, setUserInput] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [isRunning, setIsRunning] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lintErrors, setLintErrors] = useState<
@@ -150,17 +145,6 @@ export const GraphSpecEditor: FC<GraphSpecEditorProps> = ({
       .finally(() => setIsSaving(false));
   };
 
-  const handleRun = (): void => {
-    setIsRunning(true);
-    setError(null);
-    runGraph(workspaceId, specId, userInput.trim() || undefined)
-      .then((resp) => onRun(resp.graph_instance_id))
-      .catch((err) => {
-        setError(formatGraphApiError(err));
-        setIsRunning(false);
-      });
-  };
-
   if (isLoading) {
     return (
       <div className="flex flex-1 items-center justify-center">
@@ -198,21 +182,10 @@ export const GraphSpecEditor: FC<GraphSpecEditorProps> = ({
             <Code2 size={14} />
             {t("graphs.editYaml")}
           </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={handleRun}
-            loading={isRunning}
-            className="gap-1.5"
-            data-testid="spec-editor-run"
-          >
-            <Play size={14} />
-            {t("graphs.run")}
-          </Button>
         </div>
       </div>
 
-      {/* Error banner (run errors) */}
+      {/* Error banner (load/save errors) */}
       {error && !panelOpen ? (
         <pre className="mx-4 mt-3 whitespace-pre-wrap rounded-sm border border-danger bg-canvas-elevated px-3 py-2 font-mono text-xs text-danger">
           {error}
@@ -242,16 +215,6 @@ export const GraphSpecEditor: FC<GraphSpecEditorProps> = ({
             {t("graphs.parseError")}: {parseError.message}
           </div>
         ) : null}
-
-        {/* Floating user input bar (bottom-left, semi-transparent) */}
-        <div className="absolute bottom-3 right-3 w-72 rounded-lg border border-hairline bg-canvas-elevated/90 px-3 py-2.5 shadow-card backdrop-blur-sm">
-          <Input
-            label={t("graphs.userInputLabel")}
-            value={userInput}
-            onChange={(e): void => setUserInput(e.target.value)}
-            placeholder={t("graphs.userInputPlaceholder")}
-          />
-        </div>
       </div>
 
       {/* YAML slide-out panel */}

@@ -349,8 +349,7 @@ const AppInner: FC = () => {
             <GraphSpecEditor
               workspaceId={streamWs}
               specId={route.specId}
-              onBack={(): void => navigate("/graphs")}
-              onRun={(instanceId): void => navigate(`/graphs/instances/${instanceId}`)}
+              onBack={(): void => navigate(`/graphs/${route.specId}`)}
             />
           ) : route.kind === "graphInstances" ? (
             <GraphInstanceListPage

@@ -29,17 +29,11 @@ const SPEC_RESPONSE = {
   yaml_content: SPEC_YAML,
 };
 
-const RUN_RESPONSE = {
-  graph_instance_id: "inst-123",
-  status: "pending",
-};
-
 // ── Mocks ───────────────────────────────────────────────────────────────────
 
 vi.mock("../../lib/graphsApi", () => ({
   getSpec: vi.fn(),
   updateSpec: vi.fn(),
-  runGraph: vi.fn(),
 }));
 
 // Mock YamlCodeEditor to a simple controlled textarea.
@@ -82,14 +76,13 @@ vi.mock("./topology/TopologyCanvas", () => ({
   ),
 }));
 
-import { getSpec, updateSpec, runGraph } from "../../lib/graphsApi";
+import { getSpec, updateSpec } from "../../lib/graphsApi";
 
 function renderEditor(props: Partial<GraphSpecEditorProps> = {}) {
   const defaultProps: GraphSpecEditorProps = {
     workspaceId: "ws-1",
     specId: "test_wf",
     onBack: vi.fn(),
-    onRun: vi.fn(),
     ...props,
   };
   return render(<GraphSpecEditor {...defaultProps} />);
@@ -110,7 +103,6 @@ describe("GraphSpecEditor", () => {
     vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
     vi.mocked(getSpec).mockResolvedValue(SPEC_RESPONSE);
     vi.mocked(updateSpec).mockResolvedValue(SPEC_RESPONSE);
-    vi.mocked(runGraph).mockResolvedValue(RUN_RESPONSE);
   });
 
   afterEach(() => {
@@ -293,48 +285,6 @@ default_trigger: on_all_preds
       const lintMarker = screen.queryByTestId("lint-error-5");
       expect(lintMarker).toBeTruthy();
       expect(lintMarker?.textContent).toContain("line 5");
-    });
-  });
-
-  // ── Run flow ─────────────────────────────────────────────────────────────
-
-  it("calls runGraph and navigates to instance on Run", async () => {
-    const onRun = vi.fn();
-    renderEditor({ onRun });
-    await waitForLoaded();
-
-    fireEvent.click(screen.getByTestId("spec-editor-run"));
-
-    await waitFor(() => {
-      expect(vi.mocked(runGraph)).toHaveBeenCalledWith(
-        "ws-1",
-        "test_wf",
-        undefined,
-      );
-    });
-
-    await waitFor(() => {
-      expect(onRun).toHaveBeenCalledWith("inst-123");
-    });
-  });
-
-  it("passes user input to runGraph when provided", async () => {
-    renderEditor();
-    await waitForLoaded();
-
-    const input = screen.getByPlaceholderText(
-      "Content delivered to the graph's start node",
-    );
-    fireEvent.change(input, { target: { value: "hello world" } });
-
-    fireEvent.click(screen.getByTestId("spec-editor-run"));
-
-    await waitFor(() => {
-      expect(vi.mocked(runGraph)).toHaveBeenCalledWith(
-        "ws-1",
-        "test_wf",
-        "hello world",
-      );
     });
   });
 });
