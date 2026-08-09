@@ -19,6 +19,7 @@ from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.tools.graph_deliver import GraphDeliverTargetStore, GraphDeliverTool
 from modex_agent.tools.graph_tool_preset import GraphToolPreset
+from modex_graph.constants import FrameworkPayloadSource, GraphNode
 from modex_graph.integration import GraphPayload
 
 if TYPE_CHECKING:
@@ -86,7 +87,7 @@ class BotAgentNode(AgentNode):
 
     def resolve_description(self) -> str:
         instance = self._resolve_agent_instance()
-        return instance.descriptor.role_description or "[not found]"
+        return instance.descriptor.role_description or AgentNode.DESCRIPTION_NOT_FOUND
 
     async def execute(
         self,
@@ -133,14 +134,25 @@ class BotAgentNode(AgentNode):
                 pool_data=pool_data,
             )
 
-            sections: list[str] = []
-            if ctx.user_input is not None and ctx.user_input.content:
-                sections.append("[Origin Request]:\n" + str(ctx.user_input.content))
-            if integrated_input.payloads:
-                upstream = self._format_integrated_input(integrated_input)
+            upstream = self._format_integrated_input(integrated_input)
+            existing_messages = await agent_context.history.to_list()
+            is_re_execution = len(existing_messages) > 0
+
+            if is_re_execution:
+                # Crash recovery or resume — session already has [Origin Request]
+                # from the prior invocation. Only inject new upstream input.
+                if upstream:
+                    reminder = wrap_system_reminder(upstream)
+                else:
+                    reminder = ""
+            else:
+                # First execution — append [Origin Request] + upstream input.
+                sections: list[str] = []
+                if ctx.user_input is not None and ctx.user_input.content:
+                    sections.append("[Origin Request]:\n" + str(ctx.user_input.content))
                 if upstream:
                     sections.append(upstream)
-            reminder = wrap_system_reminder("\n\n".join(sections)) if sections else ""
+                reminder = wrap_system_reminder("\n\n".join(sections)) if sections else ""
             if reminder:
                 await agent_context.history.append(
                     {"role": MessageRole.SYSTEM_REMINDER, "content": reminder}
@@ -194,6 +206,9 @@ class BotAgentNode(AgentNode):
             agent_context.runtime.state.custom[TurnCustomKey.GRAPH_NODE_DESCRIPTION] = (
                 self.resolve_description()
             )
+            agent_context.runtime.state.custom[TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT] = (
+                self._build_topology_section()
+            )
             result = await runner.execute_turn(
                 agent_context,
                 emitter,
@@ -217,17 +232,46 @@ class BotAgentNode(AgentNode):
 
     def _format_integrated_input(self, integrated_input: IntegratedInput) -> str:
         if not integrated_input.payloads:
-            return ""
+            status = self._build_upstream_status(delivered_sources=set())
+            return status
+
         groups: dict[str, list[str]] = {}
+        source_descs: dict[str, str] = {}
+        has_framework_sentinel = False
         for payload in integrated_input.payloads:
             source_name = self._resolve_source_name(payload.source_node)
+            # __start__ payloads carry the user input that [Origin Request]
+            # in execute() already renders — skip to avoid duplication.
+            if source_name == GraphNode.START:
+                continue
+            # Framework sentinels (retry feedback, resume) replace the real
+            # input — they are not upstream delivers. Track them to skip
+            # the [Upstream Status] block, which would otherwise falsely
+            # claim real upstreams delivered nothing.
+            if source_name in FrameworkPayloadSource._value2member_map_:
+                has_framework_sentinel = True
             content = payload.content
             text = content.content if hasattr(content, "content") else str(content)
             groups.setdefault(source_name, []).append(text)
+            if source_name not in source_descs:
+                source_descs[source_name] = self._resolve_upstream_desc(source_name)
+
         lines: list[str] = []
         for source_name, texts in groups.items():
             combined = "\n".join(texts)
-            lines.append(f"[Input from graph node '{source_name}']:\n{combined}")
+            if source_name in FrameworkPayloadSource._value2member_map_:
+                annotation = " (framework feedback — not from a graph node)"
+            else:
+                desc = source_descs.get(source_name, "")
+                annotation = f" (upstream node, role: {desc})" if desc else " (upstream node)"
+            lines.append(f"[Input from graph node '{source_name}']{annotation}:\n{combined}")
+
+        if not has_framework_sentinel:
+            delivered = set(groups.keys())
+            status = self._build_upstream_status(delivered)
+            if status:
+                lines.append(status)
+
         return "\n\n".join(lines)
 
     def _resolve_source_name(self, node_id: str) -> str:
@@ -238,6 +282,84 @@ class BotAgentNode(AgentNode):
             if node.node_id == node_id:
                 return name
         return node_id
+
+    def _build_topology_section(self) -> str:
+        """Render graph topology as markdown for the ### Topology subsection."""
+        if self._graph_ref is None:
+            return ""
+        graph = self._graph_ref
+        lines: list[str] = []
+        lines.append(f"Graph: {graph.name}")
+        lines.append(f"You are node: **{self.name}**")
+        lines.append("")
+        lines.append("Nodes:")
+        for name in graph.nodes:
+            if name == GraphNode.START:
+                label = " (entry — receives Origin Request)"
+            elif name == GraphNode.END:
+                label = (
+                    " (terminal — collects all upstream deliveries in order, "
+                    "concatenates into the graph's final reply list)"
+                )
+            elif name == self.name:
+                label = " ← YOU ARE HERE"
+            else:
+                label = ""
+            lines.append(f"- {name}{label}")
+        lines.append("")
+        lines.append("Edges:")
+        for edge in graph.edges:
+            lines.append(f"- {edge.source} → {edge.target}")
+        upstream = [e.source for e in graph.edges if e.target == self.name]
+        downstream = [e.target for e in graph.edges_from(self.name)]
+        lines.append("")
+        lines.append(f"Your upstream (nodes that deliver to you): {', '.join(upstream) or '(none)'}")
+        lines.append(f"Your downstream (nodes you can deliver to): {', '.join(downstream) or '(none)'}")
+        lines.append("")
+        lines.append(
+            "Origin Request: the user's input that triggered this graph run. "
+            "It enters through __start__ and is the root task every node works towards. "
+            "You will see it in your input as [Origin Request]."
+        )
+        return "\n".join(lines)
+
+    def _resolve_upstream_desc(self, source_name: str) -> str:
+        """Resolve the role description of an upstream node.
+
+        Returns empty string for non-AgentNode upstreams (no role_description
+        available) — the annotation falls back to just '(upstream node)'.
+        """
+        if self._graph_ref is None:
+            return ""
+        node = self._graph_ref.nodes.get(source_name)
+        if node is None:
+            return ""
+        if isinstance(node, AgentNode):
+            desc = node.resolve_description()
+            return "" if desc == AgentNode.DESCRIPTION_NOT_FOUND else desc
+        return ""
+
+    def _build_upstream_status(self, delivered_sources: set[str]) -> str:
+        """Build the [Upstream Status] block showing delivered vs missing upstreams."""
+        if self._graph_ref is None:
+            return ""
+        all_upstream = [
+            e.source
+            for e in self._graph_ref.edges
+            if e.target == self.name and e.source != GraphNode.START
+        ]
+        if not all_upstream:
+            return ""
+        lines = ["[Upstream Status]"]
+        for source in all_upstream:
+            if source in delivered_sources:
+                lines.append(f"- {source}: delivered")
+            else:
+                lines.append(
+                    f"- {source}: no input — path not activated in this run, "
+                    f"no further input expected. Proceed with received input."
+                )
+        return "\n".join(lines)
 
     def _extract_auto_deliver_content(self, result: AgentResult) -> str:
         raw = ""
