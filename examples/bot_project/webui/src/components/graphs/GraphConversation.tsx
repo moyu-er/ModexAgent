@@ -80,6 +80,7 @@ export const GraphConversation: FC<GraphConversationProps> = ({
   const [runs, setRuns] = useState<GraphRunRecord[]>([]);
   const [input, setInput] = useState("");
   const [isRunning, setIsRunning] = useState(false);
+  const [pollRevision, setPollRevision] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -90,6 +91,7 @@ export const GraphConversation: FC<GraphConversationProps> = ({
     getRuns(workspaceId, specId)
       .then((fetched) => {
         setRuns(fetched);
+        setPollRevision((r) => r + 1);
         const latest = fetched[fetched.length - 1];
         if (latest && TERMINAL_STATUSES.has(latest.status)) {
           setIsRunning(false);
@@ -300,6 +302,7 @@ export const GraphConversation: FC<GraphConversationProps> = ({
                   run={run}
                   topology={topology}
                   workspaceId={workspaceId}
+                  pollRevision={pollRevision}
                   onOpenInstance={onOpenInstance}
                 />
               ))
@@ -322,6 +325,7 @@ interface RunEntryProps {
   run: GraphRunRecord;
   topology: ParsedGraphTopology | null;
   workspaceId: string;
+  pollRevision: number;
   onOpenInstance: (instanceId: string) => void;
 }
 
@@ -364,6 +368,7 @@ const RunEntry: FC<RunEntryProps> = ({
   run,
   topology,
   workspaceId,
+  pollRevision,
   onOpenInstance,
 }) => {
   const t = useT();
@@ -390,9 +395,9 @@ const RunEntry: FC<RunEntryProps> = ({
     return () => {
       cancelled = true;
     };
-    // run.updated_at re-triggers getInstance on each poll cycle (parent refreshes runs every 2s).
+    // pollRevision is a poll-cycle trigger (not read in body) — re-fetches getInstance on every 2s refresh, even when updated_at is unchanged.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, run.graph_instance_id, workspaceId, run.updated_at]);
+  }, [isActive, run.graph_instance_id, workspaceId, pollRevision]);
 
   const statusMap = nodeStatuses ? buildNodeStatusMap(nodeStatuses) : undefined;
   const totalNodes = topology ? functionalNodeCount(topology) : 0;

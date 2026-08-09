@@ -285,9 +285,8 @@ describe("GraphConversation", () => {
     vi.useFakeTimers();
     try {
       mockGetSpec.mockResolvedValue(SPEC_RESPONSE);
-      mockGetRuns
-        .mockResolvedValueOnce([makeRun({ status: "running", updated_at: 1000 })])
-        .mockResolvedValue([makeRun({ status: "running", updated_at: 2000 })]);
+      // updated_at stays CONSTANT across polls — progress must refresh via pollRevision, not updated_at.
+      mockGetRuns.mockResolvedValue([makeRun({ status: "running", updated_at: 1000 })]);
       mockGetInstance
         .mockResolvedValueOnce(RUNNING_INSTANCE)
         .mockResolvedValue({
