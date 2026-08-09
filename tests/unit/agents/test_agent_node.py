@@ -26,9 +26,11 @@ from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.graph_deliver import GraphDeliverTool
 from modex_agent.tools.graph_tool_preset import GraphToolPreset
-from modex_graph.constants import GraphNode
+from modex_graph.constants import FrameworkPayloadSource, GraphNode
 from modex_graph.context import GraphContext
+from modex_graph.graph import Graph
 from modex_graph.integration import GraphPayload, IntegratedInput, IntegratedPayload
+from modex_graph.nodes.function_node import FunctionNode
 from modex_graph.spec import NodeSpec
 
 
@@ -341,6 +343,398 @@ class TestBotAgentNodeFormatIntegratedInput:
         assert node._format_integrated_input(integrated) == ""
 
 
+class TestBotAgentNodeTopologySection:
+    def test_build_topology_section(self) -> None:
+        graph: Graph[Any] = Graph("workflow-test")
+        planner = BotAgentNode("planner", "default", MagicMock())
+        researcher = BotAgentNode("researcher", "default", MagicMock())
+        graph.add_node("planner", planner)
+        graph.add_node("researcher", researcher)
+        graph.add_edge(GraphNode.START, "planner")
+        graph.add_edge("planner", "researcher")
+        graph.add_edge("researcher", GraphNode.END)
+        planner._graph_ref = graph.compile()
+
+        section = planner._build_topology_section()
+
+        assert "Graph: workflow-test" in section
+        assert "You are node: **planner**" in section
+        assert "- planner" in section
+        assert "- researcher" in section
+        assert "- __start__ → planner" in section
+        assert "- planner → researcher" in section
+        assert "- researcher → __end__" in section
+        assert "Your upstream (nodes that deliver to you): __start__" in section
+        assert "Your downstream (nodes you can deliver to): researcher" in section
+        assert "Origin Request: the user's input that triggered this graph run." in section
+        assert "It enters through __start__" in section
+
+    def test_build_topology_section_none_graph_ref(self) -> None:
+        node = BotAgentNode("planner", "default", MagicMock())
+        node._graph_ref = None
+
+        assert node._build_topology_section() == ""
+
+    def test_build_topology_section_start_end_labels(self) -> None:
+        graph: Graph[Any] = Graph("labels-test")
+        planner = BotAgentNode("planner", "default", MagicMock())
+        graph.add_node("planner", planner)
+        graph.add_node("worker", FunctionNode(lambda ctx: ctx))
+        graph.add_edge(GraphNode.START, "planner")
+        graph.add_edge("planner", "worker")
+        graph.add_edge("worker", GraphNode.END)
+        planner._graph_ref = graph.compile()
+
+        section = planner._build_topology_section()
+
+        assert "- __start__ (entry — receives Origin Request)" in section
+        assert "- __end__ (terminal — collects all upstream deliveries in order" in section
+        assert "- worker" in section.splitlines()
+        assert "(agent)" not in section
+
+    def test_build_topology_section_current_node_highlight(self) -> None:
+        graph: Graph[Any] = Graph("highlight-test")
+        planner = BotAgentNode("planner", "default", MagicMock())
+        graph.add_node("planner", planner)
+        graph.add_edge(GraphNode.START, "planner")
+        graph.add_edge("planner", GraphNode.END)
+        planner._graph_ref = graph.compile()
+
+        section = planner._build_topology_section()
+
+        assert "- planner ← YOU ARE HERE" in section.splitlines()
+
+    def test_format_integrated_input_with_upstream_desc(self) -> None:
+        upstream_instance = _build_mock_agent_instance(
+            MagicMock(),
+            MagicMock(),
+            role_description="evidence researcher",
+        )
+        upstream_resolver = _build_mock_workspace_resolver("default", upstream_instance)
+        upstream = BotAgentNode("researcher", "default", upstream_resolver)
+        current = BotAgentNode("writer", "default", MagicMock())
+        graph: Graph[Any] = Graph("role-test")
+        graph.add_node("researcher", upstream)
+        graph.add_node("writer", current)
+        graph.add_edge(GraphNode.START, "researcher")
+        graph.add_edge("researcher", "writer")
+        graph.add_edge("writer", GraphNode.END)
+        current._graph_ref = graph.compile()
+        integrated = IntegratedInput(
+            payloads=[
+                IntegratedPayload(
+                    source_node=upstream.node_id,
+                    content=GraphPayload(content="research result"),
+                ),
+            ]
+        )
+
+        result = current._format_integrated_input(integrated)
+
+        assert "(upstream node, role: evidence researcher)" in result
+
+    def test_format_integrated_input_non_agent_upstream(self) -> None:
+        upstream = FunctionNode(lambda ctx: ctx)
+        current = BotAgentNode("writer", "default", MagicMock())
+        graph: Graph[Any] = Graph("function-test")
+        graph.add_node("loader", upstream)
+        graph.add_node("writer", current)
+        graph.add_edge(GraphNode.START, "loader")
+        graph.add_edge("loader", "writer")
+        graph.add_edge("writer", GraphNode.END)
+        current._graph_ref = graph.compile()
+        integrated = IntegratedInput(
+            payloads=[
+                IntegratedPayload(
+                    source_node=upstream.node_id,
+                    content=GraphPayload(content="loaded data"),
+                ),
+            ]
+        )
+
+        result = current._format_integrated_input(integrated)
+
+        assert "(upstream node):" in result
+        assert "role:" not in result
+
+    def test_format_integrated_input_missing_upstream(self) -> None:
+        first = FunctionNode(lambda ctx: ctx)
+        second = FunctionNode(lambda ctx: ctx)
+        current = BotAgentNode("writer", "default", MagicMock())
+        graph: Graph[Any] = Graph("missing-input-test")
+        graph.add_node("first", first)
+        graph.add_node("second", second)
+        graph.add_node("writer", current)
+        graph.add_edge(GraphNode.START, "first")
+        graph.add_edge("first", "writer")
+        graph.add_edge("first", "second")
+        graph.add_edge("second", "writer")
+        graph.add_edge("writer", GraphNode.END)
+        current._graph_ref = graph.compile()
+        integrated = IntegratedInput(
+            payloads=[
+                IntegratedPayload(
+                    source_node=first.node_id,
+                    content=GraphPayload(content="first result"),
+                ),
+            ]
+        )
+
+        result = current._format_integrated_input(integrated)
+
+        assert "[Upstream Status]" in result
+        assert "- first: delivered" in result
+        assert (
+            "- second: no input — path not activated in this run, no further "
+            "input expected. Proceed with received input."
+        ) in result
+
+    def test_format_integrated_input_no_upstream(self) -> None:
+        current = BotAgentNode("planner", "default", MagicMock())
+        graph: Graph[Any] = Graph("entry-test")
+        graph.add_node("planner", current)
+        graph.add_edge(GraphNode.START, "planner")
+        graph.add_edge("planner", GraphNode.END)
+        current._graph_ref = graph.compile()
+
+        result = current._format_integrated_input(IntegratedInput(payloads=[]))
+
+        assert "[Upstream Status]" not in result
+
+    def test_format_integrated_input_no_payloads_with_upstream(self) -> None:
+        upstream = FunctionNode(lambda ctx: ctx)
+        current = BotAgentNode("writer", "default", MagicMock())
+        graph: Graph[Any] = Graph("empty-input-test")
+        graph.add_node("loader", upstream)
+        graph.add_node("writer", current)
+        graph.add_edge(GraphNode.START, "loader")
+        graph.add_edge("loader", "writer")
+        graph.add_edge("writer", GraphNode.END)
+        current._graph_ref = graph.compile()
+
+        result = current._format_integrated_input(IntegratedInput(payloads=[]))
+
+        assert result == (
+            "[Upstream Status]\n"
+            "- loader: no input — path not activated in this run, no further input "
+            "expected. Proceed with received input."
+        )
+
+    def test_start_payload_is_skipped_not_duplicated(self) -> None:
+        """__start__ payloads must not appear as [Input from graph node '__start__'].
+        The [Origin Request] block in execute() already carries this content."""
+        graph: Graph[Any] = Graph("test-skip-start")
+        entry = BotAgentNode("entry", "default", MagicMock())
+        graph.add_node("entry", entry)
+        graph.add_edge(GraphNode.START, "entry")
+        graph.add_edge("entry", GraphNode.END)
+        compiled = graph.compile()
+        entry._graph_ref = compiled
+
+        start_node = compiled.nodes[GraphNode.START]
+        start_id = start_node.node_id
+
+        integrated = IntegratedInput(payloads=[
+            IntegratedPayload(source_node=start_id, content=GraphPayload(content="user input")),
+        ])
+
+        result = entry._format_integrated_input(integrated)
+
+        assert "[Input from graph node '__start__']" not in result
+        assert "user input" not in result
+        assert "[Upstream Status]" not in result
+
+    def test_framework_sentinel_annotated_and_status_skipped(self) -> None:
+        """Framework sentinel payloads are annotated as framework feedback,
+        and [Upstream Status] is skipped (it would falsely claim real upstreams
+        delivered nothing)."""
+        graph: Graph[Any] = Graph("test-framework")
+        worker = BotAgentNode("worker", "default", MagicMock())
+        feeder = BotAgentNode("feeder", "default", MagicMock())
+        graph.add_node("worker", worker)
+        graph.add_node("feeder", feeder)
+        graph.add_edge(GraphNode.START, "feeder")
+        graph.add_edge("feeder", "worker")
+        graph.add_edge("worker", GraphNode.END)
+        compiled = graph.compile()
+        worker._graph_ref = compiled
+
+        integrated = IntegratedInput(payloads=[
+            IntegratedPayload(
+                source_node=FrameworkPayloadSource.FRAMEWORK.value,
+                content={"error": "no deliver produced"},
+            ),
+        ])
+
+        result = worker._format_integrated_input(integrated)
+
+        assert "[Input from graph node '__framework__']" in result
+        assert "framework feedback" in result
+        assert "[Upstream Status]" not in result
+
+
+class TestAgentNodeIntegrateUpstreamIdempotency:
+    """AgentNode._integrate_upstream must always filter CONSUMED_PENDING.
+
+    Agent session memory persists upstream input across invocations.
+    On crash recovery, CONSUMED_PENDING delivers (consumed by the crashed
+    invocation) must NOT be re-consumed — they would duplicate the
+    SYSTEM_REMINDER in the agent's session history.
+    """
+
+    def test_consumed_pending_filtered_on_non_resume(self) -> None:
+        from modex_graph.constants import DeliverConsumptionStatus
+        from modex_graph.integration import IntegratedPayload
+
+        node = BotAgentNode("worker", "default", MagicMock())
+        node.name = "worker"
+        node.node_id = "node-worker"
+
+        mock_coordinator = MagicMock()
+        pending_record = MagicMock()
+        pending_record.status = DeliverConsumptionStatus.PENDING
+        pending_record.deliver_id = 101
+        pending_record.source_node_id = "src-id"
+        pending_record.content = "new deliver"
+
+        consumed_pending_record = MagicMock()
+        consumed_pending_record.status = DeliverConsumptionStatus.CONSUMED_PENDING
+        consumed_pending_record.deliver_id = 100
+        consumed_pending_record.source_node_id = "src-id"
+        consumed_pending_record.content = "old deliver"
+
+        mock_coordinator.collect_consumable_delivers.return_value = [
+            consumed_pending_record,
+            pending_record,
+        ]
+
+        result = node._integrate_upstream(
+            mock_coordinator,
+            MagicMock(invocation_id=42),
+            resume_snapshot=None,
+        )
+
+        mock_coordinator.mark_delivers_consumed.assert_called_once_with(
+            "node-worker", [101], 42
+        )
+        assert len(result.payloads) == 1
+        assert result.payloads[0].content == "new deliver"
+
+    def test_empty_when_all_consumed_pending(self) -> None:
+        from modex_graph.constants import DeliverConsumptionStatus
+
+        node = BotAgentNode("worker", "default", MagicMock())
+        node.name = "worker"
+        node.node_id = "node-worker"
+
+        mock_coordinator = MagicMock()
+        consumed_record = MagicMock()
+        consumed_record.status = DeliverConsumptionStatus.CONSUMED_PENDING
+        consumed_record.deliver_id = 100
+        consumed_record.source_node_id = "src-id"
+        consumed_record.content = "already injected"
+
+        mock_coordinator.collect_consumable_delivers.return_value = [consumed_record]
+
+        result = node._integrate_upstream(
+            mock_coordinator,
+            MagicMock(invocation_id=42),
+            resume_snapshot=None,
+        )
+
+        mock_coordinator.mark_delivers_consumed.assert_not_called()
+        assert len(result.payloads) == 0
+
+    def test_resume_snapshot_still_prepended(self) -> None:
+        from modex_graph.constants import DeliverConsumptionStatus, FrameworkPayloadSource
+
+        node = BotAgentNode("worker", "default", MagicMock())
+        node.name = "worker"
+        node.node_id = "node-worker"
+
+        mock_coordinator = MagicMock()
+        mock_coordinator.collect_consumable_delivers.return_value = []
+
+        snapshot = {"state": "resumed"}
+        result = node._integrate_upstream(
+            mock_coordinator,
+            MagicMock(invocation_id=42),
+            resume_snapshot=snapshot,
+        )
+
+        assert len(result.payloads) == 1
+        assert result.payloads[0].source_node == FrameworkPayloadSource.RESUME
+        assert result.payloads[0].content == snapshot
+
+
+class TestBotAgentNodeReExecutionIdempotency:
+    """BotAgentNode.execute must not duplicate [Origin Request] on re-execution.
+
+    On crash recovery, the session already has [Origin Request] from the
+    prior invocation. Re-appending it would duplicate the user's input
+    in the agent's session memory.
+    """
+
+    async def test_re_execution_skips_origin_request(self) -> None:
+        mock_agent, mock_builder, mock_agent_context, mock_emitter, mock_result, mock_turn_runner = (
+            TestBotAgentNodeExecute._build_execute_mocks()
+        )
+        # Session already has messages (re-execution / crash recovery)
+        mock_agent_context.history.to_list = AsyncMock(
+            return_value=[{"role": "user", "content": "prior message"}]
+        )
+
+        instance = _build_mock_agent_instance(mock_builder, mock_agent, turn_runner=mock_turn_runner)
+        resolver = _build_mock_workspace_resolver("default", instance)
+
+        node = BotAgentNode("planner", "default", resolver)
+        node.name = "planner_node"
+        node.node_id = "node-1"
+        mock_graph = MagicMock()
+        mock_graph.nodes = {}
+        mock_graph.edges_from.return_value = []
+        node._graph_ref = mock_graph
+
+        mock_ctx = MagicMock()
+        mock_ctx.user_input = GraphPayload(content="do the task")
+
+        await node.execute(mock_ctx, IntegratedInput(payloads=[]))
+
+        appended = mock_agent_context.history.append.call_args_list
+        assert len(appended) == 0 or all(
+            "[Origin Request]" not in str(call.args[0].get("content", ""))
+            for call in appended
+        )
+
+    async def test_first_execution_includes_origin_request(self) -> None:
+        mock_agent, mock_builder, mock_agent_context, mock_emitter, mock_result, mock_turn_runner = (
+            TestBotAgentNodeExecute._build_execute_mocks()
+        )
+        # Session is empty (first execution)
+        mock_agent_context.history.to_list = AsyncMock(return_value=[])
+
+        instance = _build_mock_agent_instance(mock_builder, mock_agent, turn_runner=mock_turn_runner)
+        resolver = _build_mock_workspace_resolver("default", instance)
+
+        node = BotAgentNode("planner", "default", resolver)
+        node.name = "planner_node"
+        node.node_id = "node-1"
+        mock_graph = MagicMock()
+        mock_graph.nodes = {}
+        mock_graph.edges_from.return_value = []
+        node._graph_ref = mock_graph
+
+        mock_ctx = MagicMock()
+        mock_ctx.user_input = GraphPayload(content="do the task")
+
+        await node.execute(mock_ctx, IntegratedInput(payloads=[]))
+
+        mock_agent_context.history.append.assert_called_once()
+        content = mock_agent_context.history.append.call_args.args[0]["content"]
+        assert "[Origin Request]" in content
+        assert "do the task" in content
+
+
 class TestBotAgentNodeAutoDeliver:
     def test_has_pending_delivers_false_when_none(self) -> None:
         node = BotAgentNode("a", "p", MagicMock())
@@ -427,6 +821,7 @@ class TestBotAgentNodeExecute:
         mock_agent_context = MagicMock()
         mock_agent_context.tool_manager = InMemoryToolManager()
         mock_agent_context.history = MagicMock()
+        mock_agent_context.history.to_list = AsyncMock(return_value=[])
         mock_agent_context.history.append = AsyncMock()
         mock_agent_context.runtime = MagicMock()
         mock_agent_context.runtime.state.custom = {}
@@ -475,6 +870,41 @@ class TestBotAgentNodeExecute:
         assert isinstance(delivered_content, GraphPayload)
         assert delivered_content.content == "auto-delivered output"
         assert delivered_target == "downstream"
+
+    async def test_timing_safety(self) -> None:
+        """GRAPH_TOPOLOGY_CONTEXT must be set before runner.execute_turn()."""
+        mock_agent, mock_builder, mock_agent_context, _, mock_result, mock_turn_runner = (
+            self._build_execute_mocks()
+        )
+        captured_topology: list[str] = []
+
+        async def capture_topology(*args: object, **kwargs: object) -> AgentResult:
+            captured_topology.append(
+                mock_agent_context.runtime.state.custom[
+                    TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT
+                ]
+            )
+            return mock_result
+
+        mock_turn_runner.execute_turn = AsyncMock(side_effect=capture_topology)
+        instance = _build_mock_agent_instance(
+            mock_builder,
+            mock_agent,
+            turn_runner=mock_turn_runner,
+        )
+        resolver = _build_mock_workspace_resolver("default", instance)
+        node = BotAgentNode("planner", "default", resolver)
+        graph: Graph[Any] = Graph("timing-test")
+        graph.add_node("planner", node)
+        graph.add_edge(GraphNode.START, "planner")
+        graph.add_edge("planner", GraphNode.END)
+        node._graph_ref = graph.compile()
+        mock_ctx = MagicMock()
+        mock_ctx.user_input = GraphPayload(content="do the task")
+
+        await node.execute(mock_ctx, IntegratedInput(payloads=[]))
+
+        assert captured_topology == [node._build_topology_section()]
 
     async def test_execute_auto_delivers_to_end_with_multiple_downstream_edges(
         self,
@@ -744,6 +1174,7 @@ class TestBotAgentNodeSessionCleanup:
         mock_agent_context = MagicMock()
         mock_agent_context.tool_manager = InMemoryToolManager()
         mock_agent_context.history = MagicMock()
+        mock_agent_context.history.to_list = AsyncMock(return_value=[])
         mock_agent_context.history.append = AsyncMock()
         mock_emitter = MagicMock()
         mock_builder = MagicMock()

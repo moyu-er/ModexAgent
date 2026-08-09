@@ -617,7 +617,7 @@ async def test_role_contract_order_preserved_in_content():
 
 
 @pytest.mark.asyncio
-async def test_graph_workflow_provider_emits_deliver_routing_guidance():
+async def test_graph_workflow_provider_emits_deliver_routing_guidance() -> None:
     """Prompt text must match the deliver tool's target-required behavior:
     no 'auto-delivered to ALL downstream nodes' claim (multi-edge raises
     RoutingError); instead describe single-edge auto-deliver / END fallback
@@ -626,9 +626,8 @@ async def test_graph_workflow_provider_emits_deliver_routing_guidance():
     from modex_agent.core.history import MessageHistory
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.tool_manager import InMemoryToolManager
-    from modex_graph.context import GraphContext
-
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+    from modex_graph.context import GraphContext
 
     ctx = AgentContext(
         system_prompt="",
@@ -641,6 +640,13 @@ async def test_graph_workflow_provider_emits_deliver_routing_guidance():
     try:
         provider = GraphWorkflowProvider()
         result = await provider._fetch_content()
+        assert result.startswith("## Graph Node Context\n")
+        assert result.count("\n## ") == 0
+        assert "### Workflow Guidance\n" in result
+        assert "**Pattern 1 — Producer**" in result
+        assert "**Pattern 2 — Relay**" in result
+        assert "### Topology\n" not in result
+        assert "### Your Role\n" not in result
         assert "MUST call `deliver`" in result
         assert "auto-delivered to ALL downstream nodes" not in result
     finally:
@@ -648,12 +654,49 @@ async def test_graph_workflow_provider_emits_deliver_routing_guidance():
 
 
 @pytest.mark.asyncio
-async def test_graph_workflow_provider_empty_when_no_graph_context():
+async def test_graph_workflow_provider_emits_topology_and_role_from_turn_state() -> None:
     from modex_agent.core.agent import AgentContext, current_agent_context
     from modex_agent.core.history import MessageHistory
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.runtime.models import TurnStateBase
+    from modex_agent.runtime.services import AgentRuntime
+    from modex_graph.context import GraphContext
 
+    runtime = MagicMock(spec=AgentRuntime)
+    runtime.state = MagicMock(spec=TurnStateBase)
+    runtime.state.custom = {
+        TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT: "planner -> implementer",
+        TurnCustomKey.GRAPH_NODE_DESCRIPTION: "Review the implementation.",
+    }
+    ctx = AgentContext(
+        system_prompt="",
+        history=MagicMock(spec=MessageHistory),
+        tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("test.reviewer"),
+        runtime=runtime,
+        graph_context=MagicMock(spec=GraphContext),
+    )
+    token = current_agent_context.set(ctx)
+    try:
+        provider = GraphWorkflowProvider()
+        result = await provider._fetch_content()
+        assert "### Topology\n\nplanner -> implementer\n" in result
+        assert "### Your Role\n\nReview the implementation." in result
+        assert result.index("### Workflow Guidance") < result.index("### Topology")
+        assert result.index("### Topology") < result.index("### Your Role")
+    finally:
+        current_agent_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_graph_workflow_provider_empty_when_no_graph_context() -> None:
+    from modex_agent.core.agent import AgentContext, current_agent_context
+    from modex_agent.core.history import MessageHistory
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
 
     ctx = AgentContext(
