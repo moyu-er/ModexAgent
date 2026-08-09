@@ -207,7 +207,11 @@ function parseNode(ctx: Ctx, raw: unknown, index: number): ParsedNode {
 
   const node: ParsedNode = { name, nodeType: nodeType as ParsedNodeType, config };
   const triggerPair = getPair(raw, "trigger");
-  if (triggerPair !== undefined && triggerPair.value != null) {
+  if (
+    triggerPair !== undefined &&
+    triggerPair.value != null &&
+    !(isScalar(triggerPair.value) && triggerPair.value.value === null)
+  ) {
     const trigger = scalarString(triggerPair.value);
     if (trigger === null) {
       fail(ctx, "'trigger' must be a string", `${path}.trigger`, triggerPair.value as YamlNode);

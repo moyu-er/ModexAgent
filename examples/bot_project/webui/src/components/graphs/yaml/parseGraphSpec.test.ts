@@ -203,6 +203,63 @@ nodes:
     expect(() => parseGraphSpecYaml(src)).toThrowError(/unknown field 'bogus'/);
   });
 
+  it("nodes[].trigger 为显式 null 时解析成功且节点无 trigger 字段(后端 _yaml() 对 trigger=None 输出 trigger: null)", () => {
+    // bot/webui/routes/graph_routes.py `_yaml()` 的原样输出内联拷贝 ——
+    // yaml.dump(GraphSpec(..., nodes=[NodeSpec(trigger=None)], ...).model_dump(mode="json"))。
+    const BACKEND_TRIGGER_NULL_YML = `name: trigger_null
+nodes:
+- name: a
+  node_type: agent
+  config:
+    agent: designer
+    pool: review
+  trigger: null
+edges:
+- source: __start__
+  target: a
+- source: a
+  target: __end__
+state_class: default
+scheduler: linear
+version: '1.0'
+metadata: {}
+max_iterations: 25
+default_trigger: on_all_preds
+`;
+
+    const topo = parseGraphSpecYaml(BACKEND_TRIGGER_NULL_YML);
+
+    // toEqual 精确匹配整个节点对象 —— 多出一个 trigger 字段即失败。
+    const node = topo.nodes.find((n) => n.name === "a");
+    expect(node).toEqual({
+      name: "a",
+      nodeType: "agent",
+      config: { agent: "designer", pool: "review" },
+    });
+  });
+
+  it.each([
+    { label: "boolean", triggerYaml: "trigger: true" },
+    { label: "number", triggerYaml: "trigger: 1" },
+    { label: "mapping", triggerYaml: "trigger: {mode: on_receive}" },
+  ])("非字符串 trigger($label)仍按非字符串抛错", ({ triggerYaml }) => {
+    const src = `name: t
+nodes:
+  - name: a
+    node_type: agent
+    ${triggerYaml}
+`;
+    try {
+      parseGraphSpecYaml(src);
+      expect.unreachable();
+    } catch (err) {
+      const e = err as GraphSpecParseError;
+      expect(e).toBeInstanceOf(GraphSpecParseError);
+      expect(e.message).toContain("'trigger' must be a string");
+      expect(e.path).toBe("nodes[0].trigger");
+    }
+  });
+
   it("edge 缺 target 抛错(path=edges[i].target)", () => {
     const src = `name: t
 edges:

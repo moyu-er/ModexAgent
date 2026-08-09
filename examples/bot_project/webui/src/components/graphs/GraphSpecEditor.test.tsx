@@ -134,6 +134,39 @@ describe("GraphSpecEditor", () => {
     expect(screen.getByTestId("topology-canvas-mock")).toBeTruthy();
   });
 
+  it("renders topology preview when backend YAML serializes a trigger-less node as trigger: null", async () => {
+    // Representative of backend `_yaml()` output (yaml.dump of
+    // GraphSpec.model_dump(mode="json"), sort_keys=False): NodeSpec.trigger
+    // defaults to None, so trigger-less nodes round-trip as `trigger: null`.
+    const BACKEND_YAML = `name: test_wf
+nodes:
+- name: worker
+  node_type: agent
+  config:
+    agent: worker
+    pool: default
+  trigger: null
+edges:
+- source: __start__
+  target: worker
+- source: worker
+  target: __end__
+state_class: default
+scheduler: linear
+version: '1.0'
+metadata: {}
+max_iterations: 25
+default_trigger: on_all_preds
+`;
+    vi.mocked(getSpec).mockResolvedValue({
+      ...SPEC_RESPONSE,
+      yaml_content: BACKEND_YAML,
+    });
+    renderEditor();
+    await waitForLoaded();
+    expect(screen.getByTestId("topology-canvas-mock")).toBeTruthy();
+  });
+
   it("renders Back button and spec name in header", async () => {
     renderEditor();
     await waitForLoaded();
