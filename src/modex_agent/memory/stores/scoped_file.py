@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from modex_agent.core.scope import MemoryLayerName
+from modex_agent.core.types import MessageRole
 from modex_agent.memory.archive_models import (
     CONTEXT_ARCHIVE_FILENAME,
     CORE_ARCHIVE_FILENAME,
@@ -158,9 +159,24 @@ class DefaultScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Ar
         async with self.get_lock().read():
             return read_jsonl_robust(self._messages_path)
 
-    async def load_all_messages(self) -> list[dict[str, Any]]:
+    async def load_all_messages(
+        self,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        if limit is not None and limit < 0:
+            raise ValueError("limit must be non-negative")
+        if limit == 0:
+            return []
         async with self.get_lock().read():
-            return read_jsonl_robust(self._messages_path)
+            messages = [
+                message
+                for message in read_jsonl_robust(self._messages_path)
+                if message.get("role") != str(MessageRole.COMPACT)
+            ]
+            if limit is None:
+                return messages
+            return messages[-limit:]
 
     async def save_messages(self, messages: list[dict[str, Any]]) -> StorageRevision:
         async with self.get_lock().write():

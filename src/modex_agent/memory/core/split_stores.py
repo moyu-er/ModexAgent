@@ -84,11 +84,14 @@ class MessageStore(ABC):
         ...
 
     @abstractmethod
-    async def load_all_messages(self) -> list[dict[str, Any]]:
-        """Return all messages including soft-deleted ones.
+    async def load_all_messages(self, *, limit: int | None = None) -> list[dict[str, Any]]:
+        """Return all messages including soft-deleted ones, excluding COMPACT.
 
         Soft-deleted messages carry a ``_deleted: True`` marker.
-        Used by context fork to access full parent history.
+        COMPACT role messages are always excluded (internal compaction
+        bookkeeping, not real conversational history). Used by context fork
+        to access full parent history. When *limit* is provided, return the
+        most recent messages in chronological order.
         """
         ...
 

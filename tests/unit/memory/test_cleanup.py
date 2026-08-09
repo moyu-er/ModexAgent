@@ -1891,7 +1891,7 @@ class TestCleanupSqliteBackend:
             assert len(kept) >= 2  # compact + at least one tail message
 
             # History view: pruned visible as soft-deleted, no duplicates of
-            # kept messages, exactly one compact.
+            # kept messages, no compact (COMPACT excluded from load_all_messages).
             from modex_agent.core.scope import RecordScope
 
             bundle = manager.create_bundle(
@@ -1899,7 +1899,7 @@ class TestCleanupSqliteBackend:
             )
             all_msgs = await bundle.messages.load_all_messages()
             compact_rows = [m for m in all_msgs if m.get("role") == "compact"]
-            assert len(compact_rows) == 1
+            assert len(compact_rows) == 0
             contents = [m.get("content") for m in all_msgs]
             for tail_msg in kept[1:]:
                 assert contents.count(tail_msg.content) == 1
