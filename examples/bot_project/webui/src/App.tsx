@@ -90,6 +90,36 @@ const AppInner: FC = () => {
     [navigate, selectSession],
   );
 
+  // Sidebar actions that imply "leave the graph view and go back to chat".
+  // Without navigate("") the hash stays on #/graphs/* and App keeps rendering
+  // the graph component, so the click appears to do nothing. Mirrors onSelect
+  // / handleJumpToSession — the single converged graph→chat exit path.
+  const handleNewWithRoute = useCallback(
+    (pool: string): void => {
+      navigate("");
+      handleNew(pool);
+    },
+    [navigate, handleNew],
+  );
+  const handlePoolChangeWithRoute = useCallback(
+    (pool: string): void => {
+      navigate("");
+      handlePoolChange(pool);
+    },
+    [navigate, handlePoolChange],
+  );
+  const handleWorkspaceChangedWithRoute = useCallback(
+    (cwd: string): void => {
+      navigate("");
+      handleWorkspaceChanged(cwd);
+    },
+    [navigate, handleWorkspaceChanged],
+  );
+  const handleGoHomeWithRoute = useCallback(async (): Promise<void> => {
+    navigate("");
+    await handleGoHome();
+  }, [navigate, handleGoHome]);
+
   const {
     messages,
     isStreaming,
@@ -302,11 +332,11 @@ const AppInner: FC = () => {
           mobileOpen={sidebarMobileOpen}
           onCloseMobile={() => setSidebarMobileOpen(false)}
           onSelect={onSelect}
-          onNew={handleNew}
+          onNew={handleNewWithRoute}
           onDelete={handleDelete}
-          onWorkspaceChanged={handleWorkspaceChanged}
-          onGoHome={handleGoHome}
-          onPoolChange={handlePoolChange}
+          onWorkspaceChanged={handleWorkspaceChangedWithRoute}
+          onGoHome={handleGoHomeWithRoute}
+          onPoolChange={handlePoolChangeWithRoute}
           revealSessionId={revealSessionId}
           onOpenSettings={() => setSettingsOpen(true)}
           graphsActive={route.kind !== "chat"}

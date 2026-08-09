@@ -164,18 +164,6 @@ export async function runGraph(
   return resp.json() as Promise<GraphRunResponse>;
 }
 
-/** Raw text/yaml variant of getSpec (endpoint exists; editor uses getSpec). */
-export async function getSpecYaml(
-  workspaceId: string,
-  specId: string,
-): Promise<string> {
-  const resp = await fetch(`${API_BASE}/graphs/specs/${specId}/yaml`, {
-    headers: workspaceHeaders(workspaceId),
-  });
-  await assertOk(resp);
-  return resp.text();
-}
-
 /** Structured topology (§11.3) — compiler-validated nodes/edges/scheduler.
  *  Optional optimization; parseGraphSpecYaml remains the fallback. */
 export async function getTopology(

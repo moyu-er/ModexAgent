@@ -4,7 +4,6 @@ import {
   getSpec,
   updateSpec,
   runGraph,
-  getSpecYaml,
   listInstances,
   getInstance,
   getEvents,
@@ -110,15 +109,6 @@ describe("graphsApi", () => {
     await runGraph("", "3");
     const [, init] = call(fetchMock, 0);
     expect(JSON.parse(init?.body as string)).toEqual({});
-  });
-
-  it("getSpecYaml GETs the raw yaml endpoint as text", async () => {
-    const fetchMock = vi.fn(() => Promise.resolve(makeResponse(200, "a: b")));
-    vi.stubGlobal("fetch", fetchMock);
-    const out = await getSpecYaml("", "3");
-    expect(out).toBe("a: b");
-    const [url] = call(fetchMock, 0);
-    expect(url).toBe("/api/graphs/specs/3/yaml");
   });
 
   it("listInstances appends ?status= only when provided", async () => {

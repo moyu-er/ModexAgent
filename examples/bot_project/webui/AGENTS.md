@@ -56,7 +56,6 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 | `components/graphs/GraphSpecEditor.tsx` | Split-pane spec editor — CodeMirror YAML + live topology preview + run |
 | `components/graphs/GraphInstanceListPage.tsx` | Instance list — status-colored MiniTopology + progress + elapsed |
 | `components/graphs/GraphExecutionViewer.tsx` | Core execution viewer — full-canvas topology + context sidebar + control bar |
-| `components/graphs/DeliverDialog.tsx` | Deliver-to-node modal — node selector + content input |
 | `components/graphs/shared.tsx` | Shared graph UI — GraphStatusBadge + formatGraphApiError |
 | `components/graphs/topology/TopologyCanvas.tsx` | SVG canvas — viewBox auto-fit, wheel zoom, drag pan, legend overlay |
 | `components/graphs/topology/GraphNode.tsx` | SVG node — glyph + name + sub-label + status dot, dual-channel status coloring |

@@ -598,9 +598,7 @@ export const en = {
     // 执行查看器 §6.1 / §16
     deliver: "Deliver",
     deliverInline: "Deliver to node",
-    deliverDialogTitle: "Deliver to node",
     deliverNodeLabel: "Node",
-    deliverContentLabel: "Content",
     deliverContentPlaceholder: "Enter content to deliver...",
     deliverConfirm: "Deliver",
     deliverSuccess: "Delivered to {name}",
@@ -613,7 +611,6 @@ export const en = {
     resultLabel: "Result",
     noResult: "No result",
     inferred: "inferred",
-    selectNode: "Select a node",
     loadingEditor: "Loading editor…",
     yamlEditorFallback: "YAML editor (fallback)",
     // GraphConversation (conversation-style view)
