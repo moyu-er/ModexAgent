@@ -81,22 +81,33 @@ class GraphDeliverTargetStore:
                     GraphDeliverTarget(
                         name=GraphNode.END,
                         description=(
-                            "Workflow terminal. Deliver here ONLY when your "
-                            "task is fully complete and no downstream node "
-                            "needs to process your output further. Do not "
-                            "deliver to END and another target in the same "
-                            "turn — choose one: route to a downstream node "
-                            "for further processing, or to END to finish."
+                            "Terminal node. Collects all upstream deliveries in "
+                            "delivery order and concatenates them into the graph's "
+                            "final reply (a list of content blocks).\n\n"
+                            "How it processes your input:\n"
+                            "- Your deliver content becomes one block in the final reply list.\n"
+                            "- All upstream nodes that deliver to __end__ contribute one block each.\n"
+                            "- The complete reply = [block_1, block_2, ...] in delivery order.\n\n"
+                            "What you should deliver:\n"
+                            "- A self-contained, user-facing segment of the final reply.\n"
+                            "- Write it as polished content — the user sees this directly.\n"
+                            "- Do not include internal reasoning or tool call traces.\n\n"
+                            "If multiple nodes deliver to __end__: each contribution is a "
+                            "separate block. Coordinate your scope via the topology. Delivery "
+                            "order (not topology order) determines block order in the final "
+                            "reply.\n\n"
+                            "Deliver here ONLY when your task is fully complete. Do not "
+                            "deliver to __end__ and another target in the same turn."
                         ),
                     )
                 )
                 continue
             node = self._graph.nodes[edge.target]
-            description = (
-                node.resolve_description()
-                if isinstance(node, AgentNode)
-                else f"Graph node {edge.target!r}"
-            )
+            if isinstance(node, AgentNode):
+                desc = node.resolve_description()
+                description = desc if desc != AgentNode.DESCRIPTION_NOT_FOUND else f"Graph node {edge.target!r}"
+            else:
+                description = f"Graph node {edge.target!r}"
             targets.append(
                 GraphDeliverTarget(name=edge.target, description=description)
             )
@@ -171,6 +182,7 @@ class GraphDeliverTool(Tool):
             else "  (none)"
         )
         return (
+            f"You are node: {self._store._current}\n"
             "Route your work output to a downstream node.\n"
             f"Available targets:\n{available}\n\n"
             "Choose the target that matches your node's purpose. "

@@ -817,40 +817,59 @@ class GraphWorkflowProvider(SystemPromptProvider):
         ctx = _get_agent_context()
         if ctx is None or ctx.graph_context is None:
             return ""
-        parts = [
-            "## Graph Workflow\n\n"
+        from modex_agent.runtime.enums import TurnCustomKey
+
+        parts: list[str] = ["## Graph Node Context\n"]
+
+        parts.append("### Workflow Guidance\n\n")
+        parts.append(
             "You are a node in a graph workflow. Your regular text output "
             "is NOT delivered to anyone — it stays in your local context "
             "only. The ONLY way to route your work to downstream nodes is "
             "the `deliver` tool.\n\n"
             "You MUST call `deliver` before finishing. Check the `deliver` "
             "tool description for available targets and their roles.\n\n"
-            "### Deliver Content Guidelines\n\n"
+            "**Deliver Content Guidelines**\n\n"
             "Your deliver `content` is the ONLY information downstream nodes "
             "receive from you. They cannot see your reasoning, tool calls, "
             "or intermediate steps. Write it as a handoff to the next "
             "agent — enough context to continue, not a full transcript.\n\n"
-            "Recommended structure:\n"
-            "- **Task**: What you were asked to do (one or two sentences).\n"
-            "- **Result**: What you produced or found. Reference files by "
+            "**Pattern 1 — Producer** (you produce new work):\n"
+            "- Task: What you were asked to do (one or two sentences).\n"
+            "- Result: What you produced or found. Reference files by "
             "path instead of pasting full content. Include key decisions "
             "and their rationale.\n"
-            "- **Status**: Done / partial / blocked. If partial, state "
+            "- Status: Done / partial / blocked. If partial, state "
             "what remains. If blocked, state the obstacle.\n\n"
+            "**Pattern 2 — Relay** (you selectively pass upstream content "
+            "downstream):\n"
+            "Use this when your role is to filter and summarize upstream "
+            "content for downstream nodes, not to produce new content. Do "
+            "NOT forward upstream content verbatim — select and transform it.\n"
+            "- Source: Which upstream node(s) this content is derived from.\n"
+            "- Selection: What you included and why it's relevant to the "
+            "downstream node.\n"
+            "- Summary: The filtered/summarized content, written for the "
+            "downstream node's needs.\n"
+            "- Omitted: What you excluded (briefly — so downstream knows "
+            "what's missing).\n\n"
             "If you deliver multiple times, later delivers can be short "
             "fragments — but your final deliver should be self-contained "
             "enough for the downstream node to act on without re-reading "
-            "your inputs."
-        ]
-        if (
-            ctx.runtime is not None
-            and ctx.runtime.state is not None
-        ):
-            from modex_agent.runtime.enums import TurnCustomKey
+            "your inputs.\n"
+        )
 
+        if ctx.runtime is not None and ctx.runtime.state is not None:
+            topology = ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT)
+            if topology:
+                parts.append("### Topology\n\n")
+                parts.append(topology)
+                parts.append("\n")
             desc = ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_NODE_DESCRIPTION)
             if desc:
-                parts.append(f"\n\n## Your Role\n\n{desc}")
+                parts.append("\n### Your Role\n\n")
+                parts.append(desc)
+
         return "".join(parts)
 
 

@@ -165,3 +165,8 @@ class TurnCustomKey(StrEnum):
     GRAPH_DELIVER_COUNT = "_graph_deliver_count"
     MAX_TURNS = "_max_turns"
     GRAPH_NODE_DESCRIPTION = "_graph_node_description"
+    # Serialized graph topology (markdown) for the ### Topology subsection
+    # of ## Graph Node Context in the system prompt. Set by BotAgentNode.execute
+    # before execute_turn; read by GraphWorkflowProvider._fetch_content.
+    # Empty string when graph_ref is None (test/no-scheduler path).
+    GRAPH_TOPOLOGY_CONTEXT = "_graph_topology_context"
