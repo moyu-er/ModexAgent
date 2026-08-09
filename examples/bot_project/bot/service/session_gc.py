@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from bot.scope import BotRecordScope
+from bot.service.liveness import LivenessProvider
 from modex_agent.core.cleanup import (
     DefaultSessionArtifactCleaner,
     SessionCleanupResult,
@@ -44,6 +45,9 @@ if TYPE_CHECKING:
 
 SessionStoreResolver = Callable[[Path], Awaitable[SessionStore]]
 SessionPoolResolver = Callable[[SessionInfo], str]
+
+_MAX_RETRY_ATTEMPTS = 3
+_RETRY_DELAY_SECONDS = 30
 
 logger = logging.getLogger(__name__)
 
@@ -191,11 +195,12 @@ def _cleanup_orphan_pool_routes(paths: WorkspacePaths) -> int:
 
 
 class _Job:
-    __slots__ = ("scope", "ws_root")
+    __slots__ = ("scope", "ws_root", "attempts")
 
-    def __init__(self, scope: BotRecordScope, ws_root: Path) -> None:
+    def __init__(self, scope: BotRecordScope, ws_root: Path, attempts: int = 0) -> None:
         self.scope = scope
         self.ws_root = ws_root
+        self.attempts = attempts
 
 
 class SessionCleanerOperations(ABC):
@@ -265,6 +270,7 @@ class SessionGarbageCollector:
         transcript_store: WorkspaceScopedTranscriptStore | None = None,
         session_store_resolver: SessionStoreResolver | None = None,
         session_pool_resolver: SessionPoolResolver | None = None,
+        liveness_provider: LivenessProvider | None = None,
     ) -> None:
         self._roots_provider = workspace_roots_provider
         self._data_dir_name = data_dir_name
@@ -273,10 +279,13 @@ class SessionGarbageCollector:
         self._transcript_store = transcript_store
         self._session_store_resolver = session_store_resolver
         self._session_pool_resolver = session_pool_resolver
+        self._liveness_provider = liveness_provider
         self._queue: asyncio.Queue[_Job | None] = asyncio.Queue()
         self._inflight: set[tuple[Path, str]] = set()
         self._workers: list[asyncio.Task[None]] = []
         self._sweep_task: asyncio.Task[None] | None = None
+        self._delayed_tasks: set[asyncio.Task[None]] = set()
+        self._retry_delay_seconds: int = _RETRY_DELAY_SECONDS
         self._stopping = False
 
     # -- public API ------------------------------------------------------
@@ -309,6 +318,13 @@ class SessionGarbageCollector:
         if self._workers:
             await asyncio.gather(*self._workers, return_exceptions=True)
         self._workers.clear()
+        # Cancel delayed retries AFTER workers stop — a worker may schedule a
+        # new delayed task during its final processing, so we must cancel last.
+        for task in self._delayed_tasks:
+            task.cancel()
+        if self._delayed_tasks:
+            await asyncio.gather(*self._delayed_tasks, return_exceptions=True)
+        self._delayed_tasks.clear()
         # Drain any leftover sentinels/jobs so a restart starts with an empty queue.
         while not self._queue.empty():
             self._queue.get_nowait()
@@ -319,7 +335,7 @@ class SessionGarbageCollector:
         root_session_id: str,
         ws_root: Path | None = None,
         pool: str | None = None,
-    ) -> None:
+    ) -> bool:
         """Foreground trigger: remove the root's record now, enqueue the rest.
 
         When the caller knows the workspace root and pool (the WebUI delete
@@ -327,56 +343,25 @@ class SessionGarbageCollector:
         (no index record) is still removed. Otherwise scan every workspace's
         index for the root record. Sync-removing the record + transcript makes
         the conversation leave the list immediately; the cascade drains async.
+
+        Returns ``True`` if deletion proceeded (or the session was not found).
+        Returns ``False`` when the liveness gate blocks deletion (active turn
+        or reservation already held by a concurrent delete).
         """
         if ws_root is not None and pool is not None:
-            paths = WorkspacePaths(root=ws_root / self._data_dir_name)
-            scope = BotRecordScope(
-                session_id=root_session_id,
-                pool=pool,
-                workspace_id=str(ws_root.resolve()),
-            )
-            await self._clean_record_and_transcript(
-                root_session_id,
-                scope.to_path_segment("pool"),
-                paths,
-            )
-            await self._enqueue_persisted_scopes(paths, scope, ws_root)
-            return
+            return await self._delete_with_liveness_gate(root_session_id, ws_root, pool)
         if ws_root is not None:
             paths = WorkspacePaths(root=ws_root / self._data_dir_name)
             pool = await self._find_session_pool(paths, root_session_id)
             if pool is not None:
-                await self._clean_record_and_transcript(
-                    root_session_id,
-                    pool,
-                    paths,
-                )
-                await self._enqueue_persisted_scopes(
-                    paths,
-                    BotRecordScope(
-                        session_id=root_session_id,
-                        pool=pool,
-                        workspace_id=str(ws_root.resolve()),
-                    ),
-                    ws_root,
-                )
-                return
+                return await self._delete_with_liveness_gate(root_session_id, ws_root, pool)
         for ws_root in self._roots_provider():
             paths = WorkspacePaths(root=ws_root / self._data_dir_name)
             pool = await self._find_session_pool(paths, root_session_id)
             if pool is None:
                 continue
-            await self._clean_record_and_transcript(root_session_id, pool, paths)
-            await self._enqueue_persisted_scopes(
-                paths,
-                BotRecordScope(
-                    session_id=root_session_id,
-                    pool=pool,
-                    workspace_id=str(ws_root.resolve()),
-                ),
-                ws_root,
-            )
-            return
+            return await self._delete_with_liveness_gate(root_session_id, ws_root, pool)
+        return True
 
     async def sweep_once(self) -> None:
         """One backstop pass over all workspaces: enqueue top-layer orphans."""
@@ -422,7 +407,10 @@ class SessionGarbageCollector:
                 ):
                     enqueued_sessions += 1
             for scope in orphan_scopes:
-                if self._enqueue(scope, ws_root, pool_map=pool_map):
+                fields = scope.model_dump()
+                if pool_map is not None and scope.canonical() in pool_map:
+                    fields["pool"] = pool_map[scope.canonical()]
+                if self._enqueue(BotRecordScope(**fields), ws_root):
                     enqueued_artifacts += 1
             removed_routes += _cleanup_orphan_pool_routes(paths)
         logger.info(
@@ -436,33 +424,72 @@ class SessionGarbageCollector:
 
     # -- internals -------------------------------------------------------
 
+    async def _try_reserve(self, session_id: str, ws_root: Path) -> bool:
+        """Acquire a deletion reservation. No-op (True) when no provider is wired."""
+        if self._liveness_provider is None:
+            return True
+        return await self._liveness_provider.try_reserve_deletion(session_id, ws_root)
+
+    async def _is_active(self, session_id: str, ws_root: Path) -> bool:
+        """Check if the session has an active turn. False when no provider is wired."""
+        if self._liveness_provider is None:
+            return False
+        return await self._liveness_provider.is_session_active(session_id, ws_root)
+
+    async def _release_deletion(self, session_id: str) -> None:
+        """Release a deletion reservation. No-op when no provider is wired."""
+        if self._liveness_provider is None:
+            return
+        await self._liveness_provider.release_deletion(session_id)
+
+    async def _delete_with_liveness_gate(
+        self,
+        session_id: str,
+        ws_root: Path,
+        pool: str,
+    ) -> bool:
+        """Apply liveness gate, then clean record + transcript + enqueue scopes.
+
+        Returns ``True`` if deletion proceeded, ``False`` if blocked by an
+        active turn or a reservation conflict.
+        """
+        if not await self._try_reserve(session_id, ws_root):
+            return False
+        try:
+            if await self._is_active(session_id, ws_root):
+                logger.info(
+                    "session-gc: session %s has active turn, deferring delete",
+                    session_id,
+                )
+                return False
+            paths = WorkspacePaths(root=ws_root / self._data_dir_name)
+            scope = BotRecordScope(
+                session_id=session_id,
+                pool=pool,
+                workspace_id=str(ws_root.resolve()),
+            )
+            await self._clean_record_and_transcript(
+                session_id,
+                scope.to_path_segment("pool"),
+                paths,
+            )
+            await self._enqueue_persisted_scopes(paths, scope, ws_root)
+            return True
+        finally:
+            await self._release_deletion(session_id)
+
     def _enqueue(
         self,
-        scope: RecordScope,
+        scope: BotRecordScope,
         ws_root: Path,
         *,
         pool_map: dict[str, str] | None = None,
     ) -> bool:
-        # Framework discovery returns base RecordScope (no pool); wrap so
-        # job.scope.pool reads work (ADR-0028 framework/business boundary).
-        # When pool_map is provided (from discover_file_session_pool_map),
-        # recover the pool directory name for discovered scopes so cleanup
-        # targets the correct pool-partitioned directory.
-        if isinstance(scope, BotRecordScope):
-            bot_scope = scope
-        else:
-            pool = pool_map.get(scope.canonical(), "default") if pool_map is not None else "default"
-            # scope may already carry a `pool` extra field (e.g. when
-            # from_canonical returned a different subclass with the same
-            # extra-field signature). Override it with the pool_map result.
-            fields = scope.model_dump()
-            fields["pool"] = pool
-            bot_scope = BotRecordScope(**fields)
-        key = (ws_root.resolve(), bot_scope.canonical())
+        key = (ws_root.resolve(), scope.canonical())
         if key in self._inflight:
             return False
         self._inflight.add(key)
-        self._queue.put_nowait(_Job(bot_scope, ws_root))
+        self._queue.put_nowait(_Job(scope, ws_root))
         return True
 
     async def _enqueue_persisted_scopes(
@@ -486,7 +513,10 @@ class SessionGarbageCollector:
         pool_map = discover_file_session_pool_map(paths, workspace_id)
         matching = [scope for scope in discovered if scope.session_id == session_id]
         for scope in matching or [fallback_scope]:
-            self._enqueue(scope, ws_root, pool_map=pool_map)
+            fields = scope.model_dump()
+            if pool_map is not None and scope.canonical() in pool_map:
+                fields["pool"] = pool_map[scope.canonical()]
+            self._enqueue(BotRecordScope(**fields), ws_root)
 
     async def _worker_loop(self) -> None:
         while True:
@@ -511,52 +541,113 @@ class SessionGarbageCollector:
             session_id = job.scope.session_id
             if session_id is None:
                 raise MissingSessionScopeError
+            if not await self._try_reserve(session_id, job.ws_root):
+                await self._retry_or_abandon(job, key)
+                return
             try:
-                result = await self._cleaner_factory.clean_session_artifacts(
-                    paths,
-                    session_id,
-                    job.scope,
-                )
-            except Exception:
-                logger.exception(
-                    "session-gc: clean_session_artifacts failed for %s (%s); backstop will retry",
-                    session_id,
-                    job.scope.canonical(),
-                )
-            else:
-                if result.errors:
-                    logger.warning(
-                        "session-gc: clean_session_artifacts had errors for %s: %s",
+                if await self._is_active(session_id, job.ws_root):
+                    await self._retry_or_abandon(job, key)
+                    return
+                try:
+                    result = await self._cleaner_factory.clean_session_artifacts(
+                        paths,
                         session_id,
-                        result.errors,
+                        job.scope,
                     )
-                logger.info(
-                    "session-gc: cleaned %s (scope=%s, pool=%s, ws=%s, files=%d, dirs=%d, db_rows=%d)",
-                    session_id,
-                    job.scope.canonical(),
-                    job.scope.pool,
-                    job.ws_root,
-                    result.files_deleted,
-                    result.dirs_deleted,
-                    result.db_rows_deleted,
-                )
-            for child in await self._children(paths, session_id):
-                await self._clean_record_and_transcript(
-                    child.session_id,
-                    self._pool_of(paths, child, fallback=job.scope.pool),
-                    paths,
-                )
-                await self._enqueue_persisted_scopes(
-                    paths,
-                    BotRecordScope(
-                        session_id=child.session_id,
-                        pool=self._pool_of(paths, child, fallback=job.scope.pool),
+                except Exception:
+                    logger.exception(
+                        "session-gc: clean_session_artifacts failed for %s (%s); backstop will retry",
+                        session_id,
+                        job.scope.canonical(),
+                    )
+                else:
+                    if result.errors:
+                        logger.warning(
+                            "session-gc: clean_session_artifacts had errors for %s: %s",
+                            session_id,
+                            result.errors,
+                        )
+                    logger.info(
+                        "session-gc: cleaned %s (scope=%s, pool=%s, ws=%s, files=%d, dirs=%d, db_rows=%d)",
+                        session_id,
+                        job.scope.canonical(),
+                        job.scope.pool,
+                        job.ws_root,
+                        result.files_deleted,
+                        result.dirs_deleted,
+                        result.db_rows_deleted,
+                    )
+                for child in await self._children(paths, session_id):
+                    child_session_id = child.session_id
+                    child_pool = self._pool_of(paths, child, fallback=job.scope.pool)
+                    child_scope = BotRecordScope(
+                        session_id=child_session_id,
+                        pool=child_pool,
                         workspace_id=job.scope.workspace_id,
-                    ),
-                    job.ws_root,
-                )
+                    )
+                    if not await self._try_reserve(child_session_id, job.ws_root):
+                        self._enqueue(child_scope, job.ws_root)
+                        continue
+                    try:
+                        if await self._is_active(child_session_id, job.ws_root):
+                            logger.info(
+                                "session-gc: child %s has active turn, re-enqueueing",
+                                child_session_id,
+                            )
+                            self._enqueue(child_scope, job.ws_root)
+                            continue
+                        await self._clean_record_and_transcript(
+                            child_session_id,
+                            child_pool,
+                            paths,
+                        )
+                        await self._enqueue_persisted_scopes(
+                            paths,
+                            child_scope,
+                            job.ws_root,
+                        )
+                    finally:
+                        await self._release_deletion(child_session_id)
+            finally:
+                await self._release_deletion(session_id)
         finally:
             self._inflight.discard(key)
+
+    async def _retry_or_abandon(self, job: _Job, key: tuple[Path, str]) -> None:
+        """Handle a liveness-blocked job: retry with delay or abandon after max attempts."""
+        self._inflight.discard(key)
+        job.attempts += 1
+        if job.attempts < _MAX_RETRY_ATTEMPTS:
+            logger.info(
+                "session-gc: session %s active, scheduling retry (attempt %d/%d)",
+                job.scope.session_id,
+                job.attempts,
+                _MAX_RETRY_ATTEMPTS,
+            )
+            task = asyncio.create_task(self._delayed_reenqueue(job))
+            self._delayed_tasks.add(task)
+            task.add_done_callback(self._delayed_tasks.discard)
+        else:
+            logger.warning(
+                "session-gc: session %s still active after %d attempts, abandoning",
+                job.scope.session_id,
+                _MAX_RETRY_ATTEMPTS,
+            )
+
+    async def _delayed_reenqueue(self, job: _Job) -> None:
+        """Sleep then re-enqueue the job, preserving its attempt count."""
+        await asyncio.sleep(self._retry_delay_seconds)
+        if self._stopping:
+            return
+        key = (job.ws_root.resolve(), job.scope.canonical())
+        if key in self._inflight:
+            logger.debug(
+                "session-gc: delayed re-enqueue suppressed (already in-flight): %s",
+                job.scope.session_id,
+            )
+            return
+        self._inflight.add(key)
+        self._queue.put_nowait(job)
 
     async def _session_store(self, paths: WorkspacePaths) -> SessionStore:
         resolver = self._session_store_resolver

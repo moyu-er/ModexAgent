@@ -499,8 +499,39 @@ class WebUIService(BotService):
         if self.workspace_stack is not None:
             self._server.set_workspace_control(self.workspace_stack.controller)
 
+        from bot.service.liveness import DefaultLivenessProvider
         from bot.service.session_cleaner_factory import SessionCleanerFactory
         from bot.service.session_gc import SessionGarbageCollector, load_session_gc_config
+
+        from modex_agent.core.session_id import SessionInfo
+        from modex_agent.runtime.store import TurnStateStore
+        from bot.workspace.handle import PoolWorkspaceResources
+
+        def _resolve_ws_resources(ws_root: Path) -> PoolWorkspaceResources | None:
+            resolved = Path(ws_root).resolve()
+            if self._home_resources is not None:
+                if Path(self._home_resources.target).resolve() == resolved:
+                    return self._home_resources
+            if self.workspace_stack is not None:
+                for resources in self.workspace_stack.registry.iter_materialized_resources():
+                    if Path(resources.target).resolve() == resolved:
+                        return resources
+            return None
+
+        async def _turn_store_resolver(
+            session_id: str, workspace_root: Path
+        ) -> TurnStateStore | None:
+            resources = _resolve_ws_resources(workspace_root)
+            if resources is None:
+                return None
+            agent_name = SessionInfo.from_str(session_id).agent_name
+            pool = self._pool_for_agent(agent_name)
+            pool_data = resources.pool_data.get(pool)
+            return pool_data.turn_store if pool_data is not None else None
+
+        liveness_provider = DefaultLivenessProvider(
+            turn_store_resolver=_turn_store_resolver,
+        )
 
         gc_cfg = load_session_gc_config(self._raw_config)
         self._session_gc = SessionGarbageCollector(
@@ -516,6 +547,7 @@ class WebUIService(BotService):
             transcript_store=self._transcript_store,
             session_store_resolver=self._session_store_for_index,
             session_pool_resolver=lambda session: self._pool_for_agent(session.agent_name),
+            liveness_provider=liveness_provider,
         )
         self._server.set_session_gc(self._session_gc)
         await self._session_gc.start()

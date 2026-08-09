@@ -624,6 +624,7 @@ async def test_delete_session_delegates_to_collector() -> None:
 
         async def delete_session_tree(self, root_session_id, ws_root=None, pool=None):
             self.calls.append((root_session_id, pool))
+            return True
 
     fake = FakeGC()
     server.set_session_gc(fake)
