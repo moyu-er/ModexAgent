@@ -9,6 +9,7 @@ import { useBackendReady } from "./hooks/useBackendReady";
 import { useHashRoute } from "./hooks/useHashRoute";
 import { GraphSpecListPage } from "./components/graphs/GraphSpecListPage";
 import { GraphSpecEditor } from "./components/graphs/GraphSpecEditor";
+import { GraphConversation } from "./components/graphs/GraphConversation";
 import { GraphExecutionViewer } from "./components/graphs/GraphExecutionViewer";
 import { GraphInstanceListPage } from "./components/graphs/GraphInstanceListPage";
 import BootScreen from "./components/BootScreen";
@@ -331,7 +332,17 @@ const AppInner: FC = () => {
           {route.kind === "graphs" ? (
             <GraphSpecListPage
               workspaceId={streamWs}
-              onEditSpec={(specId): void => navigate(`/graphs/${specId}/edit`)}
+              onEditSpec={(specId): void => navigate(`/graphs/${specId}`)}
+              onOpenInstances={(): void => navigate("/graphs/instances")}
+            />
+          ) : route.kind === "graphConversation" ? (
+            <GraphConversation
+              workspaceId={streamWs}
+              specId={route.specId}
+              wsClient={wsClient ?? undefined}
+              onBack={(): void => navigate("/graphs")}
+              onOpenInstance={(instanceId): void => navigate(`/graphs/instances/${instanceId}`)}
+              onEditYaml={(): void => navigate(`/graphs/${route.specId}/edit`)}
               onOpenInstances={(): void => navigate("/graphs/instances")}
             />
           ) : route.kind === "graphSpecEdit" ? (

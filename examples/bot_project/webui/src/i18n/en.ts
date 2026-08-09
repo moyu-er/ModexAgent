@@ -616,5 +616,13 @@ export const en = {
     selectNode: "Select a node",
     loadingEditor: "Loading editor…",
     yamlEditorFallback: "YAML editor (fallback)",
+    // GraphConversation (conversation-style view)
+    noRuns: "No runs yet. Send a message below to start.",
+    noInput: "(no input)",
+    noOutput: "No output",
+    sendRun: "Send",
+    inputPlaceholder: "Send a message to run the graph...",
+    inputDisabledRunning: "Graph is running...",
+    viewExecution: "View execution details",
   },
 } as const;

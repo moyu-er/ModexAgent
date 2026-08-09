@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 export type Route =
   | { kind: "chat" }
   | { kind: "graphs" }
+  | { kind: "graphConversation"; specId: string }
   | { kind: "graphSpecEdit"; specId: string }
   | { kind: "graphInstances" }
   | { kind: "graphInstance"; instanceId: string };
@@ -30,6 +31,9 @@ function parseHash(hash: string): Route {
     return second
       ? { kind: "graphSpecEdit", specId: second }
       : { kind: "graphs" };
+  }
+  if (third === undefined && second) {
+    return { kind: "graphConversation", specId: second };
   }
   return { kind: "graphs" };
 }
