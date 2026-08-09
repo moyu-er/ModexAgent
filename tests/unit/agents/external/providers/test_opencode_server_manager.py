@@ -17,6 +17,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+pytest.importorskip("aiohttp", reason="aiohttp not installed")
+
 from modex_agent.agents.external.providers.opencode import server_manager as opencode_server_manager
 from modex_agent.agents.external.providers.opencode.server_backend import (
     OpenCodeServerBackend,

@@ -23,6 +23,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+pytest.importorskip("aiohttp", reason="aiohttp not installed")
+
 from modex_agent.agents.external.providers.opencode.session_state import (
     OpenCodeSessionState,
     SessionActivity,

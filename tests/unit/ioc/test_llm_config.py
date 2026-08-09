@@ -1,4 +1,7 @@
 import pytest
+
+pytest.importorskip("openai")  # skip if openai not installed (CI [dev] doesn't include [llm] deps)
+
 from pydantic import ValidationError
 
 from modex_agent.core.constants import InterfaceFormat, ReasoningEffort

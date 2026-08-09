@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
+      UV_PYTHON: "3.13"
       TEST_LLM_PROVIDER_KEY: ${{ secrets.TEST_LLM_PROVIDER_KEY }}
       TEST_LLM_PROVIDER_NAME: ${{ secrets.TEST_LLM_PROVIDER_NAME }}
       TEST_LLM_BASE_URL: ${{ secrets.TEST_LLM_BASE_URL }}

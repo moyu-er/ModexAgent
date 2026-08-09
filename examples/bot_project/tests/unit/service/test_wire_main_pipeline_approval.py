@@ -15,10 +15,13 @@ contract; the function has no role-based branching to regress.
 
 from __future__ import annotations
 
+import shutil
 import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
+
+import pytest
 
 # Bot tests resolve ``bot.*`` via the repo root inserted into sys.path.
 sys.path.insert(0, str(Path(__file__).parents[3]))
@@ -43,6 +46,11 @@ from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.runtime.services import AgentRuntimeServices
+
+pytestmark = pytest.mark.skipif(
+    shutil.which("modexctl") is None,
+    reason="modexctl CLI not available",
+)
 
 _YML = """
 models:

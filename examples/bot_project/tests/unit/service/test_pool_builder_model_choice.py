@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
@@ -27,6 +30,11 @@ from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+
+pytestmark = pytest.mark.skipif(
+    shutil.which("modexctl") is None,
+    reason="modexctl CLI not available",
+)
 
 _YML = """
 models:

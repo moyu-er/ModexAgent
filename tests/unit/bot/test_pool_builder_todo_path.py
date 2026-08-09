@@ -11,6 +11,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+
+pytest.importorskip("aiohttp")  # transitive: ReactExecutionStrategy → web_ui_service → aiohttp
+
 from bot.service.react_strategy import ReactExecutionStrategy
 
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps

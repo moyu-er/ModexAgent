@@ -56,8 +56,5 @@ def _load_e2e_config() -> E2EModelConfig | None:
 def e2e_model_config() -> E2EModelConfig:
     cfg = _load_e2e_config()
     if cfg is None:
-        pytest.skip(
-            "E2E integration test skipped: no .env with TEST_LLM_API_KEY found. "
-            "Copy .env.example to .env and fill in your credentials."
-        )
+        pytest.skip("TEST_LLM_* secrets not configured")
     return cfg

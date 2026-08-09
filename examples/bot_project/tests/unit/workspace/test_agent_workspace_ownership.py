@@ -10,7 +10,10 @@ Verifies that:
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
+
+import pytest
 
 from bot.workspace.handle import (
     PoolWorkspaceResources,
@@ -29,6 +32,11 @@ from modex_agent.tools.workspace_scoped import (
     WorkspaceScopedTool,
 )
 from modex_agent.workspace.context import WorkspaceContext
+
+pytestmark = pytest.mark.skipif(
+    shutil.which("modexctl") is None,
+    reason="modexctl CLI not available",
+)
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 

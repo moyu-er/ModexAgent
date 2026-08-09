@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+pytest.importorskip("openai")  # skip if openai not installed (CI [dev] doesn't include [llm] deps)
+
 from modex_agent.core.constants import FinishReason, ReasoningEffort
 from modex_agent.core.llm_struct import (
     LLMErrorKind,

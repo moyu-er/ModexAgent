@@ -14,6 +14,7 @@ Mirrors the inline construction in ``_wire_main_pipeline`` (ADR-0022 D6:
 
 from __future__ import annotations
 
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -47,6 +48,11 @@ from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+
+pytestmark = pytest.mark.skipif(
+    shutil.which("modexctl") is None,
+    reason="modexctl CLI not available",
+)
 
 _YML = """
 models:

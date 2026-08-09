@@ -19,6 +19,8 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13"]
     timeout-minutes: 5
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
@@ -37,6 +39,8 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13"]
     timeout-minutes: 10
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
@@ -55,6 +59,8 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13"]
     timeout-minutes: 5
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4

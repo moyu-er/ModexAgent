@@ -16,6 +16,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+pytest.importorskip("aiohttp", reason="aiohttp not installed")
+
 from modex_agent.agents.external.providers.opencode.v2_client import (
     LocationRef,
     ModelRef,
