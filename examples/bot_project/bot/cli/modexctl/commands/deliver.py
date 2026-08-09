@@ -2,13 +2,20 @@
 
 Posts a :class:`GraphDeliverRequest` to the shared REST route
 ``POST /api/graphs/instances/{id}/deliver`` — the same route the WebUI
-frontend uses. Follows the ``send`` command pattern: workspace and
-control origin are resolved from :class:`ModexCtlContext`, with
-``--workspace`` overriding the context workspace root.
+frontend uses.
+
+Requires the graph workflow environment variables (``MODEX_WORKFLOW_ID``,
+``MODEX_TASK_ID``, ``MODEX_NODE_ID``) — these are only set when the
+process is spawned by a graph-scheduled ``BotAgentNode``. Regular
+session agents (Pi/OpenCode subagents in non-graph contexts) do not have
+these variables and cannot call deliver.
+
+``--graph-instance-id`` defaults to ``MODEX_TASK_ID`` from the environment.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from typing import Annotated, Any
 
@@ -19,7 +26,7 @@ from bot.cli.modexctl.app import EXIT_ROUTING, EXIT_USAGE
 from bot.cli.modexctl.context import (
     ModexCtlContext,
     _echo_context_error,
-    _missing_comm_env_key,
+    _missing_workflow_env_key,
     _normalize_text,
 )
 from bot.cli.modexctl.http_client import ControlClientError, get_control_origin
@@ -75,13 +82,6 @@ def _fetch_deliver(
 
 def build_deliver_command(ctx: ModexCtlContext) -> Callable[..., None]:
     def _deliver(
-        graph_instance_id: Annotated[
-            int,
-            typer.Option(
-                "--graph-instance-id",
-                help="Graph instance ID to deliver content to.",
-            ),
-        ],
         node_name: Annotated[
             str,
             typer.Option(
@@ -103,20 +103,32 @@ def build_deliver_command(ctx: ModexCtlContext) -> Callable[..., None]:
                 help="Workspace path (defaults to the bot context workspace root).",
             ),
         ] = None,
+        graph_instance_id: Annotated[
+            int | None,
+            typer.Option(
+                "--graph-instance-id",
+                help="Graph instance ID (defaults to MODEX_TASK_ID env var).",
+            ),
+        ] = None,
     ) -> None:
         """Deliver content to a graph instance node via the shared REST route."""
-        missing = _missing_comm_env_key()
+        missing = _missing_workflow_env_key()
         if missing is not None:
             _echo_context_error(missing)
             raise typer.Exit(code=EXIT_USAGE)
 
-        missing_ctx = ctx.validate_history()
-        if missing_ctx is not None:
-            _echo_context_error(missing_ctx)
-            raise typer.Exit(code=EXIT_USAGE)
+        if graph_instance_id is None:
+            env_task_id = os.environ.get("MODEX_TASK_ID", "")
+            try:
+                graph_instance_id = int(env_task_id)
+            except ValueError:
+                typer.echo(
+                    f"error: MODEX_TASK_ID={env_task_id!r} is not a valid integer.",
+                    err=True,
+                )
+                raise typer.Exit(code=EXIT_USAGE) from None
 
-        assert ctx.workspace_root is not None
-        effective_workspace = workspace if workspace is not None else ctx.workspace_root
+        effective_workspace = workspace or ""
 
         request = GraphDeliverRequest(
             node_name=node_name,
