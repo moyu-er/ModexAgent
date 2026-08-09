@@ -526,8 +526,9 @@ async def test_deliver_to_node(tmp_path: Path) -> None:
         )
         assert resp.status == 200, await resp.text()
         data = await resp.json()
-        assert data["status"] == "delivered"
-        assert data["node_name"] == "__end__"
+        assert data["ok"] is True
+        assert data["target"] == "__end__"
+        assert "Delivered to '__end__'" in data["message"]
     finally:
         await client.close()
 

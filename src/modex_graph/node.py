@@ -32,7 +32,7 @@ instance-attribute fallback).
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import TypeVar
 
@@ -392,20 +392,44 @@ class Node[S: "GraphState"](ABC):
         """
         return list(self._pending_delivers or [])
 
-    def _resolve_default_target(self, ctx: GraphContext[S]) -> list[str]:
+    def _resolve_default_target(
+        self,
+        ctx: GraphContext[S],
+        *,
+        policy: Literal["strict", "graceful"] = "strict",
+    ) -> list[str]:
         """Resolve `next_node=None` to concrete target(s) via graph topology.
 
-        Returns all downstream edge targets from the current node. If no
+        Returns the downstream edge targets from the current node. If no
         downstream edges exist, returns ``[GraphNode.END]``.
 
+        ``policy`` controls behavior when the node has more than one
+        downstream edge:
+
+        - ``"strict"`` (default): raise ``RoutingError``. Auto-deliver to
+          all is forbidden because it causes unconditional fan-out (e.g.
+          reviewer→coder + reviewer→END would loop forever). The caller
+          must specify an explicit target.
+        - ``"graceful"``: return ``[GraphNode.END]`` instead of raising.
+          Used by nodes that want a safe fallback (deliver to END) when
+          the topology is ambiguous rather than surfacing an error.
+
         Requires ``self._graph_ref`` (set by ``run(graph=...)``). Raises
-        ``RoutingError`` if no topology was passed — callers must either pass
-        explicit ``next_node`` to ``deliver()`` or pass ``graph=`` to ``run()``.
+        ``RoutingError`` if no topology was passed.
         """
         graph = self._graph_ref
         if graph is None:
             raise RoutingError("next_node=None requires graph topology — pass graph= to run()")
         targets = [e.target for e in graph.edges_from(self.name)]
+        if len(targets) > 1:
+            if policy == "strict":
+                raise RoutingError(
+                    f"Node {self.name!r} has {len(targets)} downstream targets "
+                    f"({sorted(targets)}) but no explicit target was specified. "
+                    "Auto-deliver to all downstream nodes is forbidden when "
+                    "multiple edges exist — specify an explicit target."
+                )
+            return [GraphNode.END]
         if targets:
             return targets
         return [GraphNode.END]
@@ -415,16 +439,16 @@ class Node[S: "GraphState"](ABC):
         by `next_node` grouping.
 
         Groups all accumulated delivers by `next_node`. For each group,
-        calls `ctx.dispatch(target, state_update={"delivered": payload})`.
+        each deliver is dispatched individually via
+        `ctx.dispatch(target, state_update={"delivered": content})` so
+        downstream receives one `IntegratedPayload` per deliver.
+
         Both `LINEAR` and `PARALLEL` schedulers register a dispatch handler,
         so this is the single dispatch path — no `scheduler_kind` branch
         (rule 15 convergence).
 
         `next_node=None` entries call `_resolve_default_target(ctx)`, which
         returns a list of targets (default edges / downstream / END).
-
-        Payload shaping: a group with one entry dispatches the content
-        directly; a group with multiple entries dispatches a list.
 
         `self._submit_result` is also set (test-observation seam — no
         production code reads it; tests inspect it to verify dispatch
@@ -437,17 +461,17 @@ class Node[S: "GraphState"](ABC):
             for t in targets:
                 groups.setdefault(t, []).append(content)
 
+        inv_ctx = ctx.current_invocation
         for target, contents in groups.items():
-            payload: Any = contents[0] if len(contents) == 1 else contents
-            inv_ctx = ctx.current_invocation
-            ctx.dispatch(
-                target,
-                state_update={
-                    "delivered": payload,
-                    "_source_node": inv_ctx.node_id if inv_ctx else self.node_id,
-                    "_source_inv_id": inv_ctx.invocation_id if inv_ctx else 0,
-                },
-            )
+            for content in contents:
+                ctx.dispatch(
+                    target,
+                    state_update={
+                        "delivered": content,
+                        "_source_node": inv_ctx.node_id if inv_ctx else self.node_id,
+                        "_source_inv_id": inv_ctx.invocation_id if inv_ctx else 0,
+                    },
+                )
 
         self._submit_result = groups
 

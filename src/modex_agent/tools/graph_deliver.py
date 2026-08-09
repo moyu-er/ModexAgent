@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 from modex_agent.agents.agent_node import AgentNode
 from modex_agent.core.agent import current_agent_context
 from modex_agent.core.tool_manager import Tool, ToolConfig
+from modex_agent.runtime.enums import TurnCustomKey
 from modex_graph.compiled_graph import CompiledGraph
 from modex_graph.constants import GraphNode
 from modex_graph.integration import GraphPayload
@@ -23,6 +24,47 @@ class GraphDeliverTarget(BaseModel):
     description: str
 
 
+class DeliverResult(BaseModel):
+    """Outcome of a deliver attempt — shared across tool, REST, and CLI.
+
+    All three deliver paths (agent tool, REST route, modexctl CLI) produce
+    the same ``message`` string for the same outcome, so logs and user-facing
+    feedback are identical regardless of entry point.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    ok: bool
+    target: str | None = None
+    message: str = ""
+
+    @classmethod
+    def missing_target(cls, available: list[str]) -> DeliverResult:
+        names = ", ".join(available) if available else "none"
+        return cls(
+            ok=False,
+            target=None,
+            message=f"Error: target is required. Available: {names}. Specify one target.",
+        )
+
+    @classmethod
+    def invalid_target(cls, target_name: str, available: list[str]) -> DeliverResult:
+        names = ", ".join(available) if available else "none"
+        return cls(
+            ok=False,
+            target=target_name,
+            message=f"Error: {target_name!r} is not a valid downstream node. Available: {names}.",
+        )
+
+    @classmethod
+    def success(cls, target_name: str) -> DeliverResult:
+        return cls(
+            ok=True,
+            target=target_name,
+            message=f"Delivered to {target_name!r}.",
+        )
+
+
 class GraphDeliverTargetStore:
     """Derive available delivery targets from a compiled graph topology."""
 
@@ -31,21 +73,21 @@ class GraphDeliverTargetStore:
         self._current = current_node
 
     def list(self) -> list[GraphDeliverTarget]:
-        """Return downstream targets in edge declaration order, including END.
-
-        END is listed as ``"__end__"`` so agents can explicitly deliver to
-        it to terminate the workflow. Without this, a node with both a
-        real-node back-edge and an END edge (e.g. reviewer→implementer,
-        reviewer→END) cannot route to END via the deliver tool — the LLM
-        sees only the back-edge target and loops indefinitely.
-        """
+        """Return downstream targets in edge declaration order, including END."""
         targets: list[GraphDeliverTarget] = []
         for edge in self._graph.edges_from(self._current):
             if edge.target == GraphNode.END:
                 targets.append(
                     GraphDeliverTarget(
                         name=GraphNode.END,
-                        description="Terminal node — deliver here to end the workflow.",
+                        description=(
+                            "Workflow terminal. Deliver here ONLY when your "
+                            "task is fully complete and no downstream node "
+                            "needs to process your output further. Do not "
+                            "deliver to END and another target in the same "
+                            "turn — choose one: route to a downstream node "
+                            "for further processing, or to END to finish."
+                        ),
                     )
                 )
                 continue
@@ -60,6 +102,10 @@ class GraphDeliverTargetStore:
             )
         return targets
 
+    def names(self) -> list[str]:
+        """Return just the target names — for error messages."""
+        return [t.name for t in self.list()]
+
     def get(self, name: str) -> GraphDeliverTarget | None:
         """Return the downstream target with ``name``, if available."""
         return next((target for target in self.list() if target.name == name), None)
@@ -68,14 +114,28 @@ class GraphDeliverTargetStore:
         """Resolve a graph node name to its persistent node ID for display."""
         return self._graph.nodes[name].node_id
 
+    def validate_target(self, target_name: str | None) -> DeliverResult:
+        """Validate a target name and return a ``DeliverResult``.
+
+        Shared by the agent tool and (indirectly) by the REST route.
+        Returns ``DeliverResult.ok=True`` only when ``target_name`` is a
+        valid downstream node name.
+        """
+        if target_name is None:
+            return DeliverResult.missing_target(self.names())
+        if self.get(target_name) is None:
+            return DeliverResult.invalid_target(target_name, self.names())
+        return DeliverResult.success(target_name)
+
+
 _DELIVER_PARAMETERS: Final[dict[str, Any]] = {
     "type": "object",
     "properties": {
         "target": {
             "type": "string",
             "description": (
-                "Optional exact downstream node name. Omit to deliver to all "
-                "downstream nodes."
+                "Exact downstream node name. Required — delivering without "
+                "a target is not allowed."
             ),
         },
         "content": {
@@ -83,12 +143,12 @@ _DELIVER_PARAMETERS: Final[dict[str, Any]] = {
             "description": "Self-contained content for the downstream node.",
         },
     },
-    "required": ["content"],
+    "required": ["content", "target"],
 }
 
 
 class GraphDeliverTool(Tool):
-    """Deliver agent content to one named node or all downstream nodes."""
+    """Deliver agent content to one named downstream node."""
 
     def __init__(self, node: AgentNode, store: GraphDeliverTargetStore) -> None:
         self._node = node
@@ -103,19 +163,21 @@ class GraphDeliverTool(Tool):
     def description(self) -> str:
         targets = self._store.list()
         available = (
-            ", ".join(
-                f"{target.name} (ID: {self._store.resolve_node_id(target.name)}; "
-                f"{target.description})"
+            "\n".join(
+                f"  - {target.name}: {target.description}"
                 for target in targets
             )
             if targets
-            else "none"
+            else "  (none)"
         )
         return (
-            "Deliver content to a downstream node. "
-            f"Available targets: {available}. "
-            "If no target is specified, content is delivered to all downstream "
-            "nodes (auto-deliver)."
+            "Route your work output to a downstream node.\n"
+            f"Available targets:\n{available}\n\n"
+            "Choose the target that matches your node's purpose. "
+            "Read each target's description — it tells you what that "
+            "downstream node expects. Tailor your `content` to the "
+            "chosen target based on its description. "
+            "You MUST specify a target."
         )
 
     def get_dynamic_schema(self) -> dict[str, Any]:
@@ -142,19 +204,23 @@ class GraphDeliverTool(Tool):
         if graph_context is None:
             return "Error: deliver tool called outside graph context."
 
-        if target_name is None:
-            self._node.deliver(payload, None, graph_context)
-            return "Delivered to all downstream nodes."
-
-        if self._store.get(target_name) is None:
-            available = ", ".join(target.name for target in self._store.list())
-            return (
-                f"Error: {target_name!r} is not a valid downstream node. "
-                f"Available: {available}"
-            )
+        result = self._store.validate_target(target_name)
+        if not result.ok:
+            return result.message
 
         self._node.deliver(payload, target_name, graph_context)
-        return f"Delivered to {target_name!r}."
+        # After successful deliver, increment count for DeliverRetryHook
+        if agent_context is not None and agent_context.runtime is not None:
+            state = agent_context.runtime.state
+            if state is not None:
+                count = state.custom.get(TurnCustomKey.GRAPH_DELIVER_COUNT, 0)
+                state.custom[TurnCustomKey.GRAPH_DELIVER_COUNT] = count + 1
+        return result.message
 
 
-__all__ = ["GraphDeliverTarget", "GraphDeliverTargetStore", "GraphDeliverTool"]
+__all__ = [
+    "DeliverResult",
+    "GraphDeliverTarget",
+    "GraphDeliverTargetStore",
+    "GraphDeliverTool",
+]

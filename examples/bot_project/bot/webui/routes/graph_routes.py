@@ -326,9 +326,17 @@ async def handle_deliver_to_node(request: web.Request) -> web.Response:
     try:
         await orch.deliver_to_node(gid, deliver_req.node_name, deliver_req.content)
     except ValueError as exc:
-        return web.json_response({"error": str(exc)}, status=404)
+        return web.json_response(
+            {"ok": False, "target": deliver_req.node_name, "message": str(exc)},
+            status=404,
+        )
     return web.json_response(
-        {"graph_instance_id": str(gid), "node_name": deliver_req.node_name, "status": "delivered"}
+        {
+            "ok": True,
+            "target": deliver_req.node_name,
+            "message": f"Delivered to {deliver_req.node_name!r}.",
+            "graph_instance_id": str(gid),
+        }
     )
 
 

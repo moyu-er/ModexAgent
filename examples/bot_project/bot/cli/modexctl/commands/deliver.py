@@ -57,7 +57,7 @@ def _fetch_deliver(
     if resp.status_code != 200:
         try:
             body = resp.json()
-            detail = body.get("error", resp.text[:200])
+            detail = body.get("message") or body.get("error") or resp.text[:200]
         except ValueError:
             detail = resp.text[:200]
         raise ControlClientError(
@@ -129,9 +129,7 @@ def build_deliver_command(ctx: ModexCtlContext) -> Callable[..., None]:
             typer.echo(f"error: {exc}", err=True)
             raise typer.Exit(code=EXIT_ROUTING) from exc
 
-        typer.echo(
-            f"delivered to graph instance {result.get('graph_instance_id')} "
-            f"node '{result.get('node_name')}': {result.get('status')}"
-        )
+        message = result.get("message", f"Delivered to {node_name!r}.")
+        typer.echo(message)
 
     return _deliver
