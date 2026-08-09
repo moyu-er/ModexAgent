@@ -16,6 +16,14 @@ Status: living（2026-08-05 盘点自 `issues/history/` 全部 ticket + `PRD.md`
 
 ## 中优先级（功能缺口）
 
+### BL-18 modexctl deliver --help 缺少动态目标描述
+
+- 出处：2026-08-09 graph agent context injection 设计审查
+- 内容：`modexctl deliver` 命令（`examples/bot_project/bot/cli/modexctl/commands/deliver.py`）的 `--help` 输出是静态 typer Option help 文本，仅描述 `--node-name`、`--content`、`--workspace`、`--graph-instance-id` 参数。缺少 `GraphDeliverTool.description`（`src/modex_agent/tools/graph_deliver.py:174-193`）中的动态内容：当前节点名、下游目标列表、每个 target 的 description、deliver 引导语。
+- 影响：external agent（Pi/OpenCode CLI）在 graph 节点中通过 `modexctl deliver` 而非 tool call 投递结果时，无法从 `--help` 得知有哪些合法 target 及每个 target 期望什么内容——native agent 的 deliver tool 动态描述对外部 agent 不可见。
+- 关系：**部分相关**。`GraphWorkflowProvider`（system prompt 注入）对 external agent 不可见（external agent 不读 system prompt pipeline），所以 deliver 语义引导需要通过 CLI `--help` 或 `current_input` / `AGENTS.md` runtime block 补齐。
+- 建议：`modexctl deliver --help` 或 `modexctl deliver --list-targets` 动态查询 graph 实例拓扑，输出当前节点可投递的下游目标 + 每个 target 的 description（与 `GraphDeliverTool.description` 收敛到同一信息源 `GraphDeliverTargetStore.list()`）。
+
 ### BL-01 长任务节点超时与取消机制
 
 - 出处：`issues/history/07-long-running-node-execution.md` §5
