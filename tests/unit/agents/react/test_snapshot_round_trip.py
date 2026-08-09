@@ -431,6 +431,7 @@ class TestCheckpointRoundTrip:
             "custom",
             "current_node",
             "iteration",
+            "turn_attempt",
             "llm_response",
             "tool_batches",
             "approval",

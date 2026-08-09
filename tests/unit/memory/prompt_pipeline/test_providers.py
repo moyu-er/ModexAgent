@@ -611,3 +611,62 @@ async def test_role_contract_order_preserved_in_content():
     planner_marker = "Role Contract — Planner"
     assert rp.index(reviewer_marker) < rp.index(planner_marker)
     assert pr.index(planner_marker) < pr.index(reviewer_marker)
+
+
+# -- GraphWorkflowProvider --
+
+
+@pytest.mark.asyncio
+async def test_graph_workflow_provider_emits_deliver_routing_guidance():
+    """Prompt text must match the deliver tool's target-required behavior:
+    no 'auto-delivered to ALL downstream nodes' claim (multi-edge raises
+    RoutingError); instead describe single-edge auto-deliver / END fallback
+    and require an explicit target."""
+    from modex_agent.core.agent import AgentContext, current_agent_context
+    from modex_agent.core.history import MessageHistory
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_graph.context import GraphContext
+
+    from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+
+    ctx = AgentContext(
+        system_prompt="",
+        history=MagicMock(spec=MessageHistory),
+        tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("test.planner"),
+        graph_context=MagicMock(spec=GraphContext),
+    )
+    token = current_agent_context.set(ctx)
+    try:
+        provider = GraphWorkflowProvider()
+        result = await provider._fetch_content()
+        assert "MUST call `deliver`" in result
+        assert "auto-delivered to ALL downstream nodes" not in result
+    finally:
+        current_agent_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_graph_workflow_provider_empty_when_no_graph_context():
+    from modex_agent.core.agent import AgentContext, current_agent_context
+    from modex_agent.core.history import MessageHistory
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+
+    from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+
+    ctx = AgentContext(
+        system_prompt="",
+        history=MagicMock(spec=MessageHistory),
+        tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("test.planner"),
+        graph_context=None,
+    )
+    token = current_agent_context.set(ctx)
+    try:
+        provider = GraphWorkflowProvider()
+        result = await provider._fetch_content()
+        assert result == ""
+    finally:
+        current_agent_context.reset(token)

@@ -5,19 +5,28 @@ from dataclasses import fields
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from bot.graph.agent_node import BotAgentNode
 from bot.graph.agent_node_factory import BotAgentNodeConfig, BotAgentNodeFactory
 
 from modex_agent.agents.agent_node import AgentNode, SessionStrategy
+from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.core.session_registry import InMemorySessionRegistry, SessionRegistry
 from modex_agent.core.tool_manager import InMemoryToolManager, Tool
 from modex_agent.core.types import MessageRole
+from modex_agent.memory.history import ListMessageHistory
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
+from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.runtime.models import TurnIdentity
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.graph_deliver import GraphDeliverTool
 from modex_agent.tools.graph_tool_preset import GraphToolPreset
+from modex_graph.constants import GraphNode
 from modex_graph.context import GraphContext
 from modex_graph.integration import GraphPayload, IntegratedInput, IntegratedPayload
 from modex_graph.spec import NodeSpec
@@ -286,8 +295,7 @@ class TestBotAgentNodeFormatIntegratedInput:
 
         result = node._format_integrated_input(integrated)
 
-        assert result.startswith("<system-reminder>\n")
-        assert result.endswith("\n</system-reminder>")
+        assert "[Input from graph node" in result
         assert "hello world" in result
         assert "src" in result
 
@@ -405,7 +413,11 @@ class TestBotAgentNodeExecute:
         MagicMock, MagicMock, MagicMock, MagicMock, AgentResult, MagicMock
     ]:
         """Build the mock chain for execute: agent, builder, agent_context, emitter, result, turn_runner."""
-        mock_result = AgentResult(content="auto-delivered output", messages=[])
+        mock_result = AgentResult(
+            content="auto-delivered output",
+            messages=[],
+            stop_reason=StopReason.COMPLETED,
+        )
         mock_agent = MagicMock()
         mock_agent.run = AsyncMock(return_value=mock_result)
 
@@ -416,6 +428,8 @@ class TestBotAgentNodeExecute:
         mock_agent_context.tool_manager = InMemoryToolManager()
         mock_agent_context.history = MagicMock()
         mock_agent_context.history.append = AsyncMock()
+        mock_agent_context.runtime = MagicMock()
+        mock_agent_context.runtime.state.custom = {}
 
         mock_emitter = MagicMock()
         mock_builder = MagicMock()
@@ -438,6 +452,9 @@ class TestBotAgentNodeExecute:
         mock_src = MagicMock()
         mock_src.node_id = "src-id"
         mock_graph.nodes = {"source": mock_src}
+        downstream_edge = MagicMock()
+        downstream_edge.target = "downstream"
+        mock_graph.edges_from.return_value = [downstream_edge]
         node._graph_ref = mock_graph
 
         mock_ctx = MagicMock()
@@ -451,12 +468,63 @@ class TestBotAgentNodeExecute:
 
         mock_turn_runner.execute_turn.assert_awaited_once()
         mock_agent_context.history.append.assert_awaited_once()
+        assert mock_agent_context.runtime.state.custom[TurnCustomKey.MAX_TURNS] == 3
         assert mock_agent_context.graph_context is mock_ctx
         assert len(node._pending_delivers or []) == 1
         delivered_content, delivered_target = (node._pending_delivers or [])[0]
         assert isinstance(delivered_content, GraphPayload)
         assert delivered_content.content == "auto-delivered output"
-        assert delivered_target is None
+        assert delivered_target == "downstream"
+
+    async def test_execute_auto_delivers_to_end_with_multiple_downstream_edges(
+        self,
+    ) -> None:
+        mock_agent, mock_builder, _, _, _, mock_turn_runner = self._build_execute_mocks()
+        instance = _build_mock_agent_instance(
+            mock_builder,
+            mock_agent,
+            turn_runner=mock_turn_runner,
+        )
+        resolver = _build_mock_workspace_resolver("default", instance)
+        node = BotAgentNode("planner", "default", resolver)
+        node.name = "planner_node"
+        node.node_id = "node-1"
+        mock_graph = MagicMock()
+        first_edge = MagicMock()
+        first_edge.target = "first"
+        second_edge = MagicMock()
+        second_edge.target = "second"
+        mock_graph.nodes = {}
+        mock_graph.edges_from.return_value = [first_edge, second_edge]
+        node._graph_ref = mock_graph
+        mock_ctx = MagicMock()
+        mock_ctx.user_input = GraphPayload(content="task")
+
+        await node.execute(mock_ctx, IntegratedInput(payloads=[]))
+
+        assert (node._pending_delivers or [])[0][1] == GraphNode.END
+
+    async def test_execute_auto_delivers_to_end_without_downstream_edges(self) -> None:
+        mock_agent, mock_builder, _, _, _, mock_turn_runner = self._build_execute_mocks()
+        instance = _build_mock_agent_instance(
+            mock_builder,
+            mock_agent,
+            turn_runner=mock_turn_runner,
+        )
+        resolver = _build_mock_workspace_resolver("default", instance)
+        node = BotAgentNode("planner", "default", resolver)
+        node.name = "planner_node"
+        node.node_id = "node-1"
+        mock_graph = MagicMock()
+        mock_graph.nodes = {}
+        mock_graph.edges_from.return_value = []
+        node._graph_ref = mock_graph
+        mock_ctx = MagicMock()
+        mock_ctx.user_input = GraphPayload(content="task")
+
+        await node.execute(mock_ctx, IntegratedInput(payloads=[]))
+
+        assert (node._pending_delivers or [])[0][1] == GraphNode.END
 
     async def test_execute_injects_integrated_input_as_reminder(self) -> None:
         mock_agent, mock_builder, mock_agent_context, _, _, mock_turn_runner = self._build_execute_mocks()
@@ -536,9 +604,9 @@ class TestBotAgentNodeExecute:
         append_call = mock_agent_context.history.append.call_args
         appended_msg = append_call.args[0]
         assert appended_msg["role"] == MessageRole.SYSTEM_REMINDER
-        assert appended_msg["content"] == (
-            "<system-reminder>\nfallback task\n</system-reminder>"
-        )
+        appended_content = appended_msg["content"]
+        assert "[Origin Request]" in appended_content
+        assert "fallback task" in appended_content
 
     async def test_execute_skips_auto_deliver_when_agent_delivered(self) -> None:
         mock_agent, mock_builder, mock_agent_context, mock_emitter, mock_result, mock_turn_runner = (
@@ -567,8 +635,51 @@ class TestBotAgentNodeExecute:
 
         await node.execute(mock_ctx, integrated)
 
+        mock_turn_runner.execute_turn.assert_awaited_once()
         assert len(node._pending_delivers) == 1
         assert node._pending_delivers[0][0].content == "manual"
+
+
+class TestReActAgentCompileBudget:
+    async def test_compile_budget_scales_with_runtime_max_turns(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        session = SessionInfo.from_str("test.agent")
+        state = ReActTurnState(
+            identity=TurnIdentity(agent_id="test", session=session, turn_id="turn-1"),
+            agent_kind=AgentKind.REACT,
+            phase=TurnPhase.CREATED,
+        )
+        state.custom[TurnCustomKey.MAX_TURNS] = 3
+        runtime = AgentRuntime(services=AgentRuntimeServices(), state=state)
+        context = AgentContext(
+            system_prompt="",
+            history=ListMessageHistory(),
+            tool_manager=InMemoryToolManager(),
+            session=session,
+            max_iterations=5,
+            identity=state.identity,
+            runtime=runtime,
+        )
+        graph_builder = MagicMock()
+        compiled_graph = MagicMock()
+        compiled_graph.nodes = {}
+        graph_builder.compile.return_value = compiled_graph
+        monkeypatch.setattr(
+            "modex_agent.agents.react.graph.build_react_graph",
+            MagicMock(return_value=graph_builder),
+        )
+        engine = MagicMock()
+        engine.run_async = AsyncMock(return_value=state)
+        monkeypatch.setattr(
+            "modex_graph.engine.GraphEngine",
+            MagicMock(return_value=engine),
+        )
+
+        await ReActAgent(provider=MagicMock()).run(context, MagicMock())
+
+        graph_builder.compile.assert_called_once_with(max_iterations=70)
 
 
 class TestBotAgentNodeFactory:

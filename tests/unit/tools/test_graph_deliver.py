@@ -12,7 +12,11 @@ from modex_agent.core.history import MessageHistory
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.session_registry import InMemorySessionRegistry, SessionRegistry
 from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.runtime.models import TurnIdentity, TurnStateBase
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.graph_deliver import (
+    DeliverResult,
     GraphDeliverTarget,
     GraphDeliverTargetStore,
     GraphDeliverTool,
@@ -71,14 +75,32 @@ def _compiled_graph() -> tuple[Any, _AgentNode]:
     return graph.compile(), current
 
 
-def _agent_context(graph_context: GraphContext[Any] | None) -> AgentContext:
+def _agent_context(
+    graph_context: GraphContext[Any] | None,
+    *,
+    runtime: AgentRuntime | None = None,
+) -> AgentContext:
     return AgentContext(
         system_prompt="",
         history=MagicMock(spec=MessageHistory),
         tool_manager=InMemoryToolManager(),
         session=SessionInfo.from_str("test.planner"),
         graph_context=graph_context,
+        runtime=runtime,
     )
+
+
+def _make_runtime() -> AgentRuntime:
+    state = TurnStateBase(
+        identity=TurnIdentity(
+            agent_id="planner",
+            session=SessionInfo.from_str("test.planner"),
+            turn_id="turn-1",
+        ),
+        agent_kind=AgentKind.REACT,
+        phase=TurnPhase.RUNNING,
+    )
+    return AgentRuntime(services=AgentRuntimeServices(), state=state)
 
 
 def test_target_is_frozen_and_forbids_extra_fields() -> None:
@@ -95,6 +117,34 @@ def test_target_is_frozen_and_forbids_extra_fields() -> None:
         target.name = "writer"
 
 
+def test_deliver_result_is_frozen_and_forbids_extra_fields() -> None:
+    result = DeliverResult.success("researcher")
+
+    assert result.model_dump() == {
+        "ok": True,
+        "target": "researcher",
+        "message": "Delivered to 'researcher'.",
+    }
+    with pytest.raises(ValidationError):
+        DeliverResult(
+            ok=True,
+            target="researcher",
+            message="Delivered to 'researcher'.",
+            unexpected=True,
+        )
+    with pytest.raises(ValidationError):
+        result.ok = False
+
+
+def test_deliver_result_factories_bind_to_subclass() -> None:
+    class SpecializedDeliverResult(DeliverResult):
+        pass
+
+    assert type(SpecializedDeliverResult.missing_target([])) is SpecializedDeliverResult
+    assert type(SpecializedDeliverResult.invalid_target("writer", [])) is SpecializedDeliverResult
+    assert type(SpecializedDeliverResult.success("writer")) is SpecializedDeliverResult
+
+
 def test_store_lists_downstream_targets_including_end() -> None:
     compiled, _ = _compiled_graph()
     store = GraphDeliverTargetStore(compiled, "planner")
@@ -106,7 +156,14 @@ def test_store_lists_downstream_targets_including_end() -> None:
         GraphDeliverTarget(name="formatter", description="Graph node 'formatter'"),
         GraphDeliverTarget(
             name=GraphNode.END,
-            description="Terminal node — deliver here to end the workflow.",
+            description=(
+                "Workflow terminal. Deliver here ONLY when your "
+                "task is fully complete and no downstream node "
+                "needs to process your output further. Do not "
+                "deliver to END and another target in the same "
+                "turn — choose one: route to a downstream node "
+                "for further processing, or to END to finish."
+            ),
         ),
     ]
     assert store.get("researcher") == targets[0]
@@ -129,10 +186,8 @@ def test_description_lists_targets_ids_and_auto_deliver_behavior() -> None:
     description = tool.description
 
     assert "researcher" in description
-    assert compiled.nodes["researcher"].node_id in description
     assert "Research agent" in description
     assert "formatter" in description
-    assert "auto-deliver" in description
 
 
 def test_dynamic_schema_binds_target_enum_to_downstream_names() -> None:
@@ -147,7 +202,7 @@ def test_dynamic_schema_binds_target_enum_to_downstream_names() -> None:
         "formatter",
         "__end__",
     ]
-    assert schema["function"]["parameters"]["required"] == ["content"]
+    assert schema["function"]["parameters"]["required"] == ["content", "target"]
 
 
 async def test_execute_delivers_payload_to_target_name() -> None:
@@ -167,7 +222,7 @@ async def test_execute_delivers_payload_to_target_name() -> None:
     ]
 
 
-async def test_execute_without_target_uses_auto_deliver() -> None:
+async def test_execute_without_target_returns_error() -> None:
     compiled, current = _compiled_graph()
     graph_context = MagicMock(spec=GraphContext)
     tool = GraphDeliverTool(current, GraphDeliverTargetStore(compiled, "planner"))
@@ -178,8 +233,10 @@ async def test_execute_without_target_uses_auto_deliver() -> None:
     finally:
         current_agent_context.reset(token)
 
-    assert result == "Delivered to all downstream nodes."
-    assert current._pending_delivers == [(GraphPayload(content="shared result"), None)]
+    assert result.startswith("Error: target is required")
+    assert "researcher" in result
+    assert "formatter" in result
+    assert current._pending_delivers is None or current._pending_delivers == []
 
 
 async def test_execute_rejects_unknown_target() -> None:
@@ -195,7 +252,7 @@ async def test_execute_rejects_unknown_target() -> None:
 
     assert result == (
         "Error: 'invented' is not a valid downstream node. "
-        "Available: researcher, formatter, __end__"
+        "Available: researcher, formatter, __end__."
     )
     assert current._pending_delivers is None
 
@@ -212,3 +269,51 @@ async def test_execute_rejects_missing_graph_context() -> None:
 
     assert result == "Error: deliver tool called outside graph context."
     assert current._pending_delivers is None
+
+
+async def test_execute_increments_deliver_count_on_success() -> None:
+    compiled, current = _compiled_graph()
+    graph_context = MagicMock(spec=GraphContext)
+    tool = GraphDeliverTool(current, GraphDeliverTargetStore(compiled, "planner"))
+    runtime = _make_runtime()
+    token = current_agent_context.set(_agent_context(graph_context, runtime=runtime))
+
+    try:
+        result = await tool.execute(target="researcher", content="find evidence")
+    finally:
+        current_agent_context.reset(token)
+
+    assert result == "Delivered to 'researcher'."
+    assert runtime.state.custom[TurnCustomKey.GRAPH_DELIVER_COUNT] == 1
+
+
+async def test_execute_increments_deliver_count_across_two_delivers() -> None:
+    compiled, current = _compiled_graph()
+    graph_context = MagicMock(spec=GraphContext)
+    tool = GraphDeliverTool(current, GraphDeliverTargetStore(compiled, "planner"))
+    runtime = _make_runtime()
+    token = current_agent_context.set(_agent_context(graph_context, runtime=runtime))
+
+    try:
+        await tool.execute(target="researcher", content="first")
+        await tool.execute(target="formatter", content="second")
+    finally:
+        current_agent_context.reset(token)
+
+    assert runtime.state.custom[TurnCustomKey.GRAPH_DELIVER_COUNT] == 2
+
+
+async def test_execute_does_not_increment_deliver_count_on_failed_deliver() -> None:
+    compiled, current = _compiled_graph()
+    graph_context = MagicMock(spec=GraphContext)
+    tool = GraphDeliverTool(current, GraphDeliverTargetStore(compiled, "planner"))
+    runtime = _make_runtime()
+    token = current_agent_context.set(_agent_context(graph_context, runtime=runtime))
+
+    try:
+        result = await tool.execute(target="invented", content="content")
+    finally:
+        current_agent_context.reset(token)
+
+    assert "not a valid downstream node" in result
+    assert TurnCustomKey.GRAPH_DELIVER_COUNT not in runtime.state.custom

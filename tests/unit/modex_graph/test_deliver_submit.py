@@ -398,21 +398,24 @@ class TestSubmitGrouping:
         node.name = "multi_deliver"
         ctx, dispatch_calls = _make_parallel_ctx()
         await node.run(ctx)
-        assert len(dispatch_calls) == 2
-        targets = {call[1] for call in dispatch_calls}
-        assert targets == {"target_x", "target_y"}
+        assert len(dispatch_calls) == 3
+        targets = [call[1] for call in dispatch_calls]
+        assert targets.count("target_x") == 2
+        assert targets.count("target_y") == 1
 
-    async def test_submit_under_parallel_multi_entry_group_dispatches_list(self) -> None:
+    async def test_submit_under_parallel_multi_entry_group_dispatches_individually(self) -> None:
         node = _MultiDeliverNode()
         node.name = "multi_deliver"
         ctx, dispatch_calls = _make_parallel_ctx()
         await node.run(ctx)
-        # target_x has 2 entries -> dispatched as a list.
-        for _source, target, payload in dispatch_calls:
-            if target == "target_x":
-                assert payload and payload["delivered"] == ["data_1", "data_2"]
-            elif target == "target_y":
-                assert payload and payload["delivered"] == "data_3"
+        # target_x has 2 entries -> 2 separate dispatches, each with one content.
+        target_x_payloads = [p for _s, t, p in dispatch_calls if t == "target_x"]
+        target_y_payloads = [p for _s, t, p in dispatch_calls if t == "target_y"]
+        assert len(target_x_payloads) == 2
+        assert target_x_payloads[0]["delivered"] == "data_1"
+        assert target_x_payloads[1]["delivered"] == "data_2"
+        assert len(target_y_payloads) == 1
+        assert target_y_payloads[0]["delivered"] == "data_3"
 
     async def test_custom_submit_override(self) -> None:
         node = _CustomSubmitNode()
@@ -486,6 +489,65 @@ class TestResolveDefaultTargetLimitation:
         scheduler = LinearScheduler(compiled)
         result = await scheduler.run_async(ctx)
         assert result.count == 1
+
+    def test_resolve_default_target_strict_multi_edge_raises(self) -> None:
+        """Strict policy (default) raises on multiple downstream edges."""
+        from helpers import AddNode
+
+        from modex_graph import Graph, GraphNode
+
+        g: Graph[CounterState] = Graph()
+        g.add_node("multi", _NullNextNodeDeliver())
+        g.add_node("target_a", AddNode(amount=1))
+        g.add_node("target_b", AddNode(amount=2))
+        g.add_edge(GraphNode.START, "multi")
+        g.add_edge("multi", "target_a")
+        g.add_edge("multi", "target_b")
+        compiled = g.compile()
+        node = _NullNextNodeDeliver()
+        node.name = "multi"
+        node._graph_ref = compiled
+        ctx = _make_linear_ctx()
+        with pytest.raises(RoutingError, match="downstream targets"):
+            node._resolve_default_target(ctx)
+
+    def test_resolve_default_target_graceful_multi_edge_returns_end(self) -> None:
+        """Graceful policy returns [END] on multiple downstream edges."""
+        from helpers import AddNode
+
+        from modex_graph import Graph, GraphNode
+
+        g: Graph[CounterState] = Graph()
+        g.add_node("multi", _NullNextNodeDeliver())
+        g.add_node("target_a", AddNode(amount=1))
+        g.add_node("target_b", AddNode(amount=2))
+        g.add_edge(GraphNode.START, "multi")
+        g.add_edge("multi", "target_a")
+        g.add_edge("multi", "target_b")
+        compiled = g.compile()
+        node = _NullNextNodeDeliver()
+        node.name = "multi"
+        node._graph_ref = compiled
+        ctx = _make_linear_ctx()
+        assert node._resolve_default_target(ctx, policy="graceful") == [GraphNode.END]
+
+    def test_resolve_default_target_graceful_single_edge_returns_target(self) -> None:
+        """Graceful policy with one downstream edge returns that target."""
+        from helpers import AddNode
+
+        from modex_graph import Graph, GraphNode
+
+        g: Graph[CounterState] = Graph()
+        g.add_node("single", _NullNextNodeDeliver())
+        g.add_node("only_down", AddNode(amount=1))
+        g.add_edge(GraphNode.START, "single")
+        g.add_edge("single", "only_down")
+        compiled = g.compile()
+        node = _NullNextNodeDeliver()
+        node.name = "single"
+        node._graph_ref = compiled
+        ctx = _make_linear_ctx()
+        assert node._resolve_default_target(ctx, policy="graceful") == ["only_down"]
 
 
 # ── DeliverStore-backed persistence ───────────────────────────────────────
@@ -902,9 +964,10 @@ class TestSubmitDispatchConvergence:
             node.name = "multi_deliver"
             ctx, calls = make_ctx_with_handler(kind)
             await node.run(ctx)
-            assert len(calls) == 2, f"Expected 2 dispatches under {kind}, got {len(calls)}"
-            targets = {c[1] for c in calls}
-            assert targets == {"target_x", "target_y"}
+            assert len(calls) == 3, f"Expected 3 dispatches under {kind}, got {len(calls)}"
+            targets = [c[1] for c in calls]
+            assert targets.count("target_x") == 2
+            assert targets.count("target_y") == 1
 
 
 # ── upstream_payloads flow: deliver → integrated_input ────────────────────
@@ -1002,12 +1065,11 @@ class TestUpstreamPayloadsFlow:
 
         assert len(sink.seen_inputs) == 1
         integrated = sink.seen_inputs[0]
-        # _submit groups multiple delivers to the same target into one
-        # dispatch with a list payload → one IntegratedPayload.
-        assert len(integrated.payloads) == 1
+        assert len(integrated.payloads) == 2
         assert integrated.payloads[0].source_node == compiled.nodes["a"].node_id
-        assert integrated.payloads[0].content == ["first", "second"]
-        assert integrated.integrated_content == [["first", "second"]]
+        assert integrated.payloads[0].content == "first"
+        assert integrated.payloads[1].content == "second"
+        assert integrated.integrated_content == ["first", "second"]
 
     async def test_flow_under_parallel_on_receive(self) -> None:
         """Under PARALLEL + ON_RECEIVE: Node A delivers → Node B receives
