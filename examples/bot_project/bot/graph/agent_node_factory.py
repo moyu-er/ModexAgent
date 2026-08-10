@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict
 
 from bot.graph.agent_node import BotAgentNode
+from bot.graph.knowledge_config import KnowledgeNodeConfig
 from modex_graph.node_factory import NodeFactory
 
 if TYPE_CHECKING:
@@ -22,6 +23,7 @@ class BotAgentNodeConfig(BaseModel):
 
     agent: str
     pool: str = "default"
+    knowledge: KnowledgeNodeConfig = KnowledgeNodeConfig()
 
 
 class BotAgentNodeFactory(NodeFactory):
@@ -36,6 +38,7 @@ class BotAgentNodeFactory(NodeFactory):
             agent_name=config.agent,
             pool_name=config.pool,
             workspace_resolver=self._workspace_resolver,
+            knowledge_config=config.knowledge,
         )
 
     def config_schema(self) -> type[BaseModel] | None:

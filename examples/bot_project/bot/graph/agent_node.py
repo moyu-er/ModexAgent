@@ -10,14 +10,19 @@ injection, deliver-tool installation, agent execution, and auto-deliver.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bot.graph.knowledge_config import KnowledgeNodeConfig
 from modex_agent.agents.agent_node import AgentNode, SessionStrategy
 from modex_agent.core.message_utils import wrap_system_reminder
+from modex_agent.core.tool_manager import Tool, ToolManager
 from modex_agent.core.types import InputMessage, MessageRole
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.tools.graph_deliver import GraphDeliverTargetStore, GraphDeliverTool
+from modex_agent.tools.graph_knowledge_capabilities import KnowledgeToolCapabilities
+from modex_agent.tools.graph_knowledge_tool import GraphKnowledgeBaseTool
 from modex_agent.tools.graph_tool_preset import GraphToolPreset
 from modex_graph.constants import FrameworkPayloadSource, GraphNode
 from modex_graph.integration import GraphPayload
@@ -52,12 +57,14 @@ class BotAgentNode(AgentNode):
         workspace_resolver: WorkspaceResolverCell,
         *,
         session_strategy: SessionStrategy = SessionStrategy.CACHED,
+        knowledge_config: KnowledgeNodeConfig | None = None,
     ) -> None:
         super().__init__(session_strategy=session_strategy)
         self._agent_name = agent_name
         self._pool_name = pool_name
         self._workspace_resolver = workspace_resolver
         self._deliver_tool: GraphDeliverTool | None = None
+        self._knowledge_config = knowledge_config or KnowledgeNodeConfig()
 
     def agent_name(self) -> str:
         return self._agent_name
@@ -158,9 +165,20 @@ class BotAgentNode(AgentNode):
                     {"role": MessageRole.SYSTEM_REMINDER, "content": reminder}
                 )
 
-            # Ensure deliver tool and override tool manager.
             deliver_tool = self._ensure_deliver_tool()
-            preset = GraphToolPreset(graph_tools=[deliver_tool])
+            graph_tools: list[Tool] = [deliver_tool]
+            knowledge_dir: Path | None = None
+            if self._knowledge_config.enabled and ctx.graph_instance_id is not None:
+                knowledge_dir = workspace.ctx.paths.graph_instance_knowledge_dir(
+                    ctx.graph_instance_id
+                )
+                knowledge_dir.mkdir(parents=True, exist_ok=True)
+            knowledge_tool = self._ensure_knowledge_tool(
+                knowledge_dir, agent_context.tool_manager
+            )
+            if knowledge_tool is not None:
+                graph_tools.append(knowledge_tool)
+            preset = GraphToolPreset(graph_tools=graph_tools)
             agent_context.tool_manager = preset.build_tool_manager(agent_context.tool_manager)
 
             # Set graph context for the deliver tool.
@@ -209,6 +227,16 @@ class BotAgentNode(AgentNode):
             agent_context.runtime.state.custom[TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT] = (
                 self._build_topology_section()
             )
+            if knowledge_dir is not None:
+                agent_context.runtime.state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_DIR] = str(
+                    knowledge_dir
+                )
+                agent_context.runtime.state.custom[
+                    TurnCustomKey.GRAPH_KNOWLEDGE_REQUIRE_READ
+                ] = self._knowledge_config.require_read
+                agent_context.runtime.state.custom[
+                    TurnCustomKey.GRAPH_KNOWLEDGE_REQUIRE_WRITE
+                ] = self._knowledge_config.require_write
             result = await runner.execute_turn(
                 agent_context,
                 emitter,
@@ -394,6 +422,20 @@ class BotAgentNode(AgentNode):
         )
         self._deliver_tool = GraphDeliverTool(node=self, store=store)
         return self._deliver_tool
+
+    def _ensure_knowledge_tool(
+        self,
+        knowledge_dir: Path | None,
+        tool_manager: ToolManager,
+    ) -> GraphKnowledgeBaseTool | None:
+        if knowledge_dir is None:
+            return None
+        capabilities = KnowledgeToolCapabilities.from_tool_manager(tool_manager)
+        return GraphKnowledgeBaseTool(
+            knowledge_dir=knowledge_dir,
+            capabilities=capabilities,
+            node_name=self.name,
+        )
 
 
 __all__ = ["BotAgentNode"]
