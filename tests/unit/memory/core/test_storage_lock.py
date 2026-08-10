@@ -167,6 +167,14 @@ class TestFileStorageLock:
         async with lock.read():
             pass
 
+    async def test_file_lock_reentrant_across_same_path_instances(self, tmp_path):
+        lock_file = tmp_path / "test.lock"
+        lock1 = FileStorageLock(lock_file)
+        lock2 = FileStorageLock(lock_file)
+
+        async with lock1.write(), lock2.write():
+            pass
+
     async def test_file_lock_excludes_concurrent_writers(self, tmp_path):
         import sys
 

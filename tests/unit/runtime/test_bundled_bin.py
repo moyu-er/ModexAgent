@@ -14,14 +14,11 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from modex_agent.runtime.bundled_bin import (
     bundled_bin_dir,
     ensure_bundled_bin_on_path,
     prepend_path_idempotent,
 )
-
 
 # ── prepend_path_idempotent ──────────────────────────────────────────────────
 
@@ -33,25 +30,28 @@ class TestPrependPathIdempotent:
         assert prepend_path_idempotent("", "C:\\bin") == "C:\\bin"
 
     def test_simple_prepend(self) -> None:
-        result = prepend_path_idempotent("C:\\existing", "C:\\bin")
+        result = prepend_path_idempotent("C:\\existing", "C:\\bin", pathsep=";")
         assert result == "C:\\bin;C:\\existing"
 
     def test_exact_match_idempotent_no_marker(self) -> None:
         """Without marker: exact-match removal, then prepend."""
         path = "C:\\bin;C:\\other"
-        result = prepend_path_idempotent(path, "C:\\bin", marker=None)
+        result = prepend_path_idempotent(path, "C:\\bin", marker=None, pathsep=";")
         assert result == "C:\\bin;C:\\other"
 
     def test_exact_match_case_insensitive(self) -> None:
         path = "c:\\BIN;C:\\other"
-        result = prepend_path_idempotent(path, "C:\\bin", marker=None)
+        result = prepend_path_idempotent(path, "C:\\bin", marker=None, pathsep=";")
         assert result == "C:\\bin;C:\\other"
 
     def test_marker_removes_all_matching(self) -> None:
         """Marker mode: all entries containing the marker are removed."""
         path = "C:\\old\\python\\Scripts;C:\\system32;D:\\other\\python\\Scripts"
         result = prepend_path_idempotent(
-            path, "E:\\new\\python\\Scripts", marker="\\python\\Scripts"
+            path,
+            "E:\\new\\python\\Scripts",
+            marker="\\python\\Scripts",
+            pathsep=";",
         )
         # Both old entries removed, new one prepended, system32 kept.
         assert result == "E:\\new\\python\\Scripts;C:\\system32"
@@ -59,7 +59,10 @@ class TestPrependPathIdempotent:
     def test_marker_case_insensitive(self) -> None:
         path = "C:\\OLD\\PYTHON\\SCRIPTS;C:\\system32"
         result = prepend_path_idempotent(
-            path, "C:\\new\\python\\Scripts", marker="\\python\\Scripts"
+            path,
+            "C:\\new\\python\\Scripts",
+            marker="\\python\\Scripts",
+            pathsep=";",
         )
         assert result == "C:\\new\\python\\Scripts;C:\\system32"
 
@@ -67,7 +70,10 @@ class TestPrependPathIdempotent:
         """The key idempotency scenario: reinstall to a new dir."""
         old_path = "C:\\OldInstall\\python\\Scripts;C:\\Windows\\System32"
         result = prepend_path_idempotent(
-            old_path, "D:\\NewInstall\\python\\Scripts", marker="\\python\\Scripts"
+            old_path,
+            "D:\\NewInstall\\python\\Scripts",
+            marker="\\python\\Scripts",
+            pathsep=";",
         )
         assert result == "D:\\NewInstall\\python\\Scripts;C:\\Windows\\System32"
 
@@ -77,7 +83,7 @@ class TestPrependPathIdempotent:
         marker = "\\bin\\windows"
         for _ in range(5):
             path = prepend_path_idempotent(
-                path, "C:\\install\\bin\\windows", marker=marker
+                path, "C:\\install\\bin\\windows", marker=marker, pathsep=";"
             )
         entries = [e for e in path.split(";") if e]
         assert entries.count("C:\\install\\bin\\windows") == 1
@@ -86,7 +92,7 @@ class TestPrependPathIdempotent:
 
     def test_preserves_unrelated_entries(self) -> None:
         path = "C:\\Python312;C:\\Windows\\System32;C:\\Windows;D:\\tools"
-        result = prepend_path_idempotent(path, "C:\\bin", marker=None)
+        result = prepend_path_idempotent(path, "C:\\bin", marker=None, pathsep=";")
         entries = result.split(";")
         assert entries[0] == "C:\\bin"
         for e in ["C:\\Python312", "C:\\Windows\\System32", "C:\\Windows", "D:\\tools"]:
@@ -95,7 +101,7 @@ class TestPrependPathIdempotent:
     def test_strips_empty_entries(self) -> None:
         """Empty entries (leading/trailing/duplicate separators) are dropped."""
         path = ";C:\\existing;;C:\\other;"
-        result = prepend_path_idempotent(path, "C:\\bin", marker=None)
+        result = prepend_path_idempotent(path, "C:\\bin", marker=None, pathsep=";")
         entries = result.split(";")
         assert "" not in entries
         assert entries == ["C:\\bin", "C:\\existing", "C:\\other"]
@@ -144,7 +150,11 @@ class TestBundledBinDir:
         install_root = tmp_path
         python_dir = install_root / "python"
         python_dir.mkdir()
-        platform_name = "windows" if sys.platform == "win32" else "linux"
+        platform_name = {
+            "win32": "windows",
+            "linux": "linux",
+            "darwin": "darwin",
+        }.get(sys.platform, sys.platform)
         bin_dir = install_root / "bin" / platform_name
         bin_dir.mkdir(parents=True)
 
@@ -205,11 +215,11 @@ class TestEnsureBundledBinOnPath:
         bin_dir.mkdir()
         other_bin = tmp_path / "other_bundled"
         other_bin.mkdir()
-        system_path = "C:\\Windows\\System32"
+        system_path = "C:\\Windows\\System32" if os.pathsep == ";" else "/usr/bin"
 
         original_path = os.environ.get("PATH", "")
         try:
-            os.environ["PATH"] = f"{bin_dir};{system_path};{bin_dir}"
+            os.environ["PATH"] = os.pathsep.join((str(bin_dir), system_path, str(bin_dir)))
 
             with patch("modex_agent.runtime.bundled_bin.bundled_bin_dir", return_value=bin_dir):
                 ensure_bundled_bin_on_path()

@@ -1,10 +1,10 @@
 """Structural regression test for bundled pool agent descriptions.
 
 Loads every shipped pool under ``examples/bot_project/config/pools`` via the
-real :class:`PoolStore` and asserts self-containment invariants on the six
+real :class:`PoolStore` and asserts self-containment invariants on the nine
 main + subagent specs:
 
-* the discovered agent-name set is exactly the expected six-name roster;
+* the discovered agent-name set is exactly the expected eight-name roster;
 * every description is non-empty;
 * no description mentions any OTHER configured agent name as a whole token
   (hyphenated names included) -- a description that names a sibling agent
@@ -34,8 +34,18 @@ from modex_agent.multi_agent.pool_config.store import PoolStore  # noqa: E402
 # The complete roster shipped under ``config/pools/``. Drift (a name added or
 # removed without updating this set) is itself a regression the test catches.
 _EXPECTED_AGENT_NAMES: frozenset[str] = frozenset(
-    {"default", "office-expert", "orchestrator", "explore", "coder", "opencode"}
+    {
+        "coder",
+        "default",
+        "explore",
+        "general",
+        "office-expert",
+        "opencode",
+        "orchestrator",
+        "reviewer",
+    }
 )
+_EXPECTED_SPEC_COUNT = 9
 
 
 def _load_specs(store: PoolStore) -> list[tuple[str, str, str]]:
@@ -72,9 +82,9 @@ def _mentions_whole_token(name: str, text: str) -> bool:
 
 
 def test_discovered_agent_names_match_expected_roster() -> None:
-    """The six bundled specs must be exactly the expected roster."""
-    assert len(_SPECS) == len(_EXPECTED_AGENT_NAMES), (
-        f"Expected {len(_EXPECTED_AGENT_NAMES)} specs, found {len(_SPECS)}"
+    """The nine bundled specs must be exactly the expected roster."""
+    assert len(_SPECS) == _EXPECTED_SPEC_COUNT, (
+        f"Expected {_EXPECTED_SPEC_COUNT} specs, found {len(_SPECS)}"
     )
     assert _AGENT_NAMES == _EXPECTED_AGENT_NAMES, (
         f"Discovered names {_AGENT_NAMES} != expected {_EXPECTED_AGENT_NAMES}"

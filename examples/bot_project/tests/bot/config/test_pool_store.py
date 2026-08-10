@@ -189,11 +189,10 @@ class TestWritePoolRoundTrip:
         assert reread.subagents[0].description == "recon"
         assert reread.subagents[1].max_steps == 150
 
-    def test_llm_not_persisted_and_memory_not_persisted(
+    def test_llm_not_persisted_and_memory_toggle_persisted(
         self, store: PoolStore, tmp_path: Path
     ) -> None:
-        """llm is no longer a pool-level key; memory is a baked main-agent
-        default injected at pool-build, never persisted."""
+        """llm is global while the main-agent memory toggle is pool-editable."""
         pool_dir = tmp_path / "config" / "pools" / "main"
         pool_dir.mkdir(parents=True)
         (pool_dir / "pool.yml").write_text(
@@ -201,7 +200,7 @@ class TestWritePoolRoundTrip:
                 {
                     "main_agent_name": "main",
                     "llm": {"model": "claude-opus-4"},
-                    "memory": {"session": {"max_token_ratio": 0.9}},
+                    "memory": {"archive_enabled": True, "core_enabled": False},
                     "agents": [{"name": "main", "role": "main", "max_steps": 10}],
                 },
                 sort_keys=False,
@@ -212,7 +211,7 @@ class TestWritePoolRoundTrip:
         store.write_pool("main", tree)
         raw = yaml.safe_load((pool_dir / "pool.yml").read_text(encoding="utf-8"))
         assert "llm" not in raw  # removed: model config lives in model.yml
-        assert "memory" not in raw  # baked default, not persisted
+        assert raw["memory"] == {"archive_enabled": True, "core_enabled": False}
         assert "name" not in raw  # pool name = dir name, not persisted
 
     def test_experience_not_persisted(self, store: PoolStore, tmp_path: Path) -> None:

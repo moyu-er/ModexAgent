@@ -310,7 +310,7 @@ async def test_on_client_connected_sets_nodelay_on_real_socket() -> None:
         backend._on_client_connected(reader, writer)
         # TCP_NODELAY should now be set on the accepted socket.
         nodelay = accepted.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY)
-        assert nodelay == 1
+        assert nodelay != 0
         # And the reader/writer are stored on the backend.
         assert backend._reader is reader
         assert backend._writer is writer

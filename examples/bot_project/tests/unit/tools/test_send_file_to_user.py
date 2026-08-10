@@ -103,7 +103,7 @@ class TestOutboundAttachmentRecord:
             found = await find_attachment(store, "s1.main", att_id)
         assert found is not None
         assert found.locator is AttachmentLocator.WORKSPACE
-        assert found.path == str(file)
+        assert found.path == str(file.resolve())
         assert found.size == len(b"hello")
         assert found.name == "report.txt"
 
@@ -141,7 +141,7 @@ class TestOutboundAttachmentRecord:
         output_adapter.send.assert_awaited_once()
         args, _ = output_adapter.send.call_args
         msg = args[0]
-        assert msg.attachments == [str(file)]
+        assert msg.attachments == [str(file.resolve())]
         assert msg.content == "see this"
 
     @pytest.mark.asyncio
@@ -182,7 +182,7 @@ class TestOutboundAttachmentRecord:
             await tool.execute(file_path=str(file))
 
         assert seen_at_send["found"] is not None
-        assert seen_at_send["found"].path == str(file)
+        assert seen_at_send["found"].path == str(file.resolve())
 
     @pytest.mark.asyncio
     async def test_record_uses_sniffed_mime_and_classified_kind(self) -> None:

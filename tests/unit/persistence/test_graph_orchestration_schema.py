@@ -41,6 +41,7 @@ GRAPH_TABLES: frozenset[str] = frozenset(
 )
 
 VALID_STATUSES: tuple[str, ...] = (
+    "pending",
     "running",
     "paused",
     "stopped",
@@ -282,7 +283,7 @@ def test_graph_instances_accepts_valid_insert() -> None:
         conn.close()
 
 
-def test_graph_instances_default_status_is_running() -> None:
+def test_graph_instances_default_status_is_pending() -> None:
     conn = _connect()
     try:
         conn.execute(
@@ -298,7 +299,7 @@ def test_graph_instances_default_status_is_running() -> None:
             "SELECT status FROM graph_instances WHERE graph_instance_id = ?",
             (INSTANCE_ID,),
         ).fetchone()[0]
-        assert status == "running"
+        assert status == "pending"
     finally:
         conn.close()
 
@@ -728,21 +729,27 @@ def test_graph_triggers_exist() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Snowflake ID PKs — BIGINT, not AUTOINCREMENT
+# Snowflake ID PKs — BIGINT, versioned where required, not AUTOINCREMENT
 # ---------------------------------------------------------------------------
 
 
-def test_graph_primary_keys_are_bigint_no_autoincrement() -> None:
+def test_graph_primary_keys_use_snowflake_ids_without_autoincrement() -> None:
     conn = _connect()
     try:
         for table in GRAPH_TABLES:
             rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-            pk_cols = [r for r in rows if r[5] > 0]
-            assert len(pk_cols) == 1, f"{table} must have exactly one PK column"
-            col_type = pk_cols[0][2].upper()
-            assert col_type == "BIGINT", (
-                f"{table}.{pk_cols[0][1]} must be BIGINT (Snowflake ID), got {col_type}"
-            )
+            pk_cols = sorted((r for r in rows if r[5] > 0), key=lambda row: row[5])
+            if table == "graph_instances":
+                assert [(row[1], row[2].upper()) for row in pk_cols] == [
+                    ("graph_instance_id", "BIGINT"),
+                    ("version", "INTEGER"),
+                ]
+            else:
+                assert len(pk_cols) == 1, f"{table} must have exactly one PK column"
+                col_type = pk_cols[0][2].upper()
+                assert col_type == "BIGINT", (
+                    f"{table}.{pk_cols[0][1]} must be BIGINT (Snowflake ID), got {col_type}"
+                )
             sql_text = conn.execute(
                 "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
                 (table,),
