@@ -867,6 +867,24 @@ class GraphWorkflowProvider(SystemPromptProvider):
             if desc:
                 parts.append("\n### Your Role\n\n")
                 parts.append(desc)
+            knowledge_dir = ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_KNOWLEDGE_DIR)
+            if knowledge_dir:
+                parts.append("\n### Knowledge Base\n\n")
+                parts.append(
+                    "A shared knowledge base is available via the `knowledge_base` "
+                    "tool. It lets you record findings, decisions, and questions that "
+                    "other nodes can read, even if they are not directly downstream "
+                    "from you.\n\n"
+                    "Use it to:\n"
+                    "- Record important discoveries in `findings` (append by convention).\n"
+                    "- Log key decisions in `decisions` (append by convention).\n"
+                    "- Track unresolved questions in `open_questions`.\n"
+                    "- Use `grep` to check if a topic has already been recorded before "
+                    "writing a duplicate entry.\n"
+                    "- The `changelog` is auto-maintained - do not write to it directly.\n\n"
+                    "A summary of recent findings and open questions is injected at the "
+                    "start of each turn. Use the tool for full content or searches.\n"
+                )
 
         return "".join(parts)
 

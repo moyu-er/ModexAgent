@@ -691,6 +691,83 @@ async def test_graph_workflow_provider_emits_topology_and_role_from_turn_state()
 
 
 @pytest.mark.asyncio
+async def test_graph_workflow_provider_emits_knowledge_base_section_when_knowledge_dir_set() -> None:
+    from modex_agent.core.agent import AgentContext, current_agent_context
+    from modex_agent.core.history import MessageHistory
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.runtime.models import TurnStateBase
+    from modex_agent.runtime.services import AgentRuntime
+    from modex_graph.context import GraphContext
+
+    runtime = MagicMock(spec=AgentRuntime)
+    runtime.state = MagicMock(spec=TurnStateBase)
+    runtime.state.custom = {
+        TurnCustomKey.GRAPH_KNOWLEDGE_DIR: "/tmp/knowledge",
+    }
+    ctx = AgentContext(
+        system_prompt="",
+        history=MagicMock(spec=MessageHistory),
+        tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("test.reviewer"),
+        runtime=runtime,
+        graph_context=MagicMock(spec=GraphContext),
+    )
+    token = current_agent_context.set(ctx)
+    try:
+        provider = GraphWorkflowProvider()
+        result = await provider._fetch_content()
+        assert "### Knowledge Base\n" in result
+        assert "`knowledge_base`" in result
+        assert "findings" in result
+        assert "decisions" in result
+        assert "open_questions" in result
+        assert "changelog" in result
+        assert result.index("### Workflow Guidance") < result.index("### Knowledge Base")
+    finally:
+        current_agent_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_graph_workflow_provider_omits_knowledge_base_section_when_knowledge_dir_not_set() -> None:
+    from modex_agent.core.agent import AgentContext, current_agent_context
+    from modex_agent.core.history import MessageHistory
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.runtime.models import TurnStateBase
+    from modex_agent.runtime.services import AgentRuntime
+    from modex_graph.context import GraphContext
+
+    runtime = MagicMock(spec=AgentRuntime)
+    runtime.state = MagicMock(spec=TurnStateBase)
+    runtime.state.custom = {
+        TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT: "planner -> implementer",
+        TurnCustomKey.GRAPH_NODE_DESCRIPTION: "Review the implementation.",
+    }
+    ctx = AgentContext(
+        system_prompt="",
+        history=MagicMock(spec=MessageHistory),
+        tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("test.reviewer"),
+        runtime=runtime,
+        graph_context=MagicMock(spec=GraphContext),
+    )
+    token = current_agent_context.set(ctx)
+    try:
+        provider = GraphWorkflowProvider()
+        result = await provider._fetch_content()
+        assert "### Knowledge Base" not in result
+        assert "### Topology\n" in result
+        assert "### Your Role\n" in result
+    finally:
+        current_agent_context.reset(token)
+
+
+@pytest.mark.asyncio
 async def test_graph_workflow_provider_empty_when_no_graph_context() -> None:
     from modex_agent.core.agent import AgentContext, current_agent_context
     from modex_agent.core.history import MessageHistory

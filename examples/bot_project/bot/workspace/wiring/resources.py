@@ -28,6 +28,7 @@ from bot.workspace.pool_data import build_pool_data
 from modex_agent.approval.ui import IMUserInterface
 from modex_agent.hook.builtin import CurrentTimeInjectionHook, TodoContinuationHook
 from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
+from modex_agent.hook.builtin.knowledge_hook import KnowledgeHook
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.comm_kind import AgentCommKind
@@ -193,10 +194,10 @@ async def _assemble_resources(
 
     # Shared (service-level) infra reused across this workspace's pools.
     shared_hooks = [
-        # Must be registered before ExperienceReviewHook (flag-set before flag-check)
-        CurrentTimeInjectionHook(),
-        DeliverRetryHook(),
-        TodoContinuationHook(),
+        CurrentTimeInjectionHook(),       # StartNodeTurnHook
+        DeliverRetryHook(),               # AfterTurnHook (hard - deliver check)
+        KnowledgeHook(),                  # BeforeTurnHook + AfterTurnHook (counter reset, summary, retry)
+        TodoContinuationHook(),           # AfterTurnHook (todo check)
         *_collect_run_hooks(service.plugin_integration, app_config),
     ]
     shared_hook_runner = _build_hook_runner(shared_hooks)
