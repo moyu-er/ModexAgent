@@ -20,6 +20,68 @@
 
 ## P0 — 极高优先级(功能直接影响)
 
+### P0-6. Graph 调度中的 subagent 通信走 inbox 机制,缺少 graph 专用配置
+
+**位置**: `src/modex_agent/hook/builtin/subagent_auto_send.py` (发送), `src/modex_agent/hook/builtin/inbox_flush.py` (消费), `examples/bot_project/bot/graph/agent_node.py` (graph-native 路径)
+
+**问题**: 当前存在两套并行的 agent 通信机制,形成架构断层:
+
+- **路径 A (inbox 机制)**: `SubagentAutoSendHook.finally_graph()` → `agent_bus.send(parent_session_id, envelope)` → `InboxMQ` 持久化 → `InboxPoller` 唤醒 → parent 下一轮 turn → `InboxFlushHook.start_node_turn()` → `consume()` → `ctx.history.append()` (作为普通 SYSTEM_REMINDER)
+- **路径 B (graph-native deliver)**: `BotAgentNode` 内 agent 调用 `GraphDeliverTool` → `Node.deliver(GraphPayload, target_node, ctx)` → `Node._pending_delivers` 累积 → `submit()` → 下游节点 `execute()` → `_format_integrated_input()` 注入
+
+**断层**: graph 调度中的 agent 通过 `send_to_agent` tool 或 `SubagentAutoSendHook` 发送消息时,走的是路径 A (pool inbox 机制)。但消费方 agent 收到消息后,通过 `InboxFlushHook` 将消息作为普通 `AGENT_MESSAGE` 注入 history —— **缺少 graph 专用配置**:
+
+1. 没有 `GraphDeliverTool` — 消费方 agent 无法向 graph 下游节点 deliver
+2. 没有 `graph_context` — agent 不知道自己在 graph 调度上下文中
+3. 没有 graph topology context — agent 不知道上下游节点角色
+4. 没有 `MAX_TURNS` 设置 — graph 调度中的 turn 限制不生效
+5. 没有 approval disable — graph 节点中的工具审批会死锁(无用户审批)
+
+**根因**: `AgentMessageEnvelope` 不携带 graph 调度上下文信息(`graph_instance_id`, `source_node_id`, `graph_spec_id`)。消费方无法区分"这是 graph 调度产生的消息"和"这是普通 agent 间消息"。`BotAgentNode.execute()` 中完整的 graph agent 环境配置逻辑(deliver tool, topology, approval disable, MAX_TURNS)耦合在 BotAgentNode 内部,不是可复用的独立模块。
+
+**影响**: graph 调度中跨 pool/跨 agent 的通信回退为普通会话消息,消费方 agent 缺少 graph 上下文,无法正确执行 graph 工作流语义(deliver 到下游节点、理解拓扑位置等)。当前 graph 内 agent 间通信仅通过路径 B (deliver) 工作;路径 A (inbox) 产生的消息无法激活 graph agent 环境。
+
+**修复方向** (3 层设计):
+
+1. **通信数据扩展**: 在 `AgentMessageEnvelope.metadata` 中添加 graph 调度字段:
+   - `graph_instance_id: int` — 来源 graph 实例
+   - `graph_spec_id: int` — graph spec ID
+   - `source_node_id: str` — 发送方在 graph 中的节点 ID
+   - `graph_aware: bool` — 标记这是 graph 调度产生的消息
+   
+   `SubagentAutoSendHook` 或 `BotAgentNode` 在发送消息时填充这些字段。
+
+2. **消费方检测 + 分流**: 新增 `GraphInboxDispatchHook(StartNodeTurnHook)` (或扩展 `InboxFlushHook`):
+   - 检测 inbox 消息的 `graph_aware` metadata 字段
+   - graph-aware 消息: 走 graph agent 路径 (配置 graph 专用 tool/context)
+   - 普通消息: 走常规 inbox flush 路径 (不变)
+   - **收敛规则**: 不是新增第三条并行路径,而是检测到 graph-aware 消息时**替换**常规 flush 行为
+
+3. **graph agent 环境重建**: 从 `BotAgentNode.execute()` 提取可复用的 `GraphAgentContextConfigurator`:
+   - 注入 `GraphDeliverTool` (基于 `GraphEngineController.deliver_to_node` 的 deliver 回路)
+   - 设置 `agent_context.graph_context` (轻量 proxy,只重建 deliver 回路,不重建完整 graph state)
+   - disable approval (graph 节点中的工具审批会死锁)
+   - 设置 `MAX_TURNS` (graph 调度的 turn 限制)
+   - 注入 topology context (上下游节点角色)
+
+**deliver 回路设计**: 消费方 agent 的 `GraphDeliverTool` 需要回到原 graph 的 deliver store。通过 `GraphEngineController.deliver_to_node(node_name, content)` 传递 — controller 持有 live graph 引用。如果 graph 已结束/paused,降级为普通 inbox 消息 (fallback)。
+
+**风险**:
+- `GraphContext` 重建复杂 — 需要轻量 proxy 方案,只重建 deliver 回路
+- 生命周期管理 — graph 实例可能已结束,deliver 无处可去 (需状态检查 + 降级)
+- 与现有 inbox 机制收敛 — 不能引入第三条路径 (收敛规则 15)
+
+**前置工作**:
+- 先写 ADR 记录设计决策 (graph-aware 通信机制)
+- 从 `BotAgentNode` 提取 `GraphAgentContextConfigurator` 作为第一步 (纯重构,不改行为)
+- 再添加 metadata 扩展 + dispatch hook
+
+**工作量**: 高 — 涉及通信协议扩展 + 新 hook + agent context 配置模块提取 + deliver 回路设计
+
+**状态**: 🔴 未开始 — 设计待确认
+
+---
+
 ### P0-1. `run_instance` setup 失败导致实例永久卡 RUNNING — ✅ FIXED
 
 **位置**: `src/modex_agent/orchestration/graph_orchestrator.py:262-281`
