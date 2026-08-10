@@ -13,6 +13,7 @@ from modex_agent.hook.builtin.current_time import CurrentTimeInjectionHook
 from modex_agent.hook.builtin.env_injection import NativeEnvInjectionHook
 from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
 from modex_agent.hook.builtin.inbox_flush import InboxFlushHook
+from modex_agent.hook.builtin.knowledge_hook import KnowledgeHook
 from modex_agent.hook.builtin.logging import RunLoggingHook
 from modex_agent.hook.builtin.loop_detection import LoopDetectionHook
 from modex_agent.hook.builtin.runtime_context import RuntimeContextHook
@@ -23,6 +24,7 @@ __all__ = [
     "CurrentTimeInjectionHook",
     "ExperienceReviewHook",
     "InboxFlushHook",
+    "KnowledgeHook",
     "LoopDetectionHook",
     "NativeEnvInjectionHook",
     "RunLoggingHook",

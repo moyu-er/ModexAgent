@@ -165,6 +165,23 @@ class TurnCustomKey(StrEnum):
     LAST_CONTINUATION_TODO_SIG = "_last_continuation_todo_sig"
     GRAPH_DELIVER_COUNT = "_graph_deliver_count"
     MAX_TURNS = "_max_turns"
+    # Per-turn counter for graph knowledge base read actions (read/grep).
+    # Incremented by GraphKnowledgeBaseTool; read and reset by KnowledgeHook
+    # each turn attempt.
+    GRAPH_KNOWLEDGE_READ_COUNT = "_graph_knowledge_read_count"
+    # Per-turn counter for graph knowledge base write actions (write/edit).
+    # Incremented by GraphKnowledgeBaseTool; read and reset by KnowledgeHook
+    # each turn attempt.
+    GRAPH_KNOWLEDGE_WRITE_COUNT = "_graph_knowledge_write_count"
+    # Per-turn path (string) to the graph instance knowledge directory.
+    # Set by BotAgentNode.execute; read by KnowledgeHook to inject
+    # findings/open_questions summaries at turn start.
+    GRAPH_KNOWLEDGE_DIR = "_graph_knowledge_dir"
+    # Per-turn per-node knowledge requirement flags (bools, default False).
+    # Set by BotAgentNode.execute from NodeSpec config; read by
+    # KnowledgeHook to decide whether continuation is needed.
+    GRAPH_KNOWLEDGE_REQUIRE_READ = "_graph_knowledge_require_read"
+    GRAPH_KNOWLEDGE_REQUIRE_WRITE = "_graph_knowledge_require_write"
     GRAPH_NODE_DESCRIPTION = "_graph_node_description"
     # Serialized graph topology (markdown) for the ### Topology subsection
     # of ## Graph Node Context in the system prompt. Set by BotAgentNode.execute

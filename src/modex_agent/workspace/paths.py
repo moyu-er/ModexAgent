@@ -32,6 +32,9 @@ SUBDIR_COMMANDS: str = "commands"
 SUBDIR_TRACE: str = "trace"
 SUBDIR_OUTPUT: str = "output"
 SUBDIR_PRUNED: str = "pruned"
+SUBDIR_GRAPHS: str = "graphs"
+SUBDIR_GRAPH_INSTANCES: str = "instances"
+SUBDIR_GRAPH_KNOWLEDGE: str = "knowledge"
 WORKSPACE_STATE_DB: str = "state.db"
 # Reserved global-tier directory name (workspace registry + conversation map),
 # NOT a per-workspace subdir. WorkspacePaths accessors must never produce it.
@@ -124,6 +127,14 @@ class WorkspacePaths:
 
     def experience_dir(self, pool: str, agent: str) -> Path:
         return self._child(SUBDIR_EXPERIENCES, pool, agent)
+
+    # ------------------------------------------------------------------
+    # Graph instance accessors
+    # ------------------------------------------------------------------
+
+    def graph_instance_knowledge_dir(self, graph_instance_id: int) -> Path:
+        """Per-graph-instance knowledge directory (shared blackboard for cross-node exchange)."""
+        return self._child(SUBDIR_GRAPHS, SUBDIR_GRAPH_INSTANCES, str(graph_instance_id))
 
     # ------------------------------------------------------------------
     # Workspace-level accessors (properties)
