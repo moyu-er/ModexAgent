@@ -277,7 +277,7 @@ All three must be active for experience to function:
    so the LLM sees `<available_experiences>` and can call the `experience` tool.
 
 2. **ExperienceReviewHook** (`wiring.py:539-552`: registered on the main
-   agent's `pipeline.hook_runner`. Fires `after_turn` when
+   agent's `pipeline.hook_runner`. Fires `after_graph` when
    `stop_reason == completed` and history ≥ `min_messages`. Spawns a
    background task that runs `ExperienceReviewAgent.review()` — a ReAct loop
 using **the bot-global default LLM provider** (`service._default_provider`,

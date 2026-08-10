@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-22 -->
+<!-- Updated: 2026-08-10 -->
 
 # runtime
 
@@ -38,6 +38,10 @@ Runtime state governance — typed state models, enums, persistence, codecs, and
 ## Note on Control-Related Types
 
 `AgentRuntimeServices.control_channel` is threaded through but not fed in the default runtime; the live cancellation path is `asyncio.Task.cancel()` in the pipeline (see `modex_agent/control/AGENTS.md`).
+
+## turnId / trace_id Future Consideration
+
+`turn_uuid` is generated in the pipeline layer (`TurnRunner`), and `trace_id` is generated in `TraceCollectorHook.before_graph()`. Both fire once per `actual_turn()` call, so approval resume (which re-enters `actual_turn()`) generates a new trace root. A future improvement could move `trace_id` generation to `START_NODE_TURN` so approval-resume continues the same trace. This is deferred because it involves `TraceCollectorHook` span lifecycle redesign.
 
 ## Dependencies
 

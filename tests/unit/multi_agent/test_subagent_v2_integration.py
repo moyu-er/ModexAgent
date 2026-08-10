@@ -102,14 +102,14 @@ class TestFullLifecycleNotification:
         ctx = _make_context(session_id=session_id, trace_store=store)
         result = AgentResult(content="done", stop_reason=StopReason.COMPLETED)
 
-        # Step 1: trace_hook.before_turn -> pre-registers trace_id + root span_id
-        await trace_hook.before_turn(ctx)
+        # Step 1: trace_hook.before_graph -> pre-registers trace_id + root span_id
+        await trace_hook.before_graph(ctx)
 
-        # Step 2: auto_hook.finally_turn -> writes OUTPUT_1.md + sends notification
-        await auto_hook.finally_turn(ctx, result)
+        # Step 2: auto_hook.finally_graph -> writes OUTPUT_1.md + sends notification
+        await auto_hook.finally_graph(ctx, result)
 
-        # Step 3: trace_hook.finally_turn -> writes the root invoke_agent span
-        await trace_hook.finally_turn(ctx, result)
+        # Step 3: trace_hook.finally_graph -> writes the root invoke_agent span
+        await trace_hook.finally_graph(ctx, result)
 
         # --- Verify trace ---
         spans = await store.list_by_session(session_id)
@@ -161,7 +161,7 @@ class TestCrashSendsErrorNotification:
         ctx = _make_context()
         result = AgentResult(error="something broke", stop_reason=StopReason.ERROR)
 
-        await auto_hook.finally_turn(ctx, result)
+        await auto_hook.finally_graph(ctx, result)
 
         assert (runtime_dir / "output" / str(ctx.session) / "OUTPUT_1.md").exists()
 
@@ -190,11 +190,11 @@ class TestTraceCollectorRecordsErrorTurnEnd:
 
         ctx = _make_context(session_id=session_id, trace_store=store)
 
-        # Step 1: before_turn -> TURN_START span
-        await trace_hook.before_turn(ctx)
+        # Step 1: before_graph -> TURN_START span
+        await trace_hook.before_graph(ctx)
 
-        # Step 2: finally_turn with error -> no new span (TURN_END is a no-op)
-        await trace_hook.finally_turn(
+        # Step 2: finally_graph with error -> no new span (TURN_END is a no-op)
+        await trace_hook.finally_graph(
             ctx,
             AgentResult(error="timeout", stop_reason=StopReason.ERROR),
         )

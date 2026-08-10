@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Final
 from modex_agent.core import AgentCommKind
 from modex_agent.core.constants import StopReason
 from modex_agent.core.types import OutputMessageType
-from modex_agent.hook.abc import FinallyTurnHook
+from modex_agent.hook.abc import FinallyGraphHook
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -48,7 +48,7 @@ class AgentNotificationService:
             logger.exception("send_notice failed: session=%s", session_id)
 
 
-class TurnOutcomeNotifyHook(FinallyTurnHook):
+class TurnOutcomeNotifyHook(FinallyGraphHook):
     """Notifies the user on the two silent abnormal-end cases for main agents:
     a real exception, or hitting the iteration cap.
 
@@ -59,7 +59,7 @@ class TurnOutcomeNotifyHook(FinallyTurnHook):
       acks the user and ``emit_complete`` fires.
     - Approval suspension (GraphInterrupt): ``turn_runner`` already renders the
       approval prompt. GraphInterrupt is re-raised out of ``ReActAgent.run``,
-      so FINALLY_TURN sees the *initial* result ``stop_reason=ERROR`` with
+      so FINALLY_GRAPH sees the *initial* result ``stop_reason=ERROR`` with
       ``error=None``; requiring ``result.error`` to be truthy excludes it.
     - Normal completion.
 
@@ -80,7 +80,7 @@ class TurnOutcomeNotifyHook(FinallyTurnHook):
     def __init__(self, notification_service: AgentNotificationService | None = None) -> None:
         self._svc = notification_service
 
-    async def finally_turn(self, ctx: AgentContext, result: AgentResult | None) -> None:
+    async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None:
         if self._svc is None or result is None:
             return
         if ctx.comm_kind == AgentCommKind.SUBAGENT:

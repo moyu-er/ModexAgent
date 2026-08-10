@@ -235,7 +235,7 @@ def build_dispatch_message(
     subagent/parent paths: the reply is auto-delivered by
     ``SubagentAutoSendHook`` (native subagents via the hook's native content
     path; external subagents via the hook's EXTERNAL content path that
-    notifies the parent on ``FINALLY_TURN``), so no reply-contract block is
+    notifies the parent on ``FINALLY_GRAPH``), so no reply-contract block is
     injected. Injecting the WARNING + ``modexctl send`` instructions here
     would cause a double reply -- the subagent would manually send AND the
     hook would auto-forward.

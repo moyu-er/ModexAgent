@@ -39,7 +39,7 @@ async def test_max_iterations_sends_exactly_one_failed_agent_result() -> None:
         comm_kind=AgentCommKind.SUBAGENT,
     )
 
-    await hook.finally_turn(
+    await hook.finally_graph(
         context,
         AgentResult(content="Partial work", stop_reason=StopReason.MAX_ITERATIONS),
     )

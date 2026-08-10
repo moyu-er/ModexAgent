@@ -242,7 +242,7 @@ class ReActAgent(Agent[ReActEvent]):
         ctx_token = current_agent_context.set(context)
 
         # ``result`` stays None on a GraphInterrupt (approval suspend) so the
-        # FINALLY_TURN notification hook skips -- suspend is an expected pause,
+        # FINALLY_GRAPH notification hook skips -- suspend is an expected pause,
         # not a turn end. Every other path (success / cancel / error) reassigns
         # it to a concrete AgentResult before the ``finally`` runs.
         result: AgentResult | None = AgentResult(content="", stop_reason=StopReason.ERROR)
@@ -250,7 +250,7 @@ class ReActAgent(Agent[ReActEvent]):
         async def actual_turn():
             nonlocal result
             if runtime.hooks:
-                await runtime.hooks.dispatch(HookPoint.BEFORE_TURN, context)
+                await runtime.hooks.dispatch(HookPoint.BEFORE_GRAPH, context)
 
             # Drain control commands before starting turn
             if context.runtime and context.runtime.control_channel:
@@ -311,7 +311,7 @@ class ReActAgent(Agent[ReActEvent]):
                 await runtime.hooks.dispatch(HookPoint.AFTER_ITERATION, context)
             if runtime.hooks:
                 await runtime.hooks.dispatch(
-                    HookPoint.AFTER_TURN,
+                    HookPoint.AFTER_GRAPH,
                     context,
                     HookPayload(data={"result": result}),
                 )
@@ -331,7 +331,7 @@ class ReActAgent(Agent[ReActEvent]):
         except GraphInterrupt:
             # Approval suspend is an EXPECTED pause (a tool awaited human
             # approval), not a turn end -- and definitely not an error. The
-            # ``finally`` below dispatches FINALLY_TURN with whatever ``result``
+            # ``finally`` below dispatches FINALLY_GRAPH with whatever ``result``
             # holds; leaving the initial ``AgentResult(stop_reason=ERROR)``
             # default here would make TurnOutcomeNotifyHook misreport every
             # approval suspend as "The turn ended unexpectedly due to an error".
@@ -394,17 +394,17 @@ class ReActAgent(Agent[ReActEvent]):
             await emitter.emit_complete(result)
             return result
         finally:
-            # FINALLY_TURN: fires regardless of success/error/cancel.
+            # FINALLY_GRAPH: fires regardless of success/error/cancel.
             # SubagentAutoSendHook and cleanup hooks always execute.
             if runtime.hooks:
                 try:
                     await runtime.hooks.dispatch(
-                        HookPoint.FINALLY_TURN,
+                        HookPoint.FINALLY_GRAPH,
                         context,
                         HookPayload(data={"result": result}),
                     )
                 except Exception:
-                    logger.exception("FINALLY_TURN hook dispatch failed")
+                    logger.exception("FINALLY_GRAPH hook dispatch failed")
             # Clean up typed state
             state = get_react_state(context)
             if state is not None:

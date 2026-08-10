@@ -1,6 +1,6 @@
 """RuntimeContextHook — 管理 per-turn RuntimeContext 生命周期。
 
-- before_turn：解析并缓存 session 的 RuntimeContext，为新 turn 清空
+- start_node_turn：解析并缓存 session 的 RuntimeContext，为新 turn 清空
 - before_tool_execution：缓存待执行的工具调用列表
 - after_tool_execution：将工具调用结果录入 ToolCallRecord
 """
@@ -11,14 +11,18 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from modex_agent.core.tool_manager import ToolResult
-from modex_agent.hook.abc import AfterToolExecutionHook, BeforeToolExecutionHook, BeforeTurnHook
+from modex_agent.hook.abc import (
+    AfterToolExecutionHook,
+    BeforeToolExecutionHook,
+    StartNodeTurnHook,
+)
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.types import ToolCall
 
 
-class RuntimeContextHook(BeforeTurnHook, BeforeToolExecutionHook, AfterToolExecutionHook):
+class RuntimeContextHook(StartNodeTurnHook, BeforeToolExecutionHook, AfterToolExecutionHook):
     """通过 hook 接口管理 per-turn RuntimeContext 生命周期。"""
 
     @property
@@ -27,7 +31,7 @@ class RuntimeContextHook(BeforeTurnHook, BeforeToolExecutionHook, AfterToolExecu
 
     _PENDING_KEY = "_pending_tool_calls"
 
-    async def before_turn(self, ctx: AgentContext) -> None:
+    async def start_node_turn(self, ctx: AgentContext) -> None:
         rt = ctx.runtime
         if rt is None:
             return

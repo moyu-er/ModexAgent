@@ -166,27 +166,27 @@ def _handoff_spans(spans: list[SpanModel]) -> list[SpanModel]:
 
 
 class TestRootSpanIdInTurnState:
-    async def test_before_turn_stores_root_span_id(self, tmp_path: Path) -> None:
+    async def test_before_graph_stores_root_span_id(self, tmp_path: Path) -> None:
         store = OtelSpanTraceStore(base_dir=tmp_path / "traces")
         hook = TraceCollectorHook()
         ctx = _make_context(store)
 
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
 
         root_span_id = ctx.runtime.state.custom.get(TurnCustomKey.ROOT_SPAN_ID)
         assert root_span_id is not None
         assert isinstance(root_span_id, str)
         assert len(root_span_id) == 32  # uuid4().hex
 
-    async def test_finally_turn_clears_root_span_id(self, tmp_path: Path) -> None:
+    async def test_finally_graph_clears_root_span_id(self, tmp_path: Path) -> None:
         store = OtelSpanTraceStore(base_dir=tmp_path / "traces")
         hook = TraceCollectorHook()
         ctx = _make_context(store)
 
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
         assert ctx.runtime.state.custom.get(TurnCustomKey.ROOT_SPAN_ID) is not None
 
-        await hook.finally_turn(ctx, result=None)
+        await hook.finally_graph(ctx, result=None)
 
         assert TurnCustomKey.ROOT_SPAN_ID not in ctx.runtime.state.custom
 
@@ -202,7 +202,7 @@ class TestHandoffSpanEmission:
         hook = TraceCollectorHook()
         ctx = _make_context(store)
 
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
         root_span_id = ctx.runtime.state.custom[TurnCustomKey.ROOT_SPAN_ID]
         trace_id = ctx.runtime.state.custom[TurnCustomKey.TRACE_ID]
 
@@ -261,7 +261,7 @@ class TestHandoffSpanEmission:
         hook = TraceCollectorHook()
         ctx = _make_context(store)
 
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
 
         from modex_agent.core.types import ToolCall
         from modex_agent.core.tool_manager import ToolResult
@@ -291,7 +291,7 @@ class TestHandoffSpanEmission:
         hook = TraceCollectorHook()
         ctx = _make_context(store)
 
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
 
         from modex_agent.core.types import ToolCall
         from modex_agent.core.tool_manager import ToolResult
@@ -322,7 +322,7 @@ class TestHandoffSpanGuards:
     async def test_no_span_when_trace_store_none(self, tmp_path: Path) -> None:
         ctx = _make_context(store=None)
         hook = TraceCollectorHook()
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
 
         svc = _make_service()
         fake_strategy = _RecordingStrategy()
@@ -340,7 +340,7 @@ class TestHandoffSpanGuards:
         assert len(fake_strategy.calls) == 1
 
     async def test_no_span_when_trace_id_not_set(self, tmp_path: Path) -> None:
-        # before_turn NOT called → no trace_id in turn state.
+        # before_graph NOT called → no trace_id in turn state.
         store = OtelSpanTraceStore(base_dir=tmp_path / "traces")
         ctx = _make_context(store)
 
@@ -362,7 +362,7 @@ class TestHandoffSpanGuards:
         store = _FailingTraceStore(base_dir=tmp_path / "traces")
         hook = TraceCollectorHook()
         ctx = _make_context(store)
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
 
         svc = _make_service()
         fake_strategy = _RecordingStrategy()

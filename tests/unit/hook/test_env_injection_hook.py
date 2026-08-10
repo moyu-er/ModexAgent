@@ -1,6 +1,6 @@
 """Tests for NativeEnvInjectionHook — populate _modex_env / _current_session_id.
 
-The hook sets two contextvars at BEFORE_TURN so native agent bash/terminal
+The hook sets two contextvars at BEFORE_GRAPH so native agent bash/terminal
 subprocess tools (SubprocessExecutor, CommandTool) read MODEX_* env overrides.
 
 Scope: per-turn override logic — the spec template's pool-static fields are
@@ -86,11 +86,11 @@ def _reset_env_contextvars() -> Iterator[None]:
 
 
 class TestNativeEnvInjectionHook:
-    async def test_before_turn_sets_modex_env_contextvar(self) -> None:
+    async def test_before_graph_sets_modex_env_contextvar(self) -> None:
         hook = NativeEnvInjectionHook(env_spec_template=_make_template())
         ctx = _make_context(session_id="abc123.main", agent_name="main")
 
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
 
         env = _modex_env.get()
         assert env is not None
@@ -101,21 +101,21 @@ class TestNativeEnvInjectionHook:
         assert env["MODEX_WORKDIR"] == str(Path("/tmp/ws"))
         assert env["MODEX_COMM_KIND"] == "normal"
 
-    async def test_before_turn_sets_current_session_id_contextvar(self) -> None:
+    async def test_before_graph_sets_current_session_id_contextvar(self) -> None:
         hook = NativeEnvInjectionHook(env_spec_template=_make_template())
         ctx = _make_context(session_id="abc123.main")
 
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
 
         assert _current_session_id.get() == "abc123.main"
 
-    async def test_before_turn_overrides_session_id_from_ctx(self) -> None:
+    async def test_before_graph_overrides_session_id_from_ctx(self) -> None:
         # Template carries a placeholder; ctx carries the real per-turn value.
         template = _make_template(session_id="__pending__.main")
         hook = NativeEnvInjectionHook(env_spec_template=template)
         ctx = _make_context(session_id="live_prefix.main")
 
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
 
         env = _modex_env.get()
         assert env is not None
@@ -123,7 +123,7 @@ class TestNativeEnvInjectionHook:
         # Placeholder must NOT leak through.
         assert env["MODEX_SESSION_ID"] != "__pending__.main"
 
-    async def test_before_turn_overrides_comm_kind_from_ctx(self) -> None:
+    async def test_before_graph_overrides_comm_kind_from_ctx(self) -> None:
         # Template is NORMAL; ctx carries SUBAGENT — ctx wins.
         template = _make_template(comm_kind=AgentCommKind.NORMAL)
         hook = NativeEnvInjectionHook(env_spec_template=template)
@@ -132,13 +132,13 @@ class TestNativeEnvInjectionHook:
             parent_session_id="parent.sid",
         )
 
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
 
         env = _modex_env.get()
         assert env is not None
         assert env["MODEX_COMM_KIND"] == "subagent"
 
-    async def test_before_turn_overrides_parent_session_id_from_ctx(self) -> None:
+    async def test_before_graph_overrides_parent_session_id_from_ctx(self) -> None:
         # Template parent_session_id is None; ctx.session.parent_session_id is set.
         # build_modex_vars only emits MODEX_PARENT_SESSION_ID when comm_kind is
         # SUBAGENT AND parent_session_id is not None, so ctx.comm_kind must be
@@ -153,19 +153,19 @@ class TestNativeEnvInjectionHook:
             parent_session_id="parent.sid",
         )
 
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
 
         env = _modex_env.get()
         assert env is not None
         assert env["MODEX_PARENT_SESSION_ID"] == "parent.sid"
 
-    async def test_before_turn_comm_kind_none_uses_template(self) -> None:
+    async def test_before_graph_comm_kind_none_uses_template(self) -> None:
         # ctx.comm_kind is None — template's comm_kind should win.
         template = _make_template(comm_kind=AgentCommKind.NORMAL)
         hook = NativeEnvInjectionHook(env_spec_template=template)
         ctx = _make_context(comm_kind=None)
 
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
 
         env = _modex_env.get()
         assert env is not None
@@ -175,7 +175,7 @@ class TestNativeEnvInjectionHook:
         # Mirrors the inline construction in pool_builder._wire_main_pipeline:
         # a main-agent hook template built from a pool_spec with subagents +
         # peers carries every routable agent in pool_map and all targets
-        # through before_turn, so native bash tools can call
+        # through before_graph, so native bash tools can call
         # ``modexctl send --to <any agent>`` and ``modexctl agents``.
         main_name = "main"
         sub_name = "explore"
@@ -207,7 +207,7 @@ class TestNativeEnvInjectionHook:
         hook = NativeEnvInjectionHook(env_spec_template=template)
         ctx = _make_context(session_id="conv1.main", agent_name=main_name)
 
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
 
         env = _modex_env.get()
         assert env is not None
@@ -256,7 +256,7 @@ class TestNativeEnvInjectionHook:
             comm_kind=AgentCommKind.SUBAGENT,
         )
 
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
 
         env = _modex_env.get()
         assert env is not None
@@ -272,12 +272,12 @@ class TestNativeEnvInjectionHook:
         hook = NativeEnvInjectionHook(env_spec_template=_make_template())
         assert hook.name == "native_env_injection"
 
-    async def test_before_turn_prepends_modexctl_bin_dir_to_path(self) -> None:
+    async def test_before_graph_prepends_modexctl_bin_dir_to_path(self) -> None:
         template = _make_template()
         hook = NativeEnvInjectionHook(env_spec_template=template)
         ctx = _make_context(session_id="s1", agent_name="main")
 
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
 
         env = _modex_env.get()
         assert env is not None
@@ -298,7 +298,7 @@ class TestNativeEnvInjectionHook:
         hook = NativeEnvInjectionHook(env_spec_template=template)
         ctx = _make_context(session_id="inv1.explore", agent_name="explore")
 
-        await hook.before_turn(ctx)
+        await hook.before_graph(ctx)
 
         env = _modex_env.get()
         assert env is not None

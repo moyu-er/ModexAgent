@@ -108,12 +108,12 @@ async def test_g1_llm_duration_api_duration_s_and_end_time(tmp_path: Path) -> No
     ctx = _make_trace_context("g1", store)
     hook = _make_hook(model="test-model")
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     request = [ChatMessage(role=MessageRole.USER, content="hello")]
     await hook.before_llm(ctx, request)
     response = LLMResponse(content="hi", usage={"input_tokens": 5, "output_tokens": 3})
     await hook.after_llm_response(ctx, response)
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "g1")
     chat = next(s for s in spans if s.name == SpanName.CHAT.value)
@@ -129,10 +129,10 @@ async def test_g1_llm_duration_not_set_without_before_llm(tmp_path: Path) -> Non
     ctx = _make_trace_context("g1_nobefore", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     response = LLMResponse(content="hi")
     await hook.after_llm_response(ctx, response)
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "g1_nobefore")
     chat = next(s for s in spans if s.name == SpanName.CHAT.value)
@@ -149,7 +149,7 @@ async def test_g2_prompt_capture_summary_records_messages(tmp_path: Path) -> Non
     strategy = SummaryPromptCapture(max_messages=3)
     hook = _make_hook(prompt_capture=strategy, model="gpt-4")
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     request = [
         ChatMessage(role=MessageRole.SYSTEM, content="You are helpful."),
         ChatMessage(role=MessageRole.USER, content="hello world"),
@@ -157,7 +157,7 @@ async def test_g2_prompt_capture_summary_records_messages(tmp_path: Path) -> Non
     await hook.before_llm(ctx, request)
     response = LLMResponse(content="hi")
     await hook.after_llm_response(ctx, response)
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "g2")
     chat = next(s for s in spans if s.name == SpanName.CHAT.value)
@@ -178,7 +178,7 @@ async def test_g2_system_prompt_hashed_not_recorded(tmp_path: Path) -> None:
     strategy = SummaryPromptCapture()
     hook = _make_hook(prompt_capture=strategy, model="gpt-4")
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     system_content = "You are a secret agent."
     request = [
         ChatMessage(role=MessageRole.SYSTEM, content=system_content),
@@ -186,7 +186,7 @@ async def test_g2_system_prompt_hashed_not_recorded(tmp_path: Path) -> None:
     ]
     await hook.before_llm(ctx, request)
     await hook.after_llm_response(ctx, LLMResponse(content="ok"))
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "g2_sys")
     chat = next(s for s in spans if s.name == SpanName.CHAT.value)
@@ -205,12 +205,12 @@ async def test_g2_prompt_capture_truncates_long_content(tmp_path: Path) -> None:
     strategy = SummaryPromptCapture(max_text_chars=50)
     hook = _make_hook(prompt_capture=strategy, model="m")
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     long_text = "x" * 200
     request = [ChatMessage(role=MessageRole.USER, content=long_text)]
     await hook.before_llm(ctx, request)
     await hook.after_llm_response(ctx, LLMResponse(content="r"))
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "g2_trunc")
     chat = next(s for s in spans if s.name == SpanName.CHAT.value)
@@ -236,14 +236,14 @@ async def test_g2_prompt_capture_strategy_abc_replaces_logic(tmp_path: Path) -> 
             }
 
     hook = _make_hook(prompt_capture=CustomCapture(), model="original")
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     request = [
         ChatMessage(role=MessageRole.USER, content="a"),
         ChatMessage(role=MessageRole.USER, content="b"),
     ]
     await hook.before_llm(ctx, request)
     await hook.after_llm_response(ctx, LLMResponse(content="r"))
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "g2_abc")
     chat = next(s for s in spans if s.name == SpanName.CHAT.value)
@@ -260,7 +260,7 @@ async def test_g3_approval_span_records_decision_and_deny_reason(tmp_path: Path)
     ctx = _make_trace_context("g3", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     transaction = ApprovalTransaction(
         approval_id="ap1",
         turn_id="t1",
@@ -282,7 +282,7 @@ async def test_g3_approval_span_records_decision_and_deny_reason(tmp_path: Path)
         deny_reason="User rejected",
     )
     await hook.after_approval(ctx, transaction)
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "g3")
     approval_span = next(s for s in spans if s.name == SpanName.HUMAN_REVIEW.value)
@@ -298,7 +298,7 @@ async def test_g3_approval_span_approved_no_deny_reason(tmp_path: Path) -> None:
     ctx = _make_trace_context("g3_ok", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     transaction = ApprovalTransaction(
         approval_id="ap2",
         turn_id="t1",
@@ -319,7 +319,7 @@ async def test_g3_approval_span_approved_no_deny_reason(tmp_path: Path) -> None:
         status=ApprovalStatus.APPROVED,
     )
     await hook.after_approval(ctx, transaction)
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "g3_ok")
     approval_span = next(s for s in spans if s.name == SpanName.HUMAN_REVIEW.value)
@@ -336,7 +336,7 @@ async def test_g5_iteration_start_and_end_spans(tmp_path: Path) -> None:
     ctx = _make_trace_context("g5", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
 
     _set_iteration(ctx, 1)
     await hook.before_iteration(ctx)
@@ -348,7 +348,7 @@ async def test_g5_iteration_start_and_end_spans(tmp_path: Path) -> None:
     _set_iteration(ctx, 3)
     await hook.after_iteration(ctx)
 
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "g5")
     start_spans = [s for s in spans if s.name == SpanName.ITERATION_START.value]
@@ -373,10 +373,10 @@ async def test_g5_iteration_spans_parented_to_root(tmp_path: Path) -> None:
     ctx = _make_trace_context("g5_parent", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     _set_iteration(ctx, 1)
     await hook.before_iteration(ctx)
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "g5_parent")
     root = next(s for s in spans if s.name == SpanName.INVOKE_AGENT.value)
@@ -393,7 +393,7 @@ async def test_chat_span_records_cache_tokens(tmp_path: Path) -> None:
     ctx = _make_trace_context("cache", store)
     hook = _make_hook(model="m")
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     response = LLMResponse(
         content="hi",
         usage={
@@ -404,7 +404,7 @@ async def test_chat_span_records_cache_tokens(tmp_path: Path) -> None:
         },
     )
     await hook.after_llm_response(ctx, response)
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "cache")
     chat = next(s for s in spans if s.name == SpanName.CHAT.value)
@@ -418,9 +418,9 @@ async def test_chat_span_records_request_model(tmp_path: Path) -> None:
     ctx = _make_trace_context("model_attr", store)
     hook = _make_hook(model="deepseek-chat")
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     await hook.after_llm_response(ctx, LLMResponse(content="hi"))
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "model_attr")
     chat = next(s for s in spans if s.name == SpanName.CHAT.value)
@@ -436,12 +436,12 @@ async def test_tool_span_success_attribute(tmp_path: Path) -> None:
     ctx = _make_trace_context("tool_ok", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     tool_calls = [ToolCall(call_id="c1", tool_name="search", arguments={"q": "x"})]
     await hook.before_tool_execution(ctx, tool_calls)
     results = [ToolResult.from_text("search", "found", execution_time=0.01)]
     await hook.after_tool_execution(ctx, results)
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "tool_ok")
     tool_span = next(s for s in spans if s.name == SpanName.EXECUTE_TOOL.value)
@@ -455,12 +455,12 @@ async def test_tool_span_fail_and_error_type_attribute(tmp_path: Path) -> None:
     ctx = _make_trace_context("tool_fail", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     tool_calls = [ToolCall(call_id="c1", tool_name="write", arguments={"path": "/x"})]
     await hook.before_tool_execution(ctx, tool_calls)
     results = [ToolResult(tool_name="write", error="permission denied", execution_time=0.01)]
     await hook.after_tool_execution(ctx, results)
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "tool_fail")
     tool_span = next(s for s in spans if s.name == SpanName.EXECUTE_TOOL.value)
@@ -485,21 +485,21 @@ def test_build_prompt_capture_unknown_raises() -> None:
         build_prompt_capture("nonexistent")
 
 
-# -- cleanup in finally_turn --------------------------------------------------
+# -- cleanup in finally_graph --------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_finally_turn_cleans_up_all_per_trace_state(tmp_path: Path) -> None:
+async def test_finally_graph_cleans_up_all_per_trace_state(tmp_path: Path) -> None:
     store = _make_store(tmp_path)
     ctx = _make_trace_context("cleanup", store)
     hook = _make_hook(prompt_capture=SummaryPromptCapture(), model="m")
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     await hook.before_llm(ctx, [ChatMessage(role=MessageRole.USER, content="hi")])
     _set_iteration(ctx, 1)
     await hook.before_iteration(ctx)
     await hook.before_tool_execution(ctx, [ToolCall(call_id="c1", tool_name="t", arguments={})])
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     assert len(hook._llm_start_times) == 0
     assert len(hook._llm_request_attrs) == 0

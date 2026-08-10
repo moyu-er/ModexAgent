@@ -209,7 +209,7 @@ async def test_build_constructs_external_turn_runner_with_hook_runner(
 
     turn_runner = _external_turn_runner(instance)
     assert isinstance(turn_runner, ExternalTurnRunner)
-    # T3: ExternalTurnRunner.hook_runner must be wired so FINALLY_TURN fires.
+    # T3: ExternalTurnRunner.hook_runner must be wired so FINALLY_GRAPH fires.
     assert turn_runner._hook_runner is not None
 
 

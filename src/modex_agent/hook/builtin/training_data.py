@@ -1,6 +1,6 @@
 """TrainingDataHook — tag a turn's trace with ``gen_ai.training.relevant``.
 
-Fires at ``HookPoint.FINALLY_TURN`` (the single point where the final
+Fires at ``HookPoint.FINALLY_GRAPH`` (the single point where the final
 ``StopReason``, the total ReAct iteration count, and the full LLM token usage
 are all known). Computes a single boolean — *is this turn usable as training
 data?* — and persists it as a dedicated ``training_tag`` span via
@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.core.constants import StopReason
-from modex_agent.hook.abc import FinallyTurnHook
+from modex_agent.hook.abc import FinallyGraphHook
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.semconv import GenAiAttr, SpanKind, SpanName, SpanStatusCode
@@ -64,10 +64,10 @@ _NON_TRAINING_STOP_REASONS: frozenset[StopReason] = frozenset(
 )
 
 
-class TrainingDataHook(FinallyTurnHook):
+class TrainingDataHook(FinallyGraphHook):
     """Tag a turn's trace with the ``gen_ai.training.relevant`` attribute.
 
-    Stateless across turns: every ``finally_turn`` invocation re-reads the
+    Stateless across turns: every ``finally_graph`` invocation re-reads the
     ``ReActTurnState`` from ``ctx.runtime.state`` and the trace store from
     ``ctx.runtime.services.trace_store``, so pool-mode session reuse is safe.
     """
@@ -85,7 +85,7 @@ class TrainingDataHook(FinallyTurnHook):
     def name(self) -> str:
         return "training_data"
 
-    async def finally_turn(self, ctx: AgentContext, result: AgentResult | None) -> None:
+    async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None:
         react_state = get_react_state(ctx)
         if react_state is None:
             return

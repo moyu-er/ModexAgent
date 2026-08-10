@@ -85,10 +85,10 @@ def test_resolve_dir_falls_back_when_no_snapshot(
 
 
 @pytest.mark.asyncio
-async def test_after_turn_uses_snapshot_dir_for_review(
+async def test_after_graph_uses_snapshot_dir_for_review(
     tmp_path: Path, meta_store: PerFileExperienceMetaStore
 ):
-    """End-to-end: after_turn triggers a review whose experience_dir is the
+    """End-to-end: after_graph triggers a review whose experience_dir is the
     snapshot dir, even though the hook's configured fallback is different."""
     fallback_dir = tmp_path / "fallback"
     fallback_dir.mkdir()
@@ -117,7 +117,7 @@ async def test_after_turn_uses_snapshot_dir_for_review(
         messages=[{"role": "assistant", "content": "response"}],
     )
 
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     # Let the background review task run to completion, then drain it.
     import asyncio
 

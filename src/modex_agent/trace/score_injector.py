@@ -7,7 +7,7 @@ Langfuse trace.
 
 Fire-and-forget by design: every failure path is logged as a warning and
 swallowed.  The injector is called from
-:class:`~modex_agent.trace.hooks.TraceCollectorHook.finally_turn` after the
+:class:`~modex_agent.trace.hooks.TraceCollectorHook.finally_graph` after the
 root span has been emitted; a score-posting failure must never break the turn.
 """
 
@@ -40,7 +40,7 @@ class L2ScoreInjector:
     """Inject L2 heuristic scores into Langfuse via the ingestion API.
 
     Fire-and-forget: failures are logged as warnings and never propagated.
-    Called from :meth:`TraceCollectorHook.finally_turn` after the root span
+    Called from :meth:`TraceCollectorHook.finally_graph` after the root span
     is emitted.
     """
 

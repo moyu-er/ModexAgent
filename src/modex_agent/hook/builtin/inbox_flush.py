@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from modex_agent.core.types import ReminderKind
-from modex_agent.hook.abc import BeforeIterationHook, BeforeTurnHook
+from modex_agent.hook.abc import BeforeIterationHook, StartNodeTurnHook
 from modex_agent.multi_agent.message_format import build_agent_reminder_record
 from modex_agent.multi_agent.message_type import AgentMessageType
 
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 
 
-class InboxFlushHook(BeforeTurnHook, BeforeIterationHook):
+class InboxFlushHook(StartNodeTurnHook, BeforeIterationHook):
     """Inbox 消费 Hook：在 turn 开始和每次迭代前 flush pending 消息到 history。
 
     幂等性由 InboxServer.consume() 的原子性 + InboxConsumer 本地缓存共同保证。
@@ -38,7 +38,7 @@ class InboxFlushHook(BeforeTurnHook, BeforeIterationHook):
         self._agent_name = agent_name
         self._max_messages = max_messages_per_flush
 
-    async def before_turn(self, ctx: AgentContext) -> None:
+    async def start_node_turn(self, ctx: AgentContext) -> None:
         await self._flush(ctx.history, str(ctx.session))
 
     async def before_iteration(self, ctx: AgentContext) -> None:

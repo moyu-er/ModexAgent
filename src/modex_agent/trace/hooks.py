@@ -29,11 +29,11 @@ from modex_agent.hook.abc import (
     AfterIterationHook,
     AfterLLMResponseHook,
     AfterToolExecutionHook,
+    BeforeGraphHook,
     BeforeIterationHook,
     BeforeLLMHook,
     BeforeToolExecutionHook,
-    BeforeTurnHook,
-    FinallyTurnHook,
+    FinallyGraphHook,
 )
 from modex_agent.runtime.enums import OperationKind, TurnCustomKey
 from modex_agent.trace.otel_store import OtelSpanTraceStore
@@ -75,7 +75,7 @@ def _safe_json_dumps(obj: object) -> str:
 
 
 class TraceCollectorHook(
-    BeforeTurnHook,
+    BeforeGraphHook,
     BeforeLLMHook,
     AfterLLMResponseHook,
     BeforeToolExecutionHook,
@@ -83,7 +83,7 @@ class TraceCollectorHook(
     AfterApprovalHook,
     BeforeIterationHook,
     AfterIterationHook,
-    FinallyTurnHook,
+    FinallyGraphHook,
 ):
     """Collects OTel spans at each lifecycle hook point.
 
@@ -304,8 +304,8 @@ class TraceCollectorHook(
 
     # -- hook implementations ------------------------------------------------
 
-    async def before_turn(self, ctx: AgentContext) -> None:
-        """BEFORE_TURN hook — emit initial root span (invoke_agent).
+    async def before_graph(self, ctx: AgentContext) -> None:
+        """BEFORE_GRAPH hook — emit initial root span (invoke_agent).
 
         Creates the trace's root span with:
         - langfuse.internal.as_root=true (marks root observation in Langfuse)
@@ -313,9 +313,9 @@ class TraceCollectorHook(
         - langfuse.trace.input (same as obs.input, populates trace-level field)
         - langfuse.trace.name ({session_id}.{turn_id})
 
-        finally_turn re-emits the same span_id with output + duration + usage.
+        finally_graph re-emits the same span_id with output + duration + usage.
         Langfuse's ClickHouse ReplacingMergeTree keeps the latest row, so
-        finally_turn's output is preserved (both emissions must carry input
+        finally_graph's output is preserved (both emissions must carry input
         to survive the full-row overwrite).
         """
         if not self._enabled:
@@ -785,14 +785,14 @@ class TraceCollectorHook(
             status=SpanStatus(code=SpanStatusCode.OK),
         )
 
-    async def finally_turn(self, ctx: AgentContext, result: AgentResult | None) -> None:
-        """FINALLY_TURN hook — emit completed root span (invoke_agent).
+    async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None:
+        """FINALLY_GRAPH hook — emit completed root span (invoke_agent).
 
-        Re-emits the root span (same span_id as before_turn) with:
+        Re-emits the root span (same span_id as before_graph) with:
         - langfuse.observation.output (final assistant reply)
         - langfuse.trace.output (same as obs.output)
         - langfuse.observation.input (re-sent — Langfuse last-write-wins
-          overwrites the before_turn row, so input must be re-included)
+          overwrites the before_graph row, so input must be re-included)
         - gen_ai.usage.* (aggregated across all LLM calls in this turn)
         - gen_ai.response.finish_reasons
         - end_time (full turn duration)

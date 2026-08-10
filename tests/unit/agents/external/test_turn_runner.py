@@ -25,7 +25,7 @@ from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage
-from modex_agent.hook import FinallyTurnHook, HookRunner, HookSpec
+from modex_agent.hook import FinallyGraphHook, HookRunner, HookSpec
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.workspace.runtime import (
     is_workspace_root_bound,
@@ -83,17 +83,17 @@ class _CancelAgent:
         raise asyncio.CancelledError()
 
 
-class _StubFinallyTurnHook(FinallyTurnHook):
-    """Records ``(ctx, result)`` for each ``finally_turn`` invocation."""
+class _StubFinallyGraphHook(FinallyGraphHook):
+    """Records ``(ctx, result)`` for each ``finally_graph`` invocation."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[AgentContext, AgentResult | None]] = []
 
     @property
     def name(self) -> str:
-        return "stub_finally_turn_external"
+        return "stub_finally_graph_external"
 
-    async def finally_turn(self, ctx: AgentContext, result: AgentResult | None) -> None:
+    async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None:
         self.calls.append((ctx, result))
 
 
@@ -499,17 +499,17 @@ async def test_turn_identity_set() -> None:
 
 
 # ---------------------------------------------------------------------------
-# FINALLY_TURN hook dispatch (T3 — Seam 4 partial)
+# FINALLY_GRAPH hook dispatch (T3 — Seam 4 partial)
 # ---------------------------------------------------------------------------
 
 
-def _hook_runner_with(hook: _StubFinallyTurnHook) -> HookRunner:
+def _hook_runner_with(hook: _StubFinallyGraphHook) -> HookRunner:
     return HookRunner([HookSpec(hook)])
 
 
-async def test_finally_turn_hook_fires_once_on_success() -> None:
+async def test_finally_graph_hook_fires_once_on_success() -> None:
     """Hook fires exactly once with the success ``AgentResult``."""
-    hook = _StubFinallyTurnHook()
+    hook = _StubFinallyGraphHook()
     runner = _make_runner(
         agent=_RecordingAgent(result=AgentResult(content="ok", stop_reason=StopReason.COMPLETED)),
         hook_runner=_hook_runner_with(hook),
@@ -523,9 +523,9 @@ async def test_finally_turn_hook_fires_once_on_success() -> None:
     assert hook.calls[0][1] is result
 
 
-async def test_finally_turn_hook_fires_once_on_exception() -> None:
+async def test_finally_graph_hook_fires_once_on_exception() -> None:
     """Hook fires exactly once with the error ``AgentResult`` on agent exception."""
-    hook = _StubFinallyTurnHook()
+    hook = _StubFinallyGraphHook()
     runner = _make_runner(agent=_ErrorAgent(), hook_runner=_hook_runner_with(hook))
 
     result = await runner.process_locked(_make_input(), "s1", session=_session())
@@ -537,16 +537,16 @@ async def test_finally_turn_hook_fires_once_on_exception() -> None:
     assert hook.calls[0][1] is result
 
 
-async def test_finally_turn_hook_fires_once_on_cancelled_error() -> None:
+async def test_finally_graph_hook_fires_once_on_cancelled_error() -> None:
     """Hook fires exactly once with ``result=None`` when ``agent.run`` raises
     ``CancelledError``.
 
-    The finally block dispatches ``FINALLY_TURN`` (shielded) before
+    The finally block dispatches ``FINALLY_GRAPH`` (shielded) before
     re-propagating the cancellation. ``result`` stays ``None`` because the
     ``CancelledError`` except block emits a CANCELLED result but does NOT
     assign it to the local ``result`` variable.
     """
-    hook = _StubFinallyTurnHook()
+    hook = _StubFinallyGraphHook()
     runner = _make_runner(agent=_CancelAgent(), hook_runner=_hook_runner_with(hook))
 
     with pytest.raises(asyncio.CancelledError):
@@ -556,7 +556,7 @@ async def test_finally_turn_hook_fires_once_on_cancelled_error() -> None:
     assert hook.calls[0][1] is None
 
 
-async def test_finally_turn_hook_no_dispatch_when_hook_runner_none() -> None:
+async def test_finally_graph_hook_no_dispatch_when_hook_runner_none() -> None:
     """When ``hook_runner=None`` (main-agent external pool default) no dispatch
     happens — behavior is unchanged.
 
@@ -572,9 +572,9 @@ async def test_finally_turn_hook_no_dispatch_when_hook_runner_none() -> None:
     assert result is expected
 
 
-async def test_finally_turn_hook_receives_agent_context() -> None:
+async def test_finally_graph_hook_receives_agent_context() -> None:
     """The hook receives the same ``AgentContext`` built for the turn."""
-    hook = _StubFinallyTurnHook()
+    hook = _StubFinallyGraphHook()
     runner = _make_runner(agent=_RecordingAgent(), hook_runner=_hook_runner_with(hook))
 
     await runner.process_locked(_make_input("ctx-check"), "s1", session=_session())

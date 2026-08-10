@@ -28,6 +28,18 @@ CRITICAL design rules (ADR-0033 D5):
 4. ``around`` constructs interceptor context internally from
    ``ctx.user_data`` (AgentContext).
 
+5. Hook dispatch follows a 4-level hierarchy (ADR-0033 D5):
+   - Turn-attempt hooks (``BEFORE_TURN`` / ``AFTER_TURN``) are dispatched in
+     ``BeforeTurnNode`` / ``AfterTurnNode`` via ``ctx.runtime.dispatch_hook()``.
+   - Node-level hooks (``START_NODE_TURN`` / ``END_NODE_TURN``) are dispatched
+     in ``StartNode`` / ``EndNode`` via ``ctx.runtime.dispatch_hook()``.
+   - Graph-level hooks (``BEFORE_GRAPH`` / ``AFTER_GRAPH`` /
+     ``FINALLY_GRAPH``) stay in ``actual_turn()`` dispatched via
+     ``hook_runner.dispatch()`` directly, NOT through ``HOOK_POINT_MAP``
+     (they have no ``ReActHookPoint`` alias).
+   - Iteration-level hooks (``BEFORE_ITERATION`` etc.) remain node-explicit
+     as before.
+
 Migration status (ADR-0033 D13): COMPLETE. The old
 ``modex_agent.core.graph`` directory is deleted; ``ReactGraphRuntime`` is
 instantiated by ``ReActAgent.run`` and passed as ``GraphContext.runtime``
@@ -80,6 +92,10 @@ class ReactGraphRuntime(GraphRuntime):
         ReActHookPoint.AFTER_TOOL_EXECUTION: HookPoint.AFTER_TOOL_EXECUTION,
         ReActHookPoint.FINALIZE_CONTENT: HookPoint.FINALIZE_CONTENT,
         ReActHookPoint.BEFORE_LLM: HookPoint.BEFORE_LLM,
+        ReActHookPoint.START_NODE_TURN: HookPoint.START_NODE_TURN,
+        ReActHookPoint.END_NODE_TURN: HookPoint.END_NODE_TURN,
+        ReActHookPoint.BEFORE_TURN: HookPoint.BEFORE_TURN,
+        ReActHookPoint.AFTER_TURN: HookPoint.AFTER_TURN,
     }
 
     def __init__(

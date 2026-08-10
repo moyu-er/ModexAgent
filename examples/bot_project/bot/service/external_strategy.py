@@ -270,7 +270,7 @@ class ExternalAwareFactory(DefaultAgentFactory):
             agent,
             broker=broker,
             safety=safety,
-            hook_runner=None,  # main agents don't fire FINALLY_TURN
+            hook_runner=None,  # main agents don't fire FINALLY_GRAPH
             session_registry=self._session_registry,
             control_channel=self._control_channel,
             output_adapter=output_adapter if isinstance(output_adapter, OutputAdapter) else None,

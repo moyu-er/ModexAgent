@@ -137,7 +137,7 @@ class TurnCustomKey(StrEnum):
     INJECTION_CYCLE_COUNT = "_injection_cycle_count"
     TRACE_ID = "_trace_id"
     # Root invoke_agent span_id for the current turn (G10 multi-agent handoff).
-    # Set by TraceCollectorHook.before_turn; read by AgentCommunicationService
+    # Set by TraceCollectorHook.before_graph; read by AgentCommunicationService
     # to link the agent.handoff span's parent_span_id to the turn's root span.
     ROOT_SPAN_ID = "_root_span_id"
     # Resolved image-kind Attachment records for the current turn (ADR-0014 §3 /
@@ -162,6 +162,7 @@ class TurnCustomKey(StrEnum):
     # after tool results.
     TOOL_MEDIA_CACHE = "_tool_media_cache"
     CONTINUATION_REQUEST = "_continuation_request"
+    LAST_CONTINUATION_TODO_SIG = "_last_continuation_todo_sig"
     GRAPH_DELIVER_COUNT = "_graph_deliver_count"
     MAX_TURNS = "_max_turns"
     GRAPH_NODE_DESCRIPTION = "_graph_node_description"

@@ -1,13 +1,19 @@
-# ruff: noqa: ANN401
+# ruff: noqa: ANN001, ANN401
 """Tests for AfterTurnNode."""
 
 from __future__ import annotations
 
-from modex_agent.agents.react.constants import ReActNode
+from unittest.mock import AsyncMock, MagicMock
+
+from modex_agent.agents.react.constants import ReActHookPoint, ReActNode
 from modex_agent.agents.react.nodes.after_turn import AfterTurnNode
-from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.agents.react.runtime import ReactGraphRuntime
+from modex_agent.agents.react.state import ReActTurnState, get_react_state
+from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import FinishReason, StopReason
+from modex_agent.core.emitter import AgentResult
 from modex_agent.core.types import MessageRole
+from modex_agent.hook import AfterTurnHook, HookRunner, HookSpec
 from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
 from modex_agent.runtime.services import (
     AgentRuntime,
@@ -17,6 +23,20 @@ from modex_agent.runtime.services import (
 
 def _react_state(runtime: AgentRuntime) -> ReActTurnState:
     return require_runtime_state(runtime, ReActTurnState)
+
+
+class _TrackingAfterTurnHook(AfterTurnHook):
+    def __init__(self, node: AfterTurnNode) -> None:
+        self._node = node
+        self.result: AgentResult | None = None
+
+    async def after_turn(self, ctx: AgentContext, result: AgentResult) -> None:
+        state = get_react_state(ctx)
+        assert state is not None
+        assert state.result is result
+        assert TurnCustomKey.CONTINUATION_REQUEST in state.custom
+        assert self._node._pending_delivers == []
+        self.result = result
 
 
 class TestAfterTurnNodeResultConstruction:
@@ -102,6 +122,36 @@ class TestAfterTurnNodeResultConstruction:
 
 
 class TestAfterTurnNodeRouting:
+    async def test_dispatches_after_turn_with_result_before_continuation_routing(
+        self,
+        make_runtime,
+        make_graph_ctx,
+        make_response,
+    ) -> None:
+        node = AfterTurnNode()
+        hook = _TrackingAfterTurnHook(node)
+        runner = HookRunner()
+        runner.add(HookSpec(hook=hook))
+        graph_runtime = ReactGraphRuntime(hook_runner=runner)
+        tracked_runtime = MagicMock(spec=ReactGraphRuntime)
+        tracked_runtime.dispatch_hook = AsyncMock(wraps=graph_runtime.dispatch_hook)
+        runtime = make_runtime()
+        state = _react_state(runtime)
+        state.llm_response = make_response(content="ok")
+        state.custom[TurnCustomKey.CONTINUATION_REQUEST] = True
+        ctx = make_graph_ctx(runtime=runtime)
+        ctx.runtime = tracked_runtime
+
+        await node.run(ctx)
+
+        assert hook.result is state.result
+        tracked_runtime.dispatch_hook.assert_awaited_once()
+        call = tracked_runtime.dispatch_hook.await_args
+        assert call.args[0] == ReActHookPoint.AFTER_TURN
+        assert call.args[1] is ctx
+        assert call.args[2] == {"result": state.result}
+        assert node._submit_result == {ReActNode.BEFORE: [state.result]}
+
     async def test_continuation_granted_routes_to_before(
         self, make_runtime, make_graph_ctx, make_response
     ) -> None:
@@ -181,7 +231,7 @@ class TestAfterTurnNodeRouting:
         assert TurnCustomKey.CONTINUATION_REQUEST not in state.custom
         assert ReActNode.BEFORE in node._submit_result
 
-    async def test_continuation_appends_system_reminder_after_assistant_message(
+    async def test_continuation_does_not_append_system_reminder(
         self,
         make_runtime,
         make_graph_ctx,
@@ -201,10 +251,4 @@ class TestAfterTurnNodeRouting:
         await node.run(ctx)
 
         messages = await ctx.agent_ctx.history.to_list()
-        assert [message.role for message in messages] == [
-            MessageRole.ASSISTANT,
-            MessageRole.SYSTEM_REMINDER,
-        ]
-        reminder_content = str(messages[-1].content)
-        assert reminder_content.startswith("<system-reminder>\n")
-        assert reminder_content.endswith("\n</system-reminder>")
+        assert [message.role for message in messages] == [MessageRole.ASSISTANT]

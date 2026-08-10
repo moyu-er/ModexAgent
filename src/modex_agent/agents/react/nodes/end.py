@@ -12,7 +12,7 @@ and delivers to ``GraphNode.END``.
 from __future__ import annotations
 
 from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
-from modex_agent.agents.react.constants import ReActNode
+from modex_agent.agents.react.constants import ReActHookPoint, ReActNode
 from modex_agent.agents.react.context import get_agent_ctx
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.constants import StopReason
@@ -66,6 +66,7 @@ class EndNode(Node[ReActTurnState]):
 
         state.mark_completed()
 
+        await ctx.runtime.dispatch_hook(ReActHookPoint.END_NODE_TURN, ctx)
         self.deliver(result, GraphNode.END, ctx)
         return None
 

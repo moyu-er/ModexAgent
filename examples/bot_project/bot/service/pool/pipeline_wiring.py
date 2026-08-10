@@ -107,7 +107,7 @@ def _wire_main_pipeline(
         _add_hook(pipeline, CassetteFlushHook(cassette_recorder))
 
     # NativeEnvInjectionHook — populate _modex_env / _current_session_id
-    # contextvars at BEFORE_TURN so native agent subprocess tools receive
+    # contextvars at BEFORE_GRAPH so native agent subprocess tools receive
     # MODEX_* env vars. Only the main-agent pipeline reaches here; the
     # external branch in create_pool skips _wire_main_pipeline.
     # The template's session_id / agent_name are placeholders overridden

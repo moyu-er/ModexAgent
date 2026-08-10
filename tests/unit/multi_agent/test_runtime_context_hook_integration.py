@@ -2,7 +2,7 @@
 
 Verifies:
 - RuntimeContextHook is NOT auto-injected by framework
-- SubagentAutoSendHook (FinallyTurnHook) always fires on finally_turn
+- SubagentAutoSendHook (FinallyGraphHook) always fires on finally_graph
 - RuntimeContextHook records tool calls correctly
 - Multiple hooks do not conflict
 """
@@ -62,30 +62,26 @@ class FakeAgent:
             hook_runner = context.runtime.services.hooks
 
         async def _call_hook_point(method_name: str, *args):
-            if hook_runner is not None:
-                from modex_agent.hook import HookPoint, HookPayload
-
-                payload_data = {}
-                if method_name == "after_turn" and args:
-                    payload_data = {"result": args[0]}
-                elif method_name == "finally_turn" and args:
-                    payload_data = {"result": args[0]}
-                elif method_name == "before_tool_execution" and args:
-                    payload_data = {"tool_calls": args[0]}
-                elif method_name == "after_tool_execution" and args:
-                    payload_data = {"results": args[0]}
-                await hook_runner.dispatch(
-                    HookPoint(method_name),
-                    context,
-                    HookPayload(data=payload_data),
-                    hook_timeout=10.0,
-                )
+            if hook_runner is None:
                 return
-            for hook in _get_hooks_from_context(context):
-                method = getattr(hook, method_name, None)
-                if method is not None:
-                    await method(context, *args)
 
+            from modex_agent.hook import HookPoint, HookPayload
+
+            payload_data = {}
+            if method_name in ("after_turn", "finally_graph") and args:
+                payload_data = {"result": args[0]}
+            elif method_name == "before_tool_execution" and args:
+                payload_data = {"tool_calls": args[0]}
+            elif method_name == "after_tool_execution" and args:
+                payload_data = {"results": args[0]}
+            await hook_runner.dispatch(
+                HookPoint(method_name),
+                context,
+                HookPayload(data=payload_data),
+                hook_timeout=10.0,
+            )
+
+        await _call_hook_point("start_node_turn")
         await _call_hook_point("before_turn")
 
         # Simulate tool execution if configured
@@ -96,7 +92,7 @@ class FakeAgent:
 
         result = AgentResult(content="Task done.", stop_reason=StopReason.COMPLETED)
         await _call_hook_point("after_turn", result)
-        await _call_hook_point("finally_turn", result)
+        await _call_hook_point("finally_graph", result)
         return result
 
 
@@ -159,20 +155,20 @@ class TestRuntimeContextHookNoAutoInjection:
 
 
 # ---------------------------------------------------------------------------
-# 2. SubagentAutoSendHook (FinallyTurnHook) + RuntimeContextHook collaboration
+# 2. SubagentAutoSendHook (FinallyGraphHook) + RuntimeContextHook collaboration
 # ---------------------------------------------------------------------------
 
 
 class TestHookCollaboration:
-    """Verify SubagentAutoSendHook always fires via finally_turn."""
+    """Verify SubagentAutoSendHook always fires via finally_graph."""
 
     def _make_bus(self):
         bus = MagicMock()
         bus.send = AsyncMock()
         return bus
 
-    async def test_subagent_auto_send_always_fires_on_finally_turn(self):
-        """SubagentAutoSendHook always fires on finally_turn,
+    async def test_subagent_auto_send_always_fires_on_finally_graph(self):
+        """SubagentAutoSendHook always fires on finally_graph,
         regardless of whether send_to_agent was called."""
         bus = self._make_bus()
 
@@ -267,7 +263,7 @@ class TestHookCollaboration:
         )
 
         # Resolve context
-        await rch.before_turn(ctx)
+        await rch.start_node_turn(ctx)
         runtime_ctx = ctx.runtime._runtime_context
         assert runtime_ctx is not None
 
@@ -341,7 +337,7 @@ class TestHookCollaboration:
         assert custom_hook.before_turn_called
         assert custom_hook.after_turn_called
 
-        # SubagentAutoSendHook always fires (FinallyTurnHook)
+        # SubagentAutoSendHook always fires (FinallyGraphHook)
         bus.send.assert_awaited_once()
         _inbox_key, envelope = bus.send.call_args.args
         assert envelope.invocation_id == "inv-123"

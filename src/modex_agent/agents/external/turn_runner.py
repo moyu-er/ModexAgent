@@ -242,7 +242,7 @@ class ExternalTurnRunner(TurnRunner):
             # No ctx_mgr.flush() — the external CLI persists its own state;
             # the empty ListMessageHistory above is never written to.
             if self._hook_runner is not None:
-                # FINALLY_TURN fires once per turn on every path. asyncio.shield
+                # FINALLY_GRAPH fires once per turn on every path. asyncio.shield
                 # protects dispatch when the turn task itself is being cancelled
                 # (/stop via task.cancel()); the shielded coroutine continues in
                 # the background while the outer await re-raises CancelledError
@@ -250,7 +250,7 @@ class ExternalTurnRunner(TurnRunner):
                 with contextlib.suppress(asyncio.CancelledError):
                     await asyncio.shield(
                         self._hook_runner.dispatch(
-                            HookPoint.FINALLY_TURN,
+                            HookPoint.FINALLY_GRAPH,
                             agent_context,
                             HookPayload(data={"result": result}),
                         )

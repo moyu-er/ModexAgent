@@ -14,7 +14,7 @@ Walks the full multi-agent chain with only the LLM swapped for a scripted mock:
            └─ mock LLM returns a final text reply (the deliverable)
 
 The subagent's final reply text IS the deliverable. SubagentAutoSendHook fires on
-FINALLY_TURN, captures the reply, writes it to ``output/<session_id>/OUTPUT_<n>.md``
+FINALLY_GRAPH, captures the reply, writes it to ``output/<session_id>/OUTPUT_<n>.md``
 (numbered via max+1 scan), and sends a truncated (≤300 chars) notification to the
 parent's inbox via the bus. The notification carries the output path via ResultMeta.
 
@@ -80,7 +80,7 @@ class _FakePoolData:
     the test can detect whether the subagent pipeline wrongly adopted it.
     ``turn_store`` is a real store rooted at the workspace
     runtime dir — the subagent shares it (pool-level) so its AgentRuntime is
-    constructed and FINALLY_TURN hooks fire.
+    constructed and FINALLY_GRAPH hooks fire.
     """
 
     def __init__(self, runtime_dir: Path, memory_dir: Path, main_ctx_mgr: Any) -> None:
@@ -375,7 +375,7 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         )
 
         # --- assertion 4: parent notified via SubagentAutoSendHook ---
-        # The hook fires on FINALLY_TURN, writes OUTPUT_<n>.md, then sends a
+        # The hook fires on FINALLY_GRAPH, writes OUTPUT_<n>.md, then sends a
         # markdown notification to the PARENT's inbox via the bus. The
         # notification carries status, output path (via ResultMeta), and the
         # truncated (≤300 chars) deliverable text.

@@ -60,13 +60,13 @@ async def _collect_spans(store: OtelSpanTraceStore, session_id: str) -> list[Spa
 
 
 @pytest.mark.asyncio
-async def test_before_turn_records_turn_start(tmp_path: Path) -> None:
+async def test_before_graph_records_turn_start(tmp_path: Path) -> None:
     store = _make_store(tmp_path)
     ctx = _make_trace_context("s1", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
-    await hook.finally_turn(ctx, None)
+    await hook.before_graph(ctx)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "s1")
     assert len(spans) == 2
@@ -91,7 +91,7 @@ async def test_after_llm_response_records_llm_call(tmp_path: Path) -> None:
     ctx = _make_trace_context("s2", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
 
     response = LLMResponse(
         content="hello",
@@ -100,7 +100,7 @@ async def test_after_llm_response_records_llm_call(tmp_path: Path) -> None:
         usage={"prompt_tokens": 10, "completion_tokens": 5},
     )
     await hook.after_llm_response(ctx, response)
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "s2")
     assert len(spans) == 3
@@ -123,7 +123,7 @@ async def test_after_llm_response_records_cache_tokens_and_ttft(tmp_path: Path) 
     ctx = _make_trace_context("s_cache", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
 
     response = LLMResponse(
         content="hello",
@@ -138,7 +138,7 @@ async def test_after_llm_response_records_cache_tokens_and_ttft(tmp_path: Path) 
         completion_start_time="2026-07-29T16:00:00.123456+00:00",
     )
     await hook.after_llm_response(ctx, response)
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "s_cache")
     llm_span = next(s for s in spans if s.name == SpanName.CHAT.value)
@@ -159,11 +159,11 @@ async def test_after_llm_response_no_ttft_when_none(tmp_path: Path) -> None:
     ctx = _make_trace_context("s_no_ttft", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
 
     response = LLMResponse(content="hello", usage={"prompt_tokens": 5})
     await hook.after_llm_response(ctx, response)
-    await hook.finally_turn(ctx, None)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "s_no_ttft")
     llm_span = next(s for s in spans if s.name == SpanName.CHAT.value)
@@ -177,7 +177,7 @@ async def test_after_tool_execution_records_per_tool(tmp_path: Path) -> None:
     ctx = _make_trace_context("s4", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
 
     tool_calls = [
         ToolCall(tool_name="search", arguments={"query": "hello"}),
@@ -211,7 +211,7 @@ async def test_after_tool_execution_records_per_tool(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_finally_turn_writes_root_span(tmp_path: Path) -> None:
+async def test_finally_graph_writes_root_span(tmp_path: Path) -> None:
     store = _make_store(tmp_path)
     ctx = _make_trace_context("s5", store)
     hook = _make_hook()
@@ -219,8 +219,8 @@ async def test_finally_turn_writes_root_span(tmp_path: Path) -> None:
     from modex_agent.core.message import ChatMessage
 
     await ctx.history.append(ChatMessage(role="user", content="hello"))
-    await hook.before_turn(ctx)
-    await hook.finally_turn(ctx, AgentResult(content="done"))
+    await hook.before_graph(ctx)
+    await hook.finally_graph(ctx, AgentResult(content="done"))
 
     spans = await _collect_spans(store, "s5")
     assert len(spans) == 2
@@ -231,8 +231,8 @@ async def test_finally_turn_writes_root_span(tmp_path: Path) -> None:
     import json as _json
     output = _json.loads(root.attributes[GenAiAttr.LANGFUSE_OBSERVATION_OUTPUT])
     assert any(m.get("parts", [{}])[0].get("content") == "done" for m in output)
-    # finally_turn root span must also carry input (Langfuse last-write-wins
-    # overwrites the before_turn span — input must be re-sent)
+    # finally_graph root span must also carry input (Langfuse last-write-wins
+    # overwrites the before_graph span — input must be re-sent)
     assert GenAiAttr.LANGFUSE_OBSERVATION_INPUT in root.attributes or GenAiAttr.LANGFUSE_TRACE_INPUT in root.attributes
 
 
@@ -242,11 +242,11 @@ async def test_disabled_hook_records_nothing(tmp_path: Path) -> None:
     ctx = _make_trace_context("s7", store)
     hook = _make_hook(enabled=False)
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     await hook.after_llm_response(ctx, LLMResponse(content="x"))
     await hook.before_tool_execution(ctx, [ToolCall(call_id="c1", tool_name="t", arguments={})])
     await hook.after_tool_execution(ctx, [ToolResult.from_text("t", "ok")])
-    await hook.finally_turn(ctx, AgentResult(content="done"))
+    await hook.finally_graph(ctx, AgentResult(content="done"))
 
     spans = await _collect_spans(store, "s7")
     assert len(spans) == 0
@@ -261,7 +261,7 @@ async def test_llm_response_captures_tool_call_arguments(tmp_path: Path) -> None
     ctx = _make_trace_context("s_tc", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     response = LLMResponse(
         content="Let me search and read.",
         tool_calls=[
@@ -290,7 +290,7 @@ async def test_llm_response_captures_reasoning_content(tmp_path: Path) -> None:
     ctx = _make_trace_context("s_reason", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     response = LLMResponse(content="Answer.", reasoning_content="Step 1: think\nStep 2: conclude")
     await hook.after_llm_response(ctx, response)
 
@@ -305,7 +305,7 @@ async def test_tool_execution_captures_result_content(tmp_path: Path) -> None:
     ctx = _make_trace_context("s_result", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     results = [ToolResult.from_text("read", "file contents here", execution_time=0.02)]
     await hook.after_tool_execution(ctx, results)
 
@@ -322,7 +322,7 @@ async def test_tool_execution_result_truncated(tmp_path: Path) -> None:
     ctx = _make_trace_context("s_trunc", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     long_result = "x" * 5000
     results = [ToolResult.from_text("read", long_result)]
     await hook.after_tool_execution(ctx, results)
@@ -338,7 +338,7 @@ async def test_before_tool_execution_captures_full_arguments(tmp_path: Path) -> 
     ctx = _make_trace_context("s_args", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
     tool_calls = [
         ToolCall(
             call_id="c1", tool_name="write", arguments={"path": "/out/OUTPUT.md", "content": "done"}
@@ -367,8 +367,8 @@ async def test_hook_writes_to_runtime_trace_store(tmp_path: Path) -> None:
     ctx = _make_trace_context("ws_sess.main", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
-    await hook.finally_turn(ctx, None)
+    await hook.before_graph(ctx)
+    await hook.finally_graph(ctx, None)
 
     spans = await _collect_spans(store, "ws_sess.main")
     assert len(spans) == 2
@@ -382,7 +382,7 @@ async def test_hook_noop_when_no_runtime_store(tmp_path: Path) -> None:
     hook = _make_hook()
 
     # Should not raise — just silently skip
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
 
 
 @pytest.mark.asyncio
@@ -391,7 +391,7 @@ async def test_send_to_agent_emits_handoff_span(tmp_path: Path) -> None:
     ctx = _make_trace_context("handoff.main", store)
     hook = _make_hook()
 
-    await hook.before_turn(ctx)
+    await hook.before_graph(ctx)
 
     tool_calls = [
         ToolCall(tool_name="send_to_agent", arguments={"target_agent": "coder", "content": "do the thing"}),

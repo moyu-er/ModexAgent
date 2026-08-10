@@ -67,7 +67,7 @@ async def test_loop_detected_sends_incomplete_notification(tmp_path: Path):
         stop_reason=StopReason.LOOP_DETECTED,
     )
 
-    await hook.finally_turn(ctx, result)
+    await hook.finally_graph(ctx, result)
 
     msgs = await bus.consume("conv123.main")
     assert len(msgs) == 1
@@ -98,7 +98,7 @@ async def test_loop_detected_includes_invocation_id_in_hint(tmp_path: Path):
         stop_reason=StopReason.LOOP_DETECTED,
     )
 
-    await hook.finally_turn(ctx, result)
+    await hook.finally_graph(ctx, result)
 
     xml = (await bus.consume("conv123.main"))[0].payload["content"]
     invocation_id = SessionInfo.from_str(session_id).session_id_prefix
@@ -137,7 +137,7 @@ async def test_loop_detected_without_parent_logs_warning(tmp_path: Path, caplog)
     )
 
     with caplog.at_level("WARNING"):
-        await hook.finally_turn(ctx, result)
+        await hook.finally_graph(ctx, result)
 
     bus.send.assert_not_awaited()
     assert "no parent_session_id" in caplog.text.lower()

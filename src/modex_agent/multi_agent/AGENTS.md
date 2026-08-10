@@ -143,7 +143,7 @@ per invocation by pipeline providers, so reuse is safe.)
   - Star topology is enforced in `TopologyPolicy.check`: a subagent sender may
     only target its own parent; subagent→subagent is rejected.
 - **The subagent reply path converges on the same bus.** `SubagentAutoSendHook`
-  (`hook/builtin/`) fires on `FINALLY_TURN` and calls `bus.send(parent_sid,
+  (`hook/builtin/`) fires on `FINALLY_GRAPH` and calls `bus.send(parent_sid,
   agent_result envelope)` — the same carrier as `task`/`send_to_agent`. It does not
   hand-build envelopes or call a parallel mechanism. The notification carries
   absolute, workspace-rooted trace/output paths (parity with the `task`
@@ -193,7 +193,7 @@ are built.
   `agent_name`; invocation-specific prompt parts rebuild per session.
 - `InboxFlushHook` is the fold-in path (mid-turn, `role=AGENT`); it consumes
   inter-agent types only, so a human DM always starts a fresh turn.
-- `SubagentAutoSendHook` always fires on `FINALLY_TURN` and notifies the parent
+- `SubagentAutoSendHook` always fires on `FINALLY_GRAPH` and notifies the parent
   via the same bus — it is the sole reply path (subagents have no comm tool).
 - Star topology is enforced both in `_send` (subagent→parent only) and by
   `subagent_validator.py` at registration.

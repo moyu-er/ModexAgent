@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-22 -->
+<!-- Updated: 2026-08-10 -->
 
 # react
 
@@ -19,13 +19,13 @@ approval suspend/resume, and integration points for hooks, interceptors, and con
 | `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy`, and `ReActRuntimeStateCodec`. |
 | `builder.py` | `ReActAgentBuilder` -- `build_agent()` + `build_emitter_factory()` from `AgentDescriptor`. |
 | `approval.py` | *(removed — migrated to `modex_agent.approval.runtime`)* |
-| `constants.py` | `ReActNode`, `ReActHookPoint`, `ReActScope`, `ReActEvent`, `InterruptReason` (B1) StrEnums. |
-| `nodes/start.py` | `StartNode` -- routes to BEFORE (fresh) or TOOL (resume from approval). |
-| `nodes/before_turn.py` | `BeforeTurnNode` -- mechanical only: `turn_attempt += 1`, `iteration = 0`, route to LLM. NO hook dispatch (BEFORE_TURN stays in `actual_turn()`). |
+| `constants.py` | `ReActNode`, `ReActHookPoint` (11 values: iteration-level + turn-attempt `BEFORE_TURN`/`AFTER_TURN` + node-level `START_NODE_TURN`/`END_NODE_TURN`), `ReActScope`, `ReActEvent`, `InterruptReason` (B1) StrEnums. |
+| `nodes/start.py` | `StartNode` -- routes to BEFORE (fresh) or TOOL (resume from approval). Dispatches `START_NODE_TURN` hook on fresh-turn path only (not on resume). |
+| `nodes/before_turn.py` | `BeforeTurnNode` -- increments `turn_attempt`, resets `iteration = 0`, dispatches `BEFORE_TURN` hook, routes to LLM. |
 | `nodes/llm.py` | `LLMNode` -- calls LLM, handles streaming, dispatches hooks/interceptors via `ctx.runtime.*`, emits iteration events. |
 | `nodes/tool.py` | `ToolNode` -- classify all -> suspend for approval via `ctx.interrupt(tx)` -> batch execute -> route. |
-| `nodes/after_turn.py` | `AfterTurnNode` -- mechanical only: construct `AgentResult`, write `state.result`, check `CONTINUATION_REQUEST`, route to BEFORE/END. NO hook dispatch (AFTER_TURN stays in `actual_turn()`). |
-| `nodes/end.py` | `EndNode` -- reads `state.result` (raises `RuntimeError` if None), emits completion events. |
+| `nodes/after_turn.py` | `AfterTurnNode` -- constructs `AgentResult`, writes `state.result`, dispatches `AFTER_TURN` hook (with `{"result": result}` payload), checks `CONTINUATION_REQUEST` flag, routes to BEFORE/END. No hardcoded deliver-reminder (migrated to `DeliverRetryHook`). |
+| `nodes/end.py` | `EndNode` -- reads `state.result` (raises `RuntimeError` if None), emits completion events, dispatches `END_NODE_TURN` hook. |
 
 ## Graph Edges
 
@@ -73,14 +73,26 @@ Deny policy: default `TOOL_RESULT_ONLY` (loop continues); override to `CANCEL_TU
   `AgentPipeline.runtime_services` (a mirror property) — see ADR-0008.
 - ReAct runs on the `modex_graph` engine (ADR-0033). `ReActAgent.run()` constructs
   `Graph` + `GraphEngine` + `ReActGraphContext` per turn and calls `engine.run_async()`.
-  Turn-level hooks (`BEFORE_TURN`/`AFTER_TURN`/`FINALLY_TURN`) and `around_turn`
-  interceptor remain in `ReActAgent.run()`'s `actual_turn()`, NOT in the graph runtime.
-  `BeforeTurnNode` and `AfterTurnNode` are mechanical only — they handle turn-attempt
-  counting, result construction, and continuation routing; they do NOT dispatch hooks.
+  Hooks follow a 4-level hierarchy: graph-level (`BEFORE_GRAPH`/`AFTER_GRAPH`/`FINALLY_GRAPH`)
+  and `around_turn` interceptor remain in `ReActAgent.run()`'s `actual_turn()`; node-level
+  (`START_NODE_TURN`/`END_NODE_TURN`) dispatched in `StartNode`/`EndNode`; turn-attempt
+  (`BEFORE_TURN`/`AFTER_TURN`) dispatched in `BeforeTurnNode`/`AfterTurnNode`; iteration-level
+  dispatched in `LLMNode`/`ToolNode`. `BeforeTurnNode` dispatches `BEFORE_TURN` hook;
+  `AfterTurnNode` dispatches `AFTER_TURN` hook and no longer injects deliver-reminder
+  (migrated to `DeliverRetryHook`).
+- **turnId / trace_id future consideration**: `turn_uuid` is generated in the pipeline layer
+  (`TurnRunner`), and `trace_id` is generated in `TraceCollectorHook.before_graph()`. Both
+  fire once per `actual_turn()` call, so approval resume (which re-enters `actual_turn()`)
+  generates a new trace root. A future improvement could move `trace_id` generation to
+  `START_NODE_TURN` so approval-resume continues the same trace. This is deferred because it
+  involves `TraceCollectorHook` span lifecycle redesign.
 - Node-level AOP (hooks, interceptors, governance, control drain, snapshot, emit) is
-  routed through `ReactGraphRuntime` via `ctx.runtime.*`. Iteration-level hooks
-  (`BEFORE_ITERATION`/`AFTER_ITERATION`) are dispatched explicitly by nodes, NOT
-  engine-auto-invoked (preserves hook timing exactly).
+  routed through `ReactGraphRuntime` via `ctx.runtime.*`. Node-level, turn-attempt, and
+  iteration-level hooks are all dispatched explicitly by nodes via
+  `ctx.runtime.dispatch_hook(ReActHookPoint.X, ctx)`, NOT engine-auto-invoked
+  (preserves hook timing exactly). Graph-level hooks bypass `HOOK_POINT_MAP` — they
+  are dispatched in `actual_turn()` via `hook_runner.dispatch(HookPoint.X, agent_ctx)`
+  directly.
 - Per-turn state lives in `ctx.state` (`ReActTurnState`, a mutable `GraphState`).
   `ctx.state.result` holds the final
   `AgentResult` (replaces the old `custom[GRAPH_RESULT]` pattern).

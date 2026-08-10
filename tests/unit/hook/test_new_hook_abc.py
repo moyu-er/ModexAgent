@@ -16,7 +16,7 @@ from modex_agent.core.types import MessageRole
 from modex_agent.hook import (
     AfterApprovalHook,
     BeforeLLMHook,
-    BeforeTurnHook,
+    BeforeGraphHook,
     HookErrorPolicy,
     HookPayload,
     HookPoint,
@@ -73,13 +73,13 @@ def _make_approval_transaction() -> ApprovalTransaction:
 
 
 def test_hook_name_defaults_to_concrete_class_name() -> None:
-    class MinimalBeforeTurnHook(BeforeTurnHook):
-        async def before_turn(self, ctx: AgentContext) -> None:
+    class MinimalBeforeGraphHook(BeforeGraphHook):
+        async def before_graph(self, ctx: AgentContext) -> None:
             pass
 
-    hook = MinimalBeforeTurnHook()
+    hook = MinimalBeforeGraphHook()
 
-    assert hook.name == "MinimalBeforeTurnHook"
+    assert hook.name == "MinimalBeforeGraphHook"
 
 
 # BeforeLLMHook

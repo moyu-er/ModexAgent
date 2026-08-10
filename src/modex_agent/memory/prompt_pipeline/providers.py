@@ -346,7 +346,6 @@ class RuntimeProvider(SystemPromptProvider):
         return f"{hour}:{directory_version}"
 
     async def _fetch_content(self) -> str:
-        current_time = datetime.now(get_user_timezone()).strftime("%Y-%m-%d %Hh")
         platform_raw = sys.platform
         platform_name = {
             "win32": "Windows",
@@ -355,7 +354,6 @@ class RuntimeProvider(SystemPromptProvider):
         }.get(platform_raw, platform_raw)
         lines = [
             "## Runtime",
-            f"Current Time: {current_time} (hour precision, not exact)",
             f"Platform: {platform_name}",
         ]
         dir_line = format_working_directory_line(self._working_directory)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
-from modex_agent.agents.react.constants import ReActNode
+from modex_agent.agents.react.constants import ReActHookPoint, ReActNode
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.runtime.enums import TurnPhase
 from modex_graph.context import GraphContext
@@ -35,6 +35,7 @@ class StartNode(Node[ReActTurnState]):
         state.iteration = 0
 
         await ctx.runtime.emit(GraphReActEvent.START, None, ctx)
+        await ctx.runtime.dispatch_hook(ReActHookPoint.START_NODE_TURN, ctx)
         self.deliver(None, ReActNode.BEFORE, ctx)
         return None
 

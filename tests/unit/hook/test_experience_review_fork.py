@@ -184,7 +184,7 @@ class TestExperienceReviewHookPassesForkHistory:
             content="Found the issue", stop_reason=StopReason.COMPLETED, messages=[]
         )
 
-        await hook.after_turn(ctx, result)
+        await hook.after_graph(ctx, result)
         await asyncio.sleep(0.15)  # let background task run
 
         review_agent.review.assert_called_once()

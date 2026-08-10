@@ -1,6 +1,6 @@
 """SubagentAutoSendHook — always-fire result notification for subagents.
 
-Fires on FINALLY_TURN (guaranteed) — no communication tool check needed.
+Fires on FINALLY_GRAPH (guaranteed) — no communication tool check needed.
 Subagents have no communication tools; this hook is the sole notification path.
 
 The notification markdown is consumed **by the parent agent's LLM** (injected as a
@@ -74,7 +74,7 @@ from typing import TYPE_CHECKING
 from modex_agent.core.constants import ExecutionStrategyKind, StopReason
 from modex_agent.core.message_utils import sanitize_reminder_content
 from modex_agent.core.types import ReminderKind
-from modex_agent.hook.abc import FinallyTurnHook
+from modex_agent.hook.abc import FinallyGraphHook
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -85,10 +85,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SubagentAutoSendHook(FinallyTurnHook):
+class SubagentAutoSendHook(FinallyGraphHook):
     """Always-fire result notification for subagents.
 
-    Fires on FINALLY_TURN (success, error, cancel, max_iterations — always).
+    Fires on FINALLY_GRAPH (success, error, cancel, max_iterations — always).
     Sends a markdown result notification to the parent inbox via
     ``build_agent_comm_message`` from ``message_format.py``.
 
@@ -131,9 +131,9 @@ class SubagentAutoSendHook(FinallyTurnHook):
         self._execution_strategy = execution_strategy
         self._max_result_chars = max_result_chars
 
-    # -- FINALLY_TURN (always fires) ------------------------------------------
+    # -- FINALLY_GRAPH (always fires) ------------------------------------------
 
-    async def finally_turn(self, ctx: AgentContext, result: AgentResult | None) -> None:
+    async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None:
         if self._agent_bus is None:
             return
 

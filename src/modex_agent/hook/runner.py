@@ -13,20 +13,24 @@ from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 from modex_agent.control.exceptions import AgentControlError
 from modex_agent.hook.abc import (
     AfterApprovalHook,
+    AfterGraphHook,
     AfterIterationHook,
     AfterLLMResponseHook,
     AfterToolExecutionHook,
     AfterTurnHook,
+    BeforeGraphHook,
     BeforeIterationHook,
     BeforeLLMHook,
     BeforeToolExecutionHook,
     BeforeTurnHook,
+    EndNodeTurnHook,
     FinalizeContentHook,
-    FinallyTurnHook,
+    FinallyGraphHook,
     HookErrorPolicy,
     HookPayload,
     HookPoint,
     HookSpec,
+    StartNodeTurnHook,
 )
 
 if TYPE_CHECKING:
@@ -52,6 +56,10 @@ class _EmptyPayload(TypedDict, total=False):
     """No extra data."""
 
 
+class _AfterGraphPayload(TypedDict, total=False):
+    result: AgentResult | None
+
+
 class _AfterTurnPayload(TypedDict, total=False):
     result: AgentResult | None
 
@@ -72,7 +80,7 @@ class _FinalizeContentPayload(TypedDict, total=False):
     content: str | None
 
 
-class _FinallyTurnPayload(TypedDict, total=False):
+class _FinallyGraphPayload(TypedDict, total=False):
     result: AgentResult | None
 
 
@@ -87,6 +95,30 @@ class _AfterApprovalPayload(TypedDict, total=False):
 # ---------------------------------------------------------------------------
 # Per-point dispatch helpers — eliminate getattr from the hot path
 # ---------------------------------------------------------------------------
+
+
+async def _call_before_graph(
+    hook: BeforeGraphHook, ctx: AgentContext, **_: Unpack[_EmptyPayload]
+) -> None:
+    await hook.before_graph(ctx)
+
+
+async def _call_after_graph(
+    hook: AfterGraphHook, ctx: AgentContext, **kw: Unpack[_AfterGraphPayload]
+) -> None:
+    await hook.after_graph(ctx, kw.get("result"))  # type: ignore[arg-type]
+
+
+async def _call_start_node_turn(
+    hook: StartNodeTurnHook, ctx: AgentContext, **_: Unpack[_EmptyPayload]
+) -> None:
+    await hook.start_node_turn(ctx)
+
+
+async def _call_end_node_turn(
+    hook: EndNodeTurnHook, ctx: AgentContext, **_: Unpack[_EmptyPayload]
+) -> None:
+    await hook.end_node_turn(ctx)
 
 
 async def _call_before_turn(
@@ -137,10 +169,10 @@ async def _call_finalize_content(
     return hook.finalize_content(ctx, kw.get("content"))
 
 
-async def _call_finally_turn(
-    hook: FinallyTurnHook, ctx: AgentContext, **kw: Unpack[_FinallyTurnPayload]
+async def _call_finally_graph(
+    hook: FinallyGraphHook, ctx: AgentContext, **kw: Unpack[_FinallyGraphPayload]
 ) -> None:
-    await hook.finally_turn(ctx, kw.get("result"))
+    await hook.finally_graph(ctx, kw.get("result"))
 
 
 async def _call_before_llm(
@@ -156,6 +188,11 @@ async def _call_after_approval(
 
 
 _HOOK_DISPATCH: dict[HookPoint, tuple[type, Callable[..., Any]]] = {
+    HookPoint.BEFORE_GRAPH: (BeforeGraphHook, _call_before_graph),
+    HookPoint.AFTER_GRAPH: (AfterGraphHook, _call_after_graph),
+    HookPoint.FINALLY_GRAPH: (FinallyGraphHook, _call_finally_graph),
+    HookPoint.START_NODE_TURN: (StartNodeTurnHook, _call_start_node_turn),
+    HookPoint.END_NODE_TURN: (EndNodeTurnHook, _call_end_node_turn),
     HookPoint.BEFORE_TURN: (BeforeTurnHook, _call_before_turn),
     HookPoint.AFTER_TURN: (AfterTurnHook, _call_after_turn),
     HookPoint.BEFORE_ITERATION: (BeforeIterationHook, _call_before_iteration),
@@ -164,7 +201,6 @@ _HOOK_DISPATCH: dict[HookPoint, tuple[type, Callable[..., Any]]] = {
     HookPoint.AFTER_TOOL_EXECUTION: (AfterToolExecutionHook, _call_after_tool_execution),
     HookPoint.AFTER_LLM_RESPONSE: (AfterLLMResponseHook, _call_after_llm_response),
     HookPoint.FINALIZE_CONTENT: (FinalizeContentHook, _call_finalize_content),
-    HookPoint.FINALLY_TURN: (FinallyTurnHook, _call_finally_turn),
     HookPoint.BEFORE_LLM: (BeforeLLMHook, _call_before_llm),
     HookPoint.AFTER_APPROVAL: (AfterApprovalHook, _call_after_approval),
 }

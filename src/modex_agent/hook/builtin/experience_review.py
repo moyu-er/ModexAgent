@@ -1,4 +1,4 @@
-"""ExperienceReviewHook — AfterTurn hook that spawns an ExperienceReviewAgent.
+"""ExperienceReviewHook — AfterGraph hook that spawns an ExperienceReviewAgent.
 
 Features:
 - Triggers at "conversation segment completion" (plain assistant turn with
@@ -34,7 +34,7 @@ from modex_agent.core.experience import (
 )
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.scope import MemoryContext
-from modex_agent.hook.abc import AfterTurnHook
+from modex_agent.hook.abc import AfterGraphHook
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.snapshot import (
     DEFAULT_SNAPSHOT_MAX_CONTENT_LEN,
@@ -45,8 +45,8 @@ from modex_agent.memory.snapshot import (
 logger = logging.getLogger(__name__)
 
 
-class ExperienceReviewHook(AfterTurnHook):
-    """AfterTurn hook that spawns an ExperienceReviewAgent.
+class ExperienceReviewHook(AfterGraphHook):
+    """AfterGraph hook that spawns an ExperienceReviewAgent.
 
     Triggers only when the agent finishes a conversational exchange with a
     plain text response (``stop_reason == "completed"``).  The hook keeps
@@ -103,7 +103,7 @@ class ExperienceReviewHook(AfterTurnHook):
 
     # -- hook lifecycle --------------------------------------------------
 
-    async def after_turn(
+    async def after_graph(
         self,
         ctx: AgentContext,
         result: AgentResult,
@@ -361,7 +361,7 @@ class ExperienceReviewHook(AfterTurnHook):
                 run immediately after the agent edits experiences.
         Gate 3: Sufficient conversation history length (>= threshold).
                 During cooldown the effective threshold is doubled.
-        Gate 4: Non-empty snapshot (checked separately in after_turn).
+        Gate 4: Non-empty snapshot (checked separately in after_graph).
         """
         # Gate 1: Plain completion
         if result.stop_reason != StopReason.COMPLETED:

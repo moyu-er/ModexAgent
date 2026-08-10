@@ -187,7 +187,7 @@ class BotAgentNode(AgentNode):
             # Run via TurnRunner.execute_turn — converges with normal turn lifecycle:
             # register_task + set_turn_uuid (session bookkeeping), ctx_mgr.save
             # (context persistence), finally: unregister_turn + _safe_flush +
-            # on_session_end (cleanup). Hook/trace (BEFORE_TURN / FINALLY_TURN)
+            # on_session_end (cleanup). Hook/trace (BEFORE_GRAPH / FINALLY_GRAPH)
             # still fire inside agent.run() — execute_turn wraps, not replaces.
             runner = pipeline._turn_runner
             if not isinstance(runner, ReActTurnRunner):

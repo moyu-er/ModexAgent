@@ -57,7 +57,7 @@ async def test_hook_skips_when_not_plain_completion(hook: ExperienceReviewHook):
     ctx.history = ListMessageHistory([{"role": "user", "content": "hi"}] * 6)
     result = MagicMock(stop_reason="max_iterations", messages=[])
 
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     assert not hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
 
 
@@ -68,7 +68,7 @@ async def test_hook_skips_when_insufficient_messages(hook: ExperienceReviewHook)
     ctx.history = ListMessageHistory([{"role": "user", "content": "hi"}] * 3)
     result = MagicMock(stop_reason="completed", messages=[])
 
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     assert not hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
 
 
@@ -83,7 +83,7 @@ async def test_hook_triggers_on_plain_turn_with_enough_messages(
         stop_reason="completed",
         messages=[{"role": "assistant", "content": "response"}],
     )
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     # Give the background task a moment
     await asyncio.sleep(0.05)
     assert hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
@@ -103,7 +103,7 @@ async def test_hook_skips_when_full_history_is_empty(
         messages=[{"role": "assistant", "content": "response"}],
     )
 
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     await asyncio.sleep(0)
 
     assert not hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
@@ -127,7 +127,7 @@ async def test_hook_skips_during_cooldown_with_enough_messages(
     hook._last_exp_tool_turn = 1
 
     # Next turn (turn 2): still in cooldown (3 turns), threshold doubled to 12
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     assert not hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
 
 
@@ -148,7 +148,7 @@ async def test_cooldown_expires_after_enough_turns(
     hook._turn_counter = 4
     hook._last_exp_tool_turn = 1
 
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     await asyncio.sleep(0.05)
     assert hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
 
@@ -174,9 +174,9 @@ async def test_exp_tool_usage_sets_cooldown(
     hook._turn_counter = 5
     hook._last_exp_tool_turn = 0
 
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     assert not hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
-    assert hook._last_exp_tool_turn == 6  # incremented in after_turn then set in _should_review
+    assert hook._last_exp_tool_turn == 6  # incremented in after_graph then set in _should_review
 
 
 @pytest.mark.asyncio
@@ -184,7 +184,7 @@ async def test_hook_skips_when_mutex_busy(hook: ExperienceReviewHook):
     hook._pending.add(asyncio.create_task(asyncio.sleep(0.001)))
     ctx = MagicMock()
     result = MagicMock(stop_reason="completed", messages=[])
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     # Mutex busy — review should NOT be called
 
 

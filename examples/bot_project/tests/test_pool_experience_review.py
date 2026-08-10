@@ -118,8 +118,8 @@ class TestExperienceReviewHookExecution:
             )
 
     @pytest.mark.asyncio
-    async def test_experience_review_hook_after_turn_logs_info(self, tmp_path: Path) -> None:
-        """ExperienceReviewHook.after_turn must log INFO when triggering review."""
+    async def test_experience_review_hook_after_graph_logs_info(self, tmp_path: Path) -> None:
+        """ExperienceReviewHook.after_graph must log INFO when triggering review."""
         from modex_agent.agents.experience.review_agent import ExperienceReviewAgent
         from modex_agent.core.constants import StopReason
         from modex_agent.core.emitter import AgentResult
@@ -173,7 +173,7 @@ class TestExperienceReviewHookExecution:
         logger.addHandler(handler)
 
         try:
-            await hook.after_turn(ctx, result)
+            await hook.after_graph(ctx, result)
             await asyncio.sleep(0.15)
         finally:
             logger.removeHandler(handler)

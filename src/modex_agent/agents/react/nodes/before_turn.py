@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from modex_agent.agents.react.constants import ReActNode
+from modex_agent.agents.react.constants import ReActHookPoint, ReActNode
 from modex_agent.agents.react.state import ReActTurnState
 from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput
@@ -24,6 +24,7 @@ class BeforeTurnNode(Node[ReActTurnState]):
         state.turn_attempt += 1
         state.iteration = 0
         state.current_node = ReActNode.BEFORE
+        await ctx.runtime.dispatch_hook(ReActHookPoint.BEFORE_TURN, ctx)
         self.deliver(None, ReActNode.LLM, ctx)
         return None
 

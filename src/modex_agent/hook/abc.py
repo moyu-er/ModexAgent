@@ -27,6 +27,11 @@ class HookPoint(str, Enum):
     ABC 类与调用函数，再用 isinstance(hook, dispatch_cls) 检查决定是否调用该 hook。
     """
 
+    BEFORE_GRAPH = "before_graph"
+    AFTER_GRAPH = "after_graph"
+    FINALLY_GRAPH = "finally_graph"
+    START_NODE_TURN = "start_node_turn"
+    END_NODE_TURN = "end_node_turn"
     BEFORE_TURN = "before_turn"
     AFTER_TURN = "after_turn"
     BEFORE_ITERATION = "before_iteration"
@@ -35,7 +40,6 @@ class HookPoint(str, Enum):
     AFTER_TOOL_EXECUTION = "after_tool_execution"
     AFTER_LLM_RESPONSE = "after_llm_response"
     FINALIZE_CONTENT = "finalize_content"
-    FINALLY_TURN = "finally_turn"
     BEFORE_LLM = "before_llm"
     AFTER_APPROVAL = "after_approval"
 
@@ -80,6 +84,59 @@ class Hook(ABC):  # noqa: B024
     def name(self) -> str:
         """Unique hook name for logging and diagnostics."""
         return type(self).__name__
+
+
+class BeforeGraphHook(Hook):
+    """Graph-level hook — fires once per actual_turn() call.
+
+    ⚠️ Approval resume re-enters actual_turn(), causing this hook to fire again.
+    Avoid mutating ctx.history — use StartNodeTurnHook or BeforeTurnHook instead.
+    """
+
+    _hook_point = HookPoint.BEFORE_GRAPH
+
+    @abstractmethod
+    async def before_graph(self, ctx: AgentContext) -> None: ...
+
+
+class AfterGraphHook(Hook):
+    """Graph-level hook — fires once per actual_turn() call.
+
+    ⚠️ Approval resume re-enters actual_turn(), causing this hook to fire again.
+    Avoid mutating ctx.history — use StartNodeTurnHook or BeforeTurnHook instead.
+    """
+
+    _hook_point = HookPoint.AFTER_GRAPH
+
+    @abstractmethod
+    async def after_graph(self, ctx: AgentContext, result: AgentResult) -> None: ...
+
+
+class FinallyGraphHook(Hook):
+    """Graph-level hook — fires once per actual_turn() call.
+
+    ⚠️ Approval resume re-enters actual_turn(), causing this hook to fire again.
+    Avoid mutating ctx.history — use StartNodeTurnHook or BeforeTurnHook instead.
+    """
+
+    _hook_point = HookPoint.FINALLY_GRAPH
+
+    @abstractmethod
+    async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None: ...
+
+
+class StartNodeTurnHook(Hook):
+    _hook_point = HookPoint.START_NODE_TURN
+
+    @abstractmethod
+    async def start_node_turn(self, ctx: AgentContext) -> None: ...
+
+
+class EndNodeTurnHook(Hook):
+    _hook_point = HookPoint.END_NODE_TURN
+
+    @abstractmethod
+    async def end_node_turn(self, ctx: AgentContext) -> None: ...
 
 
 class BeforeTurnHook(Hook):
@@ -140,13 +197,6 @@ class FinalizeContentHook(Hook):
 
     @abstractmethod
     def finalize_content(self, ctx: AgentContext, content: str | None) -> str | None: ...
-
-
-class FinallyTurnHook(Hook):
-    _hook_point = HookPoint.FINALLY_TURN
-
-    @abstractmethod
-    async def finally_turn(self, ctx: AgentContext, result: AgentResult | None) -> None: ...
 
 
 class BeforeLLMHook(Hook):

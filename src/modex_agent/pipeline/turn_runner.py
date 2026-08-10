@@ -457,7 +457,7 @@ class ReActTurnRunner(TurnRunner):
         # subagent inherits the main prompt and loses its task context.
         # (turn_store below is still shared — it is
         # pool-level and session-isolated, and the subagent needs it so its
-        # runtime + FINALLY_TURN hooks are constructed.)
+        # runtime + FINALLY_GRAPH hooks are constructed.)
         if pool_data is not None and not self._is_subagent():
             ctx_mgr = pool_data.context_manager
 

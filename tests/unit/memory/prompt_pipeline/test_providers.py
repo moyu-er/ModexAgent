@@ -48,7 +48,6 @@ async def test_base_prompt_empty_string():
 async def test_runtime_contains_date_and_platform():
     provider = RuntimeProvider()
     result = await provider.get_or_refresh()
-    assert "Current Time:" in result
     assert "Platform:" in result
     assert "Working Directory:" not in result
 

@@ -241,7 +241,7 @@ class AgentTemplate:
                 )
             )
         # NativeEnvInjectionHook — populate _modex_env / _current_session_id
-        # at BEFORE_TURN so native subagent subprocess tools receive
+        # at BEFORE_GRAPH so native subagent subprocess tools receive
         # MODEX_* env vars (parity with main-agent wiring in pool_builder.
         # _wire_main_pipeline). The subagent's pool_map carries itself +
         # its parent so ``modexctl send --to <parent>`` routes correctly;

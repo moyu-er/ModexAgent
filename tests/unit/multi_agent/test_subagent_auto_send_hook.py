@@ -80,7 +80,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         bus = _make_bus(tmp_path)
         hook = _make_hook(bus, runtime_dir)
 
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context(session_id),
             AgentResult(content=content, stop_reason=StopReason.COMPLETED),
         )
@@ -99,9 +99,9 @@ class TestSubagentAutoSendHookFinallyTurn:
         hook = _make_hook(bus, runtime_dir)
         ctx = _make_context(session_id)
 
-        await hook.finally_turn(ctx, AgentResult(content="first"))
+        await hook.finally_graph(ctx, AgentResult(content="first"))
         await bus.consume("conv123.main")
-        await hook.finally_turn(ctx, AgentResult(content="second"))
+        await hook.finally_graph(ctx, AgentResult(content="second"))
 
         output_dir = runtime_dir / "output" / session_id
         assert (output_dir / "OUTPUT_1.md").read_text() == "first"
@@ -118,7 +118,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         bus = _make_bus(tmp_path)
         hook = _make_hook(bus, runtime_dir)
 
-        await hook.finally_turn(_make_context(session_id), AgentResult(content="new"))
+        await hook.finally_graph(_make_context(session_id), AgentResult(content="new"))
 
         assert (output_dir / "OUTPUT_1.md").read_text() == "existing"
         assert (output_dir / "OUTPUT_2.md").read_text() == "new"
@@ -137,7 +137,7 @@ class TestSubagentAutoSendHookFinallyTurn:
             ],
         )
 
-        await hook.finally_turn(_make_context(session_id), result)
+        await hook.finally_graph(_make_context(session_id), result)
 
         output_path = runtime_dir / "output" / session_id / "OUTPUT_1.md"
         notification = await _consume_content(bus)
@@ -152,7 +152,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         bus = _make_bus(tmp_path)
         hook = _make_hook(bus, runtime_dir)
 
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context(session_id),
             AgentResult(content="Partial work", stop_reason=StopReason.MAX_ITERATIONS),
         )
@@ -171,7 +171,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         bus = _make_bus(tmp_path)
         hook = _make_hook(bus, runtime_dir)
 
-        await hook.finally_turn(_make_context(session_id), result=None)
+        await hook.finally_graph(_make_context(session_id), result=None)
 
         output_path = runtime_dir / "output" / session_id / "OUTPUT_1.md"
         notification = await _consume_content(bus)
@@ -198,7 +198,7 @@ class TestSubagentAutoSendHookFinallyTurn:
             ],
         )
 
-        await hook.finally_turn(_make_context(session_id), result)
+        await hook.finally_graph(_make_context(session_id), result)
 
         assert (
             runtime_dir / "output" / session_id / "OUTPUT_1.md"
@@ -217,7 +217,7 @@ class TestSubagentAutoSendHookFinallyTurn:
             messages=[ChatMessage(role=MessageRole.USER, content="do it")],
         )
 
-        await hook.finally_turn(_make_context(session_id), result)
+        await hook.finally_graph(_make_context(session_id), result)
 
         assert (
             runtime_dir / "output" / session_id / "OUTPUT_1.md"
@@ -233,7 +233,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         hook = _make_hook(bus, runtime_dir)
         result = AgentResult(content="<think\nsecret\n</think\nActual answer")
 
-        await hook.finally_turn(_make_context(session_id), result)
+        await hook.finally_graph(_make_context(session_id), result)
 
         file_content = (
             runtime_dir / "output" / session_id / "OUTPUT_1.md"
@@ -253,7 +253,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         bus = _make_bus(tmp_path)
         hook = _make_hook(bus, runtime_dir)
 
-        await hook.finally_turn(_make_context(session_id), AgentResult(content=content))
+        await hook.finally_graph(_make_context(session_id), AgentResult(content=content))
 
         assert (
             runtime_dir / "output" / session_id / "OUTPUT_1.md"
@@ -264,7 +264,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         runtime_dir = tmp_path / "runtime"
         hook = _make_hook(None, runtime_dir)
 
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context("a1b2c3d4.worker"),
             AgentResult(content="Done"),
         )
@@ -369,7 +369,7 @@ class TestSubagentAutoSendHookWriteFail:
             "_write_output_file",
             side_effect=OSError("disk unavailable"),
         ):
-            await hook.finally_turn(
+            await hook.finally_graph(
                 _make_context("a1b2c3d4.worker"),
                 AgentResult(content="Done", stop_reason=StopReason.COMPLETED),
             )
@@ -389,7 +389,7 @@ class TestSubagentAutoSendHookWriteFail:
             "_write_output_file",
             return_value=(None, "permission denied"),
         ):
-            await hook.finally_turn(
+            await hook.finally_graph(
                 _make_context("a1b2c3d4.worker"),
                 AgentResult(content="Done"),
             )
@@ -406,7 +406,7 @@ class TestSubagentAutoSendHookWriteFail:
             "_write_output_file",
             return_value=(None, "permission denied"),
         ):
-            await hook.finally_turn(
+            await hook.finally_graph(
                 _make_context("a1b2c3d4.worker"),
                 AgentResult(content="x" * 500),
             )
@@ -422,7 +422,7 @@ class TestSubagentAutoSendHookNotifyTruncate:
         bus = _make_bus(tmp_path)
         hook = _make_hook(bus, runtime_dir)
 
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context("a1b2c3d4.worker"),
             AgentResult(content="short result"),
         )
@@ -440,7 +440,7 @@ class TestSubagentAutoSendHookNotifyTruncate:
         bus = _make_bus(tmp_path)
         hook = _make_hook(bus, runtime_dir)
 
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context(session_id),
             AgentResult(content="x" * 500),
         )
@@ -466,7 +466,7 @@ class TestSubagentAutoSendHookExternalBranch:
             execution_strategy=ExecutionStrategyKind.EXTERNAL,
         )
 
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context("abc12345.pi_worker", agent_name="pi_worker"),
             AgentResult(content="done", stop_reason=StopReason.COMPLETED),
         )
@@ -486,7 +486,7 @@ class TestSubagentAutoSendHookExternalBranch:
             execution_strategy=ExecutionStrategyKind.EXTERNAL,
         )
 
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context("abc12345.pi_worker", agent_name="pi_worker"),
             AgentResult(content="Final answer", stop_reason=StopReason.COMPLETED),
         )
@@ -507,7 +507,7 @@ class TestSubagentAutoSendHookExternalBranch:
             execution_strategy=ExecutionStrategyKind.EXTERNAL,
         )
 
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context("abc12345.pi_worker", agent_name="pi_worker"),
             AgentResult(
                 content="",
