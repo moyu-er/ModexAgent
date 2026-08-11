@@ -93,10 +93,11 @@ class Node[S: "GraphState"](ABC):
     # total executions), `RoutingError` is raised as a safety net.
     max_retry: int = 3
 
-    # Per-execution state (reset by `run`). `_pending_delivers` and
-    # `_submit_result` are reset at the start of each `run()` call.
-    # NOT concurrency-safe — a single Node instance shared across
-    # concurrent executions would race.
+    # Per-execution state (reset by run). NOT concurrency-safe — a single Node
+    # instance shared across concurrent executions would race. Safety is
+    # guaranteed by the ON_RECEIVE serial gate: the scheduler never runs two
+    # invocations of the same Node object concurrently. This is a framework
+    # invariant, not a property of the attributes themselves.
     _pending_delivers: list[tuple[Any, str | None]] | None = None
     _submit_result: dict[str, list[Any]] = {}
     # Topology reference (per-execution, set by `run(graph=...)`). Schedulers
@@ -110,20 +111,21 @@ class Node[S: "GraphState"](ABC):
         ctx: GraphContext[S],
         integrated_input: IntegratedInput,
     ) -> None:
-        """Execute node logic and accumulate downstream delivers.
+        """Execute this node's logic.
 
-        ``integrated_input`` carries the upstream delivered data, integrated
-        by ``InputIntegrator``. It is an explicit parameter — NOT an instance
-        attribute. Nodes read ``integrated_input.integrated_content`` (the
-        integrated payload) or ``integrated_input.payloads`` (raw upstream
-        payloads) to access data delivered by upstream nodes.
+        Contract:
+        - Input: read from `integrated_input` (upstream delivers).
+        - Output: call `self.deliver(content, next_node, ctx)` to send data downstream.
+        - Working state: `ctx.state.node_scratch[self.node_id]` — your own region,
+          write freely. Reading other nodes' scratch is allowed but discouraged;
+          prefer receiving data via deliver/IntegratedInput.
+        - Framework fields (resume_target, result on DefaultGraphState): framework-managed,
+          do not write unless you are a framework node (START/END).
 
-        Implementations may:
-        - Read/write `ctx.state` imperatively (`ctx.state.x = y`).
-        - Call `ctx.interrupt(value)` to suspend for HITL.
-        - Call `ctx.runtime.dispatch_hook(...)` for AOP concerns.
-        - Call `self.deliver(content, next_node, ctx)` to accumulate delivers
-          for the deliver/submit model.
+        Args:
+            ctx: The graph context (graph-run scoped resources shared, invocation-local
+                 fields set by scheduler).
+            integrated_input: All upstream delivers materialized as input payloads.
         """
         ...
 
@@ -377,6 +379,8 @@ class Node[S: "GraphState"](ABC):
         """Node-facing API. Call during `execute()` to accumulate a deliver.
 
         ``ctx`` is required — pass the ``ctx`` received by ``execute()``.
+        Currently accumulates to ``self._pending_delivers``; the ``ctx`` parameter
+        is reserved for future invocation-scoped accumulation.
         """
         self._deliver(content, next_node, ctx)
 
@@ -462,6 +466,9 @@ class Node[S: "GraphState"](ABC):
                 groups.setdefault(t, []).append(content)
 
         inv_ctx = ctx.current_invocation
+        # _source_node is set but ignored by route_deliver_from_dispatch,
+        # which derives source_node_id from the scheduler-corrected
+        # source_node_name (concurrency-safe under ParallelScheduler).
         for target, contents in groups.items():
             for content in contents:
                 ctx.dispatch(

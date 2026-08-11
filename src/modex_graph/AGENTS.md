@@ -51,6 +51,16 @@ Both paths coexist; `_recheck_pending` is the unified rescan that makes recovery
 
 All three implement the same `NodeStateStore` / `DeliverStore` / `GraphInstanceStore` ABCs. `bootstrap` on Null/InMemory stores naturally returns `[entry_node]` (no prior invocations → fresh start).
 
+## State Ownership
+
+`ctx.state` is framework-managed. Nodes read it but do not write to framework fields (`resume_target`, `result` on `DefaultGraphState`). Framework code (checkpoint, recovery, bootstrap) writes these fields.
+
+`ctx.state.node_scratch: dict[str, Any]` provides per-node working state. Each node writes only to `node_scratch[self.node_id]` — key separation provides natural isolation without fork/clone. Reading other nodes' scratch is allowed but discouraged; prefer receiving data via deliver/IntegratedInput.
+
+Cross-node data flows through deliver → DeliverStore → IntegratedInput → execute(). The `copy(ctx)` pattern was removed — ParallelScheduler passes ctx directly.
+
+The ON_RECEIVE serial gate guarantees the same Node object never executes concurrently — execution-specific mutable attributes (`_pending_delivers`, `_submit_result`, `_graph_ref`) on Node are safe under this invariant.
+
 ## Key Files
 
 | File | Description |
@@ -59,7 +69,7 @@ All three implement the same `NodeStateStore` / `DeliverStore` / `GraphInstanceS
 | `graph.py` | `Graph[S]` — `compile()` produces `CompiledGraph[S]`; START/END as registered Node instances |
 | `engine.py` | `GraphEngine[S]` — thin delegator, selects `LinearScheduler` or `ParallelScheduler` |
 | `scheduler/linear.py` | `LinearScheduler` — sequential execution, deliver-only routing |
-| `scheduler/parallel.py` | `ParallelScheduler` — multi-instance, ON_RECEIVE / ON_ALL_PREDS triggers |
+| `scheduler/parallel.py` | `ParallelScheduler` — multi-instance, ON_RECEIVE / ON_ALL_PREDS triggers, ctx passed directly (no copy) |
 | `scheduler/bootstrap.py` | `bootstrap(ctx, graph)` — unified entry point (fresh + recovery) |
 | `scheduler/base.py` | `Scheduler[S]` ABC |
 | `scheduler/instance.py` | `NodeInstance` — in-memory instance state (DORMANT/READY/RUNNING/COMPLETED/CRASHED) |
@@ -70,7 +80,7 @@ All three implement the same `NodeStateStore` / `DeliverStore` / `GraphInstanceS
 | `nodes/human_input_node.py` | `HumanInputNode` — suspends for human input via `GraphInterrupt` |
 | `nodes/graph_as_node.py` | `GraphAsNode` — embeds a sub-graph as a Node |
 | `compiled_graph.py` | `CompiledGraph[S]` — compiled graph with nodes, edges, entry_node |
-| `context.py` | `GraphContext[S]` — state, runtime, coordinator, dispatch handler, user_input |
+| `context.py` | `GraphContext[S]` — runtime, coordinator, dispatch handler, user_input, current_invocation (invocation-local); state is framework-managed with per-node node_scratch |
 | `persistence/node_state_store.py` | `NodeStateStore` ABC + Null/InMemory/Sqlite implementations, version chain + CAS |
 | `persistence/deliver_store.py` | `DeliverStore` ABC + Null/InMemory/Sqlite, accumulate/query_consumable/mark_consumed/promote |
 | `persistence/persistence_coordinator.py` | `GraphPersistenceCoordinator` — route_deliver, collect_consumable_delivers, rebuild_main_state; single emission seam for node-level `GraphOutput` events (`emit_output` / `set_output_adapter` / `drain_output_events`) |
@@ -79,7 +89,7 @@ All three implement the same `NodeStateStore` / `DeliverStore` / `GraphInstanceS
 | `integration.py` | `GraphPayload` (static-graph deliver content), `IntegratedPayload`, `IntegratedInput` |
 | `nodes/start_node.py` | `StartNode` — reads `ctx.user_input`, delivers to downstream |
 | `nodes/end_node.py` | `EndNode` — aggregates delivers to `ctx.state.result` (ON_ALL_PREDS trigger) |
-| `state/state.py` | `GraphState` ABC (frozen=False, mutable) |
+| `state/state.py` | `GraphState` ABC (frozen=False, mutable, node_scratch for per-node working state) |
 | `state/default_state.py` | `DefaultGraphState` — `result: list[GraphPayload]` for static graphs |
 | `output_adapter.py` | `GraphOutputAdapter` ABC, `GraphOutput`, `GraphOutputKind` (terminal + node-level events) |
 | `constants.py` | `GraphNode` (START/END), `InvocationStatus`, `NodeTrigger`, `SchedulerKind`, `GraphInstanceStatus` |

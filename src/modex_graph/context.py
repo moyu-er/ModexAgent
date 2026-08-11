@@ -15,8 +15,10 @@ Provides:
   etc. for business-specific AOP.
 - `user_data: Any` — turn-scoped business context. For ReAct, holds the
   `AgentContext`. Shared across forks.
-- `fork(state=..., parent=...)` — create a sub-context with isolated state.
-  See `fork` docstring for shared/isolated semantics.
+- `fork(*, state=...)` — create a sub-context with shared resources and
+  optionally isolated state. See `fork` docstring for shared/isolated
+  semantics. Deprecated for scheduler use (ADR-0034 D7: ParallelScheduler
+  passes ctx directly via scratchpad model).
 - `emit(event_type, data)` — convenience for `ctx.runtime.emit(..., ctx)`.
 - `interrupt(value)` — raises `GraphInterrupt(value)` (suspend-without-
   re-execution semantics).
@@ -170,8 +172,12 @@ class GraphContext[S: "GraphState"]:
           state. Imperative mutations (`sub_ctx.state.x = y`) do NOT
           propagate to the parent state unless the caller propagates them.
           If `state=None` is passed (the default), the subtask shares the
-          parent state and mutations propagate directly. `ParallelScheduler`
-          uses per-task context shells that share the same state object.
+          parent state and mutations propagate directly. **Note:**
+          `ParallelScheduler` does NOT call `fork()` — it passes `ctx`
+          directly (scratchpad model, per ADR-0034 D7 refinement). State
+          isolation is via per-node `node_scratch[self.node_id]` keys,
+          not context copying. `fork()` is retained for business-module
+          subtask patterns (e.g. ReAct sub-agent spawning) and tests.
         - **`scheduler_kind` shared** (inherited from parent if
           `scheduler_kind=None`): subtask sees the same scheduler kind.
           Needed so `dispatch` checks the right kind under fan-out.

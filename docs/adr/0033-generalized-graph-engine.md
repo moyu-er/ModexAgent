@@ -225,6 +225,17 @@ call per node execution (negligible).
 
 ### D4 — State model: shared Pydantic `BaseModel` (imperative mutate + full snapshot)
 
+**Scratchpad refinement (2026-08-11):** The shared-state model below
+was replaced with a per-node scratchpad pattern. `GraphState` now
+carries `node_scratch: dict[str, Any]` — each node writes only to
+`node_scratch[self.node_id]`, providing isolation through key
+separation rather than object copying. `copy(ctx)` was removed from
+ParallelScheduler; ctx is passed directly. Cross-node data flows
+through deliver → IntegratedInput exclusively. Framework fields
+(`resume_target`, `result` on `DefaultGraphState`) remain
+framework-managed. The historical shared-state model is preserved
+below for traceability.
+
 **Current contract (2026-08-05 refinement):** State is a plain
 `GraphState(BaseModel)` subclass. Fields are ordinary Pydantic fields —
 no `Annotated[T, ChannelSpec]`, no `LastValue` / `ReducerChannel`, no
@@ -445,6 +456,12 @@ fan-out. Three layers of sharing:
   with care in Phase a; Phase c parallel execution forbids this).
 
 This three-layer semantics is the contract for `Task`-based fan-out.
+
+**DEPRECATED (2026-08-11):** `fork()` is retained on `GraphContext`
+but is never called by schedulers. The scratchpad model (D4
+refinement) replaces fork-based isolation — per-node state lives in
+`node_scratch[self.node_id]`, and `ParallelScheduler` passes `ctx`
+directly without copying.
 
 ### D6 — Routing: deliver / submit (current contract)
 
