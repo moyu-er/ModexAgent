@@ -1,4 +1,5 @@
 -- Workspace DB initial schema.
+-- NOTE: Modifying 001 requires DB rebuild for existing deployments.
 -- Target schema per ADR-0028 (RecordScope base/subclass split, pool removal),
 -- ADR-0029 (epoch-ms timestamps + updated_at triggers), and
 -- ADR-0031 (scope/scope_key merge, dead-table drops, inbox_topics minimization,
@@ -545,3 +546,92 @@ BEGIN
     UPDATE deliver_states SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
     WHERE rowid = NEW.rowid;
 END;
+
+-- ---------------------------------------------------------------------------
+-- 20. session_trees — root anchor for a session execution tree.
+--     One row per tree; root_node_session_id is the spawning session.
+--     status tracks tree lifecycle (active -> completed/cancelled).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS session_trees (
+    tree_id               TEXT    PRIMARY KEY,
+    root_node_session_id  TEXT    NOT NULL,
+    pool_name             TEXT    NOT NULL,
+    workspace_root        TEXT    NOT NULL,
+    scope_key             TEXT    NOT NULL COLLATE BINARY,
+    owner_scope_key       TEXT    NOT NULL COLLATE BINARY,
+    status                TEXT    NOT NULL DEFAULT 'active'
+                          CHECK (status IN ('active', 'completed', 'cancelled')),
+    created_at            INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    updated_at            INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    completed_at          INTEGER
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_session_trees_auto_updated_at
+AFTER UPDATE ON session_trees
+FOR EACH ROW
+WHEN NEW.updated_at IS OLD.updated_at
+BEGIN
+    UPDATE session_trees SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+    WHERE rowid = NEW.rowid;
+END;
+
+-- ---------------------------------------------------------------------------
+-- 21. tree_nodes — node entries within a session tree.
+--     One row per (tree_id, session_id); parent_session_id is NULL for root.
+--     version/parent_version chain node re-invocations. status tracks the
+--     node lifecycle (running -> completed/cancelled).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tree_nodes (
+    tree_id             TEXT    NOT NULL,
+    session_id          TEXT    NOT NULL,
+    parent_session_id   TEXT,
+    agent_name          TEXT    NOT NULL,
+    version             INTEGER NOT NULL DEFAULT 0,
+    parent_version      INTEGER,
+    status              TEXT    NOT NULL DEFAULT 'running'
+                        CHECK (status IN ('running', 'completed', 'cancelled')),
+    scope_key           TEXT    NOT NULL COLLATE BINARY,
+    owner_scope_key     TEXT    NOT NULL COLLATE BINARY,
+    created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    UNIQUE (tree_id, session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tree_nodes_tree    ON tree_nodes (tree_id);
+CREATE INDEX IF NOT EXISTS idx_tree_nodes_session ON tree_nodes (session_id);
+
+CREATE TRIGGER IF NOT EXISTS trg_tree_nodes_auto_updated_at
+AFTER UPDATE ON tree_nodes
+FOR EACH ROW
+WHEN NEW.updated_at IS OLD.updated_at
+BEGIN
+    UPDATE tree_nodes SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+    WHERE rowid = NEW.rowid;
+END;
+
+-- ---------------------------------------------------------------------------
+-- 22. message_tracks — delivery tracking for inter-node routed messages.
+--     message_type is restricted to routed payloads only (task_request,
+--     agent_result); external_input and agent_message do not get tracks.
+--     Short-lived (dispatched -> consumed/cancelled); no updated_at trigger,
+--     mirroring the inbox_delivered_ids append-only pattern.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS message_tracks (
+    track_id            TEXT    PRIMARY KEY,
+    tree_id             TEXT    NOT NULL,
+    message_id          TEXT    NOT NULL,
+    message_type        TEXT    NOT NULL
+                        CHECK (message_type IN ('task_request', 'agent_result')),
+    invocation_id       TEXT,
+    target_session_id   TEXT    NOT NULL,
+    source_session_id   TEXT    NOT NULL,
+    status              TEXT    NOT NULL DEFAULT 'dispatched'
+                        CHECK (status IN ('dispatched', 'consumed', 'cancelled')),
+    scope_key           TEXT    NOT NULL COLLATE BINARY,
+    owner_scope_key     TEXT    NOT NULL COLLATE BINARY,
+    dispatched_at       INTEGER NOT NULL,
+    consumed_at         INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_tracks_tree_status    ON message_tracks (tree_id, status);
+CREATE INDEX IF NOT EXISTS idx_message_tracks_target_session ON message_tracks (target_session_id);
