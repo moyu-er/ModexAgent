@@ -85,7 +85,7 @@ per invocation by pipeline providers, so reuse is safe.)
 | `bus.py` | `AgentMessageBus` ABC + `LocalAgentMessageBus` — persist + signal the pool's `InboxPoller` via `signal_wakeup()` (in-process `Event.set`, the single convergence point for every inbox writer: user input, agent-to-agent, CLI `modexctl send`, external peer reply). `consume(only_types=)` for fold-in filtering; `sessions_with_pending()` for poller enumeration. The poller is wired post-construction via `set_poller()`; until then `send` is persist-only and the poller's tick fallback covers delivery. |
 | `communication/` (package) | `AgentCommunicationService` — pure router. Strategy-dispatched (ADR-0019): `_send` resolves target → `TopologyPolicy.check` → one of three `SendStrategy` subclasses (`SubagentDispatchStrategy`, `ParentReplyStrategy`, `PeerNormalStrategy`) handles the full vertical slice (session construction, invocation_id semantics, envelope shape, delivery, result). See `communication/AGENTS.md` for the strategy contract. |
 | `comm_kind.py` | `AgentCommKind` — `NORMAL` / `SUBAGENT` topology kind. |
-| `tools.py` | `TaskDispatchTool` (main agent's sole external communication tool: subagent dispatch + continuation + peer communication, fused from the former `SendToAgentTool` + `TaskDispatchTool` split) + `SendToAgentTool` (subagent→parent consultation only) + `CommunicationTargetStore`, `CommunicationTarget` (carries `pool_name` + `bus_ref` for cross-pool routing per ADR-0019). Both tools converge on `AgentCommunicationService.send_async()`. |
+| `tools.py` | `TaskDispatchTool` (main agent's sole external communication tool: subagent dispatch + continuation + peer communication, fused from the former `SendToAgentTool` + `TaskDispatchTool` split) + `SendToAgentTool` (subagent→parent consultation only) + `CommunicationTargetStore`, `CommunicationTarget` (carries `pool_name` + `tree_ref` for cross-pool routing per ADR-0019). Both tools converge on `AgentCommunicationService.send_async()`. |
 | `template.py` | `AgentTemplate` — subagent preset + the **only** construction path (`materialize`). Builds the tool manager, session-only memory, subagent hooks; wires per-invocation APPEND/FORK prompt providers. |
 | `template_registry.py` | `AgentTemplateRegistry` — scans/loads per-pool subagent templates (`config/pools/<pool>/templates/*.yml`). |
 | `materialize_deps.py` | `AgentMaterializeDeps` — frozen value object of construction deps (factory, broker, pool, path resolver, fork builder, …); replaces ~30 scattered ctor params. |
@@ -104,7 +104,7 @@ per invocation by pipeline providers, so reuse is safe.)
 | Directory | Purpose |
 |-----------|---------|
 | `inbox/` | Inbox subsystem — `InboxMQ` ABC (`InboxServer` is a deprecated alias) + `LocalFileInboxMQ` / `InMemoryInboxServer`, `InboxProducer` / `InboxConsumer` (local-cache dedup). `DeliveredIdTracker` is deprecated (merged into `InboxMQ` internal in T11). Pure MQ: persist + atomic FIFO consume (with `only_types` filter and `sessions_with_pending`); no orchestration. SQLite adapter: `SqliteInboxMQ` (`modex_agent.persistence.adapters`). |
-| `communication/` | Strategy-dispatched inter-agent messaging package (ADR-0019). `service.py` (thin orchestrator) → `TopologyPolicy.check` → `SendStrategy.execute` template method. Three concrete strategies: `SubagentDispatchStrategy` (NORMAL→SUBAGENT), `ParentReplyStrategy` (SUBAGENT→parent), `PeerNormalStrategy` (NORMAL→peer-NORMAL cross-pool via `target.bus_ref`). `result.py` holds `AgentSendResult` + `format_send_ack`. |
+| `communication/` | Strategy-dispatched inter-agent messaging package (ADR-0019). `service.py` (thin orchestrator) → `TopologyPolicy.check` → `SendStrategy.execute` template method. Three concrete strategies: `SubagentDispatchStrategy` (NORMAL→SUBAGENT), `ParentReplyStrategy` (SUBAGENT→parent), `PeerNormalStrategy` (NORMAL→peer-NORMAL cross-pool via `target.tree_ref`). `result.py` holds `AgentSendResult` + `format_send_ack`. |
 
 ## Communication Contract
 
@@ -137,13 +137,13 @@ per invocation by pipeline providers, so reuse is safe.)
   - `invocation_id` omitted → mint a new subagent task session (cold-start; the
     poller materializes on first turn).
   - `invocation_id` concrete → continue that subagent session verbatim.
-  - `target.bus_ref` set → cross-pool peer send (ADR-0019): delivers directly to
-    the peer pool's `AgentMessageBus`; `invocation_id` is hidden from the
+  - `target.tree_ref` set → cross-pool peer send (ADR-0019): delivers directly to
+    the peer pool's tree via `target.tree_ref`; `invocation_id` is hidden from the
     sender's ack and the receiver's XML.
   - Star topology is enforced in `TopologyPolicy.check`: a subagent sender may
     only target its own parent; subagent→subagent is rejected.
-- **The subagent reply path converges on the same bus.** `SubagentAutoSendHook`
-  (`hook/builtin/`) fires on `FINALLY_GRAPH` and calls `bus.send(parent_sid,
+- **The subagent reply path converges on the same tree.** `SubagentAutoSendHook`
+  (`hook/builtin/`) fires on `FINALLY_GRAPH` and calls `tree.deliver(parent_sid,
   agent_result envelope)` — the same carrier as `task`/`send_to_agent`. It does not
   hand-build envelopes or call a parallel mechanism. The notification carries
   absolute, workspace-rooted trace/output paths (parity with the `task`
@@ -164,7 +164,7 @@ removed. Do not add compatibility wrappers.
 Each pool owns its own `InboxMQ` (own storage dir
 `<workspace_data>/inbox/<pool_name>/`), `LocalAgentMessageBus`, and
 `InboxPoller`. The `MessageBroker` stays workspace/bot-level for cross-pool
-peer routing (ADR-0019 `bus_ref`); it no longer carries an `_inbox_wakeup`
+peer routing (ADR-0019 `tree_ref`); it no longer carries an `_inbox_wakeup`
 signal — between-turn wakeup is now an in-process `asyncio.Event` on the
 poller, signalled from `LocalAgentMessageBus.send`.
 `session_id` is unique within a pool, so the inbox keys by bare
@@ -172,13 +172,13 @@ poller, signalled from `LocalAgentMessageBus.send`.
 exactly one workspace).
 
 **Cross-pool exception (ADR-0019):** the framework gains an *optional* routing
-primitive — `CommunicationTarget.bus_ref` (an `AgentMessageBus | None` field).
+primitive — `CommunicationTarget.tree_ref` (a `SessionTreeManager | None` field).
 When the business layer wires peer pools, it populates each pool's
-`CommunicationTargetStore` with peer main-agent entries whose `bus_ref` points
-at the peer pool's bus. `PeerNormalStrategy.deliver` reads `bus_ref` and calls
-`bus.send()` on it directly — this is the ONLY cross-pool messaging path. The
+`CommunicationTargetStore` with peer main-agent entries whose `tree_ref` points
+at the peer pool's tree. `PeerNormalStrategy.deliver` reads `tree_ref` and calls
+`tree.deliver()` on it directly — this is the ONLY cross-pool messaging path. The
 framework itself has no "peer pool" concept; it only sees "the target carries an
-optional bus reference; deliver there if set, else local bus". With no peer
+optional tree reference; deliver there if set, else local tree". With no peer
 wiring configured, behaviour is byte-for-byte identical to single-pool
 operation. Peer wiring is performed in a post-assembly phase (Phase 2) by the
 business layer (`examples/bot_project/bot/workspace/wiring.py`), after all pools
