@@ -89,23 +89,22 @@ class CompiledGraph(Node[S]):
         with the parent. The subgraph's terminal node writes its result to
         a state field; the parent reads it after this `execute` returns.
 
-        The dispatch handler, current_instance, and current_invocation are
-        saved and restored so the inner scheduler does not clobber the
-        outer scheduler's routing state.
+        The dispatch handler is saved and restored so the inner scheduler
+        does not clobber the outer scheduler's routing. Invocation identity
+        (instance_id, current_invocation) is handled automatically by the
+        ContextVar-based execution context — token-based reset in
+        ``Node.run()`` restores the parent's value when the subgraph
+        finishes.
         """
         from .engine import GraphEngine
 
         saved_dispatch_handler = ctx._dispatch_handler
-        saved_current_instance = ctx._current_instance
-        saved_current_invocation = ctx.current_invocation
 
         engine: GraphEngine[S] = GraphEngine(self)
         try:
             await engine.run_async(ctx)
         finally:
             ctx.set_dispatch_handler(saved_dispatch_handler)
-            ctx.set_current_instance(saved_current_instance)
-            ctx.current_invocation = saved_current_invocation
         return None
 
     # ── Edge lookup helpers (used by GraphEngine) ──────────────────────

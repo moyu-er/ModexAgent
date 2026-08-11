@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..constants import GraphNode, SchedulerKind
 from ..exceptions import GraphRecursionError, RoutingError, UndeliveredError
+from ..execution_context import NodeExecution, reset_execution, set_execution
 from ._dispatch_utils import route_deliver_from_dispatch, validate_dispatch_target
 from .base import Scheduler
 from .bootstrap import bootstrap
@@ -96,27 +97,22 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
 
             # Reset per-node dispatch records before executing.
             self._dispatches = {}
-            ctx.set_current_instance(current)
 
             node = self.graph.nodes[current]
 
-            await ctx.runtime.before_node(ctx, current)
+            node_exec = NodeExecution(instance_id=current)
+            exec_token = set_execution(node_exec)
 
-            # Execute via run() — pass graph topology so _resolve_default_target
-            # can resolve next_node=None. Upstream payloads flow through
-            # coordinator.collect_consumable_delivers. The dispatch
-            # handler calls coordinator.route_deliver to route delivers to
-            # the target node's deliver_store.
             try:
-                await node.run(
-                    ctx,
-                    graph=self.graph,
-                )
-            except UndeliveredError:
-                ctx.reached_end = False
-                break
-
-            await ctx.runtime.after_node(ctx, current)
+                await ctx.runtime.before_node(ctx, current)
+                try:  # noqa: SIM105
+                    await node.run(ctx, graph=self.graph)
+                except UndeliveredError:
+                    ctx.reached_end = False
+                    break
+                await ctx.runtime.after_node(ctx, current)
+            finally:
+                reset_execution(exec_token)
 
             if current == GraphNode.END:
                 break
@@ -132,7 +128,6 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
 
             iteration += 1
 
-        ctx.set_current_instance(None)
         return ctx.state
 
     def _handle_linear_dispatch(

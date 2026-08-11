@@ -481,12 +481,17 @@ class TestMaxIterations:
 
 class TestExecutionContextShell:
     async def test_before_node_does_not_observe_parent_invocation(self) -> None:
+        from modex_graph.execution_context import get_execution
+
         class InvocationCapturingRuntime(GraphRuntime):
             def __init__(self) -> None:
                 self.before_invocations: list[InvocationContext | None] = []
 
             async def before_node(self, ctx: GraphContext[Any], node_name: str) -> None:
-                self.before_invocations.append(ctx.current_invocation)
+                exec_ctx = get_execution()
+                self.before_invocations.append(
+                    exec_ctx.invocation if exec_ctx is not None else None
+                )
 
         g: Graph[CounterState] = Graph()
         g.add_node("a", DispatchAddNode(amount=1, target=GraphNode.END))
@@ -494,18 +499,11 @@ class TestExecutionContextShell:
         g.add_edge("a", GraphNode.END)
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
         runtime = InvocationCapturingRuntime()
-        parent_invocation = InvocationContext(
-            invocation_id=99,
-            node_id="parent",
-            version=1,
-            parent_version=None,
-        )
         ctx = GraphContext(
             state=CounterState(),
             runtime=runtime,
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
-            current_invocation=parent_invocation,
         )
 
         await ParallelScheduler(compiled).run_async(ctx)
@@ -552,10 +550,12 @@ class TestGraphContextDispatch:
             ctx.dispatch("target")
 
     def test_set_dispatch_handler(self) -> None:
-        calls: list[tuple[str, str, dict[str, Any] | None]] = []
+        from modex_graph.execution_context import NodeExecution, set_execution, reset_execution
 
-        def handler(source: str, target: str, payload: dict[str, Any] | None) -> None:
-            calls.append((source, target, payload))
+        calls: list[tuple[str, str, Any]] = []
+
+        def handler(s: str, t: str, p: dict[str, Any] | None) -> None:
+            calls.append((s, t, p))
 
         ctx = GraphContext(
             state=CounterState(),
@@ -563,21 +563,14 @@ class TestGraphContextDispatch:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
             dispatch_handler=handler,
-            current_instance="a#0",
         )
-        ctx.dispatch("b", {"key": "val"})
+        exec_ctx = NodeExecution(instance_id="a#0")
+        token = set_execution(exec_ctx)
+        try:
+            ctx.dispatch("b", {"key": "val"})
+        finally:
+            reset_execution(token)
         assert calls == [("a#0", "b", {"key": "val"})]
-
-    def test_set_current_instance(self) -> None:
-        ctx = GraphContext(
-            state=CounterState(),
-            runtime=make_runtime(),
-            coordinator=make_coordinator(),
-            scheduler_kind=SchedulerKind.PARALLEL,
-        )
-        assert ctx._current_instance is None
-        ctx.set_current_instance("llm#2")
-        assert ctx._current_instance == "llm#2"
 
     def test_fork_inherits_dispatch_handler(self) -> None:
         def handler(s: str, t: str, p: dict[str, Any] | None) -> None:
@@ -593,13 +586,14 @@ class TestGraphContextDispatch:
         sub = ctx.fork(state=CounterState())
         assert sub._dispatch_handler is handler
 
-    def test_fork_does_not_inherit_current_instance(self) -> None:
+    def test_fork_does_not_inherit_dispatch_identity(self) -> None:
+        """A forked context has no active execution — dispatch identity
+        comes from the ContextVar, not from fork parameters."""
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_runtime(),
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
-            current_instance="a#0",
         )
         sub = ctx.fork(state=CounterState())
         assert sub._current_instance is None

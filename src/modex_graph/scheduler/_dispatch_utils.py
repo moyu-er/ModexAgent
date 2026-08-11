@@ -59,24 +59,17 @@ def route_deliver_from_dispatch[S: "GraphState"](
     Extracts ``delivered`` content from ``state_update``, then calls
     ``coordinator.route_deliver``. The ``source_node_id`` is always derived
     from the corrected ``source_node_name`` (not from the payload's
-    ``_source_node`` field) — under ``ParallelScheduler``, concurrent
-    tasks share ``ctx.current_invocation`` which can be clobbered when one
-    task yields and another overwrites it (ADR-0034 D7 scratchpad model).
-    The ``source_node_name`` is corrected by ``_handle_dispatch`` via the
-    ``_task_to_instance`` map, so it is authoritative. The ``_source_inv_id``
-    from the payload is retained as metadata (best-effort; may be stale
-    under concurrent execution — a ``_task_to_invocation`` map would be
-    needed to correct it, deferred as future work).
+    ``_source_node`` field). Under ``ParallelScheduler``, the source
+    instance is resolved from the invocation-local ContextVar
+    (``execution_context``), which is task-local and never clobbered.
+    The ``_source_inv_id`` from the payload is retained as metadata
+    (best-effort; may be stale under concurrent execution).
 
     Returns the ``deliver_id`` from ``route_deliver`` (or ``None``).
     """
     if target == GraphNode.END:
         ctx.reached_end = True
     content = state_update.get("delivered") if state_update else None
-    # Always derive source_node_id from the corrected source_node_name.
-    # Do NOT read _source_node from the payload — it comes from
-    # ctx.current_invocation which can be clobbered under concurrent
-    # execution (scratchpad model, no copy(ctx)).
     source_node_id = graph.nodes[source_node_name].node_id
     source_inv_id = state_update.get("_source_inv_id", 0) if state_update else 0
     target_node_id = graph.nodes[target].node_id

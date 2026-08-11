@@ -21,6 +21,7 @@ from ..constants import (
     SchedulerKind,
 )
 from ..exceptions import GraphRecursionError, RoutingError, UndeliveredError
+from ..execution_context import NodeExecution, reset_execution, set_execution
 from ._dispatch_utils import route_deliver_from_dispatch, validate_dispatch_target
 from .base import Scheduler
 from .bootstrap import bootstrap
@@ -92,12 +93,6 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         # Store scans must not reschedule delivers already handled by in-memory dispatch.
         self._scheduled_deliver_ids: set[int] = set()
         self._wakeup: asyncio.Event | None = None
-        # Maps asyncio tasks to their instance IDs for correct dispatch source
-        # identification. Concurrent async instances share ctx._current_instance
-        # (scratchpad model, no copy(ctx)), which gets clobbered when one task
-        # yields and another overwrites it. _handle_dispatch uses
-        # asyncio.current_task() + this map to find the real source instance.
-        self._task_to_instance: dict[asyncio.Task[None], str] = {}
 
     # ── Scheduler ABC implementation ───────────────────────────────────
 
@@ -138,7 +133,6 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         self._scheduled_deliver_ids = set()
         self._iteration_count = 0
         self._instance_seq = 0
-        self._task_to_instance = {}
 
         # Unified bootstrap: query store -> produce seed node names.
         # Restores ctx.state and auto-promotes CONSUMED_PENDING delivers.
@@ -174,7 +168,6 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
                     self._ready.discard(iid)
 
                     task = asyncio.create_task(self._execute_instance(iid, ctx))
-                    self._task_to_instance[task] = iid
                     running[task] = iid
 
                 if not running:
@@ -198,7 +191,6 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
                     if task is wakeup_wait:
                         continue
                     iid = running.pop(task)
-                    self._task_to_instance.pop(task, None)
                     try:
                         task.result()
                     except Exception:
@@ -218,7 +210,6 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
             if running:
                 await asyncio.gather(*running, return_exceptions=True)
 
-        ctx.set_current_instance(None)
         return ctx.state
 
     async def _wait_for_wakeup(self) -> None:
@@ -286,38 +277,18 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
 
         node = self.graph.nodes[instance.node_name]
 
-        exec_ctx = ctx
-        # Both _current_instance and current_invocation are shared on ctx
-        # and clobbered when concurrent tasks yield. _handle_dispatch
-        # corrects _current_instance via _task_to_instance; source_node_id
-        # in delivers is derived from the corrected source_node_name (not
-        # from the clobbered current_invocation) in route_deliver_from_dispatch.
-        exec_ctx.set_current_instance(instance_id)
-        exec_ctx.current_invocation = None
+        node_exec = NodeExecution(instance_id=instance_id)
+        exec_token = set_execution(node_exec)
 
-        # Engine-auto-invoked lifecycle hook (D5: before_node).
-        await exec_ctx.runtime.before_node(exec_ctx, instance.node_name)
-
-        # Execute via run() — pass graph topology. _submit dispatches (via
-        # ctx.dispatch) happen inside run(). UndeliveredError (dead-end node
-        # that exhausted max_retry without delivering) is caught here so the
-        # graph continues — the dead-end instance is treated as done and
-        # reached_end stays False, producing FAILED at the orchestrator level.
-        # _handle_dispatch only creates DORMANT instances and marks READY;
-        # GraphBubbleUp exceptions propagate — NOT caught here.
-        # Upstream payloads flow through coordinator.collect_consumable_delivers.
-        # The dispatch handler calls coordinator.route_deliver to route
-        # delivers to the target node's deliver_store.
-        try:  # noqa: SIM105
-            await node.run(
-                exec_ctx,
-                graph=self.graph,
-            )
-        except UndeliveredError:
-            pass
-
-        # Engine-auto-invoked lifecycle hook (D5: after_node).
-        await exec_ctx.runtime.after_node(exec_ctx, instance.node_name)
+        try:
+            await ctx.runtime.before_node(ctx, instance.node_name)
+            try:  # noqa: SIM105
+                await node.run(ctx, graph=self.graph)
+            except UndeliveredError:
+                pass
+            await ctx.runtime.after_node(ctx, instance.node_name)
+        finally:
+            reset_execution(exec_token)
 
         instance.status = NodeInstanceStatus.COMPLETED
         self._active.discard(instance_id)
@@ -351,25 +322,16 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
              instance, the dispatch queues in a per-node FIFO and fires
              when the in-flight instance completes. Reachability is NOT
              checked.
-           - `ON_ALL_PREDS`: record the dispatch in the per-target pending
-             queue. When every activated source has at least one dispatch
-             AND reachability is clear, consume one dispatch per source
-             and create one instance (READY). Otherwise leave queued.
+            - `ON_ALL_PREDS`: record the dispatch in the per-target pending
+              queue. When every activated source has at least one dispatch
+              AND reachability is clear, consume all pending dispatches
+              and create one instance (READY). Otherwise leave queued.
 
         The reachability BFS (`_can_reach_active`) is the safety gate for
         ON_ALL_PREDS: a node never becomes READY while any
         PENDING/READY/RUNNING instance (excluding the candidate itself)
         can reach it along declared outgoing edges.
         """
-        try:
-            current_task = asyncio.current_task()
-        except RuntimeError:
-            current_task = None
-        if current_task is not None:
-            task_iid = self._task_to_instance.get(current_task)
-            if task_iid is not None:
-                source_instance = task_iid
-
         source_instance_obj = self._instances.get(source_instance)
         if source_instance_obj is None:
             raise RoutingError(f"Dispatch from unknown instance {source_instance!r}.")
