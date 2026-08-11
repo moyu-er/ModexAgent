@@ -8,7 +8,7 @@ import { ApiError } from "../../lib/api";
 const SPEC_YAML = `name: test_wf
 version: "1.0"
 scheduler: linear
-default_trigger: on_receive
+default_trigger: on_all_preds
 nodes:
   - name: worker
     node_type: agent

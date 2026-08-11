@@ -14,26 +14,23 @@ version: "1.0"
 state_class: default
 scheduler: parallel
 max_iterations: 50
-default_trigger: on_receive
+default_trigger: on_all_preds
 nodes:
   - name: designer
     node_type: agent
     config:
       agent: designer
       pool: review
-    trigger: on_receive
   - name: implementer
     node_type: agent
     config:
       agent: implementer
       pool: review
-    trigger: on_receive
   - name: reviewer
     node_type: agent
     config:
       agent: reviewer
       pool: review
-    trigger: on_receive
 edges:
   - source: __start__
     target: designer

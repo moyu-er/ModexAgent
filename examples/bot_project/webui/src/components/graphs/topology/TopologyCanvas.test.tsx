@@ -16,7 +16,7 @@ import type { ParsedGraphTopology } from "../yaml/parseGraphSpec";
 const TOPOLOGY: ParsedGraphTopology = {
   name: "review_workflow",
   scheduler: "parallel",
-  defaultTrigger: "on_receive",
+  defaultTrigger: "on_all_preds",
   entryNode: "__start__",
   nodes: [
     { name: "__start__", nodeType: "__start__", config: {} },

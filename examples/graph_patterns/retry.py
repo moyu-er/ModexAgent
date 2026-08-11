@@ -100,11 +100,12 @@ class _RetryBodyWrapper[S: GraphState](Node[S]):
     5. If ``is_failure(ctx.state)`` and counter >= ``max_retries``: delivers
        to ``GraphNode.END`` (exhaustion).
 
-    The counter lives in ``ctx.state.node_scratch[self.node_id]`` —
-    graph-run-scoped (persists across self-loop invocations within one
-    run, resets to 0 on the next run because each run gets a fresh
-    ``ctx.state``). Safe under the per-node serial gate (same ``Node``
-    object never executes concurrently under either scheduler).
+    The counter lives in ``ctx.scratch`` (the current node's scoped
+    region of ``ctx.state.node_scratch[self.node_id]``) — graph-run-scoped
+    (persists across self-loop invocations within one run, resets per
+    run because each run gets a fresh ``ctx.state``). Safe under the
+    per-node serial gate (same ``Node`` object never executes
+    concurrently under either scheduler).
     """
 
     def __init__(
@@ -118,11 +119,10 @@ class _RetryBodyWrapper[S: GraphState](Node[S]):
         self.is_failure = is_failure
 
     async def execute(self, ctx: GraphContext[S], integrated_input: IntegratedInput) -> None:
-        scratch = ctx.state.node_scratch
-        attempt = scratch.get(self.node_id, 0)
+        attempt = ctx.scratch.get("attempt", 0)
         await self.body.execute(ctx, integrated_input)
         attempt += 1
-        scratch[self.node_id] = attempt
+        ctx.scratch["attempt"] = attempt
         if not self.is_failure(ctx.state):
             self.deliver(None, GraphNode.END, ctx)
             return None

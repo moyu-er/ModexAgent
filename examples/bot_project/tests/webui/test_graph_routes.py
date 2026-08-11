@@ -729,7 +729,7 @@ def _save_spec_with_nodes(spec_store: InMemoryGraphSpecStore) -> int:
         name="topo-graph",
         state_class="default",
         scheduler="parallel",
-        default_trigger=NodeTrigger.ON_RECEIVE,
+        default_trigger=NodeTrigger.ON_ALL_PREDS,
         nodes=[
             NodeSpec(
                 name="designer",
@@ -766,7 +766,7 @@ async def test_get_topology_returns_structure(tmp_path: Path) -> None:
         assert data["spec_id"] == str(spec_id)
         assert data["name"] == "topo-graph"
         assert data["scheduler"] == "parallel"
-        assert data["default_trigger"] == "on_receive"
+        assert data["default_trigger"] == "on_all_preds"
         assert data["entry_node"] == "__start__"
         # 2 declared functional nodes
         node_names = [n["name"] for n in data["nodes"]]

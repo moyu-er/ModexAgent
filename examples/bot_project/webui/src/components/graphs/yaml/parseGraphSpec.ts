@@ -53,7 +53,7 @@ export interface ParsedEdge {
 export interface ParsedGraphTopology {
   name: string;
   scheduler: "linear" | "parallel";
-  defaultTrigger: "on_receive" | "on_all_preds";
+  defaultTrigger: "on_all_preds";
   nodes: ParsedNode[];
   edges: ParsedEdge[];
   /** 图入口 — 固定为 "__start__"。 */
@@ -100,7 +100,7 @@ const NODE_KEYS = ["name", "node_type", "config", "trigger"] as const;
 const EDGE_KEYS = ["source", "target"] as const;
 
 const SCHEDULERS = ["linear", "parallel"] as const;
-const TRIGGERS = ["on_receive", "on_all_preds"] as const;
+const TRIGGERS = ["on_all_preds"] as const;
 
 type Ctx = { lineCounter: LineCounter };
 
@@ -215,6 +215,14 @@ function parseNode(ctx: Ctx, raw: unknown, index: number): ParsedNode {
     const trigger = scalarString(triggerPair.value);
     if (trigger === null) {
       fail(ctx, "'trigger' must be a string", `${path}.trigger`, triggerPair.value as YamlNode);
+    }
+    if (!(TRIGGERS as readonly string[]).includes(trigger)) {
+      fail(
+        ctx,
+        `'trigger' must be one of: ${TRIGGERS.join(", ")}`,
+        `${path}.trigger`,
+        triggerPair.value as YamlNode,
+      );
     }
     node.trigger = trigger;
   }

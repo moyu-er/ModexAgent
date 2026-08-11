@@ -142,7 +142,7 @@ def _compile(g: Graph[DefaultGraphState]) -> Any:
         max_iterations=50,
         cycle_detection="off",
         scheduler=SchedulerKind.PARALLEL,
-        default_trigger=NodeTrigger.ON_RECEIVE,
+        default_trigger=NodeTrigger.ON_ALL_PREDS,
     )
 
 
@@ -168,7 +168,7 @@ class TestSpecLoads:
         spec = GraphSpec.model_validate(raw)
         assert spec.name == "review_workflow"
         assert spec.scheduler == SchedulerKind.PARALLEL
-        assert spec.default_trigger == NodeTrigger.ON_RECEIVE
+        assert spec.default_trigger == NodeTrigger.ON_ALL_PREDS
         assert spec.max_iterations == 50
         assert len(spec.nodes) == 3
         assert len(spec.edges) == 5
@@ -214,7 +214,7 @@ class TestTopologyCompiles:
             compiled = g.compile(
                 max_iterations=50,
                 scheduler=SchedulerKind.PARALLEL,
-                default_trigger=NodeTrigger.ON_RECEIVE,
+                default_trigger=NodeTrigger.ON_ALL_PREDS,
             )
         assert compiled is not None
 
@@ -431,7 +431,7 @@ class TestE2EStepFun:
             max_iterations=15,
             cycle_detection="off",
             scheduler=SchedulerKind.PARALLEL,
-            default_trigger=NodeTrigger.ON_RECEIVE,
+            default_trigger=NodeTrigger.ON_ALL_PREDS,
         )
 
         coord = _make_coordinator(compiled)
@@ -700,7 +700,7 @@ class TestE2EReviewLoopWithMemory:
             max_iterations=15,
             cycle_detection="off",
             scheduler=SchedulerKind.PARALLEL,
-            default_trigger=NodeTrigger.ON_RECEIVE,
+            default_trigger=NodeTrigger.ON_ALL_PREDS,
         )
 
         coord = _make_coordinator(compiled)

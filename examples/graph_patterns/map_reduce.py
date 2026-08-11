@@ -10,10 +10,12 @@ Pure deliver dataflow: no shared state accumulator.
 - `ReduceNode` reads all worker results from `IntegratedInput.payloads`,
   applies the reducer, and delivers the reduced result to END.
 
-Under `LinearScheduler`, multiple delivers to the same target group into a
-single worker execution (the worker reads items from `integrated_input`).
-Under `ParallelScheduler`, each deliver creates a separate worker instance
-receiving the item via `integrated_input`.
+Under both `LinearScheduler` and `ParallelScheduler` with `ON_ALL_PREDS`
+(the stable trigger), multiple delivers to the same target batch into a
+single worker invocation — the worker reads all items from
+`integrated_input.payloads` and delivers one result per item to reduce.
+This is the recommended batch semantics: `IntegratedInput` is a batch of
+causal payloads, not exactly one deliver.
 
 This is example code (lives under `examples/` per ADR-0007 rule 9). It
 uses only the public `modex_graph` API — no framework-internal hooks, no
@@ -44,8 +46,9 @@ class MapNode[S: GraphState](Node[S]):
     """Fan-out node: delivers each item to the worker node.
 
     `execute` reads `items_fn(ctx.state)` to get a list of items, then
-    calls `deliver(item, worker_node, ctx)` for each. Under
-    `ParallelScheduler`, each deliver creates a separate worker instance.
+    calls `deliver(item, worker_node, ctx)` for each. Under `ON_ALL_PREDS`
+    (the stable trigger), all delivers batch into a single worker
+    invocation — the worker reads items from `integrated_input.payloads`.
 
     When the items list is empty, delivers a single `None` to the worker
     so the worker fires and forwards to reduce — ensuring reduce always
@@ -120,8 +123,10 @@ def build_map_reduce_graph[S: GraphState](
     - ``map`` is a `MapNode` that delivers each item to ``worker``.
     - Workers must call `self.deliver(result, 'reduce', ctx)` to send
       results to Reduce. Workers do NOT write to shared state.
-      Under `LinearScheduler`, one execution processes all items; under
-      `ParallelScheduler`, one instance per item.
+      Under `ON_ALL_PREDS` (the stable trigger), all items batch into a
+      single worker invocation — the worker reads items from
+      `integrated_input.payloads` and delivers one result per item to
+      reduce.
     - ``reduce`` reads all worker results from `IntegratedInput.payloads`,
       applies `reducer(values)`, and delivers the reduced result to END.
 

@@ -11,9 +11,10 @@ Verifies:
 - ``build_retry_graph`` does not raise ``GraphRecursionError`` when
   ``max_iterations`` is set appropriately.
 
-The retry counter lives in ``ctx.state.node_scratch[self.node_id]``
-(graph-run-scoped, resets per run). Tests assert on ``result.attempts``
-(body call count written by the body node itself).
+The retry counter lives in ``ctx.scratch`` (the current node's scoped
+region of ``ctx.state.node_scratch[self.node_id]``, graph-run-scoped,
+resets per run). Tests assert on ``result.attempts`` (body call count
+written by the body node itself).
 """
 
 from __future__ import annotations

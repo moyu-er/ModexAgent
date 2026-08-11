@@ -45,7 +45,7 @@ const SPEC_YAML = `
 name: review_workflow
 version: "1.0"
 scheduler: parallel
-default_trigger: on_receive
+default_trigger: on_all_preds
 nodes:
   - name: designer
     node_type: agent
@@ -199,7 +199,7 @@ describe("GraphExecutionViewer — layout", () => {
     expect(within(summaryBar).getByText(/1\/2 nodes/)).toBeTruthy();
     // Scheduler and trigger mode from topology
     expect(within(summaryBar).getByText("parallel")).toBeTruthy();
-    expect(within(summaryBar).getByText("on_receive")).toBeTruthy();
+    expect(within(summaryBar).getByText("on_all_preds")).toBeTruthy();
   });
 
   it("renders canvas legend overlay", async () => {

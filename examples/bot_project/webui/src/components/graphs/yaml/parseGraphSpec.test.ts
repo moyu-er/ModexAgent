@@ -29,31 +29,28 @@ version: "1.0"
 state_class: default
 scheduler: parallel
 max_iterations: 50
-default_trigger: on_receive
+default_trigger: on_all_preds
 metadata:
   description: >-
     Designer → Implementer → Reviewer workflow with conditional routing.
     Reviewer loops back to Implementer for revisions or delivers to END
-    for approval. Uses parallel scheduling with ON_RECEIVE trigger.
+    for approval. Uses parallel scheduling with ON_ALL_PREDS trigger.
 nodes:
   - name: designer
     node_type: agent
     config:
       agent: designer
       pool: review
-    trigger: on_receive
   - name: implementer
     node_type: agent
     config:
       agent: implementer
       pool: review
-    trigger: on_receive
   - name: reviewer
     node_type: agent
     config:
       agent: reviewer
       pool: review
-    trigger: on_receive
 edges:
   - source: __start__
     target: designer
@@ -87,7 +84,7 @@ describe("parseGraphSpecYaml", () => {
 
     expect(topo.name).toBe("review_workflow");
     expect(topo.scheduler).toBe("parallel");
-    expect(topo.defaultTrigger).toBe("on_receive");
+    expect(topo.defaultTrigger).toBe("on_all_preds");
     expect(topo.entryNode).toBe("__start__");
 
     // 节点顺序:__start__ 置顶、声明节点居中、__end__ 置尾
@@ -109,7 +106,6 @@ describe("parseGraphSpecYaml", () => {
       name: "designer",
       nodeType: "agent",
       config: { agent: "designer", pool: "review" },
-      trigger: "on_receive",
     });
     // 虚拟端点无 config/trigger
     expect(topo.nodes[0]).toEqual({ name: "__start__", nodeType: "__start__", config: {} });
