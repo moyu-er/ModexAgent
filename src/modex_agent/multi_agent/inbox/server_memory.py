@@ -48,11 +48,12 @@ class InMemoryInboxServer(InboxMQ):
     ) -> list[InboxMessage]:
         async with self._lock:
             pending = self._pending.get(session_id, [])
+            taken: list[InboxMessage]
             if only_types is None:
                 taken = pending[:limit]
                 self._pending[session_id] = pending[limit:]
             else:
-                taken: list[InboxMessage] = []
+                taken = []
                 kept: list[InboxMessage] = []
                 for m in pending:
                     if len(taken) < limit and m.message_type in only_types:
@@ -70,6 +71,13 @@ class InMemoryInboxServer(InboxMQ):
     async def peek(self, session_id: str) -> list[InboxMessage]:
         async with self._lock:
             return list(self._pending.get(session_id, []))
+
+    async def contains_pending(self, session_id: str, message_id: str) -> bool:
+        async with self._lock:
+            return any(
+                message.message_id == message_id
+                for message in self._pending.get(session_id, [])
+            )
 
     async def count(self, session_id: str) -> int:
         async with self._lock:

@@ -183,6 +183,16 @@ class SqliteInboxMQ(InboxMQ):
         )
         return [self._row_to_message(row) for row in rows]
 
+    async def contains_pending(self, session_id: str, message_id: str) -> bool:
+        conn = self._require_connection()
+        scope_key = self._scope_key(session_id)
+        row = await conn.query_one(
+            "SELECT 1 FROM inbox_messages "
+            "WHERE scope_key = ? AND message_id = ? AND state = 'pending' LIMIT 1",
+            (scope_key, message_id),
+        )
+        return row is not None
+
     async def count(self, session_id: str) -> int:
         """Return the number of pending messages for ``session_id``."""
         conn = self._require_connection()

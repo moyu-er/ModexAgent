@@ -92,6 +92,11 @@ class InboxMQ(ABC):
         ...
 
     @abstractmethod
+    async def contains_pending(self, session_id: str, message_id: str) -> bool:
+        """Return whether ``message_id`` is pending for ``session_id``."""
+        ...
+
+    @abstractmethod
     async def count(self, session_id: str) -> int:
         """Return the number of pending messages for ``session_id``."""
         ...

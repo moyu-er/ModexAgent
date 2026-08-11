@@ -82,6 +82,17 @@ class TestInboxMQConformance:
         # peek does not consume
         assert await mq.count("s1") == 1
 
+    async def test_contains_pending_true_before_consume(self, mq: InboxMQ) -> None:
+        await mq.receive("s1", _msg(mid="m1"))
+
+        assert await mq.contains_pending("s1", "m1") is True
+
+    async def test_contains_pending_false_after_consume(self, mq: InboxMQ) -> None:
+        await mq.receive("s1", _msg(mid="m1"))
+        await mq.consume("s1")
+
+        assert await mq.contains_pending("s1", "m1") is False
+
     async def test_consume_removes_messages(self, mq: InboxMQ) -> None:
         await mq.receive("s1", _msg(mid="m1"))
         await mq.receive("s1", _msg(mid="m2"))

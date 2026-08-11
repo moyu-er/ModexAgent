@@ -146,14 +146,16 @@ class LocalFileInboxMQ(InboxMQ):
                 return []
 
             text = pending_path.read_text(encoding="utf-8")
-            lines = [l for l in text.strip().split("\n") if l.strip()]
+            lines = [line for line in text.strip().split("\n") if line.strip()]
 
+            consume_lines: list[str]
+            remain_lines: list[str]
             if only_types is None:
                 consume_lines = lines[:limit]
                 remain_lines = lines[limit:]
             else:
-                consume_lines: list[str] = []
-                remain_lines: list[str] = []
+                consume_lines = []
+                remain_lines = []
                 for line in lines:
                     data = json.loads(line)
                     if len(consume_lines) < limit and data.get("message_type") in only_types:
@@ -213,6 +215,16 @@ class LocalFileInboxMQ(InboxMQ):
                 )
             )
         return messages
+
+    async def contains_pending(self, session_id: str, message_id: str) -> bool:
+        pending_path = self._pending_path(self._session_dir(session_id))
+        async with self._get_lock(session_id):
+            if not pending_path.exists():
+                return False
+            for line in pending_path.read_text(encoding="utf-8").splitlines():
+                if line.strip() and json.loads(line).get("message_id") == message_id:
+                    return True
+            return False
 
     async def count(self, session_id: str) -> int:
         session_dir = self._session_dir(session_id)
