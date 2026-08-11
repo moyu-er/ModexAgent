@@ -43,6 +43,7 @@ from .constants import (
     NodeTrigger,
 )
 from .exceptions import GraphBubbleUp, GraphInterrupt, RoutingError, UndeliveredError
+from .execution_context import get_execution
 from .integration import (
     DefaultInputIntegrator,
     InputIntegrator,
@@ -116,9 +117,10 @@ class Node[S: "GraphState"](ABC):
         Contract:
         - Input: read from `integrated_input` (upstream delivers).
         - Output: call `self.deliver(content, next_node, ctx)` to send data downstream.
-        - Working state: `ctx.state.node_scratch[self.node_id]` — your own region,
-          write freely. Reading other nodes' scratch is allowed but discouraged;
-          prefer receiving data via deliver/IntegratedInput.
+        - Working state: `ctx.scratch` — the current node's scoped region
+          of `ctx.state.node_scratch[self.node_id]`. Write freely. Reading
+          other nodes' scratch is PROHIBITED — cross-node data must flow
+          through deliver/IntegratedInput only.
         - Framework fields (resume_target, result on DefaultGraphState): framework-managed,
           do not write unless you are a framework node (START/END).
 
@@ -204,6 +206,20 @@ class Node[S: "GraphState"](ABC):
         # Begin invocation (parent_version computed internally).
         invocation = store.begin_invocation(self.node_id)
         ctx.current_invocation = invocation
+
+        exec_ctx = get_execution()
+        if exec_ctx is None:
+            from .execution_context import NodeExecution, reset_execution, set_execution
+
+            exec_ctx = NodeExecution(instance_id="")
+            exec_ctx.invocation = invocation
+            _run_token = set_execution(exec_ctx)
+            _owns_token = True
+        else:
+            exec_ctx.invocation = invocation
+            _run_token = None
+            _owns_token = False
+
         coordinator.emit_output(
             GraphOutputKind.NODE_STARTED,
             node_id=self.node_id,
@@ -300,6 +316,8 @@ class Node[S: "GraphState"](ABC):
             )
             raise
         finally:
+            if _owns_token:
+                reset_execution(_run_token)
             store.finalize_invocation(invocation)
 
     def _integrate_upstream(
@@ -465,10 +483,10 @@ class Node[S: "GraphState"](ABC):
             for t in targets:
                 groups.setdefault(t, []).append(content)
 
-        inv_ctx = ctx.current_invocation
+        exec_ctx = get_execution()
+        inv_ctx = exec_ctx.invocation if exec_ctx is not None else None
         # _source_node is set but ignored by route_deliver_from_dispatch,
-        # which derives source_node_id from the scheduler-corrected
-        # source_node_name (concurrency-safe under ParallelScheduler).
+        # which derives source_node_id from the corrected source_node_name.
         for target, contents in groups.items():
             for content in contents:
                 ctx.dispatch(

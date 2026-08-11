@@ -28,7 +28,8 @@ class GraphState(BaseModel):
     resume_target: str | None = None
 
     # Per-node working state. Each node writes only to
-    # ``node_scratch[self.node_id]``; key separation provides isolation.
+    # ``node_scratch[self.node_id]`` (accessible via ``ctx.scratch``
+    # during execution); key separation provides isolation.
     node_scratch: dict[str, Any] = Field(default_factory=dict)
 
     def checkpoint(self) -> dict[str, JsonValue]:

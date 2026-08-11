@@ -51,15 +51,47 @@ Both paths coexist; `_recheck_pending` is the unified rescan that makes recovery
 
 All three implement the same `NodeStateStore` / `DeliverStore` / `GraphInstanceStore` ABCs. `bootstrap` on Null/InMemory stores naturally returns `[entry_node]` (no prior invocations → fresh start).
 
+## Trigger Model
+
+**Stable trigger:** `NodeTrigger.ON_ALL_PREDS` (the default). A node waits
+until every activated predecessor has dispatched at least once AND no active
+instance can reach it via outgoing edges. One instance is then created
+consuming all currently pending dispatches from the activated sources
+(batch semantics: IntegratedInput may contain multiple payloads per source).
+This is the recommended trigger for all production graphs.
+
+**Deprecated / experimental trigger:** `NodeTrigger.ON_RECEIVE`. Each
+dispatch creates a new instance immediately; reachability is NOT checked;
+the per-node FIFO serial gate is in-memory only and not persisted across
+crashes. `Graph.compile()` emits a `DeprecationWarning` when ON_RECEIVE is
+used; `GraphSpec` (declarative API) rejects it entirely. Do not use
+ON_RECEIVE in new production graphs.
+
 ## State Ownership
 
-`ctx.state` is framework-managed. Nodes read it but do not write to framework fields (`resume_target`, `result` on `DefaultGraphState`). Framework code (checkpoint, recovery, bootstrap) writes these fields.
+`ctx.state` is framework-managed. Nodes read it but do not write to
+framework fields (`resume_target`, `result` on `DefaultGraphState`).
+Framework code (checkpoint, recovery, bootstrap) writes these fields.
 
-`ctx.state.node_scratch: dict[str, Any]` provides per-node working state. Each node writes only to `node_scratch[self.node_id]` — key separation provides natural isolation without fork/clone. Reading other nodes' scratch is allowed but discouraged; prefer receiving data via deliver/IntegratedInput.
+`ctx.state.node_scratch: dict[str, Any]` provides per-node working state.
+Each node writes only to `node_scratch[self.node_id]` — key separation
+provides natural isolation without fork/clone. The `ctx.scratch` property
+provides a scoped accessor: `ctx.scratch["key"] = value` resolves to
+`ctx.state.node_scratch[current_node_id]["key"]` automatically. Reading
+other nodes' scratch is PROHIBITED — cross-node data must flow through
+deliver/IntegratedInput only. Tests may inspect the backing `node_scratch`
+dict to verify outcomes.
 
-Cross-node data flows through deliver → DeliverStore → IntegratedInput → execute(). The `copy(ctx)` pattern was removed — ParallelScheduler passes ctx directly.
+Cross-node data flows through deliver → DeliverStore → IntegratedInput →
+execute(). The `copy(ctx)` pattern was removed — ParallelScheduler passes
+ctx directly.
 
-The ON_RECEIVE serial gate guarantees the same Node object never executes concurrently — execution-specific mutable attributes (`_pending_delivers`, `_submit_result`, `_graph_ref`) on Node are safe under this invariant.
+The per-node serial gate guarantees the same Node object never executes
+concurrently under ANY trigger mode — execution-specific mutable
+attributes (`_pending_delivers`, `_submit_result`, `_graph_ref`) on Node
+are safe under this invariant. `ON_ALL_PREDS` enforces this via
+`_is_node_running(target)` in `_try_fire_on_all_preds`; `ON_RECEIVE`
+enforces it via `_is_node_running(target)` in `_handle_dispatch`.
 
 ## Key Files
 
