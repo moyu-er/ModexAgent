@@ -14,6 +14,7 @@ class GraphOutputKind(StrEnum):
 
     COMPLETED = "graph_completed"
     CRASHED = "graph_crashed"
+    FAILED = "graph_failed"
     NODE_STARTED = "node_started"
     NODE_COMPLETED = "node_completed"
     NODE_CRASHED = "node_crashed"

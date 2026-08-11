@@ -338,8 +338,14 @@ class GraphOrchestrator:
             self._control_service.register_engine(controller)
 
             final_state = await GraphEngine(compiled).run_async(ctx)
-            status = GraphInstanceStatus.COMPLETED
+            status = (
+                GraphInstanceStatus.COMPLETED
+                if ctx is not None and ctx.reached_end
+                else GraphInstanceStatus.FAILED
+            )
             self._instance_store.complete_invocation(invocation)
+            if status == GraphInstanceStatus.FAILED:
+                self._instance_store.update_status(gid, GraphInstanceStatus.FAILED)
             result = dict(final_state).get("result")
             io_record = self._io_store.get_by_instance(gid)
             if io_record is not None:
@@ -347,7 +353,11 @@ class GraphOrchestrator:
                     io_record.record_id, result if isinstance(result, list) else None,
                 )
             output = GraphOutput(
-                kind=GraphOutputKind.COMPLETED,
+                kind=(
+                    GraphOutputKind.COMPLETED
+                    if status == GraphInstanceStatus.COMPLETED
+                    else GraphOutputKind.FAILED
+                ),
                 graph_instance_id=gid,
                 result=result,
                 timestamp=time.time_ns() // 1_000_000,

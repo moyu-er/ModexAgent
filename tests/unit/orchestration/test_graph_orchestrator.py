@@ -27,6 +27,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from typing import Any
 
 import pytest
@@ -43,7 +44,6 @@ from modex_graph import (
     GraphInstance,
     GraphInstanceStatus,
     GraphInstanceStore,
-    GraphIORecord,
     GraphIORecordStore,
     GraphMetadata,
     GraphNode,
@@ -55,8 +55,8 @@ from modex_graph import (
     GraphSpec,
     GraphState,
     GraphStateSnapshot,
-    InMemoryGraphIORecordStore,
     InMemoryGraphInstanceStore,
+    InMemoryGraphIORecordStore,
     InMemoryGraphSpecStore,
     IntegratedInput,
     Node,
@@ -66,6 +66,8 @@ from modex_graph import (
     NullCoordinatorFactory,
     NullGraphIORecordStore,
     RoutingError,
+    SchedulerKind,
+    SqliteGraphInstanceStore,
     create_null_coordinator,
 )
 
@@ -151,6 +153,45 @@ class _BlockingFactory(NodeFactory):
         return None
 
 
+class _NeverDeliverNode(Node[CounterState]):
+    """Node that never calls deliver — triggers undelivered error after max_retry."""
+
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
+        return None
+
+
+class _NeverDeliverFactory(NodeFactory):
+    """Factory that creates ``_NeverDeliverNode`` instances."""
+
+    def create(self, spec: NodeSpec) -> Node[Any]:
+        return _NeverDeliverNode()
+
+    def config_schema(self) -> type[BaseModel] | None:
+        return None
+
+
+class _BadDispatchNode(Node[CounterState]):
+    """Delivers to a target not in outgoing edges — triggers topology RoutingError."""
+
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
+        self.deliver("data", "nonexistent", ctx)
+        return None
+
+
+class _BadDispatchFactory(NodeFactory):
+    """Factory that creates ``_BadDispatchNode`` instances."""
+
+    def create(self, spec: NodeSpec) -> Node[Any]:
+        return _BadDispatchNode()
+
+    def config_schema(self) -> type[BaseModel] | None:
+        return None
+
+
 # -- Registry + spec builders --------------------------------------------
 
 
@@ -188,9 +229,9 @@ def _make_orchestrator(
     node_registry: NodeRegistry | None = None,
     state_classes: dict[str, type[GraphState]] | None = None,
     spec_store: InMemoryGraphSpecStore | None = None,
-    instance_store: InMemoryGraphInstanceStore | None = None,
+    instance_store: GraphInstanceStore | None = None,
     io_store: GraphIORecordStore | None = None,
-) -> tuple[GraphOrchestrator, InMemoryGraphSpecStore, InMemoryGraphInstanceStore]:
+) -> tuple[GraphOrchestrator, InMemoryGraphSpecStore, GraphInstanceStore]:
     """Build an orchestrator with in-memory stores + the test registries."""
     spec_store = spec_store if spec_store is not None else InMemoryGraphSpecStore()
     instance_store = instance_store if instance_store is not None else InMemoryGraphInstanceStore()
@@ -208,7 +249,7 @@ def _save_spec(spec_store: InMemoryGraphSpecStore, spec: GraphSpec) -> int:
     return spec_store.save(spec)
 
 
-def _load_status(store: InMemoryGraphInstanceStore, gid: int) -> str:
+def _load_status(store: GraphInstanceStore, gid: int) -> str:
     instance = store.load(gid)
     assert instance is not None, f"Instance {gid} not found in store"
     return instance.status
@@ -224,7 +265,7 @@ def _get_coordinator(orch: GraphOrchestrator, gid: int) -> GraphPersistenceCoord
 async def _start_blocked_graph(
     orch: GraphOrchestrator,
     spec_store: InMemoryGraphSpecStore,
-    instance_store: InMemoryGraphInstanceStore,
+    instance_store: GraphInstanceStore,
     entered: asyncio.Event,
 ) -> tuple[int, asyncio.Task[int]]:
     spec = GraphSpec(
@@ -702,6 +743,173 @@ class TestErrorHandling:
         gids = list(orch._active_instances.keys())
         assert len(gids) == 1
         assert gids[0] in orch._active_instances
+
+
+# -- T11 Phase 0: dead-end → FAILED semantics ---------------------------
+
+
+def _dead_end_spec(*, scheduler: SchedulerKind = SchedulerKind.LINEAR) -> GraphSpec:
+    """Build a dead-end graph: entry node never delivers, has edge to END."""
+    return GraphSpec(
+        name="dead_end_graph",
+        nodes=[NodeSpec(name="entry", node_type="never_deliver")],
+        edges=[
+            EdgeSpec(source=GraphNode.START, target="entry"),
+            EdgeSpec(source="entry", target=GraphNode.END),
+        ],
+        state_class="counter",
+        scheduler=scheduler,
+    )
+
+
+class TestDeadEndFailed:
+    """Dead-end graph → FAILED (T11 Phase 0).
+
+    A dead-end node (never delivers, exhausts max_retry) raises
+    UndeliveredError. Schedulers catch it and return normally with
+    ctx.reached_end=False. The orchestrator maps this to FAILED.
+    """
+
+    async def test_dead_end_linear_failed(self) -> None:
+        node_registry = NodeRegistry()
+        node_registry.register("never_deliver", _NeverDeliverFactory())
+        orch, spec_store, instance_store = _make_orchestrator(node_registry=node_registry)
+        spec_id = _save_spec(spec_store, _dead_end_spec())
+
+        gid = await orch.create_instance(spec_id)
+        await orch.run_instance(gid)
+
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.FAILED.value
+        assert gid not in orch._active_instances
+
+    async def test_parallel_dead_end_failed(self) -> None:
+        node_registry = NodeRegistry()
+        node_registry.register("never_deliver", _NeverDeliverFactory())
+        orch, spec_store, instance_store = _make_orchestrator(node_registry=node_registry)
+        spec_id = _save_spec(spec_store, _dead_end_spec(scheduler=SchedulerKind.PARALLEL))
+
+        gid = await orch.create_instance(spec_id)
+        await orch.run_instance(gid)
+
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.FAILED.value
+        assert gid not in orch._active_instances
+
+
+class TestReachedEndSemantics:
+    """T11 Phase 0: reached_end flag, FAILED persistence, topology distinction."""
+
+    async def test_reached_end_true_on_normal_graph(self) -> None:
+        orch, spec_store, instance_store = _make_orchestrator()
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_instance(spec_id)
+        await orch.run_instance(gid)
+
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.COMPLETED.value
+
+    async def test_reached_end_false_on_dead_end(self) -> None:
+        node_registry = NodeRegistry()
+        node_registry.register("never_deliver", _NeverDeliverFactory())
+        orch, spec_store, instance_store = _make_orchestrator(node_registry=node_registry)
+        spec_id = _save_spec(spec_store, _dead_end_spec())
+
+        gid = await orch.create_instance(spec_id)
+        await orch.run_instance(gid)
+
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.FAILED.value
+
+    async def test_dead_end_persisted_failed_in_memory(self) -> None:
+        node_registry = NodeRegistry()
+        node_registry.register("never_deliver", _NeverDeliverFactory())
+        instance_store = InMemoryGraphInstanceStore()
+        orch, spec_store, _ = _make_orchestrator(
+            node_registry=node_registry, instance_store=instance_store
+        )
+        spec_id = _save_spec(spec_store, _dead_end_spec())
+
+        gid = await orch.create_instance(spec_id)
+        await orch.run_instance(gid)
+
+        reloaded = instance_store.load(gid)
+        assert reloaded is not None
+        assert reloaded.status == GraphInstanceStatus.FAILED.value
+
+    async def test_dead_end_persisted_failed_sqlite(self) -> None:
+        node_registry = NodeRegistry()
+        node_registry.register("never_deliver", _NeverDeliverFactory())
+        conn = sqlite3.connect(":memory:")
+        sqlite_store = SqliteGraphInstanceStore(conn)
+        orch, spec_store, _ = _make_orchestrator(
+            node_registry=node_registry, instance_store=sqlite_store
+        )
+        spec_id = _save_spec(spec_store, _dead_end_spec())
+
+        gid = await orch.create_instance(spec_id)
+        await orch.run_instance(gid)
+
+        reloaded = sqlite_store.load(gid)
+        assert reloaded is not None
+        assert reloaded.status == GraphInstanceStatus.FAILED.value
+        conn.close()
+
+    async def test_topology_error_still_crashes(self) -> None:
+        """Topology RoutingError (invalid dispatch target) → CRASHED, not FAILED.
+
+        A node that delivers to a target NOT in its outgoing edges raises
+        RoutingError from validate_dispatch_target. This is a topology error,
+        NOT an UndeliveredError — the scheduler does NOT catch it, so it
+        propagates → CRASHED.
+        """
+        node_registry = NodeRegistry()
+        node_registry.register("bad_dispatch", _BadDispatchFactory())
+        orch, spec_store, instance_store = _make_orchestrator(node_registry=node_registry)
+
+        spec = GraphSpec(
+            name="bad_dispatch_graph",
+            nodes=[NodeSpec(name="entry", node_type="bad_dispatch")],
+            edges=[
+                EdgeSpec(source=GraphNode.START, target="entry"),
+                EdgeSpec(source="entry", target=GraphNode.END),
+            ],
+            state_class="counter",
+        )
+        spec_id = _save_spec(spec_store, spec)
+
+        gid = await orch.create_instance(spec_id)
+        with pytest.raises(RoutingError, match="not in the outgoing edges"):
+            await orch.run_instance(gid)
+
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.CRASHED.value
+
+    async def test_failed_emits_graph_output(self) -> None:
+        """FAILED graph emits GraphOutput(kind=GraphOutputKind.FAILED)."""
+
+        class _RecordingAdapter(GraphOutputAdapter):
+            def __init__(self) -> None:
+                self.outputs: list[GraphOutput] = []
+
+            async def emit(self, output: GraphOutput) -> None:
+                self.outputs.append(output)
+
+        node_registry = NodeRegistry()
+        node_registry.register("never_deliver", _NeverDeliverFactory())
+        spec_store = InMemoryGraphSpecStore()
+        adapter = _RecordingAdapter()
+        orch = GraphOrchestrator(
+            node_registry=node_registry,
+            state_classes=_state_classes(),
+            spec_store=spec_store,
+            instance_store=InMemoryGraphInstanceStore(),
+            output_adapter=adapter,
+        )
+        spec_id = _save_spec(spec_store, _dead_end_spec())
+
+        gid = await orch.create_instance(spec_id)
+        await orch.run_instance(gid)
+
+        failed = [o for o in adapter.outputs if o.kind is GraphOutputKind.FAILED]
+        assert len(failed) == 1
+        assert failed[0].graph_instance_id == gid
 
 
 # -- _run_existing_instance (recovery path) ------------------------------

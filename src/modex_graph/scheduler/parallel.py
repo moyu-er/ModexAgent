@@ -20,7 +20,7 @@ from ..constants import (
     NodeTrigger,
     SchedulerKind,
 )
-from ..exceptions import GraphRecursionError, RoutingError
+from ..exceptions import GraphRecursionError, RoutingError, UndeliveredError
 from ._dispatch_utils import route_deliver_from_dispatch, validate_dispatch_target
 from .base import Scheduler
 from .bootstrap import bootstrap
@@ -299,16 +299,22 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         await exec_ctx.runtime.before_node(exec_ctx, instance.node_name)
 
         # Execute via run() — pass graph topology. _submit dispatches (via
-        # ctx.dispatch) happen inside run().
+        # ctx.dispatch) happen inside run(). UndeliveredError (dead-end node
+        # that exhausted max_retry without delivering) is caught here so the
+        # graph continues — the dead-end instance is treated as done and
+        # reached_end stays False, producing FAILED at the orchestrator level.
         # _handle_dispatch only creates DORMANT instances and marks READY;
         # GraphBubbleUp exceptions propagate — NOT caught here.
         # Upstream payloads flow through coordinator.collect_consumable_delivers.
         # The dispatch handler calls coordinator.route_deliver to route
         # delivers to the target node's deliver_store.
-        await node.run(
-            exec_ctx,
-            graph=self.graph,
-        )
+        try:  # noqa: SIM105
+            await node.run(
+                exec_ctx,
+                graph=self.graph,
+            )
+        except UndeliveredError:
+            pass
 
         # Engine-auto-invoked lifecycle hook (D5: after_node).
         await exec_ctx.runtime.after_node(exec_ctx, instance.node_name)

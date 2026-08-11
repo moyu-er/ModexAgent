@@ -114,6 +114,7 @@ class GraphContext[S: "GraphState"]:
         graph_instance_id: int | None = None,
         current_invocation: InvocationContext | None = None,
         control: GraphRunControl | None = None,
+        reached_end: bool = False,
     ) -> None:
         self.state: S = state
         self.runtime: GraphRuntime = runtime
@@ -140,6 +141,12 @@ class GraphContext[S: "GraphState"]:
         # None until a node begins executing.
         self.current_invocation: InvocationContext | None = current_invocation
         self.control: GraphRunControl = control if control is not None else GraphRunControl()
+        # Run-level flag: set True when a dispatch targets GraphNode.END.
+        # The orchestrator reads this after run_async returns to decide
+        # COMPLETED (reached END) vs FAILED (dead-end — node exhausted
+        # max_retry without delivering). NOT propagated by fork() — forked
+        # sub-contexts start fresh.
+        self.reached_end: bool = reached_end
 
     def fork(
         self,

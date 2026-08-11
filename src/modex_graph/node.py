@@ -42,7 +42,7 @@ from .constants import (
     GraphNode,
     NodeTrigger,
 )
-from .exceptions import GraphBubbleUp, GraphInterrupt, RoutingError
+from .exceptions import GraphBubbleUp, GraphInterrupt, RoutingError, UndeliveredError
 from .integration import (
     DefaultInputIntegrator,
     InputIntegrator,
@@ -241,7 +241,7 @@ class Node[S: "GraphState"](ABC):
                     break
 
                 if retry_count >= self.max_retry:
-                    raise RoutingError(
+                    raise UndeliveredError(
                         f"Node {self.name!r} produced no delivers after "
                         f"{retry_count + 1} executions (max_retry={self.max_retry}). "
                         f"The node forgot to call deliver() during execute()."

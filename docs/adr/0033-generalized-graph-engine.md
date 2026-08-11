@@ -485,8 +485,27 @@ class Node[S](ABC):
   downstream / END) in `_resolve_default_target`.
 - `next_node=GraphNode.END` skips `route_deliver` (END has no
   `DeliverStore`).
-- A node that produces no delivers and has no default downstream edge
-  raises `RoutingError` ("Node X did not deliver").
+- A node that produces no delivers after exhausting `max_retry` raises
+  `UndeliveredError` (subclass of `RoutingError`). Schedulers catch
+  `UndeliveredError` specifically and return normally with
+  `ctx.reached_end = False`, which the orchestrator maps to
+  `GraphInstanceStatus.FAILED`. Topology `RoutingError`s (ambiguous
+  routing, missing topology, invalid dispatch target) are NOT subclasses
+  and propagate as `GraphInstanceStatus.CRASHED`.
+
+**T11 dead-end → FAILED refinement (2026-08-11):** `UndeliveredError`
+was introduced to distinguish "node forgot to deliver" (a dead-end —
+recoverable as FAILED) from "topology is broken" (a bug — CRASHED).
+`GraphContext.reached_end` is a run-level flag set `True` by
+`route_deliver_from_dispatch` when any dispatch targets `GraphNode.END`.
+The orchestrator reads `ctx.reached_end` after `run_async` returns:
+`COMPLETED` if `True`, `FAILED` if `False`. `reached_end` is NOT
+propagated by `fork()` — forked sub-contexts start fresh. The linear
+scheduler catches `UndeliveredError` and breaks (dead-end terminates the
+chain); the parallel scheduler catches it and passes (the dead-end
+instance is treated as done, the graph continues). `linear.py` line 126
+`raise RoutingError` is unreachable dead code (Node.run raises before
+the scheduler checks dispatches) — retained as a safety net.
 
 **Historical context (preserved for traceability):** The original
 Phase-a design specified four coexisting routing mechanisms with
@@ -702,6 +721,7 @@ All current ReAct exit mechanisms are preserved through the migration:
 | `llm_error` | LLMNode checks, returns `transition="llm_error"` → static edge to END | Same | a ✅ |
 | `GraphDrained` (cooperative shutdown) | N/A | `GraphBubbleUp` subclass; now raised at scheduler safe points via `ctx.control.check()` (see `external-control.md`) | c ✅ |
 | `ParentCommand` (subgraph→parent routing) | N/A | `GraphBubbleUp` subclass | c |
+| Dead-end (node exhausted `max_retry` without delivering) | `RoutingError` → CRASHED | `UndeliveredError` (subclass of `RoutingError`) → caught by scheduler → `ctx.reached_end=False` → `GraphInstanceStatus.FAILED` (persisted via `update_status`) | T11 ✅ |
 
 **`GraphInterrupt` suspend-without-re-execution model is preserved.**
 Node authors write linear code; already-applied state updates persist

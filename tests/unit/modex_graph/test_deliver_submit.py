@@ -39,6 +39,7 @@ from modex_graph import (
     Node,
     RoutingError,
     SchedulerKind,
+    UndeliveredError,
 )
 
 # ── Test node subclasses ──────────────────────────────────────────────────
@@ -791,7 +792,7 @@ class _RetrySucceedsNode(Node[CounterState]):
 
 
 class _NeverDeliverNode(Node[CounterState]):
-    """Never calls deliver — triggers RoutingError after max_retry."""
+    """Never calls deliver — triggers UndeliveredError after max_retry."""
 
     def __init__(self) -> None:
         self.execute_count = 0
@@ -848,7 +849,7 @@ class TestUndeliveredDetection:
         node = _NeverDeliverNode()
         node.name = "never_deliver"
         ctx = _make_linear_ctx()
-        with pytest.raises(RoutingError, match="produced no delivers"):
+        with pytest.raises(UndeliveredError, match="produced no delivers"):
             await node.run(ctx)
         assert node.execute_count == 4
 
@@ -857,7 +858,7 @@ class TestUndeliveredDetection:
         node.name = "never_deliver"
         node.max_retry = 1
         ctx = _make_linear_ctx()
-        with pytest.raises(RoutingError, match="produced no delivers"):
+        with pytest.raises(UndeliveredError, match="produced no delivers"):
             await node.run(ctx)
         assert node.execute_count == 2
 
@@ -893,7 +894,7 @@ class TestUndeliveredDetection:
         node.name = "never_deliver"
         node.max_retry = 0
         ctx = _make_linear_ctx()
-        with pytest.raises(RoutingError, match="produced no delivers"):
+        with pytest.raises(UndeliveredError, match="produced no delivers"):
             await node.run(ctx)
         assert node.execute_count == 1
 

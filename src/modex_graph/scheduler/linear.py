@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ..constants import GraphNode, SchedulerKind
-from ..exceptions import GraphRecursionError, RoutingError
+from ..exceptions import GraphRecursionError, RoutingError, UndeliveredError
 from ._dispatch_utils import route_deliver_from_dispatch, validate_dispatch_target
 from .base import Scheduler
 from .bootstrap import bootstrap
@@ -107,10 +107,14 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
             # coordinator.collect_consumable_delivers. The dispatch
             # handler calls coordinator.route_deliver to route delivers to
             # the target node's deliver_store.
-            await node.run(
-                ctx,
-                graph=self.graph,
-            )
+            try:
+                await node.run(
+                    ctx,
+                    graph=self.graph,
+                )
+            except UndeliveredError:
+                ctx.reached_end = False
+                break
 
             await ctx.runtime.after_node(ctx, current)
 
@@ -123,6 +127,7 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
             if self._dispatches:
                 current = next(iter(self._dispatches.keys()))
             else:
+                # Unreachable: Node.run raises UndeliveredError before this point — safety net only
                 raise RoutingError(f"Node {previous!r} did not deliver.")
 
             iteration += 1

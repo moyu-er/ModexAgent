@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ..constants import GraphNode
 from ..exceptions import RoutingError
 
 if TYPE_CHECKING:
@@ -69,6 +70,8 @@ def route_deliver_from_dispatch[S: "GraphState"](
 
     Returns the ``deliver_id`` from ``route_deliver`` (or ``None``).
     """
+    if target == GraphNode.END:
+        ctx.reached_end = True
     content = state_update.get("delivered") if state_update else None
     # Always derive source_node_id from the corrected source_node_name.
     # Do NOT read _source_node from the payload — it comes from
