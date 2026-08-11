@@ -1,7 +1,7 @@
 """Cross-pool peer-normal communication: pool A's main agent sends to pool B.
 
 Two real pools with isolated inboxes/buses/pollers. Pool A's main agent sends
-via a ``CommunicationTarget`` whose ``bus_ref`` points at pool B's bus. The
+via a ``CommunicationTarget`` whose ``tree_ref`` points at pool B's tree. The
 envelope lands in B's inbox on a session id derived from A's prefix, B's poller
 registers the unseen session and starts a turn, and B's reply lands back in A's
 inbox on the same prefix.
@@ -31,6 +31,10 @@ from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.inbox_poller import InboxPoller
 from modex_agent.multi_agent.pool import AgentPool
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+from modex_agent.multi_agent.session_tree.store_node import InMemoryTreeNodeStore
+from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrackStore
+from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
 from modex_agent.multi_agent.state import AgentState
 from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
 
@@ -101,11 +105,15 @@ class _PoolBundle:
         self.pool._agents[resident_name] = self.instance
         self.pool._status[resident_name] = AgentState.IDLE
 
+        tree_manager = _make_tree_manager(self)
+        self.consumer.set_on_consumed(tree_manager.on_consumed)
+        self.poller.attach_tree_manager(tree_manager)
+        self.pool.tree = tree_manager
+
         self.service = AgentCommunicationService(
             source=AgentAddress(name=resident_name),
-            broker=self.broker,
+            tree=tree_manager,
             registry=self.pool,
-            agent_bus=self.bus,
             session_registry=self.session_registry,
             target_store=self.target_store,
         )
@@ -128,6 +136,19 @@ class _PoolBundle:
         )
 
 
+def _make_tree_manager(bundle: _PoolBundle) -> SessionTreeManager:
+    return SessionTreeManager(
+        tree_store=InMemorySessionTreeStore(),
+        node_store=InMemoryTreeNodeStore(),
+        track_store=InMemoryMessageTrackStore(),
+        bus=bundle.bus,
+        poller=bundle.poller,
+        pool_name=bundle.resident_name,
+        workspace_root="/tmp",
+        session_registry=bundle.session_registry,
+    )
+
+
 @pytest.mark.asyncio
 async def test_peer_normal_send_lands_in_peer_inbox_and_poller_registers_session() -> None:
     """A→B peer-normal send lands in B's inbox; B's poller registers the unseen session."""
@@ -138,13 +159,13 @@ async def test_peer_normal_send_lands_in_peer_inbox_and_poller_registers_session
     await pool_b.start()
 
     try:
-        # Wire A to know B as a peer target (B's bus_ref is B's local bus).
+        # Wire A to know B as a peer target (B's tree_ref is B's tree manager).
         pool_a.target_store.add(
             CommunicationTarget(
                 name="mainB",
                 kind=AgentCommKind.NORMAL,
                 pool_name="B",
-                bus_ref=pool_b.bus,
+                tree_ref=_make_tree_manager(pool_b),
                 description="Pool B's main agent",
             )
         )
@@ -153,7 +174,7 @@ async def test_peer_normal_send_lands_in_peer_inbox_and_poller_registers_session
                 name="mainA",
                 kind=AgentCommKind.NORMAL,
                 pool_name="A",
-                bus_ref=pool_a.bus,
+                tree_ref=_make_tree_manager(pool_a),
                 description="Pool A's main agent",
             )
         )

@@ -22,6 +22,18 @@ from modex_agent.hook import Hook, HookErrorPolicy, HookSpec, HookRunner
 from modex_agent.hook.abc import AfterToolExecutionHook, AfterTurnHook, BeforeTurnHook
 from modex_agent.hook.builtin import RuntimeContextHook
 from modex_agent.core.runtime_context import RuntimeContextManager
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+
+
+def _mock_tree(bus: object) -> SessionTreeManager:
+    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+
+    async def _deliver(sid: str, env: object) -> None:
+        await bus.send(sid, env)  # type: ignore[attr-defined]
+
+    tree.deliver = _deliver
+    return tree
+
 
 
 def _make_runtime(hook_runner=None, runtime_mgr=None):
@@ -173,7 +185,7 @@ class TestHookCollaboration:
         bus = self._make_bus()
 
         subagent_hook = SubagentAutoSendHook(
-            agent_bus=bus, self_name="doc-expert", parent_name="main"
+        tree=_mock_tree(bus),
         )
         hook_runner = HookRunner()
         hook_runner.add(HookSpec(hook=RuntimeContextHook(), on_error=HookErrorPolicy.LOG))
@@ -210,7 +222,7 @@ class TestHookCollaboration:
         bus = self._make_bus()
 
         subagent_hook = SubagentAutoSendHook(
-            agent_bus=bus, self_name="doc-expert", parent_name="main"
+        tree=_mock_tree(bus),
         )
         hook_runner = HookRunner()
         hook_runner.add(HookSpec(hook=RuntimeContextHook(), on_error=HookErrorPolicy.LOG))
@@ -306,7 +318,7 @@ class TestHookCollaboration:
         custom_hook = _CallTrackingHook()
 
         subagent_hook = SubagentAutoSendHook(
-            agent_bus=bus, self_name="doc-expert", parent_name="main"
+        tree=_mock_tree(bus),
         )
 
         # Explicitly build hook_runner (mirrors BotService._build_hook_runner)

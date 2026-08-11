@@ -9,6 +9,7 @@ Three test cases:
 """
 
 from __future__ import annotations
+from unittest.mock import MagicMock
 
 from pathlib import Path
 
@@ -25,11 +26,23 @@ from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.trace import OtelSpanTraceStore, TraceCollectorHook
 from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
+
+
+def _mock_tree(bus: object) -> SessionTreeManager:
+    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+
+    async def _deliver(sid: str, env: object) -> None:
+        await bus.send(sid, env)  # type: ignore[attr-defined]
+
+    tree.deliver = _deliver
+    return tree
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -93,7 +106,7 @@ class TestFullLifecycleNotification:
         store = OtelSpanTraceStore(base_dir=runtime_dir / "trace")
         trace_hook = TraceCollectorHook()
         auto_hook = SubagentAutoSendHook(
-            agent_bus=bus,
+        tree=_mock_tree(bus),
             self_name="worker",
             parent_name="main",
             runtime_dir=runtime_dir,
@@ -152,7 +165,7 @@ class TestCrashSendsErrorNotification:
 
         bus = _make_bus(tmp_path)
         auto_hook = SubagentAutoSendHook(
-            agent_bus=bus,
+        tree=_mock_tree(bus),
             self_name="worker",
             parent_name="main",
             runtime_dir=runtime_dir,

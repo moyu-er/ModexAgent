@@ -24,8 +24,8 @@ from bot.control.models import (
 
 from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.constants import ExecutionStrategyKind
-from modex_agent.multi_agent.bus import AgentMessageBus
 from modex_agent.multi_agent.communication.result import AgentSendResult
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
 
 # ---------------------------------------------------------------------------
@@ -66,7 +66,7 @@ def _make_request(
 def _make_target(
     *,
     kind: AgentCommKind = AgentCommKind.NORMAL,
-    bus_ref: AgentMessageBus | None = None,
+    tree_ref: SessionTreeManager | None = None,
     execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
     name: str = _TARGET_AGENT,
 ) -> CommunicationTarget:
@@ -74,7 +74,7 @@ def _make_target(
         name=name,
         kind=kind,
         pool_name=_TARGET_POOL,
-        bus_ref=bus_ref,
+        tree_ref=tree_ref,
         execution_strategy=execution_strategy,
     )
 
@@ -256,7 +256,7 @@ class TestPeerNormalSend:
     async def test_peer_send_maps_to_not_applicable(self) -> None:
         target = _make_target(
             kind=AgentCommKind.NORMAL,
-            bus_ref=MagicMock(),
+            tree_ref=MagicMock(),
             execution_strategy=ExecutionStrategyKind.REACT,
         )
         result = _make_send_result(
@@ -277,7 +277,7 @@ class TestPeerNormalSend:
 
     @pytest.mark.asyncio
     async def test_peer_send_passes_correct_args_to_service(self) -> None:
-        target = _make_target(bus_ref=MagicMock())
+        target = _make_target(tree_ref=MagicMock())
         result = _make_send_result(is_peer_send=True, created_new_task=False)
         facade, mock_service = _make_facade(target=target, send_result=result)
         await facade.send(_make_request(content="test message"))
@@ -298,7 +298,7 @@ class TestPeerNormalSend:
 class TestParentReply:
     @pytest.mark.asyncio
     async def test_parent_reply_maps_to_not_applicable(self) -> None:
-        target = _make_target(kind=AgentCommKind.NORMAL, bus_ref=None)
+        target = _make_target(kind=AgentCommKind.NORMAL, tree_ref=None)
         result = _make_send_result(
             target_kind=AgentCommKind.NORMAL,
             is_peer_send=False,
@@ -534,7 +534,7 @@ class TestInvocationIdExistence:
     @pytest.mark.asyncio
     async def test_peer_send_does_not_check_session_store(self) -> None:
         target = _make_target(
-            kind=AgentCommKind.NORMAL, bus_ref=MagicMock()
+            kind=AgentCommKind.NORMAL, tree_ref=MagicMock()
         )
         result = _make_send_result(
             target_kind=AgentCommKind.NORMAL,
@@ -552,7 +552,7 @@ class TestInvocationIdExistence:
 
     @pytest.mark.asyncio
     async def test_parent_reply_does_not_check_session_store(self) -> None:
-        target = _make_target(kind=AgentCommKind.NORMAL, bus_ref=None)
+        target = _make_target(kind=AgentCommKind.NORMAL, tree_ref=None)
         result = _make_send_result(
             target_kind=AgentCommKind.NORMAL,
             is_peer_send=False,

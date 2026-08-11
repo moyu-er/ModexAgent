@@ -138,12 +138,14 @@ def _make_deps(
     workspace_path_resolver: Any | None = None,
     session_registry: Any | None = None,
     emitter_factory: Any | None = None,
+    tree: Any | None = None,
 ) -> AgentMaterializeDeps:
     return AgentMaterializeDeps(
         agent_factory=MagicMock(),
         pool=pool or MagicMock(),
         session_factory=MagicMock(),
         broker=broker,
+        tree=tree or MagicMock(),
         agent_bus=agent_bus,
         project_dir=project_dir,
         workspace_path_resolver=workspace_path_resolver,

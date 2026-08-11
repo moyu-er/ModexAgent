@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import MagicMock, AsyncMock
 
 import pytest
 
@@ -19,6 +19,18 @@ from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+
+
+def _mock_tree(bus: object) -> SessionTreeManager:
+    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+
+    async def _deliver(sid: str, env: object) -> None:
+        await bus.send(sid, env)  # type: ignore[attr-defined]
+
+    tree.deliver = _deliver
+    return tree
+
 
 
 def _make_bus(tmpdir: Path) -> LocalAgentMessageBus:
@@ -56,7 +68,7 @@ async def test_loop_detected_sends_incomplete_notification(tmp_path: Path):
 
     bus = _make_bus(tmp_path)
     hook = SubagentAutoSendHook(
-        agent_bus=bus,
+    tree=_mock_tree(bus),
         self_name="worker",
         parent_name="main",
         runtime_dir=runtime_dir,
@@ -87,7 +99,7 @@ async def test_loop_detected_includes_invocation_id_in_hint(tmp_path: Path):
 
     bus = _make_bus(tmp_path)
     hook = SubagentAutoSendHook(
-        agent_bus=bus,
+    tree=_mock_tree(bus),
         self_name="worker",
         parent_name="main",
         runtime_dir=runtime_dir,
@@ -114,7 +126,7 @@ async def test_loop_detected_without_parent_logs_warning(tmp_path: Path, caplog)
     bus = _make_bus(tmp_path)
     bus.send = AsyncMock()  # should not be called
     hook = SubagentAutoSendHook(
-        agent_bus=bus,
+    tree=_mock_tree(bus),
         self_name="worker",
         parent_name="main",
         runtime_dir=runtime_dir,

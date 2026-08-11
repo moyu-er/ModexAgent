@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.hook.notification import AgentNotificationService
@@ -29,19 +29,21 @@ from modex_agent.multi_agent.tools import (
 )
 from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
 
+if TYPE_CHECKING:
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+
 logger = logging.getLogger(__name__)
 
 
 def _build_communication(
     pool: AgentPool,
     main_agent_name: str,
-    broker: Any,
-    agent_bus: Any,
     project_dir: Path,
     pool_name: str,
     templates: list,
     template_registry: AgentTemplateRegistry,
     *,
+    tree: SessionTreeManager,
     session_registry: SessionRegistry | None = None,
     workspace_path_resolver: WorkspacePathResolver | None = None,
     trace_enabled: bool = True,
@@ -57,9 +59,8 @@ def _build_communication(
     main_address = AgentAddress(name=main_agent_name)
     main_service = AgentCommunicationService(
         source=main_address,
-        broker=broker,
         registry=pool,
-        agent_bus=agent_bus,
+        tree=tree,
         template_registry=template_registry,
         pool=pool,
         pool_name=pool_name,

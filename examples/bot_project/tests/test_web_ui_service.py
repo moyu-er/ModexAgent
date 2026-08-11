@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -306,7 +306,7 @@ class TestAttachmentWiring:
             provider=None,
             notification_service=None,
             communication_service=None,
-            agent_bus=None,
+            tree_manager=MagicMock(),
             target_store=None,
         )
         svc = WebUIService.__new__(WebUIService)

@@ -260,7 +260,7 @@ class BotSubagentExternalBuilder(SubagentExternalBuilder):
         hook_runner.add(
             HookSpec(
                 hook=SubagentAutoSendHook(
-                    agent_bus=deps.agent_bus,
+                    tree=deps.tree,
                     self_name=agent_name,
                     parent_name=parent_name,
                     runtime_dir=runtime_dir or Path("."),

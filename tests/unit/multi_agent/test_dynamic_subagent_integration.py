@@ -14,10 +14,22 @@ from modex_agent.multi_agent.message_format import (
     SourceLabel,
     build_agent_comm_message,
 )
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.pool_config import PoolStore
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import CommunicationTarget
+
+
+def _mock_tree(bus: object) -> SessionTreeManager:
+    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+
+    async def _deliver(sid: str, env: object) -> None:
+        await bus.send(sid, env)  # type: ignore[attr-defined]
+
+    tree.deliver = _deliver
+    return tree
+
 
 
 def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
@@ -190,8 +202,8 @@ class TestInvocationIdNullCreatesNewSubagent:
 
         service = AgentCommunicationService(
             source=AgentAddress(name="main"),
-            broker=mock_broker,
             registry=mock_registry,
+            tree=MagicMock(spec=SessionTreeManager),
         )
 
         ctx = AgentContext(
@@ -227,8 +239,8 @@ class TestInvocationIdNullCreatesNewSubagent:
 
         service = AgentCommunicationService(
             source=AgentAddress(name="main"),
-            broker=mock_broker,
             registry=mock_registry,
+            tree=MagicMock(spec=SessionTreeManager),
         )
 
         ctx = AgentContext(
@@ -266,9 +278,6 @@ class TestInvocationIdDescriptionHidesCommKind:
         tool = SendToAgentTool(
             store=store,
             source=MagicMock(),
-            broker=MagicMock(),
-            registry=MagicMock(),
-            agent_bus=MagicMock(),
             service=MagicMock(),
         )
 
@@ -293,10 +302,13 @@ class TestSubagentIdentityResolution:
         sent_envelopes: list = []
         mock_broker = AsyncMock()
 
-        async def capture_send(target, msg):
-            sent_envelopes.append(msg)
+        capture_tree = MagicMock(spec=SessionTreeManager)
 
-        mock_broker.send_to = capture_send
+        async def _capture_deliver(sid: str, env: object) -> None:
+            sent_envelopes.append(env)
+
+        capture_tree.deliver = _capture_deliver
+
         mock_registry = MagicMock()
         mock_descriptor = MagicMock()
         mock_descriptor.comm_kind = AgentCommKind.NORMAL
@@ -306,8 +318,8 @@ class TestSubagentIdentityResolution:
 
         service = AgentCommunicationService(
             source=AgentAddress(name="main"),  # hardcoded at construction
-            broker=mock_broker,
             registry=mock_registry,
+            tree=capture_tree,
         )
 
         # Subagent context
@@ -330,8 +342,8 @@ class TestSubagentIdentityResolution:
             assert "Error" not in result
             # The envelope source must be the subagent, not "main"
             assert len(sent_envelopes) == 1
-            broker_msg = sent_envelopes[0]
-            assert broker_msg.sender.name != "main", "Subagent's envelope source must NOT be 'main'"
+            env = sent_envelopes[0]
+            assert env.source.name != "main", "Subagent's envelope source must NOT be 'main'"
         finally:
             current_agent_context.reset(token)
 
@@ -378,10 +390,13 @@ class TestAgentMessageXmlWrapping:
         sent_payloads: list = []
         mock_broker = AsyncMock()
 
-        async def capture_send(target, msg):
-            sent_payloads.append(msg.payload)
+        capture_tree = MagicMock(spec=SessionTreeManager)
 
-        mock_broker.send_to = capture_send
+        async def _capture_deliver(sid: str, env: object) -> None:
+            sent_payloads.append(env.payload)  # type: ignore[attr-defined]
+
+        capture_tree.deliver = _capture_deliver
+
         mock_registry = MagicMock()
         mock_registry.get_descriptor.return_value = AgentDescriptor(
             address=AgentAddress(name="helper"),
@@ -390,8 +405,8 @@ class TestAgentMessageXmlWrapping:
 
         service = AgentCommunicationService(
             source=AgentAddress(name="main"),
-            broker=mock_broker,
             registry=mock_registry,
+            tree=capture_tree,
         )
 
         ctx = AgentContext(

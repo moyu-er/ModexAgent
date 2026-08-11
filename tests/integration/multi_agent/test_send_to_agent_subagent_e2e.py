@@ -275,11 +275,34 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         fallback_runtime_dir=runtime_dir,
     )
     context_fork_builder = ContextForkBuilder()
+
+    # SessionTreeManager with InMemory stores — real tree for the
+    # SubagentAutoSendHook deliver path (todo 20 fix: tree= is mandatory
+    # on AgentMaterializeDeps since todo 16).
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+    from modex_agent.multi_agent.session_tree.store_node import InMemoryTreeNodeStore
+    from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrackStore
+    from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
+
+    tree_manager = SessionTreeManager(
+        tree_store=InMemorySessionTreeStore(),
+        node_store=InMemoryTreeNodeStore(),
+        track_store=InMemoryMessageTrackStore(),
+        bus=bus,
+        poller=poller,
+        pool_name="main",
+        workspace_root=str(tmp_path / "workspace"),
+        session_registry=session_registry,
+    )
+    consumer.set_on_consumed(tree_manager.on_consumed)
+    poller.attach_tree_manager(tree_manager)
+
     deps = AgentMaterializeDeps(
         agent_factory=factory,
         pool=pool,
         session_factory=session_factory,
         broker=broker,
+        tree=tree_manager,
         # Must mirror production wiring (bot resources.py) — TurnRunner reads safety.turn.
         safety=RuntimeSafetyPolicy(),
         project_dir=project,
@@ -295,9 +318,8 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     # --- communication service for the main agent (pure router) ---
     service = AgentCommunicationService(
         source=AgentAddress(name="main"),
-        broker=broker,
+        tree=tree_manager,
         registry=pool,
-        agent_bus=bus,
         session_factory=session_factory,
         session_registry=session_registry,
         template_registry=template_registry,

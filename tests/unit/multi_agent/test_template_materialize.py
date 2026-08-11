@@ -16,6 +16,7 @@ from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.pool_config.specs import SubagentSpec
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 
 from pathlib import Path
 
@@ -35,6 +36,7 @@ def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
         pool=pool,
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
         safety=RuntimeSafetyPolicy(),
         llm_model="gpt-4o",
         project_dir=None,  # skip prompt file read + MCP + skills
@@ -178,6 +180,7 @@ async def test_materialize_subagent_wires_hooks_to_hook_runner():
         pool=pool,
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
         agent_bus=MagicMock(),  # wired → SubagentAutoSendHook added
         project_dir=None,
     )
@@ -240,6 +243,7 @@ async def test_materialize_external_injects_emitter_factory_into_turn_runner():
         pool=pool,
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
         subagent_external_builder=_StubBuilder(),
         emitter_factory=sentinel_emitter_factory,
     )
@@ -291,6 +295,7 @@ async def test_materialize_external_skips_emitter_injection_when_deps_emitter_no
         pool=pool,
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
         subagent_external_builder=_StubBuilder(),
         emitter_factory=None,
     )

@@ -279,7 +279,7 @@ async def _assemble_resources(
                 name=peer_instance.main_agent_name,
                 kind=AgentCommKind.NORMAL,
                 pool_name=peer_pool_name,
-                bus_ref=peer_instance.agent_bus,
+                tree_ref=peer_instance.tree_manager,
                 description=description,
                 execution_strategy=peer_tree.main.execution_strategy,
             )

@@ -32,7 +32,14 @@ from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentLLMConfig
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
+from modex_agent.multi_agent.inbox_poller import InboxPoller
 from modex_agent.multi_agent.pool_config import PoolStore
+from modex_agent.multi_agent.session_tree import (
+    InMemoryMessageTrackStore,
+    InMemorySessionTreeStore,
+    InMemoryTreeNodeStore,
+    SessionTreeManager,
+)
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import CommunicationTarget
 
@@ -68,13 +75,14 @@ def _descriptor(name: str, comm_kind: AgentCommKind) -> AgentDescriptor:
 
 async def _make_pool(
     tmp_path: Path,
-) -> tuple[AgentPool, LocalAgentMessageBus, InMemorySessionRegistry]:
+) -> tuple[AgentPool, LocalAgentMessageBus, InMemorySessionRegistry, SessionTreeManager]:
     broker = InMemoryMessageBroker()
     await broker.start()
     server = InMemoryInboxServer()
+    consumer = InboxConsumer(server=server)
     bus = LocalAgentMessageBus(
         producer=InboxProducer(server=server),
-        consumer=InboxConsumer(server=server),
+        consumer=consumer,
     )
     registry = InMemorySessionRegistry()
     pool = AgentPool(
@@ -93,7 +101,23 @@ async def _make_pool(
     helper_inst = MagicMock()
     helper_inst.descriptor = _descriptor("helper", AgentCommKind.SUBAGENT)
     await pool.register_resident(_descriptor("helper", AgentCommKind.SUBAGENT), helper_inst)
-    return pool, bus, registry
+
+    poller = InboxPoller(pool, interval=0.2)
+    pool.attach_poller(poller)
+    bus.set_poller(poller)
+    tree_manager = SessionTreeManager(
+        tree_store=InMemorySessionTreeStore(),
+        node_store=InMemoryTreeNodeStore(),
+        track_store=InMemoryMessageTrackStore(),
+        bus=bus,
+        poller=poller,
+        pool_name="main",
+        workspace_root=str(tmp_path),
+        session_registry=registry,
+    )
+    consumer.set_on_consumed(tree_manager.on_consumed)
+    poller.attach_tree_manager(tree_manager)
+    return pool, bus, registry, tree_manager
 
 
 @pytest.mark.asyncio
@@ -103,18 +127,17 @@ async def test_build_communication_wires_session_registry(tmp_path):
     from modex_agent.core.agent import AgentContext
     from bot.service.pool.communication import _build_communication
 
-    pool, bus, registry = await _make_pool(tmp_path)
+    pool, bus, registry, tree_manager = await _make_pool(tmp_path)
 
     # The production helper — must accept and forward session_registry.
     service, _store = _build_communication(
         pool,
         "main",
-        pool._broker,
-        bus,
         tmp_path,
         "main",
         [],  # no extra templates; helper is a registered subagent
         AgentTemplateRegistry(PoolStore(base_dir=tmp_path)),
+        tree=tree_manager,
         session_registry=registry,
     )
 
@@ -154,19 +177,18 @@ async def test_build_communication_restores_subagent_trace_dir(tmp_path):
     from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
     from bot.service.pool.communication import _build_communication
 
-    pool, bus, registry = await _make_pool(tmp_path)
+    pool, bus, registry, tree_manager = await _make_pool(tmp_path)
     resolver = WorkspacePathResolver(
         workspace_manager=None, pool_name="main", fallback_runtime_dir=tmp_path
     )
     service, _store = _build_communication(
         pool,
         "main",
-        pool._broker,
-        bus,
         tmp_path,
         "main",
         [],
         AgentTemplateRegistry(PoolStore(base_dir=tmp_path)),
+        tree=tree_manager,
         session_registry=registry,
         workspace_path_resolver=resolver,
     )

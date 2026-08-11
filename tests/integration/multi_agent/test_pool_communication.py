@@ -28,9 +28,24 @@ from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
+from modex_agent.multi_agent.inbox_poller import InboxPoller
 from modex_agent.multi_agent.pool import AgentPool
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+from modex_agent.multi_agent.session_tree.store_node import InMemoryTreeNodeStore
+from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrackStore
+from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
 from modex_agent.multi_agent.state import AgentState
 from modex_agent.multi_agent.tools import CommunicationTarget
+
+
+class _StubPoller(InboxPoller):
+    """Real InboxPoller subclass that needs no AgentPool."""
+
+    def __init__(self) -> None:
+        self.signaled = False
+
+    def signal_wakeup(self) -> None:
+        self.signaled = True
 
 
 def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
@@ -65,6 +80,18 @@ async def _create_pool_with_bus():
     consumer = InboxConsumer(server=server)
     bus = LocalAgentMessageBus(producer=producer, consumer=consumer)
 
+    tree_manager = SessionTreeManager(
+        tree_store=InMemorySessionTreeStore(),
+        node_store=InMemoryTreeNodeStore(),
+        track_store=InMemoryMessageTrackStore(),
+        bus=bus,
+        poller=_StubPoller(),
+        pool_name="test-pool",
+        workspace_root="/tmp",
+        session_registry=InMemorySessionRegistry(),
+    )
+    consumer.set_on_consumed(tree_manager.on_consumed)
+
     factory = MagicMock()
     factory.create_agent = AsyncMock()
     factory._default_hooks = []
@@ -78,13 +105,13 @@ async def _create_pool_with_bus():
     pool = AgentPool(
         broker=broker,
         agent_factory=factory,
-        agent_bus=bus,
         inbox_consumer=consumer,
         session_factory=session_factory,
         retention=SessionRetentionPolicy(),
     )
+    pool._tree = tree_manager
 
-    return broker, bus, pool, session_factory, server
+    return broker, bus, pool, session_factory, server, tree_manager
 
 
 def _make_fake_instance(name: str, comm_kind: AgentCommKind):
@@ -119,7 +146,7 @@ def _make_fake_instance(name: str, comm_kind: AgentCommKind):
 @pytest.mark.asyncio
 async def test_main_sends_to_subagent_via_communication_service():
     """Main agent sends to subagent via AgentCommunicationService → bus → pool dispatch."""
-    broker, bus, pool, factory, server = await _create_pool_with_bus()
+    broker, bus, pool, factory, server, tree_manager = await _create_pool_with_bus()
 
     # Register main (NORMAL) and worker (SUBAGENT) agents
     main_inst = _make_fake_instance("main", AgentCommKind.NORMAL)[0]
@@ -133,9 +160,8 @@ async def test_main_sends_to_subagent_via_communication_service():
     # Create communication service for main agent
     main_service = AgentCommunicationService(
         source=AgentAddress(name="main"),
-        broker=broker,
         registry=pool,
-        agent_bus=bus,
+        tree=tree_manager,
         session_factory=factory,
     )
 
@@ -163,7 +189,7 @@ async def test_main_sends_to_subagent_via_communication_service():
 @pytest.mark.asyncio
 async def test_subagent_replies_to_main_via_communication_service():
     """Subagent sends reply to main via AgentCommunicationService → bus → wakeup."""
-    broker, bus, pool, factory, server = await _create_pool_with_bus()
+    broker, bus, pool, factory, server, tree_manager = await _create_pool_with_bus()
 
     main_inst = _make_fake_instance("main", AgentCommKind.NORMAL)[0]
     worker_inst = _make_fake_instance("worker", AgentCommKind.SUBAGENT)[0]
@@ -176,9 +202,8 @@ async def test_subagent_replies_to_main_via_communication_service():
     # Create communication service for subagent
     worker_service = AgentCommunicationService(
         source=AgentAddress(name="worker"),
-        broker=broker,
         registry=pool,
-        agent_bus=bus,
+        tree=tree_manager,
         session_factory=factory,
     )
 
@@ -215,7 +240,7 @@ async def test_subagent_replies_to_main_via_communication_service():
 @pytest.mark.asyncio
 async def test_subagent_cannot_send_to_another_subagent():
     """Subagent-to-subagent communication is blocked."""
-    broker, bus, pool, factory, server = await _create_pool_with_bus()
+    broker, bus, pool, factory, server, tree_manager = await _create_pool_with_bus()
 
     pool._agents["main"] = _make_fake_instance("main", AgentCommKind.NORMAL)[0]
     pool._agents["worker_a"] = _make_fake_instance("worker_a", AgentCommKind.SUBAGENT)[0]
@@ -226,9 +251,8 @@ async def test_subagent_cannot_send_to_another_subagent():
 
     service = AgentCommunicationService(
         source=AgentAddress(name="worker_a"),
-        broker=broker,
         registry=pool,
-        agent_bus=bus,
+        tree=tree_manager,
         session_factory=factory,
     )
 
@@ -269,7 +293,7 @@ async def test_subagent_session_registered_with_parent_in_registry():
     session_index (``.modex/session_index/``) was missing parent records for
     resident subagent sessions.
     """
-    broker, bus, pool, factory, server = await _create_pool_with_bus()
+    broker, bus, pool, factory, server, tree_manager = await _create_pool_with_bus()
 
     registry = InMemorySessionRegistry()
     pool._session_registry = registry
@@ -284,9 +308,8 @@ async def test_subagent_session_registered_with_parent_in_registry():
 
     main_service = AgentCommunicationService(
         source=AgentAddress(name="main"),
-        broker=broker,
         registry=pool,
-        agent_bus=bus,
+        tree=tree_manager,
         session_factory=factory,
         session_registry=registry,
     )

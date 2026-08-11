@@ -56,6 +56,7 @@ def _make_external_deps(
         pool=pool,
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(),
     )
     if builder is not None:
         deps = dataclasses.replace(deps, subagent_external_builder=builder)  # type: ignore[arg-type]
