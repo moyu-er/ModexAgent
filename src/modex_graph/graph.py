@@ -147,7 +147,34 @@ class Graph[S: "GraphState"]:
         `default_trigger` (Task 06) is the graph-level default trigger mode
         under `ParallelScheduler`. A per-node `Node.trigger` overrides it
         for that node. Ignored under `LINEAR`.
+
+        `ON_RECEIVE` is deprecated — `Graph.compile()` emits a
+        `DeprecationWarning` when `default_trigger` or any registered node's
+        `trigger` is `NodeTrigger.ON_RECEIVE`. Use `ON_ALL_PREDS` for
+        production graphs. `GraphSpec` (declarative API) rejects
+        `ON_RECEIVE` entirely.
         """
+        import warnings
+
+        if default_trigger == NodeTrigger.ON_RECEIVE:
+            warnings.warn(
+                "NodeTrigger.ON_RECEIVE is deprecated/experimental and is not "
+                "part of the stable scheduling contract. Use "
+                "NodeTrigger.ON_ALL_PREDS for production graphs.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        on_receive_nodes = [
+            name for name, node in self._nodes.items()
+            if node.trigger == NodeTrigger.ON_RECEIVE
+        ]
+        if on_receive_nodes:
+            warnings.warn(
+                f"Nodes {on_receive_nodes} declare trigger=ON_RECEIVE, which is "
+                "deprecated/experimental. Use ON_ALL_PREDS for production graphs.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         from .compiled_graph import CompiledGraph
 
         # 1. Exactly one entry node (exactly one edge from GraphNode.START).

@@ -90,13 +90,19 @@ class NodeTrigger(StrEnum):
 
     Controls when a node becomes READY given inbound dispatches:
 
-    - `ON_ALL_PREDS` (default): the node waits until every "activated source"
-      (a predecessor that has actually dispatched to it) has dispatched at
-      least once AND no active instance can reach it via outgoing edges.
-      One instance is then created consuming one dispatch per source.
-    - `ON_RECEIVE`: each dispatch creates a new instance immediately.
-      Reachability is NOT checked for ON_RECEIVE — the instance is marked
-      READY unconditionally.
+    - `ON_ALL_PREDS` (default, **stable**): the node waits until every
+      "activated source" (a predecessor that has actually dispatched to it)
+      has dispatched at least once AND no active instance can reach it via
+      outgoing edges. One instance is then created consuming all currently
+      pending dispatches from the activated sources (batch semantics:
+      IntegratedInput may contain multiple payloads per source). This is
+      the recommended trigger for all production graphs.
+    - `ON_RECEIVE` (**deprecated / experimental**): each dispatch creates a
+      new instance immediately. Reachability is NOT checked. The per-node
+      FIFO serial gate is in-memory only and not persisted across crashes.
+      Not recommended for new production graphs — use `ON_ALL_PREDS`.
+      `Graph.compile()` emits a `DeprecationWarning` when this trigger is
+      used; `GraphSpec` (declarative API) rejects it entirely.
     """
 
     ON_ALL_PREDS = "on_all_preds"

@@ -115,7 +115,24 @@ class GraphSpec(BaseModel):
         - At least one entry edge from `GraphNode.START`.
         - `max_iterations` > 0.
         - Edge endpoints are either sentinels or reference declared nodes.
+        - `default_trigger` and per-node `trigger` must not be `ON_RECEIVE`
+          (declarative API rejects deprecated triggers; use the imperative
+          `Graph.compile()` API if you need ON_RECEIVE with a warning).
         """
+        if self.default_trigger == NodeTrigger.ON_RECEIVE:
+            raise ValueError(
+                "GraphSpec.default_trigger=ON_RECEIVE is rejected in the "
+                "declarative API. ON_RECEIVE is deprecated/experimental. "
+                "Use NodeTrigger.ON_ALL_PREDS for production graphs."
+            )
+        for node in self.nodes:
+            if node.trigger == NodeTrigger.ON_RECEIVE:
+                raise ValueError(
+                    f"NodeSpec {node.name!r} declares trigger=ON_RECEIVE, "
+                    "which is rejected in the declarative API. ON_RECEIVE is "
+                    "deprecated/experimental. Use NodeTrigger.ON_ALL_PREDS "
+                    "for production graphs."
+                )
         # No duplicate node names.
         names = [n.name for n in self.nodes]
         duplicates = {n for n in names if names.count(n) > 1}
