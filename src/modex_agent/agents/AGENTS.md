@@ -19,7 +19,7 @@ The `agents/` module provides concrete agent implementations: the `ReActAgent` (
 
 | Directory | Files | Purpose |
 |-----------|-------|---------|
-| `react/` | 14 py (incl. `nodes/`) | `ReActAgent` — 4-node graph (START→LLM→TOOL→END) built on `modex_graph`, `TieredToolApprovalClassifier`, `ReActTurnState` (GraphState), `ReactGraphRuntime` adapter, approval suspend/resume (see `react/AGENTS.md`) |
+| `react/` | 14 py (incl. `nodes/`) | `ReActAgent` — 6-node graph (START→BEFORE→LLM→TOOL→AFTER→END) built on `modex_graph`, `TieredToolApprovalClassifier`, `ReActTurnState` (GraphState), `ReactGraphRuntime` adapter, approval suspend/resume (see `react/AGENTS.md`) |
 | `external/` | 21 py (incl. `providers/`) | `ExternalAgent` — provider-neutral streaming harness, Pi/OpenCode adapters, session-map ABC, env/prompt/path/OS process seams (see `external/AGENTS.md`, ADR-0022) |
 | `summarizer/` | 7 py | `ArchiveSummarizer` (MD archive generation), `CoreMemoryConsolidator` (ReAct-based core memory consolidation; renamed from `KnowledgeConsolidator` per ADR-0035), `SessionCompactorAgent` (tool-less single-LLM-call compact summary), `ScopedFileAgent` base class (see `summarizer/AGENTS.md`). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). |
 | `experience/` | 2 py | `ExperienceReviewAgent` — ReAct agent that reviews conversations and creates/updates EXPERIENCE.md files using experience tools (see `experience/AGENTS.md`) |
@@ -31,17 +31,19 @@ The ReAct module is the primary agent runtime. Key components:
 | File | Description |
 |------|-------------|
 | `agent.py` | `ReActAgent(Agent[ReActEvent])` — event enum, turn context setup, constructs `Graph` + `GraphEngine` + `ReActGraphContext`, delegates to `engine.run_async()` |
-| `graph.py` | `build_react_graph()` — builds `Graph[ReActTurnState]` with 4 nodes + 8 edges using `modex_graph.Graph` API |
+| `graph.py` | `build_react_graph()` — builds `Graph[ReActTurnState]` with 6 nodes + 11 edges using `modex_graph.Graph` API |
 | `context.py` | `ReActGraphContext(GraphContext[ReActTurnState])` — type-safe accessors (`agent_ctx`, `tool_manager`, `context_manager`) |
 | `runtime.py` | `ReactGraphRuntime(GraphRuntime)` — AOP bridge: maps ReAct StrEnums to `HookPoint`/`InterceptorScope`/`ReActEvent`, bridges `GraphContext.user_data` → `AgentContext` for all AOP services |
 | `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy`, `ReActRuntimeStateCodec` |
 | `builder.py` | `ReActAgentBuilder` — `build_agent()` + `build_emitter_factory()` from `AgentDescriptor` |
-| `approval.py` | `ApprovalRuntime` + `TieredToolApprovalClassifier` (NORMAL/DANGEROUS path-based) |
+| `approval.py` | *(removed — migrated to `modex_agent.approval.runtime`)* |
 | `constants.py` | `ReActNode`, `ReActHookPoint`, `ReActScope`, `ReActEvent` StrEnums |
-| `nodes/start.py` | `StartNode` — routes to LLM (fresh) or stored `current_node` (resume from suspended) |
+| `nodes/start.py` | `StartNode` — routes to BEFORE (fresh) or TOOL (resume from approval). Dispatches `START_NODE_TURN` hook on fresh-turn path only. |
+| `nodes/before_turn.py` | `BeforeTurnNode` — increments `turn_attempt`, resets `iteration`, dispatches `BEFORE_TURN` hook, routes to LLM. |
 | `nodes/llm.py` | `LLMNode` — calls LLM, handles streaming, dispatches hooks/interceptors via `ctx.runtime.*`, emits iteration events |
 | `nodes/tool.py` | `ToolNode` — classify all → suspend for approval via `ctx.interrupt(tx)` → batch execute → route |
-| `nodes/end.py` | `EndNode` — assembles `AgentResult` (normal/error/cancelled), writes `ctx.state.result` |
+| `nodes/after_turn.py` | `AfterTurnNode` — constructs `AgentResult`, writes `state.result`, dispatches `AFTER_TURN` hook, checks continuation, routes to BEFORE/END. |
+| `nodes/end.py` | `EndNode` — reads `state.result` (raises RuntimeError if None), emits completion events, dispatches `END_NODE_TURN` hook. |
 
 ### summarizer/ Submodule Details
 
@@ -89,7 +91,7 @@ The `ExperienceReviewAgent`:
 
 ```
 Agent[E]
-├── ReActAgent               (modex_graph-based, 4-node, with approval)
+├── ReActAgent               (modex_graph-based, 6-node, with approval)
 ├── ExternalAgent      (external CLI harness, provider backend lifecycle)
 ├── SessionCompactorAgent     (tool-less, single LLM call → compact summary)
 └── ScopedFileAgent          (ReAct with scoped file tools)
@@ -110,12 +112,16 @@ Agent[E]
 ### ReAct Graph Edges
 Edges are plain topology — nodes route at runtime via `deliver()`.
 ```
-START → LLM
-LLM   → TOOL
-LLM   → END
-TOOL  → LLM
-TOOL  → END
-END   → GraphNode.END
+START  → BEFORE
+START  → TOOL
+BEFORE → LLM
+LLM    → TOOL
+LLM    → AFTER
+TOOL   → LLM
+TOOL   → AFTER
+AFTER  → END
+AFTER  → BEFORE
+END    → GraphNode.END
 ```
 
 ### Runtime Modes
