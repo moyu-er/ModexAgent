@@ -11,7 +11,7 @@ Two forms of retry, exercising different parts of the deliver/submit API:
 
 2. ``build_retry_graph(...)`` — topology retry via self-loop. The body node
    is wired to itself (self-loop edge) and to ``GraphNode.END``. A counter
-   field in state tracks attempt count; when the counter reaches
+   on the wrapper instance tracks attempt count; when the counter reaches
    ``max_retries``, the wrapper delivers to END instead of back to itself.
    This form exercises self-loop edges and ``max_iterations`` as a panic
    safety net (set to ``max_retries + 5``).
@@ -93,12 +93,18 @@ class _RetryBodyWrapper[S: GraphState](Node[S]):
 
     On each execution:
     1. Awaits ``body.execute(ctx)``.
-    2. Increments ``ctx.state.<counter_state_field>`` by 1.
+    2. Increments the attempt counter (stored in ``node_scratch``).
     3. If ``not is_failure(ctx.state)``: delivers to ``GraphNode.END``.
     4. If ``is_failure(ctx.state)`` and counter < ``max_retries``: delivers
        to ``"body"`` (self-loop).
     5. If ``is_failure(ctx.state)`` and counter >= ``max_retries``: delivers
        to ``GraphNode.END`` (exhaustion).
+
+    The counter lives in ``ctx.state.node_scratch[self.node_id]`` —
+    graph-run-scoped (persists across self-loop invocations within one
+    run, resets to 0 on the next run because each run gets a fresh
+    ``ctx.state``). Safe under the per-node serial gate (same ``Node``
+    object never executes concurrently under either scheduler).
     """
 
     def __init__(
@@ -106,22 +112,21 @@ class _RetryBodyWrapper[S: GraphState](Node[S]):
         body: Node[S],
         max_retries: int,
         is_failure: Callable[[S], bool],
-        counter_state_field: str,
     ) -> None:
         self.body = body
         self.max_retries = max_retries
         self.is_failure = is_failure
-        self.counter_state_field = counter_state_field
 
     async def execute(self, ctx: GraphContext[S], integrated_input: IntegratedInput) -> None:
+        scratch = ctx.state.node_scratch
+        attempt = scratch.get(self.node_id, 0)
         await self.body.execute(ctx, integrated_input)
-        current = getattr(ctx.state, self.counter_state_field)
-        next_count = current + 1
-        setattr(ctx.state, self.counter_state_field, next_count)
+        attempt += 1
+        scratch[self.node_id] = attempt
         if not self.is_failure(ctx.state):
             self.deliver(None, GraphNode.END, ctx)
             return None
-        if next_count < self.max_retries:
+        if attempt < self.max_retries:
             self.deliver(None, "body", ctx)
             return None
         self.deliver(None, GraphNode.END, ctx)
@@ -132,7 +137,6 @@ def build_retry_graph[S: GraphState](
     body_node: Node[S],
     max_retries: int,
     is_failure: Callable[[S], bool],
-    counter_state_field: str,
 ) -> CompiledGraph[S]:
     """Build a retry-via-self-loop topology and compile it.
 
@@ -142,7 +146,8 @@ def build_retry_graph[S: GraphState](
                    -> END
 
     The user-provided ``body_node`` is wrapped in a ``_RetryBodyWrapper``
-    that manages the counter and decides whether to self-loop or exit.
+    that manages the attempt counter (instance-local) and decides whether
+    to self-loop or exit.
 
     Returns the compiled graph — pass to ``GraphEngine`` to execute.
 
@@ -152,7 +157,6 @@ def build_retry_graph[S: GraphState](
             body_node=MyBodyNode(),
             max_retries=3,
             is_failure=lambda s: s.exit_path == "fail",
-            counter_state_field="retries",
         )
         result = await GraphEngine(compiled).run_async(ctx)
     """
@@ -164,7 +168,6 @@ def build_retry_graph[S: GraphState](
             body=body_node,
             max_retries=max_retries,
             is_failure=is_failure,
-            counter_state_field=counter_state_field,
         ),
     )
     g.add_edge(GraphNode.START, "body")

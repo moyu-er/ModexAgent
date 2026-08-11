@@ -1,17 +1,18 @@
 # ruff: noqa: ANN401
-"""Tests for `examples/graph_patterns/map_reduce.py`.
+"""Tests for ``examples/graph_patterns/map_reduce.py``.
 
-Verifies:
-- `MapNode` delivers each item to the worker node.
-- Workers append results directly to shared state in execution order.
-- `ReduceNode` reads the accumulated list, applies reducer, and writes
-  the result to `result_field`.
+Verifies the pure-deliver MapReduce dataflow:
+- ``MapNode`` delivers each item to the worker node (fan-out).
+- Workers deliver squared results to ``"reduce"`` (no shared state writes).
+- ``ReduceNode`` reads ``IntegratedInput.payloads``, applies the reducer,
+  and delivers the reduced result to END.
 - A complete split -> fan-out -> reduce graph produces the expected final
-  aggregated state (map a list of numbers -> each worker squares its
-  number -> reduce sums the squares).
+  reduced value delivered to END.
 
-Tests assert observable state via `GraphEngine.run_async(ctx)` — per
-the TDD-at-the-execution-seam guidance in the task spec.
+``SqState`` inherits ``DefaultGraphState`` so ``EndNode`` writes the
+END-delivered result to ``ctx.state.result``. Tests assert on
+``result.result[0].content`` (the reduced value, stringified by
+``GraphPayload``).
 """
 
 from __future__ import annotations
@@ -23,14 +24,15 @@ from pathlib import Path
 from typing import Any
 
 from modex_graph import (
+    DefaultGraphState,
     Graph,
     GraphContext,
     GraphEngine,
     GraphNode,
     GraphPersistenceCoordinator,
     GraphRuntime,
-    GraphState,
     IntegratedInput,
+    IntegratedPayload,
     Node,
     NullDeliverStoreFactory,
     NullGraphInstanceStore,
@@ -77,22 +79,28 @@ def _make_coordinator() -> _AutoRegCoord:
     )
 
 
-class SqState(GraphState):
-    """State for the square-and-sum map-reduce example."""
+class SqState(DefaultGraphState):
+    """State for the square-and-sum map-reduce example.
+
+    Only ``items`` is needed — squared values flow through delivers, not
+    shared state. Inherits ``result`` from ``DefaultGraphState`` so
+    ``EndNode`` writes the reduced value to ``ctx.state.result``.
+    """
 
     items: list[int] = []
-    squares: list[int] = []
-    total: int = 0
 
 
 class SquareWorker(Node[SqState]):
+    """Square each item from MapNode and deliver to reduce.
+
+    For the empty-items sentinel (``content is None``), delivers ``0`` so
+    reduce still fires and produces ``sum([0]) == 0``.
+    """
+
     async def execute(self, ctx: GraphContext[SqState], integrated_input: IntegratedInput) -> None:
-        squares = [item * item for item in ctx.state.items]
-        ctx.state.squares.extend(squares)
-        if squares:
-            self.deliver(None, "reduce", ctx)
-        else:
-            self.deliver(None, GraphNode.END, ctx)
+        for payload in integrated_input.payloads:
+            item = payload.content
+            self.deliver(item * item if item is not None else 0, "reduce", ctx)
         return None
 
 
@@ -109,18 +117,13 @@ def _items(state: SqState) -> list[int]:
 
 
 def _build_graph(
-    items: list[int],
     *,
     reducer: Callable[[list[int]], int] = sum,
-    source_field: str = "squares",
-    result_field: str = "total",
 ) -> Graph[SqState]:
     return build_map_reduce_graph(
         items_fn=_items,
         worker_node=SquareWorker(),
         reducer=reducer,
-        source_field=source_field,
-        result_field=result_field,
     )
 
 
@@ -140,98 +143,81 @@ class TestMapNode:
         assert len(result["worker"]) == 5
 
     async def test_empty_items_still_delivers(self) -> None:
-        """items_fn returns [] -> no delivers -> RoutingError (enforce_deliver)."""
-        from modex_graph import RoutingError
-
+        """items_fn returns [] -> delivers single None to worker (ensures worker fires)."""
         map_node = MapNode(
             items_fn=_items,
             worker_node="worker",
         )
         ctx = _make_ctx(SqState(items=[]))
-        try:
-            await map_node.run(ctx)
-            # If no RoutingError, check if it delivered anything
-            assert not map_node._submit_result or "worker" not in map_node._submit_result
-        except RoutingError:
-            pass  # Expected — no items means no delivers
+        await map_node.run(ctx)
+        result = map_node._submit_result
+        assert "worker" in result
+        assert len(result["worker"]) == 1
+        assert result["worker"][0] is None
 
 
 class TestWorkerAccumulation:
     async def test_folds_worker_contributions_in_execution_order(self) -> None:
-        """Worker squares [3, 1, 2] -> squares = [9, 1, 4]."""
-        compiled = _build_graph([3, 1, 2]).compile()
+        """Worker squares [3, 1, 2] -> reduce sums = 9 + 1 + 4 = 14."""
+        compiled = _build_graph().compile()
         ctx = _make_ctx(SqState(items=[3, 1, 2]))
         result = await GraphEngine(compiled).run_async(ctx)
-
-        assert result.squares == [9, 1, 4]
+        assert int(result.result[0].content) == 14
 
 
 class TestReduceNode:
-    """ReduceNode reads accumulated list, applies reducer, writes result_field."""
+    """ReduceNode reads IntegratedInput.payloads, applies reducer, delivers to END."""
 
-    async def test_reads_accumulated_list_applies_reducer_writes_result_field(
-        self,
-    ) -> None:
-        """Isolated: pre-populate state.squares, call ReduceNode.execute, check."""
-        reduce_node = ReduceNode(
-            reducer=sum,
-            source_field="squares",
-            result_field="total",
-        )
-        state = SqState(squares=[1, 4, 9])
-        ctx = _make_ctx(state)
-
-        result = await reduce_node.execute(ctx, IntegratedInput())
-
-        assert result is None
-        assert ctx.state.total == 14
-        assert ctx.state.squares == [1, 4, 9]
+    async def test_reads_payloads_applies_reducer_delivers_to_end(self) -> None:
+        """Isolated: feed IntegratedInput, call execute, check pending delivers."""
+        reduce_node = ReduceNode(reducer=sum)
+        integrated_input = IntegratedInput(payloads=[
+            IntegratedPayload(source_node="worker", content=1),
+            IntegratedPayload(source_node="worker", content=4),
+            IntegratedPayload(source_node="worker", content=9),
+        ])
+        ctx = _make_ctx()
+        await reduce_node.execute(ctx, integrated_input)
+        assert len(reduce_node._pending_delivers) == 1
+        content, target = reduce_node._pending_delivers[0]
+        assert content == 14
+        assert target == GraphNode.END
 
     async def test_complete_graph_writes_expected_total_with_sum(self) -> None:
-        """Complete graph: reduce reads squares, applies sum, writes total."""
-        compiled = _build_graph([1, 2, 3, 4]).compile()
+        """Complete graph: reduce sums [1, 4, 9, 16] = 30."""
+        compiled = _build_graph().compile()
         ctx = _make_ctx(SqState(items=[1, 2, 3, 4]))
         result = await GraphEngine(compiled).run_async(ctx)
-
-        assert result.squares == [1, 4, 9, 16]
-        assert result.total == 30
+        assert int(result.result[0].content) == 30
 
     async def test_complete_graph_writes_expected_total_with_max(self) -> None:
-        """reducer=max -> total == max(squares)."""
-        compiled = _build_graph([1, 5, 2], reducer=max).compile()
+        """reducer=max -> max([1, 25, 4]) = 25."""
+        compiled = _build_graph(reducer=max).compile()
         ctx = _make_ctx(SqState(items=[1, 5, 2]))
         result = await GraphEngine(compiled).run_async(ctx)
-
-        assert result.squares == [1, 25, 4]
-        assert result.total == 25
+        assert int(result.result[0].content) == 25
 
 
 class TestCompleteMapReduceGraph:
-    """Complete split -> fan-out -> reduce graph produces expected final state."""
+    """Complete split -> fan-out -> reduce graph produces expected reduced value."""
 
     async def test_squares_then_sum(self) -> None:
         """map [1,2,3] -> square each -> sum the squares = 14."""
-        compiled = _build_graph([1, 2, 3]).compile()
+        compiled = _build_graph().compile()
         ctx = _make_ctx(SqState(items=[1, 2, 3]))
         result = await GraphEngine(compiled).run_async(ctx)
-
-        assert result.squares == [1, 4, 9]
-        assert result.total == 14
+        assert int(result.result[0].content) == 14
 
     async def test_empty_items_produces_zero_total(self) -> None:
-        """Empty input -> no items -> reduce sums empty list = 0."""
-        compiled = _build_graph([]).compile()
+        """Empty input -> worker delivers 0 -> reduce sums = 0."""
+        compiled = _build_graph().compile()
         ctx = _make_ctx(SqState(items=[]))
         result = await GraphEngine(compiled).run_async(ctx)
-
-        assert result.squares == []
-        assert result.total == 0
+        assert int(result.result[0].content) == 0
 
     async def test_single_item(self) -> None:
         """Single item -> one worker -> square -> sum = item**2."""
-        compiled = _build_graph([7]).compile()
+        compiled = _build_graph().compile()
         ctx = _make_ctx(SqState(items=[7]))
         result = await GraphEngine(compiled).run_async(ctx)
-
-        assert result.squares == [49]
-        assert result.total == 49
+        assert int(result.result[0].content) == 49

@@ -478,7 +478,7 @@ class TestRecoveryFromCoordinator:
         assert node_a.inputs[-1] == ["pending-a"]
         assert node_b.execute_count == 2
         assert node_b.inputs[-1] == [
-            {"resume_target": None, "count": 0, "name": "", "messages": []},
+            {"resume_target": None, "node_scratch": {}, "count": 0, "name": "", "messages": []},
             "pending-b",
         ]
         assert node_c.execute_count == 2
