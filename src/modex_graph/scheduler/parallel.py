@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from copy import copy
 from typing import TYPE_CHECKING, Any
 
 from ..constants import (
@@ -93,6 +92,12 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         # Store scans must not reschedule delivers already handled by in-memory dispatch.
         self._scheduled_deliver_ids: set[int] = set()
         self._wakeup: asyncio.Event | None = None
+        # Maps asyncio tasks to their instance IDs for correct dispatch source
+        # identification. Concurrent async instances share ctx._current_instance
+        # (scratchpad model, no copy(ctx)), which gets clobbered when one task
+        # yields and another overwrites it. _handle_dispatch uses
+        # asyncio.current_task() + this map to find the real source instance.
+        self._task_to_instance: dict[asyncio.Task[None], str] = {}
 
     # ── Scheduler ABC implementation ───────────────────────────────────
 
@@ -133,6 +138,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         self._scheduled_deliver_ids = set()
         self._iteration_count = 0
         self._instance_seq = 0
+        self._task_to_instance = {}
 
         # Unified bootstrap: query store -> produce seed node names.
         # Restores ctx.state and auto-promotes CONSUMED_PENDING delivers.
@@ -168,6 +174,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
                     self._ready.discard(iid)
 
                     task = asyncio.create_task(self._execute_instance(iid, ctx))
+                    self._task_to_instance[task] = iid
                     running[task] = iid
 
                 if not running:
@@ -191,6 +198,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
                     if task is wakeup_wait:
                         continue
                     iid = running.pop(task)
+                    self._task_to_instance.pop(task, None)
                     try:
                         task.result()
                     except Exception:
@@ -253,8 +261,11 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
     async def _execute_instance(self, instance_id: str, ctx: GraphContext[S]) -> None:
         """Execute a single instance: READY → RUNNING → run node → COMPLETED.
 
-        Each task uses its own context shell while sharing ``ctx.state``. After
-        ``after_node``, pending instances are re-checked.
+        Uses the shared ctx directly — state isolation is via per-node
+        scratchpad keys (node_scratch), not context copying. The scheduler
+        sets invocation-local fields (current_instance, current_invocation)
+        on the shared ctx. After ``after_node``, pending instances are
+        re-checked.
 
         ``max_iterations`` checked before execution; overflow raises
         ``GraphRecursionError``. ``GraphBubbleUp`` propagates (not caught).
@@ -275,7 +286,12 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
 
         node = self.graph.nodes[instance.node_name]
 
-        exec_ctx = copy(ctx)
+        exec_ctx = ctx
+        # Both _current_instance and current_invocation are shared on ctx
+        # and clobbered when concurrent tasks yield. _handle_dispatch
+        # corrects _current_instance via _task_to_instance; source_node_id
+        # in delivers is derived from the corrected source_node_name (not
+        # from the clobbered current_invocation) in route_deliver_from_dispatch.
         exec_ctx.set_current_instance(instance_id)
         exec_ctx.current_invocation = None
 
@@ -339,6 +355,15 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         PENDING/READY/RUNNING instance (excluding the candidate itself)
         can reach it along declared outgoing edges.
         """
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:
+            current_task = None
+        if current_task is not None:
+            task_iid = self._task_to_instance.get(current_task)
+            if task_iid is not None:
+                source_instance = task_iid
+
         source_instance_obj = self._instances.get(source_instance)
         if source_instance_obj is None:
             raise RoutingError(f"Dispatch from unknown instance {source_instance!r}.")
@@ -417,10 +442,11 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         return self.graph.default_trigger
 
     def _can_reach_active(self, target: str, *, exclude: str | None = None) -> bool:
-        """BFS from all PENDING/READY/RUNNING instances (excluding `exclude`)
-        and all pending-dispatch targets (ON_ALL_PREDS nodes with queued
-        dispatches that will become future instances) along declared outgoing
-        edges. Returns True if any can reach `target`.
+        """BFS from all PENDING/READY/RUNNING instances (excluding `exclude`),
+        all pending-dispatch targets (ON_ALL_PREDS nodes with queued
+        dispatches that will become future instances), and all nodes with
+        unconsumed PENDING delivers in their DeliverStore, along declared
+        outgoing edges. Returns True if any can reach `target`.
 
         The BFS checks ALL declared outgoing edges (not just routed ones) —
         we don't know which edges a running node will take until it completes.
@@ -433,6 +459,13 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         such a node can reach `target`, `target` must wait. The `target`
         itself is excluded from the pending-dispatch start set to avoid
         self-blocking.
+
+        Nodes with unconsumed PENDING delivers are included because those
+        delivers represent future work not yet consumed by any invocation.
+        Without this start source, fan-in closure fails when workers complete
+        sequentially — Worker#1 completes but Worker#2/#3 haven't been
+        created yet (their items are still PENDING in the DeliverStore),
+        causing Reduce to fire prematurely with partial results.
         """
         start_nodes: set[str] = set()
         for iid in self._active:
@@ -450,6 +483,24 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
                 continue
             if any(queues.get(src) for src in queues):
                 start_nodes.add(tgt)
+
+        # Third start source: nodes with unconsumed PENDING delivers.
+        # When a worker has PENDING items in its DeliverStore (not yet consumed
+        # by any invocation), those items represent future work that may
+        # eventually deliver to downstream targets. The BFS must see these
+        # nodes as reachable sources to prevent premature fan-in firing.
+        if self._ctx is not None:
+            coordinator = self._ctx.coordinator
+            for node_name, node in self.graph.nodes.items():
+                if node_name in (GraphNode.START, GraphNode.END):
+                    continue
+                if node_name == target:
+                    continue
+                if node_name in start_nodes:
+                    continue
+                delivers = coordinator.collect_consumable_delivers(node.node_id, 0)
+                if any(d.status == DeliverConsumptionStatus.PENDING for d in delivers):
+                    start_nodes.add(node_name)
 
         if not start_nodes:
             return False
@@ -478,10 +529,20 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         """Attempt to fire one ON_ALL_PREDS instance for `target`.
 
         Fires when every activated source has at least one pending
-        dispatch AND reachability is clear. Consumes ALL pending
-        dispatches for this target (not just one per source) — the
-        node fires once per "all sources have dispatched" event,
-        not once per dispatch.
+        dispatch AND the per-node serial gate is clear (no in-flight
+        instance of the same Node object) AND reachability is clear.
+        Consumes ALL pending dispatches for this target (not just one
+        per source) — the node fires once per "all sources have
+        dispatched" event, not once per dispatch.
+
+        The per-node serial gate (`_is_node_running`) enforces the same
+        invariant as ON_RECEIVE: the same Node object never executes
+        concurrently. Without this check, a second ON_ALL_PREDS group
+        could fire while the first instance is still RUNNING, racing
+        `_pending_delivers` / `_submit_result` / `_graph_ref` /
+        `node_scratch[self.node_id]`. When the gate blocks, pending
+        dispatches stay queued and are retried via `_recheck_pending`
+        after the in-flight instance completes.
         """
         activated = self._activated_sources.get(target)
         if not activated:
@@ -490,6 +551,8 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         for source in activated:
             if not pending.get(source):
                 return
+        if self._is_node_running(target):
+            return
         if self._can_reach_active(target):
             return
         self._pending_dispatches.pop(target, None)
