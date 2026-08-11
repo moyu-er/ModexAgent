@@ -360,6 +360,14 @@ _Avoid_: graph context (too generic — could mean GraphContext the runtime obje
 The user's original input that triggered a graph run. Enters the graph through `__start__`, flows as `ctx.user_input.content`, and is the root task every node works towards. Injected into agent context as a `[Origin Request]:\n<content>` block in the SYSTEM_REMINDER message (via `_format_integrated_input` in `BotAgentNode.execute`). The topology section links it to `__start__ (entry — receives Origin Request)` so the agent distinguishes it from node-to-node delivers. Distinct from upstream node delivers (`[Input from graph node 'X']`) — Origin Request is the graph-level root input, not a node-level handoff.
 _Avoid_: user input (too generic — could mean any user message), original request (ambiguous — could mean the first HTTP request), trigger input (implementation jargon)
 
+**Turn Context Configuration**:
+The runtime configuration layer that shapes a per-turn `AgentContext` after `build_runtime_and_context` constructs the fresh per-turn objects. A pipeline of ordered configurators, each deciding via `applies(descriptor)` whether it applies to the current turn and mutating `AgentContext` in place. Orthogonal to pool wiring (which handles main/subagent/native/external differences at assembly time) and to the system prompt pipeline (which shapes prompt content); this layer shapes runtime concerns — tools, approval, turn limits, graph context binding, workspace binding. Graph-scheduling turns (direct node execution and inbox-driven subagent turns under a graph context) activate the graph configurators; normal-session turns skip them via `applies() → false`. See ADR-0039.
+_Avoid_: turn setup (too generic), context builder (collides with TurnContextBuilder), per-turn config (ambiguous — could mean config read at turn time)
+
+**Graph-aware message**:
+An `AgentMessageEnvelope` carrying graph-scheduling metadata (`graph_instance_id`, `source_node_id`, `graph_spec_id`) in its `metadata` map, marking it as produced by a graph-scheduling turn rather than a normal inter-agent message. The consumer stamps the receiver's session with the graph context so the receiver's turn runs with graph-aware configuration (GraphDeliverTool, approval disabled, topology injection, MAX_TURNS). Without this metadata, the receiver runs as a normal-session turn. The metadata is the sole signal distinguishing a graph-scheduling subagent turn from a normal subagent turn — both use the same inbox mechanism.
+_Avoid_: graph message (too generic), graph envelope (collides with AgentMessageEnvelope the type)
+
 ## Relationships
 
 - A **Workspace** owns one or more **Pool Instances**; pool instances are not shared across workspaces.

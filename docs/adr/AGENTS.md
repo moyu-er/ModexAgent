@@ -3,7 +3,7 @@
 
 # docs/adr
 
-Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0038; the historical ADR-0034 phase-c-preliminaries was merged into ADR-0033 and archived in `history/001-`; the original ADR-0035 direct-CLI design was superseded by the current ADR-0035 control-plane design and archived in `history/`).
+Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0039; the historical ADR-0034 phase-c-preliminaries was merged into ADR-0033 and archived in `history/001-`; the original ADR-0035 direct-CLI design was superseded by the current ADR-0035 control-plane design and archived in `history/`).
 
 ## Purpose
 
@@ -68,5 +68,6 @@ ADRs document significant architectural decisions, including the context driving
 | 0036 | Node ID, START/END, GraphPayload breaking changes |
 | 0037 | BeforeTurnNode and AfterTurnNode — graph-internal turn lifecycle |
 | 0038 | Graph node agent context injection |
+| 0039 | Turn context configuration pipeline |
 
 <!-- MANUAL -->
