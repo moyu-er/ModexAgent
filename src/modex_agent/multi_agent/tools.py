@@ -13,11 +13,9 @@ from modex_agent.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
-    from modex_agent.messaging.broker import MessageBroker
     from modex_agent.multi_agent.address import AgentAddress
-    from modex_agent.multi_agent.bus import AgentMessageBus
     from modex_agent.multi_agent.communication import AgentCommunicationService
-    from modex_agent.multi_agent.registry import AgentRegistry
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +71,7 @@ class CommunicationTarget:
     kind: AgentCommKind
     description: str = ""
     pool_name: str = ""
-    bus_ref: AgentMessageBus | None = None
+    tree_ref: SessionTreeManager | None = None
     execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT
 
 
@@ -354,17 +352,11 @@ class SendToAgentTool(Tool):
         *,
         store: CommunicationTargetStore,
         source: AgentAddress,
-        broker: MessageBroker,
-        registry: AgentRegistry,
-        agent_bus: AgentMessageBus,
         service: AgentCommunicationService,
         wakeup_timeout: float = 1.0,
     ) -> None:
         self._store = store
         self._source = source
-        self._broker = broker
-        self._registry = registry
-        self._agent_bus = agent_bus
         self._service = service
         self._wakeup_timeout = wakeup_timeout
         super().__init__(
@@ -493,16 +485,10 @@ class TaskDispatchTool(Tool):
         *,
         store: CommunicationTargetStore,
         source: AgentAddress,
-        broker: MessageBroker,
-        registry: AgentRegistry,
-        agent_bus: AgentMessageBus,
         service: AgentCommunicationService,
     ) -> None:
         self._store = store
         self._source = source
-        self._broker = broker
-        self._registry = registry
-        self._agent_bus = agent_bus
         self._service = service
         super().__init__(
             name="task",

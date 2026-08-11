@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.factory import AgentFactory
     from modex_agent.multi_agent.inbox.consumer import InboxConsumer
     from modex_agent.multi_agent.pool import AgentPool
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
     from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
     from modex_agent.pipeline.adapters import OutputAdapter
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
@@ -45,6 +46,7 @@ class AgentMaterializeDeps:
     pool: AgentPool
     session_factory: SessionIdFactory
     broker: MessageBroker
+    tree: SessionTreeManager
     safety: RuntimeSafetyPolicy | None = None
     llm_model: str | None = None
     # TODO(model-config-convergence): 模型调用参数 temperature/max_output_tokens 应只由

@@ -77,6 +77,7 @@ class DefaultAgentFactory(AgentFactory):
         command_interceptor: Any | None = None,
         subagent_service: Any | None = None,
         inbox_server: InboxServer | None = None,
+        inbox_consumer: InboxConsumer | None = None,
         default_hooks: list[Any] | None = None,
         default_hook_runner: Any | None = None,
         default_interceptor_chain: Any | None = None,
@@ -102,7 +103,7 @@ class DefaultAgentFactory(AgentFactory):
         self._session_registry = session_registry
         self._observability_config = observability_config
         self._inbox_producer = InboxProducer(inbox_server) if inbox_server else None
-        self._inbox_consumer = InboxConsumer(inbox_server) if inbox_server else None
+        self._inbox_consumer = inbox_consumer
         # Shared runtime-context manager across all agents created by this factory.
         # Per-session isolation is handled internally via SessionScope.
         self._runtime_context_manager = RuntimeContextManager()

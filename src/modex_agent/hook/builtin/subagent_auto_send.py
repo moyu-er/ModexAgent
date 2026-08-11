@@ -80,7 +80,7 @@ if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.emitter import AgentResult
     from modex_agent.core.message import ChatMessage
-    from modex_agent.multi_agent.bus import AgentMessageBus
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ class SubagentAutoSendHook(FinallyGraphHook):
 
     def __init__(
         self,
-        agent_bus: AgentMessageBus | None = None,
+        tree: SessionTreeManager | None = None,
         self_name: str = "",
         parent_name: str = "main",
         runtime_dir: Path | None = None,
@@ -123,7 +123,7 @@ class SubagentAutoSendHook(FinallyGraphHook):
         execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
         max_result_chars: int = NOTIFY_MAX_RESULT_CHARS,
     ) -> None:
-        self._agent_bus = agent_bus
+        self._tree = tree
         self._self_name = self_name
         self._parent_name = parent_name
         self._runtime_dir = runtime_dir or Path(".")
@@ -134,8 +134,11 @@ class SubagentAutoSendHook(FinallyGraphHook):
     # -- FINALLY_GRAPH (always fires) ------------------------------------------
 
     async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None:
-        if self._agent_bus is None:
-            return
+        if self._tree is None:
+            raise RuntimeError(
+                "SubagentAutoSendHook.tree not wired — "
+                "subagent result notification dropped"
+            )
 
         invocation_id = ctx.session.session_id_prefix
         session_id = str(ctx.session)
@@ -439,8 +442,11 @@ class SubagentAutoSendHook(FinallyGraphHook):
         content: str,
     ) -> None:
         """Send markdown notification to parent agent's inbox."""
-        if self._agent_bus is None:
-            return
+        if self._tree is None:
+            raise RuntimeError(
+                "SubagentAutoSendHook.tree not wired — "
+                "subagent result notification dropped"
+            )
 
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.envelope import AgentMessageEnvelope
@@ -475,7 +481,7 @@ class SubagentAutoSendHook(FinallyGraphHook):
         )
 
         try:
-            await self._agent_bus.send(inbox_key, envelope)
+            await self._tree.deliver(inbox_key, envelope)
             logger.info(
                 "SubagentAutoSendHook: notified parent %s (agent=%s, session=%s)",
                 self._parent_name,

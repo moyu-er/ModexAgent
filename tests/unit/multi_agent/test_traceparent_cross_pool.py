@@ -34,7 +34,19 @@ from modex_agent.multi_agent.communication.strategies.base import (
 )
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.message_type import AgentMessageType
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import CommunicationTarget
+
+
+def _mock_tree(bus: object) -> SessionTreeManager:
+    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+
+    async def _deliver(sid: str, env: object) -> None:
+        await bus.send(sid, env)  # type: ignore[attr-defined]
+
+    tree.deliver = _deliver
+    return tree
+
 
 _TRACEPARENT = "00-aabbccddeeff00112233445566778899-0011223344556677-01"
 
@@ -117,12 +129,23 @@ def _make_context(agent_name: str = "mainA") -> AgentContext:
     )
 
 
+def _make_tree_ref(bus: _FakeBus) -> SessionTreeManager:
+    """Mock SessionTreeManager whose deliver() delegates to bus.send()."""
+    tree = MagicMock(spec=SessionTreeManager)
+
+    async def _deliver(sid: str, env: AgentMessageEnvelope) -> None:
+        await bus.send(sid, env)
+
+    tree.deliver = _deliver
+    return tree
+
+
 def _make_peer_target(bus: _FakeBus) -> CommunicationTarget:
     return CommunicationTarget(
         name="mainB",
         kind=AgentCommKind.NORMAL,
         pool_name="B",
-        bus_ref=bus,
+        tree_ref=_make_tree_ref(bus),
     )
 
 
@@ -133,9 +156,8 @@ def _make_service(
     local = local_bus or _FakeBus()
     service = AgentCommunicationService(
         source=AgentAddress(name="mainA"),
-        broker=_FakeBroker(),
         registry=MagicMock(),
-        agent_bus=local,
+        tree=MagicMock(spec=SessionTreeManager),
         session_factory=SessionIdFactory(),
     )
     return service, local
@@ -165,9 +187,8 @@ class TestTracePropagatingPeerNormalStrategy:
         peer_bus = _FakeBus()
         deps = SendDeps(
             source=AgentAddress(name="mainA"),
-            broker=_FakeBroker(),
+            tree=MagicMock(spec=SessionTreeManager),
             session_factory=SessionIdFactory(),
-            agent_bus=_FakeBus(),
         )
         strategy = _TracePropagatingPeerNormal(deps)
         req = SendRequest(
@@ -188,9 +209,8 @@ class TestTracePropagatingPeerNormalStrategy:
         peer_bus = _FakeBus()
         deps = SendDeps(
             source=AgentAddress(name="mainA"),
-            broker=_FakeBroker(),
+            tree=MagicMock(spec=SessionTreeManager),
             session_factory=SessionIdFactory(),
-            agent_bus=_FakeBus(),
         )
         strategy = _TracePropagatingPeerNormal(deps)
         req = SendRequest(
@@ -215,9 +235,8 @@ class TestTracePropagatingPeerNormalStrategy:
         local_bus = _FakeBus()
         deps = SendDeps(
             source=AgentAddress(name="mainA"),
-            broker=_FakeBroker(),
+            tree=MagicMock(spec=SessionTreeManager),
             session_factory=SessionIdFactory(),
-            agent_bus=local_bus,
         )
         strategy = _TracePropagatingPeerNormal(deps)
         req = SendRequest(

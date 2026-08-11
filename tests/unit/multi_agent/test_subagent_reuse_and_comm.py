@@ -37,6 +37,18 @@ from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.pool_config.specs import SubagentSpec
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.multi_agent.tools import CommunicationTarget
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+
+
+def _mock_tree(bus: object) -> SessionTreeManager:
+    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+
+    async def _deliver(sid: str, env: object) -> None:
+        await bus.send(sid, env)  # type: ignore[attr-defined]
+
+    tree.deliver = _deliver
+    return tree
+
 
 
 def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
@@ -106,6 +118,7 @@ def _deps(
         pool=pool,
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
         safety=RuntimeSafetyPolicy(),
         llm_model="gpt-4o",
         project_dir=None,
@@ -396,9 +409,9 @@ async def test_each_pool_has_an_isolated_agent_registry():
 
 
 @pytest.mark.asyncio
-async def test_send_to_agent_routes_through_agent_bus():
+async def test_send_to_agent_routes_through_tree():
     """The outbound task_request path (SendToAgentTool -> _send) enqueues via
-    agent_bus.send when a subagent template matches — same carrier as the
+    tree.deliver when a subagent template matches — same carrier as the
     auto-send hook below."""
     from modex_agent.multi_agent.communication import AgentCommunicationService
 
@@ -411,9 +424,8 @@ async def test_send_to_agent_routes_through_agent_bus():
     registry.get_profile = MagicMock(return_value=None)
     svc = AgentCommunicationService(
         source=AgentAddress(name="main"),
-        broker=MagicMock(),
         registry=registry,
-        agent_bus=bus,
+        tree=_mock_tree(bus),
         session_factory=SessionIdFactory(),
         session_registry=AsyncMock(),
         template_registry=template_registry,
@@ -444,7 +456,7 @@ async def test_subagent_auto_send_hook_routes_through_same_bus():
     bus = MagicMock()
     bus.send = AsyncMock()
     hook = SubagentAutoSendHook(
-        agent_bus=bus,
+    tree=_mock_tree(bus),
         self_name="scout",
         parent_name="main",
         runtime_dir=Path("."),

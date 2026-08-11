@@ -318,7 +318,7 @@ class BotControlFacade:
 
         # 7. Invocation existence check (T07) — same-pool subagent only.
         is_same_pool_subagent = (
-            target.kind == AgentCommKind.SUBAGENT and target.bus_ref is None
+            target.kind == AgentCommKind.SUBAGENT and target.tree_ref is None
         )
         requested_invocation_id = request.invocation_id
         if is_same_pool_subagent and requested_invocation_id:

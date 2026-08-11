@@ -69,9 +69,6 @@ def _task_tool(
     return TaskDispatchTool(
         store=store,
         source=AgentAddress(name="test"),
-        broker=MagicMock(),
-        registry=MagicMock(),
-        agent_bus=MagicMock(),
         service=service or _RecordingService(),  # type: ignore[arg-type]
     )
 

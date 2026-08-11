@@ -10,17 +10,13 @@ from __future__ import annotations
 
 import logging
 import os
-import time
-import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.session_registry import SessionRegistry
-from modex_agent.messaging.broker import MessageBroker
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.bus import AgentMessageBus
 from modex_agent.multi_agent.communication.result import AgentSendResult, format_send_ack
 from modex_agent.multi_agent.communication.strategies.base import (
     SendDeps,
@@ -35,7 +31,6 @@ from modex_agent.multi_agent.communication.strategies.subagent_dispatch import (
 )
 from modex_agent.multi_agent.communication.topology import TopologyPolicy
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
-from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.registry import AgentRegistry
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
@@ -45,6 +40,7 @@ if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.multi_agent.pool import AgentPool
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 
 logger = logging.getLogger(__name__)
 
@@ -98,10 +94,9 @@ class AgentCommunicationService:
     def __init__(
         self,
         source: AgentAddress,
-        broker: MessageBroker,
         registry: AgentRegistry,
         *,
-        agent_bus: AgentMessageBus | None = None,
+        tree: SessionTreeManager,
         session_factory: SessionIdFactory | None = None,
         session_registry: SessionRegistry | None = None,
         template_registry: AgentTemplateRegistry | None = None,
@@ -113,9 +108,8 @@ class AgentCommunicationService:
         trace_enabled: bool = True,
     ) -> None:
         self._source = source
-        self._broker = broker
         self._registry = registry
-        self._agent_bus = agent_bus
+        self._tree = tree
         self._session_factory = session_factory or SessionIdFactory()
         self._session_registry = session_registry
         self._template_registry = template_registry
@@ -127,9 +121,8 @@ class AgentCommunicationService:
 
         deps = SendDeps(
             source=source,
-            broker=broker,
             session_factory=self._session_factory,
-            agent_bus=agent_bus,
+            tree=tree,
             session_registry=session_registry,
             workspace_path_resolver=workspace_path_resolver,
             trace_enabled=trace_enabled,
@@ -171,7 +164,7 @@ class AgentCommunicationService:
         if err is not None:
             return AgentSendResult.with_error(target.name, target.kind, err)
 
-        if target.bus_ref is not None:
+        if target.tree_ref is not None:
             strategy = self._strategies[SendStrategyKind.PEER_NORMAL]
         elif target.kind == AgentCommKind.SUBAGENT:
             strategy = self._strategies[SendStrategyKind.SUBAGENT_DISPATCH]

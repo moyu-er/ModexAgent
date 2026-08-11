@@ -8,6 +8,7 @@ from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
@@ -85,9 +86,6 @@ class TestSchema:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         assert "invocation_id" in tool.parameters["properties"]
@@ -100,9 +98,6 @@ class TestSchema:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="worker"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         assert "invocation_id" not in tool.parameters["properties"]
@@ -116,9 +111,6 @@ class TestToolInvocationIdForwarding:
         tool = SendToAgentTool(
             store=_store_with_target(),
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=service,  # type: ignore[arg-type]
         )
 
@@ -150,9 +142,6 @@ class TestToolInvocationIdNullStringNormalization:
         tool = SendToAgentTool(
             store=_store_with_target(),
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=service,  # type: ignore[arg-type]
         )
 
@@ -180,9 +169,6 @@ class TestToolInvocationIdNullStringNormalization:
         tool = SendToAgentTool(
             store=_store_with_target(),
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=service,  # type: ignore[arg-type]
         )
 
@@ -214,9 +200,6 @@ class TestSendToAgentToolTargetValidation:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=service,  # type: ignore[arg-type]
         )
         token = current_agent_context.set(_context())
@@ -238,9 +221,6 @@ class TestSendToAgentToolTargetValidation:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=service,  # type: ignore[arg-type]
         )
         token = current_agent_context.set(_context())
@@ -266,9 +246,6 @@ class TestSelfSendGuard:
         tool = SendToAgentTool(
             store=_store_with_target(),
             source=AgentAddress(name="agent"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=service,  # type: ignore[arg-type]
         )
         token = current_agent_context.set(_context())
@@ -298,9 +275,6 @@ class TestSelfSendGuard:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="agent"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=service,  # type: ignore[arg-type]
         )
         token = current_agent_context.set(_context())
@@ -346,9 +320,6 @@ class TestToolManagerIntegration:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
 
@@ -374,9 +345,6 @@ class TestSendToAgentToolDescription:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         assert "office-expert" in tool.description
@@ -386,9 +354,6 @@ class TestSendToAgentToolDescription:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         assert "No targets" in tool.description
@@ -423,9 +388,6 @@ class TestSendToAgentToolDescription:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         assert "scout" in tool.description
@@ -441,9 +403,6 @@ class TestSendToAgentToolDescription:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         with pytest.raises(ValueError, match="office-expert"):
@@ -459,9 +418,6 @@ class TestSendToAgentToolDescription:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         before = tool.description
@@ -473,9 +429,6 @@ class TestSendToAgentToolDescription:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         assert "No targets" in tool.description
@@ -503,9 +456,6 @@ class TestSendToAgentToolDescription:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         targets = tool.list_targets()
@@ -534,9 +484,6 @@ class TestSendToAgentToolDescription:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         tm = InMemoryToolManager()
@@ -570,9 +517,6 @@ class TestSendToAgentToolDescription:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         desc = tool.description
@@ -591,9 +535,6 @@ class TestSendToAgentToolDynamicSchema:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         schema = tool.get_dynamic_schema()
@@ -609,9 +550,6 @@ class TestSendToAgentToolDynamicSchema:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         schema = tool.get_dynamic_schema()
@@ -624,9 +562,6 @@ class TestSendToAgentToolDynamicSchema:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         assert (
@@ -652,9 +587,6 @@ class TestSendToAgentToolDynamicSchema:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         schema = tool.get_dynamic_schema()
@@ -668,9 +600,6 @@ class TestSendToAgentToolDynamicSchema:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         schema = tool.get_dynamic_schema()
@@ -693,9 +622,6 @@ class TestSendToAgentToolDynamicSchema:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         desc = tool.description.lower()
@@ -713,9 +639,6 @@ class TestSendToAgentToolDynamicSchema:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         before = tool.parameters["properties"]["target_agent"]
@@ -753,9 +676,6 @@ class TestSubagentDescriptionContent:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="worker"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         token = current_agent_context.set(_subagent_context(parent_name="main"))
@@ -772,9 +692,6 @@ class TestSubagentDescriptionContent:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="worker"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         token = current_agent_context.set(_subagent_context())
@@ -794,9 +711,6 @@ class TestSubagentDescriptionContent:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         desc = tool.description
@@ -809,9 +723,6 @@ class TestSubagentDescriptionContent:
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="worker"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         # No contextvar set → no resolvable parent.
@@ -842,6 +753,7 @@ class TestSubagentWiringSelectsSubagentMode:
             pool=pool,
             session_factory=SessionIdFactory(),
             broker=MagicMock(),
+            tree=MagicMock(spec=SessionTreeManager),
             safety=RuntimeSafetyPolicy(),
             llm_model="gpt-4o",
             project_dir=None,

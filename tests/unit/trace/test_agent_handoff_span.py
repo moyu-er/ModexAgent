@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentCommKind, AgentContext
@@ -27,6 +28,7 @@ from modex_agent.multi_agent.communication.strategies.base import (
 )
 from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.registry import AgentProfile
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import CommunicationTarget
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
@@ -149,8 +151,8 @@ def _make_service(
 ) -> AgentCommunicationService:
     return AgentCommunicationService(
         source=AgentAddress(name=source_name),
-        broker=_FakeBroker(),
         registry=_FakeRegistry(profiles=profiles),
+        tree=MagicMock(spec=SessionTreeManager),
     )
 
 

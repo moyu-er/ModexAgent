@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -16,6 +16,7 @@ from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 
 
 def _make_bus(tmpdir: Path) -> LocalAgentMessageBus:
@@ -50,8 +51,16 @@ def _make_hook(
     *,
     execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
 ) -> SubagentAutoSendHook:
+    tree: SessionTreeManager | None = None
+    if bus is not None:
+        tree = MagicMock(spec=SessionTreeManager)
+
+        async def _deliver(sid: str, env: object) -> None:
+            await bus.send(sid, env)  # type: ignore[arg-type]
+
+        tree.deliver = _deliver
     return SubagentAutoSendHook(
-        agent_bus=bus,
+        tree=tree,
         self_name="worker",
         parent_name="main",
         runtime_dir=runtime_dir,
@@ -260,14 +269,15 @@ class TestSubagentAutoSendHookFinallyTurn:
         ).read_text() == content
         assert len(_result_body(await _consume_content(bus))) <= 300
 
-    async def test_no_agent_bus_is_noop_without_writing(self, tmp_path: Path) -> None:
+    async def test_no_tree_raises_without_writing(self, tmp_path: Path) -> None:
         runtime_dir = tmp_path / "runtime"
         hook = _make_hook(None, runtime_dir)
 
-        await hook.finally_graph(
-            _make_context("a1b2c3d4.worker"),
-            AgentResult(content="Done"),
-        )
+        with pytest.raises(RuntimeError, match="tree not wired"):
+            await hook.finally_graph(
+                _make_context("a1b2c3d4.worker"),
+                AgentResult(content="Done"),
+            )
 
         assert not (runtime_dir / "output").exists()
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -19,6 +20,7 @@ from modex_agent.multi_agent.communication.strategies.subagent_dispatch import (
 )
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.message_type import AgentMessageType
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import CommunicationTarget
 
 
@@ -104,11 +106,17 @@ def _make_request(invocation_id: str | None = None) -> SendRequest:
 def _make_deps(
     bus: object | None = None,
 ) -> SendDeps:
+    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+    if bus is not None:
+        async def _deliver(sid: str, env: object) -> None:
+            await bus.send(sid, env)  # type: ignore[attr-defined]
+        tree.deliver = _deliver
+    else:
+        tree.deliver = AsyncMock()
     return SendDeps(
         source=AgentAddress(name="main"),
-        broker=_FakeBroker(),
         session_factory=SessionIdFactory(),
-        agent_bus=bus,
+        tree=tree,
     )
 
 
@@ -172,7 +180,7 @@ class TestSubagentDispatchStrategy:
         assert result.session_id == "task-42.worker"
 
     @pytest.mark.asyncio
-    async def test_deliver_returns_error_without_bus_or_target(self) -> None:
+    async def test_deliver_uses_tree_deliver_converged(self) -> None:
         strategy = SubagentDispatchStrategy(_make_deps())
         envelope = AgentMessageEnvelope(
             payload={"content": "test"},
@@ -185,8 +193,7 @@ class TestSubagentDispatchStrategy:
             envelope, CommunicationTarget(name="worker", kind=AgentCommKind.SUBAGENT)
         )
 
-        assert result is not None
-        assert "No target address" in result
+        assert result is None
 
     def test_build_session_uses_invocation_id_as_prefix(self) -> None:
         strategy = SubagentDispatchStrategy(_make_deps())
@@ -254,11 +261,12 @@ class TestBuildResultExecutionStrategyBranch:
             pool_name="main",
             fallback_runtime_dir=tmp_path,
         )
+        mock_tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+        mock_tree.deliver = AsyncMock()
         deps = SendDeps(
             source=AgentAddress(name="main"),
-            broker=_FakeBroker(),
             session_factory=SessionIdFactory(),
-            agent_bus=_FakeBus(),
+            tree=mock_tree,
             workspace_path_resolver=resolver,
         )
         strategy = SubagentDispatchStrategy(deps)
@@ -282,11 +290,12 @@ class TestBuildResultExecutionStrategyBranch:
             pool_name="main",
             fallback_runtime_dir=tmp_path,
         )
+        mock_tree2: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+        mock_tree2.deliver = AsyncMock()
         deps = SendDeps(
             source=AgentAddress(name="main"),
-            broker=_FakeBroker(),
             session_factory=SessionIdFactory(),
-            agent_bus=_FakeBus(),
+            tree=mock_tree2,
             workspace_path_resolver=resolver,
         )
         strategy = SubagentDispatchStrategy(deps)

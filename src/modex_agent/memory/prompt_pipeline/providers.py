@@ -143,7 +143,7 @@ class _PeerCommSubProvider(_CommSubProvider):
     ``PeerCommunicationSystemPromptProvider``.
 
     Fires when the agent owns ``task`` AND at least one target is a
-    remote agent (a ``CommunicationTarget`` whose ``bus_ref`` is set — the
+    remote agent (a ``CommunicationTarget`` whose ``tree_ref`` is set — the
     target does not share this agent's bus, so there is no implicit reply
     path). For those targets the agent's ordinary output is invisible and a
     reply is only possible via ``task``.
@@ -162,7 +162,7 @@ class _PeerCommSubProvider(_CommSubProvider):
 
         if not isinstance(tool, TaskDispatchTool):
             return []
-        return sorted(t.name for t in tool.list_targets() if t.bus_ref is not None)
+        return sorted(t.name for t in tool.list_targets() if t.tree_ref is not None)
 
     def applies(self) -> bool:
         return bool(self._remote_target_names())
@@ -290,7 +290,7 @@ class AgentCommunicationSystemPromptProvider(SystemPromptProvider):
     (``comm_kind``) and the shape of its ``send_to_agent`` target set:
 
     - ``_PeerCommSubProvider`` — remote-agent reply contract (peer targets
-      whose ``bus_ref`` is set).
+      whose ``tree_ref`` is set).
     - ``_SubagentConsultationSubProvider`` — SUBAGENT consultation contract
       (ask parent for input via ``send_to_agent``).
 

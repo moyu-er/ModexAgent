@@ -166,9 +166,6 @@ def _make_tool_manager(targets: list, *, with_task: bool = True):
     tool = SendToAgentTool(
         store=store,
         source=AgentAddress(name="main"),
-        broker=MagicMock(),
-        registry=MagicMock(),
-        agent_bus=MagicMock(spec=AgentMessageBus),
         service=MagicMock(),
     )
     mgr = InMemoryToolManager()
@@ -179,9 +176,6 @@ def _make_tool_manager(targets: list, *, with_task: bool = True):
             TaskDispatchTool(
                 store=store,
                 source=AgentAddress(name="main"),
-                broker=MagicMock(),
-                registry=MagicMock(),
-                agent_bus=MagicMock(spec=AgentMessageBus),
                 service=MagicMock(),
             )
         )
@@ -229,7 +223,7 @@ async def test_comm_provider_peer_target_emits_peer_contract():
         CommunicationTarget(
             name="research-main",
             kind=AgentCommKind.NORMAL,
-            bus_ref=MagicMock(),
+            tree_ref=MagicMock(),
         ),
     ]
     provider = AgentCommunicationSystemPromptProvider(
@@ -246,7 +240,7 @@ async def test_comm_provider_peer_target_emits_peer_contract():
 @pytest.mark.asyncio
 async def test_comm_provider_subagent_target_does_not_emit_dispatch_contract():
     """_SubagentDispatchSubProvider is deprecated (applies()→False). Subagent
-    targets alone do not produce any comm output without peer bus_ref targets."""
+    targets alone do not produce any comm output without peer tree_ref targets."""
     from modex_agent.core.agent import AgentCommKind
     from modex_agent.memory.prompt_pipeline.providers import (
         AgentCommunicationSystemPromptProvider,
@@ -343,7 +337,7 @@ async def test_comm_provider_peer_emits_without_dispatch():
         CommunicationTarget(
             name="peer-a",
             kind=AgentCommKind.NORMAL,
-            bus_ref=MagicMock(),
+            tree_ref=MagicMock(),
         ),
         CommunicationTarget(
             name="subagent-b",
@@ -374,7 +368,7 @@ async def test_comm_provider_version_combines_sub_modules():
         CommunicationTarget(
             name="alpha",
             kind=AgentCommKind.NORMAL,
-            bus_ref=MagicMock(),
+            tree_ref=MagicMock(),
         ),
         CommunicationTarget(
             name="beta",
@@ -397,7 +391,7 @@ async def test_comm_provider_version_changes_when_target_added():
     from modex_agent.multi_agent.tools import CommunicationTarget, SendToAgentTool
 
     targets = [
-        CommunicationTarget(name="alpha", kind=AgentCommKind.NORMAL, bus_ref=MagicMock()),
+        CommunicationTarget(name="alpha", kind=AgentCommKind.NORMAL, tree_ref=MagicMock()),
     ]
     mgr = _make_tool_manager(targets)
     provider = AgentCommunicationSystemPromptProvider(mgr, AgentCommKind.NORMAL)
@@ -406,7 +400,7 @@ async def test_comm_provider_version_changes_when_target_added():
     tool = mgr.get_tool("send_to_agent")
     assert isinstance(tool, SendToAgentTool)
     tool.add_target(
-        CommunicationTarget(name="beta", kind=AgentCommKind.NORMAL, bus_ref=MagicMock())
+        CommunicationTarget(name="beta", kind=AgentCommKind.NORMAL, tree_ref=MagicMock())
     )
     await provider.get_or_refresh()
     v2 = provider.last_version
@@ -423,7 +417,7 @@ async def test_comm_provider_contract_does_not_expose_pool_concepts():
     from modex_agent.multi_agent.tools import CommunicationTarget
 
     targets = [
-        CommunicationTarget(name="x", kind=AgentCommKind.NORMAL, bus_ref=MagicMock()),
+        CommunicationTarget(name="x", kind=AgentCommKind.NORMAL, tree_ref=MagicMock()),
     ]
     provider = AgentCommunicationSystemPromptProvider(
         _make_tool_manager(targets), AgentCommKind.NORMAL

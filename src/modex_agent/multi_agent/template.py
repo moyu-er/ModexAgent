@@ -228,12 +228,12 @@ class AgentTemplate:
         # agent with ``inbox_strategy != "none"`` + a consumer, so fold-in is
         # wired once for both main and subagent at the factory.
         hooks: list[Hook] = []
-        if parent_session is not None and deps.agent_bus is not None:
+        if parent_session is not None:
             from modex_agent.hook.builtin import SubagentAutoSendHook
 
             hooks.append(
                 SubagentAutoSendHook(
-                    agent_bus=deps.agent_bus,
+                    tree=deps.tree,
                     self_name=name,
                     parent_name=parent_name,
                     runtime_dir=runtime_dir,
@@ -493,7 +493,7 @@ class AgentTemplate:
         ``SubagentAutoSendHook``). Failures are logged and swallowed — a
         subagent must still materialize without a comm tool.
         """
-        if deps.pool is None or deps.broker is None or deps.agent_bus is None:
+        if deps.pool is None:
             return
         try:
             from modex_agent.multi_agent.address import AgentAddress
@@ -506,9 +506,8 @@ class AgentTemplate:
             store = CommunicationTargetStore(for_subagent=True)
             service = AgentCommunicationService(
                 source=AgentAddress(name=name),
-                broker=deps.broker,
                 registry=deps.pool,
-                agent_bus=deps.agent_bus,
+                tree=deps.tree,
                 pool=deps.pool,
                 pool_name=_pool_name(deps),
                 project_dir=deps.project_dir,
@@ -519,9 +518,6 @@ class AgentTemplate:
                 SendToAgentTool(
                     store=store,
                     source=AgentAddress(name=name),
-                    broker=deps.broker,
-                    registry=deps.pool,
-                    agent_bus=deps.agent_bus,
                     service=service,
                 )
             )

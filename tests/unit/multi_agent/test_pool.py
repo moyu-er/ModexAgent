@@ -9,6 +9,7 @@ import pytest
 
 from modex_graph.exceptions import GraphInterrupt
 from modex_agent.multi_agent.pool import AgentPool
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.state import AgentState
 
 
@@ -18,6 +19,18 @@ class _FakeBroker:
 
     async def send_to(self, address, msg):
         pass
+
+
+def _mock_tree(bus: object) -> SessionTreeManager:
+    from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+
+    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+
+    async def _deliver(sid: str, env: AgentMessageEnvelope) -> None:
+        await bus.send(sid, env)  # type: ignore[attr-defined]
+
+    tree.deliver = _deliver
+    return tree
 
 
 @pytest.fixture
@@ -38,6 +51,7 @@ async def pool_with_bus():
         agent_bus=bus,
         inbox_consumer=consumer,
     )
+    p.tree = _mock_tree(bus)
     yield p
     await p.shutdown_all(timeout=0.1)
 
@@ -486,7 +500,7 @@ class TestSubmitInputAndPollerHelpers:
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 
-        await pool._agent_bus.send(
+        await pool.tree.deliver(
             sid,
             AgentMessageEnvelope(
                 payload={"content": "do task", "message_type": "task_request"},
