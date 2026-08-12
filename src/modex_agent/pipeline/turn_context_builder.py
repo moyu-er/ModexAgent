@@ -39,6 +39,9 @@ if TYPE_CHECKING:
     from modex_agent.memory.context_governance import ContextGovernance
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.multi_agent.router import RouteResult
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        SessionBindingStore,
+    )
     from modex_agent.runtime.store import TurnStateStore
     from modex_agent.utils.context_builder import MultiAgentContextBuilder
     from modex_agent.media.media_utils import MediaBlock, MediaProcessor
@@ -177,6 +180,7 @@ class TurnContextBuilder:
         self._registry = registry
         self._graph_context_resolver: Callable[[int], GraphContext[Any] | None] | None = None
         self._config_pipeline: TurnContextConfigPipeline | None = None
+        self._session_binding_store: SessionBindingStore | None = None
 
     # ── Post-construction wiring (typed setters) ─────────────────────────
     #
@@ -236,6 +240,14 @@ class TurnContextBuilder:
     @config_pipeline.setter
     def config_pipeline(self, value: TurnContextConfigPipeline | None) -> None:
         self._config_pipeline = value
+
+    @property
+    def session_binding_store(self) -> SessionBindingStore | None:
+        return self._session_binding_store
+
+    @session_binding_store.setter
+    def session_binding_store(self, value: SessionBindingStore | None) -> None:
+        self._session_binding_store = value
 
     async def build_turn_request(
         self,

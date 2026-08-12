@@ -21,6 +21,11 @@ from modex_agent.multi_agent.session_tree.models import (
     SessionTreeStatus,
     TreeNodeRecord,
 )
+from modex_agent.multi_agent.session_tree.session_binding import (
+    InMemorySessionBindingStore,
+    SessionBinding,
+    SessionBindingStore,
+)
 from modex_agent.multi_agent.session_tree.store_node import (
     InMemoryTreeNodeStore,
     LocalFileTreeNodeStore,
@@ -42,6 +47,7 @@ from modex_agent.multi_agent.session_tree.store_tree import (
 
 __all__ = [
     "InMemoryMessageTrackStore",
+    "InMemorySessionBindingStore",
     "InMemorySessionTreeStore",
     "InMemoryTreeNodeStore",
     "LocalFileMessageTrackStore",
@@ -51,6 +57,8 @@ __all__ = [
     "MessageTrackStatus",
     "MessageTrackStore",
     "NodeVersionStatus",
+    "SessionBinding",
+    "SessionBindingStore",
     "SessionTreeManager",
     "SessionTreeRecord",
     "SessionTreeStatus",

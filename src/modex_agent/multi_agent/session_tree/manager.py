@@ -15,6 +15,7 @@ from modex_agent.multi_agent.session_tree.models import (
     SessionTreeStatus,
     TreeNodeRecord,
 )
+from modex_agent.multi_agent.session_tree.session_binding import SessionBinding
 from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:
@@ -23,6 +24,9 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.envelope import AgentMessageEnvelope
     from modex_agent.multi_agent.inbox.types import InboxMessage
     from modex_agent.multi_agent.inbox_poller import InboxPoller
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        SessionBindingStore,
+    )
     from modex_agent.multi_agent.session_tree.store_node import TreeNodeStore
     from modex_agent.multi_agent.session_tree.store_track import MessageTrackStore
     from modex_agent.multi_agent.session_tree.store_tree import SessionTreeStore
@@ -45,6 +49,7 @@ class SessionTreeManager:
         pool_name: str,
         workspace_root: str,
         session_registry: SessionRegistry,
+        binding_store: SessionBindingStore | None = None,
     ) -> None:
         self._tree_store = tree_store
         self._node_store = node_store
@@ -54,6 +59,7 @@ class SessionTreeManager:
         self._pool_name = pool_name
         self._workspace_root = workspace_root
         self._session_registry = session_registry
+        self._binding_store = binding_store
         self._running: set[str] = set()
         self._pending_input: set[str] = set()
         self._quiesce_events: dict[str, asyncio.Event] = {}
@@ -61,8 +67,46 @@ class SessionTreeManager:
     def _quiesce_event(self, tree_id: str) -> asyncio.Event:
         return self._quiesce_events.setdefault(tree_id, asyncio.Event())
 
+    @property
+    def binding_store(self) -> SessionBindingStore | None:
+        return self._binding_store
+
     def _signal(self, tree_id: str) -> None:
         self._quiesce_event(tree_id).set()
+
+    def _maybe_bind_session(self, session_id: str, envelope: AgentMessageEnvelope) -> None:
+        """Auto-create a SessionBinding from envelope metadata if not already bound.
+
+        Called on every ``deliver``. Reads ``graph_instance_id`` from
+        ``envelope.metadata`` and stores it as ``task_id`` in the binding store.
+        Does NOT overwrite an existing binding — ``BotAgentNode.execute``
+        creates a richer binding (with graph artifacts) before calling
+        ``tree.deliver``, and that binding must survive subsequent delivers
+        within the same session (e.g. subagent-reply wakeups).
+
+        Raises ``ValueError`` if an existing binding's ``task_id`` conflicts
+        with the envelope's ``graph_instance_id`` — this detects concurrent
+        graph instances sharing a CACHED session, which would cross-contaminate
+        graph contexts.
+        """
+        if self._binding_store is None:
+            return
+        existing = self._binding_store.get(session_id)
+        if existing is not None:
+            incoming_gid = envelope.metadata.get("graph_instance_id")
+            if incoming_gid is not None and existing.task_id is not None and incoming_gid != existing.task_id:
+                raise ValueError(
+                    f"Session {session_id!r} is bound to task_id={existing.task_id} "
+                    f"but received a deliver with graph_instance_id={incoming_gid}. "
+                    f"Concurrent graph instances sharing a CACHED session are not supported."
+                )
+            return
+        task_id = envelope.metadata.get("graph_instance_id")
+        if task_id is not None:
+            self._binding_store.bind(
+                session_id,
+                SessionBinding(task_id=task_id),
+            )
 
     async def _ensure_node(
         self, session_id: str, envelope: AgentMessageEnvelope | None = None
@@ -113,6 +157,8 @@ class SessionTreeManager:
         msg_type = envelope.message_type
         node = await self._ensure_node(target_session_id, envelope)
         tree_id = node.tree_id
+
+        self._maybe_bind_session(target_session_id, envelope)
 
         if msg_type in _PENDING_TYPES:
             self._pending_input.add(target_session_id)
@@ -247,6 +293,8 @@ class SessionTreeManager:
         )
         self._running.discard(session_id)
         self._pending_input.discard(session_id)
+        if self._binding_store is not None:
+            self._binding_store.unbind(session_id)
         node = await self._node_store.get(session_id)
         if node is None:
             return

@@ -279,6 +279,12 @@ async def create_pool(
 
     default_resolved = _resolved_or_placeholder(bot_model_config).default_resolved()
 
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        InMemorySessionBindingStore,
+    )
+
+    session_binding_store = InMemorySessionBindingStore()
+
     # Wrap before _build_agent_factory AND AgentMaterializeDeps so both the
     # main-agent _create_with_emitter path and the external-subagent
     # BotSubagentExternalBuilder path receive the same wrapped factory.
@@ -304,6 +310,7 @@ async def create_pool(
         external_deps=external_deps,
         observability_config=app_config.observability if app_config is not None else None,
         session_registry=session_registry,
+        session_binding_store=session_binding_store,
     )
     session_factory = SessionIdFactory()
 
@@ -391,6 +398,7 @@ async def create_pool(
         pool_name=pool_name,
         workspace_root=str(project_dir),
         session_registry=session_registry or InMemorySessionRegistry(),
+        binding_store=session_binding_store,
     )
     inbox_consumer.set_on_consumed(tree_manager.on_consumed)
     poller.attach_tree_manager(tree_manager)
@@ -535,6 +543,7 @@ async def create_pool(
                 if workspace_resolver is not None
                 else None
             ),
+            session_binding_store=session_binding_store,
         )
     else:
         # external path: the external agent has no tool surface and
@@ -577,4 +586,5 @@ async def create_pool(
         communication_service=main_service,
         tree_manager=tree_manager,
         target_store=main_store,
+        session_binding_store=session_binding_store,
     )

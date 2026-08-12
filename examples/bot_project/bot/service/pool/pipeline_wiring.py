@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        SessionBindingStore,
+    )
     from modex_graph.context import GraphContext
 
 from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
@@ -71,6 +74,7 @@ def _wire_main_pipeline(
     cassette_recorder: CassetteRecorder | None = None,
     control_origin: str = "",
     graph_context_resolver: Callable[[int], GraphContext[Any] | None] | None = None,
+    session_binding_store: SessionBindingStore | None = None,
 ) -> None:
     """Wire hooks, interceptors, governance, and command processor on main pipeline.
 
@@ -176,6 +180,8 @@ def _wire_main_pipeline(
     # orchestrator dereference to invocation time (F6-verified pattern).
     if builder is not None and graph_context_resolver is not None:
         builder.graph_context_resolver = graph_context_resolver
+        if session_binding_store is not None:
+            builder.session_binding_store = session_binding_store
         from modex_agent.pipeline.turn_context_config import (
             GraphApprovalConfigurator,
             GraphContextBindingConfigurator,

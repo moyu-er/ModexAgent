@@ -1,4 +1,42 @@
-"""Turn-context descriptors and configuration pipeline."""
+"""Turn-context descriptors and configuration pipeline.
+
+Layered configuration across 3 orthogonal dimensions:
+
+    Implementation: native (ReAct) / external (CLI)
+    Topology:       normal (main) / subagent
+    Mode:           session / graph
+
+Graph mode is the upper layer — it sits above normal/subagent. Subagents in
+graph mode remain atomic agents: they carry ``graph_instance_id`` (for reply
+routing) but never receive graph-exclusive tools/hooks/providers.
+
+Configurator gate matrix (native only; external skips configurator pipeline):
+
+| Configurator        | Gate                                      | Fires on              |
+|---------------------|-------------------------------------------|-----------------------|
+| GraphContextBinding | graph_instance_id is not None             | All graph turns       |
+| GraphApproval       | graph_instance_id is not None             | All graph turns       |
+| GraphMaxTurns       | is_node_execution and NORMAL              | Graph node main only  |
+| GraphTool           | is_node_execution and NORMAL              | Graph node main only  |
+| GraphTopology       | is_node_execution and NORMAL              | Graph node main only  |
+| GraphKnowledge      | is_node_execution and NORMAL              | Graph node main only  |
+
+Examples of graph-exclusive components that fire only on graph node main
+agents: ``GraphWorkflowProvider`` (system prompt), ``KnowledgeHook``
+(before/after turn), ``DeliverRetryHook`` (after turn), ``GraphDeliverTool``,
+``GraphKnowledgeBaseTool``. Each has its own runtime gate (e.g. checking
+``GRAPH_TOPOLOGY_CONTEXT`` state key or deliver tool existence) to exclude
+subagents even when ``graph_context`` is set.
+
+Peer communication: in graph mode, ``CommunicationTargetStore`` filters out
+NORMAL (peer) targets — the agent cannot perceive or reach peers. Graph nodes
+communicate via ``deliver`` (graph edges). In session mode, peer sends go to
+the receiver's tree via ``target.tree_ref`` (cross-tree), and
+``should_propagate_graph_instance_id() → False`` ensures no graph
+contamination.
+
+See ``docs/design/session-tree/layered-config-matrix.md`` for the full design.
+"""
 
 from __future__ import annotations
 

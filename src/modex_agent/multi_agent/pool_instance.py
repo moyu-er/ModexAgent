@@ -20,6 +20,9 @@ from modex_agent.tools.terminal.managers import TerminalManagerBase
 
 if TYPE_CHECKING:
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        SessionBindingStore,
+    )
 
 
 @dataclass
@@ -50,6 +53,7 @@ class PoolInstance:
     )
     tree_manager: SessionTreeManager  # exposed for cross-pool peer wiring
     target_store: CommunicationTargetStore  # exposed for cross-pool peer wiring
+    session_binding_store: SessionBindingStore | None = None  # tree-level session binding
 
     @property
     def main_address(self) -> AgentAddress:

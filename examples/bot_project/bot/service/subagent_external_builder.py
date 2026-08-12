@@ -284,6 +284,7 @@ class BotSubagentExternalBuilder(SubagentExternalBuilder):
             session_registry=deps.session_registry,
             control_channel=None,
             context_manager=None,
+            session_binding_store=deps.tree.binding_store if deps.tree is not None else None,
         )
 
     # ── Helpers ───────────────────────────────────────────────────────────

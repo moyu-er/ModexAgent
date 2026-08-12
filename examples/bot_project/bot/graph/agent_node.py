@@ -18,6 +18,7 @@ from modex_agent.agents.agent_node import AgentNode, SessionStrategy
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.message_type import AgentMessageType
+from modex_agent.multi_agent.session_tree.session_binding import SessionBinding
 from modex_agent.pipeline.turn_context_config import GraphTurnArtifacts
 from modex_agent.tools.graph_deliver import GraphDeliverTargetStore, GraphDeliverTool
 from modex_graph.constants import FrameworkPayloadSource, GraphNode
@@ -95,6 +96,10 @@ class BotAgentNode(AgentNode):
         # 2. Ensure session.
         session = await self._ensure_session(ctx)
 
+        binding_store = self._resolve_pool().session_binding_store
+        tree = self._resolve_pool().tree_manager
+        bound_here = False
+
         try:
             # 3. Build artifacts and store on graph context for the configurator pipeline.
             artifacts = self._build_graph_artifacts(ctx)
@@ -102,13 +107,26 @@ class BotAgentNode(AgentNode):
                 ctx.user_data = {}
             ctx.user_data.setdefault("node_artifacts", {})[self.name] = artifacts
 
+            # 3b. Bind session — binding store replaces envelope transport
+            # for graph_node_name / is_node_execution / graph_artifacts.
+            if binding_store is not None and ctx.graph_instance_id is not None:
+                binding_store.bind(
+                    session.session_id,
+                    SessionBinding(
+                        task_id=ctx.graph_instance_id,
+                        graph_node_name=self.name,
+                        is_node_execution=True,
+                        graph_artifacts=artifacts,
+                    ),
+                )
+                bound_here = True
+
             # 4. Build input envelope (formats Origin Request + upstream input).
             envelope = await self._build_graph_input_envelope(
                 ctx, integrated_input, session
             )
 
             # 5. Deliver to session inbox via tree — InboxPoller drives the turn.
-            tree = self._resolve_pool().tree_manager
             await tree.deliver(session.session_id, envelope, track_consume=True)
 
             # 6. Wait for the tree to quiesce (turn + any subagents complete).
@@ -118,6 +136,8 @@ class BotAgentNode(AgentNode):
             # return — no deliver check, no auto-deliver.
             # graph COMPLETED/FAILED is judged by ctx.reached_end (graph engine).
         finally:
+            if bound_here and binding_store is not None:
+                binding_store.unbind(session.session_id)
             if self._session_strategy is SessionStrategy.PER_INVOCATION:
                 registry = await self._resolve_session_registry()
                 await registry.cleanup(session.session_id)
@@ -176,8 +196,6 @@ class BotAgentNode(AgentNode):
             agent_session_id=session.session_id,
             metadata={
                 "graph_instance_id": ctx.graph_instance_id,
-                "graph_node_name": self.name,
-                "is_node_execution": True,
             },
         )
 
