@@ -1,6 +1,8 @@
 # Turn Context Configuration Pipeline + Graph Agent Node Lifecycle
 
-Per-turn runtime configuration (graph context binding, graph tools, approval disable, turn limits, topology, knowledge keys) flows through an ordered pipeline of configurators invoked at the end of `build_runtime_and_context`, modeled on `SystemPromptPipeline`. The agent object stays a pool-level singleton — it is stateless, and `build_runtime_and_context` already constructs a fresh `AgentContext` per turn. Graph-scheduling context reaches inbox-driven subagent turns via a per-pool `GraphContextRegistry` with liveness-guarded resolution, propagated through `AgentMessageEnvelope.metadata`. `BotAgentNode.execute` is an event loop that spans multiple turns (turn A dispatches subagent → wait → turn B receives result → deliver), without using `GraphInterrupt` and without pausing the graph. `agent_context.graph_context` is the single switch for the entire graph system — all graph-aware components (GraphWorkflowProvider, KnowledgeHook, DeliverRetryHook, GraphDeliverTool) auto-activate when it is set.
+Per-turn runtime configuration (graph context binding, graph tools, approval disable, turn limits, topology, knowledge keys) flows through an ordered pipeline of configurators invoked at the end of `build_runtime_and_context`, modeled on `SystemPromptPipeline`. The agent object stays a pool-level singleton — it is stateless, and `build_runtime_and_context` already constructs a fresh `AgentContext` per turn. `agent_context.graph_context` is the single switch for the entire graph system — all graph-aware components (GraphWorkflowProvider, KnowledgeHook, DeliverRetryHook, GraphDeliverTool) auto-activate when it is set.
+
+> **Superseded sections removed**: The original §1 (BotAgentNode.execute event loop), §4 (GraphContextRegistry), and §11 (_NodeLifecycleEventCollector) have been superseded by the SessionTree redesign (Phase 3: `tree.deliver` + `tree.wait_quiesce`; Phase 4: `ModexGraphContext` + resolver closure). See `docs/design/session-tree/issues/13-phase3-botagent-execute-rewrite.md` and `14-phase4-turn-context-config-pipeline.md` for the active design.
 
 ## Context
 
@@ -31,69 +33,6 @@ Subagent is an agentNode **internal capability** — the agent calls task tool, 
 `GraphInterrupt` pauses the **entire graph instance** (ParallelScheduler D13 cancels all sibling nodes; LinearScheduler aborts the loop). A node waiting for an internal subagent must NOT pause the graph. The node's `execute` must handle the wait **internally**, without `GraphInterrupt`.
 
 ## Decision
-
-### 1. BotAgentNode.execute — event loop (no GraphInterrupt)
-
-`execute` spans multiple turns without returning and without pausing the graph:
-
-```
-BotAgentNode.execute(ctx, integrated_input):
-  1. stamp GraphContextRegistry[session_id] = (graph_ctx, node_name, is_node_execution=True)
-  2. Construct TurnContextDescriptor (graph_context=ctx, pre-built deliver_tool, topology, description)
-  3. Register temporary _NodeLifecycleEventCollector (FinallyGraphHook, filtered by session_id)
-  4. Call runner.execute_turn (turn A, synchronous)
-     → build_runtime_and_context → configure → agent ReAct
-     → agent dispatches subagent (async, fire-and-forget)
-     → turn A ends (no deliver)
-  
-  5. Event loop: await event_queue.get()
-     (execute doesn't return; graph doesn't pause; asyncio event loop runs other tasks)
-  
-  --- subagent runs via InboxPoller (normal session path) ---
-  --- subagent completes → SubagentAutoSendHook → bus.send(parent_inbox) ---
-  
-  6. InboxPoller detects parent session pending
-     → pool._process_message → turn_runner._process_locked_inner
-     → reads input_metadata["graph_instance_id"] → stamps registry
-     → build_runtime_and_context → registry.resolve → desc.graph_context
-     → configure: installs deliver tool, approval=None, MAX_TURNS, topology
-     → runner.execute_turn (turn B)
-     → InboxFlushHook flushes subagent result to history
-     → agent sees result → calls deliver
-     → turn B ends → FinallyGraphHook → event_queue.put("turn_completed")
-  
-  7. execute receives "turn_completed" event
-     → checks _deliver_received AND _has_pending_delivers() → both True → return
-   
-  8. node.run: collect delivers → submit → complete ✅
-```
-
-**Strict completion check**: `_deliver_received` is set when GraphDeliverTool.deliver() is called (during turn execution). But it is **only checked after** receiving the "turn_completed" event (FinallyGraphHook fired, turn ended normally). This prevents false completion when deliver is called but the turn hasn't ended yet — the agent might continue ReAct after deliver, and the turn must end normally for the node to complete.
-
-```python
-# In BotAgentNode.execute event loop:
-match event.kind:
-    case "turn_completed":
-        if self._deliver_received and self._has_pending_delivers():
-            return  # ✅ deliver + normal turn end = node complete
-        # turn ended but no deliver → agent waiting for subagent → continue listening
-    case "turn_error":
-        self._auto_deliver(ctx)
-        return
-```
-
-**Multiple delivers**: `_has_pending_delivers()` checks `_pending_delivers` list non-empty. Multiple delivers all write to the same list. At least one deliver + turn end = complete.
-
-**Why this works without pausing the graph**:
-- `execute` doesn't return until deliver+normal-end → `node.run` retry loop never triggers
-- `execute` doesn't raise `GraphInterrupt` → graph stays RUNNING
-- During `await event_queue.get()`, the asyncio event loop is free — InboxPoller can drive turn B
-- Turn B goes through the normal `InboxPoller → pipeline → build_runtime_and_context → configure` path — configurators correctly install deliver tool from registry
-- The temporary `FinallyGraphHook` (registered on shared `hook_runner`, filtered by session_id) fires for turn B → pushes event to queue → `execute` wakes up
-
-**Timeout**: if no deliver within `_node_timeout`, `execute` auto-delivers incomplete result and returns.
-
-**Crash recovery**: if the process crashes mid-event-loop, `node.run`'s `finally` block calls `finalize_invocation` (orphan RUNNING). On recovery, `bootstrap` re-runs the node. CACHED session retains history. `execute` detects `is_re_execution` (history has turn A's messages) → skips input dispatch → goes straight to event loop. This is an edge case — the primary design is for normal operation.
 
 ### 2. TurnContextConfigPipeline — one configuration path
 
@@ -142,36 +81,6 @@ class TurnContextDescriptor(BaseModel):
 ```
 
 **Pre-built artifacts**: BotAgentNode constructs topology/description/deliver_tool at descriptor construction time (it has `_graph_ref`, `self.name`, pool access). Configurators are thin installers — they don't construct, just install. This preserves the ADR-0038 cache on `BotAgentNode._deliver_tool` and avoids framework→business dependency.
-
-### 4. GraphContextRegistry — liveness-guarded, per-pool
-
-```python
-class GraphContextStamp(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
-    graph_ctx: GraphContext[Any]
-    node_name: str
-    graph_instance_id: int
-    is_node_execution: bool
-
-class GraphContextRegistry:
-    """Per-pool: session_id → stamp. Liveness-guarded resolve."""
-    def __init__(self, liveness_check: Callable[[int], bool],
-                 context_resolver: Callable[[int], GraphContext[Any] | None]) -> None: ...
-    def stamp(self, session_id: str, graph_ctx: GraphContext[Any],
-              node_name: str, is_node_execution: bool) -> None: ...
-    def resolve(self, session_id: str) -> GraphContextStamp | None: ...
-    def clear(self, session_id: str) -> None: ...
-```
-
-- `stamp()` is upsert (overwrite by session_id). CACHED session reuse across graph instances is safe.
-- `resolve()` is liveness-guarded: checks `graph_instance_id` via injected `liveness_check` predicate. If terminal/evicted, lazily removes stamp and returns None.
-- `context_resolver`: injected closure (`orchestrator.get_graph_context(gid)`) — resolves `GraphContext` from `graph_instance_id` for inbox-driven turns where only the ID is available in metadata. Business-layer injection, framework calls pure function.
-
-**Two clearing paths**:
-1. Lazy: liveness guard in `resolve()` — primary mechanism.
-2. Eager: `AgentPool._evict_dynamic_session` calls `registry.clear(session_id)`.
-
-**Storage**: `self._graph_context_registry: GraphContextRegistry | None` on `AgentPool`, injected into `TurnContextBuilder` (post-construction setter).
 
 ### 5. Graph context propagation — via envelope metadata (not graph_context check)
 
@@ -277,76 +186,32 @@ if ctx.tool_manager is None or ctx.tool_manager.get_tool("deliver") is None:
     return  # no deliver tool → not a graph node turn → don't enforce deliver
 ```
 
-### 11. _NodeLifecycleEventCollector — temporary hook
-
-```python
-class _NodeLifecycleEventCollector(FinallyGraphHook):
-    """Collects turn lifecycle events for BotAgentNode.execute's event loop.
-    Filtered by session_id — only processes events for the node's session."""
-
-    def __init__(self, queue: asyncio.Queue, node_session_id: str, node: BotAgentNode):
-        self._queue = queue
-        self._node_session_id = node_session_id
-        self._node = node
-
-    async def finally_graph(self, ctx, result):
-        if ctx.session.session_id != self._node_session_id:
-            return  # not our session, skip
-        if result is None or result.stop_reason not in (StopReason.ERROR, StopReason.TURN_CANCELLED):
-            await self._queue.put(_Event("turn_completed", result=result))
-        else:
-            await self._queue.put(_Event("turn_error", result=result))
-```
-
-Registered on shared `hook_runner` (pool-level), filtered by `session_id`. Unregistered in `execute`'s `finally` block.
-
-**Dynamic registration verified**: `HookRunner._hook_specs` is a mutable list (runner.py:217). `add`/`remove` supported at runtime (runner.py:224-234). `dispatch` iterates the latest list each call (runner.py:270) — not a snapshot. The temporary hook is visible to all turns during its registration period, including turn B driven by InboxPoller.
-
-**Session_id isolation verified**: The hook checks `ctx.session.session_id != self._node_session_id` and skips non-matching sessions. This filters out:
-- Normal-session turns on the same pool (different session_id)
-- Subagent turns on the same pool (different session_id)
-- Other graph node turns in parallel graphs (different session_id)
-
-Multiple concurrent BotAgentNode.execute instances (parallel graph) each register their own temporary hook — all on the same hook_runner, each filtering by its own session_id. No cross-interference.
-
 ### 12. Streaming output support (future)
 
-The event loop design supports streaming output observation via two mechanisms:
-
-1. **Hooks**: `_NodeLifecycleEventCollector` can implement additional hook ABCs (`AfterIterationHook`, `AfterToolExecutionHook`, `AfterLLMResponseHook`) to observe turn progress. Hooks fire correctly regardless of who drives the turn (InboxPoller or BotAgentNode.execute).
-
-2. **Emitter wrapping**: `CompositeEmitter` (existing) supports multiple consumers. BotAgentNode can wrap the emitter to collect streaming deltas (`emit_delta`/`MODEL_OUTPUT`) for graph-level output forwarding.
-
-Hooks cover structural events (iteration boundaries, tool calls, LLM responses). Emitter covers streaming content deltas. Both work across multiple turns within the event loop.
+Streaming output observation via `CompositeEmitter` (existing) wrapping — supports multiple consumers. BotAgentNode can wrap the emitter to collect streaming deltas (`emit_delta`/`MODEL_OUTPUT`) for graph-level output forwarding. Emitter covers streaming content deltas across multiple turns.
 
 ## Considered Options
 
 - **Per-session agent rebuild**: rejected. Agent is stateless; rebuilding buys no isolation, costs MCP/memory/tool re-wiring, doesn't solve P0-6.
 - **GraphInterrupt for subagent waiting**: rejected. Pauses the **entire graph** (ParallelScheduler D13 cancels siblings; LinearScheduler aborts loop). A node's internal subagent wait must not affect graph scheduling.
-- **Event loop without GraphInterrupt (chosen)**: `execute` spans multiple turns via `await event_queue.get()`, driven by temporary `FinallyGraphHook`. Graph stays RUNNING. InboxPoller drives turn B through normal path. Configurators correctly install deliver tool from registry.
 - **InboxFlushHook as stamp site**: rejected. InboxFlushHook must stay purely mode-agnostic (pull messages + append to history). Stamp moved to `turn_runner._process_locked_inner` + `BotAgentNode.execute`.
 - **`ctx.graph_context` as switch in SubagentAutoSendHook**: rejected. Subagent's `graph_context` is always None (subagent builds its own context). Correct switch is `state.custom[GRAPH_INSTANCE_ID]` set from envelope metadata.
 
 ## Consequences
 
 - `build_runtime_and_context` gains optional `turn_descriptor` parameter + `configure` call at end. Existing callers unaffected (short-circuit when None).
-- `TurnContextBuilder` gains `_config_pipeline` + `_graph_context_registry` fields (post-construction setters).
-- `AgentPool` gains `_graph_context_registry` field.
+- `TurnContextBuilder` gains `_config_pipeline` field (post-construction setter).
 - `turn_runner._process_locked_inner` gains a stamp step: reads `input_metadata["graph_instance_id"]` → stamps registry (via `context_resolver` closure).
-- `AgentPool._evict_dynamic_session` gains `registry.clear(session_id)`.
 - `GraphOrchestrator` gains `is_instance_active(gid) → bool` + `get_graph_context(gid) → GraphContext | None` (read-only query methods).
 - `SubagentDispatchStrategy.build_envelope` appends `graph_instance_id`/`source_node_id` when `req.context.graph_context is not None`.
 - `SubagentAutoSendHook` reads `state.custom[GRAPH_INSTANCE_ID]` (not `ctx.graph_context`) → appends graph metadata to reply envelope.
 - `InboxFlushHook` — **unchanged**. Pure mode-agnostic.
 - `DeliverRetryHook` — checks deliver tool existence before enforcing.
-- `BotAgentNode.execute` — rewritten as event loop. 70 lines of post-build mutation deleted, replaced by descriptor construction + configurators.
-- `_NodeLifecycleEventCollector` — new temporary hook (FinallyGraphHook, session_id-filtered).
+- `BotAgentNode.execute` — 70 lines of post-build mutation deleted, replaced by descriptor construction + configurators.
 - External agents — unaffected (don't go through `build_runtime_and_context`).
 
 ## Scope limitation
 
-This design is validated for **LinearScheduler** (sequential graph). In linear mode, graph-pause and node-pause are observationally identical (only one node runs), but the event loop design avoids even graph-level pause — `execute` doesn't return, graph stays RUNNING, asyncio event loop is free.
+This design is validated for **LinearScheduler** (sequential graph) and **ParallelScheduler** (concurrent nodes). The configurator pipeline + descriptor approach is scheduler-agnostic — all turns go through `build_runtime_and_context` regardless of scheduler.
 
-For **ParallelScheduler** (concurrent nodes), the event loop design also works without modification — `execute` not returning doesn't pause the graph, sibling nodes continue independently. The only concern is the temporary hook on shared `hook_runner` — filtered by `session_id`, so sibling nodes' turns don't trigger events for this node's queue.
-
-If per-node `GraphInterrupt` pause/resume is needed in the future (e.g. for HITL approval within a specific node without blocking siblings), `interrupt_policy.py` already defines the `NodeOnlyPolicy` extension point — but this is a separate concern from subagent waiting.
+If per-node `GraphInterrupt` pause/resume is needed in the future (e.g. for HITL approval within a specific node without blocking siblings), `interrupt_policy.py` mentions `NodeOnlyPolicy` as a future extension concept — but this is a separate concern from subagent waiting.
