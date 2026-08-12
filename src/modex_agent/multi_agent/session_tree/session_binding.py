@@ -23,6 +23,24 @@ Design:
 - ``BotAgentNode.execute`` creates the main-agent binding with full graph
   artifacts BEFORE ``tree.deliver`` — ``tree.deliver`` sees the binding
   already exists and does not overwrite it.
+
+Isolation guarantees:
+- **Same agent, same session, different modes**: the binding is unbound in
+  ``BotAgentNode.execute``'s finally block. A subsequent session-mode turn on
+  the same session_id finds no binding → all graph configurators skip.
+- **Same agent, different sessions**: the store is a ``dict[session_id,
+  SessionBinding]`` — each session_id is an independent key. Session A's
+  binding is never visible to session B.
+- **AgentContext is per-turn**: ``build_runtime_and_context`` creates a fresh
+  AgentContext each call. The agent singleton is stateless.
+- **Per-pool store**: created in ``factory.py``, one per pool. Different pools
+  have independent stores.
+- **Concurrency**: InboxPoller single-flight ensures one turn per session at a
+  time; ``InMemorySessionBindingStore`` dict operations are atomic under
+  asyncio single-threading.
+
+See ``docs/design/session-tree/layered-config-matrix.md`` § Isolation
+Guarantees for the full analysis.
 """
 
 from __future__ import annotations
