@@ -18,6 +18,7 @@ from bot.service._runtime_builders import (
     _build_main_command_processor,
     _collect_run_hooks,
 )
+from bot.service.pool.communication import register_communication_tools
 from bot.workspace.background import BackgroundTaskRunner
 from bot.workspace.handle import (
     PoolWorkspaceResources,
@@ -266,8 +267,10 @@ async def _assemble_resources(
             strategy_registry=service._strategy_registry,
         )
 
-    # Phase 2: cross-pool peer wiring. Must run after all Phase 1 pools are built
-    # so subagent targets precede peer targets in each store's insertion order.
+    # Phase 2: cross-pool peer wiring + communication tool registration. Must
+    # run after all Phase 1 pools are built so subagent targets precede peer
+    # targets in each store's insertion order, and so communication tools
+    # (task / send_to_peer) are registered once with the full target set.
     pool_store = PoolStore(base_dir=service.project_dir)
     for pool_name, instance in resources.pools.items():
         pool_tree = pool_store.read_pool(pool_name)
@@ -284,6 +287,7 @@ async def _assemble_resources(
                 execution_strategy=peer_tree.main.execution_strategy,
             )
             instance.target_store.add(target)
+        register_communication_tools(instance)
 
     # Wire each pool's main pipeline + communication service to THIS workspace
     # (R), then run the experience-hook wiring that used to live in

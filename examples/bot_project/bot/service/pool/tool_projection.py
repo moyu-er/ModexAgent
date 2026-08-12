@@ -25,10 +25,11 @@ def build_main_agent_tool_names(
     """Return the set of tool NAMES the main agent will receive.
 
     Pure projection of the main-agent tool assembly (Task 1.6 parity
-    helper). Mirrors :func:`_PoolAssemblyMixin._build_tools` + ``task``
-    (subagent dispatch + peer communication):
-    preset-gated file/search/bash + supplement tools (e.g. ast_grep) +
-    terminal tools (when ``use_terminal``) + the always-on task tool.
+    helper). Mirrors :func:`_PoolAssemblyMixin._build_tools` + the
+    communication tools (``task`` for subagent dispatch, ``send_to_peer``
+    for peer messaging — both conditionally registered on subagent/peer
+    availability): preset-gated file/search/bash + supplement tools (e.g.
+    ast_grep) + terminal tools (when ``use_terminal``).
     Bot-specific tools (send_file_to_user, todo, experience) and MCP tools
     are excluded from this projection - they are runtime/path-dependent and
     not governed by the preset/supplement policy.
@@ -52,4 +53,5 @@ def build_main_agent_tool_names(
         # TerminalTool.name="terminal".
         names |= {"bash", "process", "terminal"}
     names.add("task")
+    names.add("send_to_peer")
     return names

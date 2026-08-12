@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.hook.notification import AgentNotificationService
 from modex_agent.memory.hooks import (
@@ -22,10 +23,13 @@ from modex_agent.multi_agent import AgentPool
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication import AgentCommunicationService
+from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
+    SendToPeerTool,
+    TaskDispatchTool,
 )
 from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
 
@@ -92,6 +96,40 @@ def _build_communication(
         )
     logger.info("Pool '%s': communication store (%d targets)", pool_name, len(main_store.list()))
     return main_service, main_store
+
+
+def register_communication_tools(instance: PoolInstance) -> None:
+    """Register a main agent's communication tools based on available targets.
+
+    Single convergence point for both LLM-facing communication tools: ``task``
+    (subagent dispatch) and ``send_to_peer`` (peer communication). Called once
+    per pool after Phase 2 peer wiring, so both subagent and peer targets are
+    present in the store and the presence checks reflect reality. External main
+    agents have no tool surface (they communicate via ``modexctl send``), so
+    they are skipped.
+    """
+    if instance.main_execution_strategy == ExecutionStrategyKind.EXTERNAL:
+        return
+
+    store = instance.target_store
+    source = AgentAddress(name=instance.main_agent_name)
+    service = instance.communication_service
+
+    if store.list_subagents():
+        instance.tool_manager.register(
+            TaskDispatchTool(store=store, source=source, service=service)
+        )
+        logger.info("Pool '%s': task tool registered (subagent dispatch)", instance.name)
+    else:
+        logger.info("Pool '%s': no subagents — task tool not registered", instance.name)
+
+    if store.list_peers():
+        instance.tool_manager.register(
+            SendToPeerTool(store=store, source=source, service=service)
+        )
+        logger.info("Pool '%s': send_to_peer tool registered (peer communication)", instance.name)
+    else:
+        logger.info("Pool '%s': no peers — send_to_peer tool not registered", instance.name)
 
 
 class UserNoticeCleanupHook(CleanupTriggeredHook, CleanupFinishedHook):

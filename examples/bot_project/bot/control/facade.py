@@ -388,6 +388,11 @@ class BotControlFacade:
                 ),
             )
         service = await self._communication_service_provider(resources, caller.pool)
+        # NOTE: graph-mode peer rejection is intentionally NOT enforced here
+        # yet. The tool surface (send_to_peer is absent in graph mode) is the
+        # current defense; a future change should reject cross-pool peer sends
+        # when `context.graph_instance_id` is set (here or in TopologyPolicy)
+        # so `modexctl send` cannot bypass the tool surface.
         result = await service._send(
             target=target,
             content=request.content,

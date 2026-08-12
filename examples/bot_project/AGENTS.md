@@ -127,7 +127,11 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 
 - `default` pool: General-purpose assistant with file/shell tools, MCP tools (playwright), communication tools + subagents (office-expert).
 - `coder` pool: Main agent (orchestrator) + subagents (explore, coder). Orchestrator handles exploration/planning/review directly; delegates deep investigation to explore and code modification to coder (external).
-- Communication: `send_to_agent` (async inbox-based).
+- Communication: `task` (subagent dispatch, main agent only) + `send_to_peer`
+  (peer messaging, session-mode only) + `send_to_agent` (subagent→parent
+  consultation). All converge on `AgentCommunicationService.send_async`.
+  Tools are registered by a single `register_communication_tools()` call in
+  Phase 2 — `task` when subagents exist, `send_to_peer` when peers exist.
 - `SubagentAutoSendHook` auto-forwards subagent output to parent.
 - Session ID format: `{conversation_id}.{agent_name}[.{invocation_id}]` (via `DefaultSessionIdStrategy`).
 

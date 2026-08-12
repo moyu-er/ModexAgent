@@ -230,6 +230,18 @@ class CommunicationTargetStore:
             targets = [t for t in targets if t.kind != AgentCommKind.NORMAL]
         return targets
 
+    def list_subagents(self) -> list[CommunicationTarget]:
+        """Return only SUBAGENT targets (visible in both session and graph mode)."""
+        return [t for t in self.list() if t.kind == AgentCommKind.SUBAGENT]
+
+    def list_peers(self) -> list[CommunicationTarget]:
+        """Return only NORMAL (peer) targets.
+
+        Empty in graph mode — ``list()`` filters NORMAL targets when
+        ``graph_instance_id`` is set, so peers are invisible to graph nodes.
+        """
+        return [t for t in self.list() if t.kind == AgentCommKind.NORMAL]
+
     def has(self, name: str) -> bool:
         if self._for_subagent:
             parent = self._parent_target()
@@ -480,20 +492,20 @@ _TASK_PARAMS: dict[str, Any] = {
         "target_agent": {
             "type": "string",
             "description": (
-                "REQUIRED: exact name of the target agent. "
+                "REQUIRED: exact name of the subagent to dispatch the task to. "
                 "MUST be one of the names listed in the tool description "
-                "under 'Available peer agents' or 'Available subagents'. "
+                "under 'Available subagents'. "
                 "Do not invent names, do not use descriptions as names."
             ),
         },
         "content": {
             "type": "string",
             "description": (
-                "Complete, self-contained message or task description. "
-                "For subagents: they start with a fresh context — include "
-                "concrete objective, relevant context (file paths, constraints), "
-                "scope (code or research), expected output, verification method, "
-                "and boundaries. For peer agents: the message content to send."
+                "Complete, self-contained task description. The subagent "
+                "starts with a fresh context — include a concrete objective, "
+                "relevant context (file paths, constraints), scope (code or "
+                "research), expected output, verification method, and "
+                "boundaries."
             ),
         },
         "invocation_id": {
@@ -501,8 +513,7 @@ _TASK_PARAMS: dict[str, Any] = {
             "description": (
                 "Optional. Used ONLY to continue an existing subagent session — "
                 "pass the invocation_id returned by a prior task result. "
-                "Omit this parameter entirely for a new subagent task or for "
-                "peer communication. Peer agents ignore this parameter."
+                "Omit this parameter entirely for a new subagent task."
             ),
         },
     },
@@ -510,14 +521,38 @@ _TASK_PARAMS: dict[str, Any] = {
 }
 
 
-class TaskDispatchTool(Tool):
-    """Dispatch a task to a subagent or send a message to a peer agent.
+SEND_TO_PEER_TOOL_NAME = "send_to_peer"
 
-    The main agent's sole external communication tool: dispatches new
-    subagent tasks (omit ``invocation_id``), continues existing subagent
-    sessions (pass ``invocation_id``), and sends peer messages (NORMAL
-    targets — ``invocation_id`` ignored). Fused from the former
-    ``SendToAgentTool`` + ``TaskDispatchTool`` split (convergence).
+
+_PEER_PARAMS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "target_peer": {
+            "type": "string",
+            "description": (
+                "REQUIRED: exact name of the peer to message. "
+                "MUST be one of the names listed in the tool description "
+                "under 'Available peers'. "
+                "Do not invent names, do not use descriptions as names."
+            ),
+        },
+        "content": {
+            "type": "string",
+            "description": "Message content to send to the peer.",
+        },
+    },
+    "required": ["target_peer", "content"],
+}
+
+
+class TaskDispatchTool(Tool):
+    """Dispatch a task to a subagent — the main agent's work-delegation tool.
+
+    Dispatches new subagent tasks (omit ``invocation_id``) and continues
+    existing subagent sessions (pass ``invocation_id``). Strictly
+    subagent-scoped: peer communication is a separate concern handled by
+    :class:`SendToPeerTool`, so the LLM cannot conflate delegation with
+    cross-agent messaging.
     """
 
     def __init__(
@@ -541,30 +576,33 @@ class TaskDispatchTool(Tool):
         return self._build_description()
 
     def _build_description(self) -> str:
-        targets = self._store.list()
-        subagent_targets = [t for t in targets if t.kind == AgentCommKind.SUBAGENT]
-        peer_targets = [t for t in targets if t.kind == AgentCommKind.NORMAL]
+        subagent_targets = self._store.list_subagents()
 
         lines = [
-            "Dispatch a task to a subagent or send a message to a peer agent.",
+            "Dispatch a task to a subagent.",
             "",
-            "Only `content` reaches the target — your reasoning, tool calls, and",
+            "A subagent is a worker you dispatch a task to. It starts with a",
+            "fresh context — it cannot see your conversation, reasoning, or",
+            "earlier tool results — runs autonomously, and automatically returns",
+            "its final result to you.",
+            "",
+            "Only `content` reaches the subagent; your reasoning, tool calls, and",
             "output stay local. Sends are asynchronous: end your turn after",
-            "dispatching; the result arrives as a notification when the agent finishes.",
+            "dispatching; the result arrives as a notification when the subagent finishes.",
             "",
             "When NOT to use this tool:",
             "- If you want to read a specific file, use the read tool directly — it's faster",
             "- If you are searching for a specific pattern, use grep or glob directly",
             "- If you are searching within 2-3 known files, use read instead of delegating",
-            "- If no available agent is a good fit for the task, do it yourself",
+            "- If no available subagent is a good fit for the task, do it yourself",
             "",
             "Usage notes:",
             "1. Launch multiple tasks concurrently when they are independent — use",
             "   multiple tool calls in a single message.",
-            "2. Once you delegate work to an agent, do not duplicate that work yourself.",
+            "2. Once you delegate work to a subagent, do not duplicate that work yourself.",
             "   Continue with non-overlapping tasks, or end your turn and wait for the",
             "   notification.",
-            "3. The agent's result is returned to you only — relay a concise summary to",
+            "3. The subagent's result is returned to you only — relay a concise summary to",
             "   the user if needed.",
             "4. Construct a high-quality subagent task with:",
             "   - TASK: What exactly to do (concrete objective, not a topic)",
@@ -573,61 +611,42 @@ class TaskDispatchTool(Tool):
             "   - OUTPUT: Exactly what to return in the final reply",
             "   - VERIFICATION: How to verify (e.g., test commands)",
             "   - BOUNDARIES: What NOT to do, out-of-scope items",
-            "5. The agent's output should generally be trusted.",
+            "5. The subagent's output should generally be trusted.",
             "",
             'A one-line task like "fix the bug" is insufficient — the result quality',
             "is directly proportional to your prompt quality.",
             "",
         ]
 
-        if not targets:
-            lines.append("No agents currently available.")
+        if not subagent_targets:
+            lines.append("No subagents currently available.")
             return "\n".join(lines)
 
-        if peer_targets:
-            lines.append("## Peer Agents")
-            lines.append("")
-            lines.append(
-                "Peer agents are independent agents you can coordinate with as an"
-                " equal. They receive your message as a notification and may or may"
-                " not reply. Do not expect immediate results — continue your work"
-                " after sending."
-            )
-            lines.append("")
-            lines.append("Available peer agents:")
-            for t in peer_targets:
-                entry = f"  - {t.name}"
-                if t.description:
-                    entry += f": {t.description}"
-                lines.append(entry)
-            lines.append("")
-
-        if subagent_targets:
-            lines.append("## Subagents")
-            lines.append("")
-            lines.append(
-                "Subagents are specialized workers you dispatch tasks to. They start"
-                " with a fresh context and run autonomously — they cannot see your"
-                " conversation, reasoning, or prior tool results. Everything they"
-                " need must be in `content`. Omit `invocation_id` for a new task;"
-                " pass a prior `invocation_id` to continue an existing session."
-            )
-            lines.append("")
-            lines.append("Available subagents:")
-            for t in subagent_targets:
-                entry = f"  - {t.name}"
-                if t.description:
-                    entry += f": {t.description}"
-                lines.append(entry)
+        lines.append("## Subagents")
+        lines.append("")
+        lines.append(
+            "Subagents are specialized workers you dispatch tasks to. They start"
+            " with a fresh context and run autonomously — they cannot see your"
+            " conversation, reasoning, or prior tool results. Everything they"
+            " need must be in `content`. Omit `invocation_id` for a new task;"
+            " pass a prior `invocation_id` to continue an existing session."
+        )
+        lines.append("")
+        lines.append("Available subagents:")
+        for t in subagent_targets:
+            entry = f"  - {t.name}"
+            if t.description:
+                entry += f": {t.description}"
+            lines.append(entry)
 
         return "\n".join(lines)
 
     def list_targets(self) -> list[CommunicationTarget]:
-        """Return all targets from the shared store (same as SendToAgentTool)."""
-        return self._store.list()
+        """Return only SUBAGENT targets from the shared store."""
+        return self._store.list_subagents()
 
     def add_target(self, target: CommunicationTarget) -> None:
-        """Register a new communication target (peer or subagent)."""
+        """Register a new subagent communication target."""
         self._store.add(target)
 
     def pop_target_by_name(self, name: str) -> None:
@@ -635,21 +654,21 @@ class TaskDispatchTool(Tool):
         self._store.pop_by_name(name)
 
     def has_target(self, name: str) -> bool:
-        """Check whether a target is registered."""
-        return self._store.has(name)
+        """Check whether a SUBAGENT target is registered."""
+        return any(t.name == name for t in self._store.list_subagents())
 
     def get_dynamic_schema(self) -> dict[str, Any]:
-        """Return schema with target_agent enum bound to ALL available targets."""
+        """Return schema with target_agent enum bound to available subagents."""
         schema = super().get_dynamic_schema()
         function = dict(schema.get("function", {}))
         parameters = dict(function.get("parameters", {}))
         properties = dict(parameters.get("properties", {}))
 
-        all_names = [t.name for t in self._store.list()]
-        if all_names and "target_agent" in properties:
+        subagent_names = [t.name for t in self.list_targets()]
+        if subagent_names and "target_agent" in properties:
             properties["target_agent"] = {
                 **properties["target_agent"],
-                "enum": all_names,
+                "enum": subagent_names,
             }
 
         parameters["properties"] = properties
@@ -673,22 +692,151 @@ class TaskDispatchTool(Tool):
                 f"to yourself. Choose a different target."
             )
 
-        target = self._store.get(target_agent)
+        target = next(
+            (t for t in self._store.list_subagents() if t.name == target_agent),
+            None,
+        )
         if target is None:
-            available = ", ".join(t.name for t in self._store.list())
+            available = ", ".join(t.name for t in self.list_targets())
             return (
-                f"Error: '{target_agent}' is not a valid target. "
-                f"Available: {available}"
+                f"Error: '{target_agent}' is not a valid subagent. "
+                f"Available subagents: {available}"
             )
-
-        # Peer targets (NORMAL): invocation_id is ignored — peer sessions reuse
-        # the sender's session prefix (ADR-0019), no invocation_id semantics.
-        if target.kind == AgentCommKind.NORMAL:
-            invocation_id = None
 
         return await self._service.send_async(
             target=target,
             content=content,
             invocation_id=invocation_id,
+            context=context,
+        )
+
+
+class SendToPeerTool(Tool):
+    """Send a message to a peer — the main agent's cross-agent communication tool.
+
+    Peers are separate, independent assistants, not workers you assign tasks
+    to. This tool is for communication and coordination only, never task
+    delegation. Peer targets are invisible in graph mode (the store filters
+    NORMAL targets), so a graph node sees an empty peer set.
+    """
+
+    def __init__(
+        self,
+        *,
+        store: CommunicationTargetStore,
+        source: AgentAddress,
+        service: AgentCommunicationService,
+    ) -> None:
+        self._store = store
+        self._source = source
+        self._service = service
+        super().__init__(
+            name=SEND_TO_PEER_TOOL_NAME,
+            parameters=_PEER_PARAMS,
+            config=ToolConfig(),
+        )
+
+    @property
+    def description(self) -> str:
+        return self._build_description()
+
+    def _build_description(self) -> str:
+        peer_targets = self._store.list_peers()
+
+        lines = [
+            "Communicate with another assistant you coordinate with as equals.",
+            "",
+            "A peer is a separate, independent assistant — NOT a worker you can",
+            "assign tasks to. It has its own conversation context and its own",
+            "responsibilities, which you cannot see or control. This tool is for",
+            "communication and coordination only, never for task delegation.",
+            "Messages are asynchronous: a peer may or may not reply, and there is",
+            "no guaranteed result.",
+            "",
+            "If you want a concrete piece of work done, prefer dispatching a",
+            "subagent with the `task` tool instead. A subagent is a worker you",
+            "hand a task to, and it automatically returns its result to you.",
+            "",
+            "Use `send_to_peer` only when:",
+            "- replying to an assistant that contacted you first;",
+            "- you need information or a decision that only that assistant has;",
+            "- handing an entire request or responsibility over to that assistant;",
+            "- the user explicitly asked you to involve that specific assistant.",
+            "",
+            "Never use it for routine work, code exploration, implementation,",
+            "running things in parallel, or getting a second opinion. If a",
+            "suitable subagent exists, use that instead.",
+            "",
+        ]
+
+        if not peer_targets:
+            lines.append("No peers currently available.")
+            return "\n".join(lines)
+
+        lines.append("Available peers:")
+        for t in peer_targets:
+            entry = f"  - {t.name}"
+            if t.description:
+                entry += f": {_truncate_desc(t.description)}"
+            lines.append(entry)
+
+        return "\n".join(lines)
+
+    def list_targets(self) -> list[CommunicationTarget]:
+        """Return only NORMAL (peer) targets from the shared store."""
+        return self._store.list_peers()
+
+    def has_target(self, name: str) -> bool:
+        """Check whether a peer target is registered."""
+        return any(t.name == name for t in self._store.list_peers())
+
+    def get_dynamic_schema(self) -> dict[str, Any]:
+        """Return schema with target_peer enum bound to available peers."""
+        schema = super().get_dynamic_schema()
+        function = dict(schema.get("function", {}))
+        parameters = dict(function.get("parameters", {}))
+        properties = dict(parameters.get("properties", {}))
+
+        peer_names = [t.name for t in self.list_targets()]
+        if peer_names and "target_peer" in properties:
+            properties["target_peer"] = {
+                **properties["target_peer"],
+                "enum": peer_names,
+            }
+
+        parameters["properties"] = properties
+        function["parameters"] = parameters
+        return {**schema, "function": function}
+
+    async def execute(self, **kwargs: Any) -> str:
+        target_peer = str(kwargs.get("target_peer", ""))
+        content = str(kwargs.get("content", ""))
+
+        context = _current_agent_context()
+        if context is None:
+            return "Error: no agent context available"
+
+        caller_name = context.session.agent_name
+        if caller_name and target_peer == caller_name:
+            return (
+                f"Error: You are {caller_name!r} — you cannot send a message "
+                f"to yourself. Choose a different target."
+            )
+
+        target = next(
+            (t for t in self._store.list_peers() if t.name == target_peer),
+            None,
+        )
+        if target is None:
+            available = ", ".join(t.name for t in self.list_targets())
+            return (
+                f"Error: '{target_peer}' is not a valid peer. "
+                f"Available peers: {available}"
+            )
+
+        return await self._service.send_async(
+            target=target,
+            content=content,
+            invocation_id=None,
             context=context,
         )

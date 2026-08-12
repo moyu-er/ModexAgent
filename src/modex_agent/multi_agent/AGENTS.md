@@ -85,7 +85,7 @@ per invocation by pipeline providers, so reuse is safe.)
 | `bus.py` | `AgentMessageBus` ABC + `LocalAgentMessageBus` — persist + signal the pool's `InboxPoller` via `signal_wakeup()` (in-process `Event.set`, the single convergence point for every inbox writer: user input, agent-to-agent, CLI `modexctl send`, external peer reply). `consume(only_types=)` for fold-in filtering; `sessions_with_pending()` for poller enumeration. The poller is wired post-construction via `set_poller()`; until then `send` is persist-only and the poller's tick fallback covers delivery. |
 | `communication/` (package) | `AgentCommunicationService` — pure router. Strategy-dispatched (ADR-0019): `_send` resolves target → `TopologyPolicy.check` → one of three `SendStrategy` subclasses (`SubagentDispatchStrategy`, `ParentReplyStrategy`, `PeerNormalStrategy`) handles the full vertical slice (session construction, invocation_id semantics, envelope shape, delivery, result). See `communication/AGENTS.md` for the strategy contract. |
 | `comm_kind.py` | `AgentCommKind` — `NORMAL` / `SUBAGENT` topology kind. |
-| `tools.py` | `TaskDispatchTool` (main agent's sole external communication tool: subagent dispatch + continuation + peer communication, fused from the former `SendToAgentTool` + `TaskDispatchTool` split) + `SendToAgentTool` (subagent→parent consultation only) + `CommunicationTargetStore`, `CommunicationTarget` (carries `pool_name` + `tree_ref` for cross-pool routing per ADR-0019). Both tools converge on `AgentCommunicationService.send_async()`. |
+| `tools.py` | `TaskDispatchTool` (main agent's subagent dispatch tool — strictly subagent-scoped: new task dispatch + session continuation) + `SendToPeerTool` (main agent's peer communication tool — cross-agent messaging, never task delegation; session-mode only, excluded from graph turns via `GraphToolPreset.excluded_base_tools`) + `SendToAgentTool` (subagent→parent consultation only) + `CommunicationTargetStore` (with `list_subagents()`/`list_peers()` views) + `CommunicationTarget` (carries `pool_name` + `tree_ref` for cross-pool routing per ADR-0019). All three tools converge on `AgentCommunicationService.send_async()`. |
 | `template.py` | `AgentTemplate` — subagent preset + the **only** construction path (`materialize`). Builds the tool manager, session-only memory, subagent hooks; wires per-invocation APPEND/FORK prompt providers. |
 | `template_registry.py` | `AgentTemplateRegistry` — scans/loads per-pool subagent templates (`config/pools/<pool>/templates/*.yml`). |
 | `materialize_deps.py` | `AgentMaterializeDeps` — frozen value object of construction deps (factory, broker, pool, path resolver, fork builder, …); replaces ~30 scattered ctor params. |
@@ -118,15 +118,21 @@ per invocation by pipeline providers, so reuse is safe.)
   **session group** (A→B creates `convA.mainB`; B→A reply lands on
   `convA.mainA`). No fresh `invocation_id` is minted; the peer session is a root
   session (`parent_session_id=null`) — peer agents are equals, not parent/child.
-- Two LLM-facing tools, both converging on `AgentCommunicationService.send_async`:
-  - `task(target_agent, content, invocation_id?)` — the **main agent's sole
-    external communication tool** (fused from the former `SendToAgentTool` +
-    `TaskDispatchTool` split). Dispatches new subagent tasks (omit
-    `invocation_id`), continues existing subagent sessions (pass
-    `invocation_id`), and sends peer messages (NORMAL targets —
-    `invocation_id` ignored). Only registered for main agents. Dynamic
-    description with distinct peer/subagent sections guides the LLM to
-    construct high-quality, self-contained task prompts.
+- Three LLM-facing tools, all converging on `AgentCommunicationService.send_async`:
+  - `task(target_agent, content, invocation_id?)` — the **main agent's
+    work-delegation tool** (strictly subagent-scoped). Dispatches new subagent
+    tasks (omit `invocation_id`), continues existing subagent sessions (pass
+    `invocation_id`). Only registered for main agents when subagents exist.
+    `TaskDispatchTool.list_targets()` returns only SUBAGENT targets from the
+    shared store — peer targets are invisible to this tool.
+  - `send_to_peer(target_peer, content)` — the **main agent's peer
+    communication tool** (session-mode only). Sends a message to a peer
+    agent for coordination, never for task delegation. `invocation_id` is
+    always `None` (peer sessions reuse the sender's prefix, ADR-0019).
+    Registered only when peers exist (`store.list_peers()` non-empty). In
+    graph mode, `GraphToolPreset` excludes this tool via
+    `excluded_base_tools={SEND_TO_PEER_TOOL_NAME}` so graph nodes cannot
+    reach peers (they use `deliver` instead).
   - `send_to_agent(target_agent, content, invocation_id?)` — **subagent-only**
     tool for child→parent consultation. `SendToAgentTool.execute` resolves the
     target by name from `CommunicationTargetStore` and dispatches via
@@ -142,14 +148,20 @@ per invocation by pipeline providers, so reuse is safe.)
     sender's ack and the receiver's XML.
   - Star topology is enforced in `TopologyPolicy.check`: a subagent sender may
     only target its own parent; subagent→subagent is rejected.
+  - Tool registration is converged in a single function
+    `register_communication_tools(instance)` (in
+    `examples/bot_project/bot/service/pool/communication.py`), called once per
+    pool after Phase 2 peer wiring. It registers `task` when
+    `store.list_subagents()` is non-empty, `send_to_peer` when
+    `store.list_peers()` is non-empty, and skips external main agents entirely.
 - **The subagent reply path converges on the same tree.** `SubagentAutoSendHook`
   (`hook/builtin/`) fires on `FINALLY_GRAPH` and calls `tree.deliver(parent_sid,
   agent_result envelope)` — the same carrier as `task`/`send_to_agent`. It does not
   hand-build envelopes or call a parallel mechanism. The notification carries
   absolute, workspace-rooted trace/output paths (parity with the `task`
   ack). **Note**: this hook fires ONLY for subagent turns — peer (NORMAL) agents
-  do NOT auto-notify; they must explicitly call `task` to reply
-  (ADR-0019 deferred #1).
+  do NOT auto-notify; they must explicitly call `send_to_peer` to reply
+  (ADR-0019 deferred #1). Peer agents reply via `send_to_peer`, not `task`.
 - Human DM / WebUI / approval decisions enter via `pool.submit_input(session_id,
   InputMessage)`, which serializes the full `InputMessage` (via
   `BrokerInputPayload`, carrying `approval_decision` + `attachments_resolved`)

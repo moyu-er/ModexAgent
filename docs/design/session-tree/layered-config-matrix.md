@@ -26,6 +26,7 @@ parent graph is active.
 | **graph_context** | — | ✅ | — | ✅ | — | — | — | — |
 | **approval** | pool default | None | pool default | None | N/A | N/A | N/A | N/A |
 | **deliver tool** | — | ✅ | — | — | — | — | — | — |
+| **send_to_peer tool** | ✅ (if peers) | ❌ excluded | — | — | ❌ | ❌ | — | — |
 | **knowledge tool** | — | ✅ | — | — | — | — | — | — |
 | **MAX_TURNS=3** | default | ✅ | default | default | N/A | N/A | N/A | N/A |
 | **topology** | — | ✅ | — | — | — | — | — | — |
@@ -121,18 +122,25 @@ configuration.
 
 ## Peer Communication Rules
 
-### Graph mode: peers invisible
+### Graph mode: peers invisible + `send_to_peer` excluded
 
-In graph mode, peer (NORMAL) targets are filtered out at the
-`CommunicationTargetStore` level — the agent cannot perceive or reach peers.
+In graph mode, peer (NORMAL) targets are filtered out at two layers:
+
+1. **`CommunicationTargetStore`** — `list()` filters NORMAL targets, so
+   `list_peers()` returns empty and `send_to_peer`'s enum is empty.
+2. **`GraphToolPreset.excluded_base_tools`** — `send_to_peer` is excluded by
+   name (`SEND_TO_PEER_TOOL_NAME`) when `GraphToolConfigurator` builds the
+   graph-scoped tool manager. The tool does not appear in the LLM's tool list
+   at all — a stronger guarantee than an empty enum.
+
 Graph nodes communicate via `deliver` (graph edges), not peer messaging.
 
-| `CommunicationTargetStore` method | Graph mode behavior |
-|-----------------------------------|---------------------|
-| `list()` | Filters out `NORMAL` targets |
-| `get(name)` | Returns `None` for `NORMAL` targets |
-| `has(name)` | Returns `False` for `NORMAL` targets |
-| `description` | Dynamic (no cache); no peer targets in output |
+| Mechanism | Graph mode behavior |
+|-----------|---------------------|
+| `CommunicationTargetStore.list()` | Filters out `NORMAL` targets |
+| `CommunicationTargetStore.list_peers()` | Returns `[]` (based on `list()`) |
+| `GraphToolPreset.build_tool_manager()` | Skips `send_to_peer` (in `excluded_base_tools`) |
+| `send_to_peer` tool visibility | **Not in tool list** (excluded by preset) |
 
 `SUBAGENT` targets remain visible (graph nodes can dispatch subagents).
 The gate is `ctx.graph_instance_id is not None` on the current
@@ -255,7 +263,9 @@ session_id is an independent key. No cross-session reads, no shared state.
 5. **External agent** (1 test): external gets graph_instance_id only, no
    graph tools/hooks/providers
 6. **Peer communication — graph mode** (4 tests): NORMAL targets hidden in
-   `list()`/`get()`/`has()`/`description`; SUBAGENT targets still visible
+   `list()`/`get()`/`has()`/`description`; SUBAGENT targets still visible.
+   `send_to_peer` tool excluded from graph tool manager via
+   `GraphToolPreset.excluded_base_tools`
 7. **Peer communication — session cross-tree** (2 tests): peer deliver uses
    `target.tree_ref`; falls back to `deps.tree`; no graph_instance_id in
    envelope
@@ -277,3 +287,6 @@ session_id is an independent key. No cross-session reads, no shared state.
 | `multi_agent/communication/strategies/subagent_dispatch.py` | Override: True |
 | `multi_agent/communication/strategies/parent_reply.py` | Override: True |
 | `multi_agent/communication/strategies/peer_normal.py` | Default: False (no override) |
+| `multi_agent/tools.py` | `CommunicationTargetStore.list_subagents()`/`list_peers()` + `SEND_TO_PEER_TOOL_NAME` + `SendToPeerTool` |
+| `tools/graph_tool_preset.py` | `GraphToolPreset.excluded_base_tools` — excludes `send_to_peer` in graph mode |
+| `multi_agent/message_format.py` | Peer reply contract instructs `send_to_peer` (not `task`) |

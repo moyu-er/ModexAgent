@@ -157,6 +157,7 @@ def _make_tool_manager(targets: list, *, with_task: bool = True):
     from modex_agent.multi_agent.tools import (
         CommunicationTargetStore,
         SendToAgentTool,
+        SendToPeerTool,
         TaskDispatchTool,
     )
 
@@ -179,6 +180,13 @@ def _make_tool_manager(targets: list, *, with_task: bool = True):
                 service=MagicMock(),
             )
         )
+    mgr.register(
+        SendToPeerTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            service=MagicMock(),
+        )
+    )
     return mgr
 
 
@@ -232,7 +240,7 @@ async def test_comm_provider_peer_target_emits_peer_contract():
     result = await provider.get_or_refresh()
     assert "Remote Agents" in result
     assert "research-main" in result
-    assert "`task`" in result
+    assert "`send_to_peer`" in result
     assert provider.last_version is not None
     assert provider.last_version.startswith("comm:peer:")
 

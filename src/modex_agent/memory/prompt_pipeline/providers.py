@@ -143,11 +143,11 @@ class _PeerCommSubProvider(_CommSubProvider):
     """Remote-agent reply contract — moved from the deleted
     ``PeerCommunicationSystemPromptProvider``.
 
-    Fires when the agent owns ``task`` AND at least one target is a
+    Fires when the agent owns ``send_to_peer`` AND at least one target is a
     remote agent (a ``CommunicationTarget`` whose ``tree_ref`` is set — the
     target does not share this agent's bus, so there is no implicit reply
     path). For those targets the agent's ordinary output is invisible and a
-    reply is only possible via ``task``.
+    reply is only possible via ``send_to_peer``.
     """
 
     def __init__(self, tool_manager: ToolManager | None) -> None:
@@ -156,12 +156,12 @@ class _PeerCommSubProvider(_CommSubProvider):
     def _remote_target_names(self) -> list[str]:
         if self._tool_manager is None:
             return []
-        tool = self._tool_manager.get_tool("task")
+        tool = self._tool_manager.get_tool("send_to_peer")
         if tool is None:
             return []
-        from modex_agent.multi_agent.tools import TaskDispatchTool
+        from modex_agent.multi_agent.tools import SendToPeerTool
 
-        if not isinstance(tool, TaskDispatchTool):
+        if not isinstance(tool, SendToPeerTool):
             return []
         return sorted(t.name for t in tool.list_targets() if t.tree_ref is not None)
 
@@ -179,13 +179,13 @@ class _PeerCommSubProvider(_CommSubProvider):
         name_list = "\n".join(f"  - {name}" for name in names)
         return (
             "## Communicating With Remote Agents\n\n"
-            "Some agents you can reach via `task` cannot see anything "
+            "Some agents you can reach via `send_to_peer` cannot see anything "
             "you produce normally — not this reply, not your reasoning, not your "
             "tool output. For these agents the ONLY way they ever hear from you "
-            "is a `task` call aimed at them.\n\n"
+            "is a `send_to_peer` call aimed at them.\n\n"
             "Agents that require explicit sends:\n"
             f"{name_list}\n\n"
-            "Replies are OPTIONAL. Only call `task` back when the sender "
+            "Replies are OPTIONAL. Only call `send_to_peer` back when the sender "
             "actually needs your response — do NOT acknowledge just to be polite, "
             "and do NOT ping-pong. If the incoming message does not require action "
             "from you, end your turn without replying.\n"

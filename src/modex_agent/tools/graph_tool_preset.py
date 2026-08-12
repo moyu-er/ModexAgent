@@ -8,13 +8,20 @@ from modex_agent.core.tool_manager import InMemoryToolManager, Tool, ToolManager
 class GraphToolPreset:
     """Build independent tool managers extended with graph tools."""
 
-    def __init__(self, graph_tools: list[Tool]) -> None:
+    def __init__(
+        self,
+        graph_tools: list[Tool],
+        excluded_base_tools: set[str] | None = None,
+    ) -> None:
         self._graph_tools = list(graph_tools)
+        self._excluded_base_tools = excluded_base_tools or set()
 
     def build_tool_manager(self, base: ToolManager) -> InMemoryToolManager:
-        """Copy base tools, then register graph-scoped overrides."""
+        """Copy base tools (skipping excluded), then register graph-scoped overrides."""
         tool_manager = InMemoryToolManager()
         for tool_name in base.list_tools():
+            if tool_name in self._excluded_base_tools:
+                continue
             tool = base.get_tool(tool_name)
             if tool is None:
                 message = f"ToolManager listed an unavailable tool: {tool_name}"

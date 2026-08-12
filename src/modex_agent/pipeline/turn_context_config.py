@@ -49,6 +49,7 @@ from pydantic import BaseModel, ConfigDict
 from modex_agent.core.agent import AgentCommKind, AgentContext
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.tool_manager import Tool
+from modex_agent.multi_agent.tools import SEND_TO_PEER_TOOL_NAME
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.tools.graph_tool_preset import GraphToolPreset
 from modex_graph.context import GraphContext
@@ -194,7 +195,10 @@ class GraphToolConfigurator(TurnContextConfigurator):
                 node_name=desc.graph_node_name or "",
             )
             graph_tools.append(knowledge_tool)
-        preset = GraphToolPreset(graph_tools)
+        preset = GraphToolPreset(
+            graph_tools,
+            excluded_base_tools={SEND_TO_PEER_TOOL_NAME},
+        )
         ctx.tool_manager = preset.build_tool_manager(ctx.tool_manager)
 
 
