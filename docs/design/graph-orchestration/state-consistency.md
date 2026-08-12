@@ -541,8 +541,9 @@ except Exception:
 ctx.coordinator.post_complete_invocation(invocation, ctx.state.checkpoint())
 ```
 
-For LinearScheduler, `ctx.state` IS `main_state` (no forking — linear.py:94
-sets `ctx.set_current_instance(current)` but doesn't fork). So
+For LinearScheduler, `ctx.state` IS `main_state` (no forking — the scheduler
+passes `ctx` directly; the instance ID is carried by the task-local
+ContextVar execution context, not a ctx field). So
 `ctx.state.checkpoint()` captures everything including imperative mutations.
 `ctx.current_invocation` is set by `Node.run()` (node.py:228) and persists
 after return (LinearScheduler doesn't fork, so the ctx is the main context).

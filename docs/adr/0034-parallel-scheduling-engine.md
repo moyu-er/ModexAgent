@@ -230,6 +230,17 @@ consumption state machine, not through state deltas.
 
 ### D7 — Multi-instance model with shared state (per-task context shells)
 
+**ContextVar refinement (2026-08-12):** Invocation identity is no longer
+stored in shared ctx fields at all. `instance_id` and the current
+`InvocationContext` live in a task-local `ContextVar` execution context
+(`execution_context.py: NodeExecution`), set by the scheduler around
+`before_node`/`run`/`after_node` with token-based reset (correct under
+subgraph nesting). `GraphContext._current_instance` is a read-only
+property delegating to the ContextVar; `set_current_instance()` was
+removed; `ctx.current_invocation` remains a plain field written by
+`Node.run()` for direct-run test access. `ctx.dispatch()` /
+`ctx.scratch` / `Node._submit()` resolve identity from the ContextVar.
+
 **Scratchpad refinement (2026-08-11):** The `copy(ctx)` per-task
 context shell was removed. ParallelScheduler now passes `ctx` directly
 — state isolation is via per-node scratchpad keys

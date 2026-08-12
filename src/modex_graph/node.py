@@ -96,9 +96,10 @@ class Node[S: "GraphState"](ABC):
 
     # Per-execution state (reset by run). NOT concurrency-safe — a single Node
     # instance shared across concurrent executions would race. Safety is
-    # guaranteed by the ON_RECEIVE serial gate: the scheduler never runs two
-    # invocations of the same Node object concurrently. This is a framework
-    # invariant, not a property of the attributes themselves.
+    # guaranteed by the per-node serial gate: under ANY trigger mode, the
+    # scheduler never runs two invocations of the same Node object
+    # concurrently. This is a framework invariant, not a property of the
+    # attributes themselves.
     _pending_delivers: list[tuple[Any, str | None]] | None = None
     _submit_result: dict[str, list[Any]] = {}
     # Topology reference (per-execution, set by `run(graph=...)`). Schedulers

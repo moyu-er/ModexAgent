@@ -53,7 +53,7 @@ The exception type nodes raise to pause graph execution after persisting resumab
 _Avoid_: pause, suspend (when referring to the mechanism), checkpoint exception
 
 **Trigger Mode**:
-The per-node policy deciding when a node with multiple incoming edges becomes eligible to execute. Two values: `ON_ALL_PREDS` — the node fires once, after all *activated* predecessors have completed; `ON_RECEIVE` — the node fires once *per* activated predecessor that completes (N predecessors → up to N executions). "Activated" means the predecessor was actually selected by an upstream routing decision — a predecessor that is never routed to does not count toward the node's readiness, so conditional branches that skip one arm do not deadlock the join. Each graph has a default Trigger Mode (recommended `ON_ALL_PREDS`); individual nodes may override it.
+The per-node policy deciding when a node with multiple incoming edges becomes eligible to execute. Two values: `ON_ALL_PREDS` — the node fires once, after all *activated* predecessors have completed (the stable, recommended mode); `ON_RECEIVE` — the node fires once *per* activated predecessor that completes (**deprecated / experimental**: `Graph.compile()` emits a `DeprecationWarning`, `GraphSpec` rejects it; the per-node FIFO serial gate is in-memory only and not persisted across crashes). "Activated" means the predecessor was actually selected by an upstream routing decision — a predecessor that is never routed to does not count toward the node's readiness, so conditional branches that skip one arm do not deadlock the join. Each graph has a default Trigger Mode (recommended `ON_ALL_PREDS`); individual nodes may override it.
 _Avoid_: join policy, fan-in mode, activation strategy
 
 **Activated Predecessor**:
@@ -65,7 +65,7 @@ One execution round of a BSP (Bulk Synchronous Parallel) graph scheduler: all no
 _Avoid_: iteration (that is a ReAct concept — one LLM+TOOL cycle; a superstep is a graph-scheduler concept), batch, wave
 
 **Continuous Scheduling**:
-The `ParallelScheduler` execution model (ADR-0034 D2): instances start as independent `asyncio.Task`s the moment their dependencies are satisfied — no batch barrier (`asyncio.gather`). A short task (10ms) completing does not wait for a long task (10s) in the same batch. Each task gets its own `GraphContext` shell while all tasks share the same `ctx.state` object. Contrast with BSP supersteps (langgraph's model), where a barrier waits for all tasks in a step to complete before merging.
+The `ParallelScheduler` execution model (ADR-0034 D2): instances start as independent `asyncio.Task`s the moment their dependencies are satisfied — no batch barrier (`asyncio.gather`). A short task (10ms) completing does not wait for a long task (10s) in the same batch. All tasks share the same `GraphContext` (no per-task shells — `copy(ctx)` was removed); state isolation is via per-node `node_scratch` keys, and invocation identity (instance ID, invocation context) is task-local via a `ContextVar` execution context. Contrast with BSP supersteps (langgraph's model), where a barrier waits for all tasks in a step to complete before merging.
 _Avoid_: event-driven scheduling (too generic), task-parallel (overloaded with distributed computing sense)
 
 **Ready**:
@@ -77,7 +77,7 @@ The pluggable scheduling strategy behind `GraphEngine`. An ABC with two implemen
 _Avoid_: executor (too generic), runner (collides with `TurnRunner`), engine (that is `GraphEngine` — the entry point that delegates to a Scheduler)
 
 **Node Instance**:
-One execution of a node under `ParallelScheduler`. Identified by `{node_name}#{global_seq}` (e.g. `body#0`, `body#1`). Each instance has an independent lifecycle (DORMANT → READY → RUNNING → COMPLETED) and a per-task `GraphContext` shell over the graph's shared state. Loops produce new instances rather than resetting state. `ON_RECEIVE` multi-trigger produces multiple concurrent instances. Re-activation by a loop edge creates a fresh instance with a new sequence number.
+One execution of a node under `ParallelScheduler`. Identified by `{node_name}#{global_seq}` (e.g. `body#0`, `body#1`). Each instance has an independent lifecycle (DORMANT → READY → RUNNING → COMPLETED) and runs as an `asyncio.Task` sharing the graph's `GraphContext`, with invocation identity carried by a task-local `ContextVar` execution context. Loops produce new instances rather than resetting state. Re-activation by a loop edge creates a fresh instance with a new sequence number. A per-node serial gate guarantees the same node never has two concurrently executing instances, under any Trigger Mode.
 _Avoid_: node execution (too generic — that is the act, not the identity), node state (collides with `GraphState`)
 
 **Dispatch**:
