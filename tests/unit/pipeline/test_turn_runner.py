@@ -130,6 +130,7 @@ def _make_runner(
     resumer = resumer or ApprovalResumer(agent=agent, turn_store=turn_store, user_interface=ui)
     if builder is None:
         builder = MagicMock(spec=TurnContextBuilder)
+        builder.session_binding_store = None
 
     return ReActTurnRunner(
         agent=agent,
@@ -367,6 +368,7 @@ async def test_process_locked_binds_workspace_root_from_manager(
     seen: dict[str, Any] = {}
 
     builder = MagicMock(spec=TurnContextBuilder)
+    builder.session_binding_store = None
     builder.build_turn_request = AsyncMock(
         return_value=MagicMock(
             user_content=None,
@@ -420,6 +422,7 @@ async def test_process_locked_binds_workspace_root_from_manager(
 async def test_process_locked_runs_full_flow_and_returns_result() -> None:
     """process_locked composes builder + approval + execute_turn end-to-end."""
     builder = MagicMock(spec=TurnContextBuilder)
+    builder.session_binding_store = None
     builder.build_turn_request = AsyncMock(
         return_value=MagicMock(
             user_content=None,
@@ -465,7 +468,7 @@ def test_build_turn_descriptor_empty_metadata_returns_normal_descriptor() -> Non
     runner = _make_runner()
     session = SessionInfo.from_str("s1.main")
 
-    desc = runner._build_turn_descriptor({}, session, None)
+    desc = runner._build_turn_descriptor(session, None)
 
     assert desc.agent_kind is AgentCommKind.NORMAL
     assert desc.execution_strategy is ExecutionStrategyKind.REACT
@@ -477,16 +480,22 @@ def test_build_turn_descriptor_empty_metadata_returns_normal_descriptor() -> Non
 
 
 def test_build_turn_descriptor_resolves_graph_context_via_resolver() -> None:
-    """graph_instance_id + wired resolver -> descriptor carries the resolved context."""
+    """task_id in binding store + wired resolver -> descriptor carries the resolved context."""
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        InMemorySessionBindingStore,
+        SessionBinding,
+    )
+
     resolved_ctx = _make_graph_context(graph_instance_id=42)
+    binding_store = InMemorySessionBindingStore()
+    session = SessionInfo.from_str("s1.main")
+    binding_store.bind(session.session_id, SessionBinding(task_id=42))
     builder = MagicMock(spec=TurnContextBuilder)
+    builder.session_binding_store = binding_store
     builder.graph_context_resolver = MagicMock(return_value=resolved_ctx)
     runner = _make_runner(builder=builder)
-    session = SessionInfo.from_str("s1.main")
 
-    desc = runner._build_turn_descriptor(
-        {"graph_instance_id": 42}, session, None
-    )
+    desc = runner._build_turn_descriptor(session, None)
 
     assert desc.graph_instance_id == 42
     assert desc.graph_context is resolved_ctx
@@ -495,28 +504,39 @@ def test_build_turn_descriptor_resolves_graph_context_via_resolver() -> None:
 
 
 def test_build_turn_descriptor_extracts_artifacts_from_graph_context_user_data() -> None:
-    """graph_node_name + GraphContext.user_data -> graph_artifacts pulled from node_artifacts dict."""
+    """Full binding (task_id + graph fields) -> descriptor carries all graph artifacts."""
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        InMemorySessionBindingStore,
+        SessionBinding,
+    )
     from modex_agent.pipeline.turn_context_config import GraphTurnArtifacts
 
-    ctx = _make_graph_context(graph_instance_id=42)
     artifacts = GraphTurnArtifacts(
         deliver_tool=_StubTool(),
         topology_section="## topology",
         node_description="node1 description",
         knowledge_config=None,
     )
-    ctx.user_data.setdefault("node_artifacts", {})["node1"] = artifacts
 
+    binding_store = InMemorySessionBindingStore()
+    session = SessionInfo.from_str("s1.main")
+    binding_store.bind(
+        session.session_id,
+        SessionBinding(
+            task_id=42,
+            graph_node_name="node1",
+            is_node_execution=True,
+            graph_artifacts=artifacts,
+        ),
+    )
+
+    ctx = _make_graph_context(graph_instance_id=42)
     builder = MagicMock(spec=TurnContextBuilder)
+    builder.session_binding_store = binding_store
     builder.graph_context_resolver = MagicMock(return_value=ctx)
     runner = _make_runner(builder=builder)
-    session = SessionInfo.from_str("s1.main")
 
-    desc = runner._build_turn_descriptor(
-        {"graph_instance_id": 42, "graph_node_name": "node1", "is_node_execution": True},
-        session,
-        None,
-    )
+    desc = runner._build_turn_descriptor(session, None)
 
     assert desc.graph_artifacts is artifacts
     assert desc.is_node_execution is True
@@ -536,7 +556,7 @@ def test_build_turn_descriptor_marks_subagent_when_descriptor_is_subagent() -> N
     runner = _make_runner()
     runner._agent_descriptor = sub_desc
 
-    desc = runner._build_turn_descriptor({}, SessionInfo.from_str("s1.sub"), None)
+    desc = runner._build_turn_descriptor(SessionInfo.from_str("s1.sub"), None)
 
     assert desc.agent_kind is AgentCommKind.SUBAGENT
 
@@ -558,6 +578,7 @@ async def test_process_locked_passes_turn_descriptor_to_build_runtime_and_contex
     from modex_agent.core.constants import ExecutionStrategyKind
 
     builder = MagicMock(spec=TurnContextBuilder)
+    builder.session_binding_store = None
     builder.build_turn_request = AsyncMock(
         return_value=MagicMock(
             user_content=None,
@@ -598,12 +619,21 @@ async def test_process_locked_passes_turn_descriptor_to_build_runtime_and_contex
 
 
 async def test_process_locked_descriptor_carries_graph_instance_id_from_metadata() -> None:
-    """When ``input_msg.metadata`` carries ``graph_instance_id`` and the builder
+    """When the session binding store carries ``task_id`` and the builder
     exposes a ``graph_context_resolver``, the descriptor forwarded to
     ``build_runtime_and_context`` carries the resolved id and context.
     """
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        InMemorySessionBindingStore,
+        SessionBinding,
+    )
+
     resolved_ctx = _make_graph_context(graph_instance_id=42)
+    session = SessionInfo.from_str("s1.main")
+    binding_store = InMemorySessionBindingStore()
+    binding_store.bind(session.session_id, SessionBinding(task_id=42))
     builder = MagicMock(spec=TurnContextBuilder)
+    builder.session_binding_store = binding_store
     builder.graph_context_resolver = MagicMock(return_value=resolved_ctx)
     builder.build_turn_request = AsyncMock(
         return_value=MagicMock(
@@ -626,15 +656,14 @@ async def test_process_locked_descriptor_carries_graph_instance_id_from_metadata
     runner = _make_runner(agent=_OkAgent(), builder=builder, approval=approval)
     input_msg = InputMessage(
         content="hi",
-        session=SessionInfo.from_str("s1.main"),
-        metadata={"graph_instance_id": 42},
+        session=session,
     )
 
     await runner.process_locked(
         input_msg,
         "s1",
         None,
-        session=SessionInfo.from_str("s1.main"),
+        session=session,
     )
 
     builder.build_runtime_and_context.assert_called_once()

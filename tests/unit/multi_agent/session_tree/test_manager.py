@@ -714,3 +714,143 @@ class TestDeliverDedup:
         assert "inv.sub" in manager._pending_input
         await manager.deliver("inv.sub", env)
         assert "inv.sub" not in manager._pending_input
+
+
+# ---------------------------------------------------------------------------
+# _maybe_bind_session + SessionBindingStore integration
+# ---------------------------------------------------------------------------
+
+
+def _make_manager_with_binding() -> tuple[SessionTreeManager, InMemoryInboxServer, InMemorySessionBindingStore]:
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        InMemorySessionBindingStore,
+    )
+
+    server = InMemoryInboxServer()
+    producer = InboxProducer(server=server)
+    consumer = InboxConsumer(server=server)
+    bus = LocalAgentMessageBus(producer=producer, consumer=consumer)
+    binding_store = InMemorySessionBindingStore()
+    manager = SessionTreeManager(
+        tree_store=InMemorySessionTreeStore(),
+        node_store=InMemoryTreeNodeStore(),
+        track_store=InMemoryMessageTrackStore(),
+        bus=bus,
+        poller=_StubPoller(),
+        pool_name="pool1",
+        workspace_root="/tmp",
+        session_registry=InMemorySessionRegistry(),
+        binding_store=binding_store,
+    )
+    return manager, server, binding_store
+
+
+def _envelope_with_gid(
+    msg_type: str,
+    *,
+    graph_instance_id: int | None = 42,
+    target_sid: str = "inv.sub",
+    message_id: str = "m1",
+) -> AgentMessageEnvelope:
+    return AgentMessageEnvelope(
+        payload={"content": "test"},
+        source=AgentAddress(kind=AddressKind.AGENT, name="main"),
+        target=AgentAddress(kind=AddressKind.AGENT, name="sub"),
+        message_type=msg_type,
+        session_id="conv1",
+        agent_session_id=target_sid,
+        parent_session_id="root.main",
+        invocation_id="inv1",
+        message_id=message_id,
+        metadata={"graph_instance_id": graph_instance_id} if graph_instance_id is not None else {},
+    )
+
+
+class TestMaybeBindSession:
+
+    async def test_deliver_auto_creates_binding_from_envelope_metadata(self) -> None:
+        manager, _, binding_store = _make_manager_with_binding()
+        await _setup_tree(manager)
+        await _add_subagent(manager)
+        env = _envelope_with_gid(AgentMessageType.EXTERNAL_INPUT, target_sid="inv.sub")
+        await manager.deliver("inv.sub", env)
+        binding = binding_store.get("inv.sub")
+        assert binding is not None
+        assert binding.task_id == 42
+        assert binding.graph_node_name is None
+        assert binding.is_node_execution is False
+
+    async def test_deliver_does_not_overwrite_existing_binding(self) -> None:
+        from modex_agent.multi_agent.session_tree.session_binding import (
+            SessionBinding,
+        )
+        from modex_agent.pipeline.turn_context_config import GraphTurnArtifacts
+        from tests.unit.pipeline.test_turn_runner import _StubTool
+
+        manager, _, binding_store = _make_manager_with_binding()
+        await _setup_tree(manager)
+        await _add_subagent(manager)
+        binding_store.bind(
+            "inv.sub",
+            SessionBinding(
+                task_id=42,
+                graph_node_name="my_node",
+                is_node_execution=True,
+                graph_artifacts=GraphTurnArtifacts(
+                    deliver_tool=_StubTool(),
+                    topology_section="## topology",
+                    node_description="desc",
+                    knowledge_config=None,
+                ),
+            ),
+        )
+        env = _envelope_with_gid(AgentMessageType.EXTERNAL_INPUT, target_sid="inv.sub")
+        await manager.deliver("inv.sub", env)
+        binding = binding_store.get("inv.sub")
+        assert binding is not None
+        assert binding.graph_node_name == "my_node"
+        assert binding.is_node_execution is True
+
+    async def test_deliver_without_graph_instance_id_does_not_bind(self) -> None:
+        manager, _, binding_store = _make_manager_with_binding()
+        await _setup_tree(manager)
+        await _add_subagent(manager)
+        env = _envelope_with_gid(
+            AgentMessageType.EXTERNAL_INPUT, graph_instance_id=None, target_sid="inv.sub"
+        )
+        await manager.deliver("inv.sub", env)
+        assert binding_store.get("inv.sub") is None
+
+    async def test_deliver_without_binding_store_does_not_crash(self) -> None:
+        manager, _ = _make_manager()
+        await _setup_tree(manager)
+        await _add_subagent(manager)
+        env = _envelope_with_gid(AgentMessageType.EXTERNAL_INPUT, target_sid="inv.sub")
+        await manager.deliver("inv.sub", env)
+
+    async def test_conflicting_task_id_raises(self) -> None:
+        from modex_agent.multi_agent.session_tree.session_binding import (
+            SessionBinding,
+        )
+
+        manager, _, binding_store = _make_manager_with_binding()
+        await _setup_tree(manager)
+        await _add_subagent(manager)
+        binding_store.bind("inv.sub", SessionBinding(task_id=42))
+        env = _envelope_with_gid(
+            AgentMessageType.EXTERNAL_INPUT, graph_instance_id=99, target_sid="inv.sub"
+        )
+        with pytest.raises(ValueError, match="Concurrent graph instances"):
+            await manager.deliver("inv.sub", env)
+
+    async def test_on_session_evicted_unbinds(self) -> None:
+        from modex_agent.multi_agent.session_tree.session_binding import (
+            SessionBinding,
+        )
+
+        manager, _, binding_store = _make_manager_with_binding()
+        await _setup_tree(manager)
+        binding_store.bind("root.main", SessionBinding(task_id=42))
+        assert binding_store.get("root.main") is not None
+        await manager.on_session_evicted("root.main")
+        assert binding_store.get("root.main") is None

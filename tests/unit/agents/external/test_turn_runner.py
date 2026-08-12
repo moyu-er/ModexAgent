@@ -26,6 +26,7 @@ from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage
 from modex_agent.hook import FinallyGraphHook, HookRunner, HookSpec
+from modex_agent.multi_agent.session_tree.session_binding import SessionBindingStore
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.workspace.runtime import (
     is_workspace_root_bound,
@@ -127,6 +128,7 @@ def _make_runner(
     on_session_end: Any = None,
     safety: RuntimeSafetyPolicy | None = None,
     hook_runner: HookRunner | None = None,
+    session_binding_store: SessionBindingStore | None = None,
 ) -> ExternalTurnRunner:
     resolved_agent: Any = agent if agent is not None else _RecordingAgent()
     return ExternalTurnRunner(
@@ -138,6 +140,7 @@ def _make_runner(
         on_session_end=on_session_end,
         safety=safety or RuntimeSafetyPolicy(),
         hook_runner=hook_runner,
+        session_binding_store=session_binding_store,
     )
 
 
@@ -625,12 +628,20 @@ async def test_workspace_root_not_bound_without_manager() -> None:
 
 async def test_graph_instance_id_set_from_metadata() -> None:
     # Given
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        InMemorySessionBindingStore,
+        SessionBinding,
+    )
+
     agent = _RecordingAgent()
-    runner = _make_runner(agent=agent)
-    input_msg = _make_input("hello", {"graph_instance_id": 42})
+    session = _session()
+    binding_store = InMemorySessionBindingStore()
+    binding_store.bind(session.session_id, SessionBinding(task_id=42))
+    runner = _make_runner(agent=agent, session_binding_store=binding_store)
+    input_msg = _make_input("hello")
 
     # When
-    await runner.process_locked(input_msg, "s1", session=_session())
+    await runner.process_locked(input_msg, "s1", session=session)
 
     # Then
     ctx = agent.received_context

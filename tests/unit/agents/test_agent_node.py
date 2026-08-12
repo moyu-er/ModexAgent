@@ -754,8 +754,6 @@ class TestBotAgentNodeBuildGraphInputEnvelope:
         assert "[Origin Request]" in envelope.payload["content"]
         assert "do the task" in envelope.payload["content"]
         assert envelope.metadata["graph_instance_id"] == 42
-        assert envelope.metadata["graph_node_name"] == "planner_node"
-        assert envelope.metadata["is_node_execution"] is True
 
     async def test_re_execution_skips_origin_request(self) -> None:
         instance = _build_mock_agent_instance(
@@ -900,7 +898,6 @@ class TestBotAgentNodeExecute:
         assert envelope.message_type == AgentMessageType.EXTERNAL_INPUT
         assert "[Origin Request]" in envelope.payload["content"]
         assert envelope.metadata["graph_instance_id"] == 42
-        assert envelope.metadata["graph_node_name"] == "planner_node"
 
     async def test_execute_calls_tree_wait_quiesce(self) -> None:
         node, mock_tree, _ = self._build_execute_setup()

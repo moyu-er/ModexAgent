@@ -615,19 +615,26 @@ async def test_graph_workflow_provider_emits_deliver_routing_guidance() -> None:
     no 'auto-delivered to ALL downstream nodes' claim (multi-edge raises
     RoutingError); instead describe single-edge auto-deliver / END fallback
     and require an explicit target."""
+    from modex_agent.agents.react.state import ReActTurnState
     from modex_agent.core.agent import AgentContext, current_agent_context
     from modex_agent.core.history import MessageHistory
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.tool_manager import InMemoryToolManager
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.runtime.models import TurnIdentity
+    from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
     from modex_graph.context import GraphContext
 
+    state = ReActTurnState(identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("test.planner"), turn_id="t1"))
+    state.custom[TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT] = ""
     ctx = AgentContext(
         system_prompt="",
         history=MagicMock(spec=MessageHistory),
         tool_manager=InMemoryToolManager(),
         session=SessionInfo.from_str("test.planner"),
         graph_context=MagicMock(spec=GraphContext),
+        runtime=AgentRuntime(services=AgentRuntimeServices(), state=state),
     )
     token = current_agent_context.set(ctx)
     try:
@@ -699,6 +706,7 @@ async def test_graph_workflow_provider_emits_knowledge_base_section_when_knowled
     runtime = MagicMock(spec=AgentRuntime)
     runtime.state = MagicMock(spec=TurnStateBase)
     runtime.state.custom = {
+        TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT: "",
         TurnCustomKey.GRAPH_KNOWLEDGE_DIR: "/tmp/knowledge",
     }
     ctx = AgentContext(

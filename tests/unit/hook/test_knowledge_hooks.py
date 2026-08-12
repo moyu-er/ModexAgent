@@ -20,7 +20,7 @@ from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
 
 def _make_context(
-    knowledge_dir: str | None = None,
+    knowledge_dir: str | None = ".",
 ) -> tuple[AgentContext, ReActTurnState]:
     identity = TurnIdentity(
         agent_id="test",
