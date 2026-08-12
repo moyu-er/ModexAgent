@@ -15,11 +15,7 @@ Provides:
 - `runtime: GraphRuntime` — AOP bridge. Nodes call `ctx.runtime.dispatch_hook`
   etc. for business-specific AOP.
 - `user_data: Any` — turn-scoped business context. For ReAct, holds the
-  `AgentContext`. Shared across forks.
-- `fork(*, state=...)` — create a sub-context with shared resources and
-  optionally isolated state. See `fork` docstring for shared/isolated
-  semantics. Deprecated for scheduler use (ADR-0034 D7: ParallelScheduler
-  passes ctx directly via scratchpad model).
+  `AgentContext`.
 - `emit(event_type, data)` — convenience for `ctx.runtime.emit(..., ctx)`.
 - `interrupt(value)` — raises `GraphInterrupt(value)` (suspend-without-
   re-execution semantics).
@@ -47,7 +43,7 @@ from .run_control import GraphRunControl
 from .runtime import GraphRuntime
 
 if TYPE_CHECKING:
-    from .persistence import GraphPersistenceCoordinator, InvocationContext, NodeStateStore
+    from .persistence import GraphPersistenceCoordinator, NodeStateStore
     from .state import GraphState
 
 S = TypeVar("S", bound="GraphState")
@@ -93,13 +89,11 @@ class GraphContext[S: "GraphState"]:
     ```
 
     Construction: `GraphContext(state=..., runtime=..., coordinator=..., ...)`.
-    The engine constructs the initial context; `fork()` creates sub-contexts.
+    The engine constructs the initial context.
 
     ``coordinator`` is REQUIRED (no None fallback). It drives
     the node invocation lifecycle (begin/integrate/complete/cancel/suspend/
-    crash/finalize) via ``Node.run()``. ``current_invocation`` is set by
-    the first step of ``Node.run()`` to the current ``InvocationContext``; it is ``None``
-    until a node begins executing.
+    crash/finalize) via ``Node.run()``.
     """
 
     def __init__(
@@ -113,7 +107,6 @@ class GraphContext[S: "GraphState"]:
         scheduler_kind: SchedulerKind = SchedulerKind.LINEAR,
         dispatch_handler: DispatchHandler | None = None,
         graph_instance_id: int | None = None,
-        current_invocation: InvocationContext | None = None,
         control: GraphRunControl | None = None,
         reached_end: bool = False,
     ) -> None:
@@ -127,83 +120,12 @@ class GraphContext[S: "GraphState"]:
             dispatch_handler if dispatch_handler is not None else _noop_dispatch_handler
         )
         self.graph_instance_id: int | None = graph_instance_id
-        self.current_invocation: InvocationContext | None = current_invocation
         self.control: GraphRunControl = control if control is not None else GraphRunControl()
         # Run-level flag: set True when a dispatch targets GraphNode.END.
         # The orchestrator reads this after run_async returns to decide
-        # COMPLETED (reached END) vs FAILED (dead-end — node exhausted
-        # max_retry without delivering). NOT propagated by fork() — forked
-        # sub-contexts start fresh.
+        # COMPLETED (reached END) vs FAILED (dead-end — no dispatches
+        # produced, graph did not reach END).
         self.reached_end: bool = reached_end
-
-    def fork(
-        self,
-        *,
-        state: S | None = None,
-        runtime: GraphRuntime | None = None,
-        coordinator: GraphPersistenceCoordinator | None = None,
-        user_data: Any = None,
-        scheduler_kind: SchedulerKind | None = None,
-        dispatch_handler: DispatchHandler | None = None,
-        graph_instance_id: int | None = None,
-        current_invocation: InvocationContext | None = None,
-    ) -> GraphContext[S]:
-        """Create a sub-context with isolated state. Three layers of sharing.
-
-        Per ADR-0033 D5.2:
-
-        - **`runtime` shared** (inherited from parent if `runtime=None`):
-          subtask uses the same AOP services (hook_runner / emitter /
-          snapshot_store). AOP services are turn-scoped, not task-scoped.
-        - **`coordinator` shared** (inherited from parent if
-          `coordinator=None`): a forked sub-context is part of the
-          same graph run, so it shares the same persistence coordinator.
-          Pass an explicit `coordinator` only to override (rare).
-        - **`user_data` shared** (inherited from parent if `user_data=None`):
-          subtask sees the same `AgentContext` (or business context).
-          Turn-internal context does not change across tasks.
-        - **`state` isolated** (if `state` is passed): subtask has its own
-          state. Imperative mutations (`sub_ctx.state.x = y`) do NOT
-          propagate to the parent state unless the caller propagates them.
-          If `state=None` is passed (the default), the subtask shares the
-          parent state and mutations propagate directly. **Note:**
-          `ParallelScheduler` does NOT call `fork()` — it passes `ctx`
-          directly (scratchpad model, per ADR-0034 D7 refinement). State
-          isolation is via per-node `node_scratch[self.node_id]` keys,
-          not context copying. `fork()` is retained for business-module
-          subtask patterns (e.g. ReAct sub-agent spawning) and tests.
-        - **`scheduler_kind` shared** (inherited from parent if
-          `scheduler_kind=None`): subtask sees the same scheduler kind.
-          Needed so `dispatch` checks the right kind under fan-out.
-        - **`dispatch_handler` shared** (inherited from parent if
-          `dispatch_handler=None`): a forked context retains the parent's
-          dispatch handler so it can also dispatch. Both `LINEAR` and
-          `PARALLEL` schedulers register a handler before executing nodes.
-        - **`graph_instance_id` shared** (inherited from parent if
-          `graph_instance_id=None`): a forked sub-context is part of the
-          same graph run, so deliver persistence keys to the same instance.
-          Pass an explicit `graph_instance_id` only to override (rare).
-        - **`current_invocation` NOT inherited** (defaults to `None`): each
-          forked context is a different execution scope; it should not
-          claim the parent's invocation identity. `Node.run()` sets this
-          on its own ctx at the first step of Node.run().
-        """
-        return GraphContext(
-            state=state if state is not None else self.state,
-            runtime=runtime if runtime is not None else self.runtime,
-            coordinator=coordinator if coordinator is not None else self.coordinator,
-            user_input=self.user_input,
-            user_data=user_data if user_data is not None else self.user_data,
-            scheduler_kind=scheduler_kind if scheduler_kind is not None else self.scheduler_kind,
-            dispatch_handler=dispatch_handler
-            if dispatch_handler is not None
-            else self._dispatch_handler,
-            graph_instance_id=graph_instance_id
-            if graph_instance_id is not None
-            else self.graph_instance_id,
-            current_invocation=current_invocation,
-            control=self.control,
-        )
 
     def emit(self, event_type: str, data: Any) -> None:
         """Fire-and-forget emit via `runtime.emit(..., ctx)`.
@@ -322,7 +244,7 @@ class GraphContext[S: "GraphState"]:
         Returns ``ctx.state.node_scratch[current_node_id]`` — the
         per-node scratch dict where the currently-executing node writes
         its local working state. Key separation from other nodes provides
-        isolation without fork/clone.
+        isolation without context copying.
 
         Resolves ``current_node_id`` from the invocation-local execution
         context (ContextVar, task-local). Raises ``RuntimeError`` if no
@@ -333,7 +255,7 @@ class GraphContext[S: "GraphState"]:
             ctx.scratch["attempt"] = 3
         """
         exec_ctx = get_execution()
-        inv = exec_ctx.invocation if exec_ctx is not None else self.current_invocation
+        inv = exec_ctx.invocation if exec_ctx is not None else None
         if inv is None:
             raise RuntimeError(
                 "ctx.scratch is only valid during node execution "

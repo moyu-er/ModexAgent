@@ -47,7 +47,13 @@ if TYPE_CHECKING:
     from modex_agent.core.skills import SkillManager
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.pipeline.adapters import OutputAdapter
+    from modex_agent.pipeline.turn_context_config import (
+        TurnContextConfigPipeline,
+        TurnContextDescriptor,
+    )
     from modex_agent.runtime.models import TurnSnapshot
+
+    from modex_graph.context import GraphContext
 
 from modex_agent.approval.response import parse_input_command
 from modex_agent.approval.types import ApprovalAction
@@ -169,6 +175,8 @@ class TurnContextBuilder:
         self._output_adapter = output_adapter
         self._turn_store = turn_store
         self._registry = registry
+        self._graph_context_resolver: Callable[[int], GraphContext[Any] | None] | None = None
+        self._config_pipeline: TurnContextConfigPipeline | None = None
 
     # ── Post-construction wiring (typed setters) ─────────────────────────
     #
@@ -210,6 +218,24 @@ class TurnContextBuilder:
     @emitter_factory.setter
     def emitter_factory(self, value: Callable[..., ContentEmitter[Any]] | None) -> None:
         self._emitter_factory = value
+
+    @property
+    def graph_context_resolver(self) -> Callable[[int], GraphContext[Any] | None] | None:
+        return self._graph_context_resolver
+
+    @graph_context_resolver.setter
+    def graph_context_resolver(
+        self, value: Callable[[int], GraphContext[Any] | None] | None
+    ) -> None:
+        self._graph_context_resolver = value
+
+    @property
+    def config_pipeline(self) -> TurnContextConfigPipeline | None:
+        return self._config_pipeline
+
+    @config_pipeline.setter
+    def config_pipeline(self, value: TurnContextConfigPipeline | None) -> None:
+        self._config_pipeline = value
 
     async def build_turn_request(
         self,
@@ -405,6 +431,7 @@ class TurnContextBuilder:
         pool_data: PoolDataSnapshot | None = None,
         inline_attachments: Sequence[Attachment] | None = None,
         workspace: Path | None = None,
+        turn_descriptor: TurnContextDescriptor | None = None,
     ) -> tuple[AgentContext, ContentEmitter]:
         """Build AgentContext and emitter for the turn.
 
@@ -499,6 +526,7 @@ class TurnContextBuilder:
             )
             agent_context.runtime = AgentRuntime(services=services, state=react_state)
             agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
+            agent_context.runtime.state.custom[TurnCustomKey.MAX_TURNS] = 3
         elif governance is not None:
             # Lightweight runtime for governance-only mode (no turn_store)
             from modex_agent.agents.react.state import ReActTurnState
@@ -544,5 +572,8 @@ class TurnContextBuilder:
                 session_id=session.session_id,
                 send_timeout=self._safety.turn.output_send_timeout_seconds,
             )
+
+        if turn_descriptor is not None and self._config_pipeline is not None:
+            self._config_pipeline.configure(agent_context, turn_descriptor)
 
         return agent_context, emitter

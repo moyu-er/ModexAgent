@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from typing import TYPE_CHECKING
 
 from modex_agent.multi_agent.message_type import AgentMessageType
@@ -102,13 +101,24 @@ class SessionTreeManager:
             logger.exception("bus.send failed for %s", target_session_id)
             return False
 
-    async def deliver(self, target_session_id: str, envelope: AgentMessageEnvelope) -> None:
+    async def tree_id_for_session(self, session_id: str) -> str | None:
+        """Return the tree containing ``session_id``, if one exists."""
+        node = await self._node_store.get(session_id)
+        return node.tree_id if node is not None else None
+
+    async def deliver(
+        self, target_session_id: str, envelope: AgentMessageEnvelope, *,
+        track_consume: bool = False,
+    ) -> None:
         msg_type = envelope.message_type
         node = await self._ensure_node(target_session_id, envelope)
         tree_id = node.tree_id
 
         if msg_type in _PENDING_TYPES:
             self._pending_input.add(target_session_id)
+        tracked_external_input = track_consume and msg_type is AgentMessageType.EXTERNAL_INPUT
+
+        if msg_type in _PENDING_TYPES and not tracked_external_input:
             # NOTE: On _send failure (dedup or error), we discard from
             # _pending_input. This is correct for error (message not in inbox)
             # but technically wrong for dedup (message IS in inbox from a prior
@@ -120,15 +130,12 @@ class SessionTreeManager:
             self._signal(tree_id)
             return
 
-        if msg_type not in _TRACKED_TYPES:
+        if msg_type not in _TRACKED_TYPES and not tracked_external_input:
             await self._send(target_session_id, envelope)
             return
 
         task_req: MessageTrack | None = None
-        if (
-            msg_type == AgentMessageType.AGENT_RESULT
-            and envelope.invocation_id
-        ):
+        if msg_type == AgentMessageType.AGENT_RESULT and envelope.invocation_id:
             for t in await self._track_store.list_dispatched(tree_id):
                 if (
                     t.message_type == AgentMessageType.TASK_REQUEST
@@ -161,6 +168,8 @@ class SessionTreeManager:
             await self._track_store.update_status(
                 track.track_id, MessageTrackStatus.CANCELLED
             )
+            if tracked_external_input:
+                self._pending_input.discard(target_session_id)
             if task_req is not None:
                 await self._track_store.update_status(
                     task_req.track_id, MessageTrackStatus.DISPATCHED
@@ -223,21 +232,14 @@ class SessionTreeManager:
             s in self._pending_input for s in sessions
         )
 
-    async def wait_quiesce(self, tree_id: str, timeout: float) -> bool:
-        deadline = time.monotonic() + timeout
+    async def wait_quiesce(self, tree_id: str) -> None:
         while True:
             if await self.is_quiesced(tree_id):
-                return True
+                return
             event = self._quiesce_event(tree_id)
             event.clear()
             self._poller.signal_wakeup()
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return False
-            try:
-                await asyncio.wait_for(event.wait(), remaining)
-            except TimeoutError:
-                return False
+            await event.wait()
 
     async def on_session_evicted(self, session_id: str) -> None:
         await self._track_store.close_tracks_for_session(

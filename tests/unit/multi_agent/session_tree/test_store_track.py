@@ -118,6 +118,32 @@ async def test_create_then_get_returns_track(store: MessageTrackStore) -> None:
     assert await store.get(track.track_id) == track
 
 
+async def test_create_accepts_external_input_message_type(
+    store: MessageTrackStore,
+) -> None:
+    """BotAgentNode.execute delivers EXTERNAL_INPUT envelopes with track_consume=True.
+
+    The track store must accept external_input as a message_type — the SQLite
+    CHECK constraint was originally limited to task_request/agent_result, causing
+    IntegrityError at runtime.
+    """
+    track = MessageTrack(
+        track_id="ext-1",
+        tree_id="tree-1",
+        message_id="ext-1",
+        message_type="external_input",
+        invocation_id=None,
+        target_session_id="target-1",
+        source_session_id="source-1",
+        status=MessageTrackStatus.DISPATCHED,
+        dispatched_at=_NOW,
+    )
+
+    await store.create(track)
+
+    assert await store.get(track.track_id) == track
+
+
 async def test_get_nonexistent_returns_none(store: MessageTrackStore) -> None:
     assert await store.get("missing") is None
 

@@ -2,34 +2,29 @@
 
 Bridges the static graph scheduling layer (modex_graph) to the bot's pool-mode
 agent runtime. Each node binds a named agent from a named pool, resolves the
-pool's TurnContextBuilder/ContextManager/Agent, and runs a full agent turn
-inside ``execute``: session lifecycle, context assembly, integrated-input
-injection, deliver-tool installation, agent execution, and auto-deliver.
+pool's AgentInstance, and drives a graph turn via the session tree: pre-build
+graph artifacts → tree.deliver → tree.wait_quiesce → return. Per-turn
+configuration (tools, topology, approval, knowledge) is handled by the
+TurnContextConfigPipeline configurators, not inline mutation.
 """
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bot.graph.knowledge_config import KnowledgeNodeConfig
 from modex_agent.agents.agent_node import AgentNode, SessionStrategy
-from modex_agent.core.message_utils import wrap_system_reminder
-from modex_agent.core.tool_manager import Tool, ToolManager
-from modex_agent.core.types import InputMessage, MessageRole
-from modex_agent.pipeline.turn_runner import ReActTurnRunner
-from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.multi_agent.message_type import AgentMessageType
+from modex_agent.pipeline.turn_context_config import GraphTurnArtifacts
 from modex_agent.tools.graph_deliver import GraphDeliverTargetStore, GraphDeliverTool
-from modex_agent.tools.graph_knowledge_capabilities import KnowledgeToolCapabilities
-from modex_agent.tools.graph_knowledge_tool import GraphKnowledgeBaseTool
-from modex_agent.tools.graph_tool_preset import GraphToolPreset
 from modex_graph.constants import FrameworkPayloadSource, GraphNode
-from modex_graph.integration import GraphPayload
 
 if TYPE_CHECKING:
     from bot.workspace.handle import WorkspaceResolverCell
-    from modex_agent.core.emitter import AgentResult
+    from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.session_registry import SessionRegistry
     from modex_agent.multi_agent.descriptor import AgentInstance
     from modex_agent.multi_agent.pool_instance import PoolInstance
@@ -39,16 +34,6 @@ if TYPE_CHECKING:
 
 class BotAgentNode(AgentNode):
     """Graph node backed by a pool agent with full turn-context lifecycle."""
-
-    _THINK_PAIRED_RE = re.compile(
-        r"<\s*(?:think|reasoning|reflection)\b[^>]*[>\n]"
-        r"(.*?)</\s*(?:think|reasoning|reflection)\b[^>]*[>\n]",
-        re.IGNORECASE | re.DOTALL,
-    )
-    _THINK_TAG_RE = re.compile(
-        r"<\s*/?\s*(?:think|reasoning|reflection)\b[^>]*>?",
-        re.IGNORECASE,
-    )
 
     def __init__(
         self,
@@ -101,162 +86,100 @@ class BotAgentNode(AgentNode):
         ctx: GraphContext[Any],
         integrated_input: IntegratedInput,
     ) -> None:
-        # Resolve pool resources.
+        # 1. Resolve pool resources.
         instance = self._resolve_agent_instance()
         pipeline = instance.pipeline
         if pipeline is None:
             raise RuntimeError(f"Agent {self._agent_name!r} has no pipeline")
-        builder = pipeline._turn_context_builder
-        if builder is None:
-            raise RuntimeError(f"Agent {self._agent_name!r} has no TurnContextBuilder")
-        ctx_mgr = instance.context_manager
 
-        # Ensure session.
+        # 2. Ensure session.
         session = await self._ensure_session(ctx)
 
         try:
-            # Assemble context state.
-            input_msg = InputMessage(content="", session=session)
-            context_state = await builder.assemble(
-                session_id=session.session_id,
-                input_msg=input_msg,
-                input_metadata={},
-                sanitized_content=None,
-                media_blocks=[],
-                _media_processor=None,
-                ctx_mgr=ctx_mgr,
-                route_result=None,
-                _is_approval_cmd=False,
-                append_user_message=False,
+            # 3. Build artifacts and store on graph context for the configurator pipeline.
+            artifacts = self._build_graph_artifacts(ctx)
+            if ctx.user_data is None:
+                ctx.user_data = {}
+            ctx.user_data.setdefault("node_artifacts", {})[self.name] = artifacts
+
+            # 4. Build input envelope (formats Origin Request + upstream input).
+            envelope = await self._build_graph_input_envelope(
+                ctx, integrated_input, session
             )
 
-            # Build runtime and context.
-            workspace = self._workspace_resolver.resolve_workspace()
-            pool_data = workspace.pool_data.get(self._pool_name)
-            agent_context, emitter = builder.build_runtime_and_context(
-                session=session,
-                context_state=context_state,
-                ctx_mgr=ctx_mgr,
-                input_metadata={},
-                pool_data=pool_data,
-            )
+            # 5. Deliver to session inbox via tree — InboxPoller drives the turn.
+            tree = self._resolve_pool().tree_manager
+            await tree.deliver(session.session_id, envelope, track_consume=True)
 
-            upstream = self._format_integrated_input(integrated_input)
-            existing_messages = await agent_context.history.to_list()
-            is_re_execution = len(existing_messages) > 0
-
-            if is_re_execution:
-                # Crash recovery or resume — session already has [Origin Request]
-                # from the prior invocation. Only inject new upstream input.
-                if upstream:
-                    reminder = wrap_system_reminder(upstream)
-                else:
-                    reminder = ""
-            else:
-                # First execution — append [Origin Request] + upstream input.
-                sections: list[str] = []
-                if ctx.user_input is not None and ctx.user_input.content:
-                    sections.append("[Origin Request]:\n" + str(ctx.user_input.content))
-                if upstream:
-                    sections.append(upstream)
-                reminder = wrap_system_reminder("\n\n".join(sections)) if sections else ""
-            if reminder:
-                await agent_context.history.append(
-                    {"role": MessageRole.SYSTEM_REMINDER, "content": reminder}
-                )
-
-            deliver_tool = self._ensure_deliver_tool()
-            graph_tools: list[Tool] = [deliver_tool]
-            knowledge_dir: Path | None = None
-            if self._knowledge_config.enabled and ctx.graph_instance_id is not None:
-                knowledge_dir = workspace.ctx.paths.graph_instance_knowledge_dir(
-                    ctx.graph_instance_id
-                )
-                knowledge_dir.mkdir(parents=True, exist_ok=True)
-            knowledge_tool = self._ensure_knowledge_tool(
-                knowledge_dir, agent_context.tool_manager
-            )
-            if knowledge_tool is not None:
-                graph_tools.append(knowledge_tool)
-            preset = GraphToolPreset(graph_tools=graph_tools)
-            agent_context.tool_manager = preset.build_tool_manager(agent_context.tool_manager)
-
-            # Set graph context for the deliver tool.
-            agent_context.graph_context = ctx
-
-            # Per-turn approval disable for graph context.
-            #
-            # Graph nodes run inside a pre-defined workflow — tools execute as
-            # designed intent, not user-interacted agent actions. Approval
-            # (DANGEROUS tier tool suspend) is a normal-session concept: it
-            # protects users from agent-initiated risky actions in interactive
-            # chat. In graph context, the workflow designer has already decided
-            # which tools each node should use, so approval suspension would
-            # deadlock the graph (no user to approve, no way to resume).
-            #
-            # This is a per-turn override on AgentRuntimeServices (a mutable
-            # dataclass, NOT frozen). The pool-level base_services.approval is
-            # NOT modified — the next normal session turn rebuilds a fresh
-            # AgentRuntimeServices via build_runtime_and_context, which reads
-            # approval from base_services again. Normal sessions are unaffected.
-            if agent_context.runtime is not None:
-                agent_context.runtime.services.approval = None
-
-            # Run via TurnRunner.execute_turn — converges with normal turn lifecycle:
-            # register_task + set_turn_uuid (session bookkeeping), ctx_mgr.save
-            # (context persistence), finally: unregister_turn + _safe_flush +
-            # on_session_end (cleanup). Hook/trace (BEFORE_GRAPH / FINALLY_GRAPH)
-            # still fire inside agent.run() — execute_turn wraps, not replaces.
-            runner = pipeline._turn_runner
-            if not isinstance(runner, ReActTurnRunner):
-                raise RuntimeError(
-                    f"Agent {self._agent_name!r} requires a ReAct turn runner, "
-                    f"got {type(runner).__name__}"
-                )
-
-            assert agent_context.runtime is not None, (
-                "BotAgentNode requires agent_context.runtime to be set"
-            )
-            assert agent_context.runtime.state is not None, (
-                "BotAgentNode requires agent_context.runtime.state to be set"
-            )
-            agent_context.runtime.state.custom[TurnCustomKey.MAX_TURNS] = 3
-            agent_context.runtime.state.custom[TurnCustomKey.GRAPH_NODE_DESCRIPTION] = (
-                self.resolve_description()
-            )
-            agent_context.runtime.state.custom[TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT] = (
-                self._build_topology_section()
-            )
-            if knowledge_dir is not None:
-                agent_context.runtime.state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_DIR] = str(
-                    knowledge_dir
-                )
-                agent_context.runtime.state.custom[
-                    TurnCustomKey.GRAPH_KNOWLEDGE_REQUIRE_READ
-                ] = self._knowledge_config.require_read
-                agent_context.runtime.state.custom[
-                    TurnCustomKey.GRAPH_KNOWLEDGE_REQUIRE_WRITE
-                ] = self._knowledge_config.require_write
-            result = await runner.execute_turn(
-                agent_context,
-                emitter,
-                session.session_id,
-                context_state,
-                input_metadata={},
-                ctx_mgr=ctx_mgr,
-            )
-            assert result is not None
-
-            # Auto-deliver if the agent did not explicitly deliver.
-            if not self._has_pending_delivers():
-                output = self._extract_auto_deliver_content(result)
-                if output:
-                    resolved = self._resolve_default_target(ctx, policy="graceful")
-                    self.deliver(GraphPayload(content=output), resolved[0], ctx)
+            # 6. Wait for the tree to quiesce (turn + any subagents complete).
+            tree_id = await tree.tree_id_for_session(session.session_id)
+            if tree_id is not None:
+                await tree.wait_quiesce(tree_id)
+            # return — no deliver check, no auto-deliver.
+            # graph COMPLETED/FAILED is judged by ctx.reached_end (graph engine).
         finally:
             if self._session_strategy is SessionStrategy.PER_INVOCATION:
                 registry = await self._resolve_session_registry()
                 await registry.cleanup(session.session_id)
+
+    def _build_graph_artifacts(self, ctx: GraphContext[Any]) -> GraphTurnArtifacts:
+        """Build GraphTurnArtifacts for the configurator pipeline."""
+        deliver_tool = self._ensure_deliver_tool()
+        topology_section = self._build_topology_section()
+        node_description = self.resolve_description()
+
+        knowledge_dir: Path | None = None
+        if self._knowledge_config.enabled and ctx.graph_instance_id is not None:
+            workspace = self._workspace_resolver.resolve_workspace()
+            knowledge_dir = workspace.ctx.paths.graph_instance_knowledge_dir(
+                ctx.graph_instance_id
+            )
+            knowledge_dir.mkdir(parents=True, exist_ok=True)
+
+        return GraphTurnArtifacts(
+            deliver_tool=deliver_tool,
+            topology_section=topology_section,
+            node_description=node_description,
+            knowledge_config=self._knowledge_config,
+            knowledge_dir=knowledge_dir,
+        )
+
+    async def _build_graph_input_envelope(
+        self,
+        ctx: GraphContext[Any],
+        integrated_input: IntegratedInput,
+        session: SessionInfo,
+    ) -> AgentMessageEnvelope:
+        """Build the envelope delivered to the agent's inbox for this graph turn."""
+        upstream = self._format_integrated_input(integrated_input)
+
+        # Re-execution detection: session already has messages from a prior
+        # invocation (crash recovery). Skip [Origin Request] to avoid duplication.
+        ctx_mgr = self._resolve_agent_instance().context_manager
+        state = await ctx_mgr.load(session.session_id)
+        existing_messages = await state.history.to_list()
+        is_re_execution = len(existing_messages) > 0
+
+        sections: list[str] = []
+        if not is_re_execution and ctx.user_input is not None and ctx.user_input.content:
+            sections.append("[Origin Request]:\n" + str(ctx.user_input.content))
+        if upstream:
+            sections.append(upstream)
+        content = "\n\n".join(sections)
+
+        return AgentMessageEnvelope(
+            payload={"content": content},
+            source=AgentAddress(name=self.name),
+            target=AgentAddress(name=self._agent_name),
+            message_type=AgentMessageType.EXTERNAL_INPUT,
+            session_id=session.session_id_prefix,
+            agent_session_id=session.session_id,
+            metadata={
+                "graph_instance_id": ctx.graph_instance_id,
+                "graph_node_name": self.name,
+                "is_node_execution": True,
+            },
+        )
 
     def _format_integrated_input(self, integrated_input: IntegratedInput) -> str:
         if not integrated_input.payloads:
@@ -389,26 +312,6 @@ class BotAgentNode(AgentNode):
                 )
         return "\n".join(lines)
 
-    def _extract_auto_deliver_content(self, result: AgentResult) -> str:
-        raw = ""
-        if result.messages:
-            for msg in reversed(result.messages):
-                if isinstance(msg, dict):
-                    role = msg.get("role", "")
-                    content = msg.get("content", "")
-                else:
-                    role = msg.role
-                    content = msg.content
-                if str(role) == "assistant" and content:
-                    raw = str(content)
-                    break
-        if not raw:
-            raw = result.content or ""
-        return self._THINK_TAG_RE.sub("", self._THINK_PAIRED_RE.sub("", raw))
-
-    def _has_pending_delivers(self) -> bool:
-        return bool(self._pending_delivers)
-
     def _ensure_deliver_tool(self) -> GraphDeliverTool:
         if self._deliver_tool is not None:
             return self._deliver_tool
@@ -422,20 +325,6 @@ class BotAgentNode(AgentNode):
         )
         self._deliver_tool = GraphDeliverTool(node=self, store=store)
         return self._deliver_tool
-
-    def _ensure_knowledge_tool(
-        self,
-        knowledge_dir: Path | None,
-        tool_manager: ToolManager,
-    ) -> GraphKnowledgeBaseTool | None:
-        if knowledge_dir is None:
-            return None
-        capabilities = KnowledgeToolCapabilities.from_tool_manager(tool_manager)
-        return GraphKnowledgeBaseTool(
-            knowledge_dir=knowledge_dir,
-            capabilities=capabilities,
-            node_name=self.name,
-        )
 
 
 __all__ = ["BotAgentNode"]

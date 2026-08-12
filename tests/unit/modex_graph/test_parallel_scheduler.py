@@ -572,32 +572,6 @@ class TestGraphContextDispatch:
             reset_execution(token)
         assert calls == [("a#0", "b", {"key": "val"})]
 
-    def test_fork_inherits_dispatch_handler(self) -> None:
-        def handler(s: str, t: str, p: dict[str, Any] | None) -> None:
-            pass
-
-        ctx = GraphContext(
-            state=CounterState(),
-            runtime=make_runtime(),
-            coordinator=make_coordinator(),
-            scheduler_kind=SchedulerKind.PARALLEL,
-            dispatch_handler=handler,
-        )
-        sub = ctx.fork(state=CounterState())
-        assert sub._dispatch_handler is handler
-
-    def test_fork_does_not_inherit_dispatch_identity(self) -> None:
-        """A forked context has no active execution — dispatch identity
-        comes from the ContextVar, not from fork parameters."""
-        ctx = GraphContext(
-            state=CounterState(),
-            runtime=make_runtime(),
-            coordinator=make_coordinator(),
-            scheduler_kind=SchedulerKind.PARALLEL,
-        )
-        sub = ctx.fork(state=CounterState())
-        assert sub._current_instance is None
-
 
 # ── Architecture guard ────────────────────────────────────────────────────
 

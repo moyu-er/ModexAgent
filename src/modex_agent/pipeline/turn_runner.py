@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from modex_agent.core.types import InputMessage
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.multi_agent.router import RouteResult
+    from modex_agent.pipeline.turn_context_config import TurnContextDescriptor
     from modex_agent.runtime.store import TurnStateStore
     from modex_agent.workspace import WorkspaceManager
 
@@ -242,6 +243,53 @@ class ReActTurnRunner(TurnRunner):
         return (
             self._agent_descriptor is not None
             and self._agent_descriptor.comm_kind == AgentCommKind.SUBAGENT
+        )
+
+    def _build_turn_descriptor(
+        self,
+        input_metadata: dict[str, Any],
+        session: SessionInfo,
+        pool_data: PoolDataSnapshot | None,
+    ) -> TurnContextDescriptor:
+        """Build a TurnContextDescriptor from per-turn inputs.
+
+        Resolves the graph context (and per-node artifacts when the resolver
+        returns a context carrying ``user_data["node_artifacts"]``) so
+        downstream configurators can
+        bind graph state onto :class:`AgentContext` without re-reading
+        ``input_metadata``.
+        """
+        from modex_agent.core import AgentCommKind
+        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.pipeline.turn_context_config import TurnContextDescriptor
+
+        agent_kind = AgentCommKind.SUBAGENT if self._is_subagent() else AgentCommKind.NORMAL
+        graph_instance_id = input_metadata.get("graph_instance_id")
+        graph_node_name = input_metadata.get("graph_node_name")
+        is_node_execution = input_metadata.get("is_node_execution", False)
+
+        graph_context = None
+        graph_artifacts = None
+        if graph_instance_id is not None:
+            resolver = self._builder.graph_context_resolver
+            if resolver is not None:
+                graph_context = resolver(graph_instance_id)
+                if (
+                    graph_context is not None
+                    and graph_node_name is not None
+                    and graph_context.user_data is not None
+                ):
+                    node_artifacts = graph_context.user_data.get("node_artifacts", {})
+                    graph_artifacts = node_artifacts.get(graph_node_name)
+
+        return TurnContextDescriptor(
+            agent_kind=agent_kind,
+            execution_strategy=ExecutionStrategyKind.REACT,
+            graph_context=graph_context,
+            graph_node_name=graph_node_name,
+            graph_instance_id=graph_instance_id,
+            is_node_execution=is_node_execution,
+            graph_artifacts=graph_artifacts,
         )
 
     async def execute_turn(
@@ -520,6 +568,9 @@ class ReActTurnRunner(TurnRunner):
             is_approval_cmd,
             append_user_message=turn_request.append_user_message,
         )
+        turn_descriptor = self._build_turn_descriptor(
+            input_metadata, session, pool_data
+        )
         agent_context, emitter = self._builder.build_runtime_and_context(
             session,
             context_state,
@@ -528,6 +579,7 @@ class ReActTurnRunner(TurnRunner):
             pool_data=pool_data,
             inline_attachments=input_msg.attachments_resolved,
             workspace=input_msg.workspace,
+            turn_descriptor=turn_descriptor,
         )
         agent_context.current_input = sanitized_content
 

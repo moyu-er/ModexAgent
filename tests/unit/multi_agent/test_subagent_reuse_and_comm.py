@@ -435,6 +435,7 @@ async def test_send_to_agent_routes_through_tree():
         session=SessionIdFactory().create(agent_name="main"),
         comm_kind=AgentCommKind.NORMAL,
         workspace=None,
+        graph_instance_id=None,
     )
     await svc._send(
         target=_tgt("scout", AgentCommKind.SUBAGENT),
@@ -466,7 +467,7 @@ async def test_subagent_auto_send_hook_routes_through_same_bus():
         session_id_prefix="inv1",
         parent_session_id="abc123.main",
     )
-    ctx = SimpleNamespace(session=session)
+    ctx = SimpleNamespace(session=session, graph_instance_id=None)
     await hook._notify_parent(ctx, "inv1.scout", "<subagent_result/>")
     assert bus.send.await_count == 1
     inbox_key, envelope = bus.send.await_args.args

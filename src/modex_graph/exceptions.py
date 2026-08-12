@@ -77,27 +77,10 @@ class RoutingError(Exception):
     during ``execute()``. If a node produces no delivers and has no downstream
     edges, ``RoutingError`` is raised.
 
-    Subclass ``UndeliveredError`` is raised specifically when a node exhausts
-    its ``max_retry`` without delivering — schedulers catch this to produce a
-    FAILED outcome rather than CRASHED. Topology ``RoutingError``\\s (ambiguous
-    routing, missing topology, invalid dispatch target) are NOT subclasses and
-    propagate as CRASHED.
-    """
-
-
-class UndeliveredError(RoutingError):
-    """Raised when a node exhausts ``max_retry`` without delivering.
-
-    Subclass of ``RoutingError`` so existing ``isinstance(e, RoutingError)``
-    checks still match. The ``LinearScheduler`` and ``ParallelScheduler``
-    catch this specifically (not bare ``RoutingError``) to convert a dead-end
-    graph into a normal return with ``ctx.reached_end = False``, which the
-    orchestrator maps to ``GraphInstanceStatus.FAILED``.
-
-    Topology errors (``_resolve_default_target`` ambiguous routing,
-    ``validate_dispatch_target`` invalid edge, missing topology) raise plain
-    ``RoutingError`` and propagate as CRASHED — they are NOT caught by the
-    schedulers.
+    Topology ``RoutingError``\\s (ambiguous routing, missing topology, invalid
+    dispatch target) propagate as CRASHED. A dead-end graph (no dispatches
+    produced) terminates with ``ctx.reached_end = False`` → FAILED, detected
+    natively by the schedulers without raising.
     """
 
 

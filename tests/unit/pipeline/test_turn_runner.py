@@ -22,7 +22,7 @@ from modex_agent.core.emitter import AgentResult
 from modex_graph.exceptions import GraphInterrupt
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.core.tool_manager import InMemoryToolManager, Tool
 from modex_agent.core.types import InputMessage
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
@@ -37,6 +37,16 @@ from modex_agent.runtime.store import InMemoryTurnStateStore
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------
+
+
+class _StubTool(Tool):
+    """Minimal concrete Tool for GraphTurnArtifacts.deliver_tool in tests."""
+
+    def __init__(self) -> None:
+        super().__init__(name="stub", description="stub", parameters={})
+
+    async def execute(self, **kwargs: object) -> object:
+        return None
 
 
 class _RecordingUI:
@@ -138,6 +148,25 @@ def _make_runner(
         pool_data_resolver=None,
         agent_descriptor=None,
     )
+
+
+def _make_graph_context(graph_instance_id: int = 1) -> GraphContext:
+    """Build a minimal GraphContext carrying user_data for artifact storage."""
+    from modex_graph import (
+        DefaultGraphState,
+        GraphContext,
+        GraphRuntime,
+        create_null_coordinator,
+    )
+
+    ctx = GraphContext(
+        state=DefaultGraphState(),
+        runtime=GraphRuntime(),
+        coordinator=create_null_coordinator(1),
+        graph_instance_id=graph_instance_id,
+    )
+    ctx.user_data = {}
+    return ctx
 
 
 # ---------------------------------------------------------------------------
@@ -421,3 +450,196 @@ async def test_process_locked_runs_full_flow_and_returns_result() -> None:
 
     assert result is not None
     assert result.stop_reason == "completed"
+
+
+# ---------------------------------------------------------------------------
+# _build_turn_descriptor
+# ---------------------------------------------------------------------------
+
+
+def test_build_turn_descriptor_empty_metadata_returns_normal_descriptor() -> None:
+    """No graph fields in metadata -> NORMAL agent, no graph context, REACT strategy."""
+    from modex_agent.core import AgentCommKind
+    from modex_agent.core.constants import ExecutionStrategyKind
+
+    runner = _make_runner()
+    session = SessionInfo.from_str("s1.main")
+
+    desc = runner._build_turn_descriptor({}, session, None)
+
+    assert desc.agent_kind is AgentCommKind.NORMAL
+    assert desc.execution_strategy is ExecutionStrategyKind.REACT
+    assert desc.graph_instance_id is None
+    assert desc.graph_context is None
+    assert desc.graph_node_name is None
+    assert desc.is_node_execution is False
+    assert desc.graph_artifacts is None
+
+
+def test_build_turn_descriptor_resolves_graph_context_via_resolver() -> None:
+    """graph_instance_id + wired resolver -> descriptor carries the resolved context."""
+    resolved_ctx = _make_graph_context(graph_instance_id=42)
+    builder = MagicMock(spec=TurnContextBuilder)
+    builder.graph_context_resolver = MagicMock(return_value=resolved_ctx)
+    runner = _make_runner(builder=builder)
+    session = SessionInfo.from_str("s1.main")
+
+    desc = runner._build_turn_descriptor(
+        {"graph_instance_id": 42}, session, None
+    )
+
+    assert desc.graph_instance_id == 42
+    assert desc.graph_context is resolved_ctx
+    assert desc.graph_artifacts is None
+    builder.graph_context_resolver.assert_called_once_with(42)
+
+
+def test_build_turn_descriptor_extracts_artifacts_from_graph_context_user_data() -> None:
+    """graph_node_name + GraphContext.user_data -> graph_artifacts pulled from node_artifacts dict."""
+    from modex_agent.pipeline.turn_context_config import GraphTurnArtifacts
+
+    ctx = _make_graph_context(graph_instance_id=42)
+    artifacts = GraphTurnArtifacts(
+        deliver_tool=_StubTool(),
+        topology_section="## topology",
+        node_description="node1 description",
+        knowledge_config=None,
+    )
+    ctx.user_data.setdefault("node_artifacts", {})["node1"] = artifacts
+
+    builder = MagicMock(spec=TurnContextBuilder)
+    builder.graph_context_resolver = MagicMock(return_value=ctx)
+    runner = _make_runner(builder=builder)
+    session = SessionInfo.from_str("s1.main")
+
+    desc = runner._build_turn_descriptor(
+        {"graph_instance_id": 42, "graph_node_name": "node1", "is_node_execution": True},
+        session,
+        None,
+    )
+
+    assert desc.graph_artifacts is artifacts
+    assert desc.is_node_execution is True
+    assert desc.graph_node_name == "node1"
+
+
+def test_build_turn_descriptor_marks_subagent_when_descriptor_is_subagent() -> None:
+    """agent_descriptor.comm_kind == SUBAGENT -> descriptor.agent_kind == SUBAGENT."""
+    from modex_agent.core import AgentCommKind
+    from modex_agent.multi_agent.descriptor import AgentAddress, AgentDescriptor
+
+    sub_desc = AgentDescriptor(
+        address=AgentAddress(name="sub1"),
+        system_prompt_template="x",
+        comm_kind=AgentCommKind.SUBAGENT,
+    )
+    runner = _make_runner()
+    runner._agent_descriptor = sub_desc
+
+    desc = runner._build_turn_descriptor({}, SessionInfo.from_str("s1.sub"), None)
+
+    assert desc.agent_kind is AgentCommKind.SUBAGENT
+
+
+# ---------------------------------------------------------------------------
+# _process_locked_inner -> build_runtime_and_context (turn_descriptor wiring)
+# ---------------------------------------------------------------------------
+
+
+async def test_process_locked_passes_turn_descriptor_to_build_runtime_and_context() -> None:
+    """_process_locked_inner builds a TurnContextDescriptor and forwards it to
+    build_runtime_and_context via the ``turn_descriptor`` kwarg.
+
+    With empty metadata and no subagent descriptor, the forwarded descriptor
+    is the NORMAL / REACT / no-graph variant — but it MUST be present and
+    non-None, proving the wiring (build → pass) is in place.
+    """
+    from modex_agent.core import AgentCommKind
+    from modex_agent.core.constants import ExecutionStrategyKind
+
+    builder = MagicMock(spec=TurnContextBuilder)
+    builder.build_turn_request = AsyncMock(
+        return_value=MagicMock(
+            user_content=None,
+            append_user_message=True,
+            trigger_agent=True,
+            approval_action=None,
+            command_result=None,
+        )
+    )
+    builder.preprocess = AsyncMock(return_value=("hi", [], None))
+    builder.assemble = AsyncMock(return_value=ContextState())
+    builder.build_runtime_and_context = MagicMock(
+        return_value=(_make_agent_context(), MagicMock())
+    )
+
+    approval = MagicMock(spec=ApprovalRenderer)
+    approval.detect = AsyncMock(return_value=(False, None))
+
+    runner = _make_runner(agent=_OkAgent(), builder=builder, approval=approval)
+    input_msg = InputMessage(content="hi", session=SessionInfo.from_str("s1.main"))
+
+    await runner.process_locked(
+        input_msg,
+        "s1",
+        None,
+        session=SessionInfo.from_str("s1.main"),
+    )
+
+    builder.build_runtime_and_context.assert_called_once()
+    kwargs = builder.build_runtime_and_context.call_args.kwargs
+    assert "turn_descriptor" in kwargs
+    desc = kwargs["turn_descriptor"]
+    assert desc is not None
+    assert desc.agent_kind is AgentCommKind.NORMAL
+    assert desc.execution_strategy is ExecutionStrategyKind.REACT
+    assert desc.graph_instance_id is None
+    assert desc.graph_context is None
+
+
+async def test_process_locked_descriptor_carries_graph_instance_id_from_metadata() -> None:
+    """When ``input_msg.metadata`` carries ``graph_instance_id`` and the builder
+    exposes a ``graph_context_resolver``, the descriptor forwarded to
+    ``build_runtime_and_context`` carries the resolved id and context.
+    """
+    resolved_ctx = _make_graph_context(graph_instance_id=42)
+    builder = MagicMock(spec=TurnContextBuilder)
+    builder.graph_context_resolver = MagicMock(return_value=resolved_ctx)
+    builder.build_turn_request = AsyncMock(
+        return_value=MagicMock(
+            user_content=None,
+            append_user_message=True,
+            trigger_agent=True,
+            approval_action=None,
+            command_result=None,
+        )
+    )
+    builder.preprocess = AsyncMock(return_value=("hi", [], None))
+    builder.assemble = AsyncMock(return_value=ContextState())
+    builder.build_runtime_and_context = MagicMock(
+        return_value=(_make_agent_context(), MagicMock())
+    )
+
+    approval = MagicMock(spec=ApprovalRenderer)
+    approval.detect = AsyncMock(return_value=(False, None))
+
+    runner = _make_runner(agent=_OkAgent(), builder=builder, approval=approval)
+    input_msg = InputMessage(
+        content="hi",
+        session=SessionInfo.from_str("s1.main"),
+        metadata={"graph_instance_id": 42},
+    )
+
+    await runner.process_locked(
+        input_msg,
+        "s1",
+        None,
+        session=SessionInfo.from_str("s1.main"),
+    )
+
+    builder.build_runtime_and_context.assert_called_once()
+    desc = builder.build_runtime_and_context.call_args.kwargs["turn_descriptor"]
+    assert desc is not None
+    assert desc.graph_instance_id == 42
+    assert desc.graph_context is resolved_ctx
+    builder.graph_context_resolver.assert_called_once_with(42)

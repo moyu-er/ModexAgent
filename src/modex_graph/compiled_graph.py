@@ -91,7 +91,7 @@ class CompiledGraph(Node[S]):
 
         The dispatch handler is saved and restored so the inner scheduler
         does not clobber the outer scheduler's routing. Invocation identity
-        (instance_id, current_invocation) is handled automatically by the
+        (instance_id, invocation) is handled automatically by the
         ContextVar-based execution context — token-based reset in
         ``Node.run()`` restores the parent's value when the subgraph
         finishes.

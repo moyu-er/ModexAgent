@@ -2,25 +2,26 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import fields
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from bot.graph.agent_node import BotAgentNode
 from bot.graph.agent_node_factory import BotAgentNodeConfig, BotAgentNodeFactory
+from bot.graph.knowledge_config import KnowledgeNodeConfig
 
 from modex_agent.agents.agent_node import AgentNode, SessionStrategy
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.core.session_registry import InMemorySessionRegistry, SessionRegistry
 from modex_agent.core.tool_manager import InMemoryToolManager, Tool
-from modex_agent.core.types import MessageRole
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.pipeline.turn_runner import ReActTurnRunner
+from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.multi_agent.message_type import AgentMessageType
+from modex_agent.pipeline.turn_context_config import GraphTurnArtifacts
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
@@ -200,6 +201,7 @@ def _build_mock_workspace_resolver(
     pool_name: str,
     agent_instance: MagicMock,
     session_registry: SessionRegistry | None = None,
+    tree_manager: MagicMock | None = None,
 ) -> MagicMock:
     """Build a mock WorkspaceResolverCell chain returning the given agent instance."""
     mock_agent_pool = MagicMock()
@@ -208,6 +210,7 @@ def _build_mock_workspace_resolver(
 
     mock_pool_instance = MagicMock()
     mock_pool_instance.pool = mock_agent_pool
+    mock_pool_instance.tree_manager = tree_manager or MagicMock()
 
     mock_workspace = MagicMock()
     mock_workspace.pools = {pool_name: mock_pool_instance}
@@ -223,17 +226,34 @@ def _build_mock_agent_instance(
     agent: MagicMock,
     role_description: str = "test role",
     turn_runner: MagicMock | None = None,
+    existing_messages: list[dict[str, Any]] | None = None,
 ) -> MagicMock:
     """Build a mock AgentInstance with pipeline/context_manager wired."""
     instance = MagicMock()
     instance.descriptor.role_description = role_description
     instance.context_manager = MagicMock()
+    # _build_graph_input_envelope loads session history to detect re-execution.
+    mock_history = MagicMock()
+    mock_history.to_list = AsyncMock(return_value=existing_messages or [])
+    instance.context_manager.load = AsyncMock(
+        return_value=MagicMock(history=mock_history)
+    )
     instance.pipeline = MagicMock()
     instance.pipeline.agent = agent
     instance.pipeline._turn_context_builder = builder
     if turn_runner is not None:
         instance.pipeline._turn_runner = turn_runner
     return instance
+
+
+def _mock_graph_ref() -> MagicMock:
+    """Build a mock graph with string attributes for topology rendering."""
+    mock_graph = MagicMock()
+    mock_graph.name = "test-graph"
+    mock_graph.nodes = {}
+    mock_graph.edges = []
+    mock_graph.edges_from.return_value = []
+    return mock_graph
 
 
 class TestBotAgentNodeBasics:
@@ -270,9 +290,7 @@ class TestBotAgentNodeResolveSourceName:
 
     def test_returns_node_id_when_not_found(self) -> None:
         node = BotAgentNode("a", "p", MagicMock())
-        mock_graph = MagicMock()
-        mock_graph.nodes = {}
-        node._graph_ref = mock_graph
+        node._graph_ref = _mock_graph_ref()
 
         assert node._resolve_source_name("unknown") == "unknown"
 
@@ -667,121 +685,158 @@ class TestAgentNodeIntegrateUpstreamIdempotency:
         assert result.payloads[0].content == snapshot
 
 
-class TestBotAgentNodeReExecutionIdempotency:
-    """BotAgentNode.execute must not duplicate [Origin Request] on re-execution.
+class TestBotAgentNodeBuildGraphArtifacts:
+    def test_returns_correct_artifacts(self) -> None:
+        instance = _build_mock_agent_instance(MagicMock(), MagicMock(), "a planner")
+        resolver = _build_mock_workspace_resolver("default", instance)
+        node = BotAgentNode("planner", "default", resolver)
+        node.name = "planner_node"
+        node.node_id = "node-1"
+        node._graph_ref = _mock_graph_ref()
 
-    On crash recovery, the session already has [Origin Request] from the
-    prior invocation. Re-appending it would duplicate the user's input
-    in the agent's session memory.
-    """
+        ctx = MagicMock(spec=GraphContext)
+        ctx.graph_instance_id = None
+
+        artifacts = node._build_graph_artifacts(ctx)
+
+        assert isinstance(artifacts, GraphTurnArtifacts)
+        assert "test-graph" in artifacts.topology_section
+        assert artifacts.node_description == "a planner"
+        assert artifacts.knowledge_dir is None
+        assert artifacts.knowledge_config is node._knowledge_config
+
+    def test_knowledge_dir_created_when_enabled(self, tmp_path: Path) -> None:
+        instance = _build_mock_agent_instance(MagicMock(), MagicMock())
+        resolver = _build_mock_workspace_resolver("default", instance)
+        knowledge_config = KnowledgeNodeConfig(enabled=True)
+        node = BotAgentNode(
+            "planner", "default", resolver, knowledge_config=knowledge_config
+        )
+        node.name = "planner_node"
+        node.node_id = "node-1"
+        node._graph_ref = _mock_graph_ref()
+
+        mock_workspace = resolver.resolve_workspace.return_value
+        mock_workspace.ctx.paths.graph_instance_knowledge_dir.return_value = (
+            tmp_path / "knowledge"
+        )
+
+        ctx = MagicMock(spec=GraphContext)
+        ctx.graph_instance_id = 42
+
+        artifacts = node._build_graph_artifacts(ctx)
+
+        assert artifacts.knowledge_dir == tmp_path / "knowledge"
+        assert artifacts.knowledge_dir.exists()
+
+
+class TestBotAgentNodeBuildGraphInputEnvelope:
+    async def test_first_execution_includes_origin_request(self) -> None:
+        instance = _build_mock_agent_instance(
+            MagicMock(), MagicMock(), existing_messages=[]
+        )
+        resolver = _build_mock_workspace_resolver("default", instance)
+        node = BotAgentNode("planner", "default", resolver)
+        node.name = "planner_node"
+        node.node_id = "node-1"
+        node._graph_ref = _mock_graph_ref()
+
+        ctx = MagicMock(spec=GraphContext)
+        ctx.user_input = GraphPayload(content="do the task")
+        ctx.graph_instance_id = 42
+        session = SessionInfo.from_str("conv123.planner")
+
+        envelope = await node._build_graph_input_envelope(
+            ctx, IntegratedInput(payloads=[]), session
+        )
+
+        assert envelope.message_type == AgentMessageType.EXTERNAL_INPUT
+        assert "[Origin Request]" in envelope.payload["content"]
+        assert "do the task" in envelope.payload["content"]
+        assert envelope.metadata["graph_instance_id"] == 42
+        assert envelope.metadata["graph_node_name"] == "planner_node"
+        assert envelope.metadata["is_node_execution"] is True
 
     async def test_re_execution_skips_origin_request(self) -> None:
-        mock_agent, mock_builder, mock_agent_context, mock_emitter, mock_result, mock_turn_runner = (
-            TestBotAgentNodeExecute._build_execute_mocks()
+        instance = _build_mock_agent_instance(
+            MagicMock(),
+            MagicMock(),
+            existing_messages=[{"role": "user", "content": "prior message"}],
         )
-        # Session already has messages (re-execution / crash recovery)
-        mock_agent_context.history.to_list = AsyncMock(
-            return_value=[{"role": "user", "content": "prior message"}]
-        )
-
-        instance = _build_mock_agent_instance(mock_builder, mock_agent, turn_runner=mock_turn_runner)
         resolver = _build_mock_workspace_resolver("default", instance)
-
         node = BotAgentNode("planner", "default", resolver)
         node.name = "planner_node"
         node.node_id = "node-1"
-        mock_graph = MagicMock()
-        mock_graph.nodes = {}
-        mock_graph.edges_from.return_value = []
-        node._graph_ref = mock_graph
+        node._graph_ref = _mock_graph_ref()
 
-        mock_ctx = MagicMock()
-        mock_ctx.user_input = GraphPayload(content="do the task")
+        ctx = MagicMock(spec=GraphContext)
+        ctx.user_input = GraphPayload(content="do the task")
+        ctx.graph_instance_id = 42
+        session = SessionInfo.from_str("conv123.planner")
 
-        await node.execute(mock_ctx, IntegratedInput(payloads=[]))
-
-        appended = mock_agent_context.history.append.call_args_list
-        assert len(appended) == 0 or all(
-            "[Origin Request]" not in str(call.args[0].get("content", ""))
-            for call in appended
+        envelope = await node._build_graph_input_envelope(
+            ctx, IntegratedInput(payloads=[]), session
         )
 
-    async def test_first_execution_includes_origin_request(self) -> None:
-        mock_agent, mock_builder, mock_agent_context, mock_emitter, mock_result, mock_turn_runner = (
-            TestBotAgentNodeExecute._build_execute_mocks()
-        )
-        # Session is empty (first execution)
-        mock_agent_context.history.to_list = AsyncMock(return_value=[])
+        assert "[Origin Request]" not in envelope.payload["content"]
 
-        instance = _build_mock_agent_instance(mock_builder, mock_agent, turn_runner=mock_turn_runner)
+    async def test_envelope_addresses_and_session(self) -> None:
+        instance = _build_mock_agent_instance(MagicMock(), MagicMock())
         resolver = _build_mock_workspace_resolver("default", instance)
-
         node = BotAgentNode("planner", "default", resolver)
         node.name = "planner_node"
         node.node_id = "node-1"
-        mock_graph = MagicMock()
-        mock_graph.nodes = {}
-        mock_graph.edges_from.return_value = []
+        node._graph_ref = _mock_graph_ref()
+
+        ctx = MagicMock(spec=GraphContext)
+        ctx.user_input = None
+        ctx.graph_instance_id = None
+        session = SessionInfo.from_str("conv123.planner")
+
+        envelope = await node._build_graph_input_envelope(
+            ctx, IntegratedInput(payloads=[]), session
+        )
+
+        assert envelope.source.name == "planner_node"
+        assert envelope.target is not None
+        assert envelope.target.name == "planner"
+        assert envelope.session_id == "conv123"
+        assert envelope.agent_session_id == "conv123.planner"
+
+    async def test_upstream_input_included_in_content(self) -> None:
+        instance = _build_mock_agent_instance(MagicMock(), MagicMock())
+        resolver = _build_mock_workspace_resolver("default", instance)
+        node = BotAgentNode("planner", "default", resolver)
+        node.name = "planner_node"
+        node.node_id = "node-1"
+        mock_graph = _mock_graph_ref()
+        mock_src = MagicMock()
+        mock_src.node_id = "src-id"
+        mock_graph.nodes = {"source": mock_src}
         node._graph_ref = mock_graph
 
-        mock_ctx = MagicMock()
-        mock_ctx.user_input = GraphPayload(content="do the task")
+        ctx = MagicMock(spec=GraphContext)
+        ctx.user_input = GraphPayload(content="origin task")
+        ctx.graph_instance_id = 42
+        session = SessionInfo.from_str("conv123.planner")
 
-        await node.execute(mock_ctx, IntegratedInput(payloads=[]))
+        integrated = IntegratedInput(payloads=[
+            IntegratedPayload(
+                source_node="src-id", content=GraphPayload(content="upstream data")
+            ),
+        ])
 
-        mock_agent_context.history.append.assert_called_once()
-        content = mock_agent_context.history.append.call_args.args[0]["content"]
-        assert "[Origin Request]" in content
-        assert "do the task" in content
+        envelope = await node._build_graph_input_envelope(ctx, integrated, session)
 
-
-class TestBotAgentNodeAutoDeliver:
-    def test_has_pending_delivers_false_when_none(self) -> None:
-        node = BotAgentNode("a", "p", MagicMock())
-
-        assert node._has_pending_delivers() is False
-
-    def test_has_pending_delivers_true_when_non_empty(self) -> None:
-        node = BotAgentNode("a", "p", MagicMock())
-        node._pending_delivers = [(GraphPayload(content="x"), "downstream")]
-
-        assert node._has_pending_delivers() is True
-
-    def test_extract_content_from_assistant_message(self) -> None:
-        node = BotAgentNode("a", "p", MagicMock())
-        result = AgentResult(
-            messages=[
-                {"role": "user", "content": "hi"},
-                {"role": "assistant", "content": "final answer"},
-            ],
-        )
-
-        assert node._extract_auto_deliver_content(result) == "final answer"
-
-    def test_extract_content_falls_back_to_result_content(self) -> None:
-        node = BotAgentNode("a", "p", MagicMock())
-        result = AgentResult(content="fallback only")
-
-        assert node._extract_auto_deliver_content(result) == "fallback only"
-
-    def test_extract_content_strips_think_tags(self) -> None:
-        node = BotAgentNode("a", "p", MagicMock())
-        result = AgentResult(
-            messages=[
-                {"role": "assistant", "content": "<think>hidden</think>visible output"},
-            ],
-        )
-
-        assert node._extract_auto_deliver_content(result) == "visible output"
+        assert "upstream data" in envelope.payload["content"]
+        assert "[Origin Request]" in envelope.payload["content"]
 
 
 class TestBotAgentNodeEnsureDeliverTool:
     def test_creates_deliver_tool_lazily(self) -> None:
         node = BotAgentNode("a", "p", MagicMock())
         node.name = "test_node"
-        mock_graph = MagicMock()
-        mock_graph.nodes = {}
-        node._graph_ref = mock_graph
+        node._graph_ref = _mock_graph_ref()
 
         tool = node._ensure_deliver_tool()
 
@@ -791,9 +846,7 @@ class TestBotAgentNodeEnsureDeliverTool:
     def test_reuses_existing_deliver_tool(self) -> None:
         node = BotAgentNode("a", "p", MagicMock())
         node.name = "test_node"
-        mock_graph = MagicMock()
-        mock_graph.nodes = {}
-        node._graph_ref = mock_graph
+        node._graph_ref = _mock_graph_ref()
 
         first = node._ensure_deliver_tool()
         second = node._ensure_deliver_tool()
@@ -803,271 +856,120 @@ class TestBotAgentNodeEnsureDeliverTool:
 
 class TestBotAgentNodeExecute:
     @staticmethod
-    def _build_execute_mocks() -> tuple[
-        MagicMock, MagicMock, MagicMock, MagicMock, AgentResult, MagicMock
-    ]:
-        """Build the mock chain for execute: agent, builder, agent_context, emitter, result, turn_runner."""
-        mock_result = AgentResult(
-            content="auto-delivered output",
-            messages=[],
-            stop_reason=StopReason.COMPLETED,
-        )
-        mock_agent = MagicMock()
-        mock_agent.run = AsyncMock(return_value=mock_result)
-
-        mock_turn_runner = MagicMock(spec=ReActTurnRunner)
-        mock_turn_runner.execute_turn = AsyncMock(return_value=mock_result)
-
-        mock_agent_context = MagicMock()
-        mock_agent_context.tool_manager = InMemoryToolManager()
-        mock_agent_context.history = MagicMock()
-        mock_agent_context.history.to_list = AsyncMock(return_value=[])
-        mock_agent_context.history.append = AsyncMock()
-        mock_agent_context.runtime = MagicMock()
-        mock_agent_context.runtime.state.custom = {}
-
-        mock_emitter = MagicMock()
-        mock_builder = MagicMock()
-        mock_builder.assemble = AsyncMock(return_value=MagicMock())
-        mock_builder.build_runtime_and_context.return_value = (mock_agent_context, mock_emitter)
-
-        return mock_agent, mock_builder, mock_agent_context, mock_emitter, mock_result, mock_turn_runner
-
-    async def test_execute_runs_full_flow_and_auto_delivers(self) -> None:
-        mock_agent, mock_builder, mock_agent_context, mock_emitter, mock_result, mock_turn_runner = (
-            self._build_execute_mocks()
-        )
-        instance = _build_mock_agent_instance(mock_builder, mock_agent, turn_runner=mock_turn_runner)
-        resolver = _build_mock_workspace_resolver("default", instance)
-
-        node = BotAgentNode("planner", "default", resolver)
-        node.name = "planner_node"
-        node.node_id = "node-1"
-        mock_graph = MagicMock()
-        mock_src = MagicMock()
-        mock_src.node_id = "src-id"
-        mock_graph.nodes = {"source": mock_src}
-        downstream_edge = MagicMock()
-        downstream_edge.target = "downstream"
-        mock_graph.edges_from.return_value = [downstream_edge]
-        node._graph_ref = mock_graph
-
-        mock_ctx = MagicMock()
-        mock_ctx.user_input = GraphPayload(content="do the task")
-
-        integrated = IntegratedInput(payloads=[
-            IntegratedPayload(source_node="src-id", content=GraphPayload(content="upstream data")),
-        ])
-
-        await node.execute(mock_ctx, integrated)
-
-        mock_turn_runner.execute_turn.assert_awaited_once()
-        mock_agent_context.history.append.assert_awaited_once()
-        assert mock_agent_context.runtime.state.custom[TurnCustomKey.MAX_TURNS] == 3
-        assert mock_agent_context.graph_context is mock_ctx
-        assert len(node._pending_delivers or []) == 1
-        delivered_content, delivered_target = (node._pending_delivers or [])[0]
-        assert isinstance(delivered_content, GraphPayload)
-        assert delivered_content.content == "auto-delivered output"
-        assert delivered_target == "downstream"
-
-    async def test_timing_safety(self) -> None:
-        """GRAPH_TOPOLOGY_CONTEXT must be set before runner.execute_turn()."""
-        mock_agent, mock_builder, mock_agent_context, _, mock_result, mock_turn_runner = (
-            self._build_execute_mocks()
-        )
-        captured_topology: list[str] = []
-
-        async def capture_topology(*args: object, **kwargs: object) -> AgentResult:
-            captured_topology.append(
-                mock_agent_context.runtime.state.custom[
-                    TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT
-                ]
-            )
-            return mock_result
-
-        mock_turn_runner.execute_turn = AsyncMock(side_effect=capture_topology)
+    def _build_execute_setup(
+        existing_messages: list[dict[str, Any]] | None = None,
+    ) -> tuple[BotAgentNode, MagicMock, MagicMock]:
+        """Build a node + mock tree for thin-shell execute tests."""
         instance = _build_mock_agent_instance(
-            mock_builder,
-            mock_agent,
-            turn_runner=mock_turn_runner,
+            MagicMock(), MagicMock(), existing_messages=existing_messages
         )
-        resolver = _build_mock_workspace_resolver("default", instance)
-        node = BotAgentNode("planner", "default", resolver)
-        graph: Graph[Any] = Graph("timing-test")
-        graph.add_node("planner", node)
-        graph.add_edge(GraphNode.START, "planner")
-        graph.add_edge("planner", GraphNode.END)
-        node._graph_ref = graph.compile()
-        mock_ctx = MagicMock()
-        mock_ctx.user_input = GraphPayload(content="do the task")
-
-        await node.execute(mock_ctx, IntegratedInput(payloads=[]))
-
-        assert captured_topology == [node._build_topology_section()]
-
-    async def test_execute_auto_delivers_to_end_with_multiple_downstream_edges(
-        self,
-    ) -> None:
-        mock_agent, mock_builder, _, _, _, mock_turn_runner = self._build_execute_mocks()
-        instance = _build_mock_agent_instance(
-            mock_builder,
-            mock_agent,
-            turn_runner=mock_turn_runner,
+        mock_tree = MagicMock()
+        mock_tree.deliver = AsyncMock()
+        mock_tree.wait_quiesce = AsyncMock()
+        mock_tree.tree_id_for_session = AsyncMock(return_value="tree-1")
+        resolver = _build_mock_workspace_resolver(
+            "default", instance, tree_manager=mock_tree
         )
-        resolver = _build_mock_workspace_resolver("default", instance)
-        node = BotAgentNode("planner", "default", resolver)
-        node.name = "planner_node"
-        node.node_id = "node-1"
-        mock_graph = MagicMock()
-        first_edge = MagicMock()
-        first_edge.target = "first"
-        second_edge = MagicMock()
-        second_edge.target = "second"
-        mock_graph.nodes = {}
-        mock_graph.edges_from.return_value = [first_edge, second_edge]
-        node._graph_ref = mock_graph
-        mock_ctx = MagicMock()
-        mock_ctx.user_input = GraphPayload(content="task")
 
-        await node.execute(mock_ctx, IntegratedInput(payloads=[]))
-
-        assert (node._pending_delivers or [])[0][1] == GraphNode.END
-
-    async def test_execute_auto_delivers_to_end_without_downstream_edges(self) -> None:
-        mock_agent, mock_builder, _, _, _, mock_turn_runner = self._build_execute_mocks()
-        instance = _build_mock_agent_instance(
-            mock_builder,
-            mock_agent,
-            turn_runner=mock_turn_runner,
+        node = BotAgentNode(
+            "planner",
+            "default",
+            resolver,
+            knowledge_config=KnowledgeNodeConfig(enabled=False),
         )
-        resolver = _build_mock_workspace_resolver("default", instance)
-        node = BotAgentNode("planner", "default", resolver)
         node.name = "planner_node"
         node.node_id = "node-1"
-        mock_graph = MagicMock()
-        mock_graph.nodes = {}
-        mock_graph.edges_from.return_value = []
-        node._graph_ref = mock_graph
-        mock_ctx = MagicMock()
-        mock_ctx.user_input = GraphPayload(content="task")
+        node._graph_ref = _mock_graph_ref()
+        return node, mock_tree, instance
 
-        await node.execute(mock_ctx, IntegratedInput(payloads=[]))
+    async def test_execute_calls_tree_deliver_with_envelope(self) -> None:
+        node, mock_tree, _ = self._build_execute_setup()
 
-        assert (node._pending_delivers or [])[0][1] == GraphNode.END
+        ctx = MagicMock(spec=GraphContext)
+        ctx.user_input = GraphPayload(content="do the task")
+        ctx.graph_instance_id = 42
+        ctx.user_data = {}
 
-    async def test_execute_injects_integrated_input_as_reminder(self) -> None:
-        mock_agent, mock_builder, mock_agent_context, _, _, mock_turn_runner = self._build_execute_mocks()
-        instance = _build_mock_agent_instance(mock_builder, mock_agent, turn_runner=mock_turn_runner)
-        resolver = _build_mock_workspace_resolver("default", instance)
+        await node.execute(ctx, IntegratedInput(payloads=[]))
 
-        node = BotAgentNode("planner", "default", resolver)
-        node.name = "planner_node"
-        node.node_id = "node-1"
-        mock_graph = MagicMock()
-        mock_src = MagicMock()
-        mock_src.node_id = "src-id"
-        mock_graph.nodes = {"source": mock_src}
-        node._graph_ref = mock_graph
+        mock_tree.deliver.assert_awaited_once()
+        call_args = mock_tree.deliver.call_args
+        assert call_args.kwargs["track_consume"] is True
+        envelope = call_args.args[1]
+        assert isinstance(envelope, AgentMessageEnvelope)
+        assert envelope.message_type == AgentMessageType.EXTERNAL_INPUT
+        assert "[Origin Request]" in envelope.payload["content"]
+        assert envelope.metadata["graph_instance_id"] == 42
+        assert envelope.metadata["graph_node_name"] == "planner_node"
 
-        mock_ctx = MagicMock()
-        mock_ctx.user_input = GraphPayload(content="task")
-        integrated = IntegratedInput(payloads=[
-            IntegratedPayload(source_node="src-id", content=GraphPayload(content="injected data")),
-        ])
+    async def test_execute_calls_tree_wait_quiesce(self) -> None:
+        node, mock_tree, _ = self._build_execute_setup()
 
-        await node.execute(mock_ctx, integrated)
+        ctx = MagicMock(spec=GraphContext)
+        ctx.user_input = GraphPayload(content="task")
+        ctx.graph_instance_id = 42
+        ctx.user_data = {}
 
-        append_call = mock_agent_context.history.append.call_args
-        appended_msg = append_call.args[0]
-        assert appended_msg["role"] == MessageRole.SYSTEM_REMINDER
-        assert appended_msg["content"].startswith("<system-reminder>\n")
-        assert appended_msg["content"].endswith("\n</system-reminder>")
-        assert "injected data" in appended_msg["content"]
+        await node.execute(ctx, IntegratedInput(payloads=[]))
 
-    async def test_execute_does_not_append_global_user_input_when_integrated_input_exists(
-        self,
-    ) -> None:
-        mock_agent, mock_builder, _, _, _, mock_turn_runner = self._build_execute_mocks()
-        instance = _build_mock_agent_instance(mock_builder, mock_agent, turn_runner=mock_turn_runner)
-        resolver = _build_mock_workspace_resolver("default", instance)
+        mock_tree.wait_quiesce.assert_awaited_once_with("tree-1")
 
-        node = BotAgentNode("planner", "default", resolver)
-        node.name = "planner_node"
-        node.node_id = "node-1"
-        mock_graph = MagicMock()
-        mock_graph.nodes = {}
-        node._graph_ref = mock_graph
+    async def test_execute_does_not_call_runner_execute_turn(self) -> None:
+        node, mock_tree, instance = self._build_execute_setup()
 
-        mock_ctx = MagicMock()
-        mock_ctx.user_input = GraphPayload(content="global task")
-        integrated = IntegratedInput(payloads=[
-            IntegratedPayload(source_node="src-id", content=GraphPayload(content="upstream data")),
-        ])
+        ctx = MagicMock(spec=GraphContext)
+        ctx.user_input = GraphPayload(content="task")
+        ctx.graph_instance_id = 42
+        ctx.user_data = {}
 
-        await node.execute(mock_ctx, integrated)
+        await node.execute(ctx, IntegratedInput(payloads=[]))
 
-        assemble_call = mock_builder.assemble.call_args
-        assert assemble_call.kwargs["input_msg"].content == ""
-        assert assemble_call.kwargs["sanitized_content"] is None
-        assert assemble_call.kwargs["append_user_message"] is False
+        turn_runner = instance.pipeline._turn_runner
+        if turn_runner is not None and hasattr(turn_runner, "execute_turn"):
+            turn_runner.execute_turn.assert_not_called()
 
-    async def test_execute_uses_user_input_reminder_when_integrated_input_is_empty(
-        self,
-    ) -> None:
-        mock_agent, mock_builder, mock_agent_context, _, _, mock_turn_runner = self._build_execute_mocks()
-        instance = _build_mock_agent_instance(mock_builder, mock_agent, turn_runner=mock_turn_runner)
-        resolver = _build_mock_workspace_resolver("default", instance)
+    async def test_execute_does_not_auto_deliver(self) -> None:
+        node, mock_tree, _ = self._build_execute_setup()
 
-        node = BotAgentNode("planner", "default", resolver)
-        node.name = "planner_node"
-        node.node_id = "node-1"
-        mock_graph = MagicMock()
-        mock_graph.nodes = {}
-        node._graph_ref = mock_graph
+        ctx = MagicMock(spec=GraphContext)
+        ctx.user_input = GraphPayload(content="task")
+        ctx.graph_instance_id = 42
+        ctx.user_data = {}
 
-        mock_ctx = MagicMock()
-        mock_ctx.user_input = GraphPayload(content="fallback task")
+        await node.execute(ctx, IntegratedInput(payloads=[]))
 
-        await node.execute(mock_ctx, IntegratedInput(payloads=[]))
+        assert not node._pending_delivers
 
-        append_call = mock_agent_context.history.append.call_args
-        appended_msg = append_call.args[0]
-        assert appended_msg["role"] == MessageRole.SYSTEM_REMINDER
-        appended_content = appended_msg["content"]
-        assert "[Origin Request]" in appended_content
-        assert "fallback task" in appended_content
+    async def test_execute_stores_artifacts_in_user_data(self) -> None:
+        node, mock_tree, _ = self._build_execute_setup()
 
-    async def test_execute_skips_auto_deliver_when_agent_delivered(self) -> None:
-        mock_agent, mock_builder, mock_agent_context, mock_emitter, mock_result, mock_turn_runner = (
-            self._build_execute_mocks()
+        ctx = GraphContext(
+            state=MagicMock(),
+            runtime=MagicMock(),
+            coordinator=MagicMock(),
+            graph_instance_id=42,
+            user_input=GraphPayload(content="task"),
         )
-        instance = _build_mock_agent_instance(mock_builder, mock_agent, turn_runner=mock_turn_runner)
-        resolver = _build_mock_workspace_resolver("default", instance)
+        ctx.user_data = {}
 
-        node = BotAgentNode("planner", "default", resolver)
-        node.name = "planner_node"
-        node.node_id = "node-1"
-        mock_graph = MagicMock()
-        mock_graph.nodes = {}
-        node._graph_ref = mock_graph
-        node._pending_delivers = []
+        await node.execute(ctx, IntegratedInput(payloads=[]))
 
-        async def _execute_with_deliver(*args: object, **kwargs: object) -> AgentResult:
-            node._pending_delivers = [(GraphPayload(content="manual"), "downstream")]
-            return mock_result
+        artifacts = ctx.user_data.get("node_artifacts", {}).get("planner_node")
+        assert artifacts is not None
+        assert isinstance(artifacts, GraphTurnArtifacts)
+        assert artifacts.node_description == "test role"
 
-        mock_turn_runner.execute_turn = AsyncMock(side_effect=_execute_with_deliver)
+    async def test_execute_stores_artifacts_on_plain_graph_context(self) -> None:
+        node, mock_tree, _ = self._build_execute_setup()
 
-        mock_ctx = MagicMock()
-        mock_ctx.user_input = GraphPayload(content="task")
-        integrated = IntegratedInput(payloads=[])
+        ctx = MagicMock(spec=GraphContext)
+        ctx.user_input = GraphPayload(content="task")
+        ctx.graph_instance_id = 42
+        ctx.user_data = {}
 
-        await node.execute(mock_ctx, integrated)
+        await node.execute(ctx, IntegratedInput(payloads=[]))
 
-        mock_turn_runner.execute_turn.assert_awaited_once()
-        assert len(node._pending_delivers) == 1
-        assert node._pending_delivers[0][0].content == "manual"
+        assert "node_artifacts" in ctx.user_data
 
 
 class TestReActAgentCompileBudget:
@@ -1153,16 +1055,6 @@ class TestBotAgentNodeFactory:
 # P1-5: PER_INVOCATION session cleanup after execute
 
 
-class _StubTurnRunner(ReActTurnRunner):
-    """Minimal ReActTurnRunner returning a fixed AgentResult for execute tests."""
-
-    def __init__(self, result: AgentResult) -> None:
-        self._result = result
-
-    async def execute_turn(self, *args: object, **kwargs: object) -> AgentResult:
-        return self._result
-
-
 class TestBotAgentNodeSessionCleanup:
 
     @staticmethod
@@ -1170,41 +1062,36 @@ class TestBotAgentNodeSessionCleanup:
         registry: SessionRegistry,
         strategy: SessionStrategy,
     ) -> BotAgentNode:
-        mock_result = AgentResult(content="output", messages=[])
-        mock_agent_context = MagicMock()
-        mock_agent_context.tool_manager = InMemoryToolManager()
-        mock_agent_context.history = MagicMock()
-        mock_agent_context.history.to_list = AsyncMock(return_value=[])
-        mock_agent_context.history.append = AsyncMock()
-        mock_emitter = MagicMock()
-        mock_builder = MagicMock()
-        mock_builder.assemble = AsyncMock(return_value=MagicMock())
-        mock_builder.build_runtime_and_context.return_value = (
-            mock_agent_context,
-            mock_emitter,
-        )
+        mock_tree = MagicMock()
+        mock_tree.deliver = AsyncMock()
+        mock_tree.wait_quiesce = AsyncMock()
+        mock_tree.tree_id_for_session = AsyncMock(return_value="tree-1")
 
-        instance = _build_mock_agent_instance(mock_builder, MagicMock())
-        instance.pipeline._turn_runner = _StubTurnRunner(mock_result)
-
+        instance = _build_mock_agent_instance(MagicMock(), MagicMock())
         resolver = _build_mock_workspace_resolver(
-            "default", instance, session_registry=registry
+            "default", instance, session_registry=registry, tree_manager=mock_tree
         )
 
-        node = BotAgentNode("planner", "default", resolver, session_strategy=strategy)
+        node = BotAgentNode(
+            "planner",
+            "default",
+            resolver,
+            session_strategy=strategy,
+            knowledge_config=KnowledgeNodeConfig(enabled=False),
+        )
         node.name = "planner_node"
         node.node_id = "node-1"
-        mock_graph = MagicMock()
-        mock_graph.nodes = {}
-        node._graph_ref = mock_graph
+        node._graph_ref = _mock_graph_ref()
         return node
 
     async def test_per_invocation_session_cleaned_up_after_execute(self) -> None:
         registry = _RecordingSessionRegistry()
         node = self._build_node(registry, SessionStrategy.PER_INVOCATION)
 
-        mock_ctx = MagicMock()
+        mock_ctx = MagicMock(spec=GraphContext)
         mock_ctx.user_input = GraphPayload(content="task")
+        mock_ctx.graph_instance_id = 42
+        mock_ctx.user_data = {}
         await node.execute(mock_ctx, IntegratedInput(payloads=[]))
 
         assert len(registry.registered) == 1
@@ -1215,8 +1102,10 @@ class TestBotAgentNodeSessionCleanup:
         registry = _RecordingSessionRegistry()
         node = self._build_node(registry, SessionStrategy.CACHED)
 
-        mock_ctx = MagicMock()
+        mock_ctx = MagicMock(spec=GraphContext)
         mock_ctx.user_input = GraphPayload(content="task")
+        mock_ctx.graph_instance_id = 42
+        mock_ctx.user_data = {}
         await node.execute(mock_ctx, IntegratedInput(payloads=[]))
 
         assert len(registry.registered) == 1

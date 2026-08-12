@@ -86,16 +86,26 @@ class AfterTurnNode(Node[ReActTurnState]):
 
         await ctx.runtime.dispatch_hook(ReActHookPoint.AFTER_TURN, ctx, {"result": result})
 
-        # Continuation gate: one-shot flag, bounded by MAX_TURNS, suppressed
-        # when the turn was cancelled. The flag is consumed only when a
-        # continuation is actually granted.
-        max_turns = state.custom.get(TurnCustomKey.MAX_TURNS, 1)
+        # Continuation gate: one-shot flags, consumed regardless of path.
+        # CONTINUATION_REQUEST — any AfterTurnHook wants another turn attempt.
+        # CONTINUATION_RENEW_MAX_TURNS — a hook authorizes extending MAX_TURNS
+        #   past the current upper bound (watchdog renewal).  Only one hook
+        #   (TodoContinuationHook) sets this today.  Gate increments
+        #   MAX_TURNS by 1 only once regardless of how many hooks set it.
+        max_turns = state.custom.get(TurnCustomKey.MAX_TURNS, 3)
+        has_request = TurnCustomKey.CONTINUATION_REQUEST in state.custom
+        has_renew = TurnCustomKey.CONTINUATION_RENEW_MAX_TURNS in state.custom
+
+        state.custom.pop(TurnCustomKey.CONTINUATION_REQUEST, None)
+        state.custom.pop(TurnCustomKey.CONTINUATION_RENEW_MAX_TURNS, None)
+
         if (
-            TurnCustomKey.CONTINUATION_REQUEST in state.custom
-            and state.turn_attempt < max_turns
+            has_request
             and state.phase != TurnPhase.CANCELLED
+            and (state.turn_attempt < max_turns or has_renew)
         ):
-            state.custom.pop(TurnCustomKey.CONTINUATION_REQUEST)
+            if state.turn_attempt >= max_turns:
+                state.custom[TurnCustomKey.MAX_TURNS] = max_turns + 1
             self.deliver(result, ReActNode.BEFORE, ctx)
         else:
             self.deliver(result, ReActNode.END, ctx)

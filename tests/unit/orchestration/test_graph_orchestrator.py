@@ -154,7 +154,7 @@ class _BlockingFactory(NodeFactory):
 
 
 class _NeverDeliverNode(Node[CounterState]):
-    """Node that never calls deliver — triggers undelivered error after max_retry."""
+    """Node that never calls deliver — produces no dispatches (dead-end)."""
 
     async def execute(
         self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
@@ -765,9 +765,9 @@ def _dead_end_spec(*, scheduler: SchedulerKind = SchedulerKind.LINEAR) -> GraphS
 class TestDeadEndFailed:
     """Dead-end graph → FAILED (T11 Phase 0).
 
-    A dead-end node (never delivers, exhausts max_retry) raises
-    UndeliveredError. Schedulers catch it and return normally with
-    ctx.reached_end=False. The orchestrator maps this to FAILED.
+    A dead-end node (never delivers) produces no dispatches. The scheduler
+    exits with ctx.reached_end=False (native dead-end detection). The
+    orchestrator maps this to FAILED.
     """
 
     async def test_dead_end_linear_failed(self) -> None:
@@ -857,7 +857,7 @@ class TestReachedEndSemantics:
 
         A node that delivers to a target NOT in its outgoing edges raises
         RoutingError from validate_dispatch_target. This is a topology error,
-        NOT an UndeliveredError — the scheduler does NOT catch it, so it
+        NOT a dead-end — the scheduler does NOT catch it, so it
         propagates → CRASHED.
         """
         node_registry = NodeRegistry()

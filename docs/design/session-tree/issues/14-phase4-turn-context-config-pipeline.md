@@ -83,7 +83,7 @@ Built once by `BotAgentNode.execute` (it has `_graph_ref`, `self.name`, pool acc
 ```python
 class TurnContextConfigurator(ABC):
     @abstractmethod
-    async def applies(self, desc: TurnContextDescriptor) -> bool: ...
+    def applies(self, desc: TurnContextDescriptor) -> bool: ...
     @abstractmethod
     def configure(self, ctx: AgentContext, desc: TurnContextDescriptor) -> None: ...
 
@@ -91,18 +91,20 @@ class TurnContextConfigPipeline:
     def __init__(self, configurators: list[TurnContextConfigurator]) -> None:
         self._configurators = configurators
 
-    async def configure(self, ctx: AgentContext, desc: TurnContextDescriptor | None) -> None:
+    def configure(self, ctx: AgentContext, desc: TurnContextDescriptor | None) -> None:
         if desc is None:
             return  # short-circuit for callers that omit descriptor
         for c in self._configurators:
-            if await c.applies(desc):
+            if c.applies(desc):
                 c.configure(ctx, desc)
 ```
 
-`build_runtime_and_context` gains `turn_descriptor: TurnContextDescriptor | None = None` parameter. At the END of the method (after emitter selection, before return):
+**applies() + configure() 都是 sync。** 所有 6 个 configurator 的 `applies()` gate 都是纯字段读取(`graph_context is not None`、`graph_instance_id is not None`、`is_node_execution and agent_kind == MAIN`)— 无 I/O,不需要 async。`configure()` 执行同步 mutation(tool_manager wrap、approval=None、state.custom 赋值)— 也无 I/O。
+
+`build_runtime_and_context` 保持 sync。在方法末尾(emitter selection 之后,return 之前):
 ```python
 if turn_descriptor is not None and self._config_pipeline is not None:
-    await self._config_pipeline.configure(agent_context, turn_descriptor)
+    self._config_pipeline.configure(agent_context, turn_descriptor)
 ```
 
 When `turn_descriptor=None` (all existing non-graph callers) → short-circuit → behavior identical to today.
@@ -119,12 +121,20 @@ ADR-0039 §7 matrix retained unchanged. Ordering enforced by registration positi
 
 | Order | Configurator | applies() | Graph node (MAIN, is_node_execution) | Graph subagent (SUBAGENT) | Normal session |
 |---|---|---|---|---|---|
-| 0 | `GraphContextBindingConfigurator` | `graph_context is not None` | ✅ set `ctx.graph_context` | ✅ set | ❌ skip |
-| 1 | `GraphApprovalConfigurator` | `graph_context is not None` | ✅ `approval=None` | ✅ `approval=None` | ❌ skip |
+| 0 | `GraphContextBindingConfigurator` | `graph_instance_id is not None` | ✅ set `ctx.graph_instance_id`; set `ctx.graph_context` if resolver returns non-None | ✅ set `ctx.graph_instance_id`; set `ctx.graph_context` if resolver returns non-None | ❌ skip |
+| 1 | `GraphApprovalConfigurator` | `graph_instance_id is not None` | ✅ `approval=None` | ✅ `approval=None` | ❌ skip |
 | 2 | `GraphMaxTurnsConfigurator` | `is_node_execution and agent_kind == MAIN` | ✅ `MAX_TURNS=3` | ❌ skip | ❌ skip |
 | 3 | `GraphToolConfigurator` | `is_node_execution and agent_kind == MAIN` | ✅ deliver+knowledge tool | ❌ skip | ❌ skip |
 | 4 | `GraphTopologyConfigurator` | `is_node_execution and agent_kind == MAIN` | ✅ topology+node_desc | ❌ skip | ❌ skip |
 | 5 | `GraphKnowledgeConfigurator` | `is_node_execution and agent_kind == MAIN` | ✅ knowledge keys | ❌ skip | ❌ skip |
+
+**GraphContextBindingConfigurator applies() correction**: The gate is `graph_instance_id is not None`, NOT `graph_context is not None`. This handles the resolver stale-reference scenario (§11): when the graph has crashed and `_active_contexts` is cleaned, `resolver(gid)` returns None → `desc.graph_context = None`. But `desc.graph_instance_id` is still set (from envelope.metadata) — the subagent IS a graph subagent even if the graph is dead.
+
+**GraphContextBindingConfigurator configure() behavior**:
+- Always sets `ctx.graph_instance_id = desc.graph_instance_id` (so SubagentAutoSendHook can always read it, even if resolver failed).
+- Sets `ctx.graph_context = desc.graph_context` only if resolver returned non-None (i.e., `desc.graph_context is not None`). When resolver failed, `graph_context` stays None — ReAct graph components (GraphWorkflowProvider, KnowledgeHook, DeliverRetryHook, GraphDeliverTool) correctly skip.
+
+This ensures: SubagentAutoSendHook always reads `ctx.graph_instance_id` correctly (§6.4), regardless of resolver success/failure. In the stale-reference scenario, the hook reads `ctx.graph_instance_id` (set by configurator) and propagates it back to the parent — the parent's tree receives the result with graph metadata, and stale tracks are cleaned by Phase 0-2's `recover_tree`.
 
 **Ordering constraint**: `GraphContextBindingConfigurator` (index 0) MUST run before all others — it sets `agent_context.graph_context`, which other configurators' `applies()` checks depend on. Since `applies()` reads `desc.graph_context` (not `ctx.graph_context`), this constraint is about the `configure()` side-effect: ContextBinding sets `ctx.graph_context` so that execution-time components (GraphDeliverTool, GraphWorkflowProvider, KnowledgeHook) find it. The `applies()` gate itself reads from the descriptor, not from ctx, so ordering doesn't affect gate evaluation — but the side-effect ordering matters for any configurator that reads `ctx.graph_context` during `configure()`.
 
@@ -149,19 +159,15 @@ Configurators run at END of `build_runtime_and_context` (after line 546, before 
 
 **`graph_context`** (GraphContextBindingConfigurator): `build_runtime_and_context` does NOT set `graph_context` (confirmed via grep — only production assignment is agent_node.py:185). Field defaults to `None` (core/agent.py:101). Configurator sets it; execution-time consumers (`graph_deliver.py:215`, hooks) find it. No build-time dependency violated.
 
-**`emitter`** — **open item, not yet decided**: `build_runtime_and_context` selects emitter at lines 538-546 but returns it as a **separate tuple element** — `agent_context.emitter` stays `None` in the ReAct path. Emitter selection does NOT depend on `graph_context`. Current `BotAgentNode.execute` does NOT override emitter (uses build default).
+**`emitter`** — **DECIDED: no configurator for emitter in Phase 4.** `build_runtime_and_context` selects emitter at lines 538-546 and returns it as a separate tuple element — `agent_context.emitter` stays `None` in the ReAct path. Emitter selection does NOT depend on `graph_context`. Current `BotAgentNode.execute` does NOT override emitter (uses pool default). Phase 3-4 matches this behavior. If graph-specific emitter becomes necessary in the future (e.g. for ADR-0039 §12 streaming), add a configurator then — YAGNI.
 
-Analysis: if graph nodes use the same pool-level emitter as normal turns (current behavior), no configurator is needed. If graph-specific emitter is needed in the future, two options exist: (a) configurator sets `agent_context.emitter` and call site converges to read from there (external path already does this at external/turn_runner.py:199); (b) configurator replaces the tuple element. **Recommendation**: no configurator for emitter in Phase 4 (match current behavior). Revisit if graph-specific emitter becomes necessary. **Pending: confirm whether graph nodes need a different emitter than normal turns.**
-
-**`current_input` stale docstring** — **open item, not yet decided**: `core/agent.py:119-125` documents `current_input` as "set by `build_runtime_and_context`", but grep confirms it is NOT set there (stays `None`). No configurator currently reads it.
-
-Analysis: either fix the docstring (remove the false claim) or set `current_input` in build. Non-blocking for Phase 4 design. **Recommendation**: fix the docstring as a separate cleanup. **Pending: decide docstring fix vs. actually setting the field.**
+**`current_input` stale docstring`** — **DECIDED: fix the docstring.** `core/agent.py:119-125` documents `current_input` as "set by `build_runtime_and_context`", but grep confirms it is NOT set there (stays `None`). Fix the docstring to reflect reality. Do NOT set the field — ReAct agents use history; external agents will be addressed when external agent integration needs it. Tracked in T15.
 
 ### 5. _process_locked_inner — single descriptor construction site
 
 After Phase 3 rewrite, ALL ReAct turns (graph node / graph subagent / normal main / normal subagent) go through `_process_locked_inner` (turn_runner.py:424). This is the single descriptor construction point.
 
-**External agent turns**: `ExternalTurnRunner` (external/turn_runner.py:76) has its own `process_locked` (L135) that does NOT call `_process_locked_inner` or `build_runtime_and_context`. The configurator pipeline does NOT apply to external turns — this is correct: external agents don't have ReAct graph components (GraphWorkflowProvider, KnowledgeHook, DeliverRetryHook, GraphDeliverTool). External agent graph integration is via `_LightGraphContext` (§6.3) — `ExternalTurnRunner` reads `graph_instance_id` from `input_metadata` and sets `agent_context.graph_context = _LightGraphContext(gid)`. This lets `SubagentAutoSendHook` uniformly read `ctx.graph_context.graph_instance_id` (§6.4) for both ReAct and External subagents.
+**External agent turns**: `ExternalTurnRunner` (external/turn_runner.py:76) has its own `process_locked` (L135) that does NOT call `_process_locked_inner` or `build_runtime_and_context`. The configurator pipeline does NOT apply to external turns — this is correct: external agents don't have ReAct graph components (GraphWorkflowProvider, KnowledgeHook, DeliverRetryHook, GraphDeliverTool). External agent graph integration is via `agent_context.graph_instance_id` (§6.3) — `ExternalTurnRunner` reads `graph_instance_id` from `input_metadata` and sets `agent_context.graph_instance_id = gid`. This lets `SubagentAutoSendHook` uniformly read `ctx.graph_instance_id` (§6.4) for both ReAct and External subagents.
 
 Current `_process_locked_inner` already:
 - Reads `input_msg.metadata` at L448 (where graph_instance_id will be)
@@ -202,8 +208,8 @@ agent_context, emitter = self._builder.build_runtime_and_context(
 #### 6.1 Architecture
 
 ```
-┌─ Sender (has graph_context) ─────────────────────────────────────┐
-│  ctx.graph_context.graph_instance_id → envelope.metadata         │
+┌─ Sender (has graph_instance_id) ─────────────────────────────────┐
+│  ctx.graph_instance_id → envelope.metadata                       │
 │  Injection: SendStrategy.execute (post-build_envelope)           │
 │  Covers: SubagentDispatch + ParentReply (+ SubagentAutoSendHook) │
 └──────────────────────────┬───────────────────────────────────────┘
@@ -212,63 +218,80 @@ agent_context, emitter = self._builder.build_runtime_and_context(
 ┌─ tree.deliver (converged sink — passes through, no injection) ───┐
 └──────────────────────────┬───────────────────────────────────────┘
                            │
-              ┌────────────┴────────────┐
-              ▼                         ▼
+               ┌────────────┴────────────┐
+               ▼                         ▼
 ┌─ ReAct receiver ──────────┐  ┌─ External receiver ──────────────┐
 │ _process_locked_inner:     │  │ ExternalTurnRunner.process_locked:│
 │   read metadata.gid        │  │   read metadata.gid               │
-│   → resolver(gid)          │  │   → ctx.graph_context =           │
-│   → ModexGraphContext      │  │     _LightGraphContext(gid)       │
-│   → configurators install  │  │   (no resolver, no three-comp)    │
-│   → three components active│  │   → SubagentAutoSendHook reads    │
-│                            │  │     ctx.graph_context.gid         │
+│   → resolver(gid)          │  │   → agent_context.graph_instance_id│
+│     = ModexGraphContext    │  │     = gid (int, no GraphContext)  │
+│   → configurators install  │  │   → SubagentAutoSendHook reads    │
+│   → three components active│  │     ctx.graph_instance_id         │
 │                            │  │     → writes AGENT_RESULT.metadata│
 └────────────────────────────┘  └──────────────────────────────────┘
 ```
 
-#### 6.2 Injection points (4 sites)
+**Design principle**: `graph_instance_id` is a first-class field on `AgentContext` (`int | None`), NOT an attribute hidden inside `GraphContext`. This avoids the need for `_LightGraphContext` (a lightweight GraphContext subclass that would require dummy state/runtime/coordinator). `graph_context` (the `GraphContext[Any]` object) remains the sole switch for ReAct graph components (GraphWorkflowProvider, KnowledgeHook, DeliverRetryHook, GraphDeliverTool) — only set for ReAct graph turns. `graph_instance_id` (the int) is the graph-association marker — set for both ReAct and External graph subagents.
+
+#### 6.2 Injection points (4 propagation sites + 1 origin)
+
+**Origin point**: `BotAgentNode.execute` constructs the graph input envelope (`_build_graph_input_envelope`) with `metadata: {graph_instance_id, graph_node_name, is_node_execution=True}`. This is the ORIGIN of graph_instance_id in the communication path — graph → main agent. It's not a "propagation" site (it doesn't propagate from a sender; it reads from `ctx.graph_instance_id` at construction). T13 execute skeleton L34 documents this.
+
+**Key correction (verified via code exploration)**: `_deliver` (base.py:164) is NOT the converged injection point — `PeerNormalStrategy` overrides `deliver` (peer_normal.py:72) and bypasses `_deliver` entirely. The truly converged point is `SendStrategy.execute` (base.py:73-89), the template method inherited by ALL three strategies. Specifically the seam between `build_envelope` (L79) and `deliver` (L80).
+
+`AgentMessageEnvelope` is a plain `@dataclass` (NOT frozen, NOT Pydantic). `metadata: dict[str, Any]` is a regular mutable dict. Post-construction mutation `envelope.metadata["key"] = value` works — proven by `_TracePropagatingPeerNormal` (service.py:82) which does exactly `envelope.metadata["traceparent"] = traceparent`.
 
 | # | Site | File:Line | Covers | Logic | Lines |
 |---|------|-----------|--------|-------|-------|
-| 1 | `SendStrategy.execute` (post-build_envelope) | base.py:77-93 | SubagentDispatch + ParentReply (+ SubagentAutoSendHook if converged to SendStrategy by Phase 0-2) | `if req.context.graph_context is not None: envelope.metadata["graph_instance_id"] = req.context.graph_context.graph_instance_id` | +3 |
-| 2 | `SubagentAutoSendHook._notify_parent` | subagent_auto_send.py:463 | AGENT_RESULT (subagent→parent auto-reply) | `if ctx.graph_context is not None: envelope.metadata["graph_instance_id"] = ctx.graph_context.graph_instance_id` | +3 (**may be absorbed by Site 1 if Phase 0-2 converges SubagentAutoSendHook to SendStrategy**) |
-| 3 | `ExternalTurnRunner.process_locked` | external/turn_runner.py:166-178 | External agent receives graph_instance_id | `gid = input_metadata.get("graph_instance_id"); if gid is not None: agent_context.graph_context = _LightGraphContext(gid)` | +5 |
-| 4 | `modexctl SendRequest` + `facade.send` | models.py:138 / facade.py:369 | CLI send carries graph_instance_id | SendRequest adds `graph_instance_id: int \| None = None` field; facade constructs `_LightGraphContext(gid)` on AgentContext | +model field +3 |
+| 1 | `SendStrategy.execute` (between build_envelope and deliver) | base.py:79-80 | SubagentDispatch + ParentReply + PeerNormal (ALL three strategies) | `if req.context.graph_instance_id is not None: envelope.metadata["graph_instance_id"] = req.context.graph_instance_id` | +3 |
+| 2 | `SubagentAutoSendHook._notify_parent` | subagent_auto_send.py:480 | AGENT_RESULT (subagent→parent auto-reply, bypasses SendStrategy) | `if ctx.graph_instance_id is not None: envelope.metadata["graph_instance_id"] = ctx.graph_instance_id` | +3 |
+| 3 | `ExternalTurnRunner.process_locked` | external/turn_runner.py:166-178 | External agent receives graph_instance_id | `gid = input_metadata.get("graph_instance_id"); if gid is not None: agent_context.graph_instance_id = gid` | +3 |
+| 4 | `modexctl SendRequest` + `facade.send` | models.py:138 / facade.py:369 | CLI send carries graph_instance_id | SendRequest adds `graph_instance_id: int \| None = None` field; facade sets `agent_context.graph_instance_id = gid` | +model field +2 |
 
-**Note on Site 2**: SubagentAutoSendHook currently bypasses SendStrategy (constructs envelope inline, calls `tree.deliver` directly). Phase 0-2 may converge this to SendStrategy (T09/T12). If converged, Site 2 is absorbed by Site 1 (one injection covers all). If not converged, Site 2 is independent. **Implementation: check Phase 0-2 final state.**
+**Site 1 is the converged injection for SendStrategy paths.** One line in `execute` (base.py:79-80) covers SubagentDispatch + ParentReply + PeerNormal. No per-strategy subclassing needed (unlike the `_TracePropagatingPeerNormal` precedent which is per-strategy — that pattern is correct for traceparent which is peer-only, but wrong for graph_instance_id which must cover all strategies).
 
-#### 6.3 _LightGraphContext
+**Site 2 is independent** — SubagentAutoSendHook constructs its envelope inline (subagent_auto_send.py:469-481) and calls `tree.deliver` directly (L484), bypassing SendStrategy entirely. This is NOT converged by Site 1. Phase 0-2 has NOT converged SubagentAutoSendHook to SendStrategy (verified: hook still calls tree.deliver directly). Site 2 remains a separate injection point.
 
-A lightweight GraphContext subclass for External and CLI paths — carries only `graph_instance_id`, no artifacts, no state. Does NOT trigger resolver or configurators (ExternalTurnRunner doesn't go through `build_runtime_and_context`).
+**PeerNormalStrategy exclusion**: graph mode shields peer communication at the business layer (task tool / send_to_agent reject peer targets when `graph_context is not None`). PeerNormalStrategy is NOT used in graph scenarios. Site 1's `if req.context.graph_context is not None` check naturally skips peer sends in normal mode (graph_context is None for normal sessions). No explicit PeerNormal exclusion needed in the injection logic.
+
+#### 6.3 AgentContext.graph_instance_id field (replaces _LightGraphContext)
+
+`AgentContext` gains a new first-class field:
 
 ```python
-class _LightGraphContext(GraphContext[Any]):
-    """Minimal GraphContext for external/CLI paths. Only carries graph_instance_id
-    for SubagentAutoSendHook to read. Does NOT activate three-components
-    (ExternalTurnRunner doesn't dispatch BEFORE_TURN/AFTER_TURN hooks)."""
-    
-    def __init__(self, graph_instance_id: int) -> None:
-        self.graph_instance_id = graph_instance_id
+# core/agent.py — AgentContext dataclass
+graph_instance_id: int | None = None    # NEW — graph-association marker
 ```
 
-**Why not full ModexGraphContext?** External agents don't have ReAct graph components (GraphDeliverTool, GraphWorkflowProvider, KnowledgeHook, DeliverRetryHook). These are all ReAct-hook-gated or require `runtime`/`ReActTurnState` that ExternalTurnRunner doesn't build. `_LightGraphContext` provides the sole thing external needs: `graph_instance_id` for SubagentAutoSendHook to propagate back.
+**Semantics**:
+- `graph_context: GraphContext[Any] | None` (existing, unchanged) — the full graph engine context object. Only set for ReAct graph turns (by `GraphContextBindingConfigurator`). This is the sole switch for ReAct graph components (GraphWorkflowProvider, KnowledgeHook, DeliverRetryHook, GraphDeliverTool).
+- `graph_instance_id: int | None` (NEW) — the graph instance ID as a serializable int. Set for both ReAct graph turns (by `GraphContextBindingConfigurator`, alongside `graph_context`) AND External graph subagents (by `ExternalTurnRunner`, without `graph_context`). This is the sole source for `SubagentAutoSendHook` to propagate graph_instance_id back.
+
+**Why not `_LightGraphContext(GraphContext[Any])`?** A `GraphContext` subclass requires `state: S` + `runtime: GraphRuntime` + `coordinator: GraphPersistenceCoordinator` (all mandatory `__init__` params). Creating dummy objects for these is wasteful and fragile — any code that accesses `ctx.graph_context.state` or `ctx.graph_context.coordinator` on an external turn would hit dummy objects. A separate `int | None` field is simpler, safer, and doesn't abuse polymorphism.
+
+**Who sets what**:
+
+| Turn scenario | `graph_context` | `graph_instance_id` | Set by |
+|---|---|---|---|
+| Normal main | None | None | (defaults) |
+| Normal subagent | None | None | (defaults) |
+| Graph node main (ReAct) | ModexGraphContext (full) | gid (int) | `GraphContextBindingConfigurator` |
+| Graph subagent (ReAct) | ModexGraphContext (full) | gid (int) | `GraphContextBindingConfigurator` |
+| Graph subagent (External) | None | gid (int) | `ExternalTurnRunner.process_locked` |
+| modexctl send | None | gid (int) | `facade.send` |
 
 #### 6.4 SubagentAutoSendHook — unified read logic
 
-Both ReAct and External subagents read `ctx.graph_context.graph_instance_id`:
+Both ReAct and External subagents read `ctx.graph_instance_id` (the first-class field, NOT `ctx.graph_context.graph_instance_id`):
 
 ```python
 # In SubagentAutoSendHook._notify_parent:
-gid = (
-    ctx.graph_context.graph_instance_id
-    if ctx.graph_context is not None
-    else None
-)
+gid = ctx.graph_instance_id  # one field, one read, no type check, no fallback
 if gid is not None:
     envelope.metadata["graph_instance_id"] = gid
 ```
 
-**One code path, no ReAct/External branch for graph_instance_id.** ReAct subagent has `graph_context` set by `GraphContextBindingConfigurator`; External subagent has `graph_context` set by `ExternalTurnRunner` (`_LightGraphContext`). Both expose `.graph_instance_id`.
+**One code path, no ReAct/External branch for graph_instance_id.** ReAct subagent has `graph_instance_id` set by `GraphContextBindingConfigurator` (alongside `graph_context`). External subagent has `graph_instance_id` set by `ExternalTurnRunner` (without `graph_context`). Both expose the same `int | None` field.
 
 #### 6.5 External agent — environment variable bridge
 
@@ -280,7 +303,7 @@ External agents (opencode) already have a graph_instance_id bridge via environme
 
 **SSE child discovery**: opencode's internal subagent forks (via SSE `session.created` with `parentID`) inherit parent's environment variables. Child env snapshots (agent.py:733-741) set `comm_kind=SUBAGENT` + `parent_session_id`. The `MODEX_TASK_ID` env var is inherited automatically → child external subagent also has graph_instance_id.
 
-**modexctl send convergence**: SendRequest (models.py:138) adds `graph_instance_id: int | None = None` field. When set, `facade.send` constructs `_LightGraphContext(gid)` on the AgentContext → SendStrategy.execute reads it → propagates to envelope.metadata. This converges CLI send with agent-to-agent communication.
+**modexctl send convergence**: SendRequest (models.py:138) adds `graph_instance_id: int | None = None` field. When set, `facade.send` sets `agent_context.graph_instance_id = gid` → SendStrategy.execute reads it → propagates to envelope.metadata. This converges CLI send with agent-to-agent communication.
 
 **modexctl deliver already works**: `deliver.py` carries `--graph-instance-id` (defaults to `MODEX_TASK_ID`). No change needed.
 
@@ -327,7 +350,7 @@ Verified: current DeliverRetryHook does NOT have this check — this is the addi
 - `get_graph_context(gid) → GraphContext | None`: returns from `_active_contexts`, or None if finalized/evicted.
 - `is_instance_active(gid) → bool`: `gid in self._active_contexts`.
 
-**Liveness is acceptable**: In normal flow, graph finalizes AFTER `BotAgentNode.execute` returns (execute's `wait_quiesce` waits for all subagents → execute returns → node.run completes → graph advances → finalize). So subagent turns always find the graph still RUNNING. In abnormal flow (crash/timeout), resolver returns None → descriptor.graph_context=None → configurators skip → subagent runs without graph config, but tree's track fallback prevents deadlock.
+**Liveness is acceptable**: In normal flow, graph finalizes AFTER `BotAgentNode.execute` returns (execute's `wait_quiesce` blocks until all subagents complete → execute returns → node.run completes → graph advances → finalize). So subagent turns always find the graph still RUNNING. In abnormal flow (crash), resolver returns None → descriptor.graph_context=None → configurators skip → subagent runs without graph config, but tree's track fallback prevents deadlock.
 
 ### 10. ModexGraphContext._node_artifacts clearing
 
@@ -341,9 +364,9 @@ Verified: current DeliverRetryHook does NOT have this check — this is the addi
 | Normal subagent | InboxPoller → _process_locked_inner | None | all skip | N/A |
 | Graph node main (ReAct) | BotAgentNode.execute → tree.deliver → InboxPoller → _process_locked_inner | resolver → ModexGraphContext (full) | all 6 apply | ✅ via SubagentAutoSendHook / SendStrategy |
 | Graph subagent (ReAct) | (parent dispatch) → InboxPoller → _process_locked_inner | resolver → ModexGraphContext (full) | ContextBinding + Approval | ✅ via SubagentAutoSendHook (Site 2) |
-| Graph subagent (External) | (parent dispatch) → InboxPoller → ExternalTurnRunner.process_locked | _LightGraphContext (gid only) | none (bypasses configurator pipeline) | ✅ via SubagentAutoSendHook (unified read, §6.4) |
-| Graph subagent (External, SSE child) | opencode internal fork → inherits MODEX_TASK_ID env | _LightGraphContext (gid from env) | none | ✅ via SubagentAutoSendHook + env inheritance (§6.5) |
-| modexctl send | CLI → facade → SendStrategy → tree.deliver | _LightGraphContext (from SendRequest field) | depends on receiver path | ✅ via SendStrategy.execute (Site 1) |
+| Graph subagent (External) | (parent dispatch) → InboxPoller → ExternalTurnRunner.process_locked | `graph_instance_id` field (int, no GraphContext) | none (bypasses configurator pipeline) | ✅ via SubagentAutoSendHook (unified read, §6.4) |
+| Graph subagent (External, SSE child) | opencode internal fork → inherits MODEX_TASK_ID env | `graph_instance_id` from env (via ExternalEnvSpec) | none | ✅ via SubagentAutoSendHook + env inheritance (§6.5) |
+| modexctl send | CLI → facade → SendStrategy → tree.deliver | `graph_instance_id` field (from SendRequest) | depends on receiver path | ✅ via SendStrategy.execute (Site 1) |
 
 ## ADR-0039 relationship
 
@@ -373,10 +396,53 @@ ADR-0039's retained sections (§2 ConfigPipeline, §3 Descriptor, §5 propagatio
 - **Pipeline model precedented**: `applies()` gate from `_CommSubProvider.applies()` (providers.py:129) + `SkillCommandHandler.can_handle()` (handlers.py:235). Mutating AgentContext from `TurnContextBuilder` itself. Ordered list from all framework pipelines.
 - **`current_input` stale docstring — open item**: core/agent.py:119-125 claims set by build, but NOT set. Not yet decided: fix docstring vs. set the field. See §4.1.
 
+### 11. Risk mitigation design
+
+#### 11.1 Resolver stale-reference degradation
+
+**Scenario**: Graph crashes/terminates → `GraphOrchestrator._active_contexts` cleaned (finally block pops gid) → `resolver(gid)` returns `None` → `desc.graph_context = None`. But `desc.graph_instance_id` is still set (from envelope.metadata — the subagent was dispatched before the graph died).
+
+**Degradation behavior**:
+- `GraphContextBindingConfigurator`: `applies() = graph_context is not None` → **skips** (nothing to bind — correct)
+- `GraphApprovalConfigurator`: `applies() = graph_instance_id is not None` → **fires** (`approval=None` — prevents deadlock, see §4 matrix correction)
+- `GraphMaxTurns/Tool/Topology/Knowledge`: `applies() = is_node_execution and agent_kind == MAIN` → **skips** (no artifacts to install without ModexGraphContext — correct, the subagent runs as a bare agent)
+- `SubagentAutoSendHook`: reads `ctx.graph_instance_id` → `GraphContextBindingConfigurator` always sets it (even when resolver fails) → `gid` is set → graph_instance_id IS in AGENT_RESULT metadata. The hook fires correctly; the parent's tree receives the result with graph metadata. Stale tracks 由 Phase 0-2 的 `recover_tree` + `on_session_evicted` 清理。
+
+**Net effect**: subagent runs without graph config (no deliver tool, no topology, no knowledge keys) but also without approval deadlock. The subagent completes naturally, its result is delivered to the parent's tree. No infinite wait, no deadlock.
+
+#### 11.2 Concurrency safety summary
+
+Verified via code exploration (6 risk points analyzed):
+
+| Risk | Status | Mitigation |
+|------|--------|------------|
+| SessionTreeManager shared state (`_running`/`_pending_input`/`_quiesce_events`) | SAFE | asyncio 单线程 — 同步 set/dict 操作在 await 之间原子。Stores 有 `asyncio.Lock` 保护自身的 read-modify-write。 |
+| `ctx.current_invocation` race under ParallelScheduler | FIXED (T15-2) | 删除字段;所有读取用 `get_execution()` ContextVar (task-local)。 |
+| `reached_end` race | SAFE | 单调布尔 (False→True, 运行中不重置)。只在 `run_async` 返回后读。 |
+| `Node._pending_delivers` stale-turn write | SAFE | Per-node serial gate 序列化 `run()`。Stale InboxPoller turn 调 `tree.deliver()` (manager), 不是 `node.deliver()` (Node) — 不同对象。 |
+| InboxPoller dispatch per-session overlap | SAFE | 结构性 single-flight via `_inflight` dict。跨 session 并发,per-session 串行。 |
+| `_active_contexts` resolver vs finally race | SAFE | asyncio 单线程 — dict.get/dict.pop 同步原子。Resolver 返回 None → 降级 (§11.1)。 |
+
+## 不做的设计 (Explicitly Rejected)
+
+以下设计在探索过程中被考虑过但最终否决,列出以避免后续理解产生错误。详细理由见 T13 "不做的设计"。
+
+- **§A wait_quiesce lost-wakeup fix**: asyncio 单线程下不可触发。不做。
+- **§B cancel_tree**: 引入 GraphOrchestrator → SessionTreeManager 跨层依赖。Phase 0-2 的 recover_tree + on_session_evicted 已覆盖清理。不做。
+- **§C crash_count guard**: crash recovery 已是收敛的原生机制,限制重试是业务策略。不做。
+- **§D wait_quiesce timeout**: 无限阻塞等待,心跳检测后续处理。不做。
+- **§E Graph-level emitter configurator**: 不涉及 streaming,YAGNI。不做。
+- **§F current_input 字段设置**: ReAct 用 history。只修 docstring。不做。
+
 ## Implementation order
 
-Phase 3 and Phase 4 must ship together (or Phase 4 slightly before Phase 3):
-- Phase 4 without Phase 3: configurators ready but execute still does inline mutation → configurators never run (no `turn_descriptor` passed) → no harm but no benefit.
-- Phase 3 without Phase 4: execute uses tree.deliver but InboxPoller-driven turn has no graph config → deliver tool missing, graph_context missing → broken.
+Phase 3 and Phase 4 must ship together (or Phase 4 slightly before Phase 3). T15 (technical debt cleanup) is a prerequisite — it fixes issues that Phase 3-4 builds on.
 
-**Recommended**: implement Phase 4 configurators + `build_runtime_and_context` param + `_process_locked_inner` descriptor construction first (can be tested with normal turns — `turn_descriptor=None` short-circuits). Then implement Phase 3 execute rewrite (flips the switch — graph node turns start passing descriptors).
+**Implementation batches** (see MAP.md for full batch breakdown):
+
+1. **Batch 0 — T15 technical debt cleanup** (prerequisite): fork() deletion + current_invocation removal + UndeliveredError/retry loop deletion. These are independent and can be verified separately.
+2. **Batch 1 — Phase 4 infrastructure**: TurnContextDescriptor + GraphTurnArtifacts + TurnContextConfigurator ABC + 6 configurators + `build_runtime_and_context` param + resolver wiring. Testable independently (`turn_descriptor=None` short-circuits).
+3. **Batch 2 — graph_instance_id propagation**: 4 injection sites + `AgentContext.graph_instance_id` field + DeliverRetryHook fix.
+4. **Batch 3 — GraphOrchestrator + SessionTreeManager extensions**: `_active_contexts` + `get_graph_context` + `ModexGraphContext` + `tree_id_for_session` + `track_consume`.
+5. **Batch 4 — pipeline_wiring binding**: `graph_context_resolver` post-construction setter.
+6. **Batch 5 — Phase 3 execute rewrite**: thin shell + delete 70-line inline mutation + delete auto-deliver + delete isinstance assert.

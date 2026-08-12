@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ..constants import GraphNode, SchedulerKind
-from ..exceptions import GraphRecursionError, RoutingError, UndeliveredError
+from ..exceptions import GraphRecursionError
 from ..execution_context import NodeExecution, reset_execution, set_execution
 from ._dispatch_utils import route_deliver_from_dispatch, validate_dispatch_target
 from .base import Scheduler
@@ -105,11 +105,7 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
 
             try:
                 await ctx.runtime.before_node(ctx, current)
-                try:  # noqa: SIM105
-                    await node.run(ctx, graph=self.graph)
-                except UndeliveredError:
-                    ctx.reached_end = False
-                    break
+                await node.run(ctx, graph=self.graph)
                 await ctx.runtime.after_node(ctx, current)
             finally:
                 reset_execution(exec_token)
@@ -119,12 +115,12 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
 
             # Deliver-only routing: read recorded dispatches for next target.
             # LINEAR is sequential — take the first target.
-            previous = current
             if self._dispatches:
                 current = next(iter(self._dispatches.keys()))
             else:
-                # Unreachable: Node.run raises UndeliveredError before this point — safety net only
-                raise RoutingError(f"Node {previous!r} did not deliver.")
+                # Dead-end: node produced no dispatches → graph did not reach END.
+                ctx.reached_end = False
+                break
 
             iteration += 1
 

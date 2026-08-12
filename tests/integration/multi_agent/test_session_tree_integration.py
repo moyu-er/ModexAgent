@@ -298,7 +298,7 @@ async def test_wait_quiesce_blocks_then_returns() -> None:
     task_env = _envelope(AgentMessageType.TASK_REQUEST, message_id="m1", target_sid="inv.sub")
     await manager.deliver("inv.sub", task_env)
 
-    wait_task = asyncio.create_task(manager.wait_quiesce("t1", timeout=5.0))
+    wait_task = asyncio.create_task(manager.wait_quiesce("t1"))
     await asyncio.sleep(0.1)
     assert not wait_task.done()
 
@@ -312,7 +312,7 @@ async def test_wait_quiesce_blocks_then_returns() -> None:
     await manager._bus.consume("root.main", limit=10)
 
     result = await asyncio.wait_for(wait_task, timeout=5.0)
-    assert result is True
+    assert result is None
 
 
 # ---------------------------------------------------------------------------

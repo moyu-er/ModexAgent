@@ -360,3 +360,120 @@ class TestStoreSubagentDynamicParent:
             assert store.has("main") is False
         finally:
             current_agent_context.reset(token)
+
+
+class TestStoreGraphModeFiltersPeers:
+    """In graph mode (``graph_instance_id`` set on AgentContext), the store
+    filters out NORMAL (peer) targets — only SUBAGENT targets remain visible.
+
+    Graph nodes communicate via ``deliver`` (graph edges), not peer messaging.
+    The agent must not perceive peers: they disappear from ``list()``,
+    ``has()``, ``get()``, and the description. Attempting to reach a peer
+    returns ``None`` (the tool surfaces "not a valid target").
+    """
+
+    @staticmethod
+    def _graph_ctx() -> AgentContext:
+        from modex_agent.core.agent import AgentContext
+        from modex_agent.core.session_id import SessionInfo
+        from modex_agent.core.tool_manager import InMemoryToolManager
+        from modex_agent.memory.history import ListMessageHistory
+
+        return AgentContext(
+            system_prompt="",
+            history=ListMessageHistory([]),
+            tool_manager=InMemoryToolManager(),
+            session=SessionInfo.from_str("conv-1.researcher"),
+            graph_instance_id=42,
+        )
+
+    @staticmethod
+    def _non_graph_ctx() -> AgentContext:
+        from modex_agent.core.agent import AgentContext
+        from modex_agent.core.session_id import SessionInfo
+        from modex_agent.core.tool_manager import InMemoryToolManager
+        from modex_agent.memory.history import ListMessageHistory
+
+        return AgentContext(
+            system_prompt="",
+            history=ListMessageHistory([]),
+            tool_manager=InMemoryToolManager(),
+            session=SessionInfo.from_str("conv-1.researcher"),
+        )
+
+    def test_list_filters_out_normal_targets_in_graph_mode(self) -> None:
+        from modex_agent.core.agent import current_agent_context
+
+        store = CommunicationTargetStore()
+        store.add(_normal("peer-main", "Planning partner"))
+        store.add(_subagent("scout", "Fast recon"))
+
+        token = current_agent_context.set(self._graph_ctx())
+        try:
+            names = [t.name for t in store.list()]
+        finally:
+            current_agent_context.reset(token)
+
+        assert "scout" in names
+        assert "peer-main" not in names
+
+    def test_has_returns_false_for_peer_in_graph_mode(self) -> None:
+        from modex_agent.core.agent import current_agent_context
+
+        store = CommunicationTargetStore()
+        store.add(_normal("peer-main"))
+        store.add(_subagent("scout"))
+
+        token = current_agent_context.set(self._graph_ctx())
+        try:
+            assert store.has("scout") is True
+            assert store.has("peer-main") is False
+        finally:
+            current_agent_context.reset(token)
+
+    def test_get_returns_none_for_peer_in_graph_mode(self) -> None:
+        from modex_agent.core.agent import current_agent_context
+
+        store = CommunicationTargetStore()
+        store.add(_normal("peer-main", "Planning partner"))
+        store.add(_subagent("scout", "Fast recon"))
+
+        token = current_agent_context.set(self._graph_ctx())
+        try:
+            assert store.get("scout") is not None
+            assert store.get("peer-main") is None
+        finally:
+            current_agent_context.reset(token)
+
+    def test_description_omits_peer_section_in_graph_mode(self) -> None:
+        from modex_agent.core.agent import current_agent_context
+
+        store = CommunicationTargetStore()
+        store.add(_normal("peer-main", "Planning partner"))
+        store.add(_subagent("scout", "Fast recon"))
+
+        token = current_agent_context.set(self._graph_ctx())
+        try:
+            desc = store.description
+        finally:
+            current_agent_context.reset(token)
+
+        assert "scout" in desc
+        assert "peer-main" not in desc
+        assert "Peer targets" not in desc
+
+    def test_peers_visible_again_when_graph_mode_cleared(self) -> None:
+        from modex_agent.core.agent import current_agent_context
+
+        store = CommunicationTargetStore()
+        store.add(_normal("peer-main"))
+        store.add(_subagent("scout"))
+
+        token = current_agent_context.set(self._graph_ctx())
+        store.description  # populate cache in graph mode
+        current_agent_context.reset(token)
+
+        # Non-graph context — peers visible again
+        names = [t.name for t in store.list()]
+        assert "peer-main" in names
+        assert "scout" in names

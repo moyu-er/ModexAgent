@@ -102,13 +102,6 @@ class KnowledgeHook(BeforeTurnHook, AfterTurnHook):
         if state is None:
             return
 
-        if TurnCustomKey.CONTINUATION_REQUEST in state.custom:
-            return
-
-        max_turns = state.custom.get(TurnCustomKey.MAX_TURNS, 1)
-        if state.turn_attempt >= max_turns:
-            return
-
         require_read = state.custom.get(TurnCustomKey.GRAPH_KNOWLEDGE_REQUIRE_READ, False)
         require_write = state.custom.get(TurnCustomKey.GRAPH_KNOWLEDGE_REQUIRE_WRITE, False)
 
@@ -127,7 +120,6 @@ class KnowledgeHook(BeforeTurnHook, AfterTurnHook):
         if not missing:
             return
 
-        state.custom[TurnCustomKey.CONTINUATION_REQUEST] = True
         reminder = (
             "You ended without using the knowledge base tool. "
             f"Your node configuration requires knowledge {missing[0]}"
@@ -136,8 +128,15 @@ class KnowledgeHook(BeforeTurnHook, AfterTurnHook):
             "before finishing your turn."
         )
         await ctx.history.append(
-            {"role": str(MessageRole.SYSTEM_REMINDER), "content": wrap_system_reminder(reminder)}
+            {
+                "role": str(MessageRole.SYSTEM_REMINDER),
+                "content": wrap_system_reminder(reminder),
+            }
         )
+
+        max_turns = state.custom.get(TurnCustomKey.MAX_TURNS, 3)
+        if state.turn_attempt < max_turns:
+            state.custom[TurnCustomKey.CONTINUATION_REQUEST] = True
 
     # -- Helpers ---------------------------------------------------------
 

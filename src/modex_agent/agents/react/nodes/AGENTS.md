@@ -15,7 +15,7 @@ Graph node implementations for the ReAct agent execution loop. Each node is a si
 | `before_turn.py` | `BeforeTurnNode` — increments `turn_attempt`, resets `iteration = 0`, dispatches `BEFORE_TURN` hook, routes to LLM |
 | `llm.py` | `LLMNode` — assembles messages, calls the LLM provider (streaming or non-streaming), dispatches hooks/interceptors via `ctx.runtime.*`, emits iteration events |
 | `tool.py` | `ToolNode` — classifies tool calls for approval, suspends for approval when `PENDING` via `ctx.interrupt(tx)`, batch-executes approved calls, routes back to LLM or AFTER |
-| `after_turn.py` | `AfterTurnNode` — constructs `AgentResult`, writes `state.result`, dispatches `AFTER_TURN` hook (with `{"result": result}` payload), checks `CONTINUATION_REQUEST` flag, routes to BEFORE (continuation) or END. No hardcoded deliver-reminder (migrated to `DeliverRetryHook`) |
+| `after_turn.py` | `AfterTurnNode` — constructs `AgentResult`, writes `state.result`, dispatches `AFTER_TURN` hook (with `{"result": result}` payload), then consumes two one-shot flags (`CONTINUATION_REQUEST` + `CONTINUATION_RENEW_MAX_TURNS`) to decide continuation. Routes to BEFORE (continuation) or END (terminal). When `CONTINUATION_RENEW_MAX_TURNS` is set and `turn_attempt >= MAX_TURNS`, the gate increments `MAX_TURNS` by 1 (watchdog renewal). Default `MAX_TURNS` is 3. No hardcoded deliver-reminder (migrated to `DeliverRetryHook`) |
 | `end.py` | `EndNode` — reads `state.result` (raises `RuntimeError` if None), emits completion events, dispatches `END_NODE_TURN` hook, delivers to `GraphNode.END` |
 | `__init__.py` | Re-exports `StartNode`, `LLMNode`, `ToolNode`, `EndNode` (`BeforeTurnNode`/`AfterTurnNode` are imported directly from their modules by `graph.py`) |
 

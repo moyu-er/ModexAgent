@@ -13,7 +13,7 @@ Covers:
 - GraphContext.dispatch: works under both LINEAR and PARALLEL (both
   schedulers register a dispatch handler). Raises RuntimeError if no
   handler is registered.
-- GraphContext.scheduler_kind: defaults to LINEAR, propagates via fork.
+- GraphContext.scheduler_kind: defaults to LINEAR.
 - Architecture guard: Scheduler is ABC (not Protocol), LinearScheduler
   inherits Scheduler.
 - Zero behaviour change: Graph.compile(scheduler=LINEAR) == Graph.compile().
@@ -408,26 +408,6 @@ class TestGraphContextDispatch:
     def test_scheduler_kind_defaults_to_linear(self) -> None:
         ctx = make_ctx(CounterState())
         assert ctx.scheduler_kind == SchedulerKind.LINEAR
-
-    def test_scheduler_kind_propagates_through_fork(self) -> None:
-        ctx = GraphContext(
-            state=CounterState(),
-            runtime=make_ctx(CounterState()).runtime,
-            coordinator=make_coordinator(),
-            scheduler_kind=SchedulerKind.PARALLEL,
-        )
-        sub = ctx.fork(state=CounterState())
-        assert sub.scheduler_kind == SchedulerKind.PARALLEL
-
-    def test_scheduler_kind_inherited_through_fork_default(self) -> None:
-        ctx = make_ctx(CounterState())
-        sub = ctx.fork(state=CounterState())
-        assert sub.scheduler_kind == SchedulerKind.LINEAR
-
-    def test_fork_overrides_scheduler_kind(self) -> None:
-        ctx = make_ctx(CounterState())
-        sub = ctx.fork(state=CounterState(), scheduler_kind=SchedulerKind.PARALLEL)
-        assert sub.scheduler_kind == SchedulerKind.PARALLEL
 
 
 # ── Architecture guard ────────────────────────────────────────────────────

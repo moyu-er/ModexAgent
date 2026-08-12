@@ -102,6 +102,7 @@ if TYPE_CHECKING:
         ExecutionStrategyRegistry,
     )
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
+    from modex_graph.context import GraphContext
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,27 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════
 # Orchestrator
 # ═══════════════════════════════════════════════════════════════════════════
+
+
+def _make_graph_context_resolver(
+    workspace_resolver: WorkspaceResolverCell,
+) -> Callable[[int], GraphContext[Any] | None]:
+    """Build a lazy graph-context resolver closure for the main pipeline.
+
+    Defers ``PoolWorkspaceResources`` resolution + ``graph_orchestrator``
+    dereference to invocation time so the closure stays robust against
+    late workspace materialization (the cell is filled after pool creation)
+    and orchestrator LRU eviction (F6-verified pattern).
+    """
+
+    def resolve(gid: int) -> GraphContext[Any] | None:
+        resources = workspace_resolver.resolve_workspace()
+        orchestrator = resources.graph_orchestrator
+        if orchestrator is None:
+            return None
+        return orchestrator.get_graph_context(gid)
+
+    return resolve
 
 
 async def create_pool(
@@ -508,6 +530,11 @@ async def create_pool(
             model_choice_registry=model_choice_registry,
             cassette_recorder=cassette_recorder,
             control_origin=control_origin,
+            graph_context_resolver=(
+                _make_graph_context_resolver(workspace_resolver)
+                if workspace_resolver is not None
+                else None
+            ),
         )
     else:
         # external path: the external agent has no tool surface and

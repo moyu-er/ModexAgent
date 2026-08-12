@@ -2,8 +2,8 @@
 
 Each asyncio Task gets its own ``NodeExecution`` slot — concurrent tasks
 never clobber each other's invocation identity. This replaces the old
-shared ``ctx._current_instance`` / ``ctx.current_invocation`` fields that
-raced under ``ParallelScheduler`` when concurrent tasks yielded.
+shared ``ctx._current_instance`` field that raced under
+``ParallelScheduler`` when concurrent tasks yielded.
 
 Lifecycle: the scheduler sets the ContextVar before calling ``Node.run()``
 and resets it in ``finally``. Token-based reset enables proper nesting
@@ -34,8 +34,8 @@ class NodeExecution:
       ``ctx.dispatch()`` for source identification. Replaces the old
       shared ``ctx._current_instance``.
     - ``invocation``: the ``InvocationContext`` returned by
-      ``begin_invocation``, used by ``Node._submit()`` and
-      ``ctx.scratch``. Replaces the old shared ``ctx.current_invocation``.
+       ``begin_invocation``, used by ``Node._submit()`` and
+       ``ctx.scratch``.
     """
 
     __slots__ = ("instance_id", "invocation")

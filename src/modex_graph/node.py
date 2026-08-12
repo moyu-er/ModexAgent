@@ -11,8 +11,7 @@ Deliver/submit dual-method API:
 
 Three-layer method split:
 
-- `run` (framework-fixed): orchestrate integrate -> execute (with undelivered
-  detection retry) -> submit.
+- `run` (framework-fixed): orchestrate integrate -> execute -> submit.
 - `_deliver` (framework-fixed): accumulate + persist (ABC-backed).
 - `deliver` (node-custom, overridable): actual accumulation logic (default:
   append to pending list).
@@ -23,10 +22,8 @@ Three-layer method split:
 
 Data flow: `integrated_input` is an EXPLICIT parameter to `execute`, NOT an
 instance attribute. `run()` creates a local `integrated` variable and passes
-it to `execute()`. On retry (undelivered detection), a NEW `IntegratedInput`
-is created and passed to the next `execute()` call — the original is never
-mutated. `deliver()` requires `ctx` as an explicit parameter (no implicit
-instance-attribute fallback).
+it to `execute()`. `deliver()` requires `ctx` as an explicit parameter (no
+implicit instance-attribute fallback).
 """
 
 from __future__ import annotations
@@ -42,7 +39,7 @@ from .constants import (
     GraphNode,
     NodeTrigger,
 )
-from .exceptions import GraphBubbleUp, GraphInterrupt, RoutingError, UndeliveredError
+from .exceptions import GraphBubbleUp, GraphInterrupt, RoutingError
 from .execution_context import get_execution
 from .integration import (
     DefaultInputIntegrator,
@@ -87,12 +84,6 @@ class Node[S: "GraphState"](ABC):
 
     # ── Deliver/submit attributes ───────────────────────────────────
     input_integrator: InputIntegrator = DefaultInputIntegrator()
-
-    # Max retries for undelivered detection. If a node's `execute`
-    # produces no delivers, the framework retries with error feedback injected
-    # into the integrated input. After `max_retry` retries (so max_retry + 1
-    # total executions), `RoutingError` is raised as a safety net.
-    max_retry: int = 3
 
     # Per-execution state (reset by run). NOT concurrency-safe — a single Node
     # instance shared across concurrent executions would race. Safety is
@@ -144,7 +135,7 @@ class Node[S: "GraphState"](ABC):
     ) -> None:
         """Framework entry point. Store-driven lifecycle via ctx.node_state_store:
 
-        begin → integrate → execute (with undelivered detection retry) →
+        begin → integrate → execute →
         complete/cancel/suspend/crash → finalize.
 
         Called by the scheduler (``graph=compiled``) and by direct test
@@ -170,16 +161,11 @@ class Node[S: "GraphState"](ABC):
            - Resume: use ``prev.state_json`` as integrated input.
            - Normal: collect consumable delivers, mark consumed, integrate
              via ``input_integrator``.
-        4. Retry loop (undelivered detection):
-           - Reset per-execution state (``_pending_delivers``).
-           - Execute (node custom logic — may call ``self.deliver()``),
-             passing ``integrated`` as an explicit parameter.
-           - Collect delivers. If any accumulated -> break (normal flow).
-           - If no delivers: create a NEW ``IntegratedInput`` with error
-             feedback prepended (the original is never mutated) and
-             re-execute. Repeat up to ``max_retry`` times. After
-             ``max_retry`` retries without delivers, raise ``RoutingError``
-             (safety net).
+        4. Execute (single call): reset per-execution state
+           (``_pending_delivers``), call ``execute(ctx, integrated)``.
+           Dead-end detection (no delivers produced) is handled by the
+           schedulers — a node that delivers nothing produces no dispatches,
+           so the graph terminates with ``ctx.reached_end = False`` (FAILED).
         5. Submit (framework auto-dispatch by ``next_node`` grouping).
         6. ``complete_invocation`` — save COMPLETED + promote delivers.
 
@@ -206,7 +192,6 @@ class Node[S: "GraphState"](ABC):
 
         # Begin invocation (parent_version computed internally).
         invocation = store.begin_invocation(self.node_id)
-        ctx.current_invocation = invocation
 
         exec_ctx = get_execution()
         if exec_ctx is None:
@@ -242,44 +227,10 @@ class Node[S: "GraphState"](ABC):
                 resume_snapshot=resume_snapshot,
             )
 
-            # Execute with undelivered detection retry.
-            retry_count = 0
-            while True:
-                self._pending_delivers = []
-
-                await self.execute(ctx, integrated)
-
-                collected = self._collect_delivers(ctx)
-
-                if collected:
-                    break
-
-                if self.name == GraphNode.END:
-                    break
-
-                if retry_count >= self.max_retry:
-                    raise UndeliveredError(
-                        f"Node {self.name!r} produced no delivers after "
-                        f"{retry_count + 1} executions (max_retry={self.max_retry}). "
-                        f"The node forgot to call deliver() during execute()."
-                    )
-
-                retry_count += 1
-                error_feedback = IntegratedPayload(
-                    source_node=FrameworkPayloadSource.FRAMEWORK,
-                    content={
-                        "error": "undelivered",
-                        "message": (
-                            f"Previous execution of node {self.name!r} produced no "
-                            f"delivers. You MUST call deliver(content, next_node, ctx) "
-                            f"during execute(). Retry {retry_count}/{self.max_retry}."
-                        ),
-                        "retry_count": retry_count,
-                        "max_retry": self.max_retry,
-                    },
-                    metadata={"error_type": "undelivered", "retry": retry_count},
-                )
-                integrated = self.input_integrator.integrate([error_feedback])
+            # Execute (single call — schedulers detect dead-end natively
+            # when no dispatches are produced).
+            self._pending_delivers = []
+            await self.execute(ctx, integrated)
 
             # Submit (framework auto-dispatch by next_node grouping).
             if self.name != GraphNode.END:

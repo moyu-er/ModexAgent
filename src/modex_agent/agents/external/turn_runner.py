@@ -177,6 +177,10 @@ class ExternalTurnRunner(TurnRunner):
             identity=turn_identity,
         )
 
+        gid = input_msg.metadata.get("graph_instance_id")
+        if gid is not None:
+            agent_context.graph_instance_id = gid
+
         # 3. Direct-input path: external CLI reads this, never history.
         if input_msg.metadata.get("source_agent"):
             # Approved exception: per-turn history is temporary, never persisted

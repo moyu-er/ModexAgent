@@ -63,7 +63,7 @@ class ModexGraphContext(GraphContext[ModexGraphState]):
 - `TurnContextBuilder` gains `graph_context_resolver: Callable[[int], GraphContext | None]` (post-construction setter, closure binding to `orchestrator.get_graph_context(gid)`). Wiring by pool/workspace builder post-construction.
 - Configurator calls resolver(gid) → `ModexGraphContext` → `get_node_artifacts(node_name)` → installs. Configurator does NOT touch `ModexGraphContext` type — resolver returns `GraphContext` (framework type), configurator reads artifacts from descriptor (pre-resolved by `_process_locked_inner`).
 
-**Relationship to unified data flow (T14 §6)**: `ModexGraphContext` is the ReAct-side resolution target — when `_process_locked_inner` receives `graph_instance_id` from `envelope.metadata`, it calls `resolver(gid)` to get the full `ModexGraphContext` (with artifacts). This is the "resolution" half of the propagation/resolution separation. The "propagation" half (graph_instance_id in envelope.metadata) is handled by `SendStrategy.execute` + `SubagentAutoSendHook` + `ExternalTurnRunner` (T14 §6.2). External agents use `_LightGraphContext` (gid only, no artifacts) instead of `ModexGraphContext` — see T14 §6.3.
+**Relationship to unified data flow (T14 §6)**: `ModexGraphContext` is the ReAct-side resolution target — when `_process_locked_inner` receives `graph_instance_id` from `envelope.metadata`, it calls `resolver(gid)` to get the full `ModexGraphContext` (with artifacts). This is the "resolution" half of the propagation/resolution separation. The "propagation" half (graph_instance_id in envelope.metadata) is handled by `SendStrategy.execute` + `SubagentAutoSendHook` + `ExternalTurnRunner` (T14 §6.2). External agents set `agent_context.graph_instance_id` directly (no GraphContext object, no _LightGraphContext) — see T14 §6.3.
 
 #### D2 — tree.deliver gains `track_consume` parameter
 
@@ -108,8 +108,7 @@ After T13 rewrite, execute doesn't call `runner.execute_turn` directly — turns
 #### D5 — Crash recovery: NOT designed in execute
 
 **Decision**: execute does NOT contain crash recovery logic. Relies on modex_graph's existing recovery:
-- `node.run` retry loop (max_retry, `modex_graph/node.py:136-303`)
-- `GraphOrchestrator.recover_crashed()` + `bootstrap` re-runs crashed instances
+- `GraphOrchestrator.recover_crashed()` + `bootstrap` (the sole recovery mechanism — queries store, derives seeds, restores state)
 - SessionTree's `recover_tree` (Phase 0-2 T07) cleans up残留 DISPATCHED tracks + RUNNING versions
 
 **Normal flow assumption**: execute is designed for `deliver → wait_quiesce → return`. If the process crashes mid-wait, modex_graph's recovery takes over. CACHED session retains history. Tree's recover_tree handles track cleanup.
@@ -202,7 +201,7 @@ async def execute(self, ctx: GraphContext[Any], integrated_input: Any) -> None:
     await self._tree.deliver(
         session.session_id, envelope, track_consume=True
     )
-    await self._tree.wait_quiesce(tree_id, timeout=self._node_timeout)
+    await self._tree.wait_quiesce(tree_id)
     # return — no deliver check, no auto-deliver
     # graph COMPLETED/FAILED judged by ctx.reached_end (Phase 0 T11)
 ```
@@ -211,13 +210,77 @@ async def execute(self, ctx: GraphContext[Any], integrated_input: Any) -> None:
 
 - **T11 already delivered**: `graph_orchestrator.py:340-345` has `ctx.reached_end` check → COMPLETED/FAILED. Verified.
 - **SessionTree already delivered**: `multi_agent/session_tree/` exists. `SubagentAutoSendHook` already calls `self._tree.deliver(...)` at L478. Verified.
-- **`wait_quiesce` ALREADY implemented**: `manager.py:219-233`, signature `async def wait_quiesce(self, tree_id: str, timeout: float) -> bool`. Phase 3 uses it directly (no new method needed). The `timeout` parameter is required — execute skeleton should pass a timeout value.
-- **`track_consume` NOT implemented**: zero matches — Phase 3 adds this param to `tree.deliver`.
-- **`ModexGraphContext` NOT implemented**: zero matches — Phase 3 creates this class. **GraphOrchestrator.run_instance** (graph_orchestrator.py:330) currently creates `GraphContext(...)`. Phase 3 changes this to create `ModexGraphContext(...)` instead (business layer construction, stored in `_active_contexts`). The `_active_contexts` dict is new, parallel to existing `_active_instances`.
-- **`GraphOrchestrator._active_contexts` / `get_graph_context` NOT implemented**: zero matches — Phase 3 adds these.
-- **`TurnContextBuilder.graph_context_resolver` wiring**: post-construction setter, called by pool/workspace wiring code after both TurnContextBuilder and GraphOrchestrator are constructed. The closure captures `orchestrator.get_graph_context`.
+- **`wait_quiesce` 需修改签名**: 当前 `manager.py:226` 签名 `wait_quiesce(self, tree_id: str, timeout: float) -> bool` — 有 timeout 参数,返回 bool。Phase 3 修改为 `wait_quiesce(self, tree_id: str) -> None` — 无限阻塞,无 timeout,无返回值。删除 deadline/remaining/wait_for 逻辑,改为 `await event.wait()` 无限等待。
+- **`track_consume` NOT implemented**: zero matches — Phase 3 adds `*, track_consume: bool = False` to `tree.deliver`.
+- **`tree_id_for_session` NOT implemented**: zero matches — Phase 3 adds public method `tree_id_for_session(session_id) -> str | None` (thin wrapper over `_node_store.get`, read-only).
+- **`ModexGraphContext` NOT implemented**: zero matches — Phase 3 creates this class in `src/modex_agent/orchestration/`. **GraphOrchestrator.run_instance** (graph_orchestrator.py:330) currently creates `GraphContext(...)`. Phase 3 changes this to create `ModexGraphContext(...)`.
+- **`GraphOrchestrator._active_contexts` / `get_graph_context` NOT implemented**: zero matches — Phase 3 adds these, parallel to `_active_instances`.
+- **`TurnContextBuilder.graph_context_resolver` wiring**: post-construction setter in `pipeline_wiring.py`, NOT in `factory.py` directly (factory calls `_wire_main_pipeline` at L492 which is defined in `pipeline_wiring.py`).
+- **fork() dead code**: T15-1 deletes `GraphContext.fork()` entirely — zero production call sites, only 9 test-only calls. ModexGraphContext does NOT need fork() override (nothing calls it).
+- **`ctx.current_invocation` technical debt**: T15-2 removes the field. node.py:209 write is redundant (ContextVar already set at L211-222). Only production read (context.py:336) has ContextVar fallback. Phase 3-4 new code uses `get_execution()` exclusively.
+- **UndeliveredError + retry loop**: T15-3 deletes both. Scheduler native dead-end detection covers it (详见"不做的设计"§B)。
 
-## Open items (deferred, not blocking)
+## Closed items (previously open)
 
-- **Timeout for wait_quiesce**: if agent stuck in ReAct loop, tree never quiesces. `wait_quiesce` should accept a timeout parameter (tree-level). Timeout → execute returns → graph FAILED via `reached_end=False`. Implementation detail, not design decision.
-- **Message injection (L144-166) placement**: stays in execute as pre-deliver step, or moves to a configurator. Tentatively stays — it's node-lifecycle logic (re-execution detection), not per-turn configuration.
+- **wait_quiesce 阻塞语义**: DECIDED — 无限阻塞等待,不设 timeout。`wait_quiesce` 阻塞直到 tree quiesce(no DISPATCHED tracks + no running + no pending_input)。Stuck agent(如 ReAct 死循环)场景后续通过心跳检测处理,不在 Phase 3-4 设计范围。
+- **Message injection (L144-166) placement**: DECIDED — stays in execute as pre-deliver step. It's node-lifecycle logic (re-execution detection via `is_re_execution`), not per-turn configuration. Configurators handle per-turn config; execute handles node-lifecycle.
+
+### D10 — Retry behavior clarification (UndeliveredError chain)
+
+T13 D3 says "agent doesn't deliver → graph FAILED"。在 T15-3 删除 retry loop + UndeliveredError 后,链路简化为:
+
+1. Agent doesn't deliver → `_collect_delivers` returns empty → `submit` dispatches nothing → `complete_invocation`
+2. Scheduler 检测 dead-end:
+   - **LinearScheduler**: `self._dispatches` 为空 → `ctx.reached_end = False` → `break` → 返回
+   - **ParallelScheduler**: 无新 instance → `_ready` 空 + `running` 空 → 循环退出 → 返回
+3. `ctx.reached_end` 保持 False → orchestrator 映射 FAILED
+
+**Node 没 deliver = graph 没到 END = FAILED**。这是 graph 调度的原生 fail 机制,不需要 UndeliveredError。
+
+### D11 — Technical debt cleanup (see T15)
+
+Phase 3-4 implementation includes cleanup of identified technical debt. See `15-technical-debt-cleanup.md` for the full ticket:
+
+- **T15-1**: Delete `GraphContext.fork()` (zero production call sites, 9 test-only calls)
+- **T15-2**: Remove `ctx.current_invocation` field (write at node.py:209 is redundant — ContextVar already set at L211-222; only production read at context.py:336 has fallback; 8 test reads in 1 file)
+- **T15-3**: Delete `UndeliveredError` class + Node.run retry loop + `max_retry` attribute. Scheduler native dead-end detection covers it. LinearScheduler `else: raise RoutingError` 改为 `ctx.reached_end = False; break`。6 个 retry 测试删除/重写。
+
+## 不做的设计 (Explicitly Rejected)
+
+以下设计在探索过程中被考虑过但最终否决,列出以避免后续理解产生错误。
+
+### §A — wait_quiesce lost-wakeup fix (不做)
+
+**考虑过**: 重排序 `event.clear()` 到 `is_quiesced()` 之前,防止 signal 在 `is_quiced` 的 await 期间被 clear 抹掉。
+
+**否决理由**: asyncio 单线程下,`is_quiesced` 返回后到 `event.clear()` 之间全是同步操作(无 await 点)。`_signal(Event.set)` 只能在 await 点执行。如果 `_signal` 在 `is_quiced` 的 await 期间执行,说明对应的 `on_dispatch_end` 也执行了 `discard` + `close_tracks`,is_quiced 会读到更新后的状态。如果仍有其他 running,那些 running 完成时会再调 `_signal`。lost-wakeup 在当前 asyncio 单线程模型中不可触发。
+
+### §B — cancel_tree (不做)
+
+**考虑过**: Graph 终止时调 `tree_manager.cancel_tree(tree_id)`,关闭所有未关闭的 DISPATCHED tracks,防止 stale subagent delivers 导致 tree 永远 ACTIVE。
+
+**否决理由**: 引入 `GraphOrchestrator → SessionTreeManager` 跨层依赖(graph 引擎知道 tree)。graph 的生命周期是 Python 对象生命周期管理(`run_instance` 的 ctx 创建/存储/清除)。tree 是 pool 级别对象,不随 graph 终止。Phase 0-2 已有 `recover_tree`(crash recovery 时清理 stale tracks)+ `on_session_evicted`(session GC 时清理)。stale delivers 不影响新 graph(新 graph = 新 graph_instance_id = 新 tree)。
+
+### §C — crash_count guard (不做)
+
+**考虑过**: `recover_crashed()` 新增 `crash_count` 字段 + `MAX_RECOVERY_ATTEMPTS = 3` 阈值,防止 consistently-crashing instance 在每次 restart 时无限重试。
+
+**否决理由**: crash recovery 已经是收敛的原生机制(bootstrap + version chain + persistence),不是单独的 retry。`recover_crashed` 是 thin wrapper,委托给 `run_instance → bootstrap → 正常调度`。限制重试次数是业务策略,不是框架职责。如果用户想限制,可在调用层(`recover_crashed` 的 caller)实现,不需要框架 schema 变更。
+
+### §D — wait_quiesce timeout (不做)
+
+**考虑过**: `wait_quiesce` 加 timeout 参数,超时返回 False,execute 处理超时场景。
+
+**否决理由**: Stuck agent 场景后续通过心跳检测处理(不在 Phase 3-4 范围)。timeout 引入额外的 stale-turn 处理复杂度。无限阻塞等待是正确语义 — tree quiesce 是唯一返回条件。
+
+### §E — Graph-level emitter configurator (不做)
+
+**考虑过**: Phase 4 加 `GraphEmitterConfigurator` 为 graph nodes 安装 graph-specific emitter。
+
+**否决理由**: 当前 `BotAgentNode.execute` 不覆盖 emitter(用 pool 默认)。Phase 3-4 不涉及 streaming(ADR-0039 §12 deferred)。YAGNI。
+
+### §F — current_input 字段设置 (不做)
+
+**考虑过**: `build_runtime_and_context` 设置 `agent_context.current_input`(docstring 声称会设但实际未设)。
+
+**否决理由**: ReAct agent 用 history,不用 current_input。external agent 集成时再决定。Phase 3-4 只修 docstring(T15)。

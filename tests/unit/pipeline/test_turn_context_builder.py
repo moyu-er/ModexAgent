@@ -21,6 +21,8 @@ from modex_agent.commands.models import (
     CommandParseResult,
     SlashCommandInvocation,
 )
+from modex_agent.core.agent import AgentCommKind, AgentContext
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.context import ContextState, InMemoryContextManager
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
@@ -28,6 +30,10 @@ from modex_agent.core.types import InputMessage
 from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder, TurnRequest
+from modex_agent.pipeline.turn_context_config import (
+    TurnContextConfigPipeline,
+    TurnContextDescriptor,
+)
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.store import InMemoryTurnStateStore
 
@@ -496,6 +502,92 @@ async def test_build_runtime_and_context_inline_attachments_defaults_empty() -> 
 
     assert ctx.runtime is not None
     assert ctx.runtime.state.custom[TurnCustomKey.INLINE_ATTACHMENTS] == []
+
+
+# ---------------------------------------------------------------------------
+# build_runtime_and_context — turn_descriptor + config_pipeline wiring
+# ---------------------------------------------------------------------------
+
+
+class _SpyPipeline(TurnContextConfigPipeline):
+    """Records ``configure()`` calls for assertion."""
+
+    def __init__(self) -> None:
+        super().__init__(configurators=[])
+        self.calls: list[tuple[AgentContext, TurnContextDescriptor]] = []
+
+    def configure(self, ctx: AgentContext, desc: TurnContextDescriptor | None) -> None:
+        if desc is not None:
+            self.calls.append((ctx, desc))
+
+
+def _make_descriptor() -> TurnContextDescriptor:
+    return TurnContextDescriptor(
+        agent_kind=AgentCommKind.NORMAL,
+        execution_strategy=ExecutionStrategyKind.REACT,
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_runtime_and_context_turn_descriptor_default_does_not_call_pipeline() -> None:
+    """Omitting turn_descriptor (default None) never invokes the pipeline — backward compat."""
+    pipeline = _SpyPipeline()
+    builder = _make_builder(
+        agent=_agent_mock(),
+        turn_store=InMemoryTurnStateStore(),
+    )
+    builder.config_pipeline = pipeline
+
+    ctx, _emitter = builder.build_runtime_and_context(
+        SessionInfo.from_str("s:main"),
+        ContextState(),
+        MagicMock(wrap_governance=MagicMock(return_value=None)),
+    )
+
+    assert ctx is not None
+    assert pipeline.calls == []
+
+
+@pytest.mark.asyncio
+async def test_build_runtime_and_context_turn_descriptor_calls_pipeline() -> None:
+    """When turn_descriptor is provided and pipeline is wired, configure(ctx, desc) fires once."""
+    pipeline = _SpyPipeline()
+    builder = _make_builder(
+        agent=_agent_mock(),
+        turn_store=InMemoryTurnStateStore(),
+    )
+    builder.config_pipeline = pipeline
+    desc = _make_descriptor()
+
+    ctx, _emitter = builder.build_runtime_and_context(
+        SessionInfo.from_str("s:main"),
+        ContextState(),
+        MagicMock(wrap_governance=MagicMock(return_value=None)),
+        turn_descriptor=desc,
+    )
+
+    assert len(pipeline.calls) == 1
+    called_ctx, called_desc = pipeline.calls[0]
+    assert called_ctx is ctx
+    assert called_desc is desc
+
+
+@pytest.mark.asyncio
+async def test_build_runtime_and_context_turn_descriptor_without_pipeline_is_noop() -> None:
+    """turn_descriptor provided but no pipeline wired — graceful no-op, no crash."""
+    builder = _make_builder(
+        agent=_agent_mock(),
+        turn_store=InMemoryTurnStateStore(),
+    )
+
+    ctx, _emitter = builder.build_runtime_and_context(
+        SessionInfo.from_str("s:main"),
+        ContextState(),
+        MagicMock(wrap_governance=MagicMock(return_value=None)),
+        turn_descriptor=_make_descriptor(),
+    )
+
+    assert ctx is not None
 
 
 # ---------------------------------------------------------------------------

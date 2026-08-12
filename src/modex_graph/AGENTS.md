@@ -75,7 +75,7 @@ Framework code (checkpoint, recovery, bootstrap) writes these fields.
 
 `ctx.state.node_scratch: dict[str, Any]` provides per-node working state.
 Each node writes only to `node_scratch[self.node_id]` — key separation
-provides natural isolation without fork/clone. The `ctx.scratch` property
+provides natural isolation without context copying. The `ctx.scratch` property
 provides a scoped accessor: `ctx.scratch["key"] = value` resolves to
 `ctx.state.node_scratch[current_node_id]["key"]` automatically. Reading
 other nodes' scratch is PROHIBITED — cross-node data must flow through
@@ -112,7 +112,7 @@ enforces it via `_is_node_running(target)` in `_handle_dispatch`.
 | `nodes/human_input_node.py` | `HumanInputNode` — suspends for human input via `GraphInterrupt` |
 | `nodes/graph_as_node.py` | `GraphAsNode` — embeds a sub-graph as a Node |
 | `compiled_graph.py` | `CompiledGraph[S]` — compiled graph with nodes, edges, entry_node |
-| `context.py` | `GraphContext[S]` — runtime, coordinator, dispatch handler, user_input, current_invocation (invocation-local); state is framework-managed with per-node node_scratch |
+| `context.py` | `GraphContext[S]` — runtime, coordinator, dispatch handler, user_input; state is framework-managed with per-node node_scratch; invocation identity via ContextVar (`execution_context.py`) |
 | `persistence/node_state_store.py` | `NodeStateStore` ABC + Null/InMemory/Sqlite implementations, version chain + CAS |
 | `persistence/deliver_store.py` | `DeliverStore` ABC + Null/InMemory/Sqlite, accumulate/query_consumable/mark_consumed/promote |
 | `persistence/persistence_coordinator.py` | `GraphPersistenceCoordinator` — route_deliver, collect_consumable_delivers, rebuild_main_state; single emission seam for node-level `GraphOutput` events (`emit_output` / `set_output_adapter` / `drain_output_events`) |

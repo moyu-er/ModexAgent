@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from modex_agent.core.session_registry import InMemorySessionRegistry
 from modex_agent.messaging.broker import AddressKind
 from modex_agent.multi_agent.address import AgentAddress
@@ -185,6 +187,19 @@ class TestDeliver:
         track = await manager._track_store.get_by_message_id("t1", "m1")
         assert track is None
         assert "inv.sub" in manager._pending_input
+
+    async def test_external_input_track_consume_creates_dispatched_track(self) -> None:
+        manager, _ = _make_manager()
+        await _setup_tree(manager)
+        await _add_subagent(manager)
+        env = _envelope(AgentMessageType.EXTERNAL_INPUT, target_sid="inv.sub")
+
+        await manager.deliver("inv.sub", env, track_consume=True)
+
+        track = await manager._track_store.get_by_message_id("t1", "m1")
+        assert track is not None
+        assert track.status is MessageTrackStatus.DISPATCHED
+        assert track.message_type is AgentMessageType.EXTERNAL_INPUT
 
     async def test_agent_message_no_track_pending(self) -> None:
         manager, _ = _make_manager()
@@ -386,31 +401,32 @@ class TestIsQuiesced:
 
 
 class TestWaitQuiesce:
-    async def test_returns_true_when_already_quiesced(self) -> None:
+    async def test_returns_none_when_already_quiesced(self) -> None:
         manager, _ = _make_manager()
         await _setup_tree(manager)
-        result = await manager.wait_quiesce("t1", timeout=1.0)
-        assert result is True
+        result = await manager.wait_quiesce("t1")
+        assert result is None
 
-    async def test_returns_false_on_timeout(self) -> None:
+    async def test_blocks_while_tree_is_not_quiesced(self) -> None:
         manager, _ = _make_manager()
         await _setup_tree(manager)
         await _add_subagent(manager)
         manager._running.add("inv.sub")
-        result = await manager.wait_quiesce("t1", timeout=0.05)
-        assert result is False
+
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(manager.wait_quiesce("t1"), timeout=0.05)
 
     async def test_wakes_on_signal(self) -> None:
         manager, _ = _make_manager()
         await _setup_tree(manager)
         await _add_subagent(manager)
         manager._running.add("inv.sub")
-        task = asyncio.create_task(manager.wait_quiesce("t1", timeout=5.0))
+        task = asyncio.create_task(manager.wait_quiesce("t1"))
         await asyncio.sleep(0.02)
         manager._running.discard("inv.sub")
         manager._signal("t1")
         result = await asyncio.wait_for(task, timeout=1.0)
-        assert result is True
+        assert result is None
 
 
 class TestOnSessionEvicted:
@@ -571,6 +587,21 @@ class TestEnsureNode:
         assert node is not None
         assert node.tree_id == "conv1.main"
         assert node.parent_session_id is None
+
+    async def test_tree_id_for_session_returns_existing_tree_id(self) -> None:
+        manager, _ = _make_manager()
+        await _setup_tree(manager)
+
+        tree_id = await manager.tree_id_for_session("root.main")
+
+        assert tree_id == "t1"
+
+    async def test_tree_id_for_session_returns_none_for_unknown_session(self) -> None:
+        manager, _ = _make_manager()
+
+        tree_id = await manager.tree_id_for_session("unknown.main")
+
+        assert tree_id is None
 
     async def test_task_request_creates_child_node_in_parent_tree(self) -> None:
         manager, _ = _make_manager()

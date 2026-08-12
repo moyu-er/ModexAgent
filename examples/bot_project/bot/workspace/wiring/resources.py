@@ -195,9 +195,9 @@ async def _assemble_resources(
     # Shared (service-level) infra reused across this workspace's pools.
     shared_hooks = [
         CurrentTimeInjectionHook(),       # StartNodeTurnHook
-        DeliverRetryHook(),               # AfterTurnHook (hard - deliver check)
-        KnowledgeHook(),                  # BeforeTurnHook + AfterTurnHook (counter reset, summary, retry)
-        TodoContinuationHook(),           # AfterTurnHook (todo check)
+        TodoContinuationHook(),           # AfterTurnHook — must be first: only hook that sets CONTINUATION_RENEW_MAX_TURNS (watchdog renewal), reminder includes active todo list
+        DeliverRetryHook(),               # AfterTurnHook — independent, no renewal
+        KnowledgeHook(),                  # BeforeTurnHook + AfterTurnHook — independent, no renewal
         *_collect_run_hooks(service.plugin_integration, app_config),
     ]
     shared_hook_runner = _build_hook_runner(shared_hooks)

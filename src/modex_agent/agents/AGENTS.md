@@ -42,7 +42,7 @@ The ReAct module is the primary agent runtime. Key components:
 | `nodes/before_turn.py` | `BeforeTurnNode` — increments `turn_attempt`, resets `iteration`, dispatches `BEFORE_TURN` hook, routes to LLM. |
 | `nodes/llm.py` | `LLMNode` — calls LLM, handles streaming, dispatches hooks/interceptors via `ctx.runtime.*`, emits iteration events |
 | `nodes/tool.py` | `ToolNode` — classify all → suspend for approval via `ctx.interrupt(tx)` → batch execute → route |
-| `nodes/after_turn.py` | `AfterTurnNode` — constructs `AgentResult`, writes `state.result`, dispatches `AFTER_TURN` hook, checks continuation, routes to BEFORE/END. |
+| `nodes/after_turn.py` | `AfterTurnNode` — constructs `AgentResult`, writes `state.result`, dispatches `AFTER_TURN` hook, consumes `CONTINUATION_REQUEST` + `CONTINUATION_RENEW_MAX_TURNS` flags (watchdog renewal when RENEW set), routes to BEFORE/END. |
 | `nodes/end.py` | `EndNode` — reads `state.result` (raises RuntimeError if None), emits completion events, dispatches `END_NODE_TURN` hook. |
 
 ### summarizer/ Submodule Details

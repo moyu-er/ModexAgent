@@ -77,6 +77,8 @@ class SendStrategy(ABC):
         if self.should_register_session() and self._deps.session_registry is not None:
             await self._deps.session_registry.register(session)
         envelope = self.build_envelope(req, session, invocation_id)
+        if req.context.graph_instance_id is not None:
+            envelope.metadata["graph_instance_id"] = req.context.graph_instance_id
         deliver_err = await self.deliver(envelope, req.target)
         if deliver_err is not None:
             return AgentSendResult.with_error(

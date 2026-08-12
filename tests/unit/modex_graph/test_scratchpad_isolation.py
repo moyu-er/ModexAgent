@@ -3,7 +3,7 @@
 These tests verify that ``node_scratch`` provides key-based isolation under
 ``ParallelScheduler``. The model is simple: each node writes to
 ``node_scratch[<own_key>]``, and key separation provides isolation without
-context forking or deepcopy.
+context copying.
 
 Tests:
 

@@ -69,7 +69,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.constants import ExecutionStrategyKind, StopReason
 from modex_agent.core.message_utils import sanitize_reminder_content
@@ -466,6 +466,11 @@ class SubagentAutoSendHook(FinallyGraphHook):
         # Strip think tags from the content (defense in depth)
         content = sanitize_reminder_content(content)
 
+        metadata: dict[str, Any] = {"reminder_kind": ReminderKind.SUBAGENT_RESULT}
+        gid = ctx.graph_instance_id
+        if gid is not None:
+            metadata["graph_instance_id"] = gid
+
         envelope = AgentMessageEnvelope(
             payload={
                 "content": content,
@@ -477,7 +482,7 @@ class SubagentAutoSendHook(FinallyGraphHook):
             session_id=session_id,
             agent_session_id=inbox_key,
             invocation_id=invocation_id,
-            metadata={"reminder_kind": ReminderKind.SUBAGENT_RESULT},
+            metadata=metadata,
         )
 
         try:

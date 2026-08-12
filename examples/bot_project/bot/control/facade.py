@@ -372,6 +372,7 @@ class BotControlFacade:
             tool_manager=InMemoryToolManager(),
             session=session_info,
             comm_kind=comm_kind,
+            graph_instance_id=request.graph_instance_id,
         )
 
         # 9. Call AgentCommunicationService._send().

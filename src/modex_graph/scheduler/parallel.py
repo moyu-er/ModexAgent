@@ -20,7 +20,7 @@ from ..constants import (
     NodeTrigger,
     SchedulerKind,
 )
-from ..exceptions import GraphRecursionError, RoutingError, UndeliveredError
+from ..exceptions import GraphRecursionError, RoutingError
 from ..execution_context import NodeExecution, reset_execution, set_execution
 from ._dispatch_utils import route_deliver_from_dispatch, validate_dispatch_target
 from .base import Scheduler
@@ -253,9 +253,9 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         """Execute a single instance: READY → RUNNING → run node → COMPLETED.
 
         Uses the shared ctx directly — state isolation is via per-node
-        scratchpad keys (node_scratch), not context copying. The scheduler
-        sets invocation-local fields (current_instance, current_invocation)
-        on the shared ctx. After ``after_node``, pending instances are
+        scratchpad keys (node_scratch), not context copying. Invocation-local
+        identity is set via the ContextVar-based execution context
+        (``set_execution``). After ``after_node``, pending instances are
         re-checked.
 
         ``max_iterations`` checked before execution; overflow raises
@@ -282,10 +282,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
 
         try:
             await ctx.runtime.before_node(ctx, instance.node_name)
-            try:  # noqa: SIM105
-                await node.run(ctx, graph=self.graph)
-            except UndeliveredError:
-                pass
+            await node.run(ctx, graph=self.graph)
             await ctx.runtime.after_node(ctx, instance.node_name)
         finally:
             reset_execution(exec_token)

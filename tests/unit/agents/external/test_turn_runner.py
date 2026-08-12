@@ -621,3 +621,32 @@ async def test_workspace_root_not_bound_without_manager() -> None:
     await runner.process_locked(_make_input("hello"), "s1", session=_session())
 
     assert agent.bound_during_run is False
+
+
+async def test_graph_instance_id_set_from_metadata() -> None:
+    # Given
+    agent = _RecordingAgent()
+    runner = _make_runner(agent=agent)
+    input_msg = _make_input("hello", {"graph_instance_id": 42})
+
+    # When
+    await runner.process_locked(input_msg, "s1", session=_session())
+
+    # Then
+    ctx = agent.received_context
+    assert ctx is not None
+    assert ctx.graph_instance_id == 42
+
+
+async def test_graph_instance_id_none_when_metadata_absent() -> None:
+    # Given
+    agent = _RecordingAgent()
+    runner = _make_runner(agent=agent)
+
+    # When
+    await runner.process_locked(_make_input("hello"), "s1", session=_session())
+
+    # Then
+    ctx = agent.received_context
+    assert ctx is not None
+    assert ctx.graph_instance_id is None

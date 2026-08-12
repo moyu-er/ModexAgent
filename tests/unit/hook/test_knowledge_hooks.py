@@ -311,7 +311,7 @@ async def test_retry_both_required_both_missing_mentions_both() -> None:
     assert "read and write" in content
 
 
-async def test_retry_existing_continuation_request_skips() -> None:
+async def test_retry_existing_continuation_request_still_injects_reminder() -> None:
     context, state = _make_context()
     state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_REQUIRE_READ] = True
     state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_READ_COUNT] = 0
@@ -323,7 +323,9 @@ async def test_retry_existing_continuation_request_skips() -> None:
     )
 
     assert state.custom[TurnCustomKey.CONTINUATION_REQUEST] is True
-    await _assert_no_history_append(context)
+    messages = await context.history.to_list()
+    assert len(messages) == 1
+    assert messages[0].role == MessageRole.SYSTEM_REMINDER
 
 
 async def test_retry_turn_cancelled_skips() -> None:
@@ -354,7 +356,7 @@ async def test_retry_error_result_skips() -> None:
     await _assert_no_history_append(context)
 
 
-async def test_retry_max_turns_boundary_skips() -> None:
+async def test_retry_max_turns_boundary_injects_reminder_without_flag() -> None:
     context, state = _make_context()
     state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_REQUIRE_READ] = True
     state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_READ_COUNT] = 0
@@ -366,7 +368,9 @@ async def test_retry_max_turns_boundary_skips() -> None:
     )
 
     assert TurnCustomKey.CONTINUATION_REQUEST not in state.custom
-    await _assert_no_history_append(context)
+    messages = await context.history.to_list()
+    assert len(messages) == 1
+    assert messages[0].role == MessageRole.SYSTEM_REMINDER
 
 
 async def test_retry_missing_react_state_skips() -> None:

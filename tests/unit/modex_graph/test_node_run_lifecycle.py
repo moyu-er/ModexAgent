@@ -5,8 +5,6 @@ Covers:
 
 - begin → integrate → execute → complete/cancel/suspend/crash → finally
 - Resume: previous suspended invocation → skip re-consume
-- fork() coordinator propagation (inherited by default, overridable)
-- fork() current_invocation NOT inherited
 """
 
 from __future__ import annotations
@@ -76,8 +74,6 @@ class _DeliverNode(Node[CounterState]):
         self.deliver("payload", "target", ctx)
         return None
 
-    max_retry = 0
-
 
 class _InterruptNode(Node[CounterState]):
     async def execute(
@@ -86,8 +82,6 @@ class _InterruptNode(Node[CounterState]):
         ctx.interrupt({"reason": "approval"})
         return None
 
-    max_retry = 0
-
 
 class _CancelNode(Node[CounterState]):
     async def execute(
@@ -95,16 +89,12 @@ class _CancelNode(Node[CounterState]):
     ) -> None:
         raise GraphDrained()
 
-    max_retry = 0
-
 
 class _CrashNode(Node[CounterState]):
     async def execute(
         self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
     ) -> None:
         raise ValueError("boom")
-
-    max_retry = 0
 
 
 class _RecordingNode(Node[CounterState]):
@@ -117,8 +107,6 @@ class _RecordingNode(Node[CounterState]):
         self.seen_payloads.append(integrated_input.payloads)
         self.deliver("out", "target", ctx)
         return None
-
-    max_retry = 0
 
 
 class TestLifecycleComplete:
@@ -138,20 +126,20 @@ class TestLifecycleComplete:
         assert latest.state_json == ctx.state.model_dump(mode="json")
         assert latest.state_json["count"] == 1
         assert coord.node_state_store.load_latest(node.name) is None
-        assert ctx.current_invocation is not None
-        assert ctx.current_invocation.node_id == node_id
+        assert latest.node_id == node_id
 
     async def test_begin_sets_current_invocation(self) -> None:
         coord = _make_inspectable_coordinator(("n",))
         node = _DeliverNode()
         _set_identity(node, "n")
         ctx = _make_ctx(coord)
-        assert ctx.current_invocation is None
 
         await node.run(ctx)
 
-        assert ctx.current_invocation is not None
-        assert ctx.current_invocation.node_id == "n"
+        latest = coord.node_state_store.load_latest("n")
+        assert latest is not None
+        assert latest.node_id == "n"
+        assert latest.status == InvocationStatus.COMPLETED
 
 
 class TestLifecycleSuspend:
@@ -326,37 +314,3 @@ class TestI16Resume:
         assert len(node.seen_payloads[0]) == 1
         assert node.seen_payloads[0][0].source_node == "producer"
         assert node.seen_payloads[0][0].content == "data_payload"
-
-
-class TestForkCoordinatorPropagation:
-    def test_coordinator_inherited_by_default(self) -> None:
-        coord = make_coordinator(("n",))
-        ctx = _make_ctx(coord)
-        child = ctx.fork(state=CounterState())
-        assert child.coordinator is coord
-
-    def test_coordinator_overridable(self) -> None:
-        coord1 = make_coordinator(("n",))
-        coord2 = make_coordinator(("m",))
-        ctx = _make_ctx(coord1)
-        child = ctx.fork(state=CounterState(), coordinator=coord2)
-        assert child.coordinator is coord2
-
-    def test_current_invocation_not_inherited(self) -> None:
-        coord = make_coordinator(("n",))
-        ctx = _make_ctx(coord)
-
-        inv = coord.node_state_store.begin_invocation("n")
-        ctx.current_invocation = inv
-        assert ctx.current_invocation is not None
-
-        child = ctx.fork(state=CounterState())
-        assert child.current_invocation is None
-
-    def test_current_invocation_settable_on_fork(self) -> None:
-        coord = make_coordinator(("n",))
-        ctx = _make_ctx(coord)
-
-        inv = coord.node_state_store.begin_invocation("n")
-        child = ctx.fork(state=CounterState(), current_invocation=inv)
-        assert child.current_invocation is inv

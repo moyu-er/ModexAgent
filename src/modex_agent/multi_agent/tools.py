@@ -173,6 +173,11 @@ class CommunicationTargetStore:
       parent baked at materialize time would go stale. The subagent's
       ``send_to_agent`` is for CONSULTATION only; the deliverable is the
       subagent's final reply text (forwarded by ``SubagentAutoSendHook``).
+
+    In graph mode (``graph_instance_id`` set on ``AgentContext`` by
+    ``GraphContextBindingConfigurator``), NORMAL (peer) targets are filtered
+    out — graph nodes communicate via ``deliver`` (graph edges), not peer
+    messaging. The agent cannot perceive or reach peers.
     """
 
     def __init__(self, *, for_subagent: bool = False) -> None:
@@ -211,13 +216,24 @@ class CommunicationTargetStore:
         if self._for_subagent:
             parent = self._parent_target()
             return [parent] if parent is not None else []
-        return list(self._targets.values())
+        targets = list(self._targets.values())
+        ctx = _current_agent_context()
+        if ctx is not None and ctx.graph_instance_id is not None:
+            targets = [t for t in targets if t.kind != AgentCommKind.NORMAL]
+        return targets
 
     def has(self, name: str) -> bool:
         if self._for_subagent:
             parent = self._parent_target()
             return parent is not None and parent.name == name
-        return name in self._targets
+        target = self._targets.get(name)
+        if target is None:
+            return False
+        if target.kind == AgentCommKind.NORMAL:
+            ctx = _current_agent_context()
+            if ctx is not None and ctx.graph_instance_id is not None:
+                return False
+        return True
 
     def get(self, name: str) -> CommunicationTarget | None:
         """Look up a target by name. Returns None if not found.
@@ -225,11 +241,20 @@ class CommunicationTargetStore:
         In subagent mode the store is single-target (parent); resolves via
         the contextvar just like ``has`` / ``list`` so the lookup cannot
         drift from the dynamic semantics.
+
+        In graph mode, NORMAL (peer) targets are invisible — returns None.
         """
         if self._for_subagent:
             parent = self._parent_target()
             return parent if parent is not None and parent.name == name else None
-        return self._targets.get(name)
+        target = self._targets.get(name)
+        if target is None:
+            return None
+        if target.kind == AgentCommKind.NORMAL:
+            ctx = _current_agent_context()
+            if ctx is not None and ctx.graph_instance_id is not None:
+                return None
+        return target
 
     def _parent_target(self) -> CommunicationTarget | None:
         parent_name = _current_parent_name()
@@ -249,6 +274,11 @@ class CommunicationTargetStore:
         # contextvar; caching would freeze a parent across different invokers
         # reusing the same tool instance. Normal mode caches as before.
         if self._for_subagent:
+            return self._build()
+        # Graph mode is contextvar-driven (graph_instance_id on AgentContext);
+        # same reason as subagent — don't cache across mode transitions.
+        ctx = _current_agent_context()
+        if ctx is not None and ctx.graph_instance_id is not None:
             return self._build()
         if self._description is None:
             self._description = self._build()
@@ -292,7 +322,9 @@ class CommunicationTargetStore:
             ]
         )
         subagent_targets = [t for t in self._targets.values() if t.kind == AgentCommKind.SUBAGENT]
-        normal_targets = [t for t in self._targets.values() if t.kind == AgentCommKind.NORMAL]
+        ctx = _current_agent_context()
+        graph_mode = ctx is not None and ctx.graph_instance_id is not None
+        normal_targets = [] if graph_mode else [t for t in self._targets.values() if t.kind == AgentCommKind.NORMAL]
         if subagent_targets:
             lines.append("")
             lines.append("Subagents (for continuing sessions; use the `task` tool for new tasks):")

@@ -238,7 +238,9 @@ async def test_added_todo_changes_signature_and_retriggers(tmp_path: Path) -> No
     assert state.custom[TurnCustomKey.LAST_CONTINUATION_TODO_SIG] != old_signature
 
 
-async def test_max_turns_boundary_skips_continuation(tmp_path: Path) -> None:
+async def test_max_turns_boundary_renews_and_requests_continuation(
+    tmp_path: Path,
+) -> None:
     context, state, store = _make_context(tmp_path)
     state.turn_attempt = 3
     await _save_todos(
@@ -252,10 +254,15 @@ async def test_max_turns_boundary_skips_continuation(tmp_path: Path) -> None:
         AgentResult(content="done", stop_reason=StopReason.COMPLETED),
     )
 
-    await _assert_no_action(context, state)
+    assert state.custom[TurnCustomKey.CONTINUATION_REQUEST] is True
+    assert state.custom[TurnCustomKey.CONTINUATION_RENEW_MAX_TURNS] is True
+    assert state.custom[TurnCustomKey.LAST_CONTINUATION_TODO_SIG] is not None
+    messages = await context.history.to_list()
+    assert len(messages) == 1
+    assert messages[0].role == MessageRole.SYSTEM_REMINDER
 
 
-async def test_existing_continuation_request_skips_todo_continuation(
+async def test_existing_continuation_request_still_injects_reminder(
     tmp_path: Path,
 ) -> None:
     context, state, store = _make_context(tmp_path)
@@ -272,5 +279,8 @@ async def test_existing_continuation_request_skips_todo_continuation(
     )
 
     assert state.custom[TurnCustomKey.CONTINUATION_REQUEST] is True
-    assert TurnCustomKey.LAST_CONTINUATION_TODO_SIG not in state.custom
-    assert await context.history.to_list() == []
+    assert state.custom[TurnCustomKey.CONTINUATION_RENEW_MAX_TURNS] is True
+    assert state.custom[TurnCustomKey.LAST_CONTINUATION_TODO_SIG] is not None
+    messages = await context.history.to_list()
+    assert len(messages) == 1
+    assert messages[0].role == MessageRole.SYSTEM_REMINDER

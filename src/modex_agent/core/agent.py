@@ -99,6 +99,15 @@ class AgentContext:
     emitter: ContentEmitter | None = None
     runtime: AgentRuntime | None = None
     graph_context: GraphContext[Any] | None = None
+    graph_instance_id: int | None = None
+    """Graph instance this turn belongs to, or None for non-graph turns.
+
+    Set by ``GraphContextBindingConfigurator`` from ``TurnContextDescriptor``.
+    Propagated through 5 injection sites: SendStrategy (main→subagent),
+    SubagentAutoSendHook (subagent→parent), ExternalTurnRunner (metadata→ctx),
+    modexctl SendRequest/facade (CLI→ctx), and ReActTurnRunner._build_turn_descriptor
+    (metadata→descriptor→configurator).
+    """
     identity: TurnIdentity | None = None
     system_prompt_pipeline: SystemPromptPipeline | None = None
     workspace_snapshot: PoolDataSnapshot | None = None
@@ -117,11 +126,12 @@ class AgentContext:
     """
 
     current_input: str | None = None
-    """The sanitized user input for the current turn, set by the turn builder.
+    """The sanitized user input for the current turn.
 
     External coding agents read this directly instead of mining history.
-    None for ReAct agents (they use history); set by ``build_runtime_and_context``
-    when the turn's ``sanitized_content`` is available.
+    None for ReAct agents (they use history); set by ``ReActTurnRunner``
+    after ``build_runtime_and_context`` returns, from the turn's
+    ``sanitized_content``.
     """
 
     @property

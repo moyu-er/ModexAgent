@@ -162,6 +162,11 @@ class TurnCustomKey(StrEnum):
     # after tool results.
     TOOL_MEDIA_CACHE = "_tool_media_cache"
     CONTINUATION_REQUEST = "_continuation_request"
+    # One-shot flag: a hook with progress-driven continuation (currently only
+    # TodoContinuationHook) authorizes the gate to renew MAX_TURNS past the
+    # current upper bound.  Gate pops this alongside CONTINUATION_REQUEST and
+    # increments MAX_TURNS by 1 only once regardless of how many hooks set it.
+    CONTINUATION_RENEW_MAX_TURNS = "_continuation_renew_max_turns"
     LAST_CONTINUATION_TODO_SIG = "_last_continuation_todo_sig"
     GRAPH_DELIVER_COUNT = "_graph_deliver_count"
     MAX_TURNS = "_max_turns"

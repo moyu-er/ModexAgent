@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-10 -->
+<!-- Updated: 2026-08-12 -->
 
 # builtin hooks
 
@@ -21,11 +21,28 @@ channel — see the separate table below.
 | `env_injection.py` | `NativeEnvInjectionHook` | `BeforeGraphHook` | before_graph | Populates `MODEX_*` env contextvars for native agent subprocess tools |
 | `loop_detection.py` | `LoopDetectionHook` | `AfterLLMResponseHook` | after_llm_response | Detects ReAct tool-repeating loops and force-exits the turn (stateless) |
 | `experience_review.py` | `ExperienceReviewHook` | `AfterGraphHook` | after_graph | Background conversation-review agent; spawns its own task after graph execution |
-| `deliver_retry.py` | `DeliverRetryHook` | `AfterTurnHook` | after_turn | Requests graph-internal continuation when the agent stops without calling `deliver`; sets `CONTINUATION_REQUEST` and appends a system-reminder. Covers both normal stop and max-iteration exits (moved from `AfterLLMResponseHook` to fix a blind spot) |
+| `deliver_retry.py` | `DeliverRetryHook` | `AfterTurnHook` | after_turn | Injects a deliver-reminder and sets `CONTINUATION_REQUEST` (only when `turn_attempt < MAX_TURNS`) when the agent stops without calling `deliver`. Reminder is always injected so the agent understands why it stopped, even at the turn budget limit. Independent of other AfterTurnHook continuation sources — no OR/AND coordination. Does not set `CONTINUATION_RENEW_MAX_TURNS` (binary signal, no watchdog renewal). Covers both normal stop and max-iteration exits |
 | `current_time.py` | `CurrentTimeInjectionHook` | `StartNodeTurnHook` | start_node_turn | Injects second-precision current time (with timezone and weekday) as a system-reminder at fresh-turn start |
-| `todo_continuation.py` | `TodoContinuationHook` | `AfterTurnHook` | after_turn | Requests continuation when active todo tasks remain after a turn attempt; cache-based anti-deadlock via sha256 signature comparison of active todo content+status |
+| `todo_continuation.py` | `TodoContinuationHook` | `AfterTurnHook` | after_turn | The primary continuation driver. Registered first among AfterTurnHook sources. Injects a system-reminder with the full active (pending + in_progress) todo list, sets `CONTINUATION_REQUEST`, and sets `CONTINUATION_RENEW_MAX_TURNS` (watchdog: authorizes the gate to extend `MAX_TURNS` by 1 when the agent is still making progress). Anti-deadlock: caches sha256 signature of active todo content+status; skips if unchanged since last check. Clears the cached signature when no active todos remain. Independent of other hooks — no OR/AND coordination |
 | `checkpoint.py` | `CheckpointHook` | `AfterIterationHook` | after_iteration | Captures per-iteration checkpoint snapshots |
 | `training_data.py` | `TrainingDataHook` | `FinallyGraphHook` | finally_graph | Records training data at graph teardown |
+
+## Continuation Gate (AfterTurnNode)
+
+`AfterTurnNode` consumes two one-shot flags set by AfterTurnHook continuation
+sources and routes to `BEFORE` (continuation) or `END` (terminal):
+
+- **`CONTINUATION_REQUEST`** — any hook wants another turn attempt.
+- **`CONTINUATION_RENEW_MAX_TURNS`** — a hook authorizes extending `MAX_TURNS`
+  past the current upper bound (watchdog renewal). Currently only
+  `TodoContinuationHook` sets this. The gate increments `MAX_TURNS` by 1 only
+  once regardless of how many hooks set it.
+
+Default `MAX_TURNS` is 3 (set in `TurnContextBuilder.build_runtime_and_context`).
+Hooks act independently — each checks its own trigger condition, injects its own
+reminder, and sets flags without consulting other hooks. Multiple hooks setting
+the same flag is harmless (dict assignment). The gate pops both flags on every
+path, ensuring clean state for the next turn attempt.
 
 ## Non-Hook Files In This Directory
 `control_drain.py` defines **interceptors**, not hooks, and is the single shared

@@ -621,7 +621,7 @@ CREATE TABLE IF NOT EXISTS message_tracks (
     tree_id             TEXT    NOT NULL,
     message_id          TEXT    NOT NULL,
     message_type        TEXT    NOT NULL
-                        CHECK (message_type IN ('task_request', 'agent_result')),
+                        CHECK (message_type IN ('task_request', 'agent_result', 'external_input')),
     invocation_id       TEXT,
     target_session_id   TEXT    NOT NULL,
     source_session_id   TEXT    NOT NULL,

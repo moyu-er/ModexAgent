@@ -7,8 +7,12 @@ interceptors, governance, and command processor on the main-agent pipeline.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from modex_graph.context import GraphContext
 
 from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
@@ -66,6 +70,7 @@ def _wire_main_pipeline(
     model_choice_registry: ModelChoiceRegistry,
     cassette_recorder: CassetteRecorder | None = None,
     control_origin: str = "",
+    graph_context_resolver: Callable[[int], GraphContext[Any] | None] | None = None,
 ) -> None:
     """Wire hooks, interceptors, governance, and command processor on main pipeline.
 
@@ -165,6 +170,30 @@ def _wire_main_pipeline(
         services_kwargs["approval"] = approval_runtime
     if builder is not None:
         builder.runtime_services = AgentRuntimeServices(**services_kwargs)
+
+    # Graph-context resolver + turn-context config pipeline (6 configurators).
+    # The resolver is a lazy closure that defers workspace resolution +
+    # orchestrator dereference to invocation time (F6-verified pattern).
+    if builder is not None and graph_context_resolver is not None:
+        builder.graph_context_resolver = graph_context_resolver
+        from modex_agent.pipeline.turn_context_config import (
+            GraphApprovalConfigurator,
+            GraphContextBindingConfigurator,
+            GraphKnowledgeConfigurator,
+            GraphMaxTurnsConfigurator,
+            GraphToolConfigurator,
+            GraphTopologyConfigurator,
+            TurnContextConfigPipeline,
+        )
+
+        builder.config_pipeline = TurnContextConfigPipeline([
+            GraphContextBindingConfigurator(),
+            GraphApprovalConfigurator(),
+            GraphMaxTurnsConfigurator(),
+            GraphToolConfigurator(),
+            GraphTopologyConfigurator(),
+            GraphKnowledgeConfigurator(),
+        ])
 
     # Command processor (convention: use provided, else default)
     if command_processor is not None:

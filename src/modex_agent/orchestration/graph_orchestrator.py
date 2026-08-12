@@ -179,6 +179,13 @@ class GraphOrchestrator:
         self._compiler = GraphSpecCompiler(node_registry, state_classes)
         self._runtime = GraphRuntime()
         self._active_instances: dict[int, GraphInstance] = {}
+        self._active_contexts: dict[int, GraphContext[Any]] = {}
+        # Live GraphContext instances, keyed by graph_instance_id. Populated in
+        # run_instance before engine execution; popped in finally after
+        # _finalize_instance. The turn-runner resolver reads this via
+        # get_graph_context(gid) to fetch the active context (carrying
+        # per-node artifacts in ctx.user_data["node_artifacts"]) for
+        # graph-scope turn configuration.
         self._run_tasks: set[asyncio.Task[None]] = set()
         self._running_gids: set[int] = set()
 
@@ -334,6 +341,7 @@ class GraphOrchestrator:
                 user_input=effective_input,
                 graph_instance_id=gid,
             )
+            self._active_contexts[gid] = ctx
             controller = LiveGraphEngineController(gid, ctx.control)
             self._control_service.register_engine(controller)
 
@@ -386,7 +394,18 @@ class GraphOrchestrator:
         finally:
             self._instance_store.finalize_invocation(invocation)
             await self._finalize_instance(gid, status, output=output)
+            self._active_contexts.pop(gid, None)
             self._running_gids.discard(gid)
+
+    def get_graph_context(self, graph_instance_id: int) -> GraphContext[Any] | None:
+        """Get the live context for a running graph instance, or None.
+
+        The turn-runner's ``graph_context_resolver`` closure calls this to
+        fetch the active ``GraphContext`` during turn configuration. The
+        context's ``user_data["node_artifacts"]`` dict carries per-node
+        ``GraphTurnArtifacts`` stored by ``BotAgentNode.execute``.
+        """
+        return self._active_contexts.get(graph_instance_id)
 
     async def create_and_run(
         self,

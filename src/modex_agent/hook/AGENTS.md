@@ -133,8 +133,8 @@ Graph-level hooks (`BeforeGraphHook` / `AfterGraphHook` / `FinallyGraphHook`) fi
 | 4 | `CurrentTimeInjectionHook` ⭐ | `StartNodeTurnHook` | ② start_node_turn | Injects second-precision current time (IANA timezone name + weekday) as system-reminder at fresh-turn start; replaces the hour-precision `RuntimeProvider` time line |
 | 5 | `ModelChoiceBindHook` | `StartNodeTurnHook` | ② start_node_turn | Binds per-turn model selection (contextvar + model_info override); moved from graph-level to avoid re-bind on resume |
 | 6 | `TraceCollectorHook` | `BeforeGraphHook` + `BeforeLLMHook` + `AfterLLMResponseHook` + `BeforeToolExecutionHook` + `AfterToolExecutionHook` + `AfterApprovalHook` + `BeforeIterationHook` + `AfterIterationHook` + `FinallyGraphHook` | ① before_graph + ⑦ finally_graph + 6 iteration points | Creates root span at turn start, finalizes at turn end; collects OTel/Langfuse spans at every lifecycle point (9 ABCs — the most multi-inherited hook) |
-| 7 | `DeliverRetryHook` | `AfterTurnHook` | ④ after_turn | Requests graph-internal continuation when agent stops without calling `deliver`; sets `CONTINUATION_REQUEST` + injects deliver-reminder system-reminder. Moved from `AfterLLMResponseHook` to `AfterTurnHook` to cover the max-iteration blind spot (old timing missed exits where LLMNode returned before dispatching AFTER_LLM_RESPONSE) |
-| 8 | `TodoContinuationHook` ⭐ | `AfterTurnHook` | ④ after_turn | Requests continuation when active todo tasks remain after a turn attempt. Anti-deadlock: caches sha256 hash of active todo `content:status` in `state.custom[LAST_CONTINUATION_TODO_SIG]`; skips if unchanged since last continuation (agent made no progress). Coordinates with DeliverRetryHook: if DeliverRetry already set `CONTINUATION_REQUEST`, TodoContinuation skips |
+| 7 | `DeliverRetryHook` | `AfterTurnHook` | ④ after_turn | Injects a deliver-reminder and sets `CONTINUATION_REQUEST` (only when `turn_attempt < MAX_TURNS`) when the agent stops without calling `deliver`. Reminder is always injected so the agent understands why it stopped, even at the turn budget limit. Independent of other AfterTurnHook continuation sources — no OR/AND coordination. Does not set `CONTINUATION_RENEW_MAX_TURNS` (binary signal, no watchdog renewal). Moved from `AfterLLMResponseHook` to `AfterTurnHook` to cover the max-iteration blind spot |
+| 8 | `TodoContinuationHook` ⭐ | `AfterTurnHook` | ④ after_turn | The primary continuation driver — registered first among AfterTurnHook sources. Injects a system-reminder with the full active (pending + in_progress) todo list, sets `CONTINUATION_REQUEST`, and sets `CONTINUATION_RENEW_MAX_TURNS` (watchdog: authorizes the gate to extend `MAX_TURNS` by 1 when the agent is still making progress). Anti-deadlock: caches sha256 signature of active todo content+status in `state.custom[LAST_CONTINUATION_TODO_SIG]`; skips if unchanged since last check (agent made no progress). Clears the cached signature when no active todos remain. Independent of other hooks — no OR/AND coordination |
 | 9 | `ExperienceReviewHook` | `AfterGraphHook` | ⑥ after_graph | Spawns background conversation-review agent after graph execution; main agent only |
 | 10 | `SubagentAutoSendHook` | `FinallyGraphHook` | ⑦ finally_graph | On subagent turn completion, writes numbered OUTPUT\_\<n\>.md deliverable and notifies parent via bus |
 | 11 | `TurnOutcomeNotifyHook` | `FinallyGraphHook` | ⑦ finally_graph | Sends user-facing notification on max_iterations/error turn outcomes |
@@ -147,18 +147,25 @@ Graph-level hooks (`BeforeGraphHook` / `AfterGraphHook` / `FinallyGraphHook`) fi
 
 #### Hook Coordination
 
-Hooks at the same HookPoint fire in **registration order** (the order they appear in `shared_hooks` / `pool_wiring`). Two hooks on ④ AFTER_TURN coordinate via `CONTINUATION_REQUEST`:
+Hooks at the same HookPoint fire in **registration order** (the order they appear in `shared_hooks` / `pool_wiring`). AfterTurnHook continuation sources act **independently** — each checks its own trigger condition, injects its own reminder, and sets flags without consulting other hooks. There is no OR/AND coordination between hooks.
 
 ```
 shared_hooks = [
     CurrentTimeInjectionHook(),   # ② START_NODE_TURN — injects time first
-    DeliverRetryHook(),            # ④ AFTER_TURN — checks deliver, sets flag + reminder
-    TodoContinuationHook(),        # ④ AFTER_TURN — checks flag (skip if DeliverRetry set it)
+    TodoContinuationHook(),       # ④ AFTER_TURN — first: primary driver, sets REQUEST + RENEW, reminder includes active todo list
+    DeliverRetryHook(),           # ④ AFTER_TURN — independent, sets REQUEST (no RENEW), reminder always injected
+    KnowledgeHook(),              # ④ AFTER_TURN — independent, sets REQUEST (no RENEW), reminder always injected
     *_collect_run_hooks(...),
 ]
 ```
 
-If `DeliverRetryHook` sets `CONTINUATION_REQUEST` (agent stopped without deliver), `TodoContinuationHook` sees the flag already set and skips — no double reminder injection.
+`TodoContinuationHook` is registered first because it is the only hook that sets `CONTINUATION_RENEW_MAX_TURNS` (watchdog renewal), and its reminder (including the active todo list) should land before other hooks' reminders so the agent sees the todo list first.
+
+The gate in `AfterTurnNode` consumes two one-shot flags:
+- `CONTINUATION_REQUEST` — any hook wants another turn attempt.
+- `CONTINUATION_RENEW_MAX_TURNS` — authorizes extending `MAX_TURNS` past the current upper bound. The gate increments `MAX_TURNS` by 1 only once regardless of how many hooks set it.
+
+Default `MAX_TURNS` is 3 (set in `TurnContextBuilder.build_runtime_and_context`). Hooks that do not set `CONTINUATION_RENEW_MAX_TURNS` (DeliverRetry, Knowledge) only set `CONTINUATION_REQUEST` when `turn_attempt < MAX_TURNS` — at the budget limit they still inject their reminder but do not request continuation (binary signal, no renewal).
 
 ## HookPoint Dispatch
 

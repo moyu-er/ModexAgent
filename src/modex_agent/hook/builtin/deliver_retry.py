@@ -1,4 +1,16 @@
-"""DeliverRetryHook requests continuation when an agent stops without delivering."""
+"""DeliverRetryHook requests continuation when an agent stops without delivering.
+
+Each hook acts independently — no OR/AND coordination with other
+AfterTurnHook continuation sources.  This hook:
+  1. Checks whether a ``deliver`` tool is registered and whether the agent
+     called it this turn (``GRAPH_DELIVER_COUNT``).
+  2. If the agent already delivered — returns (no continuation).
+  3. Otherwise — injects a ``<system-reminder>`` telling the agent it must
+     call ``deliver``, and sets ``CONTINUATION_REQUEST`` only when
+     ``turn_attempt < MAX_TURNS`` (no watchdog renewal — binary signal).
+     The reminder is always injected so the agent understands why it is
+     being asked to continue, even when the turn budget is exhausted.
+"""
 
 from __future__ import annotations
 
@@ -29,6 +41,9 @@ class DeliverRetryHook(AfterTurnHook):
         if result.stop_reason in (StopReason.TURN_CANCELLED, StopReason.ERROR):
             return
 
+        if ctx.tool_manager is None or ctx.tool_manager.get_tool("deliver") is None:
+            return
+
         react_state = get_react_state(ctx)
         if react_state is None:
             return
@@ -37,14 +52,6 @@ class DeliverRetryHook(AfterTurnHook):
         if deliver_count > 0:
             return
 
-        max_turns = react_state.custom.get(TurnCustomKey.MAX_TURNS, 1)
-        if react_state.turn_attempt >= max_turns:
-            return
-
-        if TurnCustomKey.CONTINUATION_REQUEST in react_state.custom:
-            return
-
-        react_state.custom[TurnCustomKey.CONTINUATION_REQUEST] = True
         reminder = (
             "You ended without calling the `deliver` tool. Your regular "
             "text output was NOT delivered to anyone. You MUST call "
@@ -57,3 +64,7 @@ class DeliverRetryHook(AfterTurnHook):
                 "content": wrap_system_reminder(reminder),
             }
         )
+
+        max_turns = react_state.custom.get(TurnCustomKey.MAX_TURNS, 3)
+        if react_state.turn_attempt < max_turns:
+            react_state.custom[TurnCustomKey.CONTINUATION_REQUEST] = True

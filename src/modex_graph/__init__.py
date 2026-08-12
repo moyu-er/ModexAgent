@@ -46,7 +46,6 @@ from .exceptions import (
     InvocationStateError,
     ParentCommand,
     RoutingError,
-    UndeliveredError,
 )
 from .graph import Edge, Graph
 from .id_generator import IdGenerator, SnowflakeIdGenerator, default_id_generator
@@ -182,7 +181,6 @@ __all__ = [
     "GraphDrained",
     "ParentCommand",
     "RoutingError",
-    "UndeliveredError",
     "GraphRecursionError",
     "InvocationStateError",
     # Declarative graph spec

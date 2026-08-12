@@ -47,6 +47,7 @@ def _make_request(
     parent_session_id: str | None = None,
     content: str = "hello",
     invocation_id: str | None = None,
+    graph_instance_id: int | None = None,
 ) -> SendRequest:
     return SendRequest(
         caller=AgentSessionRef(
@@ -60,6 +61,7 @@ def _make_request(
         target_agent=target_agent,
         content=content,
         invocation_id=invocation_id,
+        graph_instance_id=graph_instance_id,
     )
 
 
@@ -590,3 +592,76 @@ class TestInvocationIdExistence:
 
         assert send_result.dispatch_outcome == DispatchOutcome.RESUMED
         assert send_result.is_external_target is True
+
+
+# ---------------------------------------------------------------------------
+# graph_instance_id propagation (Site 4)
+# ---------------------------------------------------------------------------
+
+
+class TestSendRequestGraphInstanceId:
+    def test_graph_instance_id_defaults_to_none(self) -> None:
+        request = _make_request()
+        assert request.graph_instance_id is None
+
+    def test_graph_instance_id_accepted(self) -> None:
+        request = _make_request(graph_instance_id=42)
+        assert request.graph_instance_id == 42
+
+    def test_graph_instance_id_rejects_extra_fields(self) -> None:
+        """SendRequest is frozen + extra='forbid' — unknown keys rejected."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            SendRequest(
+                caller=AgentSessionRef(
+                    workspace=_WORKSPACE,
+                    pool=_POOL,
+                    session_id=_SESSION_ID,
+                    agent_name=_AGENT_NAME,
+                ),
+                comm_kind="normal",
+                target_agent=_TARGET_AGENT,
+                content="hello",
+                graph_instance_id=1,
+                unknown_extra="rejected",  # type: ignore[call-arg]
+            )
+
+
+class TestGraphInstanceIdPropagation:
+    @pytest.mark.asyncio
+    async def test_graph_instance_id_propagates_to_agent_context(self) -> None:
+        """When SendRequest carries graph_instance_id, facade sets it on AgentContext."""
+        facade, mock_service = _make_facade()
+        await facade.send(_make_request(graph_instance_id=42))
+
+        context = mock_service._send.call_args.kwargs["context"]
+        assert context.graph_instance_id == 42
+
+    @pytest.mark.asyncio
+    async def test_graph_instance_id_none_propagates_when_omitted(self) -> None:
+        """When SendRequest omits graph_instance_id, AgentContext.graph_instance_id is None."""
+        facade, mock_service = _make_facade()
+        await facade.send(_make_request())
+
+        context = mock_service._send.call_args.kwargs["context"]
+        assert context.graph_instance_id is None
+
+    @pytest.mark.asyncio
+    async def test_graph_instance_id_propagates_for_subagent_dispatch(self) -> None:
+        """graph_instance_id propagates through the subagent dispatch path too."""
+        target = _make_target(
+            kind=AgentCommKind.SUBAGENT,
+            execution_strategy=ExecutionStrategyKind.REACT,
+        )
+        result = _make_send_result(
+            target_kind=AgentCommKind.SUBAGENT,
+            created_new_task=True,
+            invocation_id="inv-graph",
+            session_id="inv-graph.coder",
+        )
+        facade, mock_service = _make_facade(target=target, send_result=result)
+        await facade.send(_make_request(graph_instance_id=7))
+
+        context = mock_service._send.call_args.kwargs["context"]
+        assert context.graph_instance_id == 7

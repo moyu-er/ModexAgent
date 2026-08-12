@@ -1,4 +1,11 @@
-"""Todo-driven continuation with progress-sensitive deadlock prevention."""
+"""Todo-driven continuation with progress-sensitive deadlock prevention.
+
+Registered first among AfterTurnHook continuation sources so its reminder
+(including the active todo list) lands before other hooks' reminders.  It is
+the only hook that sets ``CONTINUATION_RENEW_MAX_TURNS`` — the watchdog
+signal that authorizes the gate to extend ``MAX_TURNS`` past the current
+upper bound when the agent is still making progress on its todos.
+"""
 
 from __future__ import annotations
 
@@ -22,7 +29,19 @@ def _active_todo_hash(active: list[TodoItem]) -> str:
 
 
 class TodoContinuationHook(AfterTurnHook):
-    """Request ReAct continuation when active todo tasks remain after an attempt."""
+    """Request continuation when active todo tasks remain after a turn attempt.
+
+    Each hook acts independently — no OR/AND coordination with other
+    AfterTurnHook continuation sources.  This hook:
+      1. Reads active (pending + in_progress) todos.
+      2. If none — clears the cached signature and returns.
+      3. If the active-todo signature is unchanged since the last check —
+         returns (deadlock: no progress made).
+      4. Otherwise — injects a ``<system-reminder>`` with the full active
+         todo list, sets ``CONTINUATION_REQUEST``, and sets
+         ``CONTINUATION_RENEW_MAX_TURNS`` (watchdog: authorizes the gate to
+         extend MAX_TURNS by 1 when the agent is still making progress).
+    """
 
     @property
     def name(self) -> str:
@@ -45,38 +64,44 @@ class TodoContinuationHook(AfterTurnHook):
         if react_state is None:
             return
 
-        max_turns = react_state.custom.get(TurnCustomKey.MAX_TURNS, 1)
-        if react_state.turn_attempt >= max_turns:
-            return
-        if TurnCustomKey.CONTINUATION_REQUEST in react_state.custom:
-            return
-
         todos = await todo_store.get(str(ctx.session))
         active = [
             todo
             for todo in todos
             if todo.status in (TodoStatus.PENDING, TodoStatus.IN_PROGRESS)
         ]
+
         if not active:
+            react_state.custom.pop(TurnCustomKey.LAST_CONTINUATION_TODO_SIG, None)
             return
 
         current_signature = _active_todo_hash(active)
-        cached_signature = react_state.custom.get(TurnCustomKey.LAST_CONTINUATION_TODO_SIG)
+        cached_signature = react_state.custom.get(
+            TurnCustomKey.LAST_CONTINUATION_TODO_SIG
+        )
         if cached_signature is not None and cached_signature == current_signature:
             return
 
-        react_state.custom[TurnCustomKey.CONTINUATION_REQUEST] = True
-        react_state.custom[TurnCustomKey.LAST_CONTINUATION_TODO_SIG] = current_signature
+        todo_lines: list[str] = []
+        for todo in active:
+            marker = (
+                "🔄"
+                if todo.status == TodoStatus.IN_PROGRESS
+                else "⬜"
+            )
+            todo_lines.append(f"{marker} {todo.content}")
+
         reminder = (
-            f"You have {len(active)} active todo tasks remaining. Use todo_read to see the full "
-            "list.\n\n"
+            f"You have {len(active)} active todo task(s) remaining:\n\n"
+            + "\n".join(todo_lines)
+            + "\n\n"
             "You should:\n"
             "- **Continue**: work on the next pending/in_progress todo item\n"
-            "- **Cancel**: if the remaining tasks are no longer needed, mark them as cancelled "
-            "with todo_write\n"
-            "- **Acknowledge stuck**: if a task genuinely cannot be completed, leave its status "
-            "unchanged and explain the blocker in your response — do NOT mark it completed unless "
-            "it is actually done"
+            "- **Cancel**: if the remaining tasks are no longer needed, mark "
+            "them as cancelled with todo_write\n"
+            "- **Acknowledge stuck**: if a task genuinely cannot be completed, "
+            "leave its status unchanged and explain the blocker in your "
+            "response — do NOT mark it completed unless it is actually done"
         )
         await ctx.history.append(
             {
@@ -84,3 +109,9 @@ class TodoContinuationHook(AfterTurnHook):
                 "content": wrap_system_reminder(reminder),
             }
         )
+
+        react_state.custom[TurnCustomKey.LAST_CONTINUATION_TODO_SIG] = (
+            current_signature
+        )
+        react_state.custom[TurnCustomKey.CONTINUATION_REQUEST] = True
+        react_state.custom[TurnCustomKey.CONTINUATION_RENEW_MAX_TURNS] = True
