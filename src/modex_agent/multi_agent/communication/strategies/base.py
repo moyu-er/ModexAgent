@@ -77,7 +77,10 @@ class SendStrategy(ABC):
         if self.should_register_session() and self._deps.session_registry is not None:
             await self._deps.session_registry.register(session)
         envelope = self.build_envelope(req, session, invocation_id)
-        if req.context.graph_instance_id is not None:
+        if (
+            self.should_propagate_graph_instance_id()
+            and req.context.graph_instance_id is not None
+        ):
             envelope.metadata["graph_instance_id"] = req.context.graph_instance_id
         deliver_err = await self.deliver(envelope, req.target)
         if deliver_err is not None:
@@ -121,6 +124,26 @@ class SendStrategy(ABC):
         (subagent sessions are owned by the sender's pool).
         Peer-normal sessions are registered by the *receiver's* poller, not
         the sender — so the default is False.
+        """
+        return False
+
+    def should_propagate_graph_instance_id(self) -> bool:
+        """Whether to stamp ``graph_instance_id`` onto the envelope metadata.
+
+        Default: False. Only same-graph intra-tree communication propagates
+        it — ``SubagentDispatchStrategy`` (main→subagent) and
+        ``ParentReplyStrategy`` (subagent→parent) override to True.
+        ``PeerNormalStrategy`` does NOT override (peer sends cross trees;
+        the sender's graph_instance_id is meaningless in the receiver's tree
+        and would contaminate the receiver's binding store).
+
+        Propagation matrix (see ``docs/design/session-tree/layered-config-matrix.md``):
+
+        | Strategy             | Propagates graph_instance_id |
+        |----------------------|------------------------------|
+        | SubagentDispatch     | Yes (intra-tree)             |
+        | ParentReply          | Yes (intra-tree)             |
+        | PeerNormal           | No (cross-tree)              |
         """
         return False
 
