@@ -32,6 +32,7 @@ from modex_agent.memory.injection.archive import (
     ArchiveInjectionSection,
     build_archive_injection_section,
 )
+from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.utils.timezone import get_user_timezone
 
 if TYPE_CHECKING:
@@ -798,23 +799,43 @@ class ForkContextProvider(SystemPromptProvider):
 class GraphWorkflowProvider(SystemPromptProvider):
     """Graph workflow guidance — deliver-tool routing instructions.
 
-    Fires only when the agent is running inside a graph workflow
-    (``AgentContext.graph_context`` is set by the graph node before
-    the turn starts). In normal sessions ``graph_context`` is
-    ``None`` so version is ``no-graph`` and content is empty — the
-    pipeline skips it entirely.
+    Fires only when the agent is a graph node main agent (``is_node_execution``
+    + ``graph_context`` both set). This is the upper layer: graph mode sits
+    above the normal/subagent split, so subagents — even in graph mode —
+    never receive graph workflow content. They are atomic agents whose
+    results flow back to the parent graph node.
+
+    In normal sessions ``graph_context`` is ``None`` so version is
+    ``no-graph`` and content is empty — the pipeline skips it entirely.
+
+    Gate: ``_is_graph_node_execution(ctx)`` checks ``graph_context`` is set
+    AND ``GRAPH_TOPOLOGY_CONTEXT`` state key exists (set only by
+    ``GraphTopologyConfigurator`` whose gate is ``is_node_execution and
+    NORMAL``). This excludes subagents who have ``graph_context`` but no
+    topology key.
+
+    Configuration matrix (see ``docs/design/session-tree/layered-config-matrix.md``):
+
+    | Mode                  | GraphWorkflowProvider |
+    |-----------------------|-----------------------|
+    | native main session   | empty (no-graph)      |
+    | native main graph     | full content          |
+    | native sub session    | empty                 |
+    | native sub graph      | empty (excluded)      |
+    | external (any)        | not used (no pipeline)|
     """
 
     async def _fetch_version(self) -> str:
         ctx = _get_agent_context()
-        if ctx is None or ctx.graph_context is None:
+        if not _is_graph_node_execution(ctx):
             return "no-graph"
         return "graph"
 
     async def _fetch_content(self) -> str:
         ctx = _get_agent_context()
-        if ctx is None or ctx.graph_context is None:
+        if not _is_graph_node_execution(ctx):
             return ""
+        assert ctx is not None  # narrowed by _is_graph_node_execution
         from modex_agent.runtime.enums import TurnCustomKey
 
         parts: list[str] = ["## Graph Node Context\n"]
@@ -891,3 +912,23 @@ class GraphWorkflowProvider(SystemPromptProvider):
 
 def _get_agent_context() -> AgentContext | None:
     return current_agent_context.get(None)
+
+
+def _is_graph_node_execution(ctx: AgentContext | None) -> bool:
+    """True when this turn is a graph node main agent execution.
+
+    Graph mode is the upper layer: it requires both ``graph_context`` (the
+    graph runtime is active) and the ``GRAPH_TOPOLOGY_CONTEXT`` state key
+    (set only by ``GraphTopologyConfigurator`` whose gate is
+    ``is_node_execution and agent_kind == NORMAL``). Subagents — even in
+    graph mode — never have the topology key, so they are excluded.
+
+    This keeps graph workflow content (deliver guidance, topology, knowledge
+    base instructions) strictly on graph node main agents, while subagents
+    remain atomic agents regardless of whether they run inside a graph.
+    """
+    if ctx is None or ctx.graph_context is None:
+        return False
+    if ctx.runtime is None or ctx.runtime.state is None:
+        return False
+    return ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT) is not None

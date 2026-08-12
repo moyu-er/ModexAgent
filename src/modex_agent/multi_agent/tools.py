@@ -177,7 +177,15 @@ class CommunicationTargetStore:
     In graph mode (``graph_instance_id`` set on ``AgentContext`` by
     ``GraphContextBindingConfigurator``), NORMAL (peer) targets are filtered
     out — graph nodes communicate via ``deliver`` (graph edges), not peer
-    messaging. The agent cannot perceive or reach peers.
+    messaging. The agent cannot perceive or reach peers. SUBAGENT targets
+    remain visible (graph nodes can dispatch subagents).
+
+    Peer communication matrix (see ``docs/design/session-tree/layered-config-matrix.md``):
+
+    | Mode             | NORMAL (peer) targets | SUBAGENT targets |
+    |------------------|-----------------------|------------------|
+    | Session mode     | Visible               | Visible          |
+    | Graph mode       | Hidden                | Visible          |
     """
 
     def __init__(self, *, for_subagent: bool = False) -> None:

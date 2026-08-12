@@ -24,24 +24,35 @@ class KnowledgeHook(BeforeTurnHook, AfterTurnHook):
 
     before_turn (each turn attempt, including continuations):
       1. Reset GRAPH_KNOWLEDGE_READ_COUNT and WRITE_COUNT to 0.
-         Each attempt independently tracks knowledge usage — other nodes
-         may have written new content between attempts.
-      2. Inject a truncated tail of findings.md and open_questions.md as a
-         <knowledge_base> system-reminder. Using BeforeTurnHook (not
-         StartNodeTurnHook) ensures continuations get refreshed summaries.
+      2. Inject findings.md and open_questions.md tails as a
+         <knowledge_base> system-reminder.
 
     after_turn (each turn attempt):
-      3. If per-node config requires read/write but the corresponding counter
-         is zero, set CONTINUATION_REQUEST and inject a reminder. Coordinates
-         with DeliverRetryHook via the shared CONTINUATION_REQUEST flag —
-         register KnowledgeHook AFTER DeliverRetryHook so the hard deliver
-         requirement takes precedence.
+      3. If per-node config requires read/write but the counter is zero,
+         set CONTINUATION_REQUEST and inject a reminder.
 
-    All three responsibilities early-return when ctx.graph_context is None,
-    guaranteeing zero impact on normal (non-graph) sessions.
+    Graph mode is the upper layer — only graph node main agents
+    (``is_node_execution``) receive knowledge lifecycle. Subagents are
+    atomic agents and never get knowledge config, even in graph mode.
+
+    Gate: ``_has_knowledge_config(ctx)`` checks ``graph_context`` is set
+    AND ``GRAPH_KNOWLEDGE_DIR`` state key exists (set only by
+    ``GraphKnowledgeConfigurator`` whose gate is ``is_node_execution and
+    NORMAL``). This excludes subagents who have ``graph_context`` but no
+    knowledge dir key.
+
+    Configuration matrix (see ``docs/design/session-tree/layered-config-matrix.md``):
+
+    | Mode                  | KnowledgeHook |
+    |-----------------------|---------------|
+    | native main session   | no-op         |
+    | native main graph     | active        |
+    | native sub session    | no-op         |
+    | native sub graph      | no-op (excluded) |
+    | external (any)        | not registered |
 
     Per-node config is read from state.custom:
-    - GRAPH_KNOWLEDGE_DIR (str): knowledge directory path, set by BotAgentNode
+    - GRAPH_KNOWLEDGE_DIR (str): set by GraphKnowledgeConfigurator
     - GRAPH_KNOWLEDGE_REQUIRE_READ (bool, default False)
     - GRAPH_KNOWLEDGE_REQUIRE_WRITE (bool, default False)
     """
@@ -53,7 +64,7 @@ class KnowledgeHook(BeforeTurnHook, AfterTurnHook):
     # -- BeforeTurnHook: reset + inject ----------------------------------
 
     async def before_turn(self, ctx: AgentContext) -> None:
-        if ctx.graph_context is None:
+        if not _has_knowledge_config(ctx):
             return
         state = get_react_state(ctx)
         if state is None:
@@ -93,7 +104,7 @@ class KnowledgeHook(BeforeTurnHook, AfterTurnHook):
     # -- AfterTurnHook: retry enforcement --------------------------------
 
     async def after_turn(self, ctx: AgentContext, result: AgentResult) -> None:
-        if ctx.graph_context is None:
+        if not _has_knowledge_config(ctx):
             return
         if result.stop_reason in (StopReason.TURN_CANCELLED, StopReason.ERROR):
             return
@@ -165,6 +176,25 @@ class KnowledgeHook(BeforeTurnHook, AfterTurnHook):
         if nl != -1:
             tail = tail[nl + 1 :]
         return f"[truncated - use knowledge_base action='read' for full content]\n{tail}"
+
+
+def _has_knowledge_config(ctx: AgentContext) -> bool:
+    """True when this turn has graph knowledge config (graph node main agent only).
+
+    Graph mode is the upper layer — only graph node main agents receive
+    knowledge lifecycle. Subagents are atomic agents and never get
+    ``GRAPH_KNOWLEDGE_DIR``, even in graph mode. Checking for the dir key
+    (set by ``GraphKnowledgeConfigurator`` whose gate is
+    ``is_node_execution and agent_kind == NORMAL``) is the most precise gate:
+    it directly tests whether the configurator ran, regardless of how
+    ``graph_context`` was set.
+    """
+    if ctx.graph_context is None:
+        return False
+    state = get_react_state(ctx)
+    if state is None:
+        return False
+    return state.custom.get(TurnCustomKey.GRAPH_KNOWLEDGE_DIR) is not None
 
 
 __all__ = ["KnowledgeHook"]
