@@ -45,7 +45,7 @@ def test_default_interceptor_chain_keeps_only_effective_defaults() -> None:
     service = MagicMock()
     service.control_channel = MagicMock()
     overflow_store = LocalFileToolOverflowStore(
-        workspace=Path("/tmp/_test_overflow"), max_chunk_size=10_000
+        workspace=Path("/tmp/_test_overflow")
     )
     chain = _build_workspace_interceptor_chain(service, overflow_store)
     interceptors = chain.interceptors

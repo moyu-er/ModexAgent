@@ -168,7 +168,7 @@ def test_graph_specs_rejects_invalid_json() -> None:
         conn.close()
 
 
-def test_graph_specs_unique_name_version() -> None:
+def test_graph_specs_same_name_version_allowed_for_immutable_history() -> None:
     conn = _connect()
     try:
         conn.execute(
@@ -176,13 +176,18 @@ def test_graph_specs_unique_name_version() -> None:
             "VALUES (?, ?, ?, ?)",
             (1, "react", "1.0", "{}"),
         )
+        conn.execute(
+            "INSERT INTO graph_specs (spec_id, name, version, spec_json) "
+            "VALUES (?, ?, ?, ?)",
+            (2, "react", "1.0", '{"changed": true}'),
+        )
         conn.commit()
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO graph_specs (spec_id, name, version, spec_json) "
-                "VALUES (?, ?, ?, ?)",
-                (2, "react", "1.0", "{}"),
-            )
+        rows = conn.execute(
+            "SELECT spec_id, spec_json FROM graph_specs "
+            "WHERE name = ? AND version = ? ORDER BY spec_id",
+            ("react", "1.0"),
+        ).fetchall()
+        assert rows == [(1, "{}"), (2, '{"changed": true}')]
     finally:
         conn.close()
 
@@ -209,25 +214,14 @@ def test_graph_specs_same_name_different_version_allowed() -> None:
         conn.close()
 
 
-def test_graph_specs_updated_at_trigger_fires_when_omitted() -> None:
+def test_graph_specs_has_no_trigger_because_rows_are_immutable() -> None:
     conn = _connect()
     try:
-        backdated = 1
-        conn.execute(
-            "INSERT INTO graph_specs (spec_id, name, spec_json, updated_at) "
-            "VALUES (?, ?, ?, ?)",
-            (SPEC_ID, "x", "{}", backdated),
-        )
-        conn.commit()
-        conn.execute(
-            "UPDATE graph_specs SET spec_json = ? WHERE spec_id = ?",
-            ('{"v": 2}', SPEC_ID),
-        )
-        conn.commit()
-        after = conn.execute(
-            "SELECT updated_at FROM graph_specs WHERE spec_id = ?", (SPEC_ID,)
-        ).fetchone()[0]
-        assert after > backdated, "trigger must advance updated_at when omitted from UPDATE"
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?",
+            ("graph_specs",),
+        ).fetchall()
+        assert rows == [], "graph_specs must have no trigger (immutable rows)"
     finally:
         conn.close()
 
@@ -709,14 +703,8 @@ def test_graph_indexes_exist() -> None:
         conn.close()
 
 
-# ---------------------------------------------------------------------------
-# Triggers (graph_specs, graph_instances, deliver_states — not node_states)
-# ---------------------------------------------------------------------------
-
-
 def test_graph_triggers_exist() -> None:
     expected_triggers = {
-        "trg_graph_specs_auto_updated_at",
         "trg_graph_instances_auto_updated_at",
         "trg_deliver_states_auto_updated_at",
     }
@@ -810,7 +798,6 @@ GRAPH_SCHEMA_OBJECTS: frozenset[str] = GRAPH_TABLES | {
     "idx_node_states_node",
     "idx_deliver_states_node",
     "idx_deliver_states_target",
-    "trg_graph_specs_auto_updated_at",
     "trg_graph_instances_auto_updated_at",
     "trg_deliver_states_auto_updated_at",
 }

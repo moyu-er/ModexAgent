@@ -528,7 +528,7 @@ def test_knowledge_does_not_apply_for_subagent() -> None:
     assert configurator.applies(desc) is False
 
 
-def test_knowledge_publishes_knowledge_dir_and_requirements() -> None:
+def test_knowledge_publishes_knowledge_dir_and_requirements(tmp_path: Path) -> None:
     # Given
     configurator = GraphKnowledgeConfigurator()
 
@@ -536,9 +536,10 @@ def test_knowledge_publishes_knowledge_dir_and_requirements() -> None:
         require_read = True
         require_write = False
 
+    knowledge_dir = tmp_path / "knowledge"
     artifacts = make_artifacts(
         knowledge_config=_Config(),
-        knowledge_dir=Path("/tmp/knowledge"),
+        knowledge_dir=knowledge_dir,
     )
     desc = make_graph_descriptor(artifacts=artifacts)
     ctx = make_runtime_context()
@@ -547,9 +548,8 @@ def test_knowledge_publishes_knowledge_dir_and_requirements() -> None:
     configurator.configure(ctx, desc)
 
     # Then
-    assert (
-        ctx.runtime.state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_DIR]
-        == "/tmp/knowledge"
+    assert ctx.runtime.state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_DIR] == str(
+        knowledge_dir
     )
     assert (
         ctx.runtime.state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_REQUIRE_READ]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError, fields
+
 import pytest
 
 from modex_agent.tools.overflow.models import CleanRequest, OverflowMetadata, OverflowRef
@@ -13,14 +15,19 @@ class TestOverflowMetadata:
             session_id="sess_123",
             created_at="2026-05-17T10:00:00Z",
             total_chars=15000,
-            total_chunks=2,
         )
         assert meta.tool_name == "read_file"
         assert meta.tool_call_id == "call_001"
         assert meta.session_id == "sess_123"
         assert meta.created_at == "2026-05-17T10:00:00Z"
         assert meta.total_chars == 15000
-        assert meta.total_chunks == 2
+        assert {field.name for field in fields(meta)} == {
+            "tool_name",
+            "tool_call_id",
+            "session_id",
+            "created_at",
+            "total_chars",
+        }
 
     def test_immutable(self) -> None:
         meta = OverflowMetadata(
@@ -29,34 +36,35 @@ class TestOverflowMetadata:
             session_id="sess_123",
             created_at="2026-05-17T10:00:00Z",
             total_chars=15000,
-            total_chunks=2,
         )
-        with pytest.raises(AttributeError):
-            meta.total_chars = 20000  # type: ignore[misc]
+        with pytest.raises(FrozenInstanceError):
+            meta.__setattr__("total_chars", 20000)
 
 
 class TestOverflowRef:
     def test_create(self) -> None:
         ref = OverflowRef(
             dir_path="/tmp/overflow/sess_123/call_001",
-            chunk_count=2,
             total_chars=15000,
             metadata_path="/tmp/overflow/sess_123/call_001/.meta.json",
         )
         assert ref.dir_path == "/tmp/overflow/sess_123/call_001"
-        assert ref.chunk_count == 2
         assert ref.total_chars == 15000
         assert ref.metadata_path == "/tmp/overflow/sess_123/call_001/.meta.json"
+        assert {field.name for field in fields(ref)} == {
+            "dir_path",
+            "total_chars",
+            "metadata_path",
+        }
 
     def test_immutable(self) -> None:
         ref = OverflowRef(
             dir_path="/tmp/overflow/sess_123/call_001",
-            chunk_count=2,
             total_chars=15000,
             metadata_path="/tmp/overflow/sess_123/call_001/.meta.json",
         )
-        with pytest.raises(AttributeError):
-            ref.chunk_count = 3  # type: ignore[misc]
+        with pytest.raises(FrozenInstanceError):
+            ref.__setattr__("total_chars", 20000)
 
 
 class TestCleanRequest:

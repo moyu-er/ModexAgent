@@ -1,7 +1,7 @@
 """Structural regression test for bundled pool agent descriptions.
 
 Loads every shipped pool under ``examples/bot_project/config/pools`` via the
-real :class:`PoolStore` and asserts self-containment invariants on the nine
+real :class:`PoolStore` and asserts self-containment invariants on the ten
 main + subagent specs:
 
 * the discovered agent-name set is exactly the expected eight-name roster;
@@ -35,7 +35,6 @@ from modex_agent.multi_agent.pool_config.store import PoolStore  # noqa: E402
 # removed without updating this set) is itself a regression the test catches.
 _EXPECTED_AGENT_NAMES: frozenset[str] = frozenset(
     {
-        "coder",
         "default",
         "explore",
         "general",
@@ -82,7 +81,7 @@ def _mentions_whole_token(name: str, text: str) -> bool:
 
 
 def test_discovered_agent_names_match_expected_roster() -> None:
-    """The nine bundled specs must be exactly the expected roster."""
+    """The ten bundled specs must be exactly the expected roster."""
     assert len(_SPECS) == _EXPECTED_SPEC_COUNT, (
         f"Expected {_EXPECTED_SPEC_COUNT} specs, found {len(_SPECS)}"
     )

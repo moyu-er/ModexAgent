@@ -6,7 +6,7 @@ from pathlib import Path
 
 from modex_agent.multi_agent.pool_config.specs import SubagentSpec
 from modex_agent.multi_agent.template import AgentTemplate
-from modex_agent.tools.presets import ContextMode, SystemPromptMode
+from modex_agent.tools.presets import ContextMode
 
 
 class TestForkContextPersistence:
@@ -79,13 +79,3 @@ class TestForkContextTemplateFields:
             )
         )
         assert t.spec.fork_max_messages == 50
-
-    def test_system_prompt_mode_replace_for_oracle(self) -> None:
-        t = AgentTemplate(
-            spec=SubagentSpec(
-                agent_name="oracle",
-                context_mode=ContextMode.FORK,
-                system_prompt_mode=SystemPromptMode.REPLACE,
-            )
-        )
-        assert t.spec.system_prompt_mode == SystemPromptMode.REPLACE

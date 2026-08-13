@@ -143,7 +143,7 @@ async def _assemble_resources(
     # 1. Workspace-level stores.
     ctx.paths.mkdir_skeleton()
     overflow_store = LocalFileToolOverflowStore(
-        workspace=ctx.paths.overflow_dir, max_chunk_size=10_000
+        workspace=ctx.paths.overflow_dir
     )
     session_index_store = build_session_store(
         app_config,

@@ -56,7 +56,7 @@ def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
 
 
 from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
-from modex_agent.tools.presets import ContextMode, SystemPromptMode
+from modex_agent.tools.presets import ContextMode
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -148,38 +148,6 @@ async def _assembled_prompt(ctx_mgr, session_id: str, parent_sid: str | None = N
 
 
 @pytest.mark.asyncio
-async def test_materialize_appends_the_current_parent_prompt():
-    """APPEND mode now rebuilds per invocation via a provider: a reused instance
-    resolves each session's own parent prompt through ``load()``. The parent
-    text is NOT in the static ``descriptor.system_prompt_template`` anymore."""
-    deps, factory = _deps()
-    parent_a = _instance("mainA", prompt="PROMPT_A")
-    parent_b = _instance("mainB", prompt="PROMPT_B")
-    deps.pool.get = MagicMock(side_effect=lambda n: parent_a if n == "mainA" else parent_b)
-
-    template = AgentTemplate(
-        spec=SubagentSpec(agent_name="scout", system_prompt_mode=SystemPromptMode.APPEND)
-    )
-    await template.materialize(
-        parent_session=SessionIdFactory().create(agent_name="mainA"),
-        invocation_id="inv1",
-        deps=deps,
-    )
-    ctx_mgr = factory.create_agent.call_args.kwargs["context_manager"]
-    static = _descriptor_of(factory.create_agent.call_args).system_prompt_template
-
-    # Parent link now travels via runtime_info (the dispatch envelope path),
-    # not a registry resolver. Each session's own parent selects its prompt.
-    prompt_a = await _assembled_prompt(ctx_mgr, "inv1.scout", parent_sid="conv.mainA")
-    prompt_b = await _assembled_prompt(ctx_mgr, "inv2.scout", parent_sid="conv.mainB")
-
-    # APPEND content lives in the per-session pipeline, not the static template.
-    assert "PROMPT_A" not in static
-    assert "PROMPT_A" in prompt_a and "PROMPT_B" not in prompt_a
-    assert "PROMPT_B" in prompt_b and "PROMPT_A" not in prompt_b
-
-
-@pytest.mark.asyncio
 async def test_materialize_forks_per_parent_via_load():
     """FORK context is rebuilt per invocation via a provider. Each session forks
     its own parent snapshot through ``load()``; the static template carries none
@@ -210,41 +178,6 @@ async def test_materialize_forks_per_parent_via_load():
     assert "CONTEXT_A" not in static  # not baked
     assert "CONTEXT_A" in prompt_a and "CONTEXT_B" not in prompt_a
     assert "CONTEXT_B" in prompt_b and "CONTEXT_A" not in prompt_b
-
-
-@pytest.mark.asyncio
-async def test_reused_instance_serves_per_invocation_append_and_fork():
-    """The direct proof of the fix: ONE materialized instance, loaded for two
-    sessions, yields two prompts that each carry their own invocation-specific
-    APPEND + FORK — instance reused, prompt rebuilt per invocation."""
-    fork = _FakeForkBuilder()
-    fork.register("mainA", "<fork>FA</fork>")
-    fork.register("mainB", "<fork>FB</fork>")
-    deps, factory = _deps(fork=fork)
-    parent_a = _instance("mainA", prompt="PA")
-    parent_b = _instance("mainB", prompt="PB")
-    deps.pool.get = MagicMock(side_effect=lambda n: parent_a if n == "mainA" else parent_b)
-
-    template = AgentTemplate(
-        spec=SubagentSpec(
-            agent_name="planner",
-            system_prompt_mode=SystemPromptMode.APPEND,
-            context_mode=ContextMode.FORK,
-            fork_max_messages=10,
-        )
-    )
-    await template.materialize(
-        parent_session=SessionIdFactory().create(agent_name="mainA"),
-        invocation_id="inv1",
-        deps=deps,
-    )
-    ctx_mgr = factory.create_agent.call_args.kwargs["context_manager"]
-
-    a = await _assembled_prompt(ctx_mgr, "inv1.planner", parent_sid="conv.mainA")
-    b = await _assembled_prompt(ctx_mgr, "inv2.planner", parent_sid="conv.mainB")
-
-    assert "PA" in a and "FA" in a and "PB" not in a and "FB" not in a
-    assert "PB" in b and "FB" in b and "PA" not in b and "FA" not in b
 
 
 # ── Q2: reuse defeats per-invocation rebuild ────────────────────────────

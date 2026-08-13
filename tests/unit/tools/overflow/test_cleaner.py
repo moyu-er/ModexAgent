@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
@@ -10,13 +11,13 @@ from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 
 @pytest.fixture
 async def store(tmp_path: Path) -> LocalFileToolOverflowStore:
-    s = LocalFileToolOverflowStore(workspace=tmp_path, max_chunk_size=50)
+    s = LocalFileToolOverflowStore(workspace=tmp_path)
     await s.initialize()
     return s
 
 
 @pytest.fixture
-async def cleaner(store: LocalFileToolOverflowStore) -> OverflowCleaner:
+async def cleaner(store: LocalFileToolOverflowStore) -> AsyncGenerator[OverflowCleaner]:
     c = OverflowCleaner(store, merge_window=0.01)
     yield c
     await c.stop()

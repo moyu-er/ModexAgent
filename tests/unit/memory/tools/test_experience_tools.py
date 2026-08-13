@@ -399,8 +399,8 @@ async def test_list_root_shows_exp_dirs(exp_dir: Path, meta_store: ExperienceMet
     tool = ExperienceListTool(exp_dir, meta_store)
     result = await tool.execute()
     # Raw ListDirTool output
-    assert "📁 exp-a" in result
-    assert "📁 exp-b" in result
+    assert "exp-a/" in result
+    assert "exp-b/" in result
 
 
 @pytest.mark.asyncio
@@ -421,9 +421,9 @@ async def test_list_dir_by_name(exp_dir: Path, meta_store: ExperienceMetaStore) 
 
     tool = ExperienceListTool(exp_dir, meta_store)
     result = await tool.execute(name="debug-timeout")
-    assert "📁 references" in result
-    assert "📁 scripts" in result
-    assert "📄 EXPERIENCE.md" in result
+    assert "references/" in result
+    assert "scripts/" in result
+    assert "EXPERIENCE.md" in result
 
 
 @pytest.mark.asyncio
@@ -436,8 +436,8 @@ async def test_list_sub_dir_by_path(exp_dir: Path, meta_store: ExperienceMetaSto
 
     tool = ExperienceListTool(exp_dir, meta_store)
     result = await tool.execute(name="debug-timeout", path="references")
-    assert "📄 error.txt" in result
-    assert "📄 log.txt" in result
+    assert "error.txt" in result
+    assert "log.txt" in result
 
 
 @pytest.mark.asyncio
@@ -462,7 +462,7 @@ async def test_experience_tool_list(exp_dir: Path, meta_store: ExperienceMetaSto
     _make_exp(exp_dir, "exp-a", "Desc A")
     tool = ExperienceTool(exp_dir, meta_store)
     result = await tool.execute(action="list")
-    assert "📁 exp-a" in result
+    assert "exp-a/" in result
 
 
 @pytest.mark.asyncio
@@ -548,7 +548,7 @@ async def test_experience_tool_list_with_name(exp_dir: Path, meta_store: Experie
     _make_exp(exp_dir, "test-exp")
     tool = ExperienceTool(exp_dir, meta_store)
     result = await tool.execute(action="list", name="test-exp")
-    assert "📄 EXPERIENCE.md" in result
+    assert "EXPERIENCE.md" in result
 
 
 @pytest.mark.asyncio
