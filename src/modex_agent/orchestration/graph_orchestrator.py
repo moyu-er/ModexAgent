@@ -244,16 +244,6 @@ class GraphOrchestrator:
             node_id_map=node_id_map,
         )
         self._instance_store.save(metadata)
-        self._io_store.save(
-            GraphIORecord(
-                record_id=default_id_generator().generate(),
-                graph_instance_id=graph_instance_id,
-                spec_id=spec_id,
-                user_input=user_input,
-                output=None,
-                created_at=now_ms(),
-            )
-        )
         coordinator = self._coordinator_factory.create(graph_instance_id, self._instance_store)
         self._attach_output_adapter(coordinator)
         for node in compiled.nodes.values():
@@ -292,15 +282,27 @@ class GraphOrchestrator:
         if latest.status == GraphInstanceStatus.RUNNING and gid in self._running_gids:
             raise ValueError(f"Graph instance {gid} is already running.")
 
-        if latest.status == GraphInstanceStatus.PAUSED:
-            invocation = GraphInvocationContext(graph_instance_id=gid, version=latest.version)
-        else:
-            invocation = self._instance_store.begin_invocation(gid)
-
         existing = self._active_instances.get(gid)
         initial_state = existing.initial_state if existing is not None else None
         if user_input is None and existing is not None:
             user_input = existing.user_input
+
+        if latest.status == GraphInstanceStatus.PAUSED:
+            invocation = GraphInvocationContext(graph_instance_id=gid, version=latest.version)
+        else:
+            invocation = self._instance_store.begin_invocation(gid)
+            self._io_store.save(
+                GraphIORecord(
+                    record_id=default_id_generator().generate(),
+                    graph_instance_id=gid,
+                    spec_id=latest.spec_id,
+                    version=invocation.version,
+                    user_input=user_input,
+                    output=None,
+                    created_at=now_ms(),
+                )
+            )
+
         if gid in self._active_instances:
             self.unregister_instance(gid)
         self._running_gids.add(gid)
@@ -317,11 +319,6 @@ class GraphOrchestrator:
             for node in compiled.nodes.values():
                 coordinator.register_node(node.node_id)
 
-            effective_input = user_input
-            if effective_input is None:
-                io_record = self._io_store.get_by_instance(gid)
-                effective_input = io_record.user_input if io_record is not None else None
-
             state = initial_state if initial_state is not None else self._create_state(spec)
 
             instance = GraphInstance(
@@ -330,7 +327,7 @@ class GraphOrchestrator:
                 ),
                 coordinator,
                 compiled=compiled,
-                user_input=effective_input,
+                user_input=user_input,
             )
             self._active_instances[gid] = instance
 
@@ -338,7 +335,7 @@ class GraphOrchestrator:
                 state=state,
                 runtime=self._runtime,
                 coordinator=coordinator,
-                user_input=effective_input,
+                user_input=user_input,
                 graph_instance_id=gid,
             )
             self._active_contexts[gid] = ctx
@@ -348,14 +345,14 @@ class GraphOrchestrator:
             final_state = await GraphEngine(compiled).run_async(ctx)
             status = (
                 GraphInstanceStatus.COMPLETED
-                if ctx is not None and ctx.reached_end
+                if ctx.reached_end
                 else GraphInstanceStatus.FAILED
             )
             self._instance_store.complete_invocation(invocation)
             if status == GraphInstanceStatus.FAILED:
                 self._instance_store.update_status(gid, GraphInstanceStatus.FAILED)
             result = dict(final_state).get("result")
-            io_record = self._io_store.get_by_instance(gid)
+            io_record = self._io_store.get_latest_by_instance(gid)
             if io_record is not None:
                 self._io_store.update_output(
                     io_record.record_id, result if isinstance(result, list) else None,
@@ -406,6 +403,47 @@ class GraphOrchestrator:
         ``GraphTurnArtifacts`` stored by ``BotAgentNode.execute``.
         """
         return self._active_contexts.get(graph_instance_id)
+
+    def start_invoke(
+        self,
+        graph_instance_id: int,
+        *,
+        user_input: GraphPayload | None = None,
+    ) -> asyncio.Task[None]:
+        """Launch re-invocation of an existing instance as a background task.
+
+        Validates that the instance is in a re-invokable terminal state
+        (completed/failed/crashed), then delegates to ``run_instance``
+        which calls ``begin_invocation`` (version+1, sets status RUNNING)
+        and executes fresh.
+
+        Per ADR-0040: ``bootstrap`` returns ``[entry_node]`` for the
+        re-invocation path because empty seeds (no CRASHED/RUNNING nodes)
+        combined with RUNNING instance status triggers the re-invocation
+        branch. The node's existing version chain handles per-node
+        re-execution — no node-level changes are needed.
+
+        Returns the task so callers can await it if needed.
+        """
+        latest = self._instance_store.load(graph_instance_id)
+        if latest is None:
+            raise ValueError(f"Graph instance {graph_instance_id} not found.")
+        if latest.status not in (
+            GraphInstanceStatus.COMPLETED,
+            GraphInstanceStatus.FAILED,
+            GraphInstanceStatus.CRASHED,
+        ):
+            raise ValueError(
+                f"Graph instance {graph_instance_id} status is "
+                f"{latest.status.value!r}; only completed/failed/crashed "
+                f"can be re-invoked."
+            )
+        task = asyncio.create_task(
+            self.run_instance(graph_instance_id, user_input=user_input)
+        )
+        self._run_tasks.add(task)
+        task.add_done_callback(self._run_tasks.discard)
+        return task
 
     async def create_and_run(
         self,

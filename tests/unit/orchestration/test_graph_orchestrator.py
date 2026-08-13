@@ -1492,10 +1492,10 @@ def _result_spec() -> GraphSpec:
 
 
 class TestIORecordLifecycle:
-    """io_record lifecycle: created on create_instance, output updated on completion."""
+    """io_record lifecycle: created on run_instance (begin_invocation), output updated on completion."""
 
-    async def test_io_record_created_on_create_instance(self) -> None:
-        """After create_instance, an io_record exists with user_input and output=None."""
+    async def test_no_io_record_after_create_instance_only(self) -> None:
+        """create_instance does NOT create an IORecord — only run_instance does."""
         io_store = InMemoryGraphIORecordStore()
         orch, spec_store, _ = _make_orchestrator(io_store=io_store)
         spec_id = _save_spec(spec_store, _simple_spec())
@@ -1503,13 +1503,25 @@ class TestIORecordLifecycle:
 
         gid = await orch.create_instance(spec_id, user_input=user_input)
 
-        record = io_store.get_by_instance(gid)
+        assert io_store.get_latest_by_instance(gid) is None
+        assert io_store.list_by_instance(gid) == []
+
+    async def test_io_record_created_on_run_instance(self) -> None:
+        """run_instance creates an IORecord with user_input and output=None."""
+        io_store = InMemoryGraphIORecordStore()
+        orch, spec_store, _ = _make_orchestrator(io_store=io_store)
+        spec_id = _save_spec(spec_store, _simple_spec())
+        user_input = GraphPayload(content="test input")
+
+        gid = await orch.create_instance(spec_id, user_input=user_input)
+        await orch.run_instance(gid)
+
+        record = io_store.get_latest_by_instance(gid)
         assert record is not None
         assert record.graph_instance_id == gid
         assert record.spec_id == spec_id
         assert record.user_input is not None
         assert record.user_input.content == "test input"
-        assert record.output is None
 
     async def test_io_record_created_with_none_user_input(self) -> None:
         """When user_input is None, the io_record still exists with user_input=None."""
@@ -1518,11 +1530,11 @@ class TestIORecordLifecycle:
         spec_id = _save_spec(spec_store, _simple_spec())
 
         gid = await orch.create_instance(spec_id)
+        await orch.run_instance(gid)
 
-        record = io_store.get_by_instance(gid)
+        record = io_store.get_latest_by_instance(gid)
         assert record is not None
         assert record.user_input is None
-        assert record.output is None
 
     async def test_io_record_output_updated_on_completion(self) -> None:
         """After create_and_run with DefaultGraphState, output is populated with the result."""
@@ -1539,7 +1551,7 @@ class TestIORecordLifecycle:
 
         gid = await orch.create_and_run(spec_id, user_input=user_input)
 
-        record = io_store.get_by_instance(gid)
+        record = io_store.get_latest_by_instance(gid)
         assert record is not None
         assert record.user_input is not None
         assert record.user_input.content == "hello"
@@ -1556,7 +1568,7 @@ class TestIORecordLifecycle:
 
         gid = await orch.create_and_run(spec_id, user_input=user_input)
 
-        record = io_store.get_by_instance(gid)
+        record = io_store.get_latest_by_instance(gid)
         assert record is not None
         assert record.user_input is not None
         assert record.user_input.content == "test"
@@ -1570,3 +1582,112 @@ class TestIORecordLifecycle:
         gid = await orch.create_and_run(spec_id)
 
         assert _load_status(instance_store, gid) == GraphInstanceStatus.COMPLETED.value
+
+    async def test_re_invocation_creates_new_io_record_version(self) -> None:
+        """Re-invoking a completed instance creates a new IORecord with version+1."""
+        io_store = InMemoryGraphIORecordStore()
+        orch, spec_store, instance_store = _make_orchestrator(io_store=io_store)
+        spec_id = _save_spec(spec_store, _simple_spec())
+        user_input = GraphPayload(content="first")
+
+        gid = await orch.create_and_run(spec_id, user_input=user_input)
+        first_record = io_store.get_latest_by_instance(gid)
+        assert first_record is not None
+        assert first_record.version == 1
+
+        task = orch.start_invoke(gid, user_input=GraphPayload(content="second"))
+        await task
+
+        records = io_store.list_by_instance(gid)
+        assert len(records) == 2
+        latest = io_store.get_latest_by_instance(gid)
+        assert latest is not None
+        assert latest.version == 2
+        assert latest.user_input is not None
+        assert latest.user_input.content == "second"
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.COMPLETED.value
+
+
+class TestStartInvoke:
+    """``start_invoke`` launches re-invocation as a background task."""
+
+    async def test_re_invokes_completed_instance(self) -> None:
+        orch, spec_store, instance_store = _make_orchestrator()
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_and_run(spec_id)
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.COMPLETED.value
+
+        task = orch.start_invoke(gid)
+        assert isinstance(task, asyncio.Task)
+        await task
+
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.COMPLETED.value
+
+    async def test_raises_for_unknown_instance(self) -> None:
+        orch, _, _ = _make_orchestrator()
+
+        with pytest.raises(ValueError, match="not found"):
+            orch.start_invoke(999999)
+
+    async def test_raises_for_pending_instance(self) -> None:
+        orch, spec_store, _ = _make_orchestrator()
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_instance(spec_id)
+
+        with pytest.raises(ValueError, match="only completed/failed/crashed"):
+            orch.start_invoke(gid)
+
+    async def test_raises_for_running_instance(self) -> None:
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        node_registry = NodeRegistry()
+        node_registry.register("blocking", _BlockingFactory(entered, release))
+        orch, spec_store, instance_store = _make_orchestrator(node_registry=node_registry)
+        spec = GraphSpec(
+            name="blocking_graph",
+            nodes=[NodeSpec(name="entry", node_type="blocking")],
+            edges=[
+                EdgeSpec(source=GraphNode.START, target="entry"),
+                EdgeSpec(source="entry", target=GraphNode.END),
+            ],
+            state_class="counter",
+        )
+        spec_id = _save_spec(spec_store, spec)
+
+        gid = await orch.create_instance(spec_id)
+        run_task = asyncio.create_task(orch.run_instance(gid))
+        await asyncio.wait_for(entered.wait(), timeout=5.0)
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.RUNNING.value
+
+        try:
+            with pytest.raises(ValueError, match="only completed/failed/crashed"):
+                orch.start_invoke(gid)
+        finally:
+            release.set()
+            await run_task
+
+    async def test_can_re_invoke_failed_instance(self) -> None:
+        node_registry = NodeRegistry()
+        node_registry.register("failing", _FailingFactory())
+        orch, spec_store, instance_store = _make_orchestrator(node_registry=node_registry)
+        spec = GraphSpec(
+            name="failing_graph",
+            nodes=[NodeSpec(name="entry", node_type="failing")],
+            edges=[
+                EdgeSpec(source=GraphNode.START, target="entry"),
+                EdgeSpec(source="entry", target=GraphNode.END),
+            ],
+            state_class="counter",
+        )
+        spec_id = _save_spec(spec_store, spec)
+
+        gid = await orch.create_instance(spec_id)
+        with pytest.raises(RuntimeError, match="boom"):
+            await orch.run_instance(gid)
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.CRASHED.value
+
+        task = orch.start_invoke(gid)
+        with pytest.raises(RuntimeError, match="boom"):
+            await task

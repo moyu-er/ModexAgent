@@ -38,9 +38,15 @@ _IO_TABLE = "graph_io_records"
 _COL_RECORD_ID = "record_id"
 _COL_GRAPH_INSTANCE_ID = "graph_instance_id"
 _COL_SPEC_ID = "spec_id"
+_COL_VERSION = "version"
 _COL_USER_INPUT_JSON = "user_input_json"
 _COL_OUTPUT_JSON = "output_json"
 _COL_CREATED_AT = "created_at"
+
+_SELECT_COLS = (
+    f"{_COL_RECORD_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
+    f"{_COL_VERSION}, {_COL_USER_INPUT_JSON}, {_COL_OUTPUT_JSON}, {_COL_CREATED_AT}"
+)
 
 # TypeAdapters for JSON serialization of nullable payload fields (same
 # pattern as `_NODE_ID_MAP_ADAPTER` in instance_store.py).
@@ -49,13 +55,18 @@ _OUTPUT_ADAPTER = TypeAdapter(list[GraphPayload] | None)
 
 
 class GraphIORecord(BaseModel):
-    """One graph instance's input + output record. Frozen value object (rule 12).
+    """One graph invocation's input + output record. Frozen value object (rule 12).
+
+    Version-scoped per ADR-0040: each invocation of a graph instance gets
+    its own IORecord, with ``version`` aligned to ``GraphMetadata.version``.
 
     Fields:
 
     - ``record_id: int`` -- Snowflake ID (primary key).
     - ``graph_instance_id: int`` -- FK -> ``graph_instances``.
     - ``spec_id: int`` -- FK -> ``graph_specs``.
+    - ``version: int`` -- the graph instance version (invocation number)
+      this record belongs to. Aligned with ``GraphMetadata.version``.
     - ``user_input: GraphPayload | None`` -- the user input payload
       (None if the graph had no explicit input).
     - ``output: list[GraphPayload] | None`` -- the output payloads
@@ -71,6 +82,7 @@ class GraphIORecord(BaseModel):
     record_id: int
     graph_instance_id: int
     spec_id: int
+    version: int
     user_input: GraphPayload | None = None
     output: list[GraphPayload] | None = None
     created_at: int
@@ -79,9 +91,11 @@ class GraphIORecord(BaseModel):
 class GraphIORecordStore(ABC):
     """Persistence abstraction for `GraphIORecord` rows (rule 7: ABC).
 
-    The store is keyed by `record_id` -- a Snowflake ID (BIGINT) that is
-    the primary key. Each graph instance has at most one I/O record;
-    `get_by_instance` returns that single record.
+    The store is keyed by `record_id` — a Snowflake ID (BIGINT) that is
+    the primary key. Each graph invocation gets its own I/O record,
+    version-scoped per ADR-0040. An instance may have multiple records
+    (one per version). Use `get_latest_by_instance` for the active
+    version or `list_by_instance` for all versions.
 
     All methods are synchronous and must be called from the event-loop
     thread only. The caller owns the ``sqlite3.Connection`` and manages
@@ -120,26 +134,26 @@ class GraphIORecordStore(ABC):
         ...
 
     @abstractmethod
-    def get_by_instance(self, graph_instance_id: int) -> GraphIORecord | None:
-        """Load the I/O record for a given graph instance.
-
-        Args:
-            graph_instance_id: The graph instance ID (FK -> graph_instances).
-
-        Returns:
-            The `GraphIORecord` for this instance, or `None` if not found.
-        """
-        ...
-
-    @abstractmethod
-    def list_by_instance(self, graph_instance_id: int) -> list[GraphIORecord]:
-        """List all I/O records for a given graph instance.
+    def get_latest_by_instance(self, graph_instance_id: int) -> GraphIORecord | None:
+        """Load the latest (highest version) I/O record for a graph instance.
 
         Args:
             graph_instance_id: The graph instance ID.
 
         Returns:
-            All `GraphIORecord` rows for this instance, ordered by `record_id`.
+            The ``GraphIORecord`` with the highest ``version``, or ``None``.
+        """
+        ...
+
+    @abstractmethod
+    def list_by_instance(self, graph_instance_id: int) -> list[GraphIORecord]:
+        """List all I/O records for a given graph instance, ordered by version.
+
+        Args:
+            graph_instance_id: The graph instance ID.
+
+        Returns:
+            All ``GraphIORecord`` rows for this instance, ordered by ``version``.
         """
         ...
 
@@ -151,7 +165,8 @@ class GraphIORecordStore(ABC):
             spec_id: The graph spec ID (FK -> graph_specs).
 
         Returns:
-            All `GraphIORecord` rows for this spec, ordered by `record_id`.
+            All `GraphIORecord` rows for this spec, ordered by
+            `(graph_instance_id, version)`.
         """
         ...
 
@@ -188,7 +203,7 @@ class NullGraphIORecordStore(GraphIORecordStore):
     def get(self, record_id: int) -> GraphIORecord | None:
         return None
 
-    def get_by_instance(self, graph_instance_id: int) -> GraphIORecord | None:
+    def get_latest_by_instance(self, graph_instance_id: int) -> GraphIORecord | None:
         return None
 
     def list_by_instance(self, graph_instance_id: int) -> list[GraphIORecord]:
@@ -220,21 +235,25 @@ class InMemoryGraphIORecordStore(GraphIORecordStore):
     def get(self, record_id: int) -> GraphIORecord | None:
         return self._records.get(record_id)
 
-    def get_by_instance(self, graph_instance_id: int) -> GraphIORecord | None:
-        for record in self._records.values():
-            if record.graph_instance_id == graph_instance_id:
-                return record
-        return None
-
-    def list_by_instance(self, graph_instance_id: int) -> list[GraphIORecord]:
-        return [
-            r
-            for r in self._records.values()
+    def get_latest_by_instance(self, graph_instance_id: int) -> GraphIORecord | None:
+        records = [
+            r for r in self._records.values()
             if r.graph_instance_id == graph_instance_id
         ]
+        if not records:
+            return None
+        return max(records, key=lambda r: r.version)
+
+    def list_by_instance(self, graph_instance_id: int) -> list[GraphIORecord]:
+        records = [
+            r for r in self._records.values()
+            if r.graph_instance_id == graph_instance_id
+        ]
+        return sorted(records, key=lambda r: r.version)
 
     def list_by_spec(self, spec_id: int) -> list[GraphIORecord]:
-        return [r for r in self._records.values() if r.spec_id == spec_id]
+        records = [r for r in self._records.values() if r.spec_id == spec_id]
+        return sorted(records, key=lambda r: (r.graph_instance_id, r.version))
 
     def update_output(self, record_id: int, output: list[GraphPayload] | None) -> None:
         existing = self._records.get(record_id)
@@ -289,6 +308,7 @@ class SqliteGraphIORecordStore(GraphIORecordStore):
             f"{_COL_GRAPH_INSTANCE_ID} INTEGER NOT NULL "
             f"REFERENCES graph_instances(graph_instance_id), "
             f"{_COL_SPEC_ID} INTEGER NOT NULL, "
+            f"{_COL_VERSION} INTEGER NOT NULL DEFAULT 0, "
             f"{_COL_USER_INPUT_JSON} TEXT, "
             f"{_COL_OUTPUT_JSON} TEXT, "
             f"{_COL_CREATED_AT} INTEGER NOT NULL"
@@ -296,7 +316,7 @@ class SqliteGraphIORecordStore(GraphIORecordStore):
         )
         conn.execute(
             f"CREATE INDEX IF NOT EXISTS idx_{_IO_TABLE}_instance "
-            f"ON {_IO_TABLE} ({_COL_GRAPH_INSTANCE_ID})"
+            f"ON {_IO_TABLE} ({_COL_GRAPH_INSTANCE_ID}, {_COL_VERSION} DESC)"
         )
         conn.execute(
             f"CREATE INDEX IF NOT EXISTS idx_{_IO_TABLE}_spec "
@@ -318,11 +338,12 @@ class SqliteGraphIORecordStore(GraphIORecordStore):
         self._conn.execute(
             f"INSERT INTO {_IO_TABLE} "
             f"({_COL_RECORD_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
-            f"{_COL_USER_INPUT_JSON}, {_COL_OUTPUT_JSON}, {_COL_CREATED_AT}) "
-            f"VALUES (?, ?, ?, ?, ?, ?) "
+            f"{_COL_VERSION}, {_COL_USER_INPUT_JSON}, {_COL_OUTPUT_JSON}, {_COL_CREATED_AT}) "
+            f"VALUES (?, ?, ?, ?, ?, ?, ?) "
             f"ON CONFLICT({_COL_RECORD_ID}) DO UPDATE SET "
             f"{_COL_GRAPH_INSTANCE_ID} = excluded.{_COL_GRAPH_INSTANCE_ID}, "
             f"{_COL_SPEC_ID} = excluded.{_COL_SPEC_ID}, "
+            f"{_COL_VERSION} = excluded.{_COL_VERSION}, "
             f"{_COL_USER_INPUT_JSON} = excluded.{_COL_USER_INPUT_JSON}, "
             f"{_COL_OUTPUT_JSON} = excluded.{_COL_OUTPUT_JSON}, "
             f"{_COL_CREATED_AT} = excluded.{_COL_CREATED_AT}",
@@ -330,6 +351,7 @@ class SqliteGraphIORecordStore(GraphIORecordStore):
                 record.record_id,
                 record.graph_instance_id,
                 record.spec_id,
+                record.version,
                 user_input_json,
                 output_json,
                 record.created_at,
@@ -339,9 +361,7 @@ class SqliteGraphIORecordStore(GraphIORecordStore):
 
     def get(self, record_id: int) -> GraphIORecord | None:
         row = self._conn.execute(
-            f"SELECT {_COL_RECORD_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
-            f"{_COL_USER_INPUT_JSON}, {_COL_OUTPUT_JSON}, {_COL_CREATED_AT} "
-            f"FROM {_IO_TABLE} "
+            f"SELECT {_SELECT_COLS} FROM {_IO_TABLE} "
             f"WHERE {_COL_RECORD_ID} = ?",
             (record_id,),
         ).fetchone()
@@ -349,13 +369,11 @@ class SqliteGraphIORecordStore(GraphIORecordStore):
             return None
         return self._row_to_record(row)
 
-    def get_by_instance(self, graph_instance_id: int) -> GraphIORecord | None:
+    def get_latest_by_instance(self, graph_instance_id: int) -> GraphIORecord | None:
         row = self._conn.execute(
-            f"SELECT {_COL_RECORD_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
-            f"{_COL_USER_INPUT_JSON}, {_COL_OUTPUT_JSON}, {_COL_CREATED_AT} "
-            f"FROM {_IO_TABLE} "
+            f"SELECT {_SELECT_COLS} FROM {_IO_TABLE} "
             f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? "
-            f"ORDER BY {_COL_RECORD_ID} "
+            f"ORDER BY {_COL_VERSION} DESC "
             f"LIMIT 1",
             (graph_instance_id,),
         ).fetchone()
@@ -365,22 +383,18 @@ class SqliteGraphIORecordStore(GraphIORecordStore):
 
     def list_by_instance(self, graph_instance_id: int) -> list[GraphIORecord]:
         rows = self._conn.execute(
-            f"SELECT {_COL_RECORD_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
-            f"{_COL_USER_INPUT_JSON}, {_COL_OUTPUT_JSON}, {_COL_CREATED_AT} "
-            f"FROM {_IO_TABLE} "
+            f"SELECT {_SELECT_COLS} FROM {_IO_TABLE} "
             f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? "
-            f"ORDER BY {_COL_RECORD_ID}",
+            f"ORDER BY {_COL_VERSION}",
             (graph_instance_id,),
         ).fetchall()
         return [self._row_to_record(r) for r in rows]
 
     def list_by_spec(self, spec_id: int) -> list[GraphIORecord]:
         rows = self._conn.execute(
-            f"SELECT {_COL_RECORD_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
-            f"{_COL_USER_INPUT_JSON}, {_COL_OUTPUT_JSON}, {_COL_CREATED_AT} "
-            f"FROM {_IO_TABLE} "
+            f"SELECT {_SELECT_COLS} FROM {_IO_TABLE} "
             f"WHERE {_COL_SPEC_ID} = ? "
-            f"ORDER BY {_COL_RECORD_ID}",
+            f"ORDER BY {_COL_GRAPH_INSTANCE_ID}, {_COL_VERSION}",
             (spec_id,),
         ).fetchall()
         return [self._row_to_record(r) for r in rows]
@@ -408,16 +422,12 @@ class SqliteGraphIORecordStore(GraphIORecordStore):
 
     @staticmethod
     def _row_to_record(row: tuple[Any, ...]) -> GraphIORecord:
-        """Construct a `GraphIORecord` from a DB row.
-
-        Identity columns come from individual columns; the nullable JSON
-        columns (`user_input_json`, `output_json`) are deserialized via
-        `TypeAdapter`. SQL NULL becomes Python None.
-        """
+        """Construct a `GraphIORecord` from a DB row."""
         (
             record_id,
             graph_instance_id,
             spec_id,
+            version,
             user_input_json,
             output_json,
             created_at,
@@ -426,6 +436,7 @@ class SqliteGraphIORecordStore(GraphIORecordStore):
             record_id=record_id,
             graph_instance_id=graph_instance_id,
             spec_id=spec_id,
+            version=version,
             user_input=(
                 _USER_INPUT_ADAPTER.validate_json(user_input_json)
                 if user_input_json is not None

@@ -138,16 +138,21 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         # Restores ctx.state and auto-promotes CONSUMED_PENDING delivers.
         seeds = bootstrap(ctx, self.graph)
 
-        # Only re-execute seeds (CRASHED/RUNNING) are marked READY immediately.
+        # Mark re-execute seeds (CRASHED/RUNNING) and entry_node as READY.
+        # entry_node is always READY when present in seeds (bootstrap puts
+        # it there for fresh starts and re-invocations). Other seeds are
+        # READY only if their latest invocation is CRASHED or RUNNING.
         # PENDING-deliver seeds are left for _recheck_pending's store scan.
-        # Fresh start (entry_node, no prior invocations) is also marked READY.
         for seed_name in seeds:
             node = self.graph.nodes[seed_name]
             record = ctx.coordinator.node_state_store.load_latest(node.node_id)
-            if (record is not None and record.status in (
-                InvocationStatus.CRASHED,
-                InvocationStatus.RUNNING,
-            )) or (record is None and seed_name == self.graph.entry_node):
+            if seed_name == self.graph.entry_node or (
+                record is not None
+                and record.status in (
+                    InvocationStatus.CRASHED,
+                    InvocationStatus.RUNNING,
+                )
+            ):
                 iid = self._create_instance(seed_name)
                 self._mark_ready(iid)
 

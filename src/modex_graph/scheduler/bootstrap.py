@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ..constants import DeliverConsumptionStatus, GraphNode, InvocationStatus
+from ..constants import DeliverConsumptionStatus, GraphInstanceStatus, GraphNode, InvocationStatus
 
 if TYPE_CHECKING:
     from typing_extensions import TypeVar
@@ -102,15 +102,28 @@ def bootstrap(ctx: GraphContext[S], graph: CompiledGraph[S]) -> list[str]:
                 ):
                     coordinator.promote_delivers(node.node_id, d.consumed_by_invocation_id)
 
-    # 5. Fresh start: no seeds and no prior invocations -> entry_node.
+    # 5. No seeds (no CRASHED/RUNNING nodes, no PENDING delivers).
+    #    Distinguish re-invocation from recovery:
+    #    - Instance status RUNNING (begin_invocation just set it) → re-invocation
+    #      → [entry_node]. Per ADR-0040: the `has_any_invocation` gate is removed
+    #      for this path — prior COMPLETED node records do NOT block re-execution.
+    #    - Instance status terminal (COMPLETED/FAILED/CRASHED) → recovery
+    #      → [] (graph is done, nothing to execute).
+    #    - Instance store returns None (Null store / no persistence) → fall back
+    #      to the has_any_invocation check: fresh start (no prior node records)
+    #      → [entry_node]; prior COMPLETED records → [] (recovery on Null store).
     if not seeds:
+        instance_metadata = coordinator.instance_store.load(ctx.graph_instance_id)
+        if instance_metadata is not None:
+            if instance_metadata.status == GraphInstanceStatus.RUNNING:
+                return [graph.entry_node]
+            return []
         has_any_invocation = any(
             node_state_store.load_latest(node.node_id) is not None
             for name, node in graph.nodes.items()
             if name not in (GraphNode.START, GraphNode.END)
         )
-        if not has_any_invocation:
-            return [graph.entry_node]
+        return [] if has_any_invocation else [graph.entry_node]
 
     # 6. Order seeds topologically (BFS from entry_node) so the LinearScheduler
     #    can use seeds[0] as the earliest recovery point.

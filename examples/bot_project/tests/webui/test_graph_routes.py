@@ -325,7 +325,58 @@ async def test_run_spec_with_user_input(tmp_path: Path) -> None:
         await client.close()
 
 
-# ── Instance query endpoints ─────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_invoke_instance_404_when_not_found(tmp_path: Path) -> None:
+    orch, _, _ = _make_orchestrator()
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.post("/api/graphs/instances/999999/invoke", json={})
+        assert resp.status == 404, await resp.text()
+        data = await resp.json()
+        assert "not found" in data["error"]
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_invoke_instance_409_when_not_terminal(tmp_path: Path) -> None:
+    """PENDING instance cannot be re-invoked → 409."""
+    orch, _, spec_store = _make_orchestrator()
+    spec_id = _save_spec(spec_store)
+    gid = await orch.create_instance(spec_id)
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.post(f"/api/graphs/instances/{gid}/invoke", json={})
+        assert resp.status == 409, await resp.text()
+        data = await resp.json()
+        assert "only completed/failed/crashed" in data["error"]
+    finally:
+        await orch.cleanup()
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_invoke_instance_200_when_completed(tmp_path: Path) -> None:
+    """Completed instance can be re-invoked → 200."""
+    orch, _, spec_store = _make_orchestrator()
+    spec_id = _save_spec(spec_store)
+    gid = await orch.create_and_run(spec_id)
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.post(
+            f"/api/graphs/instances/{gid}/invoke",
+            json={"user_input": {"content": "re-run"}},
+        )
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        assert data["graph_instance_id"] == str(gid)
+        assert data["status"] == "running"
+    finally:
+        await orch.cleanup()
+        await client.close()
 
 
 @pytest.mark.asyncio
@@ -980,15 +1031,15 @@ async def test_list_runs_returns_records_after_run(tmp_path: Path) -> None:
         assert resp.status == 200, await resp.text()
         data = await resp.json()
         assert len(data) == 1
-        run = data[0]
-        assert run["graph_instance_id"] == str(gid)
-        assert run["user_input"] is not None
-        assert run["user_input"]["content"] == "hello"
-        assert run["output"] is not None
-        assert run["output"][0]["content"] == "hello"
-        assert run["status"] == "completed"
-        assert run["created_at"] > 0
-        assert run["updated_at"] >= 0
+        latest = data[0]
+        assert latest["graph_instance_id"] == str(gid)
+        assert latest["user_input"] is not None
+        assert latest["user_input"]["content"] == "hello"
+        assert latest["output"] is not None
+        assert latest["output"][0]["content"] == "hello"
+        assert latest["status"] == "completed"
+        assert latest["created_at"] > 0
+        assert latest["updated_at"] >= 0
     finally:
         await orch.cleanup()
         await client.close()

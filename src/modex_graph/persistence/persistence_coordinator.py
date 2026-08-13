@@ -120,6 +120,11 @@ class GraphPersistenceCoordinator:
         """The node state store (lifecycle + version chain + CAS authority)."""
         return self._node_state_store
 
+    @property
+    def instance_store(self) -> GraphInstanceStore:
+        """The graph instance store (identity + status + version chain)."""
+        return self._instance_store
+
     # ── Output events ────────────────────────────────────────────────
 
     def set_output_adapter(self, adapter: GraphOutputAdapter | None) -> None:

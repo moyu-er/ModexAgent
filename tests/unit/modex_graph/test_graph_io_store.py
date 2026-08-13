@@ -6,7 +6,7 @@ Covers:
 - `GraphIORecordStore` ABC (rule 7: ABC, not Protocol): 7 abstract methods.
 - `GraphIORecord` frozen Pydantic value object (rule 12).
 - `NullGraphIORecordStore`: no-op; `get` returns None.
-- `InMemoryGraphIORecordStore`: save (upsert), get, get_by_instance,
+- `InMemoryGraphIORecordStore`: save (upsert), get, get_latest_by_instance,
   list_by_instance, list_by_spec, update_output, delete.
 - `SqliteGraphIORecordStore`: same CRUD + idempotent schema, timestamps
   epoch ms, table/column constants, indexes created, file-based
@@ -55,6 +55,7 @@ def _make_record(
     record_id: int | None = None,
     graph_instance_id: int = _GRAPH_INSTANCE_ID,
     spec_id: int = _SPEC_ID,
+    version: int = 0,
     user_input: GraphPayload | None = None,
     output: list[GraphPayload] | None = None,
     created_at: int = 0,
@@ -63,6 +64,7 @@ def _make_record(
         record_id=record_id if record_id is not None else _gen_record_id(),
         graph_instance_id=graph_instance_id,
         spec_id=spec_id,
+        version=version,
         user_input=user_input,
         output=output,
         created_at=created_at,
@@ -97,6 +99,7 @@ class TestGraphIORecord:
                 record_id=1,
                 graph_instance_id=2,
                 spec_id=3,
+                version=0,
                 created_at=0,
                 unexpected="oops",  # type: ignore[call-arg]
             )
@@ -106,6 +109,7 @@ class TestGraphIORecord:
             record_id=1,
             graph_instance_id=2,
             spec_id=3,
+            version=0,
             created_at=0,
         )
         assert record.user_input is None
@@ -123,11 +127,11 @@ class TestGraphIORecordStoreABC:
         with pytest.raises(TypeError):
             GraphIORecordStore()  # type: ignore[abstract]
 
-    def test_seven_abstract_methods(self) -> None:
+    def test_abstract_methods(self) -> None:
         expected = {
             "save",
             "get",
-            "get_by_instance",
+            "get_latest_by_instance",
             "list_by_instance",
             "list_by_spec",
             "update_output",
@@ -167,9 +171,9 @@ class TestNullGraphIORecordStore:
         store = NullGraphIORecordStore()
         assert store.get(1) is None
 
-    def test_get_by_instance_returns_none(self) -> None:
+    def test_get_latest_by_instance_returns_none(self) -> None:
         store = NullGraphIORecordStore()
-        assert store.get_by_instance(_GRAPH_INSTANCE_ID) is None
+        assert store.get_latest_by_instance(_GRAPH_INSTANCE_ID) is None
 
     def test_list_by_instance_returns_empty(self) -> None:
         store = NullGraphIORecordStore()
@@ -225,17 +229,17 @@ class TestGraphIORecordStoreCRUD:
         assert loaded is not None
         assert loaded.user_input == GraphPayload(content="new")
 
-    def test_get_by_instance(self, kind: str) -> None:
+    def test_get_latest_by_instance(self, kind: str) -> None:
         store = _store_factory(kind)()
-        record = _make_record(graph_instance_id=_GRAPH_INSTANCE_ID)
-        store.save(record)
-        loaded = store.get_by_instance(_GRAPH_INSTANCE_ID)
+        store.save(_make_record(graph_instance_id=_GRAPH_INSTANCE_ID, version=0))
+        store.save(_make_record(graph_instance_id=_GRAPH_INSTANCE_ID, version=1))
+        loaded = store.get_latest_by_instance(_GRAPH_INSTANCE_ID)
         assert loaded is not None
-        assert loaded.record_id == record.record_id
+        assert loaded.version == 1
 
-    def test_get_by_instance_returns_none_for_missing(self, kind: str) -> None:
+    def test_get_latest_by_instance_returns_none_for_missing(self, kind: str) -> None:
         store = _store_factory(kind)()
-        assert store.get_by_instance(99999) is None
+        assert store.get_latest_by_instance(99999) is None
 
     def test_list_by_instance(self, kind: str) -> None:
         store = _store_factory(kind)()

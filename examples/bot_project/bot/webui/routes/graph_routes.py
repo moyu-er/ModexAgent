@@ -34,8 +34,7 @@ from bot.webui.routes.graph_models import (
 )
 from modex_agent.agents.agent_node import AgentNode
 from modex_agent.orchestration import GraphOrchestrator
-from modex_graph import GraphInstanceStatus, GraphIORecord, GraphNode, GraphOutput, GraphPayload, GraphSpec, TopologyError, default_id_generator
-from modex_graph.persistence._time import now_ms
+from modex_graph import GraphInstanceStatus, GraphNode, GraphOutput, GraphPayload, GraphSpec, TopologyError
 
 if TYPE_CHECKING:
     from bot.webui.server import WebUIServer
@@ -219,22 +218,38 @@ async def handle_run_instance(request: web.Request) -> web.Response:
     if metadata is None:
         return web.json_response({"error": f"instance {gid} not found"}, status=404)
     try:
-        orch._io_store.save(
-            GraphIORecord(
-                record_id=default_id_generator().generate(),
-                graph_instance_id=gid,
-                spec_id=metadata.spec_id,
-                user_input=run_req.user_input,
-                output=None,
-                created_at=now_ms(),
-            )
-        )
         orch.start_run(gid, user_input=run_req.user_input)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=404)
     return web.json_response(
         GraphRunResponse(
             graph_instance_id=str(gid), status=GraphInstanceStatus.PENDING.value
+        ).model_dump(mode="json")
+    )
+
+
+async def handle_invoke_instance(request: web.Request) -> web.Response:
+    r = _resolve_resources(request)
+    if isinstance(r, web.Response):
+        return r
+    orch, _, _ = r
+    gid = _int_param(request, "instance_id")
+    if isinstance(gid, web.Response):
+        return gid
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, web.HTTPException):
+        body = {}
+    run_req = GraphRunRequest.model_validate(body if isinstance(body, dict) else {})
+    if orch._instance_store.load(gid) is None:
+        return web.json_response({"error": f"instance {gid} not found"}, status=404)
+    try:
+        orch.start_invoke(gid, user_input=run_req.user_input)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    return web.json_response(
+        GraphRunResponse(
+            graph_instance_id=str(gid), status=GraphInstanceStatus.RUNNING.value
         ).model_dump(mode="json")
     )
 
@@ -575,6 +590,7 @@ def register_graph_routes(
     app.router.add_get("/api/graphs/instances/{instance_id}", handle_get_instance)
     app.router.add_get("/api/graphs/instances/{instance_id}/events", handle_get_events)
     app.router.add_post("/api/graphs/instances/{instance_id}/run", handle_run_instance)
+    app.router.add_post("/api/graphs/instances/{instance_id}/invoke", handle_invoke_instance)
     app.router.add_post("/api/graphs/instances/{instance_id}/pause", handle_pause_instance)
     app.router.add_post("/api/graphs/instances/{instance_id}/resume", handle_resume_instance)
     app.router.add_post("/api/graphs/instances/{instance_id}/stop", handle_stop_instance)
