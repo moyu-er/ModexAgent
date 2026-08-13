@@ -248,11 +248,13 @@ export class WebSocketClient {
     attachments?: OutgoingAttachmentRef[],
     providerName?: string,
     modelName?: string,
+    pool?: string,
   ): boolean {
     return this.send("send_message", {
       session_id: sessionId,
       content,
       ...(ws ? { ws } : {}),
+      ...(pool ? { pool } : {}),
       // Carried so the backend can echo it back on the user_message event
       // (server.py reads data["_request_id"]) and the reducer can dedup the
       // optimistic message against the echo — without it every send renders
@@ -269,15 +271,20 @@ export class WebSocketClient {
     });
   }
 
-  deleteConversation(sessionId: string): boolean {
-    return this.send("delete_conversation", { session_id: sessionId });
+  deleteConversation(sessionId: string, pool?: string, ws?: string): boolean {
+    return this.send("delete_conversation", {
+      session_id: sessionId,
+      ...(pool ? { pool } : {}),
+      ...(ws ? { ws } : {}),
+    });
   }
 
   /** Send a pause request for the currently streaming session. */
-  pause(sessionId: string, ws?: string): boolean {
+  pause(sessionId: string, ws?: string, pool?: string): boolean {
     return this.send("pause", {
       session_id: sessionId,
       ...(ws ? { ws } : {}),
+      ...(pool ? { pool } : {}),
     });
   }
 }

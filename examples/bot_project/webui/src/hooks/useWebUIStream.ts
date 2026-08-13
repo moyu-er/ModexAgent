@@ -56,6 +56,11 @@ export function useWebUIStream(
   onSessionActivity?: (sessionId: string) => void,
   currentWs?: string,
   onSessionCreated?: (sessionId: string, parentSessionId: string | null) => void,
+  /** Pool of the currently selected session — sent on every session-scoped
+   *  REST/WS call so the backend scopes the request directly instead of
+   *  inferring the pool from the agent name. Pending (uuid-prefix) sessions
+   *  resolve their pool via ``getPoolForUuid`` instead. */
+  currentPool?: string,
 ): UseWebUIStreamResult {
   const t = useT();
   const [state, setState] = useState<StreamState>({
@@ -105,6 +110,8 @@ export function useWebUIStream(
   getPoolForUuidRef.current = getPoolForUuid;
   const currentWsRef = useRef(currentWs);
   currentWsRef.current = currentWs;
+  const currentPoolRef = useRef(currentPool);
+  currentPoolRef.current = currentPool;
 
   const handleEvent = useCallback(
     (event: ServerEventUnion): void => {
@@ -114,12 +121,16 @@ export function useWebUIStream(
         onSessionCreated?.(event.session_id, event.parent_session_id ?? null);
         return;
       }
+      // Resolve the pending session's pool BEFORE onSessionReady runs — the
+      // ready handler clears the uuid→pool entry, so a lookup after it would
+      // miss. Used for the pending-session upload/send below.
+      const pendingPool = sessionId ? getPoolForUuid?.(sessionId) : undefined;
       if (
         event.event === "attached" &&
         sessionId &&
         event.session_id !== sessionId &&
         event.session_id.startsWith(sessionId + ".") &&
-        getPoolForUuid?.(sessionId) !== undefined
+        pendingPool !== undefined
       ) {
         onSessionReady?.(sessionId, event.session_id);
         // Flush a queued ws send from a hero-composer draft send. The
@@ -142,7 +153,7 @@ export function useWebUIStream(
                 try {
                   const uploaded = await Promise.all(
                     pending.files.map(
-                      (f) => uploadAttachment(fullSid, f, currentWsRef.current),
+                      (f) => uploadAttachment(fullSid, f, currentWsRef.current, pendingPool),
                     ),
                   );
                   refs = [
@@ -171,6 +182,7 @@ export function useWebUIStream(
                 refs,
                 pending.providerName,
                 pending.modelName,
+                pendingPool,
               );
             })();
           }
@@ -218,7 +230,7 @@ export function useWebUIStream(
         event.session_id &&
         (event.tool === "todo_write" || event.tool === "todo_read")
       ) {
-        fetchTodos(event.session_id, currentWsRef.current).then(
+        fetchTodos(event.session_id, currentWsRef.current, currentPoolRef.current).then(
           (items) => {
             setState((prev) => ({
               ...prev,
@@ -238,7 +250,7 @@ export function useWebUIStream(
       // view, and a stale fetch (captured earlier) would re-add an
       // already-decided card as a phantom pending; the next event reconciles.
       const refreshApprovals = (sid: string, guardInFlight: boolean): void => {
-        fetchApprovals(sid, currentWsRef.current)
+        fetchApprovals(sid, currentWsRef.current, currentPoolRef.current)
           .then((views) => {
             setState((prev) => {
               if (
@@ -424,12 +436,12 @@ export function useWebUIStream(
     }));
 
     Promise.all([
-      fetchMessages(sessionId, currentWs),
-      fetchTodos(sessionId, currentWs).catch((err) => {
+      fetchMessages(sessionId, currentWs, currentPool),
+      fetchTodos(sessionId, currentWs, currentPool).catch((err) => {
         console.error("Failed to fetch todos for", sessionId, err);
         return [] as TodoItemDTO[];
       }),
-      fetchApprovals(sessionId, currentWs).catch((err) => {
+      fetchApprovals(sessionId, currentWs, currentPool).catch((err) => {
         console.error("Failed to fetch approvals for", sessionId, err);
         return [] as ApprovalRequestView[];
       }),
@@ -512,7 +524,7 @@ export function useWebUIStream(
     return (): void => {
       cancelled = true;
     };
-  }, [sessionId, getPoolForUuid, currentWs]);
+  }, [sessionId, getPoolForUuid, currentWs, currentPool]);
 
   const isPending = sessionId
     ? getPoolForUuid?.(sessionId) !== undefined
@@ -569,6 +581,7 @@ export function useWebUIStream(
         attachments,
         providerName,
         modelName,
+        currentPoolRef.current,
       );
     },
     [sessionId, agentName, getPoolForUuid],
@@ -587,14 +600,14 @@ export function useWebUIStream(
       console.warn("WebSocket: not connected");
       return;
     }
-    client.pause(sessionId, currentWsRef.current);
+    client.pause(sessionId, currentWsRef.current, currentPoolRef.current);
   }, [sessionId, state.isStreaming, currentWsRef.current]);
 
   const submitApproval = useCallback(
     (toolCallId: string, action: "allow" | "deny"): void => {
       if (!sessionId) return;
       setSubmittingApprovals((prev) => ({ ...prev, [toolCallId]: true }));
-      apiSubmitApproval(sessionId, toolCallId, action, currentWsRef.current)
+      apiSubmitApproval(sessionId, toolCallId, action, currentWsRef.current, currentPoolRef.current)
         .then(() => {
           setState((prev) => clearPendingApproval(prev, sessionId, toolCallId));
         })

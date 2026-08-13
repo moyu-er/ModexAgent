@@ -120,6 +120,14 @@ const AppInner: FC = () => {
     await handleGoHome();
   }, [navigate, handleGoHome]);
 
+  // Pool for the active session (or the hero view's active pool). Threads
+  // into useWebUIStream (session-scoped API calls) and resolves the skill
+  // set for /skillName autocomplete.
+  const chatPool = useMemo(() => {
+    if (!selectedId) return activePool;
+    return sessions.find((x) => x.session_id === selectedId)?.pool ?? activePool;
+  }, [sessions, selectedId, activePool]);
+
   const {
     messages,
     isStreaming,
@@ -141,6 +149,7 @@ const AppInner: FC = () => {
     onSessionActivity,
     streamWs,
     onSessionCreated,
+    chatPool,
   );
 
   // Approve every currently-pending card. Client-side loop — no new endpoint;
@@ -188,13 +197,6 @@ const AppInner: FC = () => {
     if (parts.length >= 2) return parts[1] || "main";
     return activePool || "main";
   }, [sessions, selectedId, activePool, poolAgentMap]);
-
-  // Pool for the active session (or the hero view's active pool). Used to
-  // resolve the skill set for /skillName autocomplete.
-  const chatPool = useMemo(() => {
-    if (!selectedId) return activePool;
-    return sessions.find((x) => x.session_id === selectedId)?.pool ?? activePool;
-  }, [sessions, selectedId, activePool]);
 
   const handleSend = useCallback(
     (

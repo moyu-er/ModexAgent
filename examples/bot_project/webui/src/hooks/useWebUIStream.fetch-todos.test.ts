@@ -89,7 +89,7 @@ describe("useWebUIStream todo fetch", () => {
       { content: "current", status: "in_progress" },
       { content: "next", status: "pending" },
     ]);
-    expect(fetchTodos).toHaveBeenCalledWith(sessionId, undefined);
+    expect(fetchTodos).toHaveBeenCalledWith(sessionId, undefined, undefined);
   });
 
   it("returns empty array when session has no todos", async () => {
@@ -120,7 +120,7 @@ describe("useWebUIStream todo fetch", () => {
 
     renderHook(() => useWebUIStream(sessionId, getPoolForUuid, undefined, undefined, workspace));
 
-    await waitFor(() => expect(fetchTodos).toHaveBeenCalledWith(sessionId, workspace));
+    await waitFor(() => expect(fetchTodos).toHaveBeenCalledWith(sessionId, workspace, undefined));
   });
 
   it("re-fetches todos when a todo_write tool_call_end arrives via WebSocket", async () => {
