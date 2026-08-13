@@ -133,27 +133,18 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
     # ------------------------------------------------------------------
 
     async def _persist(self, event: ServerEvent) -> None:
-        """Append *event* to the transcript store under the owning workspace.
-
-        The sessions_dir is resolved from the resolver-cell provider when wired
-        (correct workspace even inside the broker consumer task, where the
-        bind_workspace_root ContextVar is lost); when None the store uses the
-        standard ctxvar/ctor fallback (backward compat / tests).
-        """
         if self._transcript_store is None:
             return
         sessions_dir = (
             self._sessions_dir_provider() if self._sessions_dir_provider else None
         )
-        # Only pass sessions_dir explicitly when non-None — JSONLTranscriptStore
-        # (used in tests / standalone paths) does not accept the kwarg, so the
-        # non-resolver path keeps the 2-arg call the ABC defines.
+        pool = self._session_meta_resolver().pool
         if sessions_dir is not None:
             await self._transcript_store.append(
-                self._session_id, event, sessions_dir=sessions_dir
+                self._session_id, event, pool=pool, sessions_dir=sessions_dir
             )
         else:
-            await self._transcript_store.append(self._session_id, event)
+            await self._transcript_store.append(self._session_id, event, pool=pool)
 
     async def _persist_partial(self, event: ServerEvent) -> None:
         """Append a streaming delta to the in-memory partial buffer.
