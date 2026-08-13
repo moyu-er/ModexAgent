@@ -43,7 +43,7 @@ import {
 } from "../../lib/graphsApi";
 import { useGraphExecution } from "../../hooks/useGraphExecution";
 import type { WebSocketClient } from "../../lib/ws-client";
-import { useT, type MessageKey } from "../../i18n";
+import { useT } from "../../i18n";
 import { useToast } from "../ToastContext";
 import { Button } from "../ui/Button";
 import { SectionLabel } from "../ui/SectionLabel";
@@ -60,7 +60,7 @@ import {
   parseGraphSpecYaml,
   type ParsedGraphTopology,
 } from "./yaml/parseGraphSpec";
-import { formatGraphApiError, GraphStatusBadge } from "./shared";
+import { formatGraphApiError, GraphStatusBadge, statusLabelKey } from "./shared";
 import { NodeDetailPanel } from "./detail/NodeDetailPanel";
 import { DropdownPanel } from "../ui/DropdownPanel";
 import { IconButton } from "../ui/IconButton";
@@ -72,20 +72,6 @@ import { EventTimeline } from "./detail/EventTimeline";
 const ACTIVE_STATUSES = new Set(["pending", "running", "paused", "crashed"]);
 /** Crash-flash auto-dismiss (PRD §8.1: --dur = 220ms). */
 const CRASH_FLASH_MS = 220;
-
-const STATUS_LABEL_KEYS: Record<string, MessageKey> = {
-  pending: "graphs.statusPending",
-  running: "graphs.statusRunning",
-  paused: "graphs.statusPaused",
-  stopped: "graphs.statusStopped",
-  crashed: "graphs.statusCrashed",
-  completed: "graphs.statusCompleted",
-  failed: "graphs.statusFailed",
-};
-
-export function statusLabelKey(status: string): MessageKey {
-  return STATUS_LABEL_KEYS[status] ?? "graphs.status";
-}
 
 const VALID_VISUAL_STATUSES = new Set([
   "pending",

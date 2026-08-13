@@ -150,6 +150,24 @@ class GraphRunResponse(BaseModel):
     status: str
 
 
+class GraphInvocationResponse(BaseModel):
+    """``GET /api/graphs/instances/{id}/invocations`` — one invocation's I/O.
+
+    Mirrors :class:`GraphRunRecordResponse` but scoped by ``instance_id``
+    via ``list_by_instance`` (ADR-0040). Each invocation is one turn in the
+    instance's conversation history. ``record_id`` is ``str`` to avoid JS
+    precision loss (see :class:`GraphSpecSummary`).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    record_id: str
+    version: int
+    user_input: GraphPayload | None = None
+    output: list[GraphPayload] | None = None
+    created_at: int = 0
+
+
 class GraphEventItem(BaseModel):
     """Single graph event item — typed view of ``GraphOutput.model_dump``.
 
@@ -215,6 +233,7 @@ __all__ = [
     "GraphEventItem",
     "GraphEventListResponse",
     "GraphInstanceResponse",
+    "GraphInvocationResponse",
     "GraphRunRecordResponse",
     "GraphRunRequest",
     "GraphRunResponse",

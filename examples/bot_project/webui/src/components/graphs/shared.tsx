@@ -1,8 +1,10 @@
-// Shared bits for the graph views: status → token-colored badge and ApiError
-// detail formatting (backend 400s carry {"error": ..., "detail": ...}).
+// Shared bits for the graph views: status → token-colored badge, status →
+// i18n label key, and ApiError detail formatting (backend 400s carry
+// {"error": ..., "detail": ...}).
 
 import type { FC } from "react";
 import { ApiError } from "../../lib/api";
+import type { MessageKey } from "../../i18n";
 
 const STATUS_CLS: Record<string, string> = {
   pending: "text-mute border-hairline",
@@ -13,6 +15,20 @@ const STATUS_CLS: Record<string, string> = {
   completed: "text-success border-success",
   failed: "text-danger border-danger",
 };
+
+const STATUS_LABEL_KEYS: Record<string, MessageKey> = {
+  pending: "graphs.statusPending",
+  running: "graphs.statusRunning",
+  paused: "graphs.statusPaused",
+  stopped: "graphs.statusStopped",
+  crashed: "graphs.statusCrashed",
+  completed: "graphs.statusCompleted",
+  failed: "graphs.statusFailed",
+};
+
+export function statusLabelKey(status: string): MessageKey {
+  return STATUS_LABEL_KEYS[status] ?? "graphs.status";
+}
 
 export const GraphStatusBadge: FC<{ status: string; label: string }> = ({
   status,
