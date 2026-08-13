@@ -17,13 +17,16 @@ class CustomBuildHook(BuildHookInterface):
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         root = Path(self.root)
 
-        # Include bot/ Python package in the wheel
+        # Include bot/ Python package and all data files (SQL migrations,
+        # tiktoken blobs, etc.) in the wheel. force_include defaults to .py
+        # only, silently dropping data files the runtime needs at runtime.
         bot_dir = root / "bot"
         if bot_dir.is_dir():
             build_data.setdefault("force_include", {})
-            for py_file in bot_dir.rglob("*.py"):
-                rel = str(py_file.relative_to(root))
-                build_data["force_include"][rel] = rel
+            for path in bot_dir.rglob("*"):
+                if path.is_file() and path.suffix != ".pyc":
+                    rel = str(path.relative_to(root))
+                    build_data["force_include"][rel] = rel
 
         # Include built frontend assets
         dist_dir = root / "bot" / "web" / "dist"

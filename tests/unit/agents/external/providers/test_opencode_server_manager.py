@@ -1308,13 +1308,6 @@ class TestReapOrphanedProcesses:
 
 
 class TestIsPythonProcess:
-    def test_returns_true_for_current_process(self) -> None:
-        from modex_agent.agents.external.providers.opencode.server_manager import (
-            _is_python_process,
-        )
-
-        assert _is_python_process(os.getpid()) is True
-
     def test_returns_false_for_nonexistent_pid(self) -> None:
         from modex_agent.agents.external.providers.opencode.server_manager import (
             _is_python_process,

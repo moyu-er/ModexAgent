@@ -32,7 +32,7 @@ jobs:
           version: "latest"
       - run: uv python install 3.13
       - run: uv venv --python 3.13
-      - run: uv pip install -e ".[dev]"
+      - run: uv pip install -e ".[dev,llm,ast,terminal]"
       - run: uv pip install -e "examples/bot_project"
       - name: Run E2E integration tests
         run: |

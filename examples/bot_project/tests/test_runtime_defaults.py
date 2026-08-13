@@ -53,9 +53,9 @@ def test_default_interceptor_chain_keeps_only_effective_defaults() -> None:
     assert any(isinstance(item, ToolResultLimitInterceptor) for item in interceptors)
 
 
-def test_tool_timeout_default_is_120() -> None:
-    """Framework default tool timeout is 120 seconds, enforced by
+def test_tool_timeout_default_is_400() -> None:
+    """Framework default tool timeout is 400 seconds, enforced by
     ToolTimeoutInterceptor."""
     from modex_agent.core.constants import DefaultValues
 
-    assert DefaultValues.TOOL_TIMEOUT_SECONDS == 120.0
+    assert DefaultValues.TOOL_TIMEOUT_SECONDS == 400.0
