@@ -123,6 +123,7 @@ class WebUIServer:
         self._pool_switch_callback: Callable[[str, str], None] | None = None
         self._pool_resolver: Callable[[str], str | None] | None = None
         self._agent_resolver: Callable[[str], str] | None = None
+        self._agent_pool_resolver: Callable[[str], str | None] | None = None
         self._recent_workspaces = None  # set by WebUIService
         self._input_pipeline = None  # injected by WebUIService
         self._input_ctx = None
@@ -544,13 +545,20 @@ class WebUIServer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _queue_belongs_to_connection(attached_sessions: list[str], session_id: str) -> bool:
+    def _queue_belongs_to_connection(
+        attached_sessions: list[str],
+        session_id: str,
+        parent_map: dict[str, str] | None = None,
+    ) -> bool:
         """Thin delegate -- implementation in :func:`bot.webui.routes.websocket.streaming._queue_belongs_to_connection`.
 
         Kept so ``tests/webui/test_ws_partitioning_convergence.py`` (which calls
         ``WebUIServer._queue_belongs_to_connection`` as a static method)
-        continues to work without change.
+        continues to work. ``parent_map`` defaults to empty for backward
+        compatibility with tests that don't exercise subagent nesting.
         """
         from bot.webui.routes.websocket.streaming import _queue_belongs_to_connection
 
-        return _queue_belongs_to_connection(attached_sessions, session_id)
+        return _queue_belongs_to_connection(
+            attached_sessions, session_id, parent_map or {}
+        )

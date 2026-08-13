@@ -54,20 +54,32 @@ async def forward_deltas(
         logger.exception("Delta forwarding error for session %s", session_id)
 
 
-def _queue_belongs_to_connection(attached_sessions: list[str], session_id: str) -> bool:
+def _queue_belongs_to_connection(
+    attached_sessions: list[str],
+    session_id: str,
+    parent_map: dict[str, str],
+) -> bool:
     """True if *session_id*'s conversation is already owned by this connection.
 
-    Convergence point for ws isolation on the shared WebSocket adapter: the
-    adapter multiplexes every workspace/tab through one set of delta queues,
-    keyed only by session id. A dynamically-created subagent queue
-    (``{conv}.{agent}.{inv}``) belongs to whichever connection attached that
-    conversation. We derive that from the connection's own
-    ``attached_sessions`` -- every attached session shares one conversation
-    prefix -- so no per-connection ws bookkeeping is needed: claim a queue
-    only when its prefix matches a conversation this connection already owns.
+    Two matching strategies:
+    1. Prefix match — sessions sharing the same conversation prefix.
+    2. Ancestor match — subagent sessions created by
+       ``SubagentDispatchStrategy`` use ``invocation_id`` as prefix, so
+       prefix matching alone misses them. The ``parent_map`` records each
+       dynamically-created child → parent link; walk the chain until an
+       ancestor already in ``attached_sessions`` is found. Handles
+       arbitrary nesting depth (subagent-of-subagent-of-subagent).
     """
     prefix = session_id_prefix_of(session_id)
-    return any(session_id_prefix_of(s) == prefix for s in attached_sessions)
+    if any(session_id_prefix_of(s) == prefix for s in attached_sessions):
+        return True
+    attached_set = set(attached_sessions)
+    current = session_id
+    while current in parent_map:
+        current = parent_map[current]
+        if current in attached_set:
+            return True
+    return False
 
 
 async def watch_new_queues(
@@ -97,7 +109,9 @@ async def watch_new_queues(
                     break
                 if session_id in state.attached_sessions:
                     continue
-                if not _queue_belongs_to_connection(state.attached_sessions, session_id):
+                if not _queue_belongs_to_connection(
+                    state.attached_sessions, session_id, server._input._parent_map
+                ):
                     # Belongs to another connection's conversation; let that
                     # connection's own watcher claim it.
                     continue
