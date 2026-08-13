@@ -3,7 +3,7 @@
 
 # webui
 
-React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connects to the bot's WebUI backend (aiohttp) via REST API and WebSocket. All color tokens live in `src/index.css` `:root` / `.dark` blocks, mapped through CSS variables — edit colors once, never in the tailwind config. The current design system is "Teal & Ember Console" (see `docs/design/teal-ember-redesign/` and the Design System section below).
+React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connects to the bot's WebUI backend (aiohttp) via REST API and WebSocket. All color tokens live in `src/index.css` `:root` / `.dark` blocks, mapped through CSS variables — edit colors once, never in the tailwind config. The current design system is "Teal & Ember Console" (see the Design System section below). Graph visualization IA redesign spec: `docs/design/graph-visualization-redesign/PRD.md` (project-level).
 
 ## Key Files
 
@@ -23,7 +23,6 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 |-----------|---------|
 | `src/` | Application source (see below) |
 | `dist/` | Built static assets (auto-generated, served by backend at `/webui/`) |
-| `docs/` | Handoff documents and design records |
 
 ## src/ Structure
 
@@ -54,8 +53,10 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 | `components/ui/KeyValueEditor.tsx` | Postman-style key/value row editor (controlled component) |
 | `components/graphs/GraphSpecListPage.tsx` | Graph spec list — MiniTopology thumbnail + metadata per row |
 | `components/graphs/GraphSpecEditor.tsx` | Split-pane spec editor — CodeMirror YAML + live topology preview + run |
-| `components/graphs/GraphInstanceListPage.tsx` | Instance list — status-colored MiniTopology + progress + elapsed |
-| `components/graphs/GraphExecutionViewer.tsx` | Core execution viewer — full-canvas topology + context sidebar + control bar |
+| `components/graphs/GraphSpecDetail.tsx` | Spec detail view — topology preview + instance list (right panel) + new-instance composer |
+| `components/graphs/GraphInstanceDetail.tsx` | Instance detail view — conversation flow + re-invoke composer + topology drawer |
+| `components/graphs/GraphSpecInstanceRow.tsx` | Shared instance row for spec detail's instance list — #id + status badge + progress + elapsed |
+| `components/graphs/GraphExecutionViewer.tsx` | Full-canvas execution viewer — retained for Phase 2 secondary view (T07) |
 | `components/graphs/shared.tsx` | Shared graph UI — GraphStatusBadge + formatGraphApiError |
 | `components/graphs/topology/TopologyCanvas.tsx` | SVG canvas — viewBox auto-fit, wheel zoom, drag pan, legend overlay |
 | `components/graphs/topology/GraphNode.tsx` | SVG node — glyph + name + sub-label + status dot, dual-channel status coloring |
@@ -121,17 +122,11 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 
 ## Specs & Issue Tracker
 
-WebUI specs/PRDs live as local markdown under `docs/design/<feature-slug>/` (mirrors the repo-root convention in `docs/agents/issue-tracker.md`):
-
-- One feature per directory: `docs/design/<feature-slug>/`
-- The PRD is `docs/design/<feature-slug>/PRD.md`; accompanying design records (token/component specs) live alongside it (e.g. `DESIGN.md`)
-- Triage state is a `Status:` line near the top of the PRD (label vocabulary: repo-root `docs/agents/triage-labels.md`)
-
-Spec reference: `docs/design/teal-ember-redesign/` — the "Teal & Ember Console" redesign (PRD + DESIGN.md). The redesign is shipped (T01–T07); the directory is now the design-system record, not an active spec.
+WebUI specs/PRDs live at the **project level** under `docs/design/<feature-slug>/` (not under `webui/docs/`). The graph visualization IA redesign spec is at `docs/design/graph-visualization-redesign/PRD.md` + `tickets.md`. ADR-0040 (`docs/adr/0040-*.md`) covers the backend re-invocation + spec immutability decisions.
 
 ## Design System
 
-The WebUI ships the **Teal & Ember Console** design system (redesign landed 2026-07-18, T01–T07). Full normative spec: `docs/design/teal-ember-redesign/DESIGN.md`.
+The WebUI ships the **Teal & Ember Console** design system. The normative spec lived in the now-removed `docs/design/teal-ember-redesign/`; this section is the surviving record.
 
 - **Palette source of truth**: `src/index.css` `:root` / `.dark` blocks — all colors as CSS variables (`--color-*`), mapped through `tailwind.config.js` via `var(--color-*)`. Edit colors once in `index.css`; never in the tailwind config or components. Brand teal `#2DD4BF` (dark) / `#0D9488` (light) — one teal hue across both themes, only lightness shifts; ember `#F59E0B` / `#B45309` secondary accent; warm-paper (light) / neutral warm-graphite (dark, "Warm Graphite") canvas. Dark borders/scrollbars are hue-free white-alpha ("neutral shimmer"). Dark is the default theme; light remains first-class.
 - **Typography**: Inter (display + body) + JetBrains Mono (code, section eyebrows). CJK fallback via Noto Sans SC. Loaded from Google Fonts in `index.html` with `font-display: swap`. (Geist / Geist Mono / Space Grotesk were removed in the typography unification.)

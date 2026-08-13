@@ -401,3 +401,15 @@ cd examples/bot_project/webui && npm test -- --run
 Backend tests cover WebUI endpoints, streaming isolation, pool routing, input pipeline stages, transcript store, graph scheduling (node-level events, WS subscription protocol, topology endpoint), and graph REST routes. Frontend tests cover the `useWebUIStream` reducer, `request_id`-based message dedup, graph topology components (deliver pulse, active ring, diff logic, YAML editor, execution viewer, spec/instance list pages), and i18n/token coverage.
 
 <!-- MANUAL -->
+
+<!-- BEGIN MODEX-RUNTIME (auto-managed; do not edit) -->
+## ModexAgent runtime
+
+You are running as a subagent inside ModexAgent.
+
+Your final reply is your deliverable — it is forwarded to your caller automatically when your turn ends. Output your result in your reply text.
+
+Use `modexctl send --to <name> --content <text>` only to ask a question or request a decision when you cannot proceed without input.
+
+- The `.modex/` directory is framework-managed internal state. Do NOT read, modify, or delete anything under `.modex/`.
+<!-- END MODEX-RUNTIME -->
