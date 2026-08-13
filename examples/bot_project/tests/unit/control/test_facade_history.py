@@ -205,7 +205,6 @@ def _make_facade(
     messages: list[dict[str, Any]] | None = None,
     real_message_store: MessageStore | None = None,
     pool_spec: PoolSpec | None = None,
-    agent_pool_map: dict[str, str] | None = None,
     transcript_events: list[ServerEvent] | None = None,
     transcript_store_none: bool = False,
 ) -> tuple[BotControlFacade, AsyncMock, AsyncMock]:
@@ -215,8 +214,7 @@ def _make_facade(
     test can assert on either store's load call.
 
     Pass ``session_not_found=True`` to simulate a missing session (the store
-    returns ``None``). Pass ``agent_pool_map={}`` explicitly to test the
-    empty-map case (the default is ``{_AGENT_NAME: _POOL}``).
+    returns ``None``).
 
     Pass ``transcript_events`` to seed the mock ``TranscriptStore.load`` return
     value (used by external tests). Pass ``transcript_store_none=True``
@@ -289,7 +287,6 @@ def _make_facade(
 
     facade = BotControlFacade(
         workspace_resolver=_workspace_resolver,
-        agent_pool_map=agent_pool_map if agent_pool_map is not None else {_AGENT_NAME: _POOL},
         message_store_provider=_message_store_provider,
         transcript_store_provider=_transcript_store_provider,
         home_root=_WORKSPACE,
@@ -496,22 +493,6 @@ class TestCompactExclusionAutoBenefit:
 
 class TestErrorPaths:
     @pytest.mark.asyncio
-    async def test_pool_mismatch_raises_409(self) -> None:
-        facade, _, _ = _make_facade(agent_pool_map={_AGENT_NAME: "other_pool"})
-        with pytest.raises(ControlFacadeError) as exc_info:
-            await facade.history(_make_request(pool="coder_pool"))
-        assert exc_info.value.status == 409
-        assert exc_info.value.error.code == "pool_mismatch"
-
-    @pytest.mark.asyncio
-    async def test_agent_not_in_pool_map_raises_409(self) -> None:
-        facade, _, _ = _make_facade(agent_pool_map={})
-        with pytest.raises(ControlFacadeError) as exc_info:
-            await facade.history(_make_request())
-        assert exc_info.value.status == 409
-        assert exc_info.value.error.code == "agent_not_mapped"
-
-    @pytest.mark.asyncio
     async def test_main_agent_can_query_subagent_history_without_session_validation(
         self,
     ) -> None:
@@ -524,7 +505,6 @@ class TestErrorPaths:
         ]
         facade, _, _ = _make_facade(
             messages=messages,
-            agent_pool_map={_AGENT_NAME: _POOL, "office-expert": _POOL},
         )
         request = HistoryRequest(
             caller=AgentSessionRef(

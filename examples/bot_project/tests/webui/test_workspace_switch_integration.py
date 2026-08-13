@@ -14,7 +14,6 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.session_store import WorkspacePoolSessionStore
-from bot.service.web_ui_service import WebUIService
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import AssistantTurnEvent, UserMessageEvent, _unwrap_envelope
 from bot.webui.server import WebUIServer, _new_uuid_prefix
@@ -42,19 +41,6 @@ def _real_project_dir() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
 
-def _real_agent_pool_map() -> dict[str, str]:
-    """Build the production agent->pool mapping from the loaded AppConfig."""
-    from modex_agent.ioc.configs.app import AppConfig
-
-    project_dir = _real_project_dir()
-
-    class _Source:
-        _project_dir = project_dir
-        _app_config = AppConfig.from_yaml(project_dir / "config" / "bot_config.yml")
-
-    return WebUIService._build_agent_pool_map(_Source())
-
-
 def _make_server(data_dir: Path) -> tuple[WebUIServer, WebSocketInputAdapter]:
     """Create a fully wired WebUIServer with the real production pool map.
 
@@ -64,10 +50,8 @@ def _make_server(data_dir: Path) -> tuple[WebUIServer, WebSocketInputAdapter]:
     the same physical directory.
     """
     inp = WebSocketInputAdapter()
-    mapping = _real_agent_pool_map()
     home_sessions_dir = WorkspacePaths(root=data_dir / ".modex").sessions_dir
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    store.set_agent_pool_map(mapping)
     server = WebUIServer(
         inp,
         store,
@@ -78,11 +62,10 @@ def _make_server(data_dir: Path) -> tuple[WebUIServer, WebSocketInputAdapter]:
     server.set_workspace_index(store)
     server.set_data_dir_name(".modex")
     server.set_pool_agent_names(["main", "coding"])
-    server.set_agent_pool_map(mapping)
-    server.set_agent_resolver(lambda pool_name: mapping.get(pool_name, pool_name))
+    server.set_agent_resolver(lambda pool_name: pool_name)
     session_store = WorkspacePoolSessionStore(
         base_dir=data_dir,
-        pool_resolver=lambda s: mapping.get(s.agent_name, "main"),
+        pool_resolver=lambda s: s.agent_name,
     )
     server.set_session_store(session_store)
     server.set_session_factory(SessionIdFactory())
@@ -155,9 +138,8 @@ async def test_e2e_switch_workspace_attach_send_transcript_lands_in_ws_dir() -> 
         # Inject pipeline; route its persist write to ws_a via the ctxvar root.
         from tests.webui._pipeline_fixture import attach_default_pipeline
 
-        mapping = _real_agent_pool_map()
         attach_default_pipeline(
-            server, server._store, inp, agent_pool_map=mapping, workspace_root=ws_a
+            server, server._store, inp, workspace_root=ws_a
         )
 
         client = TestClient(TestServer(server.app))
@@ -256,7 +238,6 @@ async def test_im_message_carries_ws_routes_transcript_to_workspace() -> None:
 
         # Transcript store routes writes via the bound workspace root (ctxvar).
         store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-        store.set_agent_pool_map({"main": "main"})
 
         sid = f"{im_prefix}.main"
         with bind_workspace_root(ws_a):
@@ -296,7 +277,6 @@ async def test_multi_workspace_isolation_concurrent_appends() -> None:
 
         # Transcript store routes writes via the bound workspace root (ctxvar).
         store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-        store.set_agent_pool_map({"main": "main"})
 
         prefix_a = "conv_a_123"
         prefix_b = "conv_b_456"
@@ -357,7 +337,6 @@ async def test_multi_workspace_isolation_sequential_appends() -> None:
 
         # Transcript store routes writes via the bound workspace root (ctxvar).
         store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-        store.set_agent_pool_map({"main": "main"})
 
         prefix_a = "seq_a_789"
         prefix_b = "seq_b_012"
@@ -441,7 +420,6 @@ async def test_im_zero_change_routing() -> None:
 
         # Transcript store routes writes via the bound workspace root (ctxvar).
         store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-        store.set_agent_pool_map({"main": "main"})
 
         sid = f"{im_prefix}.main"
         with bind_workspace_root(ws_target):

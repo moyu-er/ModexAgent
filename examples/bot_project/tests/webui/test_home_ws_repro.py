@@ -30,7 +30,6 @@ async def test_home_path_ws_roundtrip() -> None:
         data_dir_name = ".modex"
         input_adapter = WebSocketInputAdapter()
         store = WorkspaceScopedTranscriptStore(data_dir_name=data_dir_name)
-        store.set_agent_pool_map({"main": "main"})
         home_sessions_dir = WorkspacePaths(root=home / data_dir_name).sessions_dir
         server = WebUIServer(
             input_adapter, store, static_dist=None, data_dir=home,
@@ -38,7 +37,6 @@ async def test_home_path_ws_roundtrip() -> None:
         )
         server.set_workspace_index(store)
         server.set_data_dir_name(data_dir_name)
-        server.set_agent_pool_map({"main": "main"})
         server.set_pool_agent_names(["main"])
         server.set_session_factory(SessionIdFactory())
         server.set_session_store(
@@ -50,7 +48,6 @@ async def test_home_path_ws_roundtrip() -> None:
         from tests.webui._pipeline_fixture import attach_default_pipeline
         attach_default_pipeline(
             server, store, input_adapter, workspace_root=home,
-            agent_pool_map={"main": "main"},
         )
 
         client = TestClient(TestServer(server.app))

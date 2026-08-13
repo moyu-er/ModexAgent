@@ -107,7 +107,6 @@ def _make_facade(
     target: CommunicationTarget | None = None,
     send_result: AgentSendResult | None = None,
     target_not_found: bool = False,
-    agent_pool_map: dict[str, str] | None = None,
     pool_not_materialized: bool = False,
     session_exists: bool = False,
     main_agent_name: str = "main",
@@ -161,7 +160,6 @@ def _make_facade(
 
     facade = BotControlFacade(
         workspace_resolver=_workspace_resolver,
-        agent_pool_map=agent_pool_map if agent_pool_map is not None else {_AGENT_NAME: _POOL},
         message_store_provider=_message_store_provider,
         transcript_store_provider=_transcript_store_provider,
         communication_service_provider=_comm_service_provider,
@@ -229,7 +227,6 @@ class TestTargetNotFound:
             target_not_found=True,
             main_agent_name="main",
             send_result=send_result,
-            agent_pool_map={"office-expert": _POOL, "main": _POOL},
         )
         request = SendRequest(
             caller=AgentSessionRef(

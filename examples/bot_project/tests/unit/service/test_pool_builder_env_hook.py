@@ -260,8 +260,7 @@ def test_wire_main_pipeline_skips_missing_peer_pool_with_warning(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A missing peer pool is logged and skipped — the rest of the
-    pool_map/targets are still wired (matches external_strategy.
-    _build_agent_pool_map / _build_targets try/except pattern)."""
+    pool map and targets are still wired by the external strategy."""
     import logging
 
     project_dir = tmp_path

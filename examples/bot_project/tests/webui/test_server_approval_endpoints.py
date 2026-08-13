@@ -83,7 +83,6 @@ def _build_server(tmp_path: Path, *, input_pipeline=None, input_ctx=None) -> Web
     )
     server.set_workspace_index(store)
     server.set_data_dir_name(".modex")
-    server.set_agent_pool_map({"main": "main"})
     if input_pipeline is not None:
         server.set_input_pipeline(input_pipeline)
     if input_ctx is not None:

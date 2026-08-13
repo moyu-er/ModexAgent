@@ -133,7 +133,6 @@ async def test_attachment_flow_to_llm_injection_and_asymmetry() -> None:
 
         media_store = WorkspaceScopedMediaStore(data_dir_name=".modex")
         transcript_store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-        transcript_store.set_agent_pool_map({"main": "main"})
 
         pool_store = MagicMock()
         pool_store.get.return_value = "main"
@@ -145,7 +144,6 @@ async def test_attachment_flow_to_llm_injection_and_asymmetry() -> None:
             default_pool="main",
             available_pools=lambda: {"main"},
             pool_session_store=pool_store,
-            agent_pool_map={"main": "main"},
             agent_resolver=lambda p: p,
             transcript_store=transcript_store,
             enqueue_message=enqueued.append,

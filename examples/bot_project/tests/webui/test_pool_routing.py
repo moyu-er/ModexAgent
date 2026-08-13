@@ -37,7 +37,6 @@ def _make_server(data_dir: Path) -> tuple[WebUIServer, WebSocketInputAdapter]:
         s = holder[0] if holder else None
         return str(s._workspace_control.current) if s is not None and s._workspace_control is not None else ""
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    store.set_agent_pool_map({"main": "main", "coding": "coding"})
     server = WebUIServer(
         inp,
         store,
@@ -48,7 +47,6 @@ def _make_server(data_dir: Path) -> tuple[WebUIServer, WebSocketInputAdapter]:
     holder.append(server)
     server.set_workspace_index(store)
     server.set_pool_agent_names(["main", "coding"])
-    server.set_agent_pool_map({"main": "main", "coding": "coding"})
     return server, inp
 
 
@@ -83,6 +81,7 @@ async def test_pool_switch_full_flow_routes_to_coding() -> None:
     # Wire a real PoolSessionStore callback (as pool_router.set_pool would)
     callback, real_store, calls = _make_real_callback(data_dir)
     server.set_pool_switch_callback(callback)
+    server.set_pool_resolver(real_store.get_pool)
 
     # Inject the input pipeline with the real PoolSessionStore so S5
     # persists the UI pool choice into the same store.
@@ -184,7 +183,6 @@ async def test_no_callback_defaults_to_main() -> None:
         })
         echoed = _unwrap_envelope(await ws.receive_json(timeout=2))
 
-        # Echo shows 'coding' (explicit_pool resolved from agent_pool_map)
         assert echoed["agent_name"] == "coding"
 
         # But the PoolSessionStore from disk was NEVER notified → returns default 'main'
@@ -347,14 +345,14 @@ async def test_pool_mapping_survives_server_recreation() -> None:
     from modex_agent.core.session_id import SessionIdFactory
 
     data_dir = Path(tempfile.mkdtemp())
-    agent_pool_map = {"main": "main", "coding": "coding"}
+    pool_by_agent = {"main": "main", "coding": "coding"}
     factory = SessionIdFactory()
+    routing_store = PoolSessionStore(data_dir=data_dir)
 
     # First server instance: create a session via API and send a message so
     # the transcript is persisted (empty sessions are not persisted).
     inp1 = WebSocketInputAdapter()
     store1 = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    store1.set_agent_pool_map(agent_pool_map)
     server1 = WebUIServer(
         inp1,
         store1,
@@ -363,16 +361,23 @@ async def test_pool_mapping_survives_server_recreation() -> None:
         home_sessions_dir=WorkspacePaths(root=data_dir / ".modex").sessions_dir,
     )
     server1.set_workspace_index(store1)
-    server1.set_agent_pool_map(agent_pool_map)
     server1.set_pool_agent_names(["main", "coding"])
+    server1.set_pool_switch_callback(routing_store.set)
+    server1.set_pool_resolver(routing_store.get_pool)
     session_store1 = WorkspacePoolSessionStore(
         base_dir=data_dir,
-        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+        pool_resolver=lambda s: pool_by_agent.get(s.agent_name, "main"),
     )
     server1.set_session_store(session_store1)
     server1.set_session_factory(factory)
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server1, store1, inp1, workspace_root=data_dir)
+    attach_default_pipeline(
+        server1,
+        store1,
+        inp1,
+        pool_session_store=routing_store,
+        workspace_root=data_dir,
+    )
     client1 = TestClient(TestServer(server1.app))
     await client1.start_server()
     try:
@@ -404,7 +409,6 @@ async def test_pool_mapping_survives_server_recreation() -> None:
     # Second server instance: must load session from disk.
     inp2 = WebSocketInputAdapter()
     store2 = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    store2.set_agent_pool_map(agent_pool_map)
     server2 = WebUIServer(
         inp2,
         store2,
@@ -413,11 +417,11 @@ async def test_pool_mapping_survives_server_recreation() -> None:
         home_sessions_dir=WorkspacePaths(root=data_dir / ".modex").sessions_dir,
     )
     server2.set_workspace_index(store2)
-    server2.set_agent_pool_map(agent_pool_map)
     server2.set_pool_agent_names(["main", "coding"])
+    server2.set_pool_resolver(routing_store.get_pool)
     session_store2 = WorkspacePoolSessionStore(
         base_dir=data_dir,
-        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+        pool_resolver=lambda s: pool_by_agent.get(s.agent_name, "main"),
     )
     server2.set_session_store(session_store2)
     client2 = TestClient(TestServer(server2.app))
@@ -446,6 +450,7 @@ async def test_different_conversations_route_to_different_pools() -> None:
 
     callback, real_store, calls = _make_real_callback(data_dir)
     server.set_pool_switch_callback(callback)
+    server.set_pool_resolver(real_store.get_pool)
 
     from tests.webui._pipeline_fixture import attach_default_pipeline
     attach_default_pipeline(server, server._store, inp, pool_session_store=real_store, workspace_root=data_dir)
@@ -748,11 +753,12 @@ async def test_conversations_survive_pool_switching() -> None:
     server, inp = _make_server(data_dir)
     callback, real_store, calls = _make_real_callback(data_dir)
     server.set_pool_switch_callback(callback)
+    server.set_pool_resolver(real_store.get_pool)
 
-    agent_pool_map = {"main": "main", "coding": "coding"}
+    pool_by_agent = {"main": "main", "coding": "coding"}
     session_store = WorkspacePoolSessionStore(
         base_dir=data_dir,
-        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+        pool_resolver=lambda s: pool_by_agent.get(s.agent_name, "main"),
     )
     server.set_session_store(session_store)
 
@@ -845,11 +851,12 @@ async def test_conversation_visible_after_first_message() -> None:
     server, inp = _make_server(data_dir)
     callback, real_store, calls = _make_real_callback(data_dir)
     server.set_pool_switch_callback(callback)
+    server.set_pool_resolver(real_store.get_pool)
 
-    agent_pool_map = {"main": "main", "coding": "coding"}
+    pool_by_agent = {"main": "main", "coding": "coding"}
     session_store = WorkspacePoolSessionStore(
         base_dir=data_dir,
-        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+        pool_resolver=lambda s: pool_by_agent.get(s.agent_name, "main"),
     )
     server.set_session_store(session_store)
 
@@ -929,7 +936,7 @@ async def test_conversation_visible_after_first_message() -> None:
 async def test_sessions_includes_external_adapter_conversations() -> None:
     """_handle_sessions must include conversations written to the transcript
     store by external adapters (QQ, etc.), even though those adapters never
-    touch the server's _conversations cache.
+    use the WebUI session-creation endpoint.
 
     This is the root cause of: "IM conversations can't be loaded".
     """
@@ -940,12 +947,14 @@ async def test_sessions_includes_external_adapter_conversations() -> None:
 
     data_dir = Path(tempfile.mkdtemp())
     server, inp = _make_server(data_dir)
+    routing_store = PoolSessionStore(data_dir=data_dir)
+    server.set_pool_resolver(routing_store.get_pool)
 
     # Inject session store for session listing.
-    agent_pool_map = {"main": "main", "coding": "coding"}
+    pool_by_agent = {"main": "main", "coding": "coding"}
     session_store = WorkspacePoolSessionStore(
         base_dir=data_dir,
-        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+        pool_resolver=lambda s: pool_by_agent.get(s.agent_name, "main"),
     )
     server.set_session_store(session_store)
 
@@ -953,6 +962,7 @@ async def test_sessions_includes_external_adapter_conversations() -> None:
 
     qq_conv_id = "qq_user_12345"
     qq_sid = f"{qq_conv_id}.main"
+    routing_store.set(qq_conv_id, "main")
     event = UserMessageEvent(
         session_id=qq_sid,
         agent_name="main",
@@ -979,10 +989,7 @@ async def test_sessions_includes_external_adapter_conversations() -> None:
 
         assert qq_conv_id in conv_ids, (
             f"QQ conversation {qq_conv_id!r} NOT in /api/sessions. "
-            f"Transcript store HAS data for it. "
-            f"server._conversations={server._conversations!r}. "
-            f"Fix: _handle_sessions must read from "
-            f"self._store.list_conversations() as source of truth."
+            "Transcript and session stores both contain the conversation."
         )
 
         # Verify the QQ session has correct data

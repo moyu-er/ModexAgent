@@ -61,7 +61,6 @@ class TestQueueOwnership:
 def _build_server(home: Path) -> WebUIServer:
     inp = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
-    store.set_agent_pool_map({"main": "main", "coding": "coding"})
     server = WebUIServer(
         inp,
         store,
@@ -71,7 +70,6 @@ def _build_server(home: Path) -> WebUIServer:
     )
     server.set_workspace_index(store)
     server.set_data_dir_name(_DATA_DIR_NAME)
-    server.set_agent_pool_map({"main": "main", "coding": "coding"})
     server.set_pool_agent_names(["main", "coding"])
     server.set_session_factory(SessionIdFactory())
     server.set_session_store(
@@ -156,7 +154,6 @@ async def test_transcript_append_warns_when_ws_root_unbound(
     caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
     store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
-    store.set_agent_pool_map({"main": "main"})
     sid = "convZ.main"
     with caplog.at_level(logging.WARNING, logger="bot.service.workspace_store"):
         # No bind_workspace_root → unbound.
@@ -173,7 +170,6 @@ async def test_transcript_append_silent_when_ws_root_bound(
     caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
     store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
-    store.set_agent_pool_map({"main": "main"})
     sid = "convZ.main"
     with caplog.at_level(logging.WARNING, logger="bot.service.workspace_store"):
         with bind_workspace_root(tmp_path):

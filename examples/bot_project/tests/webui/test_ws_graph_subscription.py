@@ -54,7 +54,6 @@ _GID_B = 7300000000000000002
 def _build_server(home: Path, resources: SimpleNamespace) -> WebUIServer:
     inp = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
-    store.set_agent_pool_map({"main": "main"})
     server = WebUIServer(
         inp,
         store,
@@ -64,7 +63,6 @@ def _build_server(home: Path, resources: SimpleNamespace) -> WebUIServer:
     )
     server.set_workspace_index(store)
     server.set_data_dir_name(_DATA_DIR_NAME)
-    server.set_agent_pool_map({"main": "main"})
     server.set_pool_agent_names(["main"])
     server.set_session_factory(SessionIdFactory())
     server.set_session_store(

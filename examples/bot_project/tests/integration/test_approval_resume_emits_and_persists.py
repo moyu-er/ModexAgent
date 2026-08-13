@@ -274,7 +274,6 @@ def _build_pipeline_with_webui_emitter(
     ws_input = WebSocketInputAdapter()
     ws_output = WebSocketOutputAdapter(ws_input)
     transcript_store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    transcript_store.set_agent_pool_map({"main": "main"})
 
     def emitter_factory(session_id: str) -> WebBotEmitter:
         return WebBotEmitter(
@@ -639,7 +638,6 @@ async def test_deny_all_on_batch_seals_all_pending_requests(tmp_path: Path) -> N
     ws_input = WebSocketInputAdapter()
     ws_output = WebSocketOutputAdapter(ws_input)
     transcript_store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    transcript_store.set_agent_pool_map({"main": "main"})
 
     def emitter_factory(session_id: str) -> WebBotEmitter:
         return WebBotEmitter(

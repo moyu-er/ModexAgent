@@ -50,7 +50,6 @@ def _reasoning_delta(session_id: str, text: str, *, segment_id: str = "_reasonin
 
 async def test_append_and_load_partial() -> None:
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    store.set_agent_pool_map({"main": "main"})
     sessions_dir = Path(__file__).parent / "_tmp_mem_partial"
     sid = "abc.main"
     try:
@@ -91,7 +90,6 @@ async def test_clear_partial_removes_buffer() -> None:
 
 async def test_partial_does_not_leak_into_main_transcript() -> None:
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    store.set_agent_pool_map({"main": "main"})
     sessions_dir = Path(__file__).parent / "_tmp_mem_leak"
     sid = "abc.main"
     try:
@@ -232,7 +230,6 @@ async def test_emit_complete_clears_partial_buffer() -> None:
     from modex_agent.core.emitter import AgentResult, EmitterConfig
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    store.set_agent_pool_map({"main": "main"})
     sessions_dir = Path(__file__).parent / "_tmp_e2e_clear"
     sid = "abc.main"
 
@@ -272,7 +269,6 @@ async def test_emit_complete_clears_partial_even_on_error() -> None:
     from modex_agent.core.emitter import AgentResult, EmitterConfig
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    store.set_agent_pool_map({"main": "main"})
     sessions_dir = Path(__file__).parent / "_tmp_e2e_error"
     sid = "abc.main"
 
@@ -324,7 +320,6 @@ async def test_flush_active_segment_clears_partial_buffer() -> None:
     from modex_agent.agents.react.agent import ReActEvent
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    store.set_agent_pool_map({"main": "main"})
     sessions_dir = Path(__file__).parent / "_tmp_flush_clear"
     sid = "abc.main"
 
@@ -372,7 +367,6 @@ async def test_flush_clears_partial_with_reasoning_then_text() -> None:
     from modex_agent.agents.react.agent import ReActEvent
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    store.set_agent_pool_map({"main": "main"})
     sessions_dir = Path(__file__).parent / "_tmp_flush_reasoning"
     sid = "abc.main"
 

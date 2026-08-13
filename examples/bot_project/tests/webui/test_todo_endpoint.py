@@ -29,7 +29,6 @@ async def test_get_todos_returns_active_items_only() -> None:
         )
         server.set_workspace_index(store)
         server.set_data_dir_name(".modex")
-        server.set_agent_pool_map({"main": "main"})
 
         session_id = "abc123.main"
         todo_dir = workspace_root / ".modex" / "runtime_state" / "main" / "todos"
@@ -71,7 +70,6 @@ async def test_get_todos_empty_when_no_store() -> None:
         )
         server.set_workspace_index(store)
         server.set_data_dir_name(".modex")
-        server.set_agent_pool_map({"main": "main"})
 
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -97,7 +95,6 @@ async def test_get_todos_excludes_completed_and_cancelled() -> None:
         )
         server.set_workspace_index(store)
         server.set_data_dir_name(".modex")
-        server.set_agent_pool_map({"main": "main"})
 
         session_id = "abc123.main"
         todo_dir = workspace_root / ".modex" / "runtime_state" / "main" / "todos"

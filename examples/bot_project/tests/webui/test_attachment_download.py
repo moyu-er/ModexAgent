@@ -75,14 +75,12 @@ def _full_pipeline_server(tmp_path: Path) -> tuple[WebUIServer, WorkspaceScopedM
     """
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR)
-    store.set_agent_pool_map({"main": "main"})
     home_sessions_dir = WorkspacePaths(root=tmp_path / _DATA_DIR).sessions_dir
     server = WebUIServer(
         input_adapter, store, static_dist=None, home_sessions_dir=home_sessions_dir
     )
     server.set_workspace_index(store)
     server.set_data_dir_name(_DATA_DIR)
-    server.set_agent_pool_map({"main": "main"})
 
     media_store = WorkspaceScopedMediaStore(data_dir_name=_DATA_DIR)
     pool_store = MagicMock()
@@ -95,7 +93,6 @@ def _full_pipeline_server(tmp_path: Path) -> tuple[WebUIServer, WorkspaceScopedM
         default_pool="main",
         available_pools=lambda: {"main"},
         pool_session_store=pool_store,
-        agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
         transcript_store=store,
         enqueue_message=input_adapter.put_input_message,
@@ -127,7 +124,6 @@ def _input_ctx(store: WorkspaceScopedTranscriptStore, root: Path) -> BotInputCon
         default_pool="main",
         available_pools=lambda: {"main"},
         pool_session_store=MagicMock(),
-        agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
         transcript_store=store,
         enqueue_message=MagicMock(),
@@ -139,14 +135,12 @@ def _input_ctx(store: WorkspaceScopedTranscriptStore, root: Path) -> BotInputCon
 def _build_server(tmp_path: Path) -> WebUIServer:
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR)
-    store.set_agent_pool_map({"main": "main"})
     home_sessions_dir = WorkspacePaths(root=tmp_path / _DATA_DIR).sessions_dir
     server = WebUIServer(
         input_adapter, store, static_dist=None, home_sessions_dir=home_sessions_dir
     )
     server.set_workspace_index(store)
     server.set_data_dir_name(_DATA_DIR)
-    server.set_agent_pool_map({"main": "main"})
     server.set_input_context(_input_ctx(store, tmp_path))
     return server
 

@@ -64,7 +64,6 @@ def _ctx(store: WorkspaceScopedTranscriptStore) -> BotInputContext:
         default_pool="main",
         available_pools=lambda: {"main"},
         pool_session_store=MagicMock(),
-        agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
         transcript_store=store,
         enqueue_message=MagicMock(),
@@ -158,7 +157,6 @@ class TestPersistStageWiring:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main"})
             env = UserInputEnvelope(external_id="u1", content="hello", channel="websocket")
             env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
             env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
@@ -178,7 +176,6 @@ class TestPersistStageWiring:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main"})
             env = UserInputEnvelope(external_id="u1", content="hello", channel="websocket")
             env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
             env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
@@ -306,7 +303,6 @@ class TestFindAttachment:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             ws_store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            ws_store.set_agent_pool_map({"main": "main"})
             sessions_dir = WorkspacePaths(root / ".modex").sessions_dir
             await ws_store.append(
                 "u1.main",

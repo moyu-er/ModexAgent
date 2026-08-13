@@ -6,18 +6,17 @@ file on disk → read back via transcript store.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from bot.service.web_ui_service import WebUIService
-from bot.webui.emitter import WebBotEmitter
-from bot.webui.transcript_store import JSONLTranscriptStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
+from bot.webui.emitter import WebBotEmitter
+from bot.webui.events import ServerEvent
+from bot.webui.transcript_store import JSONLTranscriptStore
+
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.core.emitter import AgentResult, EmitterConfig
 from modex_agent.workspace.runtime import bind_workspace_root
@@ -25,20 +24,27 @@ from modex_agent.workspace.runtime import bind_workspace_root
 
 # Helpers — avoid full bot boot for simpler tests
 def _build_store() -> WorkspaceScopedTranscriptStore:
-    store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    store.set_agent_pool_map({"main": "main", "coding": "coding"})
-    return store
+    return WorkspaceScopedTranscriptStore(data_dir_name=".modex")
 
 
 def _build_emitter(session_id: str, store: WorkspaceScopedTranscriptStore) -> WebBotEmitter:
-    from unittest.mock import AsyncMock
     output = MagicMock()
     output.send_envelope = AsyncMock()
+    from bot.webui.events import SessionMeta
+
+    pool = "coding" if session_id.endswith(".coding") else "main"
+    transcript_store = MagicMock(wraps=store)
+
+    async def _append_with_pool(sid: str, event: ServerEvent, **kwargs) -> None:
+        await store.append(sid, event, pool=kwargs.get("pool", pool), sessions_dir=kwargs.get("sessions_dir"))
+
+    transcript_store.append = AsyncMock(side_effect=_append_with_pool)
     return WebBotEmitter(
         output_adapter=output,
         session_id=session_id,
         config=EmitterConfig(),
-        transcript_store=store,
+        transcript_store=transcript_store,
+        session_meta_resolver=lambda: SessionMeta(pool=pool, parent_session_id=None),
     )
 
 
@@ -106,7 +112,6 @@ class TestTranscriptPersistence:
             ws_b.mkdir(parents=True)
 
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main"})
             emitter = _build_emitter("s1.main", store)
             with bind_workspace_root(ws_a_root):
                 await emitter.emit_content("in-A")

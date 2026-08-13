@@ -30,7 +30,6 @@ def _service(home: Path, app_config: AppConfig) -> MagicMock:
     service._on_subagent_created = None
     service.control_channel = MagicMock()
     service.command_processor = MagicMock()
-    service._pool_for_agent.side_effect = lambda agent: agent
     return service
 
 

@@ -35,7 +35,6 @@ def _build_real_coding_server(
     sessions_dir = WorkspacePaths(root=tmp_root / _DATA_DIR_NAME).sessions_dir
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
-    store.set_agent_pool_map({"main": "main", "coding": "coding"})
 
     server = WebUIServer(
         input_adapter,
@@ -47,7 +46,6 @@ def _build_real_coding_server(
     server.set_workspace_index(store)
     server.set_data_dir_name(_DATA_DIR_NAME)
     server.set_pool_agent_names(["main", "coding"])
-    server.set_agent_pool_map({"main": "main", "coding": "coding"})
     server.set_agent_resolver(lambda p: {"main": "main", "coding": "coding"}.get(p, p))
     server.set_session_factory(SessionIdFactory())
 
@@ -76,6 +74,7 @@ def _build_real_coding_server(
     )
 
     server.set_pool_switch_callback(pool_router.set_pool)
+    server.set_pool_resolver(pool_session_store.get)
 
     # Inject the WebUI input pipeline so _ws_send_message works.
     from tests.webui._pipeline_fixture import attach_default_pipeline
@@ -85,7 +84,6 @@ def _build_real_coding_server(
         store,
         input_adapter,
         workspace_root=tmp_root,
-        agent_pool_map={"main": "main", "coding": "coding"},
         pool_session_store=pool_session_store,
     )
 

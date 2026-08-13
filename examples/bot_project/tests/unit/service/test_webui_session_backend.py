@@ -35,7 +35,6 @@ async def test_file_access_reconstructs_workspace_file_store(tmp_path: Path) -> 
     service = WebUIService.__new__(WebUIService)
     service._app_config = AppConfig.model_validate({"persistence": {"backend": "file"}})
     service._data_dir_name = ".modex"
-    service._pool_for_agent = lambda agent_name: agent_name
 
     store = await service._session_store_for_index(tmp_path / "session_index")
 

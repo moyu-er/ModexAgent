@@ -36,9 +36,7 @@ _DATA_DIR_NAME = ".modex"
 
 
 def _build_store() -> WorkspaceScopedTranscriptStore:
-    store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
-    store.set_agent_pool_map({"main": "main"})
-    return store
+    return WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
 
 
 def _event(sid: str = "conv.main") -> AssistantTextEvent:

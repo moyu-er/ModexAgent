@@ -112,7 +112,6 @@ def _make_facade_mixed_pool(
 
     facade = BotControlFacade(
         workspace_resolver=_workspace_resolver,
-        agent_pool_map={_MAIN_AGENT: _POOL, _SUBAGENT: _POOL},
         message_store_provider=_message_store_provider,
         transcript_store_provider=_transcript_store_provider,
         home_root=_WORKSPACE,
@@ -246,7 +245,6 @@ class TestNativeSubagentStillWorks:
 
         facade = BotControlFacade(
             workspace_resolver=_workspace_resolver,
-            agent_pool_map={_MAIN_AGENT: _POOL, "explore": _POOL},
             message_store_provider=_message_store_provider,
             transcript_store_provider=_transcript_store_provider,
             home_root=_WORKSPACE,
@@ -315,7 +313,6 @@ class TestExternalMainAgentSelfHistory:
 
         facade = BotControlFacade(
             workspace_resolver=_workspace_resolver,
-            agent_pool_map={"opencode": "opencode"},
             message_store_provider=_message_store_provider,
             transcript_store_provider=_transcript_store_provider,
             home_root=_WORKSPACE,
@@ -386,7 +383,6 @@ class TestSubagentCannotReadMainAgentHistory:
 
         facade = BotControlFacade(
             workspace_resolver=_workspace_resolver,
-            agent_pool_map={_SUBAGENT: _POOL},
             message_store_provider=_message_store_provider,
             transcript_store_provider=_transcript_store_provider,
             home_root=_WORKSPACE,

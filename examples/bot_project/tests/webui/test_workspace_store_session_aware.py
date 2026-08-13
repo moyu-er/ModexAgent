@@ -35,7 +35,6 @@ async def test_append_lands_in_bound_workspace(tmp_path: Path) -> None:
     ws_b = tmp_path / "wsB"
     ws_b.mkdir()
     store = _store()
-    store.set_agent_pool_map({"main": "main"})
     with bind_workspace_root(ws_b):
         await store.append(
             "convB.main",
@@ -55,7 +54,6 @@ async def test_no_bind_defaults_to_cwd(
     home.mkdir()
     monkeypatch.chdir(home)
     store = _store()
-    store.set_agent_pool_map({"main": "main"})
     await store.append(
         "convX.main",
         UserMessageEvent(session_id="convX.main", agent_name="main", content="hi"),
@@ -68,7 +66,6 @@ async def test_read_with_explicit_sessions_dir(tmp_path: Path) -> None:
     ws_b = tmp_path / "wsB"
     ws_b.mkdir()
     store = _store()
-    store.set_agent_pool_map({"main": "main"})
     with bind_workspace_root(ws_b):
         await store.append(
             "convB.main",
@@ -87,7 +84,6 @@ async def test_load_reads_explicit_dir_without_binding(
     ws_b = tmp_path / "wsB"
     ws_b.mkdir()
     store = _store()
-    store.set_agent_pool_map({"main": "main"})
     with bind_workspace_root(ws_b):
         await store.append(
             "convB.main",
