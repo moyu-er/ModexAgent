@@ -72,9 +72,9 @@ InboxPoller (event-driven: Event.wait with ~interval tick fallback)
 Normals are registered via `pool.register_resident(descriptor, instance)`.
 Subagents are registered the same way at the end of `materialize`; the pool
 keys instances by `agent_name`, so one instance per agent type is reused across
-invocations of that type. (Invocation-specific system-prompt parts — APPEND
-parent prompt, FORK context — are NOT baked into the instance; they are rebuilt
-per invocation by pipeline providers, so reuse is safe.)
+invocations of that type. (Invocation-specific system-prompt parts — FORK
+context — are NOT baked into the instance; they are rebuilt per invocation
+by pipeline providers, so reuse is safe.)
 
 ## Key Files
 
@@ -86,7 +86,7 @@ per invocation by pipeline providers, so reuse is safe.)
 | `communication/` (package) | `AgentCommunicationService` — pure router. Strategy-dispatched (ADR-0019): `_send` resolves target → `TopologyPolicy.check` → one of three `SendStrategy` subclasses (`SubagentDispatchStrategy`, `ParentReplyStrategy`, `PeerNormalStrategy`) handles the full vertical slice (session construction, invocation_id semantics, envelope shape, delivery, result). See `communication/AGENTS.md` for the strategy contract. |
 | `comm_kind.py` | `AgentCommKind` — `NORMAL` / `SUBAGENT` topology kind. |
 | `tools.py` | `TaskDispatchTool` (main agent's subagent dispatch tool — strictly subagent-scoped: new task dispatch + session continuation) + `SendToPeerTool` (main agent's peer communication tool — cross-agent messaging, never task delegation; session-mode only, excluded from graph turns via `GraphToolPreset.excluded_base_tools`) + `SendToAgentTool` (subagent→parent consultation only) + `CommunicationTargetStore` (with `list_subagents()`/`list_peers()` views) + `CommunicationTarget` (carries `pool_name` + `tree_ref` for cross-pool routing per ADR-0019). All three tools converge on `AgentCommunicationService.send_async()`. |
-| `template.py` | `AgentTemplate` — subagent preset + the **only** construction path (`materialize`). Builds the tool manager, session-only memory, subagent hooks; wires per-invocation APPEND/FORK prompt providers. |
+| `template.py` | `AgentTemplate` — subagent preset + the **only** construction path (`materialize`). Builds the tool manager, session-only memory, subagent hooks; wires per-invocation FORK prompt provider. |
 | `template_registry.py` | `AgentTemplateRegistry` — scans/loads per-pool subagent templates (`config/pools/<pool>/templates/*.yml`). |
 | `materialize_deps.py` | `AgentMaterializeDeps` — frozen value object of construction deps (factory, broker, pool, path resolver, fork builder, …); replaces ~30 scattered ctor params. |
 | `context_fork.py` | `ContextForkBuilder` — builds the FORK context XML from parent message history (pure computation, T18). `build()` queries the parent session's messages via `MemorySystem.get_full_history(limit=)`, returns the XML string. No fork files written to disk; no cleanup methods (file I/O removed in T17/T18). |

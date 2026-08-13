@@ -58,10 +58,7 @@ from modex_agent.multi_agent.pool_config.specs import (
     PoolSpec,
     SubagentSpec,
 )
-from modex_agent.tools.presets import (
-    DEFAULT_FORK_MAX_MESSAGES,
-    SystemPromptMode,
-)
+from modex_agent.tools.presets import DEFAULT_FORK_MAX_MESSAGES
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +68,10 @@ logger = logging.getLogger(__name__)
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]+$")
 
 # Editable SubagentSpec fields overlaid onto a subagent template yml on write.
-# Non-editable baked keys (system_prompt_mode / fork_max_messages / memory)
-# are preserved from the existing template when present, and a sub-minimal
-# memory block is seeded for brand-new subagents. ``approval`` and
-# ``experience`` are never subagent fields and are dropped on write.
+# Non-editable baked keys (fork_max_messages / memory) are preserved from the
+# existing template when present, and a sub-minimal memory block is seeded for
+# brand-new subagents. ``approval`` and ``experience`` are never subagent fields
+# and are dropped on write.
 _SUBAGENT_YAML_FIELDS: tuple[str, ...] = (
     "agent_name",
     "description",
@@ -83,7 +80,6 @@ _SUBAGENT_YAML_FIELDS: tuple[str, ...] = (
     "tool_supplements",
     "context_mode",
     "mcp",
-    "system_prompt_mode",
     "fork_max_messages",
     "roles",
     "prompt_name",
@@ -101,7 +97,6 @@ _MISSING: object = object()
 _SUBAGENT_DEFAULTS: dict[str, object] = {
     "tool_supplements": [],
     "mcp": [],
-    "system_prompt_mode": SystemPromptMode.REPLACE.value,
     "fork_max_messages": DEFAULT_FORK_MAX_MESSAGES,
     "roles": [],
     "prompt_name": None,
@@ -276,8 +271,8 @@ class PoolStore:
         Validates everything FIRST; on any failure the filesystem is untouched.
         Preserves the baked pool-level keys (``llm``/``memory``/``media``) and
         the main agent's ``experience`` from the existing pool.yml when present.
-        Subagent template baked fields (``memory`` / ``system_prompt_mode`` /
-        ``fork_max_messages``) are preserved from each existing template by
+        Subagent template baked fields (``memory`` / ``fork_max_messages``)
+        are preserved from each existing template by
         overlaying the editable fields on top; ``approval`` and ``experience``
         are never subagent fields and are dropped on write. On agent
         rename/remove, the matching ``agents/<name>.md`` is renamed/removed
@@ -486,8 +481,8 @@ class PoolStore:
         """Map each NEW subagent name to the PRIOR template name whose baked
         fields it should inherit.
 
-        Each new subagent's baked fields (``system_prompt_mode``,
-        ``fork_max_messages``, ``memory``) come from a prior on-disk template.
+        Each new subagent's baked fields (``fork_max_messages``, ``memory``)
+        come from a prior on-disk template.
         The mapping is unambiguous in exactly these cases:
 
         * name unchanged -> its own prior file;
@@ -551,14 +546,14 @@ class PoolStore:
 
         Lossless for baked ``AgentTemplate`` fields: if the file exists, load it
         and OVERLAY the editable ``SubagentSpec`` fields, preserving
-        ``system_prompt_mode`` and ``fork_max_messages`` (which are editable but
-        often omitted when equal to their defaults). ``memory`` is NOT persisted
+        ``fork_max_messages`` (which is editable but often omitted when equal to
+        its default). ``memory`` is NOT persisted
         — the registry injects ``subagent_memory()`` at load for any template
         that omits it (single source of truth = the factory). ``approval`` and
         ``experience`` are never subagent fields and are dropped on write.
         Editable values equal to their field default (``tool_supplements: []``,
-        ``mcp: []``, ``system_prompt_mode: replace``, ``fork_max_messages: 80``)
-        are omitted so the file stays free of default noise. ``skills`` is never
+        ``mcp: []``, ``fork_max_messages: 80``) are omitted so the file stays
+        free of default noise. ``skills`` is never
         written — skill assignment is disk-only.
         """
         if existing_template_path.exists():

@@ -11,7 +11,6 @@ import logging
 import sys
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -683,14 +682,6 @@ class OutputMdProvider(SystemPromptProvider):
         )
 
 
-# ── Subagent per-invocation context (APPEND parent prompt + FORK context) ──
-#
-# These two move the invocation-specific parts of a subagent's system prompt
-# out of the materialize-time baked string. A reused instance (the pool keeps
-# one per agent_type) rebuilds them per invocation via load(session_id), so the
-# 2nd+ invocation no longer inherits the 1st's parent prompt / fork snapshot.
-
-
 @dataclass(frozen=True)
 class ForkContextSpec:
     """Wiring holder for ForkContextProvider.
@@ -708,41 +699,6 @@ class ForkContextSpec:
     builder: Any
     agent_type: str
     fork_max_messages: int
-
-
-class AppendParentPromptProvider(SystemPromptProvider):
-    """Subagent APPEND mode — prepend the current parent's system prompt.
-
-    Per-invocation: rebuilt every ``load()``. ``parent_session_id`` is the
-    authoritative parent for THIS turn (threaded from the dispatch envelope via
-    runtime_info, not recovered from a store); ``lookup(parent_session_id)``
-    resolves the parent's ``system_prompt_template`` from the in-memory pool (or
-    ``None``), so a reused instance reflects each invocation's own parent.
-    """
-
-    def __init__(
-        self,
-        lookup: Callable[[str], Awaitable[str | None]],
-        parent_session_id: str,
-    ) -> None:
-        super().__init__()
-        self._lookup = lookup
-        self._parent_session_id = parent_session_id
-
-    async def _fetch_version(self) -> str:
-        return self._parent_session_id  # refresh when the parent changes
-
-    async def _fetch_content(self) -> str:
-        try:
-            prompt = await self._lookup(self._parent_session_id)
-        except Exception:
-            logger.warning(
-                "AppendParentPromptProvider: lookup failed for parent %s",
-                self._parent_session_id,
-                exc_info=True,
-            )
-            return ""
-        return prompt or ""
 
 
 class ForkContextProvider(SystemPromptProvider):

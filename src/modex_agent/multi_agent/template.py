@@ -5,8 +5,8 @@
 module on the template (ADR-0015 D3, Design B). It is the subagent-only
 construction path: normals are registered by business wiring via factory
 defaults, never via materialize. ``comm_kind`` is always ``SUBAGENT``;
-``parent_session`` gates parent-dependent features (APPEND prompt, FORK
-context, SubagentAutoSendHook).
+``parent_session`` gates parent-dependent features (FORK context and
+SubagentAutoSendHook).
 """
 
 from __future__ import annotations
@@ -20,11 +20,7 @@ from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.skills import SkillsConfig
 from modex_agent.multi_agent.pool_config.specs import SubagentSpec
-from modex_agent.tools.presets import (
-    ContextMode,
-    SystemPromptMode,
-    ToolPreset,
-)
+from modex_agent.tools.presets import ContextMode, ToolPreset
 
 if TYPE_CHECKING:
     from modex_agent.core.session_id import SessionInfo
@@ -82,7 +78,7 @@ class AgentTemplate:
         """Build a subagent AgentInstance from this template (ADR-0015 D3, Design B).
 
         subagent-only construction; ``parent_session`` gates parent-dependent
-        features (APPEND prompt, FORK context, SubagentAutoSendHook).
+        features (FORK context and SubagentAutoSendHook).
         Normals are registered by business wiring via factory defaults, never
         via materialize.
 
@@ -153,37 +149,19 @@ class AgentTemplate:
         output_base_dir: Path | None = (runtime_dir / "output") if runtime_dir is not None else None
         pruned_manager = resolver.pruned_manager() if resolver else None
 
-        # ── Per-invocation providers (APPEND parent prompt + FORK context) ──
-        # These move the invocation-specific parts of the system prompt OUT of
-        # the baked string and into per-turn pipeline providers, so a reused
-        # instance (one slot per agent_type in the pool) rebuilds them per
-        # invocation. The parent *value* for each turn arrives via runtime_info
-        # (threaded from the dispatch envelope); the lookup below only resolves
-        # the parent's prompt from the in-memory pool. None when there is no
-        # parent or the mode is off → providers are skipped.
-        parent_prompt_lookup = None
         fork_context_spec = None
-        if parent_session is not None:
-            if self.spec.system_prompt_mode == SystemPromptMode.APPEND:
-                pool_ref = deps.pool
+        if (
+            parent_session is not None
+            and self.spec.context_mode == ContextMode.FORK
+            and deps.context_fork_builder is not None
+        ):
+            from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
 
-                async def _parent_prompt_of(parent_sid: str, _pool=pool_ref) -> str | None:
-                    # In-memory instance lookup only — never a session store.
-                    inst = _pool.get(str(parent_sid).split(".")[-1])
-                    if inst is None or not inst.descriptor.system_prompt_template:
-                        return None
-                    return inst.descriptor.system_prompt_template
-
-                parent_prompt_lookup = _parent_prompt_of
-
-            if self.spec.context_mode == ContextMode.FORK and deps.context_fork_builder is not None:
-                from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
-
-                fork_context_spec = ForkContextSpec(
-                    builder=deps.context_fork_builder,
-                    agent_type=name,
-                    fork_max_messages=self.spec.fork_max_messages,
-                )
+            fork_context_spec = ForkContextSpec(
+                builder=deps.context_fork_builder,
+                agent_type=name,
+                fork_max_messages=self.spec.fork_max_messages,
+            )
 
         subagent_ctx = build_session_only_memory(
             cfg=self.memory,
@@ -193,7 +171,6 @@ class AgentTemplate:
             system_prompt=system_prompt,
             pruned_manager=pruned_manager,
             output_base_dir=output_base_dir,
-            parent_prompt_lookup=parent_prompt_lookup,
             fork_context_spec=fork_context_spec,
             roles=list(self.spec.roles),
             store_registry=deps.memory_store_registry,

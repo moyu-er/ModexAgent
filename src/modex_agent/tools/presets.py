@@ -51,13 +51,6 @@ class ThinkingBudget(str, Enum):
     HIGH = "high"
 
 
-class SystemPromptMode(str, Enum):
-    """System prompt assembly mode for subagent creation."""
-
-    REPLACE = "replace"  # subagent uses its own complete prompt
-    APPEND = "append"  # subagent prompt appended after parent's
-
-
 # Fork-context truncation bounds (only meaningful when context_mode == FORK).
 # Centralized so the AgentTemplate default, the bot payload schema, and the
 # registry loader share one source of truth.
