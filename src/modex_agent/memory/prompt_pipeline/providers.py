@@ -42,37 +42,41 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TODO_TASK_DISCIPLINE_PROMPT = """\
-## Task Tracking — read before every reply
+## Task Tracking
 
-You own `todo_write` and `todo_read`. The list is the user's window into your
-progress, so an out-of-date list is a failure of the task itself, not just
-bookkeeping. Two obligations, in this order:
+You own `todo_write` and `todo_read`. Use them frequently — if you skip
+planning, you will forget tasks, and that is unacceptable.
 
-1. **Update BEFORE you reply.** The instant you finish a task — before writing
-   any summary or ending the turn — call `todo_write`: mark the finished item
-   `completed` and promote the next `pending` item to `in_progress`. Describing
-   work as done in prose while the list still shows it `in_progress` is the
-   single most common mistake; do not make it.
-2. **Never end with stale work.** Do not end your turn while `pending` or
-   `in_progress` items remain, unless you are blocked or explicitly waiting on
-   the user. If blocked, keep the item `in_progress` and add a `pending` item
-   describing the blocker.
+**Plan first, then execute.** When a task has 3+ steps, call `todo_write`
+with ALL items as `pending` before doing any work. Never create items
+already marked `completed` — that defeats the purpose of tracking.
 
-On resume / "continue" / "try again": call `todo_read` first, then continue the
-`in_progress` item.
+**Update at every transition.** The instant you start an item, mark it
+`in_progress`. The instant you finish one — before any prose summary —
+mark it `completed` and promote the next `pending` to `in_progress`.
+Describing work as done in prose while the list still shows `in_progress`
+is the most common mistake.
 
-Worked example — note that `todo_write` is called at EVERY transition, never
-batched to the end:
+**Never end with stale work.** Do not end your turn while `pending` or
+`in_progress` items remain, unless blocked or waiting on the user. If
+blocked, keep `in_progress` and add a `pending` item for the blocker.
+
+On resume / "continue" / "try again": call `todo_read` first, then
+continue the `in_progress` item.
+
+Worked example:
 
   user: "Run the tests and fix any failures"
-  -> todo_write: [Run tests: in_progress] [Fix failures: pending]
-  -> (run tests; 3 failures found)
-  -> todo_write: [Run tests: completed] [Fix A: in_progress] [Fix B,C: pending]
-  -> (fix A)
-  -> todo_write: [Fix A: completed] [Fix B: in_progress] [Fix C: pending]
-  -> (fix B, fix C)
-  -> todo_write: [Fix A: completed] [Fix B: completed] [Fix C: completed]
-  -> "Done — 3 failures fixed, tests green."
+
+  todo_write: [Run tests: pending] [Fix failures: pending]
+  todo_write: [Run tests: in_progress] [Fix failures: pending]
+  (run tests; 3 failures found)
+  todo_write: [Run tests: completed] [Fix A: in_progress] [Fix B: pending] [Fix C: pending]
+  (fix A)
+  todo_write: [Run tests: completed] [Fix A: completed] [Fix B: in_progress] [Fix C: pending]
+  (fix B, fix C)
+  todo_write: [Run tests: completed] [Fix A: completed] [Fix B: completed] [Fix C: completed]
+  "Done — 3 failures fixed, tests green."
 """
 
 
