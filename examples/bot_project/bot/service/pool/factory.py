@@ -573,4 +573,5 @@ async def create_pool(
         tree_manager=tree_manager,
         target_store=main_store,
         session_binding_store=session_binding_store,
+        requires_main_agent_tools=strategy.requires_main_agent_tools,
     )

@@ -54,6 +54,7 @@ class PoolInstance:
     tree_manager: SessionTreeManager  # exposed for cross-pool peer wiring
     target_store: CommunicationTargetStore  # exposed for cross-pool peer wiring
     session_binding_store: SessionBindingStore | None = None  # tree-level session binding
+    requires_main_agent_tools: bool = True  # ADR-0025: mirror of strategy.requires_main_agent_tools
 
     @property
     def main_address(self) -> AgentAddress:

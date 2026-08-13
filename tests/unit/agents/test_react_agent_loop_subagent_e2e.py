@@ -50,12 +50,14 @@ class _FakeEmitter:
         pass
 
 
-class _FakeBus:
-    def __init__(self):
-        self.sent: list[tuple[str, object]] = []
+class _FakeTree:
+    """Fake SessionTreeManager capturing deliver() calls for assertions."""
 
-    async def send(self, key: str, envelope: object) -> None:
-        self.sent.append((key, envelope))
+    def __init__(self):
+        self.delivered: list[tuple[str, object]] = []
+
+    async def deliver(self, key: str, envelope: object) -> None:
+        self.delivered.append((key, envelope))
 
 
 def _make_subagent_ctx(parent_session_id: str = "conv123.main"):
@@ -87,7 +89,7 @@ def _make_subagent_ctx(parent_session_id: str = "conv123.main"):
 @pytest.mark.asyncio
 async def test_subagent_loop_routes_to_parent_inbox():
     """A subagent that hits LOOP_DETECTED must notify its parent, not the user."""
-    bus = _FakeBus()
+    tree = _FakeTree()
     ctx = _make_subagent_ctx()
     # Seed a prior assistant step with the same content AND the same tool call,
     # so the AND-based loop detector fires on the first LLM response.
@@ -119,7 +121,7 @@ async def test_subagent_loop_routes_to_parent_inbox():
     ctx.runtime.services.hooks.add(
         HookSpec(
             hook=SubagentAutoSendHook(
-                agent_bus=bus,
+                tree=tree,
                 self_name="scout",
                 parent_name="main",
             ),
@@ -135,8 +137,8 @@ async def test_subagent_loop_routes_to_parent_inbox():
     assert "<loop_detected" in (result.content or "")
 
     # SubagentAutoSendHook should route the notification to the parent inbox.
-    assert len(bus.sent) == 1
-    key, envelope = bus.sent[0]
+    assert len(tree.delivered) == 1
+    key, envelope = tree.delivered[0]
     assert key == "conv123.main"
     assert envelope.message_type == AgentMessageType.AGENT_RESULT
     xml = envelope.payload["content"]

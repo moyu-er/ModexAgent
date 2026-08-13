@@ -291,7 +291,8 @@ async def _assemble_resources(
                 execution_strategy=peer_tree.main.execution_strategy,
             )
             instance.target_store.add(target)
-        register_communication_tools(instance)
+        if instance.requires_main_agent_tools:
+            register_communication_tools(instance)
 
     # Wire each pool's main pipeline + communication service to THIS workspace
     # (R), then run the experience-hook wiring that used to live in

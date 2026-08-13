@@ -437,6 +437,7 @@ class TestCheckpointRoundTrip:
             "approval",
             "result",
             "resume_target",
+            "node_scratch",
         }
         assert set(payload.keys()) == expected_keys
 

@@ -96,13 +96,19 @@ class TestSearchFilesTool:
             (tmp_workspace / f"file{i}.py").write_text("target\n")
         tool = SearchFilesTool()
         result = await tool.execute(pattern="target", path=str(tmp_workspace), max_results=5)
-        # ripgrep --max-count is per-file, so total matches may exceed max_results.
-        # Verify that the result indicates limiting and shows exactly max_results entries.
+        # Python backend returns early at max_results, so total never exceeds
+        # max_results and the truncation message is unreachable end-to-end.
+        # Verify pagination here; verify truncation formatting via _format_results.
         assert "Found" in result
         assert "target" in result
-        assert "not shown (limit: 5)" in result
         displayed_lines = [ln for ln in result.splitlines() if "target" in ln]
         assert len(displayed_lines) == 5
+
+        entries = [(f"file{i}.py", 1, "target", [], []) for i in range(10)]
+        formatted = tool._format_results(entries, max_results=5)
+        assert "not shown (limit: 5)" in formatted
+        shown_lines = [ln for ln in formatted.splitlines() if "target" in ln]
+        assert len(shown_lines) == 5
 
     @pytest.mark.asyncio
     async def test_search_skips_binary(self, tmp_workspace):

@@ -11,7 +11,6 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.hook.notification import AgentNotificationService
 from modex_agent.memory.hooks import (
@@ -104,13 +103,12 @@ def register_communication_tools(instance: PoolInstance) -> None:
     Single convergence point for both LLM-facing communication tools: ``task``
     (subagent dispatch) and ``send_to_peer`` (peer communication). Called once
     per pool after Phase 2 peer wiring, so both subagent and peer targets are
-    present in the store and the presence checks reflect reality. External main
-    agents have no tool surface (they communicate via ``modexctl send``), so
-    they are skipped.
-    """
-    if instance.main_execution_strategy == ExecutionStrategyKind.EXTERNAL:
-        return
+    present in the store and the presence checks reflect reality.
 
+    The caller gates this call on ``instance.requires_main_agent_tools``
+    (ADR-0025 capability flag); external main agents, which have no tool
+    surface, are skipped upstream rather than here.
+    """
     store = instance.target_store
     source = AgentAddress(name=instance.main_agent_name)
     service = instance.communication_service
