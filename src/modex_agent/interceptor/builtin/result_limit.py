@@ -26,9 +26,8 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
     """Tool result overflow interceptor.
 
     When a tool result exceeds *max_chars*, the full content is persisted
-    to disk and the model receives a structured XML document containing
-    chunk 1 in CDATA, plus metadata for the LLM. Falls back to simple
-    truncation when *overflow_handler* is None.
+    to disk and the model receives truncated text with a path to the full
+    output. Falls back to simple truncation when *overflow_handler* is None.
     """
 
     @property
@@ -93,11 +92,12 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
         tool_call_id = call.tool_call.call_id or f"{call.tool_name}-{uuid4().hex[:12]}"
 
         try:
-            chunk_1_content, _ref = await self._handler.store_overflow(
+            overflow_content, _ref = await self._handler.store_overflow(
                 session_id=session_id,
                 tool_call_id=tool_call_id,
                 tool_name=call.tool_name,
                 content=result_str,
+                max_chars=self._max_chars,
             )
         except Exception:
             logger.exception("Overflow store failed for %s/%s", session_id, tool_call_id)
@@ -118,20 +118,11 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
         kept_call_ids.add(tool_call_id)
         self._handler.schedule_cleanup(session_id, kept_call_ids)
 
-        # The overflow chunk is <tool_result_overflow> XML. Declare its
-        # truncation metadata so the governance layer can compact it. Under
-        # ADR-0006 the ToolManager no longer sniffs terminal XML, so the
-        # producer (this interceptor) attaches metadata explicitly.
-        from modex_agent.tools.terminal.types import terminal_result_metadata
-
-        content_format, truncatable_paths = terminal_result_metadata(chunk_1_content)
         return ToolResult.from_text(
             result.tool_name,
-            chunk_1_content,
+            overflow_content,
             call_id=result.call_id,
             overflow_processed=True,
-            content_format=content_format,
-            truncatable_paths=truncatable_paths,
         )
 
     @staticmethod

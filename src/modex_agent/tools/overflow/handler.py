@@ -3,25 +3,16 @@ from __future__ import annotations
 from modex_agent.tools.overflow.cleaner import OverflowCleaner
 from modex_agent.tools.overflow.models import OverflowRef
 from modex_agent.tools.overflow.store import ToolOverflowStore
-from modex_agent.utils.xml import xml_text
 
 
 class ToolResultOverflowHandler:
-    """Orchestrates overflow: store full content, return XML-wrapped first chunk.
+    """Orchestrates overflow: store full content, return truncated text with path notification.
 
-    The returned message is a structured XML document containing chunk 1
-    embedded in CDATA, plus metadata instructing the LLM how to read
-    remaining chunks via the read tool.
+    The truncation limit is passed by the caller (interceptor), not owned by
+    this handler. This ensures a single source of truth for the overflow
+    threshold — the interceptor decides both when to trigger overflow and
+    how much content to return.
     """
-
-    # Template for the instruction element.  Kept as a class constant so the
-    # LLM-facing text is centralised and can be overridden by subclasses.
-    _INSTRUCTION_TEMPLATE = (
-        "This result was too large and has been split into {chunk_count} chunk(s). "
-        'Chunk 1 is already shown in the <chunk index="1"> element below. '
-        "To read rest chunks through {total_chunks}, use the read tool with "
-        'path="{dir_path}/$CHUNK.full.txt", replacing $CHUNK with the number you need.'
-    )
 
     def __init__(
         self,
@@ -37,34 +28,15 @@ class ToolResultOverflowHandler:
         tool_call_id: str,
         tool_name: str,
         content: str,
+        *,
+        max_chars: int = 50_000,
     ) -> tuple[str, OverflowRef]:
         ref = await self._store.store(session_id, tool_call_id, tool_name, content)
-
-        chunk1 = await self._store.read_chunk(session_id, tool_call_id, 1)
-        if chunk1 is None:
-            chunk1 = ""
-
-        cdata = xml_text(chunk1)
-
-        instruction = self._INSTRUCTION_TEMPLATE.format(
-            chunk_count=ref.chunk_count,
-            total_chunks=ref.chunk_count,
-            dir_path=ref.dir_path,
+        truncated_text = content[:max_chars] + (
+            f"\n\n[Full output ({ref.total_chars} chars total) saved to: "
+            f"{ref.dir_path}/full.txt]"
         )
-
-        xml = (
-            f'<tool_result_overflow tool="{tool_name}" '
-            f'total_chars="{ref.total_chars}" '
-            f'total_chunks="{ref.chunk_count}" '
-            f'current_chunk="1">\n'
-            f'  <storage dir="{ref.dir_path}" session="{session_id}" tool_call="{tool_call_id}" />\n'
-            f"  <instruction>\n"
-            f"    {instruction}\n"
-            f"  </instruction>\n"
-            f'  <chunk index="1">{cdata}</chunk>\n'
-            f"</tool_result_overflow>"
-        )
-        return xml, ref
+        return truncated_text, ref
 
     def repoint_store(self, store: ToolOverflowStore) -> None:
         """Retarget this handler (and its cleaner) at a new overflow store.
