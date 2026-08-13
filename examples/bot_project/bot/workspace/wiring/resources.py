@@ -27,6 +27,7 @@ from bot.workspace.handle import (
 )
 from bot.workspace.pool_data import build_pool_data
 from modex_agent.approval.ui import IMUserInterface
+from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
 from modex_agent.hook.builtin import CurrentTimeInjectionHook, TodoContinuationHook
 from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
 from modex_agent.hook.builtin.knowledge_hook import KnowledgeHook
@@ -157,7 +158,24 @@ async def _assemble_resources(
     )
     from modex_agent.core.session_registry import InMemorySessionRegistry
 
-    session_registry = InMemorySessionRegistry(store=session_index_store)
+    _routing_store = service._pool_session_store
+
+    async def _on_session_registered(session: SessionInfo) -> None:
+        if _routing_store is None:
+            return
+        prefix = session.session_id_prefix
+        if _routing_store.get(prefix, None) is not None:
+            return
+        pool = session.metadata.get("pool")
+        if pool is None and session.parent_session_id is not None:
+            parent_prefix = session_id_prefix_of(session.parent_session_id)
+            pool = _routing_store.get(parent_prefix, None)
+        if pool is not None:
+            _routing_store.set(prefix, str(pool))
+
+    session_registry = InMemorySessionRegistry(
+        store=session_index_store, on_register=_on_session_registered
+    )
     await session_registry.load_all()
 
     # 2. Per-workspace broker (cross-process wakeup). The inbox/bus are now

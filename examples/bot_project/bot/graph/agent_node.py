@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from bot.graph.knowledge_config import KnowledgeNodeConfig
 from modex_agent.agents.agent_node import AgentNode, SessionStrategy
+from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.message_type import AgentMessageType
@@ -25,7 +26,6 @@ from modex_graph.constants import FrameworkPayloadSource, GraphNode
 
 if TYPE_CHECKING:
     from bot.workspace.handle import WorkspaceResolverCell
-    from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.session_registry import SessionRegistry
     from modex_agent.multi_agent.descriptor import AgentInstance
     from modex_agent.multi_agent.pool_instance import PoolInstance
@@ -61,6 +61,25 @@ class BotAgentNode(AgentNode):
         if registry is None:
             raise RuntimeError(f"Pool {self._pool_name!r} has no session registry")
         return registry
+
+    async def _create_session(self, ctx: GraphContext[Any]) -> SessionInfo:
+        from modex_graph.utils.id import generate_id as _generate_id
+        agent_name = self.agent_name()
+        match self._session_strategy:
+            case SessionStrategy.CACHED:
+                external_id = f"{self.node_id}.{agent_name}"
+            case SessionStrategy.PER_INVOCATION:
+                external_id = f"{self.node_id}.{agent_name}.{_generate_id()}"
+            case unreachable:
+                assert_never(unreachable)
+        session = SessionIdFactory().create(
+            agent_name,
+            external_id=external_id,
+            metadata={"pool": self._pool_name},
+        )
+        registry = await self._resolve_session_registry()
+        await registry.register(session)
+        return session
 
     def _resolve_pool(self) -> PoolInstance:
         workspace = self._workspace_resolver.resolve_workspace()

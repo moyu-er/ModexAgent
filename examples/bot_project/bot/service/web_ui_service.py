@@ -302,6 +302,7 @@ class WebUIService(BotService):
             self._parent_ids[child_id] = parent_id
             ws_input = get_ws_input()
             ws_input.ensure_queue(child_id)
+            ws_input.register_parent(child_id, parent_id)
             from bot.adapters.register_websocket import get_ws_output
             from bot.webui.events import DeltaEnvelope, WebUIEventType
             from modex_agent.core.session_id import agent_of, session_id_prefix_of
