@@ -1,7 +1,7 @@
 """Tests for SubprocessTool timeout invariants.
 
 Verifies the timeout layering invariant: the outer ToolTimeoutInterceptor
-deadline (``TurnTimeoutPolicy.tool_timeout_seconds``, default 120s) must
+deadline (``TurnTimeoutPolicy.tool_timeout_seconds``, default 400s) must
 exceed SubprocessTool's own timeout (default 90s) so that SubprocessTool's
 internal timeout fires first — returning partial output — rather than
 being cancelled by the interceptor (which would lose all output).
@@ -21,7 +21,7 @@ from modex_agent.tools.terminal.subprocess_tool import SubprocessTool, create_su
 class TestSubprocessToolTimeoutDefaults:
     def test_default_timeout_is_90(self) -> None:
         """Default timeout is 90s — short enough for interactive use,
-        leaving 30s margin under the 120s interceptor deadline."""
+        leaving ample margin under the 400s interceptor deadline."""
         tool = SubprocessTool(executor=create_subprocess_executor())
         assert tool.timeout == 90
 
@@ -35,7 +35,7 @@ class TestTimeoutInvariant:
     """The outer interceptor deadline must exceed the inner tool timeout."""
 
     def test_interceptor_exceeds_subprocess_default(self) -> None:
-        """``TurnTimeoutPolicy.tool_timeout_seconds`` (120s) >
+        """``TurnTimeoutPolicy.tool_timeout_seconds`` (400s) >
         ``SubprocessTool.timeout`` (90s) so the tool's own timeout fires
         first and returns partial output."""
         safety = RuntimeSafetyPolicy()

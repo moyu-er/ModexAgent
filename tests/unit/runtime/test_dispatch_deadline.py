@@ -43,7 +43,7 @@ class TestDispatchDeadlineUnit:
         assert d.remaining == 0.0
 
     def test_renew_extends_deadline(self):
-        d = DispatchDeadline(initial_timeout=0.0, max_total_seconds=10.0)
+        d = DispatchDeadline(initial_timeout=0.0, max_ahead_seconds=10.0)
         time.sleep(0.01)
         assert d.is_expired
         d.renew(0.5)
@@ -51,20 +51,20 @@ class TestDispatchDeadlineUnit:
         assert d.remaining > 0.3
 
     def test_renew_uses_seconds_param(self):
-        d = DispatchDeadline(initial_timeout=0.0, max_total_seconds=10.0)
+        d = DispatchDeadline(initial_timeout=0.0, max_ahead_seconds=10.0)
         time.sleep(0.01)
         d.renew(0.2)
         remaining_after_renew = d.remaining
         assert 0.1 < remaining_after_renew <= 0.21
 
     def test_renew_default_is_3_seconds(self):
-        d = DispatchDeadline(initial_timeout=0.0, max_total_seconds=10.0)
+        d = DispatchDeadline(initial_timeout=0.0, max_ahead_seconds=10.0)
         time.sleep(0.01)
         d.renew()
         assert d.remaining > 2.5
 
     def test_renew_never_shortens_deadline(self):
-        d = DispatchDeadline(initial_timeout=0.3, max_total_seconds=10.0)
+        d = DispatchDeadline(initial_timeout=0.3, max_ahead_seconds=10.0)
         time.sleep(0.05)
         remaining_before = d.remaining
         assert remaining_before > 0.2
@@ -72,15 +72,15 @@ class TestDispatchDeadlineUnit:
         remaining_after = d.remaining
         assert remaining_after >= remaining_before - 0.001
 
-    def test_renew_capped_by_max_total_seconds(self):
-        d = DispatchDeadline(initial_timeout=1.0, max_total_seconds=2.0)
+    def test_renew_capped_by_max_ahead(self):
+        d = DispatchDeadline(initial_timeout=1.0, max_ahead_seconds=2.0)
         time.sleep(0.01)
         d.renew(100.0)
         assert d.remaining <= 2.0
         assert d.remaining > 1.5
 
-    def test_renew_repeatedly_does_not_exceed_ceiling(self):
-        d = DispatchDeadline(initial_timeout=0.5, max_total_seconds=1.0)
+    def test_renew_repeatedly_stays_within_ahead(self):
+        d = DispatchDeadline(initial_timeout=0.5, max_ahead_seconds=1.0)
         for _ in range(20):
             d.renew(3.0)
             assert d.remaining <= 1.0
@@ -250,10 +250,10 @@ class TestPoolRenewableDispatch:
         assert current_dispatch_deadline.get() is None
         await p.shutdown_all(timeout=0.1)
 
-    async def test_ceiling_prevents_infinite_renewal(self, monkeypatch):
-        """Repeated renew() calls must eventually hit the hard ceiling and
-        let the watchdog kill the coro."""
-        monkeypatch.setattr(DispatchDeadline, "DEFAULT_MAX_TOTAL_SECONDS", 0.3)
+    async def test_ceiling_caps_single_renew_burst(self, monkeypatch):
+        """A single renew(huge) is capped to max_ahead, so if activity then
+        stops, the watchdog kills the coro within max_ahead."""
+        monkeypatch.setattr(DispatchDeadline, "DEFAULT_MAX_AHEAD_SECONDS", 0.3)
 
         safety = RuntimeSafetyPolicy(
             turn=TurnTimeoutPolicy(
@@ -268,13 +268,12 @@ class TestPoolRenewableDispatch:
         )
         p._max_backoff_seconds = 0.05
 
-        async def infinite_renewer():
+        async def burst_then_stall():
             deadline = current_dispatch_deadline.get()
             assert deadline is not None
-            for _ in range(100):
-                await asyncio.sleep(0.02)
-                deadline.renew(3.0)
+            deadline.renew(999.0)  # capped to now+0.3
+            await asyncio.sleep(1.0)  # stall well past 0.3
 
-        await p._run_dispatch("main", infinite_renewer())
+        await p._run_dispatch("main", burst_then_stall())
         assert p._error_counts.get("main", 0) >= 1
         await p.shutdown_all(timeout=0.1)

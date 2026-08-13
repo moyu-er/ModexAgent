@@ -260,7 +260,7 @@ class LLMNode(Node[ReActTurnState]):
         _round_extension = (
             agent_runtime.safety.turn.agent_run_timeout_seconds
             if agent_runtime is not None
-            else 420.0
+            else 600.0
         )
         renew_dispatch_deadline(_round_extension)
 

@@ -14,7 +14,7 @@ pipeline layer.
 ## Files
 | File | Class | Scope(s) | Description |
 |------|-------|----------|-------------|
-| `tool_timeout.py` | `ToolTimeoutInterceptor` | TOOL_CALL | Mandatory per-invocation tool deadline (default 120s). Composed by `ToolExecutor` as the innermost interceptor so the deadline measures only `ToolManager.execute()` time. On expiry, cancels the tool coroutine and returns a `<tool_timeout>` XML `ToolResult` (with `error` set so `success=False`); the ReAct loop continues. External `CancelledError`/`AgentCancelled` propagate naturally. |
+| `tool_timeout.py` | `ToolTimeoutInterceptor` | TOOL_CALL | Mandatory per-invocation tool deadline (default 400s). Composed by `ToolExecutor` as the innermost interceptor so the deadline measures only `ToolManager.execute()` time. On expiry, cancels the tool coroutine and returns a `<tool_timeout>` XML `ToolResult` (with `error` set so `success=False`); the ReAct loop continues. External `CancelledError`/`AgentCancelled` propagate naturally. |
 | `result_limit.py` | `ToolResultLimitInterceptor` | TOOL_CALL | Truncates tool results via a `ToolResultOverflowHandler` (default `max_chars=50000`); overflow spilled to `OverflowStore`. |
 | `tool_approval.py` | `ArgumentMatcher` | (helper, not interceptor) | Path-based tool argument classification, used by `ApprovalRuntime.classifier`. |
 

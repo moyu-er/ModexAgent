@@ -164,22 +164,33 @@ class LLMProviderKind(StrEnum):
 
 
 class LLMTimeoutPolicy(BaseModel):
-    """单次 LLM 调用的超时与重试策略。"""
+    """单次 LLM 调用的超时与重试策略。
+
+    默认不设置 provider 层超时（None = 无限等待），依赖外层 turn timeout
+    + watchdog 作为唯一终止机制。
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    request_timeout_seconds: float = 45.0
-    stream_idle_timeout_seconds: float = 90.0
-    framework_max_retries: int = 1
+    request_timeout_seconds: float | None = None
+    stream_idle_timeout_seconds: float | None = None
+    framework_max_retries: int = 2
     retry_backoff_seconds: tuple[float, ...] = (2.0, 8.0)
 
 
 class TurnTimeoutPolicy(BaseModel):
-    """单个 Turn 各阶段超时配置。"""
+    """单个 Turn 各阶段超时配置。
+
+    ``agent_run_timeout_seconds`` is the per-iteration renewal amount passed
+    to ``DispatchDeadline.renew()`` after each LLM iteration (nodes/llm.py).
+    It is NOT a hard ceiling on total turn duration — the sliding ceiling
+    (``DispatchDeadline.max_ahead_seconds``) governs that. See
+    ``runtime/dispatch.py`` for the full timeout architecture.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    agent_run_timeout_seconds: float = 420.0
+    agent_run_timeout_seconds: float = 600.0
     dispatch_timeout_seconds: float = 300.0
     output_send_timeout_seconds: float = 20.0
     memory_flush_timeout_seconds: float = 30.0
