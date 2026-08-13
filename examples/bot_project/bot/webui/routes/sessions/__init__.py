@@ -125,6 +125,10 @@ async def derive_sessions_from_transcripts(
     Legacy workspaces only have ``.modex/sessions/<pool>/*.jsonl`` files
     and no ``.modex/session_index/``.  This fallback lets the frontend
     list and attach to those sessions without a separate migration step.
+
+    Pool is resolved via ``_pool_resolver`` (PoolSessionStore — the
+    authoritative session_prefix→pool mapping).  No agent_name
+    reverse-engineering.
     """
     target_dir = sessions_dir if sessions_dir is not None else server._home_sessions_dir
     derived: list[SessionInfo] = []
@@ -134,9 +138,8 @@ async def derive_sessions_from_transcripts(
             # No separator → not a usable display id.
             continue
         agent_name = agent_of(session_id)
-        # Include any agent that maps to a known pool (main agents,
-        # resident subagents, and dynamic subagent template types).
-        pool = server._pool_for_agent_name(agent_name)
+        # Resolve pool via the authoritative PoolSessionStore lookup.
+        pool = server._resolve_pool_by_prefix(session_prefix)
         if pool is None:
             continue
         parent_session_id: str | None = None
@@ -172,33 +175,18 @@ async def _resolve_pool(
     store: SessionStore | None,
     pool_cache: dict[str, str | None],
 ) -> str | None:
-    """Resolve the pool a session belongs to.
+    """Resolve the pool a session belongs to via PoolSessionStore.
 
-    Unified derivation chain (no provider-specific branches):
-    1. Direct agent→pool mapping (registered agents + template types).
-    2. Parent inheritance — if the agent is not registered but the
-       session has a registered parent, inherit the parent's pool.
-    3. None — the session is an orphan with no known pool.
+    Pool is looked up by session_prefix (conversation id) — the
+    authoritative persisted mapping written by S5 ResolvePoolStage.
+    No agent_name reverse-engineering.
     """
-    pool = server._pool_for_agent_name(session.agent_name)
-    if pool is not None:
-        return pool
-    parent_id = session.parent_session_id
-    if parent_id is None:
-        return None
-    cached = pool_cache.get(parent_id)
-    if cached is not None:
-        return cached
-    if parent_id in pool_cache:
-        return None
-    if store is not None:
-        parent = await store.get(parent_id)
-        if parent is not None:
-            parent_pool = server._pool_for_agent_name(parent.agent_name)
-            pool_cache[parent_id] = parent_pool
-            return parent_pool
-    pool_cache[parent_id] = None
-    return None
+    prefix = session.session_id_prefix
+    if prefix in pool_cache:
+        return pool_cache[prefix]
+    pool = server._resolve_pool_by_prefix(prefix)
+    pool_cache[prefix] = pool
+    return pool
 
 
 # ── Handler sub-modules ─────────────────────────────────────────────────────

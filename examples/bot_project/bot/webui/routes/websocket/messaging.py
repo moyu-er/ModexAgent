@@ -97,17 +97,13 @@ async def handle_send_message(
     uuid_prefix = resolved.session_id_prefix
     explicit_agent = resolved.agent_name
 
-    # Pool resolution is OWNED by S5 (ResolvePoolStage) -- it also persists
-    # the UI choice into PoolSessionStore so PoolRouter routes correctly.
-    # The entry only hands the UI-selected pool (derived from the
-    # session_id's agent segment) as explicit_pool; no inline resolution,
-    # no _pool_switch_callback call here. (attach still uses the callback.)
-    # For main agents the agent name IS the pool name; fall back to
-    # explicit_agent directly when agent_pool_map lacks the entry (edge
-    # case: map not yet populated during early server startup).
-    explicit_pool = (
-        (server._agent_pool_map.get(explicit_agent) or explicit_agent) if explicit_agent else None
-    )
+    # Pool is carried by the client (first-class like ws). Fall back to
+    # PoolSessionStore (authoritative persisted mapping) when the client
+    # does not send pool.
+    pool_from_payload = str(data.get("pool", ""))
+    explicit_pool = server._resolve_pool_for_request(
+        pool_from_payload or None, uuid_prefix
+    ) if uuid_prefix else (pool_from_payload or _DEFAULT_AGENT_NAME)
 
     # The session was already established upstream (attach / create_session).
     # Pass it through so the pipeline reuses session.session_id verbatim
@@ -133,15 +129,7 @@ async def handle_send_message(
     raw_attachments = data.get("attachments")
     attachments: list[AttachmentRef] = []
     if isinstance(raw_attachments, list):
-        # Resolve the staging pool the SAME way the upload endpoint does
-        # (_pool_of_agent -> _pool_for_agent_name, incl. dynamic-subagent
-        # prefix matching). ``explicit_pool`` (agent_pool_map.get or the raw
-        # agent name) diverges for subagent-instance sessions and would drop
-        # a legitimately-uploaded file whose temp path lives under the
-        # template pool's ``_tmp`` -- the same file the upload endpoint wrote.
-        staging_pool = (
-            server._pool_of_agent(explicit_agent) if explicit_agent else _DEFAULT_AGENT_NAME
-        )
+        staging_pool = explicit_pool or _DEFAULT_AGENT_NAME
         staging_root = server._media_tmp_dir_of_ws(ws_raw, staging_pool).resolve()
         for entry in raw_attachments:
             if not isinstance(entry, dict):

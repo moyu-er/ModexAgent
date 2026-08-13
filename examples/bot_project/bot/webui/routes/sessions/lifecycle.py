@@ -181,7 +181,7 @@ async def handle_delete_session(request: web.Request) -> web.Response:
     index_dir = server._index_dir_of_ws(ws_raw)
     sessions_dir = server._sessions_dir_of_ws(ws_raw)
     resolved = await resolve_session(server, session_id, index_dir=index_dir)
-    pool = server._pool_of_agent(resolved.agent_name)
+    pool = server._resolve_pool_for_request(request.query.get("pool"), resolved.session_id_prefix)
     deleted = await server._session_gc.delete_session_tree(
         session_id, ws_root=ws_root, pool=pool,
     )

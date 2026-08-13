@@ -106,7 +106,6 @@ class BotControlFacade:
         self,
         *,
         workspace_resolver: WorkspaceResolver,
-        agent_pool_map: dict[str, str],
         message_store_provider: MessageStoreProvider,
         transcript_store_provider: TranscriptStoreProvider,
         communication_service_provider: CommunicationServiceProvider | None = None,
@@ -114,7 +113,6 @@ class BotControlFacade:
         relative_base: Path | None = None,
     ) -> None:
         self._workspace_resolver: WorkspaceResolver = workspace_resolver
-        self._agent_pool_map: dict[str, str] = dict(agent_pool_map)
         self._message_store_provider: MessageStoreProvider = message_store_provider
         self._transcript_store_provider: TranscriptStoreProvider = (
             transcript_store_provider
@@ -150,13 +148,10 @@ class BotControlFacade:
             relative_base=self._relative_base,
         )
 
-        # 2. Validate pool before workspace materialization (cheap check before I/O).
-        self._validate_pool(caller.agent_name, caller.pool)
-
-        # 3. Materialize PoolWorkspaceResources for the resolved root.
+        # 2. Materialize PoolWorkspaceResources for the resolved root.
         resources = await self._workspace_resolver(resolution.root)
 
-        # 4. Resolve pool instance + execution_strategy from runtime state.
+        # 3. Resolve pool instance + execution_strategy from runtime state.
         pool_instance = resources.pools.get(caller.pool)
         if pool_instance is None:
             raise ControlFacadeError(
@@ -274,13 +269,10 @@ class BotControlFacade:
                 ),
             )
 
-        # 3. Validate pool from the agent-to-pool map.
-        self._validate_pool(caller.agent_name, caller.pool)
-
-        # 4. Materialize PoolWorkspaceResources for the resolved root.
+        # 3. Materialize PoolWorkspaceResources for the resolved root.
         resources = await self._workspace_resolver(resolution.root)
 
-        # 5. Locate the caller's pool instance.
+        # 4. Locate the caller's pool instance.
         pool_instance = resources.pools.get(caller.pool)
         if pool_instance is None:
             raise ControlFacadeError(
@@ -294,7 +286,7 @@ class BotControlFacade:
                 ),
             )
 
-        # 6. Resolve target from the live CommunicationTargetStore.
+        # 5. Resolve target from the live CommunicationTargetStore.
         target = pool_instance.target_store.get(request.target_agent)
         if target is None:
             if request.target_agent == pool_instance.main_agent_name:
@@ -316,7 +308,7 @@ class BotControlFacade:
                     ),
                 )
 
-        # 7. Invocation existence check (T07) — same-pool subagent only.
+        # 6. Invocation existence check (T07) — same-pool subagent only.
         is_same_pool_subagent = (
             target.kind == AgentCommKind.SUBAGENT and target.tree_ref is None
         )
@@ -345,7 +337,7 @@ class BotControlFacade:
             dispatch_outcome = DispatchOutcome.NOT_APPLICABLE
             result_requested_invocation_id = None
 
-        # 8. Recover caller session context and construct AgentContext.
+        # 7. Recover caller session context and construct AgentContext.
         session_info = SessionInfo.from_str(caller.session_id)
         if request.parent_session_id is not None:
             session_info = session_info.model_copy(
@@ -375,7 +367,7 @@ class BotControlFacade:
             graph_instance_id=request.graph_instance_id,
         )
 
-        # 9. Call AgentCommunicationService._send().
+        # 8. Call AgentCommunicationService._send().
         if self._communication_service_provider is None:
             raise ControlFacadeError(
                 503,
@@ -400,7 +392,7 @@ class BotControlFacade:
             context=context,
         )
 
-        # 10. Map AgentSendResult → SendResult.
+        # 9. Map AgentSendResult → SendResult.
         return self._build_send_result(
             result,
             target,
@@ -442,32 +434,6 @@ class BotControlFacade:
     # ------------------------------------------------------------------
     # Validation helpers
     # ------------------------------------------------------------------
-
-    def _validate_pool(self, agent_name: str, caller_pool: str) -> None:
-        """Validate that ``caller_pool`` matches the agent-to-pool map."""
-        expected_pool = self._agent_pool_map.get(agent_name)
-        if expected_pool is None:
-            raise ControlFacadeError(
-                409,
-                ControlError(
-                    code="agent_not_mapped",
-                    message=(
-                        f"Agent {agent_name!r} is not present in the "
-                        f"agent-to-pool map"
-                    ),
-                ),
-            )
-        if expected_pool != caller_pool:
-            raise ControlFacadeError(
-                409,
-                ControlError(
-                    code="pool_mismatch",
-                    message=(
-                        f"Agent {agent_name!r} maps to pool {expected_pool!r}, "
-                        f"not {caller_pool!r}"
-                    ),
-                ),
-            )
 
     def _resolve_target_agent(self, caller: AgentSessionRef) -> str:
         return (

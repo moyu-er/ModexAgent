@@ -123,7 +123,6 @@ class WebUIServer:
         self._pool_switch_callback: Callable[[str, str], None] | None = None
         self._pool_resolver: Callable[[str], str | None] | None = None
         self._agent_resolver: Callable[[str], str] | None = None
-        self._agent_pool_map: dict[str, str] = {}
         self._recent_workspaces = None  # set by WebUIService
         self._input_pipeline = None  # injected by WebUIService
         self._input_ctx = None
@@ -271,23 +270,32 @@ class WebUIServer:
 
         sweep_media_tmp_orphans(self)
 
-    def _pool_of_agent(self, agent_name: str) -> str:
-        """Return the pool an agent belongs to (default main)."""
-        return self._pool_for_agent_name(agent_name) or _DEFAULT_AGENT_NAME
+    def _resolve_pool_by_prefix(self, session_prefix: str) -> str | None:
+        """Resolve pool via the authoritative PoolSessionStore (session_prefix → pool).
 
-    def _pool_for_agent_name(self, agent_name: str) -> str | None:
-        """Return the pool for *agent_name*, including dynamic subagent instances.
-
-        The agent→pool map contains main agents and template types.  Dynamic
-        subagent instances have names like ``reviewer-abc123``; they inherit
-        the pool of their template type.
+        This replaces the former ``_pool_for_agent_name`` reverse-lookup.
+        Pool is a first-class partition key carried by every API request;
+        this method is the backend fallback when the client does not send
+        pool explicitly (e.g. session listing).
         """
-        if agent_name in self._agent_pool_map:
-            return self._agent_pool_map[agent_name]
-        for template_type, pool in self._agent_pool_map.items():
-            if agent_name.startswith(f"{template_type}-"):
-                return pool
+        if self._pool_resolver is not None:
+            return self._pool_resolver(session_prefix)
         return None
+
+    def _resolve_pool_for_request(
+        self, client_pool: str | None, session_prefix: str
+    ) -> str:
+        """Resolve pool for a request: client-provided → store fallback → default.
+
+        Single convergence point for REST/WS handlers. ``client_pool`` comes
+        from the query param or WS payload; when absent, falls back to the
+        authoritative PoolSessionStore; when that also misses, returns the
+        default pool name.
+        """
+        if client_pool:
+            return client_pool
+        resolved = self._resolve_pool_by_prefix(session_prefix)
+        return resolved if resolved else _DEFAULT_AGENT_NAME
 
     # ------------------------------------------------------------------
     # Late-binding configuration (called by WebUIService after init)
@@ -312,10 +320,6 @@ class WebUIServer:
     def set_data_dir_name(self, data_dir_name: str) -> None:
         """Set the data directory name (e.g. '.modex') for workspace path resolution."""
         self._data_dir_name = data_dir_name
-
-    def set_agent_pool_map(self, mapping: dict[str, str]) -> None:
-        """Set mapping from main_agent_name -> pool_name for session list labels."""
-        self._agent_pool_map = dict(mapping)
 
     def set_workspace_control(self, control: WorkspaceControlPort) -> None:
         """Inject the WorkspaceControlPort for the workspace API."""

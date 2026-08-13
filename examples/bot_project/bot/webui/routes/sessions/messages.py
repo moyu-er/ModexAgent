@@ -31,14 +31,12 @@ async def handle_get_messages(request: web.Request) -> web.Response:
     """
     server: WebUIServer = request.app["server"]
     session_id: str = request.match_info["session_id"]
-    # HTTP handlers run outside any dispatch turn, so the ctxvar is not
-    # bound — resolve the sessions dir explicitly from ?ws=.
     ws_raw = request.query.get("ws", "")
     sessions_dir = server._sessions_dir_of_ws(ws_raw)
     index_dir = server._index_dir_of_ws(ws_raw)
     agent_name: str = await resolve_agent(server, session_id, index_dir=index_dir)
-    pool: str = server._pool_of_agent(agent_name)
-    session_prefix: str = session_id_prefix_of(session_id)
+    session_prefix = session_id_prefix_of(session_id)
+    pool: str = server._resolve_pool_for_request(request.query.get("pool"), session_id_prefix_of(session_id))
 
     store = server._store
 
@@ -111,9 +109,8 @@ async def handle_get_todos(request: web.Request) -> web.Response:
     session_id: str = request.match_info["session_id"]
     ws_raw = request.query.get("ws", "")
     sessions_dir = server._sessions_dir_of_ws(ws_raw)
-    index_dir = server._index_dir_of_ws(ws_raw)
-    agent_name: str = await resolve_agent(server, session_id, index_dir=index_dir)
-    pool: str = server._pool_of_agent(agent_name)
+    session_id_prefix_of(session_id)
+    pool: str = server._resolve_pool_for_request(request.query.get("pool"), session_id_prefix_of(session_id))
 
     store = None
     if server._store_resolver is not None:

@@ -198,7 +198,7 @@ class WebUIService(BotService):
 
         session_store: WorkspacePoolSessionStore = WorkspacePoolSessionStore(
             home_session_index,
-            pool_resolver=lambda session: self._pool_for_agent(session.agent_name),
+            pool_resolver=lambda session: self._resolve_pool_for_session(session.session_id_prefix),
             data_dir_name=_data_dir_name,
         )
         self._session_store = session_store
@@ -299,21 +299,17 @@ class WebUIService(BotService):
         # again here to avoid leaking it into the home workspace.
 
         async def _on_subagent_created(child_id: str, parent_id: str) -> None:
-            # child_id is already a full session_id (e.g. "invocation.helper").
-            # Sync cache for hot-path parent lookups at emit time.
             self._parent_ids[child_id] = parent_id
             ws_input = get_ws_input()
             ws_input.ensure_queue(child_id)
-            # Notify the browser immediately so the new subagent appears in the
-            # sidebar tree as soon as it is spawned, rather than waiting for its
-            # first streaming event (or for the user to refresh).
             from bot.adapters.register_websocket import get_ws_output
             from bot.webui.events import DeltaEnvelope, WebUIEventType
-            from modex_agent.core.session_id import agent_of
+            from modex_agent.core.session_id import agent_of, session_id_prefix_of
 
             ws_output = get_ws_output()
             child_agent = agent_of(child_id, default="unknown")
-            pool = self._agent_pool_map.get(child_agent, _DEFAULT_AGENT_NAME)
+            parent_prefix = session_id_prefix_of(parent_id) if parent_id else session_id_prefix_of(child_id)
+            pool = self._resolve_pool_for_session(parent_prefix)
             await ws_output.send_envelope(
                 DeltaEnvelope(
                     session_id=child_id,
@@ -453,7 +449,7 @@ class WebUIService(BotService):
                 workspace_stack=None,
                 index_dir=index_dir,
                 data_dir_name=self._data_dir_name,
-                pool_resolver=lambda session: self._pool_for_agent(session.agent_name),
+                pool_resolver=lambda session: self._resolve_pool_for_session(session.session_id_prefix),
             )
         return await session_store_for_index(
             app_config=app_config,
@@ -461,9 +457,18 @@ class WebUIService(BotService):
             index_dir=index_dir,
         )
 
-    def _pool_for_agent(self, agent_name: str) -> str:
-        """Return the pool name for *agent_name*, defaulting to ``main``."""
-        return self._agent_pool_map.get(agent_name, _DEFAULT_AGENT_NAME)
+    def _resolve_pool_for_session(self, session_prefix: str) -> str:
+        """Resolve pool for a session_prefix via the authoritative PoolSessionStore.
+
+        Single convergence point for all service-internal pool resolution.
+        Returns _DEFAULT_AGENT_NAME when the store has no entry (e.g. fresh
+        boot, session not yet routed).
+        """
+        if self._pool_session_store is not None:
+            pool = self._pool_session_store.get(session_prefix, "")
+            if pool:
+                return pool
+        return _DEFAULT_AGENT_NAME
 
     def _is_pool_busy_provider(self, pool_name: str) -> tuple[bool, list[str]]:
         """Check if a pool has agents with active turns (``AgentState.WORKING``)."""
@@ -505,7 +510,6 @@ class WebUIService(BotService):
 
         from modex_agent.core.session_id import SessionInfo
         from modex_agent.runtime.store import TurnStateStore
-        from bot.workspace.handle import PoolWorkspaceResources
 
         def _resolve_ws_resources(ws_root: Path) -> PoolWorkspaceResources | None:
             resolved = Path(ws_root).resolve()
@@ -524,8 +528,8 @@ class WebUIService(BotService):
             resources = _resolve_ws_resources(workspace_root)
             if resources is None:
                 return None
-            agent_name = SessionInfo.from_str(session_id).agent_name
-            pool = self._pool_for_agent(agent_name)
+            prefix = SessionInfo.from_str(session_id).session_id_prefix
+            pool = self._resolve_pool_for_session(prefix)
             pool_data = resources.pool_data.get(pool)
             return pool_data.turn_store if pool_data is not None else None
 
@@ -546,7 +550,7 @@ class WebUIService(BotService):
             ),
             transcript_store=self._transcript_store,
             session_store_resolver=self._session_store_for_index,
-            session_pool_resolver=lambda session: self._pool_for_agent(session.agent_name),
+            session_pool_resolver=lambda session: self._resolve_pool_for_session(session.session_id_prefix),
             liveness_provider=liveness_provider,
         )
         self._server.set_session_gc(self._session_gc)
@@ -560,17 +564,9 @@ class WebUIService(BotService):
 
         # Pool routing callback — must be set before server accepts
         # connections so _ws_attach and _ws_send_message can route.
-        # Complete agent→pool map (main agents + subagent template types).
-        # Must include subagent types so _pool_of_agent("reviewer") resolves
-        # correctly when loading subagent transcripts and routing WS messages.
-        agent_pool_map = self._build_agent_pool_map()
-        self._agent_pool_map = agent_pool_map
-        transcript_store = self._transcript_store
-        assert transcript_store is not None
-        transcript_store.set_agent_pool_map(agent_pool_map)
-
-        # Map pool_name -> main_agent_name from pool configs.
-        # pool_name and main_agent_name may differ; the mapping is explicit.
+        # Pool is resolved via PoolSessionStore (session_prefix → pool),
+        # the authoritative persisted mapping written by S5 ResolvePoolStage.
+        # No agent_name → pool reverse-engineering.
         _agent_map: dict[str, str] = {name: pi.main_agent_name for name, pi in self._pools.items()}
 
         def _agent_resolver(pool_name: str) -> str:
@@ -578,18 +574,13 @@ class WebUIService(BotService):
 
         if self.pool_router is not None:
             self._server.set_pool_switch_callback(self.pool_router.set_pool)
-            # PoolRouter session_store is the single source of truth for routing.
-            # Resolver returns None when PoolRouter has no entry (fresh boot) so
-            # _ws_attach / _ws_send_message can fall back to persisted metadata.
             self._server.set_pool_resolver(
                 lambda conv_id: self.pool_router._session_store.get(conv_id, "") or None
             )
             self._server.set_agent_resolver(lambda pool_name: _agent_map.get(pool_name, pool_name))
-            self._server.set_agent_pool_map(agent_pool_map)
             logger.info("Pool routing callback injected (pools=%s)", pool_agent_names)
         else:
             logger.warning("pool_router is None — pool routing disabled")
-            self._server.set_agent_pool_map(agent_pool_map)
 
         # Inject the per-session business routing resolver (pool,
         # parent_session_id) so emitters attach real context to every envelope.
@@ -602,10 +593,10 @@ class WebUIService(BotService):
         parent_ids = self._parent_ids
 
         def _resolve_session_meta(session_id: str) -> SessionMeta:
-            from modex_agent.core.session_id import agent_of
+            from modex_agent.core.session_id import session_id_prefix_of
 
-            agent = agent_of(session_id, default="main")
-            pool = agent_pool_map.get(agent, _DEFAULT_AGENT_NAME)
+            prefix = session_id_prefix_of(session_id)
+            pool = self._resolve_pool_for_session(prefix)
             parent = parent_ids.get(session_id)
             return SessionMeta(pool=pool, parent_session_id=parent)
 
@@ -802,7 +793,6 @@ class WebUIService(BotService):
 
         control_facade = BotControlFacade(
             workspace_resolver=_resolve_workspace_for_control,
-            agent_pool_map=agent_pool_map,
             message_store_provider=_provide_message_store,
             transcript_store_provider=_provide_transcript_store,
             communication_service_provider=_provide_communication_service,
@@ -866,7 +856,6 @@ class WebUIService(BotService):
         return BotInputContext(
             default_pool=self._default_pool_name,
             pool_session_store=pool_store,
-            agent_pool_map=self._agent_pool_map,
             agent_resolver=agent_resolver,
             transcript_store=self._transcript_store,
             enqueue_message=inp.put_input_message,
@@ -878,20 +867,6 @@ class WebUIService(BotService):
             model_choice_registry=self._model_choice_registry,
             available_pools=self._available_pools_provider,
         )
-
-    def _build_agent_pool_map(self) -> dict[str, str]:
-        """Complete agent -> pool mapping from PoolSpec + subagent templates."""
-        from modex_agent.multi_agent.pool_config import PoolStore
-
-        pool_store = PoolStore(base_dir=self._project_dir)
-        mapping: dict[str, str] = {}
-        for summary in pool_store.list_pools():
-            spec = pool_store.read_pool(summary.name)
-            mapping[spec.main.agent_name] = summary.name
-            for sub in spec.subagents:
-                mapping[sub.agent_name] = summary.name
-
-        return mapping
 
     def _available_pools_provider(self) -> set[str]:
         """Return the current set of pool names (re-read from disk each call).

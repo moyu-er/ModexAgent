@@ -148,7 +148,11 @@ async def _assemble_resources(
         app_config,
         persistence,
         session_index_dir=ctx.paths.session_index_dir,
-        pool_resolver=lambda session: service._pool_for_agent(session.agent_name),
+        pool_resolver=lambda session: (
+            service._pool_session_store.get(session.session_id_prefix, "")
+            if service._pool_session_store is not None
+            else ""
+        ) or "main",
         data_dir_name=app_config.paths.data_dir_name,
     )
     from modex_agent.core.session_registry import InMemorySessionRegistry
