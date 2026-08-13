@@ -13,6 +13,5 @@ tool_supplements:
 - todo
 peers:
 - default
-- coder
 roles:
 - coordinator

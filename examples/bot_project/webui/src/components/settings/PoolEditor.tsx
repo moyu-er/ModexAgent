@@ -26,7 +26,6 @@ import type {
   PromptSummary,
   ProviderKind,
   SubagentNode,
-  SystemPromptMode,
   ToolPreset,
 } from "../../types/pool";
 import { getPool, savePool, addPeer, removePeer, listPools } from "../../lib/poolApi";
@@ -113,11 +112,6 @@ const CONTEXT_MODE_HINT_KEY: Record<ContextMode, MessageKey> = {
   fresh: "settings.pools.contextModeFresh",
   fork: "settings.pools.contextModeFork",
 };
-const SYSTEM_PROMPT_MODES: SystemPromptMode[] = ["replace", "append"];
-const SYSTEM_PROMPT_MODE_HINT_KEY: Record<SystemPromptMode, MessageKey> = {
-  replace: "settings.pools.promptModeReplace",
-  append: "settings.pools.promptModeAppend",
-};
 const FORK_MAX_DEFAULT = 80;
 const FORK_MAX_MAX = 100;
 const SUPPLEMENTS = ["ast_grep", "todo", "aci"] as const;
@@ -145,10 +139,6 @@ const ROLE_LABEL_KEY: Record<(typeof PRESET_ROLES)[number], MessageKey> = {
 
 const PRESET_OPTIONS = PRESETS.map((p) => ({ value: p, label: p }));
 const CONTEXT_MODE_OPTIONS = CONTEXT_MODES.map((m) => ({ value: m, label: m }));
-const SYSTEM_PROMPT_MODE_OPTIONS = SYSTEM_PROMPT_MODES.map((m) => ({
-  value: m,
-  label: m,
-}));
 
 const defaultSubagent = (): SubagentNode => ({
   agent_name: "",
@@ -1414,22 +1404,6 @@ function SubagentCard({
                   />
                   <HelperText>
                     {t(CONTEXT_MODE_HINT_KEY[node.context_mode])}
-                  </HelperText>
-                </div>
-                <div>
-                  <DropdownPanel
-                    label={t("settings.pools.systemPromptMode")}
-                    error={errFor(`subagents.${index}.system_prompt_mode`)}
-                    options={SYSTEM_PROMPT_MODE_OPTIONS}
-                    value={node.system_prompt_mode ?? "replace"}
-                    onChange={(v) =>
-                      onPatch({
-                        system_prompt_mode: v as SystemPromptMode,
-                      })
-                    }
-                  />
-                  <HelperText>
-                    {t(SYSTEM_PROMPT_MODE_HINT_KEY[node.system_prompt_mode ?? "replace"])}
                   </HelperText>
                 </div>
                 {node.context_mode === "fork" && (

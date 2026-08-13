@@ -10,9 +10,9 @@ use_terminal: false
 terminal_visibility: false
 tool_preset: full
 tool_supplements:
+- aci
 - ast_grep
 - todo
-- aci
 approval:
   enabled: true
   tools:
@@ -22,7 +22,5 @@ approval:
     edit:
       allowed_paths:
       - ./*
-peers:
-- default
 roles:
 - coordinator

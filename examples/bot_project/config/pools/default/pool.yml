@@ -20,5 +20,4 @@ approval:
 mcp:
 - playwright
 peers:
-- coder
 - opencode

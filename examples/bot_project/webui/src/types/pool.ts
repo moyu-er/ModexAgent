@@ -6,7 +6,6 @@
 
 export type ToolPreset = "full" | "read_write" | "read_only" | "minimal" | "none";
 export type ContextMode = "fresh" | "fork";
-export type SystemPromptMode = "replace" | "append";
 export type SkillSource = "global" | "local";
 export type SkillOrigin = "repo" | "user";
 
@@ -96,8 +95,6 @@ export interface SubagentNode {
   tool_supplements: string[];
   context_mode: ContextMode;
   mcp: string[];
-  /** System-prompt assembly vs the parent's. Omitted on the wire when "replace" (default). */
-  system_prompt_mode?: SystemPromptMode;
   /** Parent-context truncation cap; 1..100, default 80. Only meaningful when context_mode === "fork". Omitted on the wire when at default. */
   fork_max_messages?: number;
   /** Agent role tags (T1 data layer). Plain strings — preset AgentRole values or custom strings. */
