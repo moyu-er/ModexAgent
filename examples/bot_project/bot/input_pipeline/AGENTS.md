@@ -154,7 +154,6 @@ Both pipelines. Builds the final `InputMessage` and delivers it via `ctx.enqueue
 |-------|---------|
 | `default_pool` | S5 (fallback when no stored pool) |
 | `pool_session_store` | S2, S3 (read-only), S5 (resolve + persist) |
-| `agent_pool_map` | resolution (agent_for_pool) |
 | `agent_resolver` | S5 |
 | `transcript_store` | S7 |
 | `enqueue_message` | S8 |
