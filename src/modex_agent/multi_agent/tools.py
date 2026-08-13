@@ -553,6 +553,30 @@ class TaskDispatchTool(Tool):
     subagent-scoped: peer communication is a separate concern handled by
     :class:`SendToPeerTool`, so the LLM cannot conflate delegation with
     cross-agent messaging.
+
+    TODO — subagent lifecycle management tools (not yet implemented):
+
+    - task_output: Read a completed subagent's full output (including
+      session messages beyond the notification summary). Parameter:
+      ``invocation_id``. Needed when the notification summary is
+      insufficient and the parent needs the subagent's complete work
+      history.
+
+    - task_cancel: Cancel a running subagent task. Parameter:
+      ``invocation_id`` (or ``all=True``). Requires framework support:
+      cancel the ``InboxPoller.inflight`` task for the subagent session,
+      clean up the session and its inbox entries.
+
+    - task_list: List active and recently completed subagent tasks with
+      their status (running / completed / failed) and duration. Primarily
+      for user-facing visibility (e.g. WebUI task panel) rather than
+      agent decision-making — in the async model the parent should end
+      its turn and wait for notification, not poll for status.
+
+    - task_history: Read a subagent's conversation history (wrapper around
+      the existing ``modexctl history`` CLI capability). Useful when the
+      parent needs to review what a subagent did across multiple turns,
+      not just the final result.
     """
 
     def __init__(
@@ -587,8 +611,8 @@ class TaskDispatchTool(Tool):
             "its final result to you.",
             "",
             "Only `content` reaches the subagent; your reasoning, tool calls, and",
-            "output stay local. Sends are asynchronous: end your turn after",
-            "dispatching; the result arrives as a notification when the subagent finishes.",
+            "output stay local. Dispatch is asynchronous — the result arrives as a",
+            "notification when the subagent finishes, in a later turn.",
             "",
             "When NOT to use this tool:",
             "- If you want to read a specific file, use the read tool directly — it's faster",
@@ -600,18 +624,20 @@ class TaskDispatchTool(Tool):
             "1. Launch multiple tasks concurrently when they are independent — use",
             "   multiple tool calls in a single message.",
             "2. Once you delegate work to a subagent, do not duplicate that work yourself.",
-            "   Continue with non-overlapping tasks, or end your turn and wait for the",
-            "   notification.",
-            "3. The subagent's result is returned to you only — relay a concise summary to",
+            "3. After dispatching, the preferred action is to end your turn and wait for",
+            "   the notification — this ensures you receive the result promptly. You may",
+            "   continue with non-overlapping work if you have independent tasks that",
+            "   cannot wait, but avoid working on the same files or topics as the subagent.",
+            "4. The subagent's result is returned to you only — relay a concise summary to",
             "   the user if needed.",
-            "4. Construct a high-quality subagent task with:",
+            "5. Construct a high-quality subagent task with:",
             "   - TASK: What exactly to do (concrete objective, not a topic)",
             "   - CONTEXT: Relevant file paths, patterns, constraints",
             "   - SCOPE: Write code or just research (search/read/analyze)",
             "   - OUTPUT: Exactly what to return in the final reply",
             "   - VERIFICATION: How to verify (e.g., test commands)",
             "   - BOUNDARIES: What NOT to do, out-of-scope items",
-            "5. The subagent's output should generally be trusted.",
+            "6. The subagent's output should generally be trusted.",
             "",
             'A one-line task like "fix the bug" is insufficient — the result quality',
             "is directly proportional to your prompt quality.",
