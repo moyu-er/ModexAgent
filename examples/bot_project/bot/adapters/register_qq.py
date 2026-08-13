@@ -7,10 +7,8 @@ build is skipped gracefully (logs a warning and returns).
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from bot.adapters.channels import AdapterBuildContext, get_conv_channel, register
-from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import session_id_prefix_of
 
@@ -58,7 +56,6 @@ def build_qq(ctx: AdapterBuildContext):
 
     def emitter_factory(session_id: str):
         """Create a channel-filtered QQ emitter for *session_id*."""
-        from bot.adapters.channels import get_conv_channel
 
         class _ChannelFilteredQQEmitter(QQBotEmitter):
             """QQ emitter that only sends for QQ-originated conversations.

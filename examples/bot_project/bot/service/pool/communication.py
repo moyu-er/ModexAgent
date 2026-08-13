@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.session_registry import SessionRegistry

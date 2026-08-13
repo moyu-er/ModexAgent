@@ -34,7 +34,7 @@ from bot.webui.routes.graph_models import (
 )
 from modex_agent.agents.agent_node import AgentNode
 from modex_agent.orchestration import GraphOrchestrator
-from modex_graph import GraphInstanceStatus, GraphIORecord, GraphNode, GraphOutput, GraphPayload, GraphSpec, NodeSpec, TopologyError, default_id_generator
+from modex_graph import GraphInstanceStatus, GraphIORecord, GraphNode, GraphOutput, GraphPayload, GraphSpec, TopologyError, default_id_generator
 from modex_graph.persistence._time import now_ms
 
 if TYPE_CHECKING:

@@ -10,7 +10,7 @@ import yaml
 from pydantic import ValidationError
 
 from modex_graph import TopologyError
-from modex_graph.spec import GraphSpec, NodeSpec
+from modex_graph.spec import GraphSpec
 from modex_graph.spec_compiler import GraphSpecCompiler
 from modex_graph.spec_store import GraphSpecStore
 
