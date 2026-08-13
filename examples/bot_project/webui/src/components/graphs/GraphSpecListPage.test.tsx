@@ -63,7 +63,6 @@ describe("GraphSpecListPage", () => {
       <GraphSpecListPage
         workspaceId=""
         onEditSpec={vi.fn()}
-        onOpenInstances={vi.fn()}
       />,
     );
 
@@ -86,7 +85,6 @@ describe("GraphSpecListPage", () => {
       <GraphSpecListPage
         workspaceId=""
         onEditSpec={vi.fn()}
-        onOpenInstances={vi.fn()}
       />,
     );
 
@@ -106,7 +104,6 @@ describe("GraphSpecListPage", () => {
       <GraphSpecListPage
         workspaceId=""
         onEditSpec={onEditSpec}
-        onOpenInstances={vi.fn()}
       />,
     );
 
@@ -129,7 +126,6 @@ describe("GraphSpecListPage", () => {
       <GraphSpecListPage
         workspaceId=""
         onEditSpec={vi.fn()}
-        onOpenInstances={vi.fn()}
       />,
     );
 
@@ -138,25 +134,5 @@ describe("GraphSpecListPage", () => {
       expect(screen.getByText("simple")).toBeTruthy();
     });
     expect(screen.queryByTestId("mini-topology")).toBeNull();
-  });
-
-  it("calls onOpenInstances when the Instances button is clicked", async () => {
-    const onOpenInstances = vi.fn();
-    mockGetSpecs.mockResolvedValue([]);
-
-    render(
-      <GraphSpecListPage
-        workspaceId=""
-        onEditSpec={vi.fn()}
-        onOpenInstances={onOpenInstances}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Instances")).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByText("Instances"));
-    expect(onOpenInstances).toHaveBeenCalledOnce();
   });
 });

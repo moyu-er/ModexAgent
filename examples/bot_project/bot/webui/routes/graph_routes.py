@@ -21,6 +21,7 @@ from bot.webui.routes.graph_models import (
     GraphEventItem,
     GraphEventListResponse,
     GraphInstanceResponse,
+    GraphInvocationResponse,
     GraphRunRecordResponse,
     GraphRunRequest,
     GraphRunResponse,
@@ -144,8 +145,6 @@ async def handle_put_spec(request: web.Request) -> web.Response:
         if not isinstance(spec_dict, dict):
             return web.json_response({"error": "YAML root must be a mapping"}, status=400)
         spec = GraphSpec.model_validate(spec_dict)
-        if spec.name != record.name or spec.version != record.version:
-            return web.json_response({"error": "spec name and version are immutable"}, status=400)
         orch._compiler.validate(spec)
     except (yaml.YAMLError, ValidationError) as exc:
         return web.json_response(
@@ -159,16 +158,16 @@ async def handle_put_spec(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "topology validation failed", "detail": str(exc)}, status=400
         )
-    store.save(spec)
+    new_spec_id = store.save_if_changed(spec)
     graphs_dir = Path(resources.target) / "config" / "graphs"
     graphs_dir.mkdir(parents=True, exist_ok=True)
     (graphs_dir / f"{spec.name}.yml").write_text(update_req.yaml_content, encoding="utf-8")
-    saved_spec = store.load_by_id(sid)
+    saved_spec = store.load_by_id(new_spec_id)
     if saved_spec is None:
         return web.json_response({"error": "save succeeded but load failed"}, status=500)
     return web.json_response(
         GraphSpecResponse(
-            spec_id=str(sid),
+            spec_id=str(new_spec_id),
             name=saved_spec.name,
             version=saved_spec.version,
             yaml_content=_yaml(saved_spec),
@@ -549,6 +548,34 @@ async def handle_list_runs(request: web.Request) -> web.Response:
     return web.json_response([run.model_dump(mode="json") for run in runs])
 
 
+async def handle_list_invocations(request: web.Request) -> web.Response:
+    """List all I/O records (invocations) for a graph instance, ordered by version.
+
+    Returns the ``conversation history`` of a graph instance — each invocation's
+    user_input and output. Mirrors ``handle_list_runs`` but scoped by instance_id
+    via ``orch._io_store.list_by_instance(gid)`` (ADR-0040).
+    """
+    r = _resolve_resources(request)
+    if isinstance(r, web.Response):
+        return r
+    orch, _, _ = r
+    gid = _int_param(request, "instance_id")
+    if isinstance(gid, web.Response):
+        return gid
+    records = orch._io_store.list_by_instance(gid)
+    invocations: list[GraphInvocationResponse] = [
+        GraphInvocationResponse(
+            record_id=str(rec.record_id),
+            version=rec.version,
+            user_input=rec.user_input,
+            output=rec.output,
+            created_at=rec.created_at,
+        )
+        for rec in records
+    ]
+    return web.json_response([inv.model_dump(mode="json") for inv in invocations])
+
+
 async def handle_get_events(request: web.Request) -> web.Response:
     r = _resolve_resources(request)
     if isinstance(r, web.Response):
@@ -589,6 +616,7 @@ def register_graph_routes(
     app.router.add_get("/api/graphs/instances", handle_list_instances)
     app.router.add_get("/api/graphs/instances/{instance_id}", handle_get_instance)
     app.router.add_get("/api/graphs/instances/{instance_id}/events", handle_get_events)
+    app.router.add_get("/api/graphs/instances/{instance_id}/invocations", handle_list_invocations)
     app.router.add_post("/api/graphs/instances/{instance_id}/run", handle_run_instance)
     app.router.add_post("/api/graphs/instances/{instance_id}/invoke", handle_invoke_instance)
     app.router.add_post("/api/graphs/instances/{instance_id}/pause", handle_pause_instance)

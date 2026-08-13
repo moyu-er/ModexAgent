@@ -188,6 +188,73 @@ async def test_put_spec_validates_and_saves(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_put_spec_same_content_returns_same_spec_id(tmp_path: Path) -> None:
+    """save_if_changed: identical content → same spec_id (idempotent)."""
+    orch, _, spec_store = _make_orchestrator()
+    spec_id = _save_spec(spec_store)
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.put(
+            f"/api/graphs/specs/{spec_id}",
+            json={"yaml_content": _VALID_YAML},
+        )
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        assert data["spec_id"] == str(spec_id)
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_put_spec_changed_content_returns_new_spec_id(tmp_path: Path) -> None:
+    """save_if_changed: different content → new spec_id; old spec_id still accessible."""
+    orch, _, spec_store = _make_orchestrator()
+    spec_id = _save_spec(spec_store)
+    modified_yaml = _VALID_YAML.replace("version: '1.0'", "version: '2.0'")
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.put(
+            f"/api/graphs/specs/{spec_id}",
+            json={"yaml_content": modified_yaml},
+        )
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        new_spec_id = int(data["spec_id"])
+        assert new_spec_id != spec_id
+        assert data["version"] == "2.0"
+        old_spec = orch._spec_store.load_by_id(spec_id)
+        assert old_spec is not None
+        assert old_spec.version == "1.0"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_put_spec_renamed_creates_new_spec(tmp_path: Path) -> None:
+    """Name is editable (ADR-0040): renamed spec creates a new spec under the
+    new name; the old spec remains."""
+    orch, _, spec_store = _make_orchestrator()
+    spec_id = _save_spec(spec_store)
+    renamed_yaml = _VALID_YAML.replace("test-graph", "renamed-graph")
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.put(
+            f"/api/graphs/specs/{spec_id}",
+            json={"yaml_content": renamed_yaml},
+        )
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        assert data["name"] == "renamed-graph"
+        new_spec_id = int(data["spec_id"])
+        assert new_spec_id != spec_id
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_put_spec_404_when_not_found(tmp_path: Path) -> None:
     orch, _, _ = _make_orchestrator()
     client = _make_client(orch, {}, tmp_path)
@@ -198,25 +265,6 @@ async def test_put_spec_404_when_not_found(tmp_path: Path) -> None:
             json={"yaml_content": _VALID_YAML},
         )
         assert resp.status == 404
-    finally:
-        await client.close()
-
-
-@pytest.mark.asyncio
-async def test_put_spec_400_on_name_version_mismatch(tmp_path: Path) -> None:
-    orch, _, spec_store = _make_orchestrator()
-    spec_id = _save_spec(spec_store)
-    client = _make_client(orch, {}, tmp_path)
-    await client.start_server()
-    try:
-        renamed_yaml = _VALID_YAML.replace("test-graph", "renamed")
-        resp = await client.put(
-            f"/api/graphs/specs/{spec_id}",
-            json={"yaml_content": renamed_yaml},
-        )
-        assert resp.status == 400
-        data = await resp.json()
-        assert "immutable" in data["error"]
     finally:
         await client.close()
 
@@ -1132,4 +1180,92 @@ async def test_list_instances_includes_time_fields(tmp_path: Path) -> None:
             assert isinstance(item["created_at"], int)
             assert isinstance(item["updated_at"], int)
     finally:
+        await client.close()
+
+
+# ── T03: /instances/{id}/invocations endpoint ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_invocations_returns_empty_list(tmp_path: Path) -> None:
+    orch, _, spec_store = _make_orchestrator()
+    spec_id = _save_spec(spec_store)
+    gid = await orch.create_instance(spec_id)
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get(f"/api/graphs/instances/{gid}/invocations")
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        assert data == []
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_list_invocations_returns_records_after_run(tmp_path: Path) -> None:
+    orch, _, spec_store = _make_orchestrator()
+    spec_id = _save_spec(spec_store)
+    gid = await orch.create_and_run(spec_id, user_input=GraphPayload(content="hello"))
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get(f"/api/graphs/instances/{gid}/invocations")
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        assert len(data) == 1
+        rec = data[0]
+        assert rec["user_input"] is not None
+        assert rec["user_input"]["content"] == "hello"
+        assert rec["output"] is not None
+        assert rec["output"][0]["content"] == "hello"
+        assert rec["version"] == 1
+        assert rec["created_at"] > 0
+    finally:
+        await orch.cleanup()
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_list_invocations_400_on_invalid_instance_id(tmp_path: Path) -> None:
+    orch, _, _ = _make_orchestrator()
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get("/api/graphs/instances/notanint/invocations")
+        assert resp.status == 400
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_list_invocations_returns_multiple_after_reinvoke(tmp_path: Path) -> None:
+    orch, _, spec_store = _make_orchestrator()
+    spec_id = _save_spec(spec_store)
+    gid = await orch.create_and_run(spec_id, user_input=GraphPayload(content="first"))
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get(f"/api/graphs/instances/{gid}/invocations")
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        assert len(data) == 1
+        assert data[0]["user_input"]["content"] == "first"
+
+        invoke_resp = await client.post(
+            f"/api/graphs/instances/{gid}/invoke",
+            json={"user_input": {"content": "second"}},
+        )
+        assert invoke_resp.status == 200, await invoke_resp.text()
+
+        resp = await client.get(f"/api/graphs/instances/{gid}/invocations")
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        assert len(data) == 2
+        assert data[0]["user_input"]["content"] == "first"
+        assert data[1]["user_input"]["content"] == "second"
+        assert data[0]["version"] == 1
+        assert data[1]["version"] == 2
+    finally:
+        await orch.cleanup()
         await client.close()

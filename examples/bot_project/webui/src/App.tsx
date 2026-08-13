@@ -9,9 +9,8 @@ import { useBackendReady } from "./hooks/useBackendReady";
 import { useHashRoute } from "./hooks/useHashRoute";
 import { GraphSpecListPage } from "./components/graphs/GraphSpecListPage";
 import { GraphSpecEditor } from "./components/graphs/GraphSpecEditor";
-import { GraphConversation } from "./components/graphs/GraphConversation";
-import { GraphExecutionViewer } from "./components/graphs/GraphExecutionViewer";
-import { GraphInstanceListPage } from "./components/graphs/GraphInstanceListPage";
+import { GraphSpecDetail } from "./components/graphs/GraphSpecDetail";
+import { GraphInstanceDetail } from "./components/graphs/GraphInstanceDetail";
 import BootScreen from "./components/BootScreen";
 import { DISPERSE_MS } from "./lib/particles";
 import { buildTree } from "./lib/sessionTree";
@@ -365,36 +364,28 @@ const AppInner: FC = () => {
             <GraphSpecListPage
               workspaceId={streamWs}
               onEditSpec={(specId): void => navigate(`/graphs/${specId}`)}
-              onOpenInstances={(): void => navigate("/graphs/instances")}
             />
-          ) : route.kind === "graphConversation" ? (
-            <GraphConversation
+          ) : route.kind === "graphSpecDetail" ? (
+            <GraphSpecDetail
               workspaceId={streamWs}
               specId={route.specId}
-              wsClient={wsClient ?? undefined}
               onBack={(): void => navigate("/graphs")}
-              onOpenInstance={(instanceId): void => navigate(`/graphs/instances/${instanceId}`)}
               onEditYaml={(): void => navigate(`/graphs/${route.specId}/edit`)}
-              onOpenInstances={(): void => navigate("/graphs/instances")}
+              onOpenInstance={(instanceId): void => navigate(`/graphs/instances/${instanceId}`)}
             />
           ) : route.kind === "graphSpecEdit" ? (
             <GraphSpecEditor
               workspaceId={streamWs}
               specId={route.specId}
               onBack={(): void => navigate(`/graphs/${route.specId}`)}
-            />
-          ) : route.kind === "graphInstances" ? (
-            <GraphInstanceListPage
-              workspaceId={streamWs}
-              onOpenInstance={(instanceId): void => navigate(`/graphs/instances/${instanceId}`)}
-              onBack={(): void => navigate("/graphs")}
+              onSpecIdChanged={(newId): void => navigate(`/graphs/${newId}`)}
             />
           ) : route.kind === "graphInstance" ? (
-            <GraphExecutionViewer
+            <GraphInstanceDetail
               workspaceId={streamWs}
               instanceId={route.instanceId}
               wsClient={wsClient ?? undefined}
-              onBack={(): void => navigate("/graphs/instances")}
+              onBack={(): void => navigate("/graphs")}
               onJumpToSession={handleJumpToSession}
             />
           ) : (

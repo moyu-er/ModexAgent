@@ -391,6 +391,10 @@ END;
 -- ---------------------------------------------------------------------------
 -- 16. graph_specs — graph definition persistence (full GraphSpec serialization).
 --     spec_id is a Snowflake ID (BIGINT, application-generated; not AUTOINCREMENT).
+--     Spec is immutable (ADR-0040 change 3): each save with changed content
+--     creates a new row (new spec_id). No UNIQUE(name, version) — multiple
+--     rows with the same (name, version) are allowed, distinguished by spec_id.
+--     No auto-update trigger — immutable rows are never UPDATEd.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS graph_specs (
     spec_id         BIGINT  PRIMARY KEY,
@@ -398,20 +402,10 @@ CREATE TABLE IF NOT EXISTS graph_specs (
     version         TEXT    NOT NULL DEFAULT '1.0',
     spec_json       TEXT    NOT NULL CHECK (json_valid(spec_json)),
     created_at      INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
-    updated_at      INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
-    UNIQUE (name, version)
+    updated_at      INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
 );
 
 CREATE INDEX IF NOT EXISTS idx_graph_specs_name ON graph_specs (name);
-
-CREATE TRIGGER IF NOT EXISTS trg_graph_specs_auto_updated_at
-AFTER UPDATE ON graph_specs
-FOR EACH ROW
-WHEN NEW.updated_at IS OLD.updated_at
-BEGIN
-    UPDATE graph_specs SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
-    WHERE rowid = NEW.rowid;
-END;
 
 -- ---------------------------------------------------------------------------
 -- 17. graph_instances — runtime graph instances (graph_instance_id is the

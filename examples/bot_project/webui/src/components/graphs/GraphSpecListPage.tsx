@@ -1,10 +1,10 @@
 // GraphSpecListPage — spec list for the current workspace (GET /api/graphs/specs).
 // Each row renders a MiniTopology thumbnail (parsed from the spec YAML) + spec
 // name + version + node count / scheduler / trigger mode. Clicking a row opens
-// the YAML editor; a secondary action opens the instance list. (PRD §6.3)
+// the spec detail view. (PRD §6.3)
 
 import { useEffect, useState, type FC } from "react";
-import { ChevronRight, ListTree, Pencil } from "lucide-react";
+import { ChevronRight, Pencil } from "lucide-react";
 import { getSpec, getSpecs, type GraphSpecSummary } from "../../lib/graphsApi";
 import { parseGraphSpecYaml, type ParsedGraphTopology } from "./yaml/parseGraphSpec";
 import { MiniTopology } from "./topology/MiniTopology";
@@ -17,7 +17,6 @@ import { formatGraphApiError } from "./shared";
 export interface GraphSpecListPageProps {
   workspaceId: string;
   onEditSpec: (specId: string) => void;
-  onOpenInstances: () => void;
 }
 
 /** Spec id → parsed topology (or null if parse failed). */
@@ -26,7 +25,6 @@ type TopologyMap = Record<string, ParsedGraphTopology | null>;
 export const GraphSpecListPage: FC<GraphSpecListPageProps> = ({
   workspaceId,
   onEditSpec,
-  onOpenInstances,
 }) => {
   const t = useT();
   const [specs, setSpecs] = useState<GraphSpecSummary[]>([]);
@@ -80,10 +78,6 @@ export const GraphSpecListPage: FC<GraphSpecListPageProps> = ({
       <div className="mx-auto max-w-3xl">
         <div className="flex items-center justify-between">
           <SectionLabel>{t("graphs.specs")}</SectionLabel>
-          <Button variant="secondary" size="sm" onClick={onOpenInstances}>
-            <ListTree size={14} />
-            {t("graphs.instances")}
-          </Button>
         </div>
 
         <div className="mt-4 flex flex-col gap-2">

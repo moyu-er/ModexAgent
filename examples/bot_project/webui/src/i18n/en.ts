@@ -554,6 +554,7 @@ export const en = {
     nodesCount: "{count} nodes",
     progress: "{completed}/{total} nodes",
     version: "v{version}",
+    versionLabel: "Version",
     editSpec: "Edit spec",
     back: "Back",
     save: "Save",
@@ -613,13 +614,19 @@ export const en = {
     inferred: "inferred",
     loadingEditor: "Loading editor…",
     yamlEditorFallback: "YAML editor (fallback)",
-    // GraphConversation (conversation-style view)
-    noRuns: "No runs yet. Send a message below to start.",
+    // Shared by GraphInstanceDetail
     noInput: "(no input)",
     noOutput: "No output",
-    sendRun: "Send",
-    inputPlaceholder: "Send a message to run the graph...",
-    inputDisabledRunning: "Graph is running...",
-    viewExecution: "View execution details",
+    // GraphSpecDetail (spec detail view: topology + instances + composer)
+    triggerInstance: "Trigger a new instance... (Enter to run)",
+    // GraphInstanceDetail (instance conversation flow + re-invoke)
+    backToSpec: "Spec",
+    invoke: "Invoke",
+    reInvokePlaceholder: "Re-invoke this instance...",
+    invokeDisabledRunning: "Graph is running... wait for completion",
+    topology: "Topology",
+    noInvocations: "No invocations yet. Send a message below to start.",
+    specVersion: "spec v{version}",
+    drawerTitle: "Topology",
   },
 } as const;

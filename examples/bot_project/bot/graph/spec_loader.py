@@ -104,7 +104,7 @@ class GraphSpecLoader:
                     exc,
                 )
                 continue
-            self._spec_store.save(spec)
+            self._spec_store.save_if_changed(spec)
             disk_names.add(spec.name)
             loaded.append(spec)
 

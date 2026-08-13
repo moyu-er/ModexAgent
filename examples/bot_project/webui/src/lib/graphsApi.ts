@@ -84,6 +84,14 @@ export interface GraphRunResponse {
   status: string;
 }
 
+export interface GraphInvocationRecord {
+  record_id: string;
+  version: number;
+  user_input: GraphPayload | null;
+  output: GraphPayload[] | null;
+  created_at: number;
+}
+
 export interface GraphEvent {
   kind: string;
   graph_instance_id?: string;
@@ -279,4 +287,30 @@ export async function deliverToNode(
     node_name: string;
     status: string;
   }>;
+}
+
+export async function invokeInstance(
+  workspaceId: string,
+  instanceId: string,
+  userInput?: string,
+): Promise<GraphRunResponse> {
+  const body = userInput ? { user_input: { content: userInput } } : {};
+  const resp = await fetch(`${API_BASE}/graphs/instances/${instanceId}/invoke`, {
+    method: "POST",
+    headers: { ...jsonHeaders, ...workspaceHeaders(workspaceId) },
+    body: JSON.stringify(body),
+  });
+  await assertOk(resp);
+  return resp.json() as Promise<GraphRunResponse>;
+}
+
+export async function getInvocations(
+  workspaceId: string,
+  instanceId: string,
+): Promise<GraphInvocationRecord[]> {
+  const resp = await fetch(`${API_BASE}/graphs/instances/${instanceId}/invocations`, {
+    headers: workspaceHeaders(workspaceId),
+  });
+  await assertOk(resp);
+  return resp.json() as Promise<GraphInvocationRecord[]>;
 }

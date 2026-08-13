@@ -287,4 +287,53 @@ default_trigger: on_all_preds
       expect(lintMarker?.textContent).toContain("line 5");
     });
   });
+
+  // ── spec_id navigation (ADR-0040) ────────────────────────────────────────
+
+  it("calls onSpecIdChanged with new spec_id when save returns a different id", async () => {
+    const onSpecIdChanged = vi.fn();
+    vi.mocked(updateSpec).mockResolvedValue({
+      ...SPEC_RESPONSE,
+      spec_id: "test_wf_v2",
+    });
+
+    renderEditor({ onSpecIdChanged });
+    await waitForLoaded();
+    fireEvent.click(screen.getByTestId("spec-editor-edit-yaml"));
+
+    const textarea = screen.getByTestId(
+      "yaml-editor-textarea",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: SPEC_YAML + "\n# edit" } });
+
+    fireEvent.click(screen.getAllByText("Save")[0]!);
+
+    await waitFor(() => {
+      expect(onSpecIdChanged).toHaveBeenCalledWith("test_wf_v2");
+    });
+  });
+
+  it("does not call onSpecIdChanged when save returns the same spec_id", async () => {
+    const onSpecIdChanged = vi.fn();
+
+    renderEditor({ onSpecIdChanged });
+    await waitForLoaded();
+    fireEvent.click(screen.getByTestId("spec-editor-edit-yaml"));
+
+    const textarea = screen.getByTestId(
+      "yaml-editor-textarea",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: SPEC_YAML + "\n# edit" } });
+
+    fireEvent.click(screen.getAllByText("Save")[0]!);
+
+    await waitFor(() => {
+      expect(vi.mocked(updateSpec)).toHaveBeenCalled();
+    });
+    // Panel-close wait proves the save promise resolved before we assert not-called.
+    await waitFor(() => {
+      expect(screen.queryByTestId("spec-editor-panel")).toBeNull();
+    });
+    expect(onSpecIdChanged).not.toHaveBeenCalled();
+  });
 });

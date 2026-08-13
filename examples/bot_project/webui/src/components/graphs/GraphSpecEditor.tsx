@@ -21,6 +21,8 @@ export interface GraphSpecEditorProps {
   workspaceId: string;
   specId: string;
   onBack: () => void;
+  /** ADR-0040: content change on save yields a new spec_id; host navigates. */
+  onSpecIdChanged?: (newSpecId: string) => void;
 }
 
 const PREVIEW_DEBOUNCE_MS = 300;
@@ -52,6 +54,7 @@ export const GraphSpecEditor: FC<GraphSpecEditorProps> = ({
   workspaceId,
   specId,
   onBack,
+  onSpecIdChanged,
 }) => {
   const t = useT();
   const [name, setName] = useState("");
@@ -135,6 +138,9 @@ export const GraphSpecEditor: FC<GraphSpecEditorProps> = ({
           setParseError(null);
         } catch {
           // Backend validated; ignore.
+        }
+        if (saved.spec_id !== specId) {
+          onSpecIdChanged?.(saved.spec_id);
         }
       })
       .catch((err) => {
