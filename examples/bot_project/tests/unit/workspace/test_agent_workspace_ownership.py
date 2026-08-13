@@ -12,9 +12,9 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
-
 from bot.workspace.handle import (
     PoolWorkspaceResources,
     WorkspaceHandle,
@@ -158,6 +158,7 @@ async def test_subagent_tool_manager_uses_workspace_root_provider(tmp_path: Path
         pool=object(),  # type: ignore[arg-type]  # not used by _build_tool_manager
         session_factory=None,  # not used by _build_tool_manager
         broker=InMemoryMessageBroker(),
+        tree=MagicMock(),
         root_provider=provider,
     )
     template = AgentTemplate(

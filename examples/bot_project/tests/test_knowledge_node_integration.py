@@ -6,16 +6,21 @@ from unittest.mock import AsyncMock, MagicMock
 from bot.graph.agent_node import BotAgentNode
 from bot.graph.agent_node_factory import BotAgentNodeConfig, BotAgentNodeFactory
 
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult
+from modex_agent.core.agent import AgentCommKind
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.session_registry import InMemorySessionRegistry
-from modex_agent.core.tool_manager import InMemoryToolManager
-from modex_agent.pipeline.turn_runner import ReActTurnRunner
+from modex_agent.core.tool_manager import InMemoryToolManager, Tool
+from modex_agent.pipeline.turn_context_config import (
+    GraphKnowledgeConfigurator,
+    GraphToolConfigurator,
+    GraphTurnArtifacts,
+    TurnContextDescriptor,
+)
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.tools.graph_knowledge_tool import GraphKnowledgeBaseTool
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_graph.context import GraphContext
-from modex_graph.integration import GraphPayload, IntegratedInput
+from modex_graph.integration import GraphPayload
 from modex_graph.spec import NodeSpec
 
 
@@ -48,6 +53,7 @@ def _graph_context(graph_instance_id: int | None) -> MagicMock:
     ctx = MagicMock(spec=GraphContext)
     ctx.graph_instance_id = graph_instance_id
     ctx.user_input = GraphPayload(content="task")
+    ctx.user_data = None
     return ctx
 
 
@@ -100,21 +106,35 @@ def test_constructor_defaults_knowledge_config_when_none() -> None:
     assert node._knowledge_config == BotAgentNodeConfig(agent="planner").knowledge
 
 
-def test_ensure_knowledge_tool_creates_instance_scoped_tool(tmp_path: Path) -> None:
-    resolver = _workspace_resolver(tmp_path)
-    workspace = resolver.resolve_workspace()
-    node = BotAgentNode("planner", "default", resolver)
-    node.name = "planner_node"
-
-    knowledge_dir = workspace.ctx.paths.graph_instance_knowledge_dir(42)
+def test_graph_tool_configurator_creates_instance_scoped_tool(tmp_path: Path) -> None:
+    knowledge_dir = WorkspacePaths(root=tmp_path / ".modex").graph_instance_knowledge_dir(42)
     knowledge_dir.mkdir(parents=True, exist_ok=True)
-    from modex_agent.core.tool_manager import InMemoryToolManager
     from modex_agent.tools.standard.file_tool import EditFileTool, ReadFileTool, WriteFileTool
     tm = InMemoryToolManager()
     tm.register(ReadFileTool())
     tm.register(WriteFileTool())
     tm.register(EditFileTool())
-    tool = node._ensure_knowledge_tool(knowledge_dir, tm)
+    ctx = MagicMock()
+    ctx.tool_manager = tm
+    deliver_tool = MagicMock(spec=Tool)
+    deliver_tool.name = "deliver"
+    artifacts = GraphTurnArtifacts(
+        deliver_tool=deliver_tool,
+        topology_section="",
+        node_description="planner",
+        knowledge_config=BotAgentNodeConfig(agent="planner").knowledge,
+        knowledge_dir=knowledge_dir,
+    )
+    desc = TurnContextDescriptor(
+        agent_kind=AgentCommKind.NORMAL,
+        execution_strategy=ExecutionStrategyKind.REACT,
+        graph_node_name="planner_node",
+        graph_instance_id=42,
+        is_node_execution=True,
+        graph_artifacts=artifacts,
+    )
+    GraphToolConfigurator().configure(ctx, desc)
+    tool = ctx.tool_manager.get_tool("knowledge_base")
 
     assert isinstance(tool, GraphKnowledgeBaseTool)
     assert knowledge_dir.is_dir()
@@ -122,19 +142,33 @@ def test_ensure_knowledge_tool_creates_instance_scoped_tool(tmp_path: Path) -> N
     assert action_schema["enum"] == ["read", "ls", "grep", "write", "edit"]
 
 
-def test_ensure_knowledge_tool_derives_capabilities_from_tools(tmp_path: Path) -> None:
-    resolver = _workspace_resolver(tmp_path)
-    workspace = resolver.resolve_workspace()
-    node = BotAgentNode("planner", "default", resolver)
-    node.name = "planner_node"
-
-    knowledge_dir = workspace.ctx.paths.graph_instance_knowledge_dir(42)
+def test_graph_tool_configurator_derives_capabilities_from_tools(tmp_path: Path) -> None:
+    knowledge_dir = WorkspacePaths(root=tmp_path / ".modex").graph_instance_knowledge_dir(42)
     knowledge_dir.mkdir(parents=True, exist_ok=True)
-    from modex_agent.core.tool_manager import InMemoryToolManager
     from modex_agent.tools.standard.file_tool import ReadFileTool
     tm = InMemoryToolManager()
     tm.register(ReadFileTool())
-    tool = node._ensure_knowledge_tool(knowledge_dir, tm)
+    ctx = MagicMock()
+    ctx.tool_manager = tm
+    deliver_tool = MagicMock(spec=Tool)
+    deliver_tool.name = "deliver"
+    artifacts = GraphTurnArtifacts(
+        deliver_tool=deliver_tool,
+        topology_section="",
+        node_description="planner",
+        knowledge_config=BotAgentNodeConfig(agent="planner").knowledge,
+        knowledge_dir=knowledge_dir,
+    )
+    desc = TurnContextDescriptor(
+        agent_kind=AgentCommKind.NORMAL,
+        execution_strategy=ExecutionStrategyKind.REACT,
+        graph_node_name="planner_node",
+        graph_instance_id=42,
+        is_node_execution=True,
+        graph_artifacts=artifacts,
+    )
+    GraphToolConfigurator().configure(ctx, desc)
+    tool = ctx.tool_manager.get_tool("knowledge_base")
 
     assert isinstance(tool, GraphKnowledgeBaseTool)
     action_schema = tool.get_dynamic_schema()["function"]["parameters"]["properties"]["action"]
@@ -143,30 +177,38 @@ def test_ensure_knowledge_tool_derives_capabilities_from_tools(tmp_path: Path) -
     assert "read" in action_schema["enum"]
 
 
-def test_ensure_knowledge_tool_returns_none_when_disabled(tmp_path: Path) -> None:
-    resolver = _workspace_resolver(tmp_path)
+def test_build_graph_artifacts_omits_knowledge_dir_when_disabled(tmp_path: Path) -> None:
+    builder = MagicMock()
+    resolver = _workspace_resolver(tmp_path, builder=builder)
     config = BotAgentNodeConfig.model_validate(
         {"agent": "planner", "knowledge": {"enabled": False}}
     )
     node = BotAgentNode("planner", "default", resolver, knowledge_config=config.knowledge)
+    node.name = "planner_node"
+    graph = MagicMock()
+    graph.nodes = {}
+    graph.edges = []
+    graph.edges_from.return_value = []
+    node._graph_ref = graph
 
-    from modex_agent.core.tool_manager import InMemoryToolManager
-    assert node._ensure_knowledge_tool(None, InMemoryToolManager()) is None
+    assert node._build_graph_artifacts(_graph_context(42)).knowledge_dir is None
 
 
-def test_ensure_knowledge_tool_returns_none_without_graph_instance(tmp_path: Path) -> None:
-    resolver = _workspace_resolver(tmp_path)
+def test_build_graph_artifacts_omits_knowledge_dir_without_graph_instance(tmp_path: Path) -> None:
+    builder = MagicMock()
+    resolver = _workspace_resolver(tmp_path, builder=builder)
     node = BotAgentNode("planner", "default", resolver)
+    node.name = "planner_node"
+    graph = MagicMock()
+    graph.nodes = {}
+    graph.edges = []
+    graph.edges_from.return_value = []
+    node._graph_ref = graph
 
-    from modex_agent.core.tool_manager import InMemoryToolManager
-    assert node._ensure_knowledge_tool(None, InMemoryToolManager()) is None
+    assert node._build_graph_artifacts(_graph_context(None)).knowledge_dir is None
 
 
-async def test_execute_injects_knowledge_tool_and_hook_state(tmp_path: Path) -> None:
-    result = AgentResult(content="", messages=[], stop_reason=StopReason.COMPLETED)
-    turn_runner = MagicMock(spec=ReActTurnRunner)
-    turn_runner.execute_turn = AsyncMock(return_value=result)
-
+def test_node_artifacts_configure_knowledge_tool_and_hook_state(tmp_path: Path) -> None:
     agent_context = MagicMock()
     from modex_agent.tools.standard.file_tool import EditFileTool, ReadFileTool, WriteFileTool
     tm = InMemoryToolManager()
@@ -181,11 +223,8 @@ async def test_execute_injects_knowledge_tool_and_hook_state(tmp_path: Path) -> 
     agent_context.runtime.state.custom = {}
 
     builder = MagicMock()
-    builder.assemble = AsyncMock(return_value=MagicMock())
-    builder.build_runtime_and_context.return_value = (agent_context, MagicMock())
     resolver = _workspace_resolver(tmp_path, builder=builder)
     workspace = resolver.resolve_workspace()
-    workspace.pools["default"].pool.get.return_value.pipeline._turn_runner = turn_runner
 
     config = BotAgentNodeConfig.model_validate(
         {
@@ -202,7 +241,17 @@ async def test_execute_injects_knowledge_tool_and_hook_state(tmp_path: Path) -> 
     node._graph_ref = graph
 
     ctx = _graph_context(42)
-    await node.execute(ctx, IntegratedInput(payloads=[]))
+    artifacts = node._build_graph_artifacts(ctx)
+    desc = TurnContextDescriptor(
+        agent_kind=AgentCommKind.NORMAL,
+        execution_strategy=ExecutionStrategyKind.REACT,
+        graph_node_name=node.name,
+        graph_instance_id=42,
+        is_node_execution=True,
+        graph_artifacts=artifacts,
+    )
+    GraphToolConfigurator().configure(agent_context, desc)
+    GraphKnowledgeConfigurator().configure(agent_context, desc)
 
     knowledge_dir = workspace.ctx.paths.graph_instance_knowledge_dir(42)
     assert agent_context.tool_manager.get_tool("deliver") is not None
