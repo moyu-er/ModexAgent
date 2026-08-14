@@ -40,7 +40,7 @@ def _pool_name(deps: AgentMaterializeDeps) -> str:
     """
     resolver = deps.workspace_path_resolver
     if resolver is not None and resolver.pool_name:
-        return resolver.pool_name
+        return str(resolver.pool_name)
     logger.debug(
         "_pool_name: no workspace_path_resolver wired (or empty pool_name); "
         "convention skill root defaulting to pool='main'."
@@ -313,6 +313,18 @@ class AgentTemplate:
                 instance.pipeline.hooks.extend(
                     HookSpec(hook=hook, on_error=HookErrorPolicy.LOG) for hook in hooks
                 )
+
+        # ── Tree-aware continuation hooks — converge with main-agent path
+        # (_wire_main_pipeline calls the same function). Subagents with todo
+        # tools need TodoContinuationHook to drive continuation; DeliverRetryHook
+        # is a no-op for subagents (no deliver tool) but registered for
+        # consistency. The tree-aware subtree check is safe for subagents:
+        # their subtree is empty (star topology), so the check always passes
+        # and the hook fires normally.
+        if instance.pipeline is not None and deps.tree is not None:
+            from modex_agent.hook.wiring import register_tree_aware_hooks
+
+            register_tree_aware_hooks(instance.pipeline.hook_runner, deps.tree)
 
         # ── Register resident (new two-arg signature: descriptor + instance) ──
         await deps.pool.register_resident(descriptor, instance)
