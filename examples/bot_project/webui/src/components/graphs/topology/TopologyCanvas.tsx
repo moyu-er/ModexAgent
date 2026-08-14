@@ -49,18 +49,18 @@ const DRAG_THRESHOLD_PX = 4;
 /** 内容四周留白(px,用户坐标系)。 */
 const CONTENT_PAD = 48;
 
-/** 图例 chip(§6.3):crashed 无圆点,用 ✕ 字形(text 色 = 状态色)。 */
+/** 图例 chip(§6.3 Rev 4):六态全部用真实状态色实心圆点。 */
 interface LegendChip {
   status: GraphNodeVisualStatus;
   labelKey: MessageKey;
-  dotClass: string | null;
+  dotClass: string;
 }
 
 const LEGEND_CHIPS: ReadonlyArray<LegendChip> = [
   { status: "pending", labelKey: "graphs.legendPending", dotClass: "bg-graph-status-pending" },
   { status: "running", labelKey: "graphs.legendRunning", dotClass: "bg-graph-status-running" },
   { status: "completed", labelKey: "graphs.legendCompleted", dotClass: "bg-graph-status-completed" },
-  { status: "crashed", labelKey: "graphs.legendCrashed", dotClass: null },
+  { status: "crashed", labelKey: "graphs.legendCrashed", dotClass: "bg-graph-status-crashed" },
   { status: "suspended", labelKey: "graphs.legendSuspended", dotClass: "bg-graph-status-suspended" },
   { status: "canceled", labelKey: "graphs.legendCanceled", dotClass: "bg-graph-status-canceled" },
 ];
@@ -250,7 +250,7 @@ export const TopologyCanvas: FC<TopologyCanvasProps> = ({
       style={{
         backgroundImage:
           "radial-gradient(var(--color-hairline-soft) 1px, transparent 1px)",
-        backgroundSize: "16px 16px",
+        backgroundSize: "20px 20px",
       }}
     >
       {/* 无 viewBox: 用户坐标系 = 像素坐标系,只有 <g transform> 一层缩放 */}
@@ -342,23 +342,19 @@ export const TopologyCanvas: FC<TopologyCanvasProps> = ({
         </g>
       </svg>
       <div
-        className="pointer-events-none absolute right-3 top-3 flex items-center gap-3 font-mono text-xs text-body"
+        className="pointer-events-none absolute right-3 top-3 flex max-w-[calc(100%-24px)] flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-hairline bg-graph-legend-bg px-3 py-1.5 font-mono text-xs text-body shadow-card backdrop-blur-sm"
         data-testid="graph-canvas-legend"
       >
         {LEGEND_CHIPS.map((chip) => (
           <span
             key={chip.status}
             data-legend-status={chip.status}
-            className="flex items-center gap-1"
+            className="flex items-center gap-1.5"
           >
-            {chip.dotClass !== null ? (
-              <span
-                data-legend-dot=""
-                className={`h-2 w-2 rounded-full ${chip.dotClass}`}
-              />
-            ) : (
-              <span className="text-graph-status-crashed">✕</span>
-            )}
+            <span
+              data-legend-dot=""
+              className={`h-2 w-2 rounded-full ${chip.dotClass}`}
+            />
             {t(chip.labelKey)}
           </span>
         ))}

@@ -63,34 +63,35 @@ describe("TopologyCanvas", () => {
     }
   });
 
-  it("renders the colored 6-status legend chips (PRD §6.3, i18n legend keys)", () => {
+  it("renders the contained 6-dot legend chip (PRD §6.3 Rev 4, i18n legend keys)", () => {
     renderCanvas();
     const legend = screen.getByTestId("graph-canvas-legend");
     expect(legend.getAttribute("class")).toContain("text-xs");
     expect(legend.getAttribute("class")).toContain("text-body");
+    expect(legend.getAttribute("class")).toContain("bg-graph-legend-bg");
+    expect(legend.getAttribute("class")).toContain("border-hairline");
     const chips = legend.querySelectorAll("[data-legend-status]");
     expect(chips).toHaveLength(6);
     const dotOf = (status: string) =>
       legend.querySelector(`[data-legend-status="${status}"] [data-legend-dot]`)!;
-    expect(dotOf("pending").getAttribute("class")).toContain(
-      "bg-graph-status-pending",
+    // 六态全部有真实状态色圆点(含 crashed — Rev 4 移除 ✕ 特例)
+    for (const status of [
+      "pending",
+      "running",
+      "completed",
+      "crashed",
+      "suspended",
+      "canceled",
+    ]) {
+      expect(dotOf(status).getAttribute("class")).toContain(
+        `bg-graph-status-${status}`,
+      );
+    }
+    // 六个点色 class 互不相同(六态六色)
+    const dotClasses = [...legend.querySelectorAll("[data-legend-dot]")].map(
+      (el) => el.getAttribute("class"),
     );
-    expect(dotOf("running").getAttribute("class")).toContain(
-      "bg-graph-status-running",
-    );
-    expect(dotOf("completed").getAttribute("class")).toContain(
-      "bg-graph-status-completed",
-    );
-    expect(dotOf("suspended").getAttribute("class")).toContain(
-      "bg-graph-status-suspended",
-    );
-    expect(dotOf("canceled").getAttribute("class")).toContain(
-      "bg-graph-status-canceled",
-    );
-    // crashed 用 ✕ 字形而非圆点
-    const crashed = legend.querySelector('[data-legend-status="crashed"]')!;
-    expect(crashed.textContent).toContain("✕");
-    expect(crashed.querySelector("[data-legend-dot]")).toBeNull();
+    expect(new Set(dotClasses).size).toBe(6);
     // 六个状态标签全部走 i18n
     for (const label of [
       "pending",
