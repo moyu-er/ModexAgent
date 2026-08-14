@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     S = TypeVar("S", bound="GraphState")
 
 
-def bootstrap(ctx: GraphContext[S], graph: CompiledGraph[S]) -> list[str]:
+def bootstrap[S: "GraphState"](ctx: GraphContext[S], graph: CompiledGraph[S]) -> list[str]:
     """Unified startup: query store -> produce seed node names.
 
     Returns seed node names that need execution, ordered topologically

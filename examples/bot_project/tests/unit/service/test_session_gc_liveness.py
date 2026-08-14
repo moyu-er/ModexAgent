@@ -31,7 +31,6 @@ from modex_agent.core.cleanup import SessionCleanupResult, session_artifact_path
 from modex_agent.core.scope import RecordScope
 from modex_agent.workspace.paths import WorkspacePaths
 
-
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 

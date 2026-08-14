@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import tempfile
@@ -139,8 +140,6 @@ class ExperienceUsageTracker:
                 f.flush()
             safe_atomic_replace(Path(tmp), self._path)
         except BaseException:
-            try:
+            with contextlib.suppress(OSError):
                 Path(tmp).unlink()
-            except OSError:
-                pass
             raise

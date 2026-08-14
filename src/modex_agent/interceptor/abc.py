@@ -8,7 +8,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypeVar
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from modex_agent.runtime.models import TurnStateBase
 
 
-class InterceptorScope(str, Enum):
+class InterceptorScope(StrEnum):
     """拦截器作用域枚举。
 
     定义框架中可拦截的调用边界。第一阶段优先接入 tool_call、turn、iteration。

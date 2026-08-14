@@ -7,11 +7,10 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from typing import Never
+from unittest.mock import MagicMock
 
 import pytest
-
 
 # ── Import the module under test ────────────────────────────────────────────
 
@@ -19,7 +18,6 @@ import pytest
 @pytest.fixture
 def proc_module():
     """Import modexbot.cli as a module for testing its helpers."""
-    import importlib
 
     import modexbot.cli as cli_mod
 
@@ -150,7 +148,7 @@ def test_get_command_line_windows(proc_module, monkeypatch) -> None:
 def test_get_command_line_unreadable(proc_module, monkeypatch) -> None:
     """Subprocess fails → return None."""
 
-    def mock_run(args, **kwargs):
+    def mock_run(args, **kwargs) -> Never:
         raise OSError("permission denied")
 
     monkeypatch.setattr(subprocess, "run", mock_run)
@@ -206,7 +204,7 @@ def test_kill_process_failure(proc_module, monkeypatch) -> None:
     if sys.platform != "win32":
         pytest.skip("Windows-specific test")
 
-    def mock_run(args, **kwargs):
+    def mock_run(args, **kwargs) -> Never:
         raise OSError("permission denied")
 
     monkeypatch.setattr(subprocess, "run", mock_run)
@@ -236,7 +234,7 @@ def test_stop_running_by_pid_file(proc_module, monkeypatch, tmp_path) -> None:
 
     killed: list[int] = []
 
-    def mock_kill(pid):
+    def mock_kill(pid) -> bool:
         killed.append(pid)
         alive[0] = False
         return True
@@ -292,7 +290,7 @@ def test_stop_running_stale_pid_falls_back_to_port(
 
     killed: list[int] = []
 
-    def mock_kill(pid):
+    def mock_kill(pid) -> bool:
         killed.append(pid)
         alive[pid] = False
         return True
@@ -321,7 +319,7 @@ def test_stop_running_no_pid_file_falls_back_to_port(
 
     killed: list[int] = []
 
-    def mock_kill(pid):
+    def mock_kill(pid) -> bool:
         killed.append(pid)
         alive[0] = False
         return True
@@ -400,7 +398,7 @@ def test_stop_running_force(proc_module, monkeypatch) -> None:
 
     killed: list[int] = []
 
-    def mock_kill(pid):
+    def mock_kill(pid) -> bool:
         killed.append(pid)
         alive[pid] = False
         return True

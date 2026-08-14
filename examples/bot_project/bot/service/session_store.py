@@ -17,6 +17,7 @@ event loop.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -149,10 +150,8 @@ class WorkspacePoolSessionStore(LocalFileSessionStore):
         texts = await asyncio.to_thread(_collect)
         sessions: list[SessionInfo] = []
         for t in texts:
-            try:
+            with contextlib.suppress(Exception):
                 sessions.append(SessionInfo(**json.loads(t)))
-            except Exception:
-                pass
         return sessions
 
     async def get_children(self, parent_id: str) -> list[SessionInfo]:

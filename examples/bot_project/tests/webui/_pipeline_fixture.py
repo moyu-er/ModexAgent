@@ -1,14 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 from unittest.mock import AsyncMock, MagicMock
 
 from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
 from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
-from modex_agent.core.session_id import session_id_prefix_of
 
 
 class _NoSkillRegistry(SkillRegistry):

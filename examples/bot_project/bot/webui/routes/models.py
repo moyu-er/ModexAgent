@@ -151,11 +151,10 @@ async def handle_fetch_provider_models(request: web.Request) -> web.Response:
         )
 
     saved: ProviderCfg | None = None
-    if req.provider_key:
-        if server._model_config_loader is not None:
-            cfg = server._model_config_loader()
-            if cfg is not None:
-                saved = cfg.find_provider_by_key(req.provider_key)
+    if req.provider_key and server._model_config_loader is not None:
+        cfg = server._model_config_loader()
+        if cfg is not None:
+            saved = cfg.find_provider_by_key(req.provider_key)
         # If saved is None (model.yml missing, unparseable, or key not
         # yet saved), fall through to inline values below instead of
         # erroring -- the user may be fetching models for a brand-new

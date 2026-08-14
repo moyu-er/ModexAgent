@@ -100,7 +100,7 @@ class TerminalTool(Tool):
             "required": ["action"],
         }
 
-    def result_metadata(self, result: Any) -> tuple["ContentFormat | None", list[str] | None]:
+    def result_metadata(self, result: Any) -> tuple[ContentFormat | None, list[str] | None]:
         """Declare XML truncation metadata for <terminal_result> output."""
         from modex_agent.tools.terminal.types import terminal_result_metadata
 

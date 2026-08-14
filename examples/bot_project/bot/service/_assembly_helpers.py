@@ -368,7 +368,8 @@ class _PoolAssemblyMixin:
 
         if pool_data is not None:
             base_exp_dir: Path = pool_data.experience_dir
-            _exp_path: Callable[[], Path] = lambda: base_exp_dir
+            def _exp_path() -> Path:
+                return base_exp_dir
         else:
             fallback = data_dir / "experiences" / pool_name / main_spec.agent_name
 

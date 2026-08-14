@@ -10,18 +10,17 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
+from bot.webui.transcript_store import TranscriptStore
 from modex_agent.core.session_id import agent_of
 from modex_agent.core.tool_manager import (
     Tool,
     ToolConfig,
 )
-from modex_agent.workspace.runtime import resolve_workspace_root
-from modex_agent.pipeline.adapters import OutputAdapter
-from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.media.mime import classify_kind, sniff_mime
 from modex_agent.media.models import Attachment, AttachmentLocator
-
-from bot.webui.transcript_store import TranscriptStore
+from modex_agent.multi_agent.pool_config.media import MediaConfig
+from modex_agent.pipeline.adapters import OutputAdapter
+from modex_agent.workspace.runtime import resolve_workspace_root
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +43,7 @@ class SendFileToUserTool(Tool):
         transcript_store: TranscriptStore | None = None,
         media_config: MediaConfig | None = None,
         sessions_dir_provider: Callable[[], Path | None] | None = None,
-    ):
+    ) -> None:
         self._output_adapter = output_adapter
         # None disables persistence (legacy wiring / tests without a store).
         self._transcript_store = transcript_store

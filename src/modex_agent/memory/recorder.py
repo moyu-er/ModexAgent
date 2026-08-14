@@ -17,7 +17,7 @@ import json
 import logging
 from collections.abc import Sequence
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, TypeAlias, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.scope import MemoryAgentRole, MemoryContext
@@ -25,7 +25,7 @@ from modex_agent.core.scope import MemoryAgentRole, MemoryContext
 if TYPE_CHECKING:
     from modex_agent.plugins import MemoryProvider
 
-QueuedAppend: TypeAlias = Optional[tuple[list[Union[ChatMessage, dict[str, Any]]], MemoryContext]]
+type QueuedAppend = tuple[list[ChatMessage | dict[str, Any]], MemoryContext] | None
 
 logger = logging.getLogger(__name__)
 

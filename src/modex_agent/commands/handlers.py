@@ -20,8 +20,8 @@ from modex_agent.commands.models import (
     CommandHandlingResult,
     SlashCommandInvocation,
 )
-from modex_agent.core.skills.builder import build_skill_command_xml
 from modex_agent.core.message import ContentFormat
+from modex_agent.core.skills.builder import build_skill_command_xml
 
 logger = logging.getLogger(__name__)
 

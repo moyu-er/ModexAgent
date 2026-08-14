@@ -18,7 +18,7 @@ class StageResult(ABC):
     def should_continue(self) -> bool:
         ...
 
-    def envelope(self) -> "UserInputEnvelope":
+    def envelope(self) -> UserInputEnvelope:
         raise NotImplementedError("This StageResult carries no envelope")
 
     @property
@@ -31,12 +31,12 @@ class StageResult(ABC):
 class Continue(StageResult):
     """Continue the pipeline, carrying a (possibly modified) envelope."""
 
-    value: "UserInputEnvelope"
+    value: UserInputEnvelope
 
     def should_continue(self) -> bool:
         return True
 
-    def envelope(self) -> "UserInputEnvelope":
+    def envelope(self) -> UserInputEnvelope:
         return self.value
 
 
@@ -59,6 +59,6 @@ class InputStage(ABC):
 
     @abstractmethod
     async def process(
-        self, envelope: "UserInputEnvelope", ctx: "InputContext"
+        self, envelope: UserInputEnvelope, ctx: InputContext
     ) -> StageResult:
         ...

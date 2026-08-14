@@ -24,6 +24,7 @@ The framework capstone test bypasses this by calling
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -68,15 +69,14 @@ def _make_react_pipeline(
     max_iterations=10,
     safety=None,
 ):
+    from modex_agent.core.context import InMemoryContextManager
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.pipeline.approval_renderer import ApprovalRenderer
     from modex_agent.pipeline.approval_resumer import ApprovalResumer
+    from modex_agent.pipeline.pipeline import AgentPipeline
     from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
     from modex_agent.pipeline.turn_runner import ReActTurnRunner
     from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-    from modex_agent.core.context import InMemoryContextManager
-    from modex_agent.core.agent_runtime_config import BusyInputMode
-    from modex_agent.pipeline.pipeline import AgentPipeline
     _UNSET = object()
     if sanitizer is None:
         from modex_agent.utils.sanitizer import ContentSanitizer
@@ -208,7 +208,7 @@ class _ReadTool(Tool):
         )
         self._recorded = recorded
 
-    async def execute(self, **kwargs):
+    async def execute(self, **kwargs) -> str:
         self._recorded.append(kwargs.get("path", ""))
         return f"read {kwargs.get('path', '')}"
 
@@ -231,7 +231,7 @@ class _WriteTool(Tool):
         )
         self._recorded = recorded
 
-    async def execute(self, **kwargs):
+    async def execute(self, **kwargs) -> str:
         self._recorded.append((kwargs.get("path", ""), kwargs.get("content", "")))
         return f"wrote {kwargs.get('path', '')}"
 
@@ -645,11 +645,7 @@ async def test_im_approve_text_path_still_works(tmp_path: Path) -> None:
 
 
 async def _shutdown(pool: AgentPool, broker: InMemoryMessageBroker) -> None:
-    try:
+    with contextlib.suppress(Exception):
         await pool.shutdown_all()
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         await broker.stop()
-    except Exception:
-        pass

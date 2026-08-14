@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -12,7 +11,7 @@ from modex_agent.workspace.store import GlobalWorkspaceStore
 
 class _FakeFactory:
     async def materialize(self, ctx): return {"t": ctx.target}
-    async def evict(self, resources): return None
+    async def evict(self, resources) -> None: return None
 
 
 @pytest.mark.asyncio

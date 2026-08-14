@@ -22,6 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from bot.service.react_strategy import ReactExecutionStrategy  # noqa: E402
+
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps  # noqa: E402
 from modex_agent.multi_agent.pool_config.specs import MainAgentSpec  # noqa: E402
 from modex_agent.tools.presets import ToolPreset  # noqa: E402

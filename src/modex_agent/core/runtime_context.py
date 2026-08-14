@@ -17,8 +17,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.scope import MemoryContext, Scope, SessionScope
+from modex_agent.core.session_id import SessionInfo
 
 if TYPE_CHECKING:
     from modex_agent.runtime.models import JsonValue

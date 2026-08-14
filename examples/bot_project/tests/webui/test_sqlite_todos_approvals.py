@@ -64,9 +64,10 @@ class TestSqliteTodosEndpoint:
         conn.close()
 
         # Build a SqliteTodoStore for the resolver.
+        from bot.scope import BotRecordScope
+
         from modex_agent.persistence import ConnectionManager, DatabaseKind
         from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
-        from bot.scope import BotRecordScope
 
         mgr = ConnectionManager(sqlite_db, DatabaseKind.WORKSPACE)
         await mgr.open()

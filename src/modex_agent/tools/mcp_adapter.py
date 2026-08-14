@@ -92,7 +92,7 @@ class MCPToolAdapter:
                 tool = MCPTool(
                     server_name=server_name,
                     tool_name=tool_name,
-                    description="[%s] %s" % (server_name, tool_info.get("description", "")),
+                    description="[{}] {}".format(server_name, tool_info.get("description", "")),
                     parameters=parameters,
                     mcp_manager=self.mcp_manager,
                     tool_timeout=self.tool_timeout,

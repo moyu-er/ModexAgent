@@ -8,6 +8,7 @@ communication service can read ``ws.pool_data`` with a checked type instead of
 from __future__ import annotations
 
 from bot.workspace.handle import PoolWorkspaceResources
+
 from modex_agent.workspace.resources import WorkspaceResources
 
 

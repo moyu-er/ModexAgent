@@ -1,9 +1,8 @@
 """Tiktoken-backed TokenEstimator for the example bot (offline vendored blob)."""
 from __future__ import annotations
 
-from modex_agent.memory.token_estimator import TokenEstimator
-
 from bot.memory.vendor_loader import load_cl100k
+from modex_agent.memory.token_estimator import TokenEstimator
 
 
 class TiktokenTokenEstimator(TokenEstimator):

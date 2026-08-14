@@ -22,6 +22,7 @@ if str(_BOT_PROJECT) not in sys.path:
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 from bot.graph.agent_node import BotAgentNode  # noqa: E402
+
 from modex_graph import (
     DefaultGraphState,
     Graph,
@@ -43,7 +44,6 @@ from modex_graph.persistence import (
 from modex_graph.persistence.persistence_coordinator import (
     GraphPersistenceCoordinator,
 )
-
 
 # ── Test helpers ────────────────────────────────────────────────────────
 
@@ -293,8 +293,9 @@ class TestE2EStepFun:
         self, tmp_path: Path, e2e_model_config: Any
     ) -> None:
         from bot.graph.agent_node import BotAgentNode, SessionStrategy
+
+        from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
         from modex_agent.core.constants import ExecutionStrategyKind
-        from modex_agent.core.capabilities import ModelCapabilities, ModelInfo, Modality
         from modex_agent.core.llm_struct import (
             LLMTimeoutPolicy,
             RuntimeSafetyPolicy,
@@ -560,8 +561,9 @@ class TestE2EReviewLoopWithMemory:
         self, tmp_path: Path, e2e_model_config: Any
     ) -> None:
         from bot.graph.agent_node import SessionStrategy
+
+        from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
         from modex_agent.core.constants import ExecutionStrategyKind
-        from modex_agent.core.capabilities import ModelCapabilities, ModelInfo, Modality
         from modex_agent.core.llm_struct import (
             LLMTimeoutPolicy,
             RuntimeSafetyPolicy,

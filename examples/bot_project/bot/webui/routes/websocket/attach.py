@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 from bot.webui.events import DeltaEnvelope, WebUIEventType
-from bot.webui.types import _DEFAULT_AGENT_NAME, _WsConnectionState, _safe_send_json
+from bot.webui.types import _DEFAULT_AGENT_NAME, _safe_send_json, _WsConnectionState
 from modex_agent.core.session_id import (
     SessionInfo,
     agent_of,

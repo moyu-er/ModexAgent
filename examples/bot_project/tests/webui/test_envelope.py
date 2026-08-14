@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from bot.webui.events import (
     DeltaEnvelope,
     ModelContentDelta,

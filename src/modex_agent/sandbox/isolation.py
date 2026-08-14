@@ -299,7 +299,6 @@ class WindowsIsolationProvider(IsolationProvider):
         ]
 
         # Add filesystem restrictions via ACL checks
-        fs = self.config.filesystem
 
         # Build the constrained command.
         # NOTE: Do NOT add Set-Location here. subprocess.Popen(cwd=...) handles

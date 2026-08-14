@@ -4,10 +4,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.input_pipeline.stages.resolve_workspace import ResolveWorkspaceStage
+
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
 
 

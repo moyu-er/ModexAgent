@@ -11,10 +11,8 @@ This is the other half of the persistence/retriever decoupling
 from __future__ import annotations
 
 import pytest
-
 from bot.kb.models import KbFilter, KbSearchResult
 from bot.kb.retriever import KbRetriever
-
 
 # -- ABC instantiation -------------------------------------------------
 

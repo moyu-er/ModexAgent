@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
-
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
+
 from modex_agent.adapters.platform import StreamingMode
 
 

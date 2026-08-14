@@ -9,7 +9,6 @@ these tests prevent that regression at the ABC level.
 from __future__ import annotations
 
 import pytest
-
 from bot.kb.models import KbEntry, KbFilter, KbUpsertRequest
 from bot.kb.persistence import KbPersistence
 

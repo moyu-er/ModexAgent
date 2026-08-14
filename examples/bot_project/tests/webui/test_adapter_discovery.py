@@ -8,7 +8,6 @@ import types
 from pathlib import Path
 
 import pytest
-
 from bot.adapters import channels
 from bot.service.web_ui_service import WebUIService
 
@@ -26,7 +25,7 @@ def _snapshot_adapters():
             del sys.modules[name]
 
 
-def test_import_adapter_registration_modules_discovers_new_files():
+def test_import_adapter_registration_modules_discovers_new_files() -> None:
     """Dropping a register_<name>.py file into bot/adapters/ auto-registers it."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -51,7 +50,7 @@ def test_import_adapter_registration_modules_discovers_new_files():
         assert channels.ADAPTERS[-1].enabled is True
 
 
-def test_import_adapter_registration_modules_skips_already_imported():
+def test_import_adapter_registration_modules_skips_already_imported() -> None:
     """Modules already in sys.modules are not re-imported."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -79,7 +78,7 @@ def test_import_adapter_registration_modules_skips_already_imported():
         assert second_addition == 1
 
 
-def test_import_adapter_registration_modules_logs_broken_modules():
+def test_import_adapter_registration_modules_logs_broken_modules() -> None:
     """A broken register_*.py file is logged and skipped, not crashed."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)

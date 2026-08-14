@@ -9,12 +9,10 @@ fallback.
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
-
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
 from bot.webui.events import WebUIEventType
+
 from modex_agent.core.types import OutputMessage
 from modex_agent.media.models import Attachment, AttachmentLocator, Kind
 

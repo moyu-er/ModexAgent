@@ -7,12 +7,13 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ..adapters.platform import StreamingMode
 from modex_agent.core.message import ChatMessage
+
+from ..adapters.platform import StreamingMode
 from .constants import StopReason
 from .events import AgentEvent, EmitterConfig
 from .turn_events import TurnEvent, TurnTextEvent
@@ -59,7 +60,7 @@ class AgentResult(BaseModel):
 E = TypeVar("E", bound=AgentEvent)
 
 
-class ContentEmitter(ABC, Generic[E]):
+class ContentEmitter[E: AgentEvent](ABC):
     """内容发送器抽象基类
 
     Agent 通过此接口输出内容。实现决定：

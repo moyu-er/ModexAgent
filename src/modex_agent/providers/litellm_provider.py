@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib.util
 import json
 import logging
 import time
 from collections.abc import Callable
+from datetime import UTC
 from typing import Any, ClassVar
 
 from modex_agent.core.constants import DefaultValues, FinishReason, ReasoningEffort, ToolChoice
@@ -28,8 +30,6 @@ from modex_agent.core.tool_call_accumulator import (
 from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.providers.shared.constants import inject_cache_control, inject_reasoning_effort
 from modex_agent.utils.think_tag import ThinkTagExtractor
-
-import importlib.util
 
 _LITELLM_AVAILABLE = importlib.util.find_spec("litellm") is not None
 
@@ -459,9 +459,9 @@ class LiteLLMProvider(StreamingLLMProvider):
 
         completion_start_time: str | None = None
         if first_token_time is not None:
-            from datetime import datetime, timezone
+            from datetime import datetime
             completion_start_time = datetime.fromtimestamp(
-                first_token_time, tz=timezone.utc
+                first_token_time, tz=UTC
             ).isoformat()
 
         return LLMResponse(

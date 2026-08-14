@@ -12,13 +12,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
+from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import (
     ModelContentDelta,
     ModelReasoningDelta,
     UserMessageEvent,
 )
-from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 
 pytestmark = pytest.mark.asyncio
 
@@ -227,6 +226,7 @@ async def test_emit_complete_clears_partial_buffer() -> None:
     """
     from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
     from bot.webui.emitter import WebBotEmitter
+
     from modex_agent.core.emitter import AgentResult, EmitterConfig
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
@@ -266,6 +266,7 @@ async def test_emit_complete_clears_partial_even_on_error() -> None:
     emit_complete's main body raises, the buffer is still cleared."""
     from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
     from bot.webui.emitter import WebBotEmitter
+
     from modex_agent.core.emitter import AgentResult, EmitterConfig
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
@@ -314,10 +315,11 @@ async def test_flush_active_segment_clears_partial_buffer() -> None:
     """
     from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
     from bot.webui.emitter import WebBotEmitter
+
+    from modex_agent.agents.react.agent import ReActEvent
     from modex_agent.core.emitter import AgentResult, EmitterConfig
     from modex_agent.core.tool_manager import ToolResult
     from modex_agent.core.types import ToolCall
-    from modex_agent.agents.react.agent import ReActEvent
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     sessions_dir = Path(__file__).parent / "_tmp_flush_clear"
@@ -363,8 +365,9 @@ async def test_flush_clears_partial_with_reasoning_then_text() -> None:
     """Reasoning deltas followed by text deltas must also clear partial on flush."""
     from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
     from bot.webui.emitter import WebBotEmitter
-    from modex_agent.core.emitter import AgentResult, EmitterConfig
+
     from modex_agent.agents.react.agent import ReActEvent
+    from modex_agent.core.emitter import AgentResult, EmitterConfig
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     sessions_dir = Path(__file__).parent / "_tmp_flush_reasoning"

@@ -508,7 +508,6 @@ class WebUIService(BotService):
         from bot.service.liveness import DefaultLivenessProvider
         from bot.service.session_cleaner_factory import SessionCleanerFactory
         from bot.service.session_gc import SessionGarbageCollector, load_session_gc_config
-
         from modex_agent.core.session_id import SessionInfo
         from modex_agent.runtime.store import TurnStateStore
 

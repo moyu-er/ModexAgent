@@ -11,18 +11,18 @@ from unittest.mock import MagicMock
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
+from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.emitter import WebBotEmitter
+from bot.webui.events import DeltaEnvelope, _unwrap_envelope
 from bot.webui.server import (
     WebUIServer,
     _new_uuid_prefix,
     _safe_send_json,
 )
-from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import DeltaEnvelope, _unwrap_envelope
-from bot.webui.transcript_store import JSONLTranscriptStore
-from modex_agent.workspace.paths import WorkspacePaths
+
 from modex_agent.core.emitter import AgentResult, EmitterConfig
 from modex_agent.multi_agent.pool_router import PoolSessionStore
+from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
 
 
@@ -476,6 +476,7 @@ async def test_no_static_fallback() -> None:
 async def test_sessions_list_includes_pool() -> None:
     """GET /api/sessions returns one entry per session with session_id and pool."""
     from bot.service.session_store import WorkspacePoolSessionStore
+
     from modex_agent.core.session_id import SessionIdFactory
 
     data_dir = Path(tempfile.mkdtemp())
@@ -625,7 +626,7 @@ async def test_delete_session_delegates_to_collector() -> None:
         def __init__(self) -> None:
             self.calls: list[tuple[str, str | None]] = []
 
-        async def delete_session_tree(self, root_session_id, ws_root=None, pool=None):
+        async def delete_session_tree(self, root_session_id, ws_root=None, pool=None) -> bool:
             self.calls.append((root_session_id, pool))
             return True
 
@@ -658,8 +659,9 @@ async def test_ws_send_message_uses_stored_pool() -> None:
     # Wire resolver so the send path derives agent_name from pool_name.
     server.set_pool_resolver(lambda cid: "coding")
 
-    from tests.webui._pipeline_fixture import attach_default_pipeline
     from unittest.mock import MagicMock
+
+    from tests.webui._pipeline_fixture import attach_default_pipeline
     pool_store = MagicMock()
     pool_store.get = lambda key, default=None: "coding"
     pool_store.set = MagicMock()
@@ -729,6 +731,7 @@ async def test_ws_attach_restores_pool_routing() -> None:
 async def test_pool_mapping_persistence_across_restart() -> None:
     """Pool mapping survives server restart via physical transcript layout."""
     from bot.service.session_store import WorkspacePoolSessionStore
+
     from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
@@ -833,6 +836,7 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
     """
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
+
     from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
@@ -1026,6 +1030,7 @@ async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
     """GET /api/sessions includes subagent sessions that have parent relationships."""
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
+
     from modex_agent.core.session_id import SessionInfo
 
     data_dir = Path(tempfile.mkdtemp())
@@ -1093,6 +1098,7 @@ async def test_api_messages_loads_subagent_transcript() -> None:
     """GET /api/sessions/{subagent_id}/messages loads subagent transcript events."""
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
+
     from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
@@ -1431,6 +1437,7 @@ async def test_api_sessions_falls_back_to_transcripts_when_index_empty() -> None
     """
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
+
     from modex_agent.core.session_id import SessionIdFactory
 
     data_dir = Path(tempfile.mkdtemp())
@@ -1490,7 +1497,8 @@ async def test_api_sessions_falls_back_preserves_index_entries() -> None:
     """
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
-    from modex_agent.core.session_id import SessionInfo, SessionIdFactory, now_ms
+
+    from modex_agent.core.session_id import SessionIdFactory, SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1560,9 +1568,8 @@ async def test_workspace_cd_switches_current_workspace() -> None:
     the binding correctly isolates writes.
     """
     from bot.service.session_store import WorkspacePoolSessionStore
+
     from modex_agent.core.session_id import SessionInfo, now_ms
-    from modex_agent.workspace.models import CdResult
-    from modex_agent.workspace.port import WorkspaceControlPort
 
     home = Path(tempfile.mkdtemp())
     ws_a = home / "ws-a"
@@ -1654,6 +1661,7 @@ async def test_api_sessions_includes_subagent_sessions() -> None:
     """
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
+
     from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
@@ -1728,6 +1736,7 @@ async def test_api_sessions_includes_dynamic_subagent_instance() -> None:
     of their template type and must appear in the session list.
     """
     from bot.service.session_store import WorkspacePoolSessionStore
+
     from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())

@@ -14,6 +14,7 @@ Exports:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,7 +22,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 from bot.webui.events import DeltaEnvelope, WebUIEventType
-from bot.webui.types import _DEFAULT_AGENT_NAME, _WsConnectionState, _safe_send_json
+from bot.webui.types import _DEFAULT_AGENT_NAME, _safe_send_json, _WsConnectionState
 
 if TYPE_CHECKING:
     from bot.webui.server import WebUIServer
@@ -54,8 +55,8 @@ async def handle_send_message(
     # in-function imports from server.py. ``_materialize_deferred_session``
     # lives in the sibling attach module (no cycle: attach imports streaming,
     # not messaging).
-    from bot.webui.routes.websocket.attach import _materialize_deferred_session
     from bot.input_pipeline.stages.resolve_pool import RoutingMeta
+    from bot.webui.routes.websocket.attach import _materialize_deferred_session
     from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
 
     session_id = str(data.get("session_id", ""))
@@ -218,10 +219,8 @@ async def handle_send_message(
         response = result.response
         message = ""
         if response is not None:
-            try:
+            with contextlib.suppress(KeyError, TypeError):
                 message = str(response["message"])
-            except (KeyError, TypeError):
-                pass
         pool = explicit_pool or _DEFAULT_AGENT_NAME
         await _safe_send_json(
             ws,

@@ -165,10 +165,8 @@ class WinptyConsoleWindowBackend(WinptyBackend):
             # also waits for active connections to drop, so it would hang
             # forever here. Cap the wait: server.close() already stops
             # accepting new connections, which is all we need.
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(server.wait_closed(), timeout=_SERVER_CLOSE_TIMEOUT)
-            except TimeoutError:
-                pass
 
         logger.debug("Windows visible terminal started: %s", self._shell)
 

@@ -11,19 +11,19 @@ from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import AssistantTurnEvent, UserMessageEvent, _unwrap_envelope
 from bot.webui.server import WebUIServer, _new_uuid_prefix
+
+from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.workspace.control import WorkspaceController
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.registry import WorkspaceRegistry
 from modex_agent.workspace.routing import WorkspaceResolver
-from modex_agent.workspace.store import GlobalWorkspaceStore
-from modex_agent.core.session_id import SessionIdFactory, SessionInfo, now_ms
 from modex_agent.workspace.runtime import bind_workspace_root
+from modex_agent.workspace.store import GlobalWorkspaceStore
 
 
 class _FakeFactory:
@@ -32,7 +32,7 @@ class _FakeFactory:
     async def materialize(self, ctx):
         return {"t": ctx.target}
 
-    async def evict(self, resources):
+    async def evict(self, resources) -> None:
         return None
 
 
@@ -222,7 +222,7 @@ async def test_im_message_carries_ws_routes_transcript_to_workspace() -> None:
             factory=_FakeFactory(),
             store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
         )
-        controller = WorkspaceController(
+        WorkspaceController(
             registry=registry,
             data_dir_name=".modex",
             enabled=True,
@@ -247,7 +247,7 @@ async def test_im_message_carries_ws_routes_transcript_to_workspace() -> None:
             )
 
         # Verify transcript lands in ws_a
-        ws_a_sessions = ws_a / ".modex" / "sessions" / "main"
+        ws_a / ".modex" / "sessions" / "main"
         events = await store.load(
             sid, sessions_dir=WorkspacePaths(root=ws_a / ".modex").sessions_dir
         )

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -62,7 +62,7 @@ class ImageUrlPart(BaseModel):
     image_url: ImageUrl
 
 
-ContentPart = Annotated[Union[TextPart, ImageUrlPart], Field(discriminator="type")]
+ContentPart = Annotated[TextPart | ImageUrlPart, Field(discriminator="type")]
 
 
 class ChatMessage(BaseModel):

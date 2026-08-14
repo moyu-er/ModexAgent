@@ -11,7 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from modex_agent.tools.mcp.client import BaseMCPClient, _DEFAULT_TOOL_TIMEOUT
+from modex_agent.tools.mcp.client import _DEFAULT_TOOL_TIMEOUT, BaseMCPClient
 
 
 class McpBackend(ABC):

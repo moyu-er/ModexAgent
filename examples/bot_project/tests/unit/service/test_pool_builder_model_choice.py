@@ -20,7 +20,6 @@ from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook.runner import HookRunner
 from modex_agent.ioc.configs.approval import ApprovalConfig
-from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec

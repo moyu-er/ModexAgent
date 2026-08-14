@@ -28,8 +28,8 @@ from modex_graph import (
     GraphOutput,
     GraphPayload,
     GraphSpec,
-    InMemoryGraphIORecordStore,
     InMemoryGraphInstanceStore,
+    InMemoryGraphIORecordStore,
     InMemoryGraphSpecStore,
     NodeRegistry,
     NullCoordinatorFactory,
@@ -756,6 +756,9 @@ async def test_p1_3_resume_evicted_instance_via_recovery_path(
     ``_active_instances`` (simulating bot restart) must go through the
     recovery path (``_run_existing_instance``), not ``start_run``.
     """
+    import asyncio
+
+    from modex_agent.orchestration import GraphOrchestrator
     from modex_graph import (
         DefaultGraphState,
         EdgeSpec,
@@ -764,12 +767,10 @@ async def test_p1_3_resume_evicted_instance_via_recovery_path(
         InMemoryGraphInstanceStore,
         InMemoryGraphSpecStore,
         NodeRegistry,
-        NullCoordinatorFactory,
         NodeSpec,
+        NullCoordinatorFactory,
     )
-    from modex_graph.nodes.human_input_node import HumanInputNode, HumanInputNodeFactory
-    from modex_agent.orchestration import GraphOrchestrator
-    import asyncio
+    from modex_graph.nodes.human_input_node import HumanInputNodeFactory
 
     node_registry = NodeRegistry()
     node_registry.register("human_input", HumanInputNodeFactory())

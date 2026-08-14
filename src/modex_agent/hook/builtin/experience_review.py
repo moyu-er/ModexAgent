@@ -14,6 +14,7 @@ Features:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import uuid
@@ -281,10 +282,8 @@ class ExperienceReviewHook(AfterGraphHook):
                 continue
             md = entry / "EXPERIENCE.md"
             if md.exists():
-                try:
+                with contextlib.suppress(OSError):
                     result[entry.name] = md.stat().st_mtime
-                except OSError:
-                    pass
         return result
 
     async def _cleanup(
@@ -325,10 +324,8 @@ class ExperienceReviewHook(AfterGraphHook):
 
             result = validate_experience_md(text, dir_name=name)
             if not result.valid:
-                try:
+                with contextlib.suppress(OSError):
                     md_path.unlink()
-                except OSError:
-                    pass
                 dir_path = exp_dir / name
                 try:
                     if dir_path.exists() and not any(dir_path.iterdir()):

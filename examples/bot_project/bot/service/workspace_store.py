@@ -47,7 +47,7 @@ from bot.webui.transcript_store import (
     ResilientTranscriptStore,
     TranscriptStore,
 )
-from bot.webui.types import WorkspaceIndex, _DEFAULT_AGENT_NAME
+from bot.webui.types import _DEFAULT_AGENT_NAME, WorkspaceIndex
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import is_workspace_root_bound, resolve_workspace_root
 

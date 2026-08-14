@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from bot.kb.fts_utils import sanitize_fts_query
 
-
 # ── Empty / whitespace → "" ───────────────────────────────────────────────
 
 

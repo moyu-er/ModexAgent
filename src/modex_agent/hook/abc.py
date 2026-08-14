@@ -8,7 +8,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from modex_agent.runtime.models import ApprovalTransaction
 
 
-class HookPoint(str, Enum):
+class HookPoint(StrEnum):
     """Hook 调度点枚举。
 
     HookRunner.dispatch 通过 _HOOK_DISPATCH 字典将每个 HookPoint 映射到对应的
@@ -44,7 +44,7 @@ class HookPoint(str, Enum):
     AFTER_APPROVAL = "after_approval"
 
 
-class HookErrorPolicy(str, Enum):
+class HookErrorPolicy(StrEnum):
     """Hook 执行错误处理策略。"""
 
     IGNORE = "ignore"

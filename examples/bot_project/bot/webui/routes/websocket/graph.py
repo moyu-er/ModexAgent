@@ -45,6 +45,7 @@ Exports:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import TYPE_CHECKING
 
@@ -195,10 +196,8 @@ async def handle_unsubscribe_graph(
             queues.remove(subscription.queue)
         if not subscription.task.done():
             subscription.task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await subscription.task
-            except asyncio.CancelledError:
-                pass
     await _safe_send_json(
         ws,
         {

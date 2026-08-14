@@ -75,12 +75,12 @@ if TYPE_CHECKING:
     from modex_agent.pipeline.snapshot import PoolDataSnapshot
     from modex_agent.pipeline.turn_runner_abc import TurnRunner
     from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+    from modex_agent.runtime.store import JsonFileTodoStore
     from modex_agent.tools.mcp.manager import MCPClientManager
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
     from modex_agent.tools.terminal.managers import BaseTerminalManager
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
     from modex_agent.trace.cassette import CassetteRecorder
-    from modex_agent.runtime.store import JsonFileTodoStore
 
 __all__ = [
     "ExecutionStrategy",

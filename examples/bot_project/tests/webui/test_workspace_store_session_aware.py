@@ -9,11 +9,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
-from modex_agent.workspace.runtime import bind_workspace_root
 
+from modex_agent.workspace.runtime import bind_workspace_root
 
 _DATA_DIR_NAME = ".modex"
 

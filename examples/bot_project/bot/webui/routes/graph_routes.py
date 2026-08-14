@@ -35,7 +35,14 @@ from bot.webui.routes.graph_models import (
 )
 from modex_agent.agents.agent_node import AgentNode
 from modex_agent.orchestration import GraphOrchestrator
-from modex_graph import GraphInstanceStatus, GraphNode, GraphOutput, GraphPayload, GraphSpec, TopologyError
+from modex_graph import (
+    GraphInstanceStatus,
+    GraphNode,
+    GraphOutput,
+    GraphPayload,
+    GraphSpec,
+    TopologyError,
+)
 
 if TYPE_CHECKING:
     from bot.webui.server import WebUIServer

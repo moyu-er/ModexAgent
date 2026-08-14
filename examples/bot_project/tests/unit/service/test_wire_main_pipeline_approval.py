@@ -32,10 +32,10 @@ from bot.service.pool.pipeline_wiring import _wire_main_pipeline
 
 from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.core.emitter import AgentResult
+from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
-from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
@@ -53,7 +53,6 @@ from modex_agent.pipeline.turn_context_config import (
 )
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.runtime.services import AgentRuntimeServices
 
 pytestmark = pytest.mark.skipif(

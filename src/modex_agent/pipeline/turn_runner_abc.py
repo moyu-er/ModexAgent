@@ -38,7 +38,6 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from modex_agent.approval.ui import ApprovalUserInterface
     from modex_agent.core.context import ContextManager
     from modex_agent.core.emitter import AgentResult, ContentEmitter
     from modex_agent.core.runtime_context import RuntimeContextManager

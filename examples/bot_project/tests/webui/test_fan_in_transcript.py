@@ -14,17 +14,16 @@ import asyncio
 import tempfile
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from bot.adapters.fan_in import FanInInputAdapter
 from bot.input_pipeline.assembly import build_im_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
 from bot.webui.transcript_store import JSONLTranscriptStore
-from modex_agent.core.session_id import SessionInfo, SessionIdFactory
+
+from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
 from modex_agent.pipeline.adapters import InputAdapter

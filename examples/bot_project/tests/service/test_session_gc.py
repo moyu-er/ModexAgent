@@ -6,21 +6,21 @@ from bot.service.session_gc import (
 )
 
 
-def test_config_defaults_when_key_absent():
+def test_config_defaults_when_key_absent() -> None:
     cfg = load_session_gc_config({})
     assert cfg.enabled is True
     assert cfg.scan_interval_seconds == 300
     assert cfg.max_workers == 1
 
 
-def test_config_overrides_from_raw_dict():
+def test_config_overrides_from_raw_dict() -> None:
     cfg = load_session_gc_config({"session_gc": {"enabled": False, "scan_interval_seconds": 60, "max_workers": 2}})
     assert cfg.enabled is False
     assert cfg.scan_interval_seconds == 60
     assert cfg.max_workers == 2
 
 
-def test_config_is_frozen_and_strict():
+def test_config_is_frozen_and_strict() -> None:
     import pydantic
     try:
         SessionGcConfig(scan_interval_seconds=-1)  # type: ignore[arg-type]
@@ -47,7 +47,7 @@ def _paths_for(tmp_path: Path):
     return WorkspacePaths(root=tmp_path / ".modex")
 
 
-def test_artifact_paths_all_nine_with_correct_naming(tmp_path):
+def test_artifact_paths_all_nine_with_correct_naming(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     sid = "009fc886ecba.coding"
     pool = "coding"
@@ -77,7 +77,7 @@ def test_artifact_paths_all_nine_with_correct_naming(tmp_path):
     assert not any("fork_contexts" in str(p) for p in ap)
 
 
-def test_artifact_paths_excludes_pool_shared(tmp_path):
+def test_artifact_paths_excludes_pool_shared(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     ap = _session_artifact_paths("x.main", "main", paths)
     # archive + core are pool-shared, must NOT appear
@@ -90,7 +90,7 @@ def test_artifact_paths_excludes_pool_shared(tmp_path):
 import json
 
 
-def _write_index(paths, pool, session_id, parent=None):
+def _write_index(paths, pool, session_id, parent=None) -> None:
     rec = {"session_id": session_id, "agent_name": session_id.split(".")[-1],
            "parent_session_id": parent, "created_at": 0, "updated_at": 0, "metadata": {}}
     d = paths.session_index_dir / pool
@@ -98,7 +98,7 @@ def _write_index(paths, pool, session_id, parent=None):
     (d / f"{session_id}.json").write_text(json.dumps(rec), encoding="utf-8")
 
 
-def test_read_index_builds_parent_graph(tmp_path):
+def test_read_index_builds_parent_graph(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     _write_index(paths, "coding", "aaa.coding", None)
     _write_index(paths, "coding", "bbb.worker", "aaa.coding")
@@ -107,7 +107,7 @@ def test_read_index_builds_parent_graph(tmp_path):
     assert graph["bbb.worker"].parent_session_id == "aaa.coding"
 
 
-def test_orphan_sessions_when_parent_gone(tmp_path):
+def test_orphan_sessions_when_parent_gone(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     # root index removed (simulates interrupted cascade); child remains
     _write_index(paths, "coding", "bbb.worker", "aaa.coding")
@@ -119,7 +119,7 @@ def test_orphan_sessions_when_parent_gone(tmp_path):
     assert "ccc.scout" not in orphan_ids
 
 
-def test_find_children_across_pools(tmp_path):
+def test_find_children_across_pools(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     _write_index(paths, "coding", "aaa.coding", None)
     _write_index(paths, "research", "ddd.researcher", "aaa.coding")
@@ -131,7 +131,7 @@ def test_find_children_across_pools(tmp_path):
 from bot.service.session_gc import _find_orphan_artifact_sids
 
 
-def test_orphan_artifacts_when_index_gone(tmp_path):
+def test_orphan_artifacts_when_index_gone(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     # a memory session dir exists for a sid with NO index record
     mem = paths.memory_dir("coding") / "session" / "orphan.coding"
@@ -148,6 +148,8 @@ def test_orphan_artifacts_when_index_gone(tmp_path):
 
 import asyncio
 
+from bot.scope import BotRecordScope
+
 from modex_agent.core.cleanup import (
     DefaultSessionArtifactCleaner,
     SessionArtifactCleaner,
@@ -155,8 +157,6 @@ from modex_agent.core.cleanup import (
 )
 from modex_agent.core.scope import RecordScope
 from modex_agent.workspace.paths import WorkspacePaths
-
-from bot.scope import BotRecordScope
 
 
 class _RecordingFactory(SessionCleanerOperations):
@@ -188,7 +188,7 @@ class _RecordingFactory(SessionCleanerOperations):
         return SessionCleanupResult()
 
 
-def _seed_full_session(paths, pool, sid, parent=None):
+def _seed_full_session(paths, pool, sid, parent=None) -> None:
     _write_index(paths, pool, sid, parent)
     for unit in _session_artifact_paths(sid, pool, paths):
         if unit.suffix == ".json" and "session_index" in str(unit):
@@ -205,7 +205,7 @@ def _cleaner(paths):
     return DefaultSessionArtifactCleaner(paths=paths)
 
 
-def test_collector_retries_when_cleaner_operation_fails(tmp_path):
+def test_collector_retries_when_cleaner_operation_fails(tmp_path) -> None:
     class _FailingFactory(_RecordingFactory):
         async def clean_session_artifacts(
             self,
@@ -518,7 +518,7 @@ def test_sweep_parent_orphan_uses_discovered_exact_scope(tmp_path: Path) -> None
     assert factory.cleaned == [(paths.root, "child.worker", exact_scope)]
 
 
-def test_clean_session_removes_all_nine_units(tmp_path):
+def test_clean_session_removes_all_nine_units(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "coding", "aaa.coding")
     cleaner = _cleaner(paths)
@@ -528,7 +528,7 @@ def test_clean_session_removes_all_nine_units(tmp_path):
         assert not unit.exists(), f"still present: {unit}"
 
 
-def test_clean_session_idempotent_when_already_gone(tmp_path):
+def test_clean_session_idempotent_when_already_gone(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     cleaner = _cleaner(paths)
     scope = BotRecordScope(session_id="ghost.coding", pool="coding")
@@ -536,7 +536,7 @@ def test_clean_session_idempotent_when_already_gone(tmp_path):
     asyncio.run(cleaner.clean_session_artifacts("ghost.coding", scope))  # twice is fine
 
 
-def test_clean_session_preserves_pool_shared_and_siblings(tmp_path):
+def test_clean_session_preserves_pool_shared_and_siblings(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "coding", "aaa.coding")
     _seed_full_session(paths, "coding", "sib.coding")
@@ -561,7 +561,7 @@ def test_clean_session_preserves_pool_shared_and_siblings(tmp_path):
 from bot.service.session_gc import _propagate_children
 
 
-def test_propagate_children_returns_descendants_across_pools(tmp_path):
+def test_propagate_children_returns_descendants_across_pools(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "coding", "aaa.coding", None)
     _seed_full_session(paths, "coding", "bbb.worker", "aaa.coding")
@@ -572,6 +572,8 @@ def test_propagate_children_returns_descendants_across_pools(tmp_path):
     grandkids = _propagate_children("bbb.worker", paths)
     assert {k.session_id for k in grandkids} == {"ccc.researcher"}
 
+
+from typing import Never
 
 from bot.service.session_gc import SessionGarbageCollector
 
@@ -584,14 +586,14 @@ def _collector(tmp_path):
     )
 
 
-def test_delete_session_tree_drains_full_cascade(tmp_path):
+def test_delete_session_tree_drains_full_cascade(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "coding", "aaa.coding", None)
     _seed_full_session(paths, "coding", "bbb.worker", "aaa.coding")
     _seed_full_session(paths, "coding", "ccc.scout", "bbb.worker")  # nested
     gc = _collector(tmp_path)
 
-    async def _run():
+    async def _run() -> None:
         await gc.delete_session_tree("aaa.coding")
         await gc._drain_for_tests()
 
@@ -601,13 +603,13 @@ def test_delete_session_tree_drains_full_cascade(tmp_path):
             assert not unit.exists(), f"{sid} still has {unit}"
 
 
-def test_sweep_once_completes_interrupted_cascade(tmp_path):
+def test_sweep_once_completes_interrupted_cascade(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     # simulate: root already gone, child remains (interrupted cascade)
     _seed_full_session(paths, "coding", "bbb.worker", "aaa.coding")
     gc = _collector(tmp_path)
 
-    async def _run():
+    async def _run() -> None:
         await gc.sweep_once()
         await gc._drain_for_tests()
 
@@ -616,14 +618,14 @@ def test_sweep_once_completes_interrupted_cascade(tmp_path):
         assert not unit.exists()
 
 
-def test_sweep_once_removes_orphan_artifacts(tmp_path):
+def test_sweep_once_removes_orphan_artifacts(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "coding", "orphan.coding", None)
     # now delete ONLY its index, leaving artifacts (simulated crash after index)
     (paths.session_index_dir / "coding" / "orphan.coding.json").unlink()
     gc = _collector(tmp_path)
 
-    async def _run():
+    async def _run() -> None:
         await gc.sweep_once()
         await gc._drain_for_tests()
 
@@ -631,7 +633,7 @@ def test_sweep_once_removes_orphan_artifacts(tmp_path):
     assert not (paths.memory_dir("coding") / "session" / "orphan.coding").exists()
 
 
-def test_dedup_suppresses_concurrent_duplicate(tmp_path):
+def test_dedup_suppresses_concurrent_duplicate(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "coding", "aaa.coding", None)
     gc = _collector(tmp_path)
@@ -643,23 +645,23 @@ def test_dedup_suppresses_concurrent_duplicate(tmp_path):
     assert gc._inflight_count() == 1
 
 
-def test_start_stop_clean(tmp_path):
+def test_start_stop_clean(tmp_path) -> None:
     gc = _collector(tmp_path)
 
-    async def _run():
+    async def _run() -> None:
         await gc.start()
         assert gc._sweep_task is not None
 
     asyncio.run(_run())
     # stop outside the start-loop to also exercise the no-running-loop path
-    async def _stop():
+    async def _stop() -> None:
         await gc.stop()
 
     asyncio.run(_stop())
     assert gc._sweep_task is None
     assert gc._inflight_count() == 0
     # restart-safe: a second start works on a fresh state
-    async def _run2():
+    async def _run2() -> None:
         await gc.start()
         await gc.stop()
 
@@ -667,7 +669,7 @@ def test_start_stop_clean(tmp_path):
     assert gc._sweep_task is None
 
 
-def test_sweep_covers_multiple_workspaces(tmp_path):
+def test_sweep_covers_multiple_workspaces(tmp_path) -> None:
     home = tmp_path / "home"
     other = tmp_path / "other"
     home.mkdir()
@@ -681,7 +683,7 @@ def test_sweep_covers_multiple_workspaces(tmp_path):
         config=SessionGcConfig(),
     )
 
-    async def _run():
+    async def _run() -> None:
         await gc.sweep_once()
         await gc._drain_for_tests()
 
@@ -690,7 +692,7 @@ def test_sweep_covers_multiple_workspaces(tmp_path):
         assert not unit.exists()
 
 
-def test_sweep_catches_orphan_transcript(tmp_path):
+def test_sweep_catches_orphan_transcript(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     # a transcript with NO index record and NO memory dir (orphan transcript)
     tf = paths.sessions_dir / "coding" / "ghost.coding.jsonl"
@@ -698,7 +700,7 @@ def test_sweep_catches_orphan_transcript(tmp_path):
     tf.write_text("{}\n", encoding="utf-8")
     gc = _collector(tmp_path)
 
-    async def _run():
+    async def _run() -> None:
         await gc.sweep_once()
         await gc._drain_for_tests()
 
@@ -706,13 +708,13 @@ def test_sweep_catches_orphan_transcript(tmp_path):
     assert not tf.exists()
 
 
-def test_dedup_removed_on_clean_failure(tmp_path):
+def test_dedup_removed_on_clean_failure(tmp_path) -> None:
     """A sid is removed from inflight even when the cleaner raises (backstop can retry)."""
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "coding", "aaa.coding", None)
 
     class _BoomCleaner(SessionArtifactCleaner):
-        async def clean_session_artifacts(self, session_id, scope):
+        async def clean_session_artifacts(self, session_id, scope) -> Never:
             raise OSError("simulated locked file")
 
         async def discover_orphan_scopes(
@@ -740,20 +742,20 @@ def test_dedup_removed_on_clean_failure(tmp_path):
     )
     gc._enqueue(BotRecordScope(session_id="aaa.coding", pool="coding"), tmp_path)
 
-    async def _run():
+    async def _run() -> None:
         await gc._drain_for_tests()
 
     asyncio.run(_run())
     assert gc._inflight_count() == 0
 
 
-def test_delete_session_tree_idempotent_when_repeated(tmp_path):
+def test_delete_session_tree_idempotent_when_repeated(tmp_path) -> None:
     """Calling delete_session_tree twice is safe; the duplicate enqueue is deduped."""
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "coding", "aaa.coding", None)
     gc = _collector(tmp_path)
 
-    async def _run():
+    async def _run() -> None:
         await gc.delete_session_tree("aaa.coding", ws_root=tmp_path, pool="coding")
         await gc.delete_session_tree("aaa.coding", ws_root=tmp_path, pool="coding")
         await gc._drain_for_tests()
@@ -762,7 +764,7 @@ def test_delete_session_tree_idempotent_when_repeated(tmp_path):
     assert not (paths.session_index_dir / "coding" / "aaa.coding.json").exists()
 
 
-def test_sweep_drains_multi_layer_orphan_tree_in_one_pass(tmp_path):
+def test_sweep_drains_multi_layer_orphan_tree_in_one_pass(tmp_path) -> None:
     """Top-layer sweep + in-pool BFS propagation drains a multi-layer orphan tree
     in a single sweep_once + drain (ccc is not an orphan at sweep time — its parent
     bbb is still present — but is reached via bbb's propagation once bbb is cleaned)."""
@@ -772,7 +774,7 @@ def test_sweep_drains_multi_layer_orphan_tree_in_one_pass(tmp_path):
     _seed_full_session(paths, "coding", "ccc.scout", "bbb.worker")
     gc = _collector(tmp_path)
 
-    async def _run():
+    async def _run() -> None:
         await gc.sweep_once()
         await gc._drain_for_tests()
 
@@ -782,7 +784,7 @@ def test_sweep_drains_multi_layer_orphan_tree_in_one_pass(tmp_path):
             assert not unit.exists(), f"{sid} still has {unit}"
 
 
-def test_cleanup_orphan_pool_routes(tmp_path):
+def test_cleanup_orphan_pool_routes(tmp_path) -> None:
     """Orphan pool_sessions entries (no live session shares the prefix) are removed;
     live and shared-prefix entries are kept."""
     from bot.service.session_gc import _cleanup_orphan_pool_routes
@@ -813,7 +815,7 @@ def test_cleanup_orphan_pool_routes(tmp_path):
     assert (routes / "shared1.json").exists()
 
 
-def test_sweep_once_cleans_orphan_pool_routes(tmp_path):
+def test_sweep_once_cleans_orphan_pool_routes(tmp_path) -> None:
     """sweep_once removes orphan pool_sessions routing entries (end-to-end)."""
     paths = _paths_for(tmp_path)
     routes = paths.pool_sessions_dir
@@ -823,7 +825,7 @@ def test_sweep_once_cleans_orphan_pool_routes(tmp_path):
     )
     gc = _collector(tmp_path)
 
-    async def _run():
+    async def _run() -> None:
         await gc.sweep_once()
         await gc._drain_for_tests()
 
@@ -831,7 +833,7 @@ def test_sweep_once_cleans_orphan_pool_routes(tmp_path):
     assert not (routes / "gone.json").exists()
 
 
-def test_clean_session_emits_log(tmp_path, caplog):
+def test_clean_session_emits_log(tmp_path, caplog) -> None:
     """Cleaning a session emits one log line with its id/pool/workspace."""
     import logging
 
@@ -841,7 +843,7 @@ def test_clean_session_emits_log(tmp_path, caplog):
     gc._enqueue(BotRecordScope(session_id="aaa.coding", pool="coding"), tmp_path)
 
     with caplog.at_level(logging.INFO, logger="bot.service.session_gc"):
-        async def _run():
+        async def _run() -> None:
             await gc._drain_for_tests()
 
         asyncio.run(_run())
@@ -850,7 +852,7 @@ def test_clean_session_emits_log(tmp_path, caplog):
     ), [r.message for r in caplog.records]
 
 
-def test_sweep_once_emits_summary(tmp_path, caplog):
+def test_sweep_once_emits_summary(tmp_path, caplog) -> None:
     """sweep_once emits a summary line with workspace/orphan/route counts."""
     import logging
 
@@ -863,7 +865,7 @@ def test_sweep_once_emits_summary(tmp_path, caplog):
     gc = _collector(tmp_path)
 
     with caplog.at_level(logging.INFO, logger="bot.service.session_gc"):
-        async def _run():
+        async def _run() -> None:
             await gc.sweep_once()
 
         asyncio.run(_run())
@@ -875,7 +877,7 @@ def test_sweep_once_emits_summary(tmp_path, caplog):
 # ── SQLite-specific regression tests ──────────────────────────────────────────
 
 
-def test_sqlite_delete_session_tree_removes_sessions_row_synchronously(tmp_path):
+def test_sqlite_delete_session_tree_removes_sessions_row_synchronously(tmp_path) -> None:
     """delete_session_tree must synchronously remove the ``sessions`` table row.
 
     Regression: before the fix, ``_clean_record_and_transcript`` only removed
@@ -940,7 +942,7 @@ def test_sqlite_delete_session_tree_removes_sessions_row_synchronously(tmp_path)
     assert asyncio.run(_run()) == 0
 
 
-def test_sqlite_delete_session_tree_removes_transcript_events(tmp_path):
+def test_sqlite_delete_session_tree_removes_transcript_events(tmp_path) -> None:
     """delete_session_tree must synchronously remove transcript events."""
     from bot.service.session_cleaner_factory import SessionCleanerFactory
 
@@ -985,7 +987,7 @@ def test_sqlite_delete_session_tree_removes_transcript_events(tmp_path):
         await manager.close()
 
         class _FakeTranscriptStore:
-            async def delete_session(self, sid, sessions_dir=None):
+            async def delete_session(self, sid, sessions_dir=None) -> None:
                 m = WorkspacePersistenceManager(paths.state_db)
                 await m.open()
                 await m.connection.execute(

@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 from modex_agent.utils.time import now_ms
 from modex_agent.workspace.context import WorkspaceContext
@@ -118,7 +118,7 @@ class WorkspaceRegistryStore(ABC):
 RegistryStore = WorkspaceRegistryStore
 
 
-class WorkspaceRegistry(Generic[R]):
+class WorkspaceRegistry[R]:
     """Holds WorkspaceContexts keyed by resolved target + lazily-cached ``R``."""
 
     def __init__(

@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.input_pipeline.stages.session_control import SessionControlStage
-from modex_agent.workspace.control import WorkspaceController
+
 from modex_agent.core.session_id import SessionIdFactory, encode_snowflake
 from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.workspace.control import WorkspaceController
 from modex_agent.workspace.models import CdResult
 
 
@@ -145,6 +144,7 @@ async def test_continue_command_enqueues_continue_signal() -> None:
     """CommandDispatchStage: /continue enqueues a continue InputMessage and marks HANDLED."""
     from bot.input_pipeline.stages.command import CommandDispatchStage
     from bot.input_pipeline.stages.commands import SHARED_COMMANDS
+
     from modex_agent.input_pipeline.envelope import CommandStatus
 
     enqueued: list[InputMessage] = []

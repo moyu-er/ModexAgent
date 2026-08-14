@@ -5,9 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from bot.workspace.factory import PoolResourceFactory
+
 from modex_agent.workspace.context import WorkspaceContext
 
 

@@ -129,7 +129,7 @@ def _resolve_blob() -> Path:
 
 
 @lru_cache(maxsize=1)
-def load_cl100k() -> "tiktoken.Encoding":
+def load_cl100k() -> tiktoken.Encoding:
     """Build the cl100k_base Encoding from the verified vendored blob (offline)."""
     blob = _resolve_blob()
     ranks = load_tiktoken_bpe(str(blob))

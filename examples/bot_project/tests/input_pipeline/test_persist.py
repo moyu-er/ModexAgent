@@ -5,15 +5,14 @@ from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock
 
 import pytest
-
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.persist_user_message import PersistUserMessageStage
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
+
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import ApprovalDecisionInput
-from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
 from modex_agent.workspace.runtime import bind_workspace_root
 

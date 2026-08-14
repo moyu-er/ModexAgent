@@ -178,7 +178,7 @@ class AgentRuntime:
         return self._runtime_context
 
 
-def require_runtime_state(runtime: AgentRuntime, state_type: type[TState]) -> TState:
+def require_runtime_state[TState: TurnStateBase](runtime: AgentRuntime, state_type: type[TState]) -> TState:
     """Validate and narrow runtime state to the expected mode-specific type."""
     if isinstance(runtime.state, state_type):
         return runtime.state

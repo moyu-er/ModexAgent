@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic
+from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypeVar
 
@@ -170,7 +170,7 @@ current_agent_context: contextvars.ContextVar[AgentContext] = contextvars.Contex
 E = TypeVar("E", bound=AgentEvent)
 
 
-class Agent(ABC, Generic[E]):
+class Agent[E: AgentEvent](ABC):
     """Agent 推理模式抽象基类
 
     职责：执行特定的推理模式（ReAct、Plan 等）。

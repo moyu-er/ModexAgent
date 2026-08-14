@@ -18,7 +18,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
@@ -28,6 +27,7 @@ from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import AssistantTurnEvent, UserMessageEvent
 from bot.webui.server import WebUIServer
+
 from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
 from modex_agent.media.models import Attachment, AttachmentLocator, Kind
@@ -35,7 +35,6 @@ from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -663,7 +662,6 @@ async def test_upload_ws_send_ingest_preprocess_e2e() -> None:
         # Capture the InputMessage EnqueueStage builds so preprocess runs on the
         # real post-ingest carriage (attachments_resolved populated by G3).
         enqueued: list[InputMessage] = []
-        real_enqueue = server._input_ctx.enqueue_message
         server._input_ctx.enqueue_message = enqueued.append  # type: ignore[assignment]
 
         client = TestClient(TestServer(server.app))

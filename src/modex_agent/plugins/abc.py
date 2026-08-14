@@ -68,8 +68,8 @@ class MemoryProvider(ABC):
     @abstractmethod
     async def add(
         self,
-        messages: list["ChatMessage"],
-        context: "MemoryContext",
+        messages: list[ChatMessage],
+        context: MemoryContext,
     ) -> dict[str, Any]:
         """Add messages to the memory backend.
 
@@ -89,7 +89,7 @@ class MemoryProvider(ABC):
     async def search(
         self,
         query: str,
-        context: "MemoryContext",
+        context: MemoryContext,
         limit: int = 5,
         filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
@@ -103,7 +103,7 @@ class MemoryProvider(ABC):
     # ---- optional extensions ----
 
     async def prefetch(  # noqa: ARG002
-        self, _query: str, _context: "MemoryContext"
+        self, _query: str, _context: MemoryContext
     ) -> str | None:
         """Per-turn dynamic memory prefetch.
 
@@ -117,8 +117,8 @@ class MemoryProvider(ABC):
 
     async def on_pre_compress(  # noqa: ARG002
         self,
-        _messages: list["ChatMessage"],
-        _context: "MemoryContext",
+        _messages: list[ChatMessage],
+        _context: MemoryContext,
     ) -> None:
         """Called before context compression prunes messages.
 

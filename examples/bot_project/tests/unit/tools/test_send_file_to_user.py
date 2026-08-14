@@ -164,7 +164,7 @@ class TestOutboundAttachmentRecord:
 
             seen_at_send: dict[str, object] = {}
 
-            async def _spy_send(msg, session_id):
+            async def _spy_send(msg, session_id) -> None:
                 # The card carries attachment_records; resolve each through
                 # find_attachment as the download endpoint would.
                 rec = msg.attachment_records[0]

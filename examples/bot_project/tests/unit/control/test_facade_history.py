@@ -24,9 +24,7 @@ from bot.control.facade import BotControlFacade, ControlFacadeError
 from bot.control.models import (
     AgentSessionRef,
     ControlError,
-    HistoryMessage,
     HistoryRequest,
-    HistoryResult,
     HistorySource,
 )
 from bot.scope import BotRecordScope

@@ -22,7 +22,7 @@ def _main_spec(use_terminal: bool, terminal_visibility: bool = True):
     )
 
 
-def test_build_terminal_manager_creates_when_main_agent_opts_in(monkeypatch):
+def test_build_terminal_manager_creates_when_main_agent_opts_in(monkeypatch) -> None:
     from bot.service import _assembly_helpers as helpers
 
     sentinel = object()
@@ -40,7 +40,7 @@ def test_build_terminal_manager_creates_when_main_agent_opts_in(monkeypatch):
     assert mgr is sentinel
 
 
-def test_build_terminal_manager_skips_when_main_agent_opts_out(monkeypatch):
+def test_build_terminal_manager_skips_when_main_agent_opts_out(monkeypatch) -> None:
     from bot.service import _assembly_helpers as helpers
 
     attempted = {"n": 0}
@@ -60,7 +60,7 @@ def test_build_terminal_manager_skips_when_main_agent_opts_out(monkeypatch):
     assert attempted["n"] == 0
 
 
-def test_build_terminal_manager_works_for_any_pool_main_agent(monkeypatch):
+def test_build_terminal_manager_works_for_any_pool_main_agent(monkeypatch) -> None:
     from bot.service import _assembly_helpers as helpers
 
     sentinel = object()

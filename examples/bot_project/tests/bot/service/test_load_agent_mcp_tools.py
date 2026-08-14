@@ -13,7 +13,7 @@ import sys
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import Any
+from typing import Any, Never
 
 import pytest
 
@@ -22,6 +22,7 @@ if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
 from bot.service.builders import _load_agent_mcp_tools
+
 from modex_agent.tools.mcp.client import BaseMCPClient
 from modex_agent.tools.mcp.injector import MCPTransportInjector
 from modex_agent.tools.mcp.manager import MCPClientManager
@@ -29,7 +30,6 @@ from modex_agent.tools.mcp.registry import (
     McpConnectionRegistry,
     SharedMcpBackend,
 )
-
 
 # ── Stub client + fake connect_fn (mirrors the framework registry tests) ──
 
@@ -142,7 +142,7 @@ class TestLoadAgentMcpToolsRegistryBranch:
         """If acquire raises, the loader returns ([], None) — MCP never breaks the pool."""
 
         class _BrokenRegistry(McpConnectionRegistry):
-            async def acquire(self, selection, *, timeout=8.0):  # type: ignore[override]
+            async def acquire(self, selection, *, timeout=8.0) -> Never:  # type: ignore[override]
                 raise RuntimeError("simulated acquire failure")
 
         reg = _BrokenRegistry({}, connect_fn=_make_connect_fn())

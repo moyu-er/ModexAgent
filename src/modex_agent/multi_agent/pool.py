@@ -518,10 +518,8 @@ class AgentPool(AgentRegistry):
         finally:
             if watchdog_task is not None and not watchdog_task.done():
                 watchdog_task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await watchdog_task
-                except asyncio.CancelledError:
-                    pass
             if deadline is not None and token is not None:
                 current_dispatch_deadline.reset(token)
             remaining = max(0, self._active_session_counts.get(agent_name, 1) - 1)
@@ -726,7 +724,7 @@ class AgentPool(AgentRegistry):
         dynamic_sessions = sorted(
             (
                 sid
-                for sid in self._session_activity.keys()
+                for sid in self._session_activity
                 if self._session_agents.get(sid) == agent_name and sid in self._dynamic_sessions
             ),
             key=lambda sid: self._session_lru.get(sid, 0),

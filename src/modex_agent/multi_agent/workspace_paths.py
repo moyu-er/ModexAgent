@@ -28,11 +28,11 @@ class WorkspacePathResolver:
     def __init__(
         self,
         *,
-        workspace_manager: "WorkspaceManager | None",
+        workspace_manager: WorkspaceManager | None,
         pool_name: str | None,
         fallback_runtime_dir: Path | None = None,
         fallback_memory_dir: Path | None = None,
-        fallback_pruned_manager: "PrunedManager | None" = None,
+        fallback_pruned_manager: PrunedManager | None = None,
     ) -> None:
         self._workspace_manager = workspace_manager
         self._pool_name = pool_name
@@ -40,7 +40,7 @@ class WorkspacePathResolver:
         self._fallback_memory_dir = fallback_memory_dir
         self._fallback_pruned_manager = fallback_pruned_manager
 
-    def _resolve_pool_data(self) -> "PoolDataSnapshot | None":
+    def _resolve_pool_data(self) -> PoolDataSnapshot | None:
         mgr = self._workspace_manager
         if mgr is None or self._pool_name is None:
             return None
@@ -64,7 +64,7 @@ class WorkspacePathResolver:
             return pool_data.memory_dir
         return self._fallback_memory_dir
 
-    def pruned_manager(self) -> "PrunedManager | None":
+    def pruned_manager(self) -> PrunedManager | None:
         pool_data = self._resolve_pool_data()
         if pool_data is not None and pool_data.pruned_manager is not None:
             return pool_data.pruned_manager

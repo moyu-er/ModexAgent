@@ -8,19 +8,18 @@ folder selection and workspace switching into one request.
 
 from __future__ import annotations
 
-import asyncio
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-
 from bot.adapters.web_socket import WebSocketInputAdapter
-from bot.webui.server import WebUIServer
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from modex_agent.workspace.paths import WorkspacePaths
+from bot.webui.server import WebUIServer
+
 from modex_agent.workspace.models import CdResult
+from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.port import WorkspaceControlPort
 
 
@@ -58,7 +57,7 @@ class _FakeControl(WorkspaceControlPort):
 
 
 class _FakeProc:
-    def __init__(self, stdout: bytes, stderr: bytes = b"", returncode: int = 0):
+    def __init__(self, stdout: bytes, stderr: bytes = b"", returncode: int = 0) -> None:
         self._stdout = stdout
         self._stderr = stderr
         self.returncode = returncode
@@ -236,7 +235,7 @@ async def test_pick_returns_504_on_timeout() -> None:
         await client.start_server()
         try:
             fake_proc = _FakeProc(b"")
-            fake_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+            fake_proc.communicate = AsyncMock(side_effect=TimeoutError())
             with patch(
                 "asyncio.create_subprocess_exec",
                 new=AsyncMock(return_value=fake_proc),

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from enum import Enum
+from enum import StrEnum
 
 
-class StreamingMode(str, Enum):
+class StreamingMode(StrEnum):
     """平台支持的流式输出模式。"""
 
     NATIVE = "native"

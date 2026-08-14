@@ -8,14 +8,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from bot.service.core import BotService
 
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
 from modex_agent.interceptor.builtin import (
     ToolResultLimitInterceptor,
 )
-from modex_agent.pipeline.adapters import InputAdapter, NullOutputAdapter
+from modex_agent.pipeline.adapters import InputAdapter
 
 
 class _InputAdapter(InputAdapter):
@@ -40,6 +39,7 @@ def test_default_interceptor_chain_keeps_only_effective_defaults() -> None:
     from unittest.mock import MagicMock
 
     from bot.workspace.wiring.pool_wiring import _build_workspace_interceptor_chain
+
     from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 
     service = MagicMock()

@@ -8,6 +8,7 @@ This module is a leaf dependency: it MUST NOT import from ``bot.webui.server``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -88,10 +89,8 @@ class _WsConnectionState:
                 queues.remove(sub.queue)
             if not sub.task.done():
                 sub.task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await sub.task
-                except asyncio.CancelledError:
-                    pass
         self.graph_subscriptions.clear()
 
     async def cleanup(
@@ -122,10 +121,8 @@ class _WsConnectionState:
         for task in self.forward_tasks:
             if not task.done():
                 task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await task
-                except asyncio.CancelledError:
-                    pass
         self.forward_tasks.clear()
         for session_id in self.attached_sessions:
             input_adapter.unregister_connection(session_id)

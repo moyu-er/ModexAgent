@@ -1,3 +1,4 @@
+import contextlib
 import os
 import shutil
 import subprocess
@@ -164,10 +165,8 @@ class LandlockSandbox(SandboxAdapter):
             )
         finally:
             if tmpdir and os.path.exists(tmpdir):
-                try:
+                with contextlib.suppress(Exception):
                     shutil.rmtree(tmpdir)
-                except Exception:
-                    pass
 
     async def execute_command(
         self,

@@ -96,7 +96,7 @@ async def test_kb_tool_registered_when_register_flag_is_true(
     tmp_path: Path,
 ) -> None:
     main_spec = MainAgentSpec(agent_name="main", tool_preset=ToolPreset.NONE)
-    pool_spec = PoolSpec(name="test-pool", main_agent_name="main", main=main_spec)
+    PoolSpec(name="test-pool", main_agent_name="main", main=main_spec)
     data_dir = tmp_path / ".modex"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

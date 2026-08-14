@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,7 +22,7 @@ from modex_agent.tools.standard import (
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider, wrap_standard_tools
 
 
-class ToolPreset(str, Enum):
+class ToolPreset(StrEnum):
     """Declarative tool preset for subagent assignment.
 
     Values map to tool factory lists in TOOL_PRESETS.
@@ -36,14 +36,14 @@ class ToolPreset(str, Enum):
     WEB = "web"  # web search + web reader (opt-in, not included in FULL)
 
 
-class ContextMode(str, Enum):
+class ContextMode(StrEnum):
     """Subagent context mode — controls memory inheritance strategy."""
 
     FRESH = "fresh"  # clean session, no parent context inherited
     FORK = "fork"  # system-prompt injection of truncated parent context as read-only reference
 
 
-class ThinkingBudget(str, Enum):
+class ThinkingBudget(StrEnum):
     """Thinking budget annotation for subagent LLM calls."""
 
     LOW = "low"
@@ -179,7 +179,7 @@ def get_preset_tools(
     return tools
 
 
-class ToolSupplement(str, Enum):
+class ToolSupplement(StrEnum):
     """Additive tool group layered on top of a base ToolPreset.
 
     Unlike ToolPreset (one-of), supplements are multi-select and combine.
@@ -213,7 +213,7 @@ def _make_aci_tools() -> list[Tool]:
     return [AciEditTool(default_lint_registry)]
 
 
-def _make_todo_tools(todo_store: "TodoStore") -> list[Tool]:
+def _make_todo_tools(todo_store: TodoStore) -> list[Tool]:
     from modex_agent.tools.standard import TodoReadTool, TodoWriteTool
 
     return [TodoWriteTool(todo_store), TodoReadTool(todo_store)]
@@ -229,7 +229,7 @@ def get_supplement_tools(
     supplements: list[ToolSupplement],
     *,
     root_provider: WorkspaceRootProvider | None = None,
-    todo_store: "TodoStore | None" = None,
+    todo_store: TodoStore | None = None,
 ) -> list[Tool]:
     """Return deduped tool instances for the given additive supplements."""
     seen: set[str] = set()

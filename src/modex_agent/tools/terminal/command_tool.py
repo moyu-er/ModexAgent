@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 from modex_agent.core.tool_manager import Tool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
-from modex_agent.tools.terminal.guard import check_command_writable, TerminalGuardResult
+from modex_agent.tools.terminal.guard import TerminalGuardResult, check_command_writable
 from modex_agent.tools.terminal.managers import TerminalManagerBase
 from modex_agent.tools.terminal.process_registry import ProcessRegistry, RunningSessionRuntime
 from modex_agent.tools.terminal.prompt import (
@@ -27,7 +27,11 @@ from modex_agent.tools.terminal.prompt import (
 )
 from modex_agent.tools.terminal.pty_keys import CursorKeyMode
 from modex_agent.tools.terminal.session import TerminalSession
-from modex_agent.tools.terminal.types import CommandResultStatus, ProcessStatus, TerminalCommandStatus
+from modex_agent.tools.terminal.types import (
+    CommandResultStatus,
+    ProcessStatus,
+    TerminalCommandStatus,
+)
 from modex_agent.utils.xml import xml_text
 
 
@@ -110,7 +114,7 @@ class CommandTool(Tool):
             "required": ["command"],
         }
 
-    def result_metadata(self, result: Any) -> tuple["ContentFormat | None", list[str] | None]:
+    def result_metadata(self, result: Any) -> tuple[ContentFormat | None, list[str] | None]:
         """Declare XML truncation metadata for <command_result> output."""
         from modex_agent.tools.terminal.types import terminal_result_metadata
 

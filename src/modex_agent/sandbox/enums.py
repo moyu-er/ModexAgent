@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class SandboxType(str, Enum):
+class SandboxType(StrEnum):
     SUBPROCESS = "subprocess"
     LANDLOCK = "landlock"
     DOCKER = "docker"

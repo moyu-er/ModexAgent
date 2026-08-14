@@ -32,15 +32,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
-from bot.webui.emitter import WebBotEmitter
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
+from bot.webui.emitter import WebBotEmitter
 from bot.webui.transcript_store import JSONLTranscriptStore
+
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.agents.react.state import ReActSnapshotPolicy
-from modex_agent.approval.ui import IMUserInterface
 from modex_agent.approval.types import ApprovalAction
+from modex_agent.approval.ui import IMUserInterface
 from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.core.context import InMemoryContextManager
 from modex_agent.core.emitter import EmitterConfig
@@ -51,8 +51,8 @@ from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
 from modex_agent.ioc.factories.approval import build_approval_runtime
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.runtime.enums import SnapshotReason, TurnPhase
-from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.models import StateQueryScope
+from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 
 
@@ -72,15 +72,14 @@ def _make_react_pipeline(
     max_iterations=10,
     safety=None,
 ):
+    from modex_agent.core.context import InMemoryContextManager
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.pipeline.approval_renderer import ApprovalRenderer
     from modex_agent.pipeline.approval_resumer import ApprovalResumer
+    from modex_agent.pipeline.pipeline import AgentPipeline
     from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
     from modex_agent.pipeline.turn_runner import ReActTurnRunner
     from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-    from modex_agent.core.context import InMemoryContextManager
-    from modex_agent.core.agent_runtime_config import BusyInputMode
-    from modex_agent.pipeline.pipeline import AgentPipeline
     _UNSET = object()
     if sanitizer is None:
         from modex_agent.utils.sanitizer import ContentSanitizer
@@ -180,7 +179,7 @@ class _WriteTool(Tool):
         )
         self._recorded = recorded
 
-    async def execute(self, **kwargs):
+    async def execute(self, **kwargs) -> str:
         self._recorded.append((kwargs.get("path", ""), kwargs.get("content", "")))
         return f"wrote {kwargs.get('path', '')}"
 

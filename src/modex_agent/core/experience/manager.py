@@ -32,7 +32,7 @@ class ExperienceManager:
     async def build_prompt(
         self,
         max_experiences: int = _MAX_INJECTED_EXPERIENCES,
-        context: "MemoryContext | None" = None,
+        context: MemoryContext | None = None,
     ) -> str:
         """Render XML metadata block for system prompt injection.
 

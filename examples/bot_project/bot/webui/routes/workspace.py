@@ -223,7 +223,7 @@ async def handle_workspace_pick(request: web.Request) -> web.Response:
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
             proc.communicate(), timeout=_PICKER_TIMEOUT_S
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         await proc.wait()
         logger.info("Native directory picker timed out after %ds", _PICKER_TIMEOUT_S)

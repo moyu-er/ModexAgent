@@ -1,10 +1,11 @@
 import pytest
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
+
 from modex_agent.core.types import OutputMessage
 
 
 @pytest.mark.asyncio
-async def test_approval_message_emits_structured_envelope():
+async def test_approval_message_emits_structured_envelope() -> None:
     inp = WebSocketInputAdapter()
     inp.register_connection("s.main", object())
     out = WebSocketOutputAdapter(inp)
@@ -27,7 +28,7 @@ async def test_approval_message_emits_structured_envelope():
 
 
 @pytest.mark.asyncio
-async def test_normal_message_still_content_delta():
+async def test_normal_message_still_content_delta() -> None:
     inp = WebSocketInputAdapter()
     inp.register_connection("s.main", object())
     out = WebSocketOutputAdapter(inp)

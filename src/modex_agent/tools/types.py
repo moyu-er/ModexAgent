@@ -10,7 +10,7 @@
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Optional, Union, get_type_hints
 
 from ..core.constants import (
@@ -18,7 +18,7 @@ from ..core.constants import (
 )
 
 
-class ToolParameterType(str, Enum):
+class ToolParameterType(StrEnum):
     """参数类型"""
 
     STRING = "string"
@@ -191,15 +191,11 @@ def _is_annotated_type(annotation: Any) -> bool:
         return False
 
     # 检查 __class__ 名称
-    if hasattr(annotation, "__class__"):
-        if "Annotated" in annotation.__class__.__name__:
-            return True
-
-    # 检查是否有 __metadata__ 属性
-    if hasattr(annotation, "__metadata__"):
+    if hasattr(annotation, "__class__") and "Annotated" in annotation.__class__.__name__:
         return True
 
-    return False
+    # 检查是否有 __metadata__ 属性
+    return bool(hasattr(annotation, "__metadata__"))
 
 
 def _get_annotated_args(annotation: Any) -> tuple:
@@ -344,16 +340,12 @@ def _is_typeddict(type_hint: Any) -> bool:
         return False
 
     # 检查 __class__ 名称
-    if hasattr(type_hint, "__class__"):
-        if "TypedDict" in type_hint.__class__.__name__:
-            return True
+    if hasattr(type_hint, "__class__") and "TypedDict" in type_hint.__class__.__name__:
+        return True
 
     # 检查是否是 typing.TypedDict 的子类
     origin = getattr(type_hint, "__origin__", None)
-    if origin and "TypedDict" in str(origin):
-        return True
-
-    return False
+    return bool(origin and "TypedDict" in str(origin))
 
 
 def _is_literal_type(type_hint: Any) -> bool:
@@ -366,11 +358,7 @@ def _is_literal_type(type_hint: Any) -> bool:
         return True
 
     # 检查 __class__ 名称
-    if hasattr(type_hint, "__class__"):
-        if "Literal" in type_hint.__class__.__name__:
-            return True
-
-    return False
+    return bool(hasattr(type_hint, "__class__") and "Literal" in type_hint.__class__.__name__)
 
 
 def _get_literal_values(type_hint: Any) -> list[str] | None:

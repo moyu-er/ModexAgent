@@ -408,9 +408,9 @@ async def test_cross_pool_same_name_subagent_emitter_partitioning() -> None:
     transcript_store.append(). Before the fix, _persist() did NOT pass pool,
     so the store defaulted to _DEFAULT_POOL ("main") for every non-main write.
     """
-    from bot.adapters.web_socket import WebSocketOutputAdapter
     from bot.webui.emitter import WebBotEmitter
-    from bot.webui.events import SessionMeta, UserMessageEvent
+    from bot.webui.events import SessionMeta
+
     from modex_agent.core.emitter import EmitterConfig
     from modex_agent.core.session_id import session_id_prefix_of
 

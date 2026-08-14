@@ -76,10 +76,7 @@ def create_subagent_governance(
         ToolChainRepairGovernance,
     )
 
-    if cfg is None or cfg.governance is None:
-        _gov = GovernanceConfig()
-    else:
-        _gov = cfg.governance
+    _gov = GovernanceConfig() if cfg is None or cfg.governance is None else cfg.governance
 
     if not _gov.tool_chain_repair:
         return None

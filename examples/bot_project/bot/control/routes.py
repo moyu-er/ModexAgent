@@ -26,7 +26,6 @@ from bot.control.models import (
     SendResult,
 )
 
-
 logger = logging.getLogger(__name__)
 
 #: Path registered on the aiohttp router.

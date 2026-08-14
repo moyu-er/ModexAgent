@@ -3,10 +3,10 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillParseStage
+
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope

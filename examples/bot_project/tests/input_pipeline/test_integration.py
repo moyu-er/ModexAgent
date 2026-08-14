@@ -5,13 +5,12 @@ from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from bot.input_pipeline.assembly import build_im_pipeline, build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
 from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import UserMessageEvent
+
 from modex_agent.core.session_id import SessionIdFactory, encode_snowflake
 from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
@@ -74,7 +73,8 @@ def _make_ctx(
     if workspace_root is None:
         current_ws_provider = resolve_workspace_root
     else:
-        current_ws_provider = (lambda root=workspace_root: root)
+        def current_ws_provider(root=workspace_root):
+            return (root)
     return BotInputContext(
         default_pool="main",
         available_pools=lambda: {"main", "coding"},

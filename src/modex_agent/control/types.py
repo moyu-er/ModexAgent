@@ -7,10 +7,10 @@ for the control plane.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class ControlCommandType(str, Enum):
+class ControlCommandType(StrEnum):
     """Control command types."""
 
     CANCEL_TURN = "cancel_turn"

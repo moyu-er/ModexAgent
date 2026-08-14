@@ -12,6 +12,7 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable
+from datetime import UTC
 from typing import Any, ClassVar
 
 import httpx
@@ -336,9 +337,9 @@ class OpenAIProvider(StreamingLLMProvider):
 
         completion_start_time: str | None = None
         if first_token_time is not None:
-            from datetime import datetime, timezone
+            from datetime import datetime
             completion_start_time = datetime.fromtimestamp(
-                first_token_time, tz=timezone.utc
+                first_token_time, tz=UTC
             ).isoformat()
 
         return LLMResponse(

@@ -560,10 +560,8 @@ class OpenCodeServerManager:
         self._unregister_pid_for(self._proc.pid)
 
     def _unregister_pid_for(self, pid: int) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self._pid_file(pid).unlink(missing_ok=True)
-        except Exception:
-            pass
         self._pid_registered = False
 
     async def _reap_orphaned_processes(self) -> None:
@@ -593,10 +591,8 @@ class OpenCodeServerManager:
                 _sync_kill_proc(pid)
                 pid_file.unlink(missing_ok=True)
             except Exception:
-                try:
+                with contextlib.suppress(Exception):
                     pid_file.unlink(missing_ok=True)
-                except Exception:
-                    pass
 
 
 def _is_python_process(pid: int) -> bool:

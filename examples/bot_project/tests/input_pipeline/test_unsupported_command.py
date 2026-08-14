@@ -3,9 +3,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.unsupported_command import UnsupportedCommandStage
+
 from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 
 

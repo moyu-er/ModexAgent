@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def resolve_parent_name(context: "AgentContext | None") -> str | None:
+def resolve_parent_name(context: AgentContext | None) -> str | None:
     """Resolve the parent agent NAME for the currently executing subagent.
 
     Reads ``context.session.parent_session_id`` (populated by the production

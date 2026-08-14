@@ -16,13 +16,13 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import TodoStatus
 from modex_agent.utils.file_io import read_json_robust
 
 from .codec import RuntimeStateCodecRegistry
 from .enums import TurnPhase
 from .models import StateQueryScope, TurnIdentity, TurnSnapshot
-from modex_agent.core.session_id import SessionInfo
 
 logger = logging.getLogger(__name__)
 
@@ -108,9 +108,7 @@ class InMemoryTurnStateStore(TurnStateStore):
             return False
         if scope.reason is not None and snapshot.reason != scope.reason:
             return False
-        if scope.created_before is not None and snapshot.created_at >= scope.created_before:
-            return False
-        return True
+        return not (scope.created_before is not None and snapshot.created_at >= scope.created_before)
 
 
 class JsonFileTurnStateStore(TurnStateStore):
@@ -245,9 +243,7 @@ class JsonFileTurnStateStore(TurnStateStore):
             return False
         if scope.reason is not None and snapshot.reason != scope.reason:
             return False
-        if scope.created_before is not None and snapshot.created_at >= scope.created_before:
-            return False
-        return True
+        return not (scope.created_before is not None and snapshot.created_at >= scope.created_before)
 
 
 # ===========================================================================
