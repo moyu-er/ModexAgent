@@ -18,6 +18,7 @@ from bot.service._runtime_builders import (
     _build_main_command_processor,
     _collect_run_hooks,
 )
+from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.pool.communication import register_communication_tools
 from bot.workspace.background import BackgroundTaskRunner
 from bot.workspace.handle import (
@@ -28,8 +29,7 @@ from bot.workspace.handle import (
 from bot.workspace.pool_data import build_pool_data
 from modex_agent.approval.ui import IMUserInterface
 from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
-from modex_agent.hook.builtin import CurrentTimeInjectionHook, TodoContinuationHook
-from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
+from modex_agent.hook.builtin import CurrentTimeInjectionHook
 from modex_agent.hook.builtin.knowledge_hook import KnowledgeHook
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
@@ -99,6 +99,8 @@ async def _assemble_resources(
     from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
     app_config = service._app_config
+    if app_config is None:
+        raise RuntimeError("AppConfig must be loaded before workspace resource assembly")
     pool_store = PoolStore(base_dir=service._project_dir)
     pool_names = [s.name for s in pool_store.list_pools()]
     pool_specs: dict[str, PoolSpec] = {name: pool_store.read_pool(name) for name in pool_names}
@@ -215,13 +217,14 @@ async def _assemble_resources(
     # 3. Per-workspace interceptor chain, rooted at THIS workspace's overflow dir.
     shared_interceptor_chain = _build_workspace_interceptor_chain(service, overflow_store)
 
+    plugin_integration = service.plugin_integration
+    if plugin_integration is None:
+        raise RuntimeError("PluginIntegration must be initialized before workspace resource assembly")
     # Shared (service-level) infra reused across this workspace's pools.
     shared_hooks = [
         CurrentTimeInjectionHook(),       # StartNodeTurnHook
-        TodoContinuationHook(),           # AfterTurnHook — must be first: only hook that sets CONTINUATION_RENEW_MAX_TURNS (watchdog renewal), reminder includes active todo list
-        DeliverRetryHook(),               # AfterTurnHook — independent, no renewal
         KnowledgeHook(),                  # BeforeTurnHook + AfterTurnHook — independent, no renewal
-        *_collect_run_hooks(service.plugin_integration, app_config),
+        *_collect_run_hooks(plugin_integration, app_config),
     ]
     shared_hook_runner = _build_hook_runner(shared_hooks)
     im_ui = IMUserInterface(
@@ -281,7 +284,9 @@ async def _assemble_resources(
             session_store=session_index_store,
             transcript_store=service._transcript_store,
             bot_model_config=service._bot_model_config,
-            model_choice_registry=service._model_choice_registry,
+            model_choice_registry=service._model_choice_registry
+            if service._model_choice_registry is not None
+            else ModelChoiceRegistry(),
             mcp_registry=service._mcp_registry,
             persistence=persistence,
             app_config=app_config,

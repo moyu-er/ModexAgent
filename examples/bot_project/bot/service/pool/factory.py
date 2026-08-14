@@ -37,7 +37,7 @@ from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.session_registry import InMemorySessionRegistry, SessionRegistry
 from modex_agent.core.session_store import SessionStore
-from modex_agent.hook import HookRunner
+from modex_agent.hook import Hook, HookRunner
 from modex_agent.hook.notification import AgentNotificationService
 from modex_agent.ioc.factories.session_tree import build_session_tree_stores
 from modex_agent.memory.cleanup_hooks import TodoReorientationHook
@@ -143,7 +143,7 @@ async def create_pool(
     safety: RuntimeSafetyPolicy,
     retention: SessionRetentionPolicy,
     im_ui: Any,
-    shared_hooks: list,
+    shared_hooks: list[Hook],
     shared_hook_runner: HookRunner,
     shared_interceptor_chain: Any,
     control_channel: InMemoryControlChannel | None = None,
@@ -151,7 +151,7 @@ async def create_pool(
     pool_data: PoolDataSnapshot | None = None,
     workspace_handle: WorkspaceHandle | None = None,
     workspace_resolver: WorkspaceResolverCell | None = None,
-    emitter_factory: Callable[[str], ContentEmitter] | None = None,
+    emitter_factory: Callable[[str], ContentEmitter[Any]] | None = None,
     output_adapter_factory: Callable[[], OutputAdapter] | None = None,
     on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
     session_registry: SessionRegistry | None = None,
@@ -531,6 +531,7 @@ async def create_pool(
                 else None
             ),
             session_binding_store=session_binding_store,
+            tree_manager=tree_manager,
         )
     else:
         # external path: the external agent has no tool surface (it
