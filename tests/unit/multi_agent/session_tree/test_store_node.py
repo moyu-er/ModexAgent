@@ -73,12 +73,13 @@ async def store(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterator
             assert_never(unreachable)
 
 
-def test_tree_node_store_has_five_async_abstract_methods() -> None:
+def test_tree_node_store_has_six_async_abstract_methods() -> None:
     expected = {
         "create",
         "get",
         "get_or_create",
         "get_tree_sessions",
+        "get_tree_node_records",
         "update_version",
     }
 
@@ -167,3 +168,45 @@ async def test_get_tree_sessions_returns_only_requested_tree(store: TreeNodeStor
     sessions = await store.get_tree_sessions("tree-1")
 
     assert set(sessions) == {"root-sid", "child-sid"}
+
+
+async def test_get_tree_node_records_returns_full_records(store: TreeNodeStore) -> None:
+    await store.create(_node("root-sid"))
+    await store.create(
+        _node(
+            "child-sid",
+            agent_name="worker",
+            parent_session_id="root-sid",
+        )
+    )
+    await store.create(_node("other-sid", tree_id="tree-2"))
+
+    records = await store.get_tree_node_records("tree-1")
+
+    assert len(records) == 2
+    assert {r.session_id for r in records} == {"root-sid", "child-sid"}
+    child = next(r for r in records if r.session_id == "child-sid")
+    assert child.parent_session_id == "root-sid"
+    assert child.agent_name == "worker"
+
+
+async def test_get_tree_node_records_returns_empty_for_nonexistent_tree(
+    store: TreeNodeStore,
+) -> None:
+    await store.create(_node("root-sid"))
+
+    records = await store.get_tree_node_records("missing")
+
+    assert records == []
+
+
+async def test_get_tree_node_records_sorted_by_session_id(
+    store: TreeNodeStore,
+) -> None:
+    await store.create(_node("c"))
+    await store.create(_node("a"))
+    await store.create(_node("b"))
+
+    records = await store.get_tree_node_records("tree-1")
+
+    assert [r.session_id for r in records] == ["a", "b", "c"]

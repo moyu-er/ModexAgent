@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
@@ -284,3 +284,93 @@ async def test_existing_continuation_request_still_injects_reminder(
     messages = await context.history.to_list()
     assert len(messages) == 1
     assert messages[0].role == MessageRole.SYSTEM_REMINDER
+
+
+def _make_tree_mock(tree_id: str | None, active_nodes: list[str]) -> MagicMock:
+    tree = MagicMock()
+    tree.tree_id_for_session = AsyncMock(return_value=tree_id)
+    tree.get_active_subtree_nodes = AsyncMock(return_value=active_nodes)
+    return tree
+
+
+async def test_tree_aware_skips_when_subtree_has_active_nodes(
+    tmp_path: Path,
+) -> None:
+    context, state, store = _make_context(tmp_path)
+    await _save_todos(
+        context,
+        store,
+        [TodoItem(content="implement hook", status=TodoStatus.IN_PROGRESS)],
+    )
+    tree = _make_tree_mock("tree-1", ["session.agent", "child.session"])
+
+    await TodoContinuationHook(tree=tree).after_turn(
+        context,
+        AgentResult(content="working", stop_reason=StopReason.COMPLETED),
+    )
+
+    await _assert_no_action(context, state)
+
+
+async def test_tree_aware_triggers_when_subtree_has_only_self(
+    tmp_path: Path,
+) -> None:
+    context, state, store = _make_context(tmp_path)
+    await _save_todos(
+        context,
+        store,
+        [TodoItem(content="implement hook", status=TodoStatus.IN_PROGRESS)],
+    )
+    tree = _make_tree_mock("tree-1", ["session.agent"])
+
+    await TodoContinuationHook(tree=tree).after_turn(
+        context,
+        AgentResult(content="working", stop_reason=StopReason.COMPLETED),
+    )
+
+    assert state.custom[TurnCustomKey.CONTINUATION_REQUEST] is True
+    assert state.custom[TurnCustomKey.LAST_CONTINUATION_TODO_SIG] is not None
+    messages = await context.history.to_list()
+    assert len(messages) == 1
+    assert messages[0].role == MessageRole.SYSTEM_REMINDER
+
+
+async def test_tree_none_falls_through(tmp_path: Path) -> None:
+    context, state, store = _make_context(tmp_path)
+    await _save_todos(
+        context,
+        store,
+        [TodoItem(content="implement hook", status=TodoStatus.IN_PROGRESS)],
+    )
+
+    await TodoContinuationHook().after_turn(
+        context,
+        AgentResult(content="working", stop_reason=StopReason.COMPLETED),
+    )
+
+    assert state.custom[TurnCustomKey.CONTINUATION_REQUEST] is True
+    assert state.custom[TurnCustomKey.LAST_CONTINUATION_TODO_SIG] is not None
+    messages = await context.history.to_list()
+    assert len(messages) == 1
+
+
+async def test_tree_aware_falls_through_when_tree_id_is_none(
+    tmp_path: Path,
+) -> None:
+    context, state, store = _make_context(tmp_path)
+    await _save_todos(
+        context,
+        store,
+        [TodoItem(content="implement hook", status=TodoStatus.IN_PROGRESS)],
+    )
+    tree = _make_tree_mock(None, [])
+
+    await TodoContinuationHook(tree=tree).after_turn(
+        context,
+        AgentResult(content="working", stop_reason=StopReason.COMPLETED),
+    )
+
+    assert state.custom[TurnCustomKey.CONTINUATION_REQUEST] is True
+    assert state.custom[TurnCustomKey.LAST_CONTINUATION_TODO_SIG] is not None
+    messages = await context.history.to_list()
+    assert len(messages) == 1

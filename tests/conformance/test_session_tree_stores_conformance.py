@@ -270,6 +270,23 @@ class TestTreeNodeStoreConformance:
 
         assert set(sessions) == {"root-sid", "child-sid"}
 
+    async def test_get_tree_node_records_returns_full_records(
+        self, node_store: TreeNodeStore
+    ) -> None:
+        await node_store.create(_node_record("root-sid"))
+        await node_store.create(
+            _node_record("child-sid", agent_name="worker", parent_session_id="root-sid"),
+        )
+        await node_store.create(_node_record("other-sid", tree_id="tree-2"))
+
+        records = await node_store.get_tree_node_records("tree-1")
+
+        assert len(records) == 2
+        assert {r.session_id for r in records} == {"root-sid", "child-sid"}
+        child = next(r for r in records if r.session_id == "child-sid")
+        assert child.parent_session_id == "root-sid"
+        assert child.agent_name == "worker"
+
 
 class TestMessageTrackStoreConformance:
     """Same behavior on both backends."""
