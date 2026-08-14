@@ -1,26 +1,20 @@
 /**
- * GraphNode.tsx — 单个图节点的 SVG 渲染(graph PRD §5.2,Rev 4)。
+ * GraphNode.tsx — 单个图节点的 SVG 渲染(graph PRD §5.2, §6 Rev 4)。
  *
- * - **所有节点(含 START/END)统一为 140×44 圆角矩形** — 通过 glyph 和名称区分类型,
- *   不通过形状区分。START/END 显示友好标签 "START"/"END"(而非 `__start__`/`__end__`)。
- * - 功能节点内部: 左 glyph(20px, mono text-xs mute,附加 U+FE0E 强制文本呈现)、
- *   中 name(Inter 500 text-sm ink,超长截断 + <title> 完整名)+
- *   sub(类型 + pool, mono text-xs faint)、右 8px status dot。
- * - START/END 无 glyph、无 sub、无 status dot — 仅标签居中显示,brand fill 填充,
- *   字体 font-mono text-xs font-semibold(标签化视觉)。
+ * - **状态只由节点内圆点颜色表达**(§6 Rev 4 dot-only):节点本体
+ *   fill/描边恒定,不随状态变化 — 状态着色只出现在右侧 10px 实心圆点上,
+ *   六态六色(灰/teal/绿/红/琥珀/紫),右上角图例同色映射。
+ * - 功能节点 140×44 圆角矩形:左 lucide SVG 类型图标(14px, text-mute)、
+ *   中 name(Inter 500 text-sm ink,超长截断 + <title> 完整名)、
+ *   sub(类型 + pool, mono text-xs text-mute)、右状态圆点。
+ * - START/END 为 76×30 幽灵药丸(brand 微 tint 填充 + brand 40% 描边 +
+ *   brand 文字)— 终端节点视觉降权,功能节点才是主角。
+ * - running 额外保留 ActiveNodeRing 外扩呼吸环(节点本体颜色不变,
+ *   动效只是运行提示);crash flash 由 TopologyCanvas 渲染(瞬态)。
  * - **agent 节点单击即跳转会话**(onOpen);非 agent 功能节点单击选中(onSelect)。
- * - 状态着色按 §6.3 六状态表(双通道:描边 + 底色 tint + dot),全部走
- *   graph-status / graph-dot 系列 token(不直连 brand/warning):
- *   running = graph-status-running 描边 + 空心 dot + ActiveNodeRing;completed = 绿描边 +
- *   18% tint 底色 + 实心绿 dot;crashed = danger 描边 + 14% tint 底色 +
- *   实心红 dot;suspended = graph-status-suspended 虚线描边;canceled = 默认描边 + 名称
- *   删除线;pending = 默认。动效降级下静态双通道仍可分辨全部六态。
- * - 空心 dot 的描边复用 style.bodyStroke(同一 §6.3 表驱动,无需新增 dotStroke
- *   字段):running 是唯一 hollow 状态,其 dot 描边恒等于节点本体描边。
- * - running 时渲染外扩 4px 同形圆角矩形描边槽位(data-ring-slot,无 stroke)
- *   — 几何由 ringSlotGeometry() 导出,G03 的 ActiveNodeRing 复用同一几何。
  */
 import { useState, type FC, type KeyboardEvent, type MouseEvent } from "react";
+import { Bot, Braces, Timer, User, Workflow, type LucideIcon } from "lucide-react";
 import {
   GRAPH_NODE_END,
   GRAPH_NODE_START,
@@ -28,7 +22,7 @@ import {
 } from "../yaml/parseGraphSpec";
 import type { LayoutNodeRect } from "./layout";
 
-/** 节点运行状态(§5.2 状态着色表的键;由实例节点状态映射而来)。 */
+/** 节点运行状态(§5.2;由实例节点状态映射而来)。 */
 export type GraphNodeVisualStatus =
   | "pending"
   | "running"
@@ -42,19 +36,17 @@ export const GRAPH_NODE_RADIUS = 12;
 /** 活跃描边外扩距离(§4.4)。 */
 export const RING_SLOT_OUTSET = 4;
 
-/** U+FE0E variation selector — 强制 glyph 文本呈现(§5.2 Rev 2 修正 4)。 */
-const FE0E = "\uFE0E";
-
-/** 功能节点类型 → glyph(§5.2 类型 glyph 表)。START/END 无 glyph。 */
-export const NODE_TYPE_GLYPHS: Readonly<Record<string, string>> = {
-  agent: `◉${FE0E}`,
-  function: `ƒ${FE0E}`,
-  delay: `◷${FE0E}`,
-  human_input: `⏸${FE0E}`,
-  graph: `⬕${FE0E}`,
+/** 功能节点类型 → lucide 图标(§5.2 Rev 4:SVG 图标替代 unicode glyph,
+ * 跨平台渲染稳定)。START/END 无图标。 */
+export const NODE_TYPE_ICONS: Readonly<Record<string, LucideIcon>> = {
+  agent: Bot,
+  function: Braces,
+  delay: Timer,
+  human_input: User,
+  graph: Workflow,
 };
 
-/** 判断是否为结构性端点(START/END) — 统一形状但无 glyph/sub/dot。 */
+/** 判断是否为结构性端点(START/END) — 小药丸,无图标/sub/dot。 */
 export function isEndpointNode(nodeType: string): boolean {
   return nodeType === GRAPH_NODE_START || nodeType === GRAPH_NODE_END;
 }
@@ -65,81 +57,25 @@ const ENDPOINT_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   [GRAPH_NODE_END]: "END",
 };
 
-// 节点内部布局(局部坐标,节点中心为原点):padding 12,glyph 20,gap 4,
-// status dot 8 + gap 8 → name 可用宽度 76px;text-sm(12px Inter)平均字宽
-// 约 6.6px → 11 字符截断。sub 行与 dot 无垂直交叠,可用满宽 92px;
+// 节点内部布局(局部坐标,节点中心为原点):padding 12,icon 14,gap 6,
+// status dot 10 + gap 8 → name 可用宽度 80px;text-sm(12px Inter)平均字宽
+// 约 6.6px → 12 字符截断。sub 行与 dot 无垂直交叠,可用满宽 96px;
 // text-xs(11px JetBrains Mono)字宽恒为 0.6em=6.6px → 14 字符截断。
-// START/END 标签居中:可用宽度 = 140 - 2*12 = 116px → 17 字符截断。
 const CONTENT_PAD = 12;
-const GLYPH_WIDTH = 20;
-const LABEL_GAP = 4;
-const DOT_SIZE = 8;
-const NAME_MAX_CHARS = 11;
+const ICON_SIZE = 14;
+const LABEL_GAP = 6;
+const DOT_SIZE = 10;
+const NAME_MAX_CHARS = 12;
 const SUB_MAX_CHARS = 14;
-const ENDPOINT_NAME_MAX_CHARS = 17;
 
-interface StatusStyle {
-  /** dot 填充(hollow 时忽略,描边复用 bodyStroke — 见文件头)。 */
-  readonly dotFill: string;
-  readonly dotHollow: boolean;
-  readonly bodyFill: string;
-  readonly bodyStroke: string;
-  readonly dashed: boolean;
-}
-
-/** §6.3 六状态着色表(双通道版:状态色描边 + tint 底色 + dot)。 */
-const STATUS_STYLES: Readonly<Record<GraphNodeVisualStatus, StatusStyle>> = {
-  pending: {
-    dotFill: "fill-graph-dot-pending",
-    dotHollow: false,
-    bodyFill: "fill-graph-node-fill",
-    bodyStroke: "stroke-graph-node-border",
-    dashed: false,
-  },
-  running: {
-    dotFill: "",
-    dotHollow: true,
-    bodyFill: "fill-graph-node-fill",
-    bodyStroke: "stroke-graph-status-running",
-    dashed: false,
-  },
-  completed: {
-    dotFill: "fill-graph-status-completed",
-    dotHollow: false,
-    bodyFill: "fill-graph-node-fill-completed",
-    bodyStroke: "stroke-graph-status-completed",
-    dashed: false,
-  },
-  crashed: {
-    dotFill: "fill-graph-status-crashed",
-    dotHollow: false,
-    bodyFill: "fill-graph-node-fill-crashed",
-    bodyStroke: "stroke-graph-status-crashed",
-    dashed: false,
-  },
-  canceled: {
-    dotFill: "fill-graph-dot-canceled",
-    dotHollow: false,
-    bodyFill: "fill-graph-node-fill",
-    bodyStroke: "stroke-graph-node-border",
-    dashed: false,
-  },
-  suspended: {
-    dotFill: "fill-graph-status-suspended",
-    dotHollow: false,
-    bodyFill: "fill-graph-node-fill",
-    bodyStroke: "stroke-graph-status-suspended",
-    dashed: true,
-  },
-};
-
-/** START/END 固定样式:brand 填充,无状态着色。 */
-const ENDPOINT_STYLE: StatusStyle = {
-  dotFill: "",
-  dotHollow: false,
-  bodyFill: "fill-brand",
-  bodyStroke: "stroke-brand-deep",
-  dashed: false,
+/** §6.2 Rev 4 状态 → 圆点填充色(节点本体不随状态变化)。 */
+const STATUS_DOTS: Readonly<Record<GraphNodeVisualStatus, string>> = {
+  pending: "fill-graph-status-pending",
+  running: "fill-graph-status-running",
+  completed: "fill-graph-status-completed",
+  crashed: "fill-graph-status-crashed",
+  canceled: "fill-graph-status-canceled",
+  suspended: "fill-graph-status-suspended",
 };
 
 /** 超长截断(SVG text 不支持 CSS ellipsis,按字符数保守截断)。 */
@@ -194,19 +130,15 @@ export const GraphNode: FC<GraphNodeProps> = ({
   const { width, height } = rect;
   const isEndpoint = isEndpointNode(node.nodeType);
   const isAgent = node.nodeType === "agent";
-  const style = isEndpoint ? ENDPOINT_STYLE : STATUS_STYLES[status];
-  // 选中高亮(§8.1:150ms border-color)与键盘 focus ring 共用 brand 描边。
+  // 选中高亮(§8.1)与键盘 focus ring 共用 brand 描边。
   // agent 节点单击跳转,不会被选中;endpoint 不可交互。
   const highlighted = !isEndpoint && !isAgent && (selected || focused);
-  const bodyStroke = highlighted
-    ? "stroke-graph-node-border-active"
-    : style.bodyStroke;
 
-  const glyph = NODE_TYPE_GLYPHS[node.nodeType] ?? null;
+  const Icon = NODE_TYPE_ICONS[node.nodeType] ?? null;
   // START/END 显示友好标签 "START"/"END"
   const nameText = isEndpoint
-    ? (ENDPOINT_DISPLAY_NAMES[node.name] ?? truncateLabel(node.name, ENDPOINT_NAME_MAX_CHARS))
-    : truncateLabel(node.name, NAME_MAX_CHARS);
+    ? (ENDPOINT_DISPLAY_NAMES[node.name] ?? node.name)
+    : truncateLabel(node.name);
   const subText = isEndpoint
     ? null
     : truncateLabel(
@@ -214,7 +146,7 @@ export const GraphNode: FC<GraphNodeProps> = ({
         SUB_MAX_CHARS,
       );
 
-  const labelX = -width / 2 + CONTENT_PAD + GLYPH_WIDTH + LABEL_GAP;
+  const labelX = -width / 2 + CONTENT_PAD + ICON_SIZE + LABEL_GAP;
   const dotCx = width / 2 - CONTENT_PAD - DOT_SIZE / 2;
   const ring = ringSlotGeometry(width, height);
 
@@ -284,26 +216,42 @@ export const GraphNode: FC<GraphNodeProps> = ({
           pointerEvents="none"
         />
       )}
-      <rect
-        data-node-body=""
-        x={-width / 2}
-        y={-height / 2}
-        width={width}
-        height={height}
-        rx={GRAPH_NODE_RADIUS}
-        strokeWidth={highlighted ? 2 : 1.5}
-        strokeDasharray={style.dashed ? "5 3" : undefined}
-        className={`${style.bodyFill} ${bodyStroke} transition-colors duration-fast ease-out`}
-      />
-      {glyph !== null && (
-        <text
+      {isEndpoint ? (
+        // START/END 幽灵药丸(§5.2 Rev 4):全圆角,brand 微 tint + 描边。
+        <rect
+          data-node-body=""
+          x={-width / 2}
+          y={-height / 2}
+          width={width}
+          height={height}
+          rx={height / 2}
+          strokeWidth={1.25}
+          className="fill-graph-endpoint-fill stroke-graph-endpoint-border transition-colors duration-fast ease-out"
+        />
+      ) : (
+        // 功能节点:本体恒定(fill + border-strong + 阴影),状态只在 dot 上。
+        <rect
+          data-node-body=""
+          x={-width / 2}
+          y={-height / 2}
+          width={width}
+          height={height}
+          rx={GRAPH_NODE_RADIUS}
+          strokeWidth={highlighted ? 2 : 1.25}
+          className={`fill-graph-node-fill ${highlighted ? "stroke-graph-node-border-active" : "stroke-graph-node-border"} transition-colors duration-fast ease-out`}
+          style={{ filter: "var(--filter-graph-node)" }}
+        />
+      )}
+      {Icon !== null && (
+        <Icon
           x={-width / 2 + CONTENT_PAD}
-          y={0}
-          dominantBaseline="central"
-          className="fill-current font-mono text-xs text-mute"
-        >
-          {glyph}
-        </text>
+          y={-ICON_SIZE / 2}
+          width={ICON_SIZE}
+          height={ICON_SIZE}
+          strokeWidth={1.75}
+          className="text-mute"
+          aria-hidden="true"
+        />
       )}
       {isEndpoint ? (
         // START/END:标签居中显示,mono font-semibold(标签化视觉)
@@ -312,17 +260,17 @@ export const GraphNode: FC<GraphNodeProps> = ({
           y={0}
           textAnchor="middle"
           dominantBaseline="central"
-          className="fill-current font-mono text-xs font-semibold text-on-brand"
+          className="fill-current font-mono text-xs font-semibold tracking-wide text-graph-endpoint-text"
         >
           {nameText}
         </text>
       ) : (
-        // 功能节点:名称左对齐 + sub 行 + status dot
+        // 功能节点:名称左对齐 + sub 行 + 状态圆点
         <>
           <text
             x={labelX}
             y={-4}
-            className={`fill-current font-sans text-sm font-medium text-ink${status === "canceled" ? " line-through" : ""}`}
+            className="fill-current font-sans text-sm font-medium text-ink"
           >
             {nameText}
           </text>
@@ -330,29 +278,18 @@ export const GraphNode: FC<GraphNodeProps> = ({
             <text
               x={labelX}
               y={11}
-              className="fill-current font-mono text-xs text-faint"
+              className="fill-current font-mono text-xs text-mute"
             >
               {subText}
             </text>
           )}
-          {style.dotHollow ? (
-            <circle
-              data-status-dot=""
-              cx={dotCx}
-              cy={0}
-              r={DOT_SIZE / 2}
-              strokeWidth={1.5}
-              className={`${style.bodyFill} ${style.bodyStroke}`}
-            />
-          ) : (
-            <circle
-              data-status-dot=""
-              cx={dotCx}
-              cy={0}
-              r={DOT_SIZE / 2}
-              className={style.dotFill}
-            />
-          )}
+          <circle
+            data-status-dot=""
+            cx={dotCx}
+            cy={0}
+            r={DOT_SIZE / 2}
+            className={STATUS_DOTS[status]}
+          />
         </>
       )}
     </g>
