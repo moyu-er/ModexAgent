@@ -11,7 +11,7 @@ TurnContextConfigPipeline configurators, not inline mutation.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, assert_never
 
 from bot.graph.knowledge_config import KnowledgeNodeConfig
 from modex_agent.agents.agent_node import AgentNode, SessionStrategy

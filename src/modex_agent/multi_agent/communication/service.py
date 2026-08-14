@@ -54,7 +54,7 @@ def _resolve_current_traceparent() -> str | None:
     """
     carrier: dict[str, str] = {}
     try:
-        from opentelemetry import propagate  # type: ignore[import-not-found]
+        from opentelemetry import propagate
     except ImportError:
         pass
     else:

@@ -366,7 +366,7 @@ def register_signal_handlers() -> None:
     def _make_chained(prev: object) -> Callable[[int, object], None]:
         def _chained(signum: int, frame: object) -> None:
             if callable(prev):
-                prev(signum, frame)  # type: ignore[operator]
+                prev(signum, frame)
             _signal_cleanup(signum, frame)
 
         return _chained

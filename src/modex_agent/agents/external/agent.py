@@ -141,7 +141,7 @@ def _otel_inject(carrier: dict[str, str]) -> None:
     The import is lazy — never at module level.
     """
     try:
-        from opentelemetry import propagate  # type: ignore[import-not-found]
+        from opentelemetry import propagate
     except ImportError:
         return
     propagate.inject(carrier)
@@ -187,7 +187,7 @@ def _otel_invoke_agent_span(provider_kind: str) -> Iterator[Any]:
     """
     try:
         from opentelemetry import trace as otel_trace
-        from opentelemetry.trace import SpanKind  # type: ignore[import-not-found]
+        from opentelemetry.trace import SpanKind
     except ImportError:
         yield None
         return

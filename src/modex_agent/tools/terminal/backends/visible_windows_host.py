@@ -216,7 +216,7 @@ def _resize_monitor(proc: VisiblePtyProcess, stop: threading.Event) -> None:
         if size and size != last:
             try:
                 if hasattr(proc, "setwinsize"):
-                    proc.setwinsize(size[0], size[1])  # type: ignore[union-attr]
+                    proc.setwinsize(size[0], size[1])
             except (OSError, AttributeError):
                 pass
             last = size

@@ -150,7 +150,7 @@ class ChatMessage(BaseModel):
                         "call_id": tc.get("id"),
                     })
                 else:
-                    converted.append(tc)  # type: ignore[arg-type]
+                    converted.append(tc)
             data["tool_calls"] = converted
         return cls.model_validate(data)
 

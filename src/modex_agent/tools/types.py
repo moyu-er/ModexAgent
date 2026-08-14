@@ -415,7 +415,7 @@ def _parse_docstring_params(doc: str) -> dict[str, str]:
         param_docs[name] = desc
 
     # 2. Google style: Args:
-    name: description
+    #    name: description
     args_match = re.search(
         r"(?:Args|Arguments|Params|Parameters)\s*:\s*\n(.*?)(?=\n\s*(?:Returns?|Yields?|Raises?|Example|Note|Attributes|\"\"\"|$))",
         doc,

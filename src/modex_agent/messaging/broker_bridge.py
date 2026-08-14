@@ -251,7 +251,6 @@ class BrokerOutputAdapter(OutputAdapter):
         broker_msg = BrokerMessage(
             payload={
                 "content": message.content,
-                "session_id": session_id,
                 "metadata": metadata,
                 "session_id": metadata.get("session_id", session_id),
                 "agent_session_id": metadata.get("agent_session_id", session_id),

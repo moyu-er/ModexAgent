@@ -50,12 +50,12 @@ class ToolExecutor:
 
         async def _timed() -> ToolResult:
             return await self._timeout_interceptor.around_tool_call(
-                ctx, call_ctx, _actual  # type: ignore[misc]
+                ctx, call_ctx, _actual
             )
 
         interceptor_chain = ctx.runtime.interceptors if ctx.runtime else None
         if interceptor_chain is not None:
             return await interceptor_chain.around_tool_call(
-                ctx, call_ctx, _timed  # type: ignore[misc]
+                ctx, call_ctx, _timed
             )
         return await _timed()
