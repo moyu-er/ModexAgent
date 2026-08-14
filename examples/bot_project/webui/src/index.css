@@ -114,35 +114,39 @@
   --color-session-hover: color-mix(in oklab, var(--color-brand) 6%, var(--color-canvas-sidebar));
   --color-session-active: color-mix(in oklab, var(--color-brand) 10%, var(--color-canvas-sidebar));
 
-  /* ── Graph visualization semantic tokens (graph PRD §7.1/§7.2) ──────────
-     All values derive from existing tokens — no new colors introduced.
-     Theme-invariant aliases: they reference --color-* tokens that flip under
-     .dark, so both blocks carry the same declarations. */
+  /* ── Graph visualization semantic tokens (graph PRD §7.1/§7.2, §6 Rev 4) ─
+     Rev 4 (dot-only status): the status dot IS the status channel — the node
+     body never changes color with status. Nodes read against the canvas via
+     border-strong + a soft drop-shadow (edges are softened so nodes win the
+     hierarchy). canceled gets its own violet hue so all six status dots are
+     mutually distinct at 10px. */
   --color-graph-node-fill: var(--color-canvas-elevated);
 
-  /* graph-status tokens (PRD §6.2) — per-status hues for the status dot /
-     badge / dual-channel node tint. completed deliberately introduces an
-     independent green (light #059669 / dark #34D399, ~40° off the teal brand)
-     so completed stops colliding with running; every other status aliases an
-     existing token. Global --color-success / --color-warning stay untouched. */
+  /* graph-status tokens (PRD §6.2 Rev 4) — six MUTUALLY DISTINCT hues for
+     the status dot / badge / mini topology. completed is an independent
+     green (~40° off the teal brand); canceled is violet (was mute-45% —
+     indistinguishable from pending). Global --color-success / --color-warning
+     stay untouched. */
   --color-graph-status-pending: var(--color-mute);
   --color-graph-status-running: var(--color-brand);
   --color-graph-status-completed: #059669;
   --color-graph-status-crashed: var(--color-danger);
   --color-graph-status-suspended: var(--color-warning);
-  --color-graph-status-canceled: color-mix(in srgb, var(--color-mute) 45%, transparent);
-  --color-graph-dot-pending: var(--color-mute);
-  --color-graph-dot-canceled: color-mix(in srgb, var(--color-mute) 45%, transparent);
-  /* 双通道编码 (§6.3): 节点底色 tint 从对应状态色派生,单一真相源仍是
-     --color-graph-status-*。completed 18% / crashed 14%。 */
-  --color-graph-node-fill-completed: color-mix(in srgb, var(--color-graph-status-completed) 18%, transparent);
-  --color-graph-node-fill-crashed: color-mix(in srgb, var(--color-graph-status-crashed) 14%, transparent);
-  --color-graph-node-border: var(--color-hairline);
+  --color-graph-status-canceled: #6D5AD0;
+  --color-graph-node-border: var(--color-border-strong);
   --color-graph-node-border-active: var(--color-brand);
-  --color-graph-edge: var(--color-border-strong);
-  --color-graph-edge-active: color-mix(in srgb, var(--color-brand) 60%, transparent);
-  --color-graph-arrow: var(--color-border-strong);
-  --color-graph-arrow-active: color-mix(in srgb, var(--color-brand) 60%, transparent);
+  /* Edges recede below node borders (Rev 4 hierarchy flip: nodes > edges). */
+  --color-graph-edge: color-mix(in srgb, var(--color-border-strong) 70%, transparent);
+  --color-graph-edge-active: color-mix(in srgb, var(--color-brand) 70%, transparent);
+  --color-graph-arrow: color-mix(in srgb, var(--color-border-strong) 70%, transparent);
+  --color-graph-arrow-active: color-mix(in srgb, var(--color-brand) 70%, transparent);
+  /* START/END ghost terminals (Rev 4): quiet pill — brand-tinted fill,
+     brand border, brand text. Replaces the loud solid-brand rect. */
+  --color-graph-endpoint-fill: color-mix(in srgb, var(--color-brand) 7%, transparent);
+  --color-graph-endpoint-border: color-mix(in srgb, var(--color-brand) 40%, transparent);
+  --color-graph-endpoint-text: var(--color-brand-deep);
+  /* Legend chip container — translucent elevated surface over the dot grid. */
+  --color-graph-legend-bg: color-mix(in srgb, var(--color-canvas-elevated) 88%, transparent);
   --color-graph-deliver: var(--color-brand-bright);
   --color-graph-deliver-glow: color-mix(in srgb, var(--color-brand-bright) 12%, transparent);
   --color-graph-deliver-trail: color-mix(in srgb, var(--color-brand) 40%, transparent);
@@ -151,6 +155,9 @@
   --color-graph-mini-edge: var(--color-hairline);
   --color-graph-mini-start: var(--color-brand);
   --color-graph-mini-end: var(--color-brand);
+  /* SVG drop-shadow for node bodies (filter value, not a color). */
+  --filter-graph-node: drop-shadow(0 1px 2px rgba(15, 23, 20, 0.1))
+    drop-shadow(0 6px 16px rgba(15, 23, 20, 0.06));
   --dur-deliver: 600ms;
   --ease-deliver: var(--ease-out);
   --dur-ring-pulse: 1200ms;
@@ -300,29 +307,29 @@
   --color-session-hover: color-mix(in oklab, var(--color-brand) 8%, var(--color-canvas-sidebar));
   --color-session-active: color-mix(in oklab, var(--color-brand) 12%, var(--color-canvas-sidebar));
 
-  /* ── Graph visualization semantic tokens (graph PRD §7.1/§7.2) ──────────
+  /* ── Graph visualization semantic tokens (graph PRD §7.1/§7.2, §6 Rev 4) ─
      Same declarations as :root — they alias --color-* tokens that flip per
      theme; restated so both blocks carry the full set. */
   --color-graph-node-fill: var(--color-canvas-elevated);
 
-  /* graph-status tokens (PRD §6.2) — see :root note. completed is the one
-     deliberately NEW hue (dark #34D399), decoupled from running teal. */
+  /* graph-status tokens (PRD §6.2 Rev 4) — see :root note. completed is the
+     independent green; canceled is violet so all six dots stay distinct. */
   --color-graph-status-pending: var(--color-mute);
   --color-graph-status-running: var(--color-brand);
   --color-graph-status-completed: #34D399;
   --color-graph-status-crashed: var(--color-danger);
   --color-graph-status-suspended: var(--color-warning);
-  --color-graph-status-canceled: color-mix(in srgb, var(--color-mute) 45%, transparent);
-  --color-graph-dot-pending: var(--color-mute);
-  --color-graph-dot-canceled: color-mix(in srgb, var(--color-mute) 45%, transparent);
-  --color-graph-node-fill-completed: color-mix(in srgb, var(--color-graph-status-completed) 18%, transparent);
-  --color-graph-node-fill-crashed: color-mix(in srgb, var(--color-graph-status-crashed) 14%, transparent);
-  --color-graph-node-border: var(--color-hairline);
+  --color-graph-status-canceled: #A78BFA;
+  --color-graph-node-border: var(--color-border-strong);
   --color-graph-node-border-active: var(--color-brand);
-  --color-graph-edge: var(--color-border-strong);
-  --color-graph-edge-active: color-mix(in srgb, var(--color-brand) 60%, transparent);
-  --color-graph-arrow: var(--color-border-strong);
-  --color-graph-arrow-active: color-mix(in srgb, var(--color-brand) 60%, transparent);
+  --color-graph-edge: color-mix(in srgb, var(--color-border-strong) 70%, transparent);
+  --color-graph-edge-active: color-mix(in srgb, var(--color-brand) 70%, transparent);
+  --color-graph-arrow: color-mix(in srgb, var(--color-border-strong) 70%, transparent);
+  --color-graph-arrow-active: color-mix(in srgb, var(--color-brand) 70%, transparent);
+  --color-graph-endpoint-fill: color-mix(in srgb, var(--color-brand) 7%, transparent);
+  --color-graph-endpoint-border: color-mix(in srgb, var(--color-brand) 40%, transparent);
+  --color-graph-endpoint-text: var(--color-brand-bright);
+  --color-graph-legend-bg: color-mix(in srgb, var(--color-canvas-elevated) 88%, transparent);
   --color-graph-deliver: var(--color-brand-bright);
   --color-graph-deliver-glow: color-mix(in srgb, var(--color-brand-bright) 12%, transparent);
   --color-graph-deliver-trail: color-mix(in srgb, var(--color-brand) 40%, transparent);
@@ -331,6 +338,8 @@
   --color-graph-mini-edge: var(--color-hairline);
   --color-graph-mini-start: var(--color-brand);
   --color-graph-mini-end: var(--color-brand);
+  --filter-graph-node: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35))
+    drop-shadow(0 8px 20px rgba(0, 0, 0, 0.25));
   --dur-deliver: 600ms;
   --ease-deliver: var(--ease-out);
   --dur-ring-pulse: 1200ms;
@@ -1094,10 +1103,9 @@
   }
 
   /* ── GraphStatusBadge per-status chips (PRD §6.4) ───────────────────────
-   * Filled chip: text = status color, border = status 35% mix, bg = status
-   * 12% mix. pending 走灰阶分离(mute 文本 + hairline 边框 + 8% bg);
-   * canceled(stopped)加删除线。全部色值由 --color-graph-status-* 派生,
-   * 无裸 hex。 */
+    * Filled chip: text = status color, border = status 35% mix, bg = status
+    * 12% mix. pending 走灰阶分离(mute 文本 + hairline 边框 + 8% bg);
+    * canceled(stopped)加删除线,chip 色与节点圆点同源(violet,Rev 4)。 */
   .graph-badge-pending {
     color: var(--color-mute);
     border-color: var(--color-hairline);
@@ -1124,9 +1132,9 @@
     background: color-mix(in srgb, var(--color-graph-status-suspended) 12%, transparent);
   }
   .graph-badge-canceled {
-    color: var(--color-faint);
-    border-color: color-mix(in srgb, var(--color-mute) 35%, transparent);
-    background: color-mix(in srgb, var(--color-mute) 12%, transparent);
+    color: var(--color-graph-status-canceled);
+    border-color: color-mix(in srgb, var(--color-graph-status-canceled) 35%, transparent);
+    background: color-mix(in srgb, var(--color-graph-status-canceled) 12%, transparent);
     text-decoration: line-through;
   }
 
