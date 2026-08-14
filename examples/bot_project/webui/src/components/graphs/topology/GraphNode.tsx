@@ -9,8 +9,14 @@
  * - START/END 无 glyph、无 sub、无 status dot — 仅标签居中显示,brand fill 填充,
  *   字体 font-mono text-xs font-semibold(标签化视觉)。
  * - **agent 节点单击即跳转会话**(onOpen);非 agent 功能节点单击选中(onSelect)。
- * - 状态着色按 §5.2 表:running = 空心 dot + brand 边框 + 描边槽位;
- *   completed = 实心 dot + brand-soft 底色(双通道,动效降级下仍可分辨)。
+ * - 状态着色按 §6.3 六状态表(双通道:描边 + 底色 tint + dot),全部走
+ *   graph-status / graph-dot 系列 token(不直连 brand/warning):
+ *   running = graph-status-running 描边 + 空心 dot + ActiveNodeRing;completed = 绿描边 +
+ *   18% tint 底色 + 实心绿 dot;crashed = danger 描边 + 14% tint 底色 +
+ *   实心红 dot;suspended = graph-status-suspended 虚线描边;canceled = 默认描边 + 名称
+ *   删除线;pending = 默认。动效降级下静态双通道仍可分辨全部六态。
+ * - 空心 dot 的描边复用 style.bodyStroke(同一 §6.3 表驱动,无需新增 dotStroke
+ *   字段):running 是唯一 hollow 状态,其 dot 描边恒等于节点本体描边。
  * - running 时渲染外扩 4px 同形圆角矩形描边槽位(data-ring-slot,无 stroke)
  *   — 几何由 ringSlotGeometry() 导出,G03 的 ActiveNodeRing 复用同一几何。
  */
@@ -73,7 +79,7 @@ const SUB_MAX_CHARS = 14;
 const ENDPOINT_NAME_MAX_CHARS = 17;
 
 interface StatusStyle {
-  /** dot 填充(hollow 时忽略,改用描边)。 */
+  /** dot 填充(hollow 时忽略,描边复用 bodyStroke — 见文件头)。 */
   readonly dotFill: string;
   readonly dotHollow: boolean;
   readonly bodyFill: string;
@@ -81,7 +87,7 @@ interface StatusStyle {
   readonly dashed: boolean;
 }
 
-/** §5.2 状态着色表(Rev 2 双通道版,含"节点底色"列)。 */
+/** §6.3 六状态着色表(双通道版:状态色描边 + tint 底色 + dot)。 */
 const STATUS_STYLES: Readonly<Record<GraphNodeVisualStatus, StatusStyle>> = {
   pending: {
     dotFill: "fill-graph-dot-pending",
@@ -94,21 +100,21 @@ const STATUS_STYLES: Readonly<Record<GraphNodeVisualStatus, StatusStyle>> = {
     dotFill: "",
     dotHollow: true,
     bodyFill: "fill-graph-node-fill",
-    bodyStroke: "stroke-brand",
+    bodyStroke: "stroke-graph-status-running",
     dashed: false,
   },
   completed: {
-    dotFill: "fill-success",
+    dotFill: "fill-graph-status-completed",
     dotHollow: false,
-    bodyFill: "fill-graph-node-fill-done",
-    bodyStroke: "stroke-graph-node-border",
+    bodyFill: "fill-graph-node-fill-completed",
+    bodyStroke: "stroke-graph-status-completed",
     dashed: false,
   },
   crashed: {
-    dotFill: "fill-danger",
+    dotFill: "fill-graph-status-crashed",
     dotHollow: false,
-    bodyFill: "fill-graph-node-fill",
-    bodyStroke: "stroke-danger",
+    bodyFill: "fill-graph-node-fill-crashed",
+    bodyStroke: "stroke-graph-status-crashed",
     dashed: false,
   },
   canceled: {
@@ -119,10 +125,10 @@ const STATUS_STYLES: Readonly<Record<GraphNodeVisualStatus, StatusStyle>> = {
     dashed: false,
   },
   suspended: {
-    dotFill: "fill-warning",
+    dotFill: "fill-graph-status-suspended",
     dotHollow: false,
     bodyFill: "fill-graph-node-fill",
-    bodyStroke: "stroke-warning",
+    bodyStroke: "stroke-graph-status-suspended",
     dashed: true,
   },
 };
@@ -316,7 +322,7 @@ export const GraphNode: FC<GraphNodeProps> = ({
           <text
             x={labelX}
             y={-4}
-            className="fill-current font-sans text-sm font-medium text-ink"
+            className={`fill-current font-sans text-sm font-medium text-ink${status === "canceled" ? " line-through" : ""}`}
           >
             {nameText}
           </text>
@@ -336,7 +342,7 @@ export const GraphNode: FC<GraphNodeProps> = ({
               cy={0}
               r={DOT_SIZE / 2}
               strokeWidth={1.5}
-              className={`${style.bodyFill} stroke-brand`}
+              className={`${style.bodyFill} ${style.bodyStroke}`}
             />
           ) : (
             <circle

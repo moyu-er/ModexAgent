@@ -587,6 +587,8 @@ export const en = {
     legendRunning: "running",
     legendCrashed: "crashed",
     legendPending: "pending",
+    legendSuspended: "suspended",
+    legendCanceled: "canceled",
     // Spec 编辑器
     preview: "preview",
     unsavedChanges: "unsaved changes",
@@ -614,8 +616,13 @@ export const en = {
     // Shared by GraphInstanceDetail
     noInput: "(no input)",
     noOutput: "No output",
-    // GraphSpecDetail (spec detail view: topology + instances + composer)
+    // GraphSpecDetail (spec detail view: topology + instances + New Instance modal)
     triggerInstance: "Trigger a new instance... (Enter to run)",
+    newInstance: "New Instance",
+    timeJustNow: "just now",
+    timeMinutesAgo: "{count}m ago",
+    timeHoursAgo: "{count}h ago",
+    timeDaysAgo: "{count}d ago",
     // GraphInstanceDetail (instance conversation flow + re-invoke)
     backToSpec: "Spec",
     invoke: "Invoke",

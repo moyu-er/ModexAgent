@@ -86,7 +86,14 @@ export default {
         // 不要加 /alpha 修饰用法（var() token 上不生成 CSS）。
         graph: {
           "node-fill": v("graph-node-fill"),
-          "node-fill-done": v("graph-node-fill-done"),
+          "node-fill-completed": v("graph-node-fill-completed"),
+          "node-fill-crashed": v("graph-node-fill-crashed"),
+          "status-pending": v("graph-status-pending"),
+          "status-running": v("graph-status-running"),
+          "status-completed": v("graph-status-completed"),
+          "status-crashed": v("graph-status-crashed"),
+          "status-suspended": v("graph-status-suspended"),
+          "status-canceled": v("graph-status-canceled"),
           "dot-pending": v("graph-dot-pending"),
           "dot-canceled": v("graph-dot-canceled"),
           "node-border": v("graph-node-border"),

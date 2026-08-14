@@ -5,7 +5,10 @@
  *   避免 viewBox meet 模式与 transform 叠加导致节点过大。
  * - 初始 fit-to-screen: 自动缩放到容器,但不超过 1.0x(节点不被放大)。
  * - 滚轮缩放 0.5x–2x(以光标为中心)+ 指针拖拽平移。
- * - 右上角叠加状态图例。
+ * - 右上角叠加六状态彩色图例(§6.3):每状态一枚 chip(真实状态色圆点
+ *   + text-body 标签;crashed 用 ✕ 字形),双主题在点阵背景上可读。
+ * - crash flash(§8.1):crashNodeNames 命中的节点绘制红色外扩描边
+ *   (ringSlotGeometry 同形几何,crashed 状态色);存续由调用方的 220ms 定时器控制。
  * - agent 节点单击 → onOpenSession;非 agent 单击 → onSelectNode;空白点击取消选中。
  */
 import {
@@ -16,7 +19,7 @@ import {
   type FC,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { useT } from "../../../i18n";
+import { useT, type MessageKey } from "../../../i18n";
 import type { ParsedGraphTopology } from "../yaml/parseGraphSpec";
 import {
   edgeKey,
@@ -25,7 +28,11 @@ import {
   type LayoutResult,
 } from "./layout";
 import { GraphEdge } from "./GraphEdge";
-import { GraphNode, type GraphNodeVisualStatus } from "./GraphNode";
+import {
+  GraphNode,
+  ringSlotGeometry,
+  type GraphNodeVisualStatus,
+} from "./GraphNode";
 import { DeliverPulse } from "./DeliverPulse";
 import { ActiveNodeRing } from "./ActiveNodeRing";
 
@@ -41,6 +48,22 @@ export const MAX_ZOOM = 2;
 const DRAG_THRESHOLD_PX = 4;
 /** 内容四周留白(px,用户坐标系)。 */
 const CONTENT_PAD = 48;
+
+/** 图例 chip(§6.3):crashed 无圆点,用 ✕ 字形(text 色 = 状态色)。 */
+interface LegendChip {
+  status: GraphNodeVisualStatus;
+  labelKey: MessageKey;
+  dotClass: string | null;
+}
+
+const LEGEND_CHIPS: ReadonlyArray<LegendChip> = [
+  { status: "pending", labelKey: "graphs.legendPending", dotClass: "bg-graph-status-pending" },
+  { status: "running", labelKey: "graphs.legendRunning", dotClass: "bg-graph-status-running" },
+  { status: "completed", labelKey: "graphs.legendCompleted", dotClass: "bg-graph-status-completed" },
+  { status: "crashed", labelKey: "graphs.legendCrashed", dotClass: null },
+  { status: "suspended", labelKey: "graphs.legendSuspended", dotClass: "bg-graph-status-suspended" },
+  { status: "canceled", labelKey: "graphs.legendCanceled", dotClass: "bg-graph-status-canceled" },
+];
 
 export function clampZoom(scale: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, scale));
@@ -129,6 +152,8 @@ export interface TopologyCanvasProps {
   nodeStatuses?: Readonly<Record<string, GraphNodeVisualStatus>>;
   activeEdges?: ReadonlySet<string>;
   pulses?: ReadonlyArray<PulseSignal>;
+  /** Names of nodes currently showing the red crash-flash outline (§8.1). */
+  crashNodeNames?: ReadonlySet<string>;
   onPulseComplete?: (pulseId: number) => void;
   selectedNodeId?: string | null;
   onSelectNode?: (nodeName: string | null) => void;
@@ -141,6 +166,7 @@ export const TopologyCanvas: FC<TopologyCanvasProps> = ({
   nodeStatuses,
   activeEdges,
   pulses,
+  crashNodeNames,
   onPulseComplete,
   selectedNodeId = null,
   onSelectNode,
@@ -291,14 +317,51 @@ export const TopologyCanvas: FC<TopologyCanvasProps> = ({
               />
             );
           })}
+          {topology.nodes.map((node) => {
+            if (!crashNodeNames?.has(node.name)) return null;
+            const rect = layout.nodes.get(node.name);
+            if (!rect) return null;
+            const flash = ringSlotGeometry(rect.width, rect.height);
+            return (
+              <rect
+                key={`crash-${node.name}`}
+                data-crash-flash=""
+                x={flash.x}
+                y={flash.y}
+                width={flash.width}
+                height={flash.height}
+                rx={flash.rx}
+                fill="none"
+                strokeWidth={2.5}
+                pointerEvents="none"
+                className="stroke-graph-status-crashed"
+                transform={`translate(${rect.x} ${rect.y})`}
+              />
+            );
+          })}
         </g>
       </svg>
       <div
-        className="pointer-events-none absolute right-3 top-3 font-mono text-xs text-faint"
+        className="pointer-events-none absolute right-3 top-3 flex items-center gap-3 font-mono text-xs text-body"
         data-testid="graph-canvas-legend"
       >
-        ● {t("graphs.legendCompleted")} · ◎ {t("graphs.legendRunning")} · ●{" "}
-        {t("graphs.legendCrashed")} · ○ {t("graphs.legendPending")}
+        {LEGEND_CHIPS.map((chip) => (
+          <span
+            key={chip.status}
+            data-legend-status={chip.status}
+            className="flex items-center gap-1"
+          >
+            {chip.dotClass !== null ? (
+              <span
+                data-legend-dot=""
+                className={`h-2 w-2 rounded-full ${chip.dotClass}`}
+              />
+            ) : (
+              <span className="text-graph-status-crashed">✕</span>
+            )}
+            {t(chip.labelKey)}
+          </span>
+        ))}
       </div>
     </div>
   );

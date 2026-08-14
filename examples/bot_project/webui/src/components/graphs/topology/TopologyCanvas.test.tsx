@@ -63,14 +63,45 @@ describe("TopologyCanvas", () => {
     }
   });
 
-  it("renders the status legend (§6.1, i18n legend keys)", () => {
+  it("renders the colored 6-status legend chips (PRD §6.3, i18n legend keys)", () => {
     renderCanvas();
     const legend = screen.getByTestId("graph-canvas-legend");
-    expect(legend.textContent).toBe(
-      "● completed · ◎ running · ● crashed · ○ pending",
+    expect(legend.getAttribute("class")).toContain("text-xs");
+    expect(legend.getAttribute("class")).toContain("text-body");
+    const chips = legend.querySelectorAll("[data-legend-status]");
+    expect(chips).toHaveLength(6);
+    const dotOf = (status: string) =>
+      legend.querySelector(`[data-legend-status="${status}"] [data-legend-dot]`)!;
+    expect(dotOf("pending").getAttribute("class")).toContain(
+      "bg-graph-status-pending",
     );
-    expect(legend.getAttribute("class")).toContain("font-mono");
-    expect(legend.getAttribute("class")).toContain("text-faint");
+    expect(dotOf("running").getAttribute("class")).toContain(
+      "bg-graph-status-running",
+    );
+    expect(dotOf("completed").getAttribute("class")).toContain(
+      "bg-graph-status-completed",
+    );
+    expect(dotOf("suspended").getAttribute("class")).toContain(
+      "bg-graph-status-suspended",
+    );
+    expect(dotOf("canceled").getAttribute("class")).toContain(
+      "bg-graph-status-canceled",
+    );
+    // crashed 用 ✕ 字形而非圆点
+    const crashed = legend.querySelector('[data-legend-status="crashed"]')!;
+    expect(crashed.textContent).toContain("✕");
+    expect(crashed.querySelector("[data-legend-dot]")).toBeNull();
+    // 六个状态标签全部走 i18n
+    for (const label of [
+      "pending",
+      "running",
+      "completed",
+      "crashed",
+      "suspended",
+      "canceled",
+    ]) {
+      expect(legend.textContent).toContain(label);
+    }
   });
 
   it("passes node statuses through to nodes", () => {
@@ -195,6 +226,41 @@ describe("TopologyCanvas", () => {
       expect(ring.getAttribute("height")).toBe("52");
       expect(ring.getAttribute("rx")).toBe("16");
       expect(ring.getAttribute("class")).toContain("graph-ring-pulse");
+    });
+  });
+
+  // ── Crash-flash outline (§8.1) ─────────────────────────────────
+
+  describe("crash flash outline (§8.1)", () => {
+    it("renders a red flash outline for each node named in crashNodeNames", () => {
+      renderCanvas({ crashNodeNames: new Set(["implementer"]) });
+      const viewport = screen.getByTestId("topology-viewport");
+      const flashes = viewport.querySelectorAll("[data-crash-flash]");
+      expect(flashes).toHaveLength(1);
+      const flash = flashes[0]!;
+      // Geometry mirrors ringSlotGeometry: 140×44 node → 148×52 outset rect, rx 16.
+      expect(flash.getAttribute("width")).toBe("148");
+      expect(flash.getAttribute("height")).toBe("52");
+      expect(flash.getAttribute("rx")).toBe("16");
+      expect(flash.getAttribute("class")).toContain("stroke-graph-status-crashed");
+      expect(flash.getAttribute("fill")).toBe("none");
+      expect(flash.getAttribute("pointer-events")).toBe("none");
+    });
+
+    it("renders no flash outline when crashNodeNames is empty or absent", () => {
+      const { unmount } = renderCanvas({ crashNodeNames: new Set() });
+      expect(
+        screen
+          .getByTestId("topology-viewport")
+          .querySelectorAll("[data-crash-flash]"),
+      ).toHaveLength(0);
+      unmount();
+      renderCanvas();
+      expect(
+        screen
+          .getByTestId("topology-viewport")
+          .querySelectorAll("[data-crash-flash]"),
+      ).toHaveLength(0);
     });
   });
 

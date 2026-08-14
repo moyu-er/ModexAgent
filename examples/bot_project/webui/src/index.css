@@ -119,9 +119,24 @@
      Theme-invariant aliases: they reference --color-* tokens that flip under
      .dark, so both blocks carry the same declarations. */
   --color-graph-node-fill: var(--color-canvas-elevated);
+
+  /* graph-status tokens (PRD §6.2) — per-status hues for the status dot /
+     badge / dual-channel node tint. completed deliberately introduces an
+     independent green (light #059669 / dark #34D399, ~40° off the teal brand)
+     so completed stops colliding with running; every other status aliases an
+     existing token. Global --color-success / --color-warning stay untouched. */
+  --color-graph-status-pending: var(--color-mute);
+  --color-graph-status-running: var(--color-brand);
+  --color-graph-status-completed: #059669;
+  --color-graph-status-crashed: var(--color-danger);
+  --color-graph-status-suspended: var(--color-warning);
+  --color-graph-status-canceled: color-mix(in srgb, var(--color-mute) 45%, transparent);
   --color-graph-dot-pending: var(--color-mute);
   --color-graph-dot-canceled: color-mix(in srgb, var(--color-mute) 45%, transparent);
-  --color-graph-node-fill-done: color-mix(in srgb, var(--color-brand) 18%, transparent); /* completed 双通道编码: 底色 tint (18% brand) */
+  /* 双通道编码 (§6.3): 节点底色 tint 从对应状态色派生,单一真相源仍是
+     --color-graph-status-*。completed 18% / crashed 14%。 */
+  --color-graph-node-fill-completed: color-mix(in srgb, var(--color-graph-status-completed) 18%, transparent);
+  --color-graph-node-fill-crashed: color-mix(in srgb, var(--color-graph-status-crashed) 14%, transparent);
   --color-graph-node-border: var(--color-hairline);
   --color-graph-node-border-active: var(--color-brand);
   --color-graph-edge: var(--color-border-strong);
@@ -289,9 +304,19 @@
      Same declarations as :root — they alias --color-* tokens that flip per
      theme; restated so both blocks carry the full set. */
   --color-graph-node-fill: var(--color-canvas-elevated);
+
+  /* graph-status tokens (PRD §6.2) — see :root note. completed is the one
+     deliberately NEW hue (dark #34D399), decoupled from running teal. */
+  --color-graph-status-pending: var(--color-mute);
+  --color-graph-status-running: var(--color-brand);
+  --color-graph-status-completed: #34D399;
+  --color-graph-status-crashed: var(--color-danger);
+  --color-graph-status-suspended: var(--color-warning);
+  --color-graph-status-canceled: color-mix(in srgb, var(--color-mute) 45%, transparent);
   --color-graph-dot-pending: var(--color-mute);
   --color-graph-dot-canceled: color-mix(in srgb, var(--color-mute) 45%, transparent);
-  --color-graph-node-fill-done: color-mix(in srgb, var(--color-brand) 18%, transparent);
+  --color-graph-node-fill-completed: color-mix(in srgb, var(--color-graph-status-completed) 18%, transparent);
+  --color-graph-node-fill-crashed: color-mix(in srgb, var(--color-graph-status-crashed) 14%, transparent);
   --color-graph-node-border: var(--color-hairline);
   --color-graph-node-border-active: var(--color-brand);
   --color-graph-edge: var(--color-border-strong);
@@ -1066,6 +1091,43 @@
   .graph-ring-pulse {
     animation: graph-ring-pulse var(--dur-ring-pulse) var(--ease-ring-pulse)
       infinite;
+  }
+
+  /* ── GraphStatusBadge per-status chips (PRD §6.4) ───────────────────────
+   * Filled chip: text = status color, border = status 35% mix, bg = status
+   * 12% mix. pending 走灰阶分离(mute 文本 + hairline 边框 + 8% bg);
+   * canceled(stopped)加删除线。全部色值由 --color-graph-status-* 派生,
+   * 无裸 hex。 */
+  .graph-badge-pending {
+    color: var(--color-mute);
+    border-color: var(--color-hairline);
+    background: color-mix(in srgb, var(--color-graph-status-pending) 8%, transparent);
+  }
+  .graph-badge-running {
+    color: var(--color-graph-status-running);
+    border-color: color-mix(in srgb, var(--color-graph-status-running) 35%, transparent);
+    background: color-mix(in srgb, var(--color-graph-status-running) 12%, transparent);
+  }
+  .graph-badge-completed {
+    color: var(--color-graph-status-completed);
+    border-color: color-mix(in srgb, var(--color-graph-status-completed) 35%, transparent);
+    background: color-mix(in srgb, var(--color-graph-status-completed) 12%, transparent);
+  }
+  .graph-badge-crashed {
+    color: var(--color-graph-status-crashed);
+    border-color: color-mix(in srgb, var(--color-graph-status-crashed) 35%, transparent);
+    background: color-mix(in srgb, var(--color-graph-status-crashed) 12%, transparent);
+  }
+  .graph-badge-suspended {
+    color: var(--color-graph-status-suspended);
+    border-color: color-mix(in srgb, var(--color-graph-status-suspended) 35%, transparent);
+    background: color-mix(in srgb, var(--color-graph-status-suspended) 12%, transparent);
+  }
+  .graph-badge-canceled {
+    color: var(--color-faint);
+    border-color: color-mix(in srgb, var(--color-mute) 35%, transparent);
+    background: color-mix(in srgb, var(--color-mute) 12%, transparent);
+    text-decoration: line-through;
   }
 
 @layer utilities {

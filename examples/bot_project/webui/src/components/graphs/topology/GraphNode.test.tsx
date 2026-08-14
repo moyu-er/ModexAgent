@@ -102,10 +102,10 @@ describe("GraphNode", () => {
       expect(ring).toBeNull();
     });
 
-    it("running: hollow brand dot + brand border + ring slot reserved", () => {
+    it("running: hollow graph-status dot + graph-status border + ring slot reserved", () => {
       const { body, dot, ring } = bodyAndDot("running");
-      expect(body.getAttribute("class")).toContain("stroke-brand");
-      expect(dot.getAttribute("class")).toContain("stroke-brand");
+      expect(body.getAttribute("class")).toContain("stroke-graph-status-running");
+      expect(dot.getAttribute("class")).toContain("stroke-graph-status-running");
       expect(dot.getAttribute("class")).toContain("fill-graph-node-fill");
       expect(ring).not.toBeNull();
       // 外扩 4px 同形圆角矩形(§4.4)
@@ -116,29 +116,45 @@ describe("GraphNode", () => {
       expect(ring!.getAttribute("rx")).toBe("16");
     });
 
-    it("completed: solid success dot + brand-soft body fill (双通道)", () => {
+    it("completed: solid green dot + green stroke + 18% status tint (双通道)", () => {
       const { body, dot, ring } = bodyAndDot("completed");
-      expect(dot.getAttribute("class")).toContain("fill-success");
-      expect(body.getAttribute("class")).toContain("fill-graph-node-fill-done");
+      expect(dot.getAttribute("class")).toContain("fill-graph-status-completed");
+      expect(body.getAttribute("class")).toContain("stroke-graph-status-completed");
+      expect(body.getAttribute("class")).toContain("fill-graph-node-fill-completed");
       expect(ring).toBeNull();
     });
 
-    it("crashed: danger dot + danger border", () => {
+    it("crashed: solid red dot + danger stroke + 14% status tint (双通道)", () => {
       const { body, dot } = bodyAndDot("crashed");
-      expect(dot.getAttribute("class")).toContain("fill-danger");
-      expect(body.getAttribute("class")).toContain("stroke-danger");
+      expect(dot.getAttribute("class")).toContain("fill-graph-status-crashed");
+      expect(body.getAttribute("class")).toContain("stroke-graph-status-crashed");
+      expect(body.getAttribute("class")).toContain("fill-graph-node-fill-crashed");
     });
 
-    it("canceled: graph-dot-canceled dot, hairline border", () => {
-      const { body, dot } = bodyAndDot("canceled");
+    it("canceled: 45% mute dot, hairline border, name struck through", () => {
+      const { container } = renderNode(agentNode(), { status: "canceled" });
+      const body = container.querySelector("[data-node-body]")!;
+      const dot = container.querySelector("[data-status-dot]")!;
       expect(dot.getAttribute("class")).toContain("fill-graph-dot-canceled");
       expect(body.getAttribute("class")).toContain("stroke-graph-node-border");
+      const name = [...container.querySelectorAll("text")].find(
+        (el) => el.textContent === "designer",
+      )!;
+      expect(name.getAttribute("class")).toContain("line-through");
     });
 
-    it("suspended: warning dot + warning dashed border", () => {
+    it("non-canceled statuses leave the name without strikethrough", () => {
+      const { container } = renderNode(agentNode(), { status: "completed" });
+      const name = [...container.querySelectorAll("text")].find(
+        (el) => el.textContent === "designer",
+      )!;
+      expect(name.getAttribute("class")).not.toContain("line-through");
+    });
+
+    it("suspended: graph-status dot + graph-status dashed border", () => {
       const { body, dot } = bodyAndDot("suspended");
-      expect(dot.getAttribute("class")).toContain("fill-warning");
-      expect(body.getAttribute("class")).toContain("stroke-warning");
+      expect(dot.getAttribute("class")).toContain("fill-graph-status-suspended");
+      expect(body.getAttribute("class")).toContain("stroke-graph-status-suspended");
       expect(body.getAttribute("stroke-dasharray")).toBe("5 3");
     });
   });

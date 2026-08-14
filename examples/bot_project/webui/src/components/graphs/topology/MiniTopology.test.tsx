@@ -76,9 +76,23 @@ describe("MiniTopology", () => {
       <MiniTopology topology={SMALL} nodeStatuses={{ b: "running" }} />,
     );
     const running = container.querySelector('[data-mini-node="b"]')!;
-    expect(running.getAttribute("class")).toContain("fill-brand");
+    expect(running.getAttribute("class")).toContain("fill-graph-status-running");
     const idle = container.querySelector('[data-mini-node="a"]')!;
     expect(idle.getAttribute("class")).toContain("fill-graph-mini-node");
+  });
+
+  it("syncs every status to the graph-status palette (§6.5)", () => {
+    const { container } = render(
+      <MiniTopology
+        topology={SMALL}
+        nodeStatuses={{ a: "completed", b: "crashed", c: "suspended" }}
+      />,
+    );
+    const fillOf = (name: string) =>
+      container.querySelector(`[data-mini-node="${name}"]`)!.getAttribute("class")!;
+    expect(fillOf("a")).toContain("fill-graph-status-completed");
+    expect(fillOf("b")).toContain("fill-graph-status-crashed");
+    expect(fillOf("c")).toContain("fill-graph-status-suspended");
   });
 });
 
