@@ -1,16 +1,22 @@
-// GraphExecutionViewer.test.tsx — integration tests for the hero view (G05).
+// GraphInstanceDetail.modal.test.tsx — integration tests for the Run Graph
+// modal (migrated from the retired full-page execution viewer test suite).
 //
-// Tests how the viewer orchestrates TopologyCanvas, sidebar panels,
-// inline deliver panel, and control buttons. useGraphExecution is mocked to return
-// controlled state; getSpec is mocked to return YAML that parseGraphSpecYaml
-// parses for real (testing the real spec→topology→canvas pipeline).
+// The modal carries the full live-graph experience: top control bar
+// (spec name · version chip · status badge · Pause/Resume/Stop), full-size
+// TopologyCanvas, context sidebar (NodeDetailPanel / InstanceSummary +
+// EventTimeline), and the inline deliver panel. useGraphExecution is mocked
+// to return controlled state; getSpec is mocked to return YAML that
+// parseGraphSpecYaml parses for real (testing the real spec→topology→canvas
+// pipeline). Every test opens the modal via the header "Topology" button.
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
-import { GraphExecutionViewer } from "./GraphExecutionViewer";
+import { render, screen, waitFor, fireEvent, within, act } from "@testing-library/react";
+import { GraphInstanceDetail } from "./GraphInstanceDetail";
 import { useGraphExecution } from "../../hooks/useGraphExecution";
 import {
   getSpec,
+  getInvocations,
+  invokeInstance,
   deliverToNode,
   pauseGraph,
   resumeGraph,
@@ -26,6 +32,8 @@ vi.mock("../../hooks/useGraphExecution", () => ({
 
 vi.mock("../../lib/graphsApi", () => ({
   getSpec: vi.fn(),
+  getInvocations: vi.fn(),
+  invokeInstance: vi.fn(),
   deliverToNode: vi.fn(),
   pauseGraph: vi.fn(),
   resumeGraph: vi.fn(),
@@ -34,6 +42,8 @@ vi.mock("../../lib/graphsApi", () => ({
 
 const mockUseGraphExecution = vi.mocked(useGraphExecution);
 const mockGetSpec = vi.mocked(getSpec);
+const mockGetInvocations = vi.mocked(getInvocations);
+const mockInvokeInstance = vi.mocked(invokeInstance);
 const mockDeliverToNode = vi.mocked(deliverToNode);
 const mockPauseGraph = vi.mocked(pauseGraph);
 const mockResumeGraph = vi.mocked(resumeGraph);
@@ -91,6 +101,7 @@ function mockHook(overrides: {
   pulses?: unknown[];
   crashFlashes?: unknown[];
   error?: string | null;
+  dismissCrashFlash?: (id: number) => void;
 } = {}): void {
   mockUseGraphExecution.mockReturnValue({
     instance: overrides.instance ?? makeInstance(),
@@ -100,19 +111,19 @@ function mockHook(overrides: {
     error: overrides.error ?? null,
     refresh: vi.fn(),
     dismissPulse: vi.fn(),
-    dismissCrashFlash: vi.fn(),
+    dismissCrashFlash: overrides.dismissCrashFlash ?? vi.fn(),
   } as never);
 }
 
-function renderViewer(props?: {
+function renderDetail(props?: {
   workspaceId?: string;
   instanceId?: string;
   onBack?: ReturnType<typeof vi.fn>;
   onJumpToSession?: ReturnType<typeof vi.fn>;
-}): void {
-  render(
+}) {
+  return render(
     <ToastProvider>
-      <GraphExecutionViewer
+      <GraphInstanceDetail
         workspaceId={props?.workspaceId ?? ""}
         instanceId={props?.instanceId ?? "12345"}
         onBack={props?.onBack ?? vi.fn()}
@@ -122,10 +133,24 @@ function renderViewer(props?: {
   );
 }
 
-async function waitForCanvas(): Promise<void> {
+async function waitForDialog(): Promise<HTMLElement> {
   await waitFor(() => {
-    expect(screen.getByTestId("topology-canvas")).toBeTruthy();
+    expect(screen.getByTestId("run-graph-modal")).toBeTruthy();
   });
+  return screen.getByTestId("run-graph-modal");
+}
+
+async function openModal(props?: Parameters<typeof renderDetail>[0]): Promise<HTMLElement> {
+  renderDetail(props);
+  await waitFor(() => {
+    expect(screen.getByTestId("graph-instance-detail")).toBeTruthy();
+  });
+  fireEvent.click(screen.getByText("Topology"));
+  const dialog = await waitForDialog();
+  await waitFor(() => {
+    expect(within(dialog).getByTestId("topology-canvas")).toBeTruthy();
+  });
+  return dialog;
 }
 
 // ── Setup / cleanup ─────────────────────────────────────────────────────────
@@ -133,6 +158,8 @@ async function waitForCanvas(): Promise<void> {
 beforeEach(() => {
   mockUseGraphExecution.mockReset();
   mockGetSpec.mockReset();
+  mockGetInvocations.mockReset();
+  mockInvokeInstance.mockReset();
   mockDeliverToNode.mockReset();
   mockPauseGraph.mockReset();
   mockResumeGraph.mockReset();
@@ -140,6 +167,11 @@ beforeEach(() => {
 
   mockHook();
   mockGetSpec.mockResolvedValue(SPEC_RESPONSE);
+  mockGetInvocations.mockResolvedValue([]);
+  mockInvokeInstance.mockResolvedValue({
+    graph_instance_id: "12345",
+    status: "running",
+  });
   mockDeliverToNode.mockResolvedValue({
     graph_instance_id: "12345",
     node_name: "designer",
@@ -165,16 +197,14 @@ afterEach(() => {
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
-describe("GraphExecutionViewer — layout", () => {
-  it("renders control bar with Back, instance ID, status badge, and control buttons", async () => {
-    renderViewer();
-    await waitForCanvas();
+describe("Run graph modal — layout", () => {
+  it("renders top bar with spec name, version chip, status badge, and control buttons", async () => {
+    const dialog = await openModal();
 
-    const bar = screen.getByTestId("control-bar");
-    // Back button
-    expect(within(bar).getByText("Back")).toBeTruthy();
-    // Instance ID (mono)
-    expect(within(bar).getByText("12345")).toBeTruthy();
+    const bar = within(dialog).getByTestId("control-bar");
+    // Spec name + version chip
+    expect(within(bar).getByText("review_workflow")).toBeTruthy();
+    expect(within(bar).getByText("spec v1.0")).toBeTruthy();
     // Status badge shows "running"
     expect(within(bar).getByText("running")).toBeTruthy();
     // Control buttons
@@ -182,89 +212,81 @@ describe("GraphExecutionViewer — layout", () => {
     expect(within(bar).getByText("Stop")).toBeTruthy();
   });
 
-  it("renders topology canvas, sidebar, and bottom summary bar", async () => {
-    renderViewer();
-    await waitForCanvas();
+  it("renders topology canvas, sidebar with instance summary, and event timeline", async () => {
+    const dialog = await openModal();
 
     // Canvas
-    expect(screen.getByTestId("topology-canvas")).toBeTruthy();
+    expect(within(dialog).getByTestId("topology-canvas")).toBeTruthy();
     // Sidebar — instance summary (no node selected)
-    expect(screen.getByTestId("sidebar-instance-summary")).toBeTruthy();
+    expect(within(dialog).getByTestId("sidebar-instance-summary")).toBeTruthy();
     // Progress ring
-    expect(screen.getByTestId("progress-ring")).toBeTruthy();
+    expect(within(dialog).getByTestId("progress-ring")).toBeTruthy();
     // Event timeline
-    expect(screen.getByTestId("event-timeline")).toBeTruthy();
-    // Bottom summary bar: progress text
-    const summaryBar = screen.getByTestId("summary-bar");
-    expect(within(summaryBar).getByText(/1\/2 nodes/)).toBeTruthy();
-    // Scheduler and trigger mode from topology
-    expect(within(summaryBar).getByText("parallel")).toBeTruthy();
-    expect(within(summaryBar).getByText("on_all_preds")).toBeTruthy();
+    expect(within(dialog).getByTestId("event-timeline")).toBeTruthy();
+    // Instance summary shows scheduler + trigger mode from topology
+    const summary = within(dialog).getByTestId("instance-summary");
+    expect(within(summary).getByText("parallel")).toBeTruthy();
+    expect(within(summary).getByText("on_all_preds")).toBeTruthy();
   });
 
   it("renders canvas legend overlay", async () => {
-    renderViewer();
-    await waitForCanvas();
-    expect(screen.getByTestId("graph-canvas-legend")).toBeTruthy();
+    const dialog = await openModal();
+    expect(within(dialog).getByTestId("graph-canvas-legend")).toBeTruthy();
   });
 });
 
-describe("GraphExecutionViewer — node selection", () => {
+describe("Run graph modal — node selection", () => {
   it("switches sidebar to NodeDetailPanel when a node is clicked", async () => {
-    renderViewer();
-    await waitForCanvas();
+    const dialog = await openModal();
 
     // Initially shows instance summary
-    expect(screen.getByTestId("sidebar-instance-summary")).toBeTruthy();
-    expect(screen.queryByTestId("sidebar-node-detail")).toBeNull();
+    expect(within(dialog).getByTestId("sidebar-instance-summary")).toBeTruthy();
+    expect(within(dialog).queryByTestId("sidebar-node-detail")).toBeNull();
 
     // Click the implementer node (function type → single click selects)
-    fireEvent.click(screen.getByTestId("graph-node-implementer"));
+    fireEvent.click(within(dialog).getByTestId("graph-node-implementer"));
 
     // Sidebar switches to node detail
     await waitFor(() => {
-      expect(screen.getByTestId("sidebar-node-detail")).toBeTruthy();
+      expect(within(dialog).getByTestId("sidebar-node-detail")).toBeTruthy();
     });
-    expect(screen.queryByTestId("sidebar-instance-summary")).toBeNull();
+    expect(within(dialog).queryByTestId("sidebar-instance-summary")).toBeNull();
 
     // NodeDetailPanel shows the node name
-    expect(screen.getByTestId("node-detail-panel")).toBeTruthy();
+    expect(within(dialog).getByTestId("node-detail-panel")).toBeTruthy();
   });
 
   it("does not show Open session button for non-agent nodes in detail panel", async () => {
-    renderViewer();
-    await waitForCanvas();
+    const dialog = await openModal();
 
-    fireEvent.click(screen.getByTestId("graph-node-implementer"));
+    fireEvent.click(within(dialog).getByTestId("graph-node-implementer"));
 
     await waitFor(() => {
-      expect(screen.getByTestId("node-detail-panel")).toBeTruthy();
+      expect(within(dialog).getByTestId("node-detail-panel")).toBeTruthy();
     });
 
     // function node → no "Open session transcript" button
-    const panel = screen.getByTestId("node-detail-panel");
+    const panel = within(dialog).getByTestId("node-detail-panel");
     expect(within(panel).queryByText("Open session transcript")).toBeNull();
   });
 
   it("calls onJumpToSession with node.session_id when agent node is clicked", async () => {
     const onJumpToSession = vi.fn();
-    renderViewer({ onJumpToSession });
-    await waitForCanvas();
+    const dialog = await openModal({ onJumpToSession });
 
     // Agent node: single click → direct jump to session
-    fireEvent.click(screen.getByTestId("graph-node-designer"));
+    fireEvent.click(within(dialog).getByTestId("graph-node-designer"));
 
     expect(onJumpToSession).toHaveBeenCalledWith("abc123.designer");
   });
 });
 
-describe("GraphExecutionViewer — control button state machine", () => {
+describe("Run graph modal — control button state machine", () => {
   it("shows Pause and Stop when running (no Resume)", async () => {
     mockHook({ instance: makeInstance({ status: "running" }) });
-    renderViewer();
-    await waitForCanvas();
+    const dialog = await openModal();
 
-    const bar = screen.getByTestId("control-bar");
+    const bar = within(dialog).getByTestId("control-bar");
     expect(within(bar).getByText("Pause")).toBeTruthy();
     expect(within(bar).getByText("Stop")).toBeTruthy();
     expect(within(bar).queryByText("Resume")).toBeNull();
@@ -280,10 +302,9 @@ describe("GraphExecutionViewer — control button state machine", () => {
         ],
       }),
     });
-    renderViewer();
-    await waitForCanvas();
+    const dialog = await openModal();
 
-    const bar = screen.getByTestId("control-bar");
+    const bar = within(dialog).getByTestId("control-bar");
     expect(within(bar).getByText("Resume")).toBeTruthy();
     expect(within(bar).getByText("Stop")).toBeTruthy();
     expect(within(bar).queryByText("Pause")).toBeNull();
@@ -300,10 +321,9 @@ describe("GraphExecutionViewer — control button state machine", () => {
         result: [{ content: "done" }],
       }),
     });
-    renderViewer();
-    await waitForCanvas();
+    const dialog = await openModal();
 
-    const bar = screen.getByTestId("control-bar");
+    const bar = within(dialog).getByTestId("control-bar");
     expect(within(bar).queryByText("Pause")).toBeNull();
     expect(within(bar).queryByText("Resume")).toBeNull();
     expect(within(bar).queryByText("Stop")).toBeNull();
@@ -311,10 +331,9 @@ describe("GraphExecutionViewer — control button state machine", () => {
 
   it("calls pauseGraph when Pause is clicked", async () => {
     mockHook({ instance: makeInstance({ status: "running" }) });
-    renderViewer();
-    await waitForCanvas();
+    const dialog = await openModal();
 
-    const bar = screen.getByTestId("control-bar");
+    const bar = within(dialog).getByTestId("control-bar");
     fireEvent.click(within(bar).getByText("Pause"));
 
     await waitFor(() => {
@@ -323,14 +342,13 @@ describe("GraphExecutionViewer — control button state machine", () => {
   });
 });
 
-describe("GraphExecutionViewer — inline deliver panel", () => {
+describe("Run graph modal — inline deliver panel", () => {
   it("renders inline deliver panel when running", async () => {
     mockHook({ instance: makeInstance({ status: "running" }) });
-    renderViewer();
-    await waitForCanvas();
+    const dialog = await openModal();
 
     await waitFor(() => {
-      expect(screen.getByTestId("deliver-inline-panel")).toBeTruthy();
+      expect(within(dialog).getByTestId("deliver-inline-panel")).toBeTruthy();
     });
   });
 
@@ -344,11 +362,10 @@ describe("GraphExecutionViewer — inline deliver panel", () => {
         ],
       }),
     });
-    renderViewer();
-    await waitForCanvas();
+    const dialog = await openModal();
 
     await waitFor(() => {
-      expect(screen.getByTestId("deliver-inline-panel")).toBeTruthy();
+      expect(within(dialog).getByTestId("deliver-inline-panel")).toBeTruthy();
     });
   });
 
@@ -364,37 +381,34 @@ describe("GraphExecutionViewer — inline deliver panel", () => {
           ],
         }),
       });
-      renderViewer();
-      await waitForCanvas();
+      const dialog = await openModal();
 
-      expect(screen.queryByTestId("deliver-inline-panel")).toBeNull();
+      expect(within(dialog).queryByTestId("deliver-inline-panel")).toBeNull();
     },
   );
 
   it("Send button disabled when content is empty", async () => {
     mockHook({ instance: makeInstance({ status: "running" }) });
-    renderViewer();
-    await waitForCanvas();
+    const dialog = await openModal();
 
     await waitFor(() => {
-      expect(screen.getByTestId("deliver-inline-panel")).toBeTruthy();
+      expect(within(dialog).getByTestId("deliver-inline-panel")).toBeTruthy();
     });
 
-    const panel = screen.getByTestId("deliver-inline-panel");
+    const panel = within(dialog).getByTestId("deliver-inline-panel");
     const sendButton = within(panel).getByRole("button", { name: "Deliver" }) as HTMLButtonElement;
     expect(sendButton.disabled).toBe(true);
   });
 
   it("calls deliverToNode when content is entered and Send is clicked", async () => {
     mockHook({ instance: makeInstance({ status: "running" }) });
-    renderViewer();
-    await waitForCanvas();
+    const dialog = await openModal();
 
     await waitFor(() => {
-      expect(screen.getByTestId("deliver-inline-panel")).toBeTruthy();
+      expect(within(dialog).getByTestId("deliver-inline-panel")).toBeTruthy();
     });
 
-    const panel = screen.getByTestId("deliver-inline-panel");
+    const panel = within(dialog).getByTestId("deliver-inline-panel");
 
     // Enter content in the textarea
     const textarea = panel.querySelector("textarea");
@@ -417,14 +431,13 @@ describe("GraphExecutionViewer — inline deliver panel", () => {
 
   it("clears content after successful deliver", async () => {
     mockHook({ instance: makeInstance({ status: "running" }) });
-    renderViewer();
-    await waitForCanvas();
+    const dialog = await openModal();
 
     await waitFor(() => {
-      expect(screen.getByTestId("deliver-inline-panel")).toBeTruthy();
+      expect(within(dialog).getByTestId("deliver-inline-panel")).toBeTruthy();
     });
 
-    const panel = screen.getByTestId("deliver-inline-panel");
+    const panel = within(dialog).getByTestId("deliver-inline-panel");
     const textarea = panel.querySelector("textarea") as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: "hello world" } });
 
@@ -441,7 +454,7 @@ describe("GraphExecutionViewer — inline deliver panel", () => {
   });
 });
 
-describe("GraphExecutionViewer — graph-level result", () => {
+describe("Run graph modal — graph-level result", () => {
   it("shows result in InstanceSummary when instance is completed", async () => {
     mockHook({
       instance: makeInstance({
@@ -453,14 +466,13 @@ describe("GraphExecutionViewer — graph-level result", () => {
         result: [{ content: "All done, ship it!" }],
       }),
     });
-    renderViewer();
-    await waitForCanvas();
+    const dialog = await openModal();
 
     // Instance summary is shown (no node selected)
-    expect(screen.getByTestId("instance-summary")).toBeTruthy();
+    expect(within(dialog).getByTestId("instance-summary")).toBeTruthy();
 
     // Result content is displayed
-    expect(screen.getByText("All done, ship it!")).toBeTruthy();
+    expect(within(dialog).getByText("All done, ship it!")).toBeTruthy();
   });
 
   it("shows no result message when completed with null result", async () => {
@@ -474,14 +486,13 @@ describe("GraphExecutionViewer — graph-level result", () => {
         result: null,
       }),
     });
-    renderViewer();
-    await waitForCanvas();
+    const dialog = await openModal();
 
-    expect(screen.getByText("No result")).toBeTruthy();
+    expect(within(dialog).getByText("No result")).toBeTruthy();
   });
 });
 
-describe("GraphExecutionViewer — event timeline", () => {
+describe("Run graph modal — event timeline", () => {
   it("renders timeline events with kind labels", async () => {
     mockHook({
       instance: makeInstance(),
@@ -504,20 +515,18 @@ describe("GraphExecutionViewer — event timeline", () => {
         },
       ],
     });
-    renderViewer();
-    await waitForCanvas();
+    const dialog = await openModal();
 
-    const timeline = screen.getByTestId("event-timeline");
+    const timeline = within(dialog).getByTestId("event-timeline");
     expect(within(timeline).getByText("node_completed")).toBeTruthy();
     expect(within(timeline).getByText("node_started")).toBeTruthy();
   });
 
   it("shows empty state when no events", async () => {
     mockHook({ instance: makeInstance(), timeline: [] });
-    renderViewer();
-    await waitForCanvas();
+    const dialog = await openModal();
 
-    expect(screen.getByText("No events yet")).toBeTruthy();
+    expect(within(dialog).getByText("No events yet")).toBeTruthy();
   });
 
   it("marks derived events as inferred", async () => {
@@ -534,20 +543,71 @@ describe("GraphExecutionViewer — event timeline", () => {
         },
       ],
     });
-    renderViewer();
-    await waitForCanvas();
+    const dialog = await openModal();
 
-    expect(screen.getByText("(inferred)")).toBeTruthy();
+    expect(within(dialog).getByText("(inferred)")).toBeTruthy();
   });
 });
 
-describe("GraphExecutionViewer — back button", () => {
-  it("calls onBack when Back button is clicked", async () => {
-    const onBack = vi.fn();
-    renderViewer({ onBack });
-    await waitForCanvas();
+describe("Run graph modal — crash flash (§8.1)", () => {
+  const FLASH = {
+    id: 1,
+    nodeId: "node_1",
+    nodeName: "designer",
+    timestamp: 1000,
+  };
 
-    fireEvent.click(screen.getByText("Back"));
-    expect(onBack).toHaveBeenCalledOnce();
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("renders a crash-flash outline on the flashed node and dismisses it after 220ms", async () => {
+    const dismissCrashFlash = vi.fn();
+    mockHook({ crashFlashes: [FLASH], dismissCrashFlash });
+    renderDetail();
+    // Flush the async spec/invocation loads without waitFor (fake timers).
+    await act(async () => {});
+    fireEvent.click(screen.getByText("Topology"));
+
+    const canvas = screen.getByTestId("topology-canvas");
+    expect(canvas.querySelectorAll("[data-crash-flash]")).toHaveLength(1);
+
+    act(() => {
+      vi.advanceTimersByTime(220);
+    });
+    expect(dismissCrashFlash).toHaveBeenCalledWith(FLASH.id);
+  });
+
+  it("auto-dismisses crash flashes after 220ms even while the modal is closed", async () => {
+    const dismissCrashFlash = vi.fn();
+    mockHook({ crashFlashes: [FLASH], dismissCrashFlash });
+    renderDetail();
+    await act(async () => {});
+
+    expect(screen.queryByTestId("run-graph-modal")).toBeNull();
+    expect(dismissCrashFlash).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(220);
+    });
+    expect(dismissCrashFlash).toHaveBeenCalledWith(FLASH.id);
+  });
+
+  it("clears pending crash-flash timers on unmount", async () => {
+    const dismissCrashFlash = vi.fn();
+    mockHook({ crashFlashes: [FLASH], dismissCrashFlash });
+    const view = renderDetail();
+    await act(async () => {});
+
+    view.unmount();
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(dismissCrashFlash).not.toHaveBeenCalled();
   });
 });
+

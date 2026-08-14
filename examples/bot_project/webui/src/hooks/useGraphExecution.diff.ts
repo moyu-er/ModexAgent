@@ -137,7 +137,7 @@ export function deriveTimelineEvents(
  * Wrap REST /events payloads as timeline entries. GraphEvent carries no
  * id/timestamp — key by per-kind ordinal, stable across polls because the
  * backend event list is append-only (same keying the pre-refactor
- * GraphExecutionViewer used); `observedAt` stands in for the timestamp.
+ * execution viewer used); `observedAt` stands in for the timestamp.
  */
 export function restTimelineEvents(
   events: GraphEvent[],

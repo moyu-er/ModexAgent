@@ -1,3 +1,17 @@
+// GraphInstanceDetail — conversation-first instance view (PRD Rev 3 §1.1).
+//
+// Layout: header + invocation conversation flow + bottom re-invoke composer.
+// No run graph is visible by default; the header "Topology" button opens a
+// centered near-fullscreen Run Graph modal carrying the full live-graph
+// experience (merged from the retired full-page execution viewer):
+//   - top bar: spec name · version chip · status badge · Pause/Resume/Stop · ✕
+//   - full-size TopologyCanvas (nodeStatuses + activeEdges + pulses + crash flash)
+//   - sidebar w-80: NodeDetailPanel (node selected) / InstanceSummary + EventTimeline
+//   - inline Deliver panel while running/paused
+// The modal traps focus while open and returns focus to the opener on close
+// (Esc / ✕ / backdrop click). useGraphExecution stays mounted on the page so
+// badges and bubble progress keep updating while the modal is closed.
+
 import {
   useCallback,
   useEffect,
@@ -9,21 +23,34 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { ArrowLeft, ChevronDown, Play, X } from "lucide-react";
+import { createPortal } from "react-dom";
+import { ArrowLeft, Pause, Play, Send, Square, X } from "lucide-react";
 import {
+  deliverToNode,
   getInvocations,
   getSpec,
   invokeInstance,
+  pauseGraph,
+  resumeGraph,
+  stopGraph,
+  type GraphInstance,
   type GraphInvocationRecord,
-  type GraphNodeStatus,
 } from "../../lib/graphsApi";
 import type { WebSocketClient } from "../../lib/ws-client";
 import { useT } from "../../i18n";
 import { formatClock } from "../../lib/timezone";
+import { useToast } from "../ToastContext";
 import { Button } from "../ui/Button";
 import { IconButton } from "../ui/IconButton";
+import { SectionLabel } from "../ui/SectionLabel";
+import { DropdownPanel } from "../ui/DropdownPanel";
 import { MarkdownRenderer } from "../MarkdownRenderer";
-import { GraphStatusBadge, formatGraphApiError, statusLabelKey } from "./shared";
+import {
+  buildNodeStatusMap,
+  formatGraphApiError,
+  GraphStatusBadge,
+  statusLabelKey,
+} from "./shared";
 import { mergeGraphOutput } from "./detail/mergeOutput";
 import { MiniTopology } from "./topology/MiniTopology";
 import {
@@ -38,43 +65,25 @@ import {
   parseGraphSpecYaml,
   type ParsedGraphTopology,
 } from "./yaml/parseGraphSpec";
+import { NodeDetailPanel } from "./detail/NodeDetailPanel";
+import { InstanceSummary } from "./detail/InstanceSummary";
+import { EventTimeline } from "./detail/EventTimeline";
 import { useGraphExecution } from "../../hooks/useGraphExecution";
+import { useModalFocus } from "../../hooks/useModalFocus";
+import type { GraphTimelineEvent } from "../../hooks/useGraphExecution.diff";
 
 const MAX_INPUT_HEIGHT = 320;
 const MIN_INPUT_HEIGHT = 56;
 
 const TERMINAL_STATUSES = new Set(["completed", "crashed", "stopped", "failed"]);
 const ACTIVE_STATUSES = new Set(["pending", "running", "paused"]);
+// Stoppable statuses mirror the hook's ACTIVE_STATUSES: crashed stays
+// stoppable because fault recovery may auto-resume it to running.
+const STOPPABLE_STATUSES = new Set(["pending", "running", "paused", "crashed"]);
+/** Crash-flash auto-dismiss (PRD §8.1: --dur = 220ms). */
+const CRASH_FLASH_MS = 220;
 
 const CONTENT_WIDTH = "mx-auto w-full min-w-0 max-w-[800px]";
-
-function toVisualStatus(status: string): GraphNodeVisualStatus {
-  switch (status) {
-    case "running":
-      return "running";
-    case "completed":
-      return "completed";
-    case "crashed":
-      return "crashed";
-    case "canceled":
-    case "cancelled":
-      return "canceled";
-    case "suspended":
-      return "suspended";
-    default:
-      return "pending";
-  }
-}
-
-function buildNodeStatusMap(
-  nodes: GraphNodeStatus[],
-): Record<string, GraphNodeVisualStatus> {
-  const map: Record<string, GraphNodeVisualStatus> = {};
-  for (const n of nodes) {
-    map[n.node_name] = toVisualStatus(n.status);
-  }
-  return map;
-}
 
 function functionalNodeCount(topology: ParsedGraphTopology): number {
   return topology.nodes.filter(
@@ -106,7 +115,7 @@ export const GraphInstanceDetail: FC<GraphInstanceDetailProps> = ({
   const [invocations, setInvocations] = useState<GraphInvocationRecord[]>([]);
   const [input, setInput] = useState("");
   const [isInvoking, setIsInvoking] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [invocationsLoading, setInvocationsLoading] = useState(true);
 
@@ -121,10 +130,13 @@ export const GraphInstanceDetail: FC<GraphInstanceDetailProps> = ({
 
   const {
     instance,
+    timeline,
     pulses,
+    crashFlashes,
     error: pollError,
     refresh,
     dismissPulse,
+    dismissCrashFlash,
   } = useGraphExecution(workspaceId, instanceId, edges, wsClient);
 
   const nodeStatuses = useMemo<Record<string, GraphNodeVisualStatus>>(() => {
@@ -224,15 +236,46 @@ export const GraphInstanceDetail: FC<GraphInstanceDetailProps> = ({
     prevInstanceStatus.current = currentStatus;
   }, [instance?.status, refreshInvocations]);
 
-  // Esc key closes drawer.
+  // Modal close is a stable callback: the RunGraphModal's focus/keyboard
+  // effect depends on it and must not re-run on every poll render.
+  const closeModal = useCallback((): void => setModalOpen(false), []);
+
+  const flashTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
+
+  // Auto-dismiss crash flashes after 220ms (PRD §8.1). Each flash is
+  // scheduled exactly once. Lives on the always-mounted page so flashes
+  // expire whether the Run Graph modal is open or closed — nothing
+  // accumulates or replays on the next open.
   useEffect(() => {
-    if (!drawerOpen) return;
-    const onEsc = (e: globalThis.KeyboardEvent): void => {
-      if (e.key === "Escape") setDrawerOpen(false);
+    for (const flash of crashFlashes) {
+      if (!flashTimers.current.has(flash.id)) {
+        const timer = setTimeout(() => {
+          dismissCrashFlash(flash.id);
+          flashTimers.current.delete(flash.id);
+        }, CRASH_FLASH_MS);
+        flashTimers.current.set(flash.id, timer);
+      }
+    }
+  }, [crashFlashes, dismissCrashFlash]);
+
+  // Drain any pending crash-flash timers on unmount (separate unmount-only
+  // effect: a cleanup on the scheduling effect would cancel live timers on
+  // every crashFlashes change).
+  useEffect(() => {
+    const timers = flashTimers.current;
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
     };
-    window.addEventListener("keydown", onEsc);
-    return () => window.removeEventListener("keydown", onEsc);
-  }, [drawerOpen]);
+  }, []);
+
+  // The modal only needs the set of currently-flashing node names.
+  const crashNodeNames = useMemo<ReadonlySet<string>>(
+    () => new Set(crashFlashes.map((flash) => flash.nodeName)),
+    [crashFlashes],
+  );
 
   // Scroll to bottom when invocations change.
   useEffect(() => {
@@ -386,10 +429,10 @@ export const GraphInstanceDetail: FC<GraphInstanceDetailProps> = ({
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => setDrawerOpen((v) => !v)}
+            aria-haspopup="dialog"
+            onClick={() => setModalOpen(true)}
           >
             {t("graphs.topology")}
-            <ChevronDown size={14} />
           </Button>
         </div>
       </header>
@@ -435,19 +478,24 @@ export const GraphInstanceDetail: FC<GraphInstanceDetailProps> = ({
         <div className={CONTENT_WIDTH}>{renderComposer()}</div>
       </div>
 
-      {drawerOpen && (
-        <TopologyDrawer
+      {modalOpen && (
+        <RunGraphModal
+          workspaceId={workspaceId}
+          instanceId={instanceId}
           topology={topology}
+          specInfo={specInfo}
+          instance={instance}
+          timeline={timeline}
           nodeStatuses={nodeStatuses}
           activeEdges={activeEdges}
           pulses={canvasPulses}
+          crashNodeNames={crashNodeNames}
+          completedCount={completedCount}
+          totalNodes={totalNodes}
+          refresh={refresh}
           onPulseComplete={dismissPulse}
           onOpenSession={handleOpenSession}
-          specInfo={specInfo}
-          scheduler={topology?.scheduler ?? ""}
-          triggerMode={topology?.defaultTrigger ?? ""}
-          totalNodes={totalNodes}
-          onClose={() => setDrawerOpen(false)}
+          onClose={closeModal}
         />
       )}
     </div>
@@ -559,90 +607,366 @@ const InvocationEntry: FC<InvocationEntryProps> = ({
   );
 };
 
-interface TopologyDrawerProps {
+interface RunGraphModalProps {
+  workspaceId: string;
+  instanceId: string;
   topology: ParsedGraphTopology | null;
+  specInfo: { name: string; version: string } | null;
+  instance: GraphInstance | null;
+  timeline: GraphTimelineEvent[];
   nodeStatuses: Record<string, GraphNodeVisualStatus>;
   activeEdges: Set<string>;
   pulses: CanvasPulseSignal[];
+  crashNodeNames: ReadonlySet<string>;
+  completedCount: number;
+  totalNodes: number;
+  refresh: () => void;
   onPulseComplete: (id: number) => void;
   onOpenSession: (nodeName: string) => void;
-  specInfo: { name: string; version: string } | null;
-  scheduler: string;
-  triggerMode: string;
-  totalNodes: number;
   onClose: () => void;
 }
 
-const TopologyDrawer: FC<TopologyDrawerProps> = ({
+const RunGraphModal: FC<RunGraphModalProps> = ({
+  workspaceId,
+  instanceId,
   topology,
+  specInfo,
+  instance,
+  timeline,
   nodeStatuses,
   activeEdges,
   pulses,
+  crashNodeNames,
+  completedCount,
+  totalNodes,
+  refresh,
   onPulseComplete,
   onOpenSession,
-  specInfo,
-  scheduler,
-  triggerMode,
-  totalNodes,
   onClose,
 }) => {
   const t = useT();
-  return (
+  const toast = useToast();
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [deliverNodeName, setDeliverNodeName] = useState("");
+  const [deliverContent, setDeliverContent] = useState("");
+  const [controlBusy, setControlBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [runStartTime, setRunStartTime] = useState<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const deliverTaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Focus management: move focus into the dialog on open, trap Tab inside,
+  // restore focus to the opener on close. Esc closes the modal.
+  useModalFocus({ dialogRef, onClose });
+
+  // Track when the instance first enters running state (for elapsed timer).
+  useEffect(() => {
+    if (instance?.status === "running" && runStartTime === null) {
+      setRunStartTime(Date.now());
+    }
+  }, [instance?.status, runStartTime]);
+
+  // Elapsed seconds ticker.
+  useEffect(() => {
+    if (runStartTime === null) return;
+    const update = (): void => {
+      setElapsedSeconds(Math.floor((Date.now() - runStartTime) / 1000));
+    };
+    update();
+    const timer = setInterval(update, 1000);
+    return () => clearInterval(timer);
+  }, [runStartTime]);
+
+  const handleControl = useCallback(
+    (fn: typeof pauseGraph): void => {
+      setControlBusy(true);
+      setActionError(null);
+      fn(workspaceId, instanceId)
+        .then(() => refresh())
+        .catch((err) => setActionError(formatGraphApiError(err)))
+        .finally(() => setControlBusy(false));
+    },
+    [workspaceId, instanceId, refresh],
+  );
+
+  const handleDeliverInline = useCallback((): void => {
+    if (!deliverNodeName || !deliverContent.trim() || controlBusy) return;
+    setControlBusy(true);
+    setActionError(null);
+    deliverToNode(workspaceId, instanceId, deliverNodeName, deliverContent)
+      .then(() => {
+        refresh();
+        toast.show({
+          message: t("graphs.deliverSuccess", { name: deliverNodeName }),
+        });
+        setDeliverContent("");
+      })
+      .catch((err) => setActionError(formatGraphApiError(err)))
+      .finally(() => setControlBusy(false));
+  }, [workspaceId, instanceId, deliverNodeName, deliverContent, controlBusy, refresh, toast, t]);
+
+  const autosizeDeliver = useCallback((): void => {
+    const ta = deliverTaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.max(44, Math.min(ta.scrollHeight, 160))}px`;
+  }, []);
+
+  useEffect(() => {
+    autosizeDeliver();
+  }, [deliverContent, autosizeDeliver]);
+
+  const status = instance?.status ?? "";
+  const canPause = status === "running" || status === "pending";
+  const canResume = status === "paused";
+  const canStop = STOPPABLE_STATUSES.has(status);
+  const canDeliver = status === "running" || status === "paused";
+
+  // Selected node lookups.
+  const selectedParsedNode = topology?.nodes.find(
+    (n) => n.name === selectedNodeId,
+  );
+  const selectedInstanceNode = instance?.nodes.find(
+    (n) => n.node_name === selectedNodeId,
+  );
+  const selectedVisualStatus: GraphNodeVisualStatus = selectedNodeId
+    ? (nodeStatuses[selectedNodeId] ?? "pending")
+    : "pending";
+
+  // Deliver node options (functional nodes from instance).
+  const deliverNodeNames = useMemo(
+    () =>
+      instance?.nodes
+        .filter(
+          (n) =>
+            n.node_name !== GRAPH_NODE_START &&
+            n.node_name !== GRAPH_NODE_END,
+        )
+        .map((n) => n.node_name) ?? [],
+    [instance?.nodes],
+  );
+
+  // Auto-select the first functional node when deliver becomes available.
+  useEffect(() => {
+    if (canDeliver && !deliverNodeName && deliverNodeNames.length > 0) {
+      setDeliverNodeName(deliverNodeNames[0] ?? "");
+    }
+  }, [canDeliver, deliverNodeName, deliverNodeNames]);
+
+  // Portal at document.body: the modal must escape any ancestor transform
+  // (same containment hazard documented in WorkspaceBrowser).
+  return createPortal(
     <div
-      className="absolute right-0 top-0 bottom-0 z-50 flex w-[360px] flex-col border-l border-border-strong bg-canvas-popover shadow-card-hover"
-      data-testid="topology-drawer"
-      role="dialog"
-      aria-label={t("graphs.drawerTitle")}
+      className="modal-scrim-enter fixed inset-0 z-50 bg-overlay"
+      data-testid="run-graph-backdrop"
+      onClick={onClose}
+      role="presentation"
     >
-      <div className="flex items-center justify-between border-b border-hairline px-4 py-3">
-        <span className="font-mono text-xs uppercase tracking-widest text-brand">
-          {t("graphs.drawerTitle")}
-          {specInfo && ` · ${t("graphs.specVersion", { version: specInfo.version })}`}
-        </span>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={t("common.close")}
-          className="rounded-sm p-1 text-mute hover:bg-hairline-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("graphs.drawerTitle")}
+        tabIndex={-1}
+        data-testid="run-graph-modal"
+        className="modal-panel-enter absolute inset-6 flex flex-col overflow-hidden rounded-lg border border-hairline bg-canvas-popover shadow-card-hover focus:outline-none"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Top bar: spec name · version chip · status badge · controls · ✕ */}
+        <div
+          className="flex shrink-0 items-center gap-3 border-b border-hairline px-4 py-3"
+          data-testid="control-bar"
         >
-          <X size={18} />
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto p-4">
-        {topology ? (
-          <TopologyCanvas
-            topology={topology}
-            nodeStatuses={nodeStatuses}
-            activeEdges={activeEdges}
-            pulses={pulses}
-            onPulseComplete={onPulseComplete}
-            onOpenSession={onOpenSession}
-            className="min-h-[300px]"
-          />
-        ) : (
-          <p className="text-base text-mute">{t("graphs.loading")}</p>
-        )}
-        <div className="mt-4 flex flex-col gap-1 font-mono text-xs">
-          <div className="flex justify-between">
-            <span className="text-faint">{t("graphs.scheduler")}</span>
-            <span className="text-body">{scheduler}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-faint">{t("graphs.triggerMode")}</span>
-            <span className="text-body">{triggerMode}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-faint">{t("graphs.nodes")}</span>
-            <span className="text-body">{totalNodes}</span>
-          </div>
-          {specInfo && (
-              <div className="flex justify-between">
-              <span className="text-faint">{t("graphs.versionLabel")}</span>
-              <span className="text-body">{t("graphs.version", { version: specInfo.version })}</span>
-            </div>
+          {specInfo ? (
+            <>
+              <span className="truncate text-base font-medium text-ink">
+                {specInfo.name}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-sm border border-hairline px-1.5 py-0.5 font-mono text-xs text-ember">
+                {t("graphs.specVersion", { version: specInfo.version })}
+              </span>
+            </>
+          ) : (
+            <span className="text-base text-mute">{t("graphs.loading")}</span>
           )}
+          {instance && (
+            <GraphStatusBadge
+              status={status}
+              label={t(statusLabelKey(status))}
+            />
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            {canPause ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={controlBusy}
+                onClick={(): void => handleControl(pauseGraph)}
+              >
+                <Pause size={14} />
+                {t("graphs.pause")}
+              </Button>
+            ) : null}
+            {canResume ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={controlBusy}
+                onClick={(): void => handleControl(resumeGraph)}
+              >
+                <Play size={14} />
+                {t("graphs.resume")}
+              </Button>
+            ) : null}
+            {canStop ? (
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={controlBusy}
+                onClick={(): void => handleControl(stopGraph)}
+              >
+                <Square size={14} />
+                {t("graphs.stop")}
+              </Button>
+            ) : null}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label={t("common.close")}
+              className="rounded-sm p-1 text-mute hover:bg-hairline-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+
+        {actionError ? (
+          <pre className="mx-4 mt-3 whitespace-pre-wrap rounded-sm border border-danger bg-canvas-elevated px-3 py-2 font-mono text-xs text-danger">
+            {actionError}
+          </pre>
+        ) : null}
+
+        {/* Body: canvas + sidebar (row on desktop, stacked on mobile) */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
+          {/* TopologyCanvas enforces its own min-h-[400px]; the wrapper's
+              mobile min-height matches it so the canvas can't overflow into
+              the sidebar stacked below. */}
+          <div className="flex min-h-[400px] flex-1 flex-col md:min-h-0 md:min-w-0">
+            {topology ? (
+              <TopologyCanvas
+                topology={topology}
+                nodeStatuses={nodeStatuses}
+                activeEdges={activeEdges}
+                pulses={pulses}
+                crashNodeNames={crashNodeNames}
+                onPulseComplete={onPulseComplete}
+                selectedNodeId={selectedNodeId}
+                onSelectNode={setSelectedNodeId}
+                onOpenSession={onOpenSession}
+                className="flex-1"
+              />
+            ) : (
+              <div className="flex flex-1 items-center justify-center">
+                <p className="text-base text-mute">{t("graphs.loading")}</p>
+              </div>
+            )}
+          </div>
+
+          <aside className="flex w-full flex-col border-t border-hairline md:w-80 md:border-l md:border-t-0">
+            {/* Top: node detail or instance summary */}
+            <div className="flex-1 overflow-y-auto p-4">
+              {selectedNodeId && selectedParsedNode ? (
+                <div data-testid="sidebar-node-detail">
+                  <SectionLabel>{t("graphs.nodeDetail")}</SectionLabel>
+                  <NodeDetailPanel
+                    nodeName={selectedParsedNode.name}
+                    nodeType={selectedParsedNode.nodeType}
+                    pool={selectedParsedNode.config.pool}
+                    status={selectedVisualStatus}
+                    statusLabel={t(statusLabelKey(selectedVisualStatus))}
+                    nodeId={selectedInstanceNode?.node_id}
+                    result={selectedInstanceNode?.result}
+                    isAgent={selectedParsedNode.nodeType === "agent"}
+                    onOpenSession={(): void =>
+                      onOpenSession(selectedParsedNode.name)
+                    }
+                  />
+                </div>
+              ) : (
+                <div data-testid="sidebar-instance-summary">
+                  <SectionLabel>{t("graphs.instanceSummary")}</SectionLabel>
+                  {specInfo ? (
+                    <InstanceSummary
+                      specName={specInfo.name}
+                      specVersion={specInfo.version}
+                      scheduler={topology?.scheduler ?? "linear"}
+                      triggerMode={topology?.defaultTrigger ?? "on_all_preds"}
+                      completedCount={completedCount}
+                      totalNodes={totalNodes}
+                      elapsedSeconds={elapsedSeconds}
+                      isCompleted={status === "completed"}
+                      result={instance?.result ?? null}
+                    />
+                  ) : (
+                    <p className="text-base text-mute">
+                      {t("graphs.loading")}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Bottom: event timeline */}
+            <div className="max-h-[35%] overflow-y-auto border-t border-hairline">
+              <EventTimeline events={timeline} />
+            </div>
+
+            {/* Inline deliver panel (shown when running/paused) */}
+            {canDeliver ? (
+              <div
+                className="border-t border-hairline p-3"
+                data-testid="deliver-inline-panel"
+              >
+                <SectionLabel>{t("graphs.deliverInline")}</SectionLabel>
+                <div className="mt-2 flex flex-col gap-2">
+                  <DropdownPanel
+                    options={deliverNodeNames.map((n) => ({
+                      value: n,
+                      label: n,
+                    }))}
+                    value={deliverNodeName}
+                    onChange={setDeliverNodeName}
+                    label={t("graphs.deliverNodeLabel")}
+                    listboxLabel={t("graphs.deliverNodeLabel")}
+                  />
+                  <textarea
+                    ref={deliverTaRef}
+                    value={deliverContent}
+                    onChange={(e): void => setDeliverContent(e.target.value)}
+                    onInput={autosizeDeliver}
+                    placeholder={t("graphs.deliverContentPlaceholder")}
+                    rows={1}
+                    className="w-full resize-none overflow-y-auto rounded-sm border border-hairline bg-canvas-elevated px-3 py-2 text-base text-ink placeholder:text-faint focus:border-brand focus:ring-2 focus:ring-brand focus:outline-none min-h-[44px] max-h-[160px]"
+                  />
+                  <IconButton
+                    icon={<Send size={18} />}
+                    label={t("graphs.deliverConfirm")}
+                    variant="primary"
+                    size="md"
+                    disabled={
+                      !deliverNodeName || !deliverContent.trim() || controlBusy
+                    }
+                    onClick={handleDeliverInline}
+                    className="self-end"
+                  />
+                </div>
+              </div>
+            ) : null}
+          </aside>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
