@@ -228,11 +228,9 @@ def _build_mock_agent_instance(
     turn_runner: MagicMock | None = None,
     existing_messages: list[dict[str, Any]] | None = None,
 ) -> MagicMock:
-    """Build a mock AgentInstance with pipeline/context_manager wired."""
     instance = MagicMock()
     instance.descriptor.role_description = role_description
     instance.context_manager = MagicMock()
-    # _build_graph_input_envelope loads session history to detect re-execution.
     mock_history = MagicMock()
     mock_history.to_list = AsyncMock(return_value=existing_messages or [])
     instance.context_manager.load = AsyncMock(
@@ -755,29 +753,6 @@ class TestBotAgentNodeBuildGraphInputEnvelope:
         assert "do the task" in envelope.payload["content"]
         assert envelope.metadata["graph_instance_id"] == 42
 
-    async def test_re_execution_skips_origin_request(self) -> None:
-        instance = _build_mock_agent_instance(
-            MagicMock(),
-            MagicMock(),
-            existing_messages=[{"role": "user", "content": "prior message"}],
-        )
-        resolver = _build_mock_workspace_resolver("default", instance)
-        node = BotAgentNode("planner", "default", resolver)
-        node.name = "planner_node"
-        node.node_id = "node-1"
-        node._graph_ref = _mock_graph_ref()
-
-        ctx = MagicMock(spec=GraphContext)
-        ctx.user_input = GraphPayload(content="do the task")
-        ctx.graph_instance_id = 42
-        session = SessionInfo.from_str("conv123.planner")
-
-        envelope = await node._build_graph_input_envelope(
-            ctx, IntegratedInput(payloads=[]), session
-        )
-
-        assert "[Origin Request]" not in envelope.payload["content"]
-
     async def test_envelope_addresses_and_session(self) -> None:
         instance = _build_mock_agent_instance(MagicMock(), MagicMock())
         resolver = _build_mock_workspace_resolver("default", instance)
@@ -828,6 +803,116 @@ class TestBotAgentNodeBuildGraphInputEnvelope:
 
         assert "upstream data" in envelope.payload["content"]
         assert "[Origin Request]" in envelope.payload["content"]
+
+    async def test_re_invoke_with_new_input_includes_origin_request(self) -> None:
+        """Re-invoke on the same graphInstance: session already has messages
+        from the first turn, but the new user_input must still appear in
+        [Origin Request]. The graph state machine (bootstrap / version chain)
+        distinguishes re-invoke from crash-resume; the node must not
+        second-guess via history length."""
+        instance = _build_mock_agent_instance(
+            MagicMock(),
+            MagicMock(),
+            existing_messages=[{"role": "user", "content": "first turn input"}],
+        )
+        resolver = _build_mock_workspace_resolver("default", instance)
+        node = BotAgentNode("planner", "default", resolver)
+        node.name = "planner_node"
+        node.node_id = "node-1"
+        node._graph_ref = _mock_graph_ref()
+
+        ctx = MagicMock(spec=GraphContext)
+        ctx.user_input = GraphPayload(content="second turn input")
+        ctx.graph_instance_id = 42
+        session = SessionInfo.from_str("conv123.planner")
+
+        envelope = await node._build_graph_input_envelope(
+            ctx, IntegratedInput(payloads=[]), session
+        )
+
+        assert "[Origin Request]" in envelope.payload["content"]
+        assert "second turn input" in envelope.payload["content"]
+
+    async def test_none_user_input_omits_origin_request(self) -> None:
+        """When ctx.user_input is None (e.g. crash-resume fallback path
+        where run_instance reuses existing.user_input=None), [Origin Request]
+        is omitted — no content to render."""
+        instance = _build_mock_agent_instance(
+            MagicMock(),
+            MagicMock(),
+            existing_messages=[{"role": "user", "content": "prior"}],
+        )
+        resolver = _build_mock_workspace_resolver("default", instance)
+        node = BotAgentNode("planner", "default", resolver)
+        node.name = "planner_node"
+        node.node_id = "node-1"
+        node._graph_ref = _mock_graph_ref()
+
+        ctx = MagicMock(spec=GraphContext)
+        ctx.user_input = None
+        ctx.graph_instance_id = 42
+        session = SessionInfo.from_str("conv123.planner")
+
+        envelope = await node._build_graph_input_envelope(
+            ctx, IntegratedInput(payloads=[]), session
+        )
+
+        assert "[Origin Request]" not in envelope.payload["content"]
+
+
+class TestStartNodeDeliversUserInput:
+    async def test_start_node_delivers_ctx_user_input(self) -> None:
+        from modex_graph.context import GraphContext
+        from modex_graph.nodes.start_node import StartNode
+        from modex_graph.state.default_state import DefaultGraphState
+
+        state = DefaultGraphState()
+        ctx = GraphContext(
+            state=state,
+            runtime=MagicMock(),
+            coordinator=MagicMock(),
+            user_input=GraphPayload(content="re-invoke new input"),
+            graph_instance_id=99,
+        )
+        start = StartNode()
+        start.name = "__start__"
+        start.node_id = "start-node-1"
+
+        await start.run(ctx, graph=MagicMock())
+
+        delivers = start._collect_delivers(ctx)
+        assert len(delivers) == 1
+        content, target = delivers[0]
+        assert content is not None
+        # GraphPayload is frozen Pydantic — content.content holds the text.
+        assert content.content == "re-invoke new input"
+
+    async def test_start_node_delivers_none_when_user_input_is_none(self) -> None:
+        """Resume path: run_instance sets ctx.user_input from
+        existing.user_input which may be None for sub-graphs. StartNode
+        still delivers (None payload) so the downstream trigger fires."""
+        from modex_graph.context import GraphContext
+        from modex_graph.nodes.start_node import StartNode
+        from modex_graph.state.default_state import DefaultGraphState
+
+        state = DefaultGraphState()
+        ctx = GraphContext(
+            state=state,
+            runtime=MagicMock(),
+            coordinator=MagicMock(),
+            user_input=None,
+            graph_instance_id=99,
+        )
+        start = StartNode()
+        start.name = "__start__"
+        start.node_id = "start-node-1"
+
+        await start.run(ctx, graph=MagicMock())
+
+        delivers = start._collect_delivers(ctx)
+        assert len(delivers) == 1
+        content, _ = delivers[0]
+        assert content is None
 
 
 class TestBotAgentNodeEnsureDeliverTool:

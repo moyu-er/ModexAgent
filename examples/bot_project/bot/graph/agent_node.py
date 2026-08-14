@@ -192,15 +192,8 @@ class BotAgentNode(AgentNode):
         """Build the envelope delivered to the agent's inbox for this graph turn."""
         upstream = self._format_integrated_input(integrated_input)
 
-        # Re-execution detection: session already has messages from a prior
-        # invocation (crash recovery). Skip [Origin Request] to avoid duplication.
-        ctx_mgr = self._resolve_agent_instance().context_manager
-        state = await ctx_mgr.load(session.session_id)
-        existing_messages = await state.history.to_list()
-        is_re_execution = len(existing_messages) > 0
-
         sections: list[str] = []
-        if not is_re_execution and ctx.user_input is not None and ctx.user_input.content:
+        if ctx.user_input is not None and ctx.user_input.content:
             sections.append("[Origin Request]:\n" + str(ctx.user_input.content))
         if upstream:
             sections.append(upstream)
