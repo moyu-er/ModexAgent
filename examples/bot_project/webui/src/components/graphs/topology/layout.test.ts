@@ -87,10 +87,10 @@ describe("layoutGraph", () => {
       expect(rect.width).toBeGreaterThan(0);
       expect(rect.height).toBeGreaterThan(0);
     }
-    // 尺寸规范:所有节点统一 140×44(含 START/END — Rev 3 统一形状)
+    // 尺寸规范(§5.4 Rev 4):功能节点统一 140×44;START/END 为 76×30 小药丸
     expect(layout.nodes.get("designer")).toMatchObject({ width: 140, height: 44 });
-    expect(layout.nodes.get("__start__")).toMatchObject({ width: 140, height: 44 });
-    expect(layout.nodes.get("__end__")).toMatchObject({ width: 140, height: 44 });
+    expect(layout.nodes.get("__start__")).toMatchObject({ width: 76, height: 30 });
+    expect(layout.nodes.get("__end__")).toMatchObject({ width: 76, height: 30 });
   });
 
   it("review_workflow:TB 方向 — y 坐标沿 start→…→end 递增", () => {
