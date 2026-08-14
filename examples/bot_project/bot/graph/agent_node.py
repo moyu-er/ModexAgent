@@ -44,6 +44,7 @@ class BotAgentNode(AgentNode):
         *,
         session_strategy: SessionStrategy = SessionStrategy.CACHED,
         knowledge_config: KnowledgeNodeConfig | None = None,
+        node_description: str | None = None,
     ) -> None:
         super().__init__(session_strategy=session_strategy)
         self._agent_name = agent_name
@@ -51,6 +52,7 @@ class BotAgentNode(AgentNode):
         self._workspace_resolver = workspace_resolver
         self._deliver_tool: GraphDeliverTool | None = None
         self._knowledge_config = knowledge_config or KnowledgeNodeConfig()
+        self._description = node_description
 
     def agent_name(self) -> str:
         return self._agent_name
@@ -98,6 +100,8 @@ class BotAgentNode(AgentNode):
         return instance
 
     def resolve_description(self) -> str:
+        if self._description:
+            return self._description
         instance = self._resolve_agent_instance()
         return instance.descriptor.role_description or AgentNode.DESCRIPTION_NOT_FOUND
 
@@ -166,6 +170,8 @@ class BotAgentNode(AgentNode):
         deliver_tool = self._ensure_deliver_tool()
         topology_section = self._build_topology_section()
         node_description = self.resolve_description()
+        if node_description == AgentNode.DESCRIPTION_NOT_FOUND:
+            node_description = ""
 
         # Compute downstream target types for topology-aware prompt rendering.
         downstream_has_end = False

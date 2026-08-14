@@ -123,3 +123,37 @@ async def test_register_main_agent_preserves_multiple_roles() -> None:
     call_kwargs = factory.create_agent.call_args.kwargs
     descriptor = call_kwargs.get("descriptor") or factory.create_agent.call_args.args[0]
     assert descriptor.roles == ["coordinator", "communicator", "custom-role"]
+
+
+@pytest.mark.asyncio
+async def test_register_main_agent_passes_description_to_descriptor() -> None:
+    fake_instance = MagicMock()
+    fake_instance.pipeline = MagicMock()
+    fake_instance.stop = AsyncMock()
+
+    pool = MagicMock()
+    pool.register_resident = AsyncMock()
+
+    factory = MagicMock()
+    factory.create_agent = AsyncMock(return_value=fake_instance)
+
+    main_spec = MainAgentSpec(
+        agent_name="main",
+        description="Pool main agent desc",
+    )
+
+    await _register_main_agent(
+        pool=pool,
+        main_spec=main_spec,
+        assembly_deps=PoolAssemblyDeps(),
+        system_prompt="",
+        safety=RuntimeSafetyPolicy(),
+        pool_name="default",
+        factory=factory,
+        broker=MagicMock(),
+        context_manager=MagicMock(),
+        bot_model_config=None,
+    )
+
+    descriptor = factory.create_agent.call_args.args[0]
+    assert descriptor.role_description == "Pool main agent desc"

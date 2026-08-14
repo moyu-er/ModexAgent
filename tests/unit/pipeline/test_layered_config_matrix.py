@@ -17,6 +17,7 @@ See ``docs/design/session-tree/layered-config-matrix.md`` for the full design.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -324,7 +325,8 @@ class TestGraphAwareComponentsSubagentExclusion:
             provider = GraphWorkflowProvider()
             version = await provider._fetch_version()
             content = await provider._fetch_content()
-            assert version == "graph:10"
+            expected = f"graph:10:{hashlib.sha1(b'node desc').hexdigest()[:8]}"
+            assert version == expected
             assert "## Graph Node Context" in content
             assert "### Topology" in content
         finally:

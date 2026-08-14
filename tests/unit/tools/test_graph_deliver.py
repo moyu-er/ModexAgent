@@ -61,10 +61,12 @@ class _GenericNode(Node[Any]):
         return None
 
 
-def _compiled_graph() -> tuple[Any, _AgentNode]:
+def _compiled_graph(
+    researcher: _AgentNode | None = None,
+) -> tuple[Any, _AgentNode]:
     graph: Graph[Any] = Graph("deliver-test")
     current = _AgentNode("planner", "Planning agent")
-    researcher = _AgentNode("researcher", "Research agent")
+    researcher = researcher or _AgentNode("researcher", "Research agent")
     graph.add_node("planner", current)
     graph.add_node("researcher", researcher)
     graph.add_node("formatter", _GenericNode())
@@ -184,6 +186,18 @@ def test_store_lists_downstream_targets_including_end() -> None:
     ]
     assert store.get("researcher") == targets[0]
     assert store.get(GraphNode.END) == targets[2]
+
+
+def test_store_degrades_description_sentinel_to_graph_node_label() -> None:
+    compiled, _ = _compiled_graph(
+        _AgentNode("planner", AgentNode.DESCRIPTION_NOT_FOUND)
+    )
+    store = GraphDeliverTargetStore(compiled, "planner")
+
+    target = store.get("researcher")
+
+    assert target is not None
+    assert target.description == "Graph node 'researcher'"
 
 
 def test_store_resolves_target_node_id() -> None:

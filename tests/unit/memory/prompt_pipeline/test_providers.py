@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -919,7 +920,7 @@ async def test_graph_workflow_provider_no_downstream_omits_deliver_guidelines() 
 
 @pytest.mark.asyncio
 async def test_graph_workflow_provider_version_encodes_downstream_types() -> None:
-    """Version encodes downstream types: graph:11, graph:10, graph:01, graph:00."""
+    """Version encodes downstream types before the description hash."""
     from modex_agent.agents.react.state import ReActTurnState
     from modex_agent.core.agent import AgentContext, current_agent_context
     from modex_agent.core.history import MessageHistory
@@ -950,27 +951,129 @@ async def test_graph_workflow_provider_version_encodes_downstream_types() -> Non
     ctx = _make_ctx(True, True)
     token = current_agent_context.set(ctx)
     try:
-        assert await provider._fetch_version() == "graph:11"
+        expected = f"graph:11:{hashlib.sha1(b'').hexdigest()[:8]}"
+        assert await provider._fetch_version() == expected
     finally:
         current_agent_context.reset(token)
     # graph:10
     ctx = _make_ctx(True, False)
     token = current_agent_context.set(ctx)
     try:
-        assert await provider._fetch_version() == "graph:10"
+        expected = f"graph:10:{hashlib.sha1(b'').hexdigest()[:8]}"
+        assert await provider._fetch_version() == expected
     finally:
         current_agent_context.reset(token)
     # graph:01
     ctx = _make_ctx(False, True)
     token = current_agent_context.set(ctx)
     try:
-        assert await provider._fetch_version() == "graph:01"
+        expected = f"graph:01:{hashlib.sha1(b'').hexdigest()[:8]}"
+        assert await provider._fetch_version() == expected
     finally:
         current_agent_context.reset(token)
     # graph:00
     ctx = _make_ctx(False, False)
     token = current_agent_context.set(ctx)
     try:
-        assert await provider._fetch_version() == "graph:00"
+        expected = f"graph:00:{hashlib.sha1(b'').hexdigest()[:8]}"
+        assert await provider._fetch_version() == expected
     finally:
         current_agent_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_graph_workflow_provider_version_changes_with_node_description() -> None:
+    from modex_agent.agents.react.state import ReActTurnState
+    from modex_agent.core.agent import AgentContext, current_agent_context
+    from modex_agent.core.history import MessageHistory
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.runtime.models import TurnIdentity
+    from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+    from modex_graph.context import GraphContext
+
+    def _make_ctx(description: str) -> AgentContext:
+        state = ReActTurnState(
+            identity=TurnIdentity(
+                agent_id="test",
+                session=SessionInfo.from_str("test.description"),
+                turn_id="t1",
+            )
+        )
+        state.custom[TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT] = ""
+        state.custom[TurnCustomKey.GRAPH_DOWNSTREAM_HAS_AGENT] = True
+        state.custom[TurnCustomKey.GRAPH_DOWNSTREAM_HAS_END] = True
+        state.custom[TurnCustomKey.GRAPH_NODE_DESCRIPTION] = description
+        return AgentContext(
+            system_prompt="",
+            history=MagicMock(spec=MessageHistory),
+            tool_manager=InMemoryToolManager(),
+            session=SessionInfo.from_str("test.description"),
+            graph_context=MagicMock(spec=GraphContext),
+            runtime=AgentRuntime(services=AgentRuntimeServices(), state=state),
+        )
+
+    provider = GraphWorkflowProvider()
+    versions: list[str] = []
+    for description in ("Reviewer role", "Coder role", "Reviewer role"):
+        token = current_agent_context.set(_make_ctx(description))
+        try:
+            versions.append(await provider._fetch_version())
+        finally:
+            current_agent_context.reset(token)
+
+    assert versions[0] != versions[1]
+    assert versions[0] == versions[2]
+
+
+@pytest.mark.asyncio
+async def test_graph_workflow_provider_version_empty_description_is_stable() -> None:
+    from modex_agent.agents.react.state import ReActTurnState
+    from modex_agent.core.agent import AgentContext, current_agent_context
+    from modex_agent.core.history import MessageHistory
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.runtime.models import TurnIdentity
+    from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+    from modex_graph.context import GraphContext
+
+    def _make_ctx(description: str | None) -> AgentContext:
+        state = ReActTurnState(
+            identity=TurnIdentity(
+                agent_id="test",
+                session=SessionInfo.from_str("test.empty-description"),
+                turn_id="t1",
+            )
+        )
+        state.custom[TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT] = ""
+        state.custom[TurnCustomKey.GRAPH_DOWNSTREAM_HAS_AGENT] = True
+        state.custom[TurnCustomKey.GRAPH_DOWNSTREAM_HAS_END] = False
+        if description is not None:
+            state.custom[TurnCustomKey.GRAPH_NODE_DESCRIPTION] = description
+        return AgentContext(
+            system_prompt="",
+            history=MagicMock(spec=MessageHistory),
+            tool_manager=InMemoryToolManager(),
+            session=SessionInfo.from_str("test.empty-description"),
+            graph_context=MagicMock(spec=GraphContext),
+            runtime=AgentRuntime(services=AgentRuntimeServices(), state=state),
+        )
+
+    provider = GraphWorkflowProvider()
+    token = current_agent_context.set(_make_ctx(""))
+    try:
+        empty_version = await provider._fetch_version()
+    finally:
+        current_agent_context.reset(token)
+
+    token = current_agent_context.set(_make_ctx(None))
+    try:
+        absent_version = await provider._fetch_version()
+    finally:
+        current_agent_context.reset(token)
+
+    assert empty_version == absent_version

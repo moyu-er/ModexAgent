@@ -792,7 +792,9 @@ class GraphWorkflowProvider(SystemPromptProvider):
             return "no-graph"
         has_agent = custom.get(TurnCustomKey.GRAPH_DOWNSTREAM_HAS_AGENT, False)
         has_end = custom.get(TurnCustomKey.GRAPH_DOWNSTREAM_HAS_END, False)
-        return f"graph:{int(has_agent)}{int(has_end)}"
+        desc = custom.get(TurnCustomKey.GRAPH_NODE_DESCRIPTION, "")
+        desc_hash = hashlib.sha1(desc.encode()).hexdigest()[:8]
+        return f"graph:{int(has_agent)}{int(has_end)}:{desc_hash}"
 
     async def _fetch_content(self) -> str:
         ctx = _get_agent_context()

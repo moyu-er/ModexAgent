@@ -283,6 +283,7 @@ class AgentTemplate:
             comm_kind=comm_kind,
             memory_config=self.memory,
             roles=list(self.spec.roles),
+            role_description=self.spec.description,
         )
 
         # ── Create instance ──
@@ -376,6 +377,7 @@ class AgentTemplate:
             system_prompt_template="",
             safety_policy=deps.safety,
             roles=list(self.spec.roles),
+            role_description=self.spec.description,
         )
 
         instance = await deps.subagent_external_builder.build(
