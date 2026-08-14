@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
@@ -32,12 +32,10 @@ def attach_default_pipeline(
     server,
     store,
     input_adapter,
-    agent_pool_map=None,
     pool_session_store=None,
     workspace_root: Path | None = None,
     available_pools: Callable[[], set[str]] | None = None,
 ) -> None:
-    agent_pool_map = agent_pool_map or {"main": "main", "coding": "coding"}
     pipe = build_webui_pipeline(
         skill_registry=_NoSkillRegistry(), bot_model_config=_bot_model_config()
     )
@@ -45,6 +43,8 @@ def attach_default_pipeline(
         pool_session_store = MagicMock()
         pool_session_store.get = lambda key, default=None: default
         pool_session_store.set = MagicMock()
+    transcript_store = MagicMock(wraps=store)
+    transcript_store.append = AsyncMock(side_effect=store.append)
     # PersistUserMessageStage (S7) routes its append by the bound workspace root
     # (ctxvar), and ResolveWorkspaceStage stamps it from ctx.current_ws(). When a
     # test supplies a workspace_root, route the resolved workspace there so the
@@ -61,9 +61,8 @@ def attach_default_pipeline(
         default_pool="main",
         available_pools=available_pools or (lambda: {"main", "coding"}),
         pool_session_store=pool_session_store,
-        agent_pool_map=agent_pool_map,
-        agent_resolver=lambda p: agent_pool_map.get(p, p),
-        transcript_store=store,
+        agent_resolver=lambda p: p,
+        transcript_store=transcript_store,
         enqueue_message=input_adapter.put_input_message,
         command_adapter=input_adapter,
         current_ws_provider=current_ws_provider,

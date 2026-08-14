@@ -16,8 +16,8 @@ live on ``NodeStateStore``, NOT on the coordinator. ``Node.run()`` calls
 
 - **Deliver routing** — ``route_deliver``, ``collect_consumable_delivers``,
   ``mark_delivers_consumed``, ``promote_delivers``.
-- **Recovery** — ``load_for_recovery``, ``rebuild_main_state``,
-  ``get_graph_state``. These query the store internally.
+- **State queries** — ``rebuild_main_state`` and ``get_graph_state`` query the
+  store internally.
 - **Registration** — ``register_node`` registers deliver stores.
 
 Consumption methods:
@@ -26,11 +26,8 @@ Consumption methods:
 - ``mark_delivers_consumed`` — delegate to ``deliver_store.mark_consumed``.
 - ``promote_delivers`` — promote ALL CONSUMED_PENDING for the node.
 
-Recovery methods:
+State query methods:
 
-- ``load_for_recovery`` — load metadata + each node's latest record from the
-  store + rebuild main_state. Auto-promote CONSUMED_PENDING delivers whose
-  consuming invocation is COMPLETED.
 - ``rebuild_main_state`` — for each node, pick the single newest record from
   the union of COMPLETED and suspended RUNNING, ordered by
   ``updated_at DESC, invocation_id DESC``. Merge per-node winners in global
@@ -40,25 +37,29 @@ Recovery methods:
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
 from abc import ABC, abstractmethod
 from typing import Any
 
 from ..constants import (
     DeliverConsumptionStatus,
     GraphInstanceStatus,
-    GraphNode,
     InvocationStatus,
 )
 from ..exceptions import RoutingError
+from ..output_adapter import GraphOutput, GraphOutputAdapter, GraphOutputKind
 from .deliver_store import DeliverRecord, DeliverStore, DeliverStoreFactory, NullDeliverStoreFactory
 from .graph_metadata import (
     GraphMetadata,
     GraphStateSnapshot,
     NodeInvocationRecord,
-    RecoveryContext,
 )
 from .instance_store import GraphInstanceStore, NullGraphInstanceStore
 from .node_state_store import NodeStateStore, NullNodeStateStore
+
+logger = logging.getLogger(__name__)
 
 
 class GraphPersistenceCoordinator:
@@ -67,6 +68,13 @@ class GraphPersistenceCoordinator:
     The scheduler is unaware of persistence stores; the coordinator holds
     the instance store + node state store + per-node DeliverStore references
     and routes deliver/consumption/recovery calls.
+
+    The coordinator is also the single emission seam for node-level
+    ``GraphOutput`` events (``node_started`` / ``node_completed`` /
+    ``node_crashed`` / ``deliver_dispatched``): it is the one object
+    reachable from both ``Node.run`` (via ``ctx.coordinator``) and
+    ``route_deliver``. The adapter is wired post-construction via
+    ``set_output_adapter`` by the assembler that owns it.
 
     Three implementation strategies:
 
@@ -104,17 +112,103 @@ class GraphPersistenceCoordinator:
         self._node_state_store = node_state_store
         self._default_deliver_store_factory = default_deliver_store_factory
         self._deliver_stores: dict[str, DeliverStore] = {}
+        self._output_adapter: GraphOutputAdapter | None = None
+        self._emit_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def node_state_store(self) -> NodeStateStore:
         """The node state store (lifecycle + version chain + CAS authority)."""
         return self._node_state_store
 
+    @property
+    def instance_store(self) -> GraphInstanceStore:
+        """The graph instance store (identity + status + version chain)."""
+        return self._instance_store
+
+    # ── Output events ────────────────────────────────────────────────
+
+    def set_output_adapter(self, adapter: GraphOutputAdapter | None) -> None:
+        """Wire the graph output adapter for node-level events.
+
+        Called post-construction by the assembler that owns the adapter
+        (``GraphOrchestrator``) — the coordinator is created by a
+        ``CoordinatorFactory`` that knows nothing about output adapters.
+        ``None`` (the default) disables emission.
+        """
+        self._output_adapter = adapter
+
+    def emit_output(
+        self,
+        kind: GraphOutputKind,
+        *,
+        result: Any = None,
+        error: str | None = None,
+        node_id: str | None = None,
+        node_name: str | None = None,
+        invocation_id: int | None = None,
+        target_node_id: str | None = None,
+    ) -> None:
+        """Emit a ``GraphOutput`` event — the single seam for node-level events.
+
+        Sync fire-and-forget: usable from both async (``Node.run``) and sync
+        (``route_deliver``) call sites. The adapter's async ``emit`` is
+        scheduled on the running event loop; emit failures are logged, never
+        raised (log-and-continue — emission must not affect graph execution).
+        No-op when no adapter is wired or no event loop is running.
+        ``graph_instance_id`` and ``timestamp`` are stamped here so every
+        event carries them.
+        """
+        adapter = self._output_adapter
+        if adapter is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        output = GraphOutput(
+            kind=kind,
+            graph_instance_id=self._graph_instance_id,
+            result=result,
+            error=error,
+            node_id=node_id,
+            node_name=node_name,
+            invocation_id=invocation_id,
+            target_node_id=target_node_id,
+            timestamp=time.time_ns() // 1_000_000,
+        )
+        task = loop.create_task(self._emit_safe(adapter, output))
+        self._emit_tasks.add(task)
+        task.add_done_callback(self._emit_tasks.discard)
+
+    async def drain_output_events(self) -> None:
+        """Await all pending fire-and-forget emit tasks.
+
+        Called by the assembler (``GraphOrchestrator._finalize_instance``)
+        before emitting the terminal output, so node-level events reach the
+        adapter before ``graph_completed`` / ``graph_crashed`` — the event
+        stream stays causally ordered even when nothing in the graph body
+        yielded to the event loop.
+        """
+        if self._emit_tasks:
+            await asyncio.gather(*self._emit_tasks, return_exceptions=True)
+
+    async def _emit_safe(self, adapter: GraphOutputAdapter, output: GraphOutput) -> None:
+        """Await ``adapter.emit`` with log-and-continue error isolation."""
+        try:
+            await adapter.emit(output)
+        except Exception:
+            logger.warning(
+                "graph output adapter emit failed for instance %s (kind=%s)",
+                self._graph_instance_id,
+                output.kind,
+                exc_info=True,
+            )
+
     # ── Registration + routing ───────────────────────────────────────
 
     def register_node(
         self,
-        node_name: str,
+        node_id: str,
         deliver_store: DeliverStore | None = None,
     ) -> None:
         """Register a node's deliver store.
@@ -122,7 +216,7 @@ class GraphPersistenceCoordinator:
         ``None`` for ``deliver_store`` means "use the default factory".
 
         Args:
-            node_name: The node to register.
+            node_id: The node ID to register.
             deliver_store: Optional explicit DeliverStore. None → default factory.
         """
         ds = (
@@ -130,54 +224,58 @@ class GraphPersistenceCoordinator:
             if deliver_store is not None
             else self._default_deliver_store_factory.create()
         )
-        self._deliver_stores[node_name] = ds
+        self._deliver_stores[node_id] = ds
 
-    def get_deliver_store(self, node_name: str) -> DeliverStore | None:
+    def get_deliver_store(self, node_id: str) -> DeliverStore | None:
         """Get a node's deliver_store (for external deliver routing queries)."""
-        return self._deliver_stores.get(node_name)
+        return self._deliver_stores.get(node_id)
 
     def route_deliver(
         self,
-        target_node: str,
+        target_node_id: str,
         content: Any,
-        source_node: str,
+        source_node_id: str,
         source_invocation_id: int,
+        source_node_name: str | None = None,
     ) -> int | None:
         """Route a deliver to the target node's deliver_store.
 
-        If ``target_node == GraphNode.END``, skip (END has no deliver_store),
-        return None.
-
         Args:
-            target_node: The node receiving the deliver.
+            target_node_id: The node ID receiving the deliver.
             content: The delivered content (JSON-serializable).
-            source_node: The delivering node.
+            source_node_id: The delivering node ID.
             source_invocation_id: The deliverer's invocation_id.
+            source_node_name: The delivering node's name (for event emission).
+                ``None`` for external delivers (no source node).
 
         Returns:
-            The ``deliver_id`` (Snowflake), or ``None`` if target is END.
+            The ``deliver_id`` (Snowflake).
 
         Raises:
-            RoutingError: If ``target_node`` is not END and has no
-                deliver_store registered.
+            RoutingError: If ``target_node_id`` has no deliver_store registered.
         """
-        if target_node == GraphNode.END:
-            return None
-        store = self._deliver_stores.get(target_node)
+        store = self._deliver_stores.get(target_node_id)
         if store is None:
-            raise RoutingError(f"Node {target_node!r} has no deliver_store registered.")
-        return store.accumulate(
+            raise RoutingError(f"Node {target_node_id!r} has no deliver_store registered.")
+        deliver_id = store.accumulate(
             graph_instance_id=self._graph_instance_id,
-            target_node=target_node,
-            source_node=source_node,
+            node_id=target_node_id,
+            source_node_id=source_node_id,
             source_invocation_id=source_invocation_id,
             content=content,
         )
+        self.emit_output(
+            GraphOutputKind.DELIVER_DISPATCHED,
+            node_id=source_node_id,
+            node_name=source_node_name,
+            target_node_id=target_node_id,
+        )
+        return deliver_id
 
     # ── Consumption methods ─────────────────────────────────────────────
 
     def collect_consumable_delivers(
-        self, node_name: str, invocation_id: int
+        self, node_id: str, invocation_id: int
     ) -> list[DeliverRecord]:
         """Collect delivers consumable by this invocation.
 
@@ -185,29 +283,29 @@ class GraphPersistenceCoordinator:
         CONSUMED_PENDING (SQLite) or just PENDING (InMemory).
 
         Args:
-            node_name: The consuming node.
+            node_id: The consuming node ID.
             invocation_id: The consuming invocation's ID.
 
         Returns:
             Consumable ``DeliverRecord`` list, or empty list if no store.
         """
-        store = self._deliver_stores.get(node_name)
+        store = self._deliver_stores.get(node_id)
         if store is None:
             return []
-        return store.query_consumable(self._graph_instance_id, node_name)
+        return store.query_consumable(self._graph_instance_id, node_id)
 
     def mark_delivers_consumed(
-        self, node_name: str, deliver_ids: list[int], invocation_id: int
+        self, node_id: str, deliver_ids: list[int], invocation_id: int
     ) -> None:
         """Mark delivers as consumed by an invocation.
 
         Delegates to ``deliver_store.mark_consumed``.
         """
-        store = self._deliver_stores.get(node_name)
+        store = self._deliver_stores.get(node_id)
         if store is not None:
             store.mark_consumed(deliver_ids, invocation_id)
 
-    def promote_delivers(self, node_name: str, invocation_id: int) -> None:
+    def promote_delivers(self, node_id: str, invocation_id: int) -> None:
         """Promote consumed delivers on invocation completion.
 
         Promotes ALL CONSUMED_PENDING delivers for this node, not just
@@ -217,13 +315,13 @@ class GraphPersistenceCoordinator:
         invocation completes.
 
         Args:
-            node_name: The node whose delivers to promote.
+            node_id: The node ID whose delivers to promote.
             invocation_id: The completing invocation's ID.
         """
-        store = self._deliver_stores.get(node_name)
+        store = self._deliver_stores.get(node_id)
         if store is None:
             return
-        consumable = store.query_consumable(self._graph_instance_id, node_name)
+        consumable = store.query_consumable(self._graph_instance_id, node_id)
         consumed_pending_invocation_ids = {
             r.consumed_by_invocation_id
             for r in consumable
@@ -244,14 +342,14 @@ class GraphPersistenceCoordinator:
         state (imperative mutations from every prior node). Return that
         snapshot's ``state_json`` directly — no per-node merge needed.
 
-        Ticket 26: single query ``max(updated_at, invocation_id)`` across
+        Single query ``max(updated_at, invocation_id)`` across
         all nodes' ``{COMPLETED, suspended RUNNING}`` records.
         """
         store = self._node_state_store
         candidates: list[NodeInvocationRecord] = []
-        for node_name in store.list_nodes():
+        for node_id in store.list_nodes():
             versions = store.query_versions(
-                node_name, {InvocationStatus.COMPLETED, InvocationStatus.RUNNING}
+                node_id, {InvocationStatus.COMPLETED, InvocationStatus.RUNNING}
             )
             candidates.extend(
                 r
@@ -263,77 +361,6 @@ class GraphPersistenceCoordinator:
             return {}
         latest = max(candidates, key=lambda r: (r.updated_at, r.invocation_id))
         return dict(latest.state_json)
-
-    def load_for_recovery(self) -> RecoveryContext:
-        """Load recovery context: metadata + node states + rebuilt main_state.
-
-        Auto-promote CONSUMED_PENDING delivers whose consuming invocation
-        is COMPLETED (crash between save COMPLETED and promote_delivers).
-
-        Returns:
-            ``RecoveryContext`` with metadata, per-node latest invocation
-            records, and rebuilt main_state.
-        """
-        gid = self._graph_instance_id
-        store = self._node_state_store
-        metadata = self._instance_store.load(gid)
-        if metadata is None:
-            metadata = GraphMetadata(
-                graph_instance_id=gid,
-                spec_id=0,
-                parent_instance_id=None,
-                parent_node=None,
-                status=GraphInstanceStatus.RUNNING,
-            )
-            node_states: dict[str, NodeInvocationRecord | None] = dict.fromkeys(
-                self._deliver_stores
-            )
-            return RecoveryContext(
-                metadata=metadata,
-                node_states=node_states,
-                rebuilt_main_state={},
-            )
-
-        node_states = {name: store.load_latest(name) for name in self._deliver_stores}
-
-        self._auto_promote_completed_invocations(node_states)
-
-        rebuilt_main_state = self.rebuild_main_state()
-
-        return RecoveryContext(
-            metadata=metadata,
-            node_states=node_states,
-            rebuilt_main_state=rebuilt_main_state,
-        )
-
-    def _auto_promote_completed_invocations(
-        self, node_states: dict[str, NodeInvocationRecord | None]
-    ) -> None:
-        """Recovery: auto-promote CONSUMED_PENDING delivers for COMPLETED invocations.
-
-        For each node, scan ``query_consumable`` for CONSUMED_PENDING records.
-        If the ``consumed_by_invocation_id`` corresponds to a COMPLETED
-        invocation (checked via ``load_by_invocation_id``), promote them.
-        """
-        gid = self._graph_instance_id
-        store = self._node_state_store
-        for node_name in self._deliver_stores:
-            deliver_store = self._deliver_stores[node_name]
-            consumable = deliver_store.query_consumable(gid, node_name)
-            for record in consumable:
-                if (
-                    record.status != DeliverConsumptionStatus.CONSUMED_PENDING
-                    or record.consumed_by_invocation_id is None
-                ):
-                    continue
-                inv_record = store.load_by_invocation_id(
-                    node_name, record.consumed_by_invocation_id
-                )
-                if (
-                    inv_record is not None
-                    and inv_record.status == InvocationStatus.COMPLETED
-                ):
-                    deliver_store.promote_consumed(record.consumed_by_invocation_id)
 
     def get_graph_state(
         self, node_status_filter: set[InvocationStatus] | None = None
@@ -359,8 +386,8 @@ class GraphPersistenceCoordinator:
                 status=GraphInstanceStatus.RUNNING,
             )
         nodes: dict[str, list[NodeInvocationRecord]] = {}
-        for node_name in self._deliver_stores:
-            nodes[node_name] = store.query_versions(node_name, node_status_filter)
+        for node_id in self._deliver_stores:
+            nodes[node_id] = store.query_versions(node_id, node_status_filter)
         return GraphStateSnapshot(metadata=metadata, nodes=nodes)
 
     # ── Resource cleanup ──────────────────────────────────────────────────

@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -18,57 +18,9 @@ from bot.webui.server import WebUIServer
 
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.multi_agent.pool_config.media import MediaConfig
+from modex_agent.multi_agent.pool_router import PoolSessionStore
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
-
-
-def _make_pool_yml(pool_dir: Path, pool_name: str, main_agent: str) -> None:
-    """Write a minimal pool.yml + main agent template for PoolStore."""
-    pool_dir.mkdir(parents=True, exist_ok=True)
-    (pool_dir / "pool.yml").write_text(
-        f"main_agent_name: {main_agent}\n", encoding="utf-8"
-    )
-
-
-class TestWebUIService:
-    """Unit tests for WebUIService helpers."""
-
-    def test_build_agent_pool_map_uses_pool_store(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            project_dir = Path(tmp)
-            pools_dir = project_dir / "config" / "pools"
-            _make_pool_yml(pools_dir / "coder", "coder", "coder")
-            _make_pool_yml(pools_dir / "main", "main", "main")
-
-            class _FakeService:
-                _project_dir = project_dir
-
-            mapping = WebUIService._build_agent_pool_map(_FakeService())
-
-        assert mapping.get("main") == "main"
-        assert mapping.get("coder") == "coder"
-
-    def test_build_agent_pool_map_includes_resident_subagents(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            project_dir = Path(tmp)
-            pools_dir = project_dir / "config" / "pools"
-            coder_dir = pools_dir / "coder"
-            _make_pool_yml(coder_dir, "coder", "coder")
-            tmpl_dir = coder_dir / "templates"
-            tmpl_dir.mkdir(parents=True, exist_ok=True)
-            (tmpl_dir / "scout.yml").write_text("agent_name: scout\n", encoding="utf-8")
-            (tmpl_dir / "reviewer.yml").write_text(
-                "agent_name: reviewer\n", encoding="utf-8"
-            )
-
-            class _FakeService:
-                _project_dir = project_dir
-
-            mapping = WebUIService._build_agent_pool_map(_FakeService())
-
-        assert mapping.get("coder") == "coder"
-        assert mapping.get("scout") == "coder"
-        assert mapping.get("reviewer") == "coder"
 
 
 @pytest.mark.asyncio
@@ -76,8 +28,8 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
     """End-to-end: a session created with pool=coder persists transcript under
     the coder pool directory, not main.
 
-    Regression: when _build_agent_pool_map produced an empty mapping, the
-    transcript dispatcher fell back to the main pool for every agent, so a
+    Regression: when coder pool attribution was missing, the transcript
+    dispatcher fell back to the main pool, so a
     coder session's transcript ended up at
     .modex/sessions/<ws>/main/<uuid>.orchestrator.jsonl instead of
     .modex/sessions/<ws>/coder/<uuid>.orchestrator.jsonl.
@@ -90,22 +42,9 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
 
-    # Use the production mapping builder with the real project config.
-
     project_dir = Path(__file__).resolve().parent.parent
 
-    class _MappingSource:
-        _project_dir = project_dir
-
-    mapping = WebUIService._build_agent_pool_map(_MappingSource())
-    assert mapping.get("orchestrator") == "coder", (
-        "test setup: real project must map orchestrator agent to coder pool"
-    )
-
-    # pool_name -> main_agent_name, mirroring WebUIService production wiring
-    # (_agent_map = {name: pi.main_agent_name for ...}). _build_agent_pool_map
-    # returns agent_name -> pool_name, which is the wrong direction for the
-    # resolver contract; read main agent names from PoolStore directly.
+    # pool_name -> main_agent_name, mirroring WebUIService production wiring.
     from modex_agent.multi_agent.pool_config import PoolStore
 
     _pool_store = PoolStore(base_dir=project_dir)
@@ -115,7 +54,6 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
     }
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    store.set_agent_pool_map(mapping)
 
     server = WebUIServer(
         input_adapter,
@@ -126,10 +64,12 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
     )
     server.set_workspace_index(store)
     server.set_pool_agent_names(["main", "orchestrator"])
-    server.set_agent_pool_map(mapping)
     server.set_agent_resolver(
         lambda pool_name: _pool_to_main_agent.get(pool_name, pool_name)
     )
+    pool_session_store = PoolSessionStore(data_dir / ".modex")
+    server.set_pool_switch_callback(pool_session_store.set)
+    server.set_pool_resolver(pool_session_store.get_pool)
 
     from bot.service.session_gc import SessionGarbageCollector, SessionGcConfig
 
@@ -147,7 +87,7 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
         server,
         store,
         input_adapter,
-        agent_pool_map=mapping,
+        pool_session_store=pool_session_store,
         workspace_root=data_dir,
         available_pools=lambda: set(_pool_to_main_agent.keys()),
     )
@@ -178,7 +118,7 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
                 }
             )
             echoed = _unwrap_envelope(await ws.receive_json(timeout=2))
-            assert echoed["event"] == "user_message"
+            assert echoed["event"] == "user_message", echoed
 
         # The transcript MUST live under the coder pool directory.
         # Filename suffix is the main agent name (orchestrator), not the pool name.
@@ -229,15 +169,12 @@ async def test_production_style_resolver_does_not_crash_emitter() -> None:
     from bot.adapters.register_websocket import set_session_meta_resolver
     from bot.webui.events import SessionMeta
 
-    # Mirror the production resolver shape (WebUIService._resolve_session_meta).
-    # This deliberately uses the same variable reference pattern as production
-    # to catch the missing _DEFAULT_AGENT_NAME import.
-    agent_pool_map: dict[str, str] = {"main": "main", "coder": "coder"}
+    from modex_agent.core.session_id import session_id_prefix_of
+
+    pool_by_prefix: dict[str, str] = {"conv": "coder"}
 
     def _resolve_session_meta(session_id: str) -> SessionMeta:
-        parts = session_id.split(".", 2)
-        agent = parts[1] if len(parts) >= 2 else "main"
-        pool = agent_pool_map.get(agent, "main")
+        pool = pool_by_prefix.get(session_id_prefix_of(session_id), "main")
         return SessionMeta(pool=pool, parent_session_id=None)
 
     set_session_meta_resolver(_resolve_session_meta)
@@ -306,14 +243,13 @@ class TestAttachmentWiring:
             provider=None,
             notification_service=None,
             communication_service=None,
-            agent_bus=None,
+            tree_manager=MagicMock(),
             target_store=None,
         )
         svc = WebUIService.__new__(WebUIService)
         svc._pools = {"main": pool}
         svc._default_pool = "main"
         svc._media_store = WorkspaceScopedMediaStore(data_dir_name=".modex")
-        svc._agent_pool_map = {"main": "main"}
         svc._pool_session_store = SimpleNamespace()  # truthy -> skip pool_router branch
         svc._transcript_store = SimpleNamespace()
         svc._session_factory = SimpleNamespace()
@@ -335,3 +271,200 @@ class TestAttachmentWiring:
         # The per-pool resolver is wired and honors PoolAssemblyDeps.media.
         assert ctx.media_config_for("main").max_text_doc_bytes == 888
         assert ctx.media_config_for("nope") == MediaConfig()
+
+
+# ── Cross-pool same-name subagent transcript partitioning ────────────────────
+
+
+@pytest.mark.asyncio
+async def test_cross_pool_same_name_subagent_transcript_partitioning() -> None:
+    """Two pools (coder, review) both have an `explore` subagent.
+
+    A session routed to the `review` pool must persist its transcript under
+    ``sessions/review/``, NOT under ``sessions/coder/`` — even though the
+    agent_name segment of the session_id is identical (`explore`) in both
+    pools.
+
+    This is the original bug: ``_agent_pool_map["explore"]`` was overwritten
+    by the last pool iterated, so all `explore` sessions were misattributed.
+    The fix: pool is carried by the request / resolved from PoolSessionStore,
+    never inferred from agent_name.
+
+    This test exercises the REAL production write path:
+    - WS attach with explicit pool → PoolSessionStore persists the route
+    - WS send_message → S5 stamps RESOLVED_POOL → S7 persists with pool=
+    - No test wrapper injects pool — the production code must carry it.
+    """
+    data_dir = Path(tempfile.mkdtemp())
+    input_adapter = WebSocketInputAdapter()
+
+    project_dir = Path(__file__).resolve().parent.parent
+
+    from modex_agent.multi_agent.pool_config import PoolStore
+
+    _pool_store = PoolStore(base_dir=project_dir)
+    _pool_to_main_agent = {
+        s.name: _pool_store.read_pool(s.name).main.agent_name
+        for s in _pool_store.list_pools()
+    }
+
+    store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+
+    server = WebUIServer(
+        input_adapter,
+        store,
+        static_dist=None,
+        data_dir=data_dir,
+        home_sessions_dir=WorkspacePaths(root=data_dir / ".modex").sessions_dir,
+    )
+    server.set_workspace_index(store)
+    server.set_pool_agent_names(["main", "orchestrator", "reviewer"])
+    server.set_agent_resolver(
+        lambda pool_name: _pool_to_main_agent.get(pool_name, pool_name)
+    )
+    pool_session_store = PoolSessionStore(data_dir / ".modex")
+    server.set_pool_switch_callback(pool_session_store.set)
+    server.set_pool_resolver(pool_session_store.get_pool)
+
+    from bot.service.session_gc import SessionGarbageCollector, SessionGcConfig
+
+    server.set_session_gc(
+        SessionGarbageCollector(
+            workspace_roots_provider=lambda: [data_dir],
+            data_dir_name=".modex",
+            config=SessionGcConfig(),
+        )
+    )
+
+    from tests.webui._pipeline_fixture import attach_default_pipeline
+
+    attach_default_pipeline(
+        server,
+        store,
+        input_adapter,
+        pool_session_store=pool_session_store,
+        workspace_root=data_dir,
+        available_pools=lambda: set(_pool_to_main_agent.keys()),
+    )
+
+    client = TestClient(TestServer(server.app))
+    await client.start_server()
+    try:
+        with bind_workspace_root(data_dir):
+            # Create a review-pool session via the API.
+            resp = await client.post("/api/sessions", json={"pool": "review"})
+            assert resp.status == 200
+            data = await resp.json()
+            session_id: str = data["session_id"]
+            assert data["pool"] == "review"
+            uuid_prefix = session_id.split(".")[0]
+
+            # Attach + send a message to trigger transcript persistence.
+            ws = await client.ws_connect("/ws")
+            await ws.send_json({"action": "attach", "session_id": session_id})
+            attached_raw = await ws.receive_json()
+            assert attached_raw["event_type"] == "attached"
+            assert attached_raw["pool"] == "review"
+
+            await ws.send_json(
+                {
+                    "action": "send_message",
+                    "session_id": session_id,
+                    "content": "review pool message",
+                    "pool": "review",
+                }
+            )
+            echoed = _unwrap_envelope(await ws.receive_json(timeout=2))
+            assert echoed["event"] == "user_message", echoed
+
+        # The transcript MUST live under the review pool directory.
+        expected_file = data_dir / ".modex" / "sessions" / "review" / f"{uuid_prefix}.reviewer.jsonl"
+        assert expected_file.exists(), (
+            f"reviewer transcript not found at expected path {expected_file}; "
+            f"available dirs: {list((data_dir / '.modex' / 'sessions').iterdir())}"
+        )
+
+        # It MUST NOT have leaked into the coder pool directory.
+        wrong_coder_file = data_dir / ".modex" / "sessions" / "coder" / f"{uuid_prefix}.reviewer.jsonl"
+        assert not wrong_coder_file.exists(), (
+            f"reviewer transcript leaked into coder pool directory {wrong_coder_file}"
+        )
+
+        # It MUST NOT have leaked into the main pool directory either.
+        wrong_main_file = data_dir / ".modex" / "sessions" / "main" / f"{uuid_prefix}.reviewer.jsonl"
+        assert not wrong_main_file.exists(), (
+            f"reviewer transcript leaked into main pool directory {wrong_main_file}"
+        )
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_cross_pool_same_name_subagent_emitter_partitioning() -> None:
+    """Emitter writes for a review-pool session must land under review/, not coder/.
+
+    Exercises the WebBotEmitter._persist() path — the emitter reads pool from
+    SessionMeta (resolved via PoolSessionStore) and passes it to
+    transcript_store.append(). Before the fix, _persist() did NOT pass pool,
+    so the store defaulted to _DEFAULT_POOL ("main") for every non-main write.
+    """
+    from bot.webui.emitter import WebBotEmitter
+    from bot.webui.events import SessionMeta
+
+    from modex_agent.core.emitter import EmitterConfig
+    from modex_agent.core.session_id import session_id_prefix_of
+
+    data_dir = Path(tempfile.mkdtemp())
+    store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+    pool_session_store = PoolSessionStore(data_dir / ".modex")
+
+    # Simulate: a review-pool session with prefix "rev_conv"
+    session_prefix = "rev_conv"
+    session_id = f"{session_prefix}.reviewer"
+    pool_session_store.set(session_prefix, "review")
+
+    # Wire the SessionMeta resolver the same way WebUIService.start() does
+    def _resolve_session_meta() -> SessionMeta:
+        prefix = session_id_prefix_of(session_id)
+        pool = pool_session_store.get_pool(prefix) or "main"
+        return SessionMeta(pool=pool, parent_session_id=None)
+
+    from bot.adapters.register_websocket import set_session_meta_resolver
+
+    set_session_meta_resolver(_resolve_session_meta)
+
+    output = MagicMock()
+    output.send_envelope = AsyncMock()
+
+    with bind_workspace_root(data_dir):
+        emitter = WebBotEmitter(
+            output_adapter=output,
+            session_id=session_id,
+            config=EmitterConfig(),
+            transcript_store=store,
+            session_meta_resolver=_resolve_session_meta,
+            sessions_dir_provider=lambda: WorkspacePaths(root=data_dir / ".modex").sessions_dir,
+        )
+
+        # Emit a content delta + stream end to trigger _persist()
+        await emitter.emit_delta("hello from review")
+        await emitter.emit_stream_end(resuming=False)
+
+    # The transcript file MUST be under sessions/review/
+    review_file = data_dir / ".modex" / "sessions" / "review" / f"{session_id}.jsonl"
+    assert review_file.exists(), (
+        f"Emitter transcript not found at {review_file}; "
+        f"available: {list((data_dir / '.modex' / 'sessions').iterdir()) if (data_dir / '.modex' / 'sessions').exists() else 'no sessions dir'}"
+    )
+
+    # MUST NOT be under sessions/main/ (the old default-path bug)
+    main_file = data_dir / ".modex" / "sessions" / "main" / f"{session_id}.jsonl"
+    assert not main_file.exists(), (
+        f"Emitter transcript leaked into main pool directory {main_file}"
+    )
+
+    # MUST NOT be under sessions/coder/ (the cross-pool same-name bug)
+    coder_file = data_dir / ".modex" / "sessions" / "coder" / f"{session_id}.jsonl"
+    assert not coder_file.exists(), (
+        f"Emitter transcript leaked into coder pool directory {coder_file}"
+    )

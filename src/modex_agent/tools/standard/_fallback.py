@@ -166,8 +166,4 @@ def is_ignored(
     if not matched:
         return False
 
-    for pattern in negative:
-        if _match_one(rel_path, parts, pattern):
-            return False
-
-    return True
+    return all(not _match_one(rel_path, parts, pattern) for pattern in negative)

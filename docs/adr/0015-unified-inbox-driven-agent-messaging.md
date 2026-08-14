@@ -1,7 +1,7 @@
 # Unified inbox-driven agent messaging
 
 Status: accepted (2026-07-01); **partially superseded (2026-07-02)** by the
-poll-driven redesign — `docs/superpowers/specs/2026-07-02-poll-driven-unified-inbox-design.md`.
+poll-driven redesign (see `src/modex_agent/multi_agent/AGENTS.md` for the current InboxPoller-driven model).
 
 This ADR is preserved as the historical decision record. Its diagnosis
 (§Context — two-path race, lost messages on lock timeout, the `_send`

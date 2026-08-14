@@ -21,14 +21,14 @@ from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import DeltaEnvelope, UserMessageEvent, _unwrap_envelope
 from bot.webui.server import WebUIServer
-from modex_agent.workspace.paths import WorkspacePaths
+
 from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
 
 _DATA_DIR_NAME = ".modex"
@@ -61,7 +61,6 @@ class TestQueueOwnership:
 def _build_server(home: Path) -> WebUIServer:
     inp = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
-    store.set_agent_pool_map({"main": "main", "coding": "coding"})
     server = WebUIServer(
         inp,
         store,
@@ -71,7 +70,6 @@ def _build_server(home: Path) -> WebUIServer:
     )
     server.set_workspace_index(store)
     server.set_data_dir_name(_DATA_DIR_NAME)
-    server.set_agent_pool_map({"main": "main", "coding": "coding"})
     server.set_pool_agent_names(["main", "coding"])
     server.set_session_factory(SessionIdFactory())
     server.set_session_store(
@@ -127,7 +125,7 @@ async def test_watcher_does_not_forward_foreign_conversation_deltas() -> None:
                 try:
                     env = await conn_a.receive_json(timeout=1)
                     a_deltas.append(str(env.get("event")))
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     break
             assert len(a_deltas) == 3, (
                 f"connA should receive all 3 convA deltas, got {len(a_deltas)}"
@@ -135,7 +133,7 @@ async def test_watcher_does_not_forward_foreign_conversation_deltas() -> None:
 
             try:
                 leaked = await conn_b.receive_json(timeout=0.3)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 leaked = None
             assert leaked is None, (
                 f"connB must NOT receive convA deltas (cross-workspace leak); "
@@ -156,7 +154,6 @@ async def test_transcript_append_warns_when_ws_root_unbound(
     caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
     store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
-    store.set_agent_pool_map({"main": "main"})
     sid = "convZ.main"
     with caplog.at_level(logging.WARNING, logger="bot.service.workspace_store"):
         # No bind_workspace_root → unbound.
@@ -173,7 +170,6 @@ async def test_transcript_append_silent_when_ws_root_bound(
     caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
     store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
-    store.set_agent_pool_map({"main": "main"})
     sid = "convZ.main"
     with caplog.at_level(logging.WARNING, logger="bot.service.workspace_store"):
         with bind_workspace_root(tmp_path):

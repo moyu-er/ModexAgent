@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from abc import ABC, abstractmethod
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import Any, Final
+from weakref import WeakValueDictionary
 
 
 class StorageLock(ABC):
@@ -173,6 +175,10 @@ class AioRWLock(StorageLock):
         return _AioRWLockWriteContext(self, timeout=timeout)
 
 
+_FILE_PROCESS_LOCKS: WeakValueDictionary[str, AioRWLock] = WeakValueDictionary()
+_FILE_PROCESS_LOCKS_GUARD: Final = threading.Lock()
+
+
 class NoOpStorageLock(StorageLock):
     """Zero-overhead null implementation for single-threaded use."""
 
@@ -208,64 +214,53 @@ class FileStorageLock(StorageLock):
             raise ImportError(
                 "filelock is required for FileStorageLock. Install it with: pip install filelock"
             ) from exc
-        self._lock_file = Path(lock_file)
-        # thread_local=False is required because run_in_executor dispatches
-        # acquire/release to different worker threads; thread-local state would
-        # hide the lock from the releasing thread and deadlock concurrent waiters.
-        self._lock = filelock.FileLock(str(self._lock_file), thread_local=False)
-        self._writer_task: asyncio.Task[Any] | None = None
-        self._writer_depth: int = 0
+        self._lock_file = Path(lock_file).resolve()
+        lock_key = str(self._lock_file)
+        with _FILE_PROCESS_LOCKS_GUARD:
+            # Share a single FileLock + AioRWLock pair per resolved path so
+            # that multiple FileStorageLock instances on the same path are
+            # reentrant within the process (filelock.FileLock without
+            # is_singleton=True deadlocks on cross-instance reentry).
+            entry = _FILE_PROCESS_LOCKS.get(lock_key)
+            if entry is None:
+                entry = filelock.FileLock(lock_key, thread_local=False)
+                entry._modex_process_lock = AioRWLock()
+                _FILE_PROCESS_LOCKS[lock_key] = entry
+            self._lock = entry
+            self._process_lock = entry._modex_process_lock
 
     class _FileLockContext(StorageLockContext):
         def __init__(
             self,
             owner: FileStorageLock,
-            is_write: bool,
             timeout: float | None = None,
         ) -> None:
             self._owner = owner
-            self._is_write = is_write
             self._timeout = timeout
+            self._process_context = owner._process_lock.write(timeout=timeout)
             self._acquired = False
 
         async def acquire(self) -> None:
-            current = asyncio.current_task()
-            if self._is_write:
-                if self._owner._writer_task is not None and self._owner._writer_task == current:
-                    self._owner._writer_depth += 1
-                    return
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self._owner._lock.acquire, self._timeout)
-                self._owner._writer_task = current
-                self._owner._writer_depth = 1
-                self._acquired = True
-            else:
-                if self._owner._writer_task is not None and self._owner._writer_task == current:
-                    return
+            await self._process_context.acquire()
+            try:
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, self._owner._lock.acquire, self._timeout)
                 self._acquired = True
+            finally:
+                if not self._acquired:
+                    await self._process_context.release()
 
         async def release(self) -> None:
-            current = asyncio.current_task()
-            if (
-                self._is_write
-                and self._owner._writer_task is not None
-                and self._owner._writer_task == current
-            ):
-                self._owner._writer_depth -= 1
-                if self._owner._writer_depth == 0:
-                    self._owner._writer_task = None
-                    loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(None, self._owner._lock.release)
-                return
             if self._acquired:
                 loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self._owner._lock.release)
-                self._acquired = False
+                try:
+                    await loop.run_in_executor(None, self._owner._lock.release)
+                finally:
+                    self._acquired = False
+                    await self._process_context.release()
 
     def read(self, timeout: float | None = None) -> StorageLockContext:
-        return self._FileLockContext(self, is_write=False, timeout=timeout)
+        return self._FileLockContext(self, timeout=timeout)
 
     def write(self, timeout: float | None = None) -> StorageLockContext:
-        return self._FileLockContext(self, is_write=True, timeout=timeout)
+        return self._FileLockContext(self, timeout=timeout)

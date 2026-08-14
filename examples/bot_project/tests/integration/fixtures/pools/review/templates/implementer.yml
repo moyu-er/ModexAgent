@@ -1,0 +1,11 @@
+agent_name: implementer
+description: >-
+  Code implementation agent. Receives a design spec from the designer,
+  writes the implementation, and delivers it to the reviewer for
+  review. If the reviewer sends feedback, revises the implementation
+  and re-delivers to the reviewer.
+max_steps: 30
+tool_preset: none
+context_mode: fresh
+roles:
+- implementer

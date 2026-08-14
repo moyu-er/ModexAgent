@@ -1,28 +1,11 @@
-"""`GraphSpecStore` — persistence abstraction for `GraphSpec` records (P1C.6).
+"""In-memory and SQLite persistence adapters for declarative graph specs.
 
-Provides:
-
-- `GraphSpecStore` ABC (rule 7: ABC, not Protocol) — the minimal interface for
-  saving and querying `GraphSpec`s keyed by `spec_id` (Snowflake) and by
-  `(name, version)`.
-- `InMemoryGraphSpecStore` — default in-memory dict implementation. Uses
-  `default_id_generator()` for Snowflake IDs.
-- `SqliteGraphSpecStore` — SQLite adapter. `CREATE TABLE IF NOT EXISTS
-  graph_specs` with the SAME DDL as in `001_initial.sql` table 16 (idempotent).
-  `spec_json` serialized via `GraphSpec.model_dump_json()` /
-  `GraphSpec.model_validate_json()`. Uses `default_id_generator()` for
-  Snowflake IDs.
-
-Follows the same store pattern as `deliver_store.py`: ABC +
-InMemory + SQLite, centralized table/column
-constants, `CREATE TABLE IF NOT EXISTS`, `?` placeholders. The SQLite
-adapter takes a caller-owned `sqlite3.Connection` and never closes it.
-
-Per ticket 08: `GraphSpec` is the declarative, fully-serializable graph
-description — the persistence unit. The full chain is
-`GraphSpec → GraphSpecCompiler → CompiledGraph → GraphInstance → GraphEngine`.
-`GraphSpec` is what gets persisted to the `graph_specs` table; the bot
-factory (P3.5) loads it via `GraphSpecStore.load_by_id` or `load_by_name`.
+Spec is immutable (ADR-0040 change 3): each save with changed content creates
+a new row with a new Snowflake ``spec_id``. ``save`` always INSERTs;
+``save_if_changed`` deduplicates by comparing ``spec_json`` against the latest
+row for the same name. ``list_records`` returns only the latest ``spec_id``
+per name (``MAX(spec_id) GROUP BY name`` — Snowflake IDs are time-ordered).
+Historical specs are accessible only via ``get_by_id`` / ``load_by_id``.
 """
 
 from __future__ import annotations
@@ -33,6 +16,7 @@ from abc import ABC, abstractmethod
 from .id_generator import default_id_generator
 from .persistence._time import now_ms
 from .spec import GraphSpec
+from .spec_record import GraphSpecRecord
 
 # ── Table / column name constants ─────────────────────────────────────────
 # The DDL/DML statements below are assembled from these constants; all data
@@ -48,73 +32,101 @@ _COL_UPDATED_AT = "updated_at"
 
 
 class GraphSpecStore(ABC):
-    """Persistence abstraction for `GraphSpec` records (rule 7: ABC).
-
-    The store is keyed by `spec_id` — a Snowflake ID (BIGINT). A secondary
-    unique key `(name, version)` allows lookup by human-readable identifier.
-
-    All methods are synchronous and must be called from the event-loop
-    thread only. The caller owns the ``sqlite3.Connection`` and manages its
-    lifetime — the store never closes it.
-
-    Implementations:
-
-    - `InMemoryGraphSpecStore` — dict-backed, default.
-    - `SqliteGraphSpecStore` — SQLite file or `:memory:`.
-    """
+    """Synchronous persistence contract for immutable graph specs (ADR-0040)."""
 
     @abstractmethod
     def save(self, spec: GraphSpec, spec_id: int | None = None) -> int:
-        """Save a `GraphSpec`. If `spec_id` is None, generate a Snowflake ID.
+        """INSERT a new ``GraphSpec`` row with a new Snowflake ``spec_id``.
+
+        Always creates a new row — never overwrites. Use ``save_if_changed``
+        for content-deduplicated saves.
 
         Args:
-            spec: The `GraphSpec` to persist.
-            spec_id: Optional Snowflake ID. If `None`, one is generated via
-                `default_id_generator()`. If provided, the caller owns
-                uniqueness.
+            spec: The ``GraphSpec`` to persist.
+            spec_id: Optional Snowflake ID for the new record. If ``None``,
+                one is generated via ``default_id_generator()``.
 
         Returns:
-            The `spec_id` under which the spec was saved.
+            The newly inserted ``spec_id``.
+        """
+        ...
+
+    @abstractmethod
+    def save_if_changed(self, spec: GraphSpec, spec_id: int | None = None) -> int:
+        """Content-deduplicated save (ADR-0040 change 3).
+
+        Compares ``spec.model_dump_json()`` against the latest existing row
+        for the same ``name`` (``MAX(spec_id) WHERE name = ?``). If identical,
+        returns the existing ``spec_id`` (idempotent — no new row). If
+        different or no prior row exists, INSERTs a new row and returns the
+        new ``spec_id``.
+
+        Args:
+            spec: The ``GraphSpec`` to persist.
+            spec_id: Optional Snowflake ID for a new record. If ``None``,
+                one is generated via ``default_id_generator()``.
+
+        Returns:
+            The existing or newly inserted ``spec_id``.
         """
         ...
 
     @abstractmethod
     def load_by_id(self, spec_id: int) -> GraphSpec | None:
-        """Load a `GraphSpec` by its `spec_id`.
+        """Load a ``GraphSpec`` by its ``spec_id``.
 
         Args:
             spec_id: The Snowflake ID to look up.
 
         Returns:
-            The `GraphSpec`, or `None` if no spec with this ID exists.
+            The ``GraphSpec``, or ``None`` if no spec with this ID exists.
         """
         ...
 
     @abstractmethod
     def load_by_name(self, name: str, version: str = "1.0") -> GraphSpec | None:
-        """Load a `GraphSpec` by `(name, version)`.
+        """Load the latest ``GraphSpec`` for a given ``name``.
+
+        ``version`` is a display label (ADR-0040), not a lookup key — the
+        latest row (``MAX(spec_id)``) for the name is returned regardless
+        of the ``version`` argument.
 
         Args:
             name: The spec name.
-            version: The spec version (defaults to `"1.0"`).
+            version: Ignored (kept for signature stability).
 
         Returns:
-            The `GraphSpec`, or `None` if no spec matches.
+            The latest ``GraphSpec`` for the name, or ``None``.
         """
         ...
 
     @abstractmethod
     def list_all(self) -> list[GraphSpec]:
-        """List all persisted `GraphSpec`s.
+        """List all persisted ``GraphSpec`` rows (including historical).
 
         Returns:
-            A list of all specs. Order is implementation-defined.
+            A list of all specs, ordered by ``spec_id``.
         """
         ...
 
     @abstractmethod
+    def list_records(self) -> list[GraphSpecRecord]:
+        """List only the latest spec record per name (ADR-0040 change 3).
+
+        Returns only the newest ``spec_id`` for each name
+        (``MAX(spec_id) GROUP BY name``). Historical specs are accessible
+        only via ``get_by_id`` / ``load_by_id``.
+        """
+        ...
+
+    @abstractmethod
+    def get_by_id(self, spec_id: int) -> GraphSpecRecord | None:
+        """Return metadata for a persisted graph specification ID."""
+        ...
+
+    @abstractmethod
     def delete(self, spec_id: int) -> None:
-        """Delete a `GraphSpec` by `spec_id`.
+        """Delete a ``GraphSpec`` by its ``spec_id``.
 
         Args:
             spec_id: The Snowflake ID of the spec to delete.
@@ -123,93 +135,94 @@ class GraphSpecStore(ABC):
 
 
 class InMemoryGraphSpecStore(GraphSpecStore):
-    """Default in-memory `GraphSpecStore` — dict keyed by `spec_id`.
-
-    A secondary index `(name, version) → spec_id` supports `load_by_name`.
-    Uses `default_id_generator()` for Snowflake IDs when `spec_id` is not
-    provided. Suitable for single-process runs and tests. Not persistent
-    across process restarts.
-    """
+    """Dictionary-backed graph specification store (immutable specs)."""
 
     def __init__(self) -> None:
         self._specs: dict[int, GraphSpec] = {}
-        self._by_name_version: dict[tuple[str, str], int] = {}
+        self._created_at: dict[int, int] = {}
 
     def save(self, spec: GraphSpec, spec_id: int | None = None) -> int:
         if spec_id is None:
             spec_id = default_id_generator().generate()
-        key = (spec.name, spec.version)
-        if key in self._by_name_version:
-            raise ValueError(
-                f"GraphSpec with (name={spec.name!r}, version={spec.version!r}) "
-                f"already exists (spec_id={self._by_name_version[key]})."
-            )
         self._specs[spec_id] = spec
-        self._by_name_version[key] = spec_id
+        self._created_at[spec_id] = now_ms()
         return spec_id
+
+    def save_if_changed(self, spec: GraphSpec, spec_id: int | None = None) -> int:
+        latest_id = self._latest_spec_id_for_name(spec.name)
+        if latest_id is not None:
+            existing = self._specs.get(latest_id)
+            if existing is not None and existing.model_dump_json() == spec.model_dump_json():
+                return latest_id
+        return self.save(spec, spec_id)
 
     def load_by_id(self, spec_id: int) -> GraphSpec | None:
         return self._specs.get(spec_id)
 
     def load_by_name(self, name: str, version: str = "1.0") -> GraphSpec | None:
-        spec_id = self._by_name_version.get((name, version))
-        if spec_id is None:
+        latest_id = self._latest_spec_id_for_name(name)
+        if latest_id is None:
             return None
-        return self._specs.get(spec_id)
+        return self._specs.get(latest_id)
 
     def list_all(self) -> list[GraphSpec]:
-        return list(self._specs.values())
+        return [self._specs[sid] for sid in sorted(self._specs)]
+
+    def list_records(self) -> list[GraphSpecRecord]:
+        latest_ids = self._latest_spec_ids_per_name()
+        return [
+            GraphSpecRecord(
+                spec_id=sid,
+                name=self._specs[sid].name,
+                version=self._specs[sid].version,
+                created_at=self._created_at[sid],
+            )
+            for sid in sorted(latest_ids)
+        ]
+
+    def get_by_id(self, spec_id: int) -> GraphSpecRecord | None:
+        spec = self._specs.get(spec_id)
+        if spec is None:
+            return None
+        return GraphSpecRecord(
+            spec_id=spec_id,
+            name=spec.name,
+            version=spec.version,
+            created_at=self._created_at[spec_id],
+        )
 
     def delete(self, spec_id: int) -> None:
-        spec = self._specs.pop(spec_id, None)
-        if spec is not None:
-            self._by_name_version.pop((spec.name, spec.version), None)
+        self._specs.pop(spec_id, None)
+        self._created_at.pop(spec_id, None)
+
+    def _latest_spec_id_for_name(self, name: str) -> int | None:
+        candidates = [sid for sid, spec in self._specs.items() if spec.name == name]
+        if not candidates:
+            return None
+        return max(candidates)
+
+    def _latest_spec_ids_per_name(self) -> list[int]:
+        by_name: dict[str, int] = {}
+        for sid, spec in self._specs.items():
+            current = by_name.get(spec.name)
+            if current is None or sid > current:
+                by_name[spec.name] = sid
+        return list(by_name.values())
 
 
 class SqliteGraphSpecStore(GraphSpecStore):
-    """SQLite-backed `GraphSpecStore` using stdlib `sqlite3`.
-
-    Schema is created on construction via `CREATE TABLE IF NOT EXISTS`
-    (lightweight migration — does not depend on modex_agent's
-    `MigrationRunner`). The DDL matches `001_initial.sql` table 16
-    (`graph_specs`) — idempotent: if the migration already created it, this
-    is a no-op; if `modex_graph` is used standalone, this creates the table.
-
-    Table and column names are module-level constants; all data values go
-    through `?` parameter placeholders (no string interpolation, no SQL
-    injection surface).
-
-    The `GraphSpec` is serialized via `model_dump_json()` on write and
-    `model_validate_json()` on read — full Pydantic round-trip.
-
-    The `json_valid` CHECK constraint from the migration is omitted here
-    (same convention as `SqliteDeliverStore` — JSON1 may not be compiled
-    in on all standalone builds; the migration includes it for workspace
-    DBs where JSON1 is guaranteed). The `UNIQUE (name, version)` constraint
-    IS included for parity.
-
-    Timestamps are epoch milliseconds (`now_ms()`), per ADR-0029.
-
-    Uses `default_id_generator()` for Snowflake IDs (the `spec_id` primary
-    key — application-side ID generation, not SQLite AUTOINCREMENT, because
-    Snowflake IDs are monotonic across processes).
-
-    The store uses a single caller-owned ``sqlite3.Connection`` for its
-    lifetime. The caller creates the connection (with ``check_same_thread``
-    set as needed) and passes it to all stores sharing one workspace DB;
-    the store never closes it.
-    """
+    """SQLite graph specification store over a caller-owned connection."""
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._conn = connection
         self._init_schema()
 
     def _init_schema(self) -> None:
-        """Create the `graph_specs` table + index if they don't exist.
+        """Create the ``graph_specs`` table + index if they don't exist.
 
-        The DDL matches `001_initial.sql` table 16. The `json_valid` CHECK
-        is omitted (same convention as `SqliteDeliverStore`); `UNIQUE
-        (name, version)` is included for parity.
+        Matches ``001_initial.sql`` table 16 (ADR-0040 change 3): no
+        ``UNIQUE (name, version)``, no auto-update trigger — rows are
+        immutable (write-once on INSERT).
         """
         conn = self._conn
         conn.execute(
@@ -219,11 +232,9 @@ class SqliteGraphSpecStore(GraphSpecStore):
             f"{_COL_VERSION} TEXT NOT NULL DEFAULT '1.0', "
             f"{_COL_SPEC_JSON} TEXT NOT NULL, "
             f"{_COL_CREATED_AT} INTEGER NOT NULL, "
-            f"{_COL_UPDATED_AT} INTEGER NOT NULL, "
-            f"UNIQUE ({_COL_NAME}, {_COL_VERSION})"
+            f"{_COL_UPDATED_AT} INTEGER NOT NULL"
             f")"
         )
-        # Index matching the migration (idx_graph_specs_name).
         conn.execute(
             f"CREATE INDEX IF NOT EXISTS idx_{_SPEC_TABLE}_name ON {_SPEC_TABLE} ({_COL_NAME})"
         )
@@ -244,6 +255,18 @@ class SqliteGraphSpecStore(GraphSpecStore):
         self._conn.commit()
         return spec_id
 
+    def save_if_changed(self, spec: GraphSpec, spec_id: int | None = None) -> int:
+        spec_json = spec.model_dump_json()
+        row = self._conn.execute(
+            f"SELECT {_COL_SPEC_ID}, {_COL_SPEC_JSON} FROM {_SPEC_TABLE} "
+            f"WHERE {_COL_NAME} = ? "
+            f"ORDER BY {_COL_SPEC_ID} DESC LIMIT 1",
+            (spec.name,),
+        ).fetchone()
+        if row is not None and row[1] == spec_json:
+            return int(row[0])
+        return self.save(spec, spec_id)
+
     def load_by_id(self, spec_id: int) -> GraphSpec | None:
         row = self._conn.execute(
             f"SELECT {_COL_SPEC_JSON} FROM {_SPEC_TABLE} WHERE {_COL_SPEC_ID} = ?",
@@ -256,8 +279,9 @@ class SqliteGraphSpecStore(GraphSpecStore):
     def load_by_name(self, name: str, version: str = "1.0") -> GraphSpec | None:
         row = self._conn.execute(
             f"SELECT {_COL_SPEC_JSON} FROM {_SPEC_TABLE} "
-            f"WHERE {_COL_NAME} = ? AND {_COL_VERSION} = ?",
-            (name, version),
+            f"WHERE {_COL_NAME} = ? "
+            f"ORDER BY {_COL_SPEC_ID} DESC LIMIT 1",
+            (name,),
         ).fetchone()
         if row is None:
             return None
@@ -268,6 +292,40 @@ class SqliteGraphSpecStore(GraphSpecStore):
             f"SELECT {_COL_SPEC_JSON} FROM {_SPEC_TABLE} ORDER BY {_COL_SPEC_ID}"
         ).fetchall()
         return [GraphSpec.model_validate_json(r[0]) for r in rows]
+
+    def list_records(self) -> list[GraphSpecRecord]:
+        rows = self._conn.execute(
+            f"SELECT {_COL_SPEC_ID}, {_COL_NAME}, {_COL_VERSION}, {_COL_CREATED_AT} "
+            f"FROM {_SPEC_TABLE} "
+            f"WHERE {_COL_SPEC_ID} IN ("
+            f"SELECT MAX({_COL_SPEC_ID}) FROM {_SPEC_TABLE} GROUP BY {_COL_NAME}"
+            f") "
+            f"ORDER BY {_COL_SPEC_ID}"
+        ).fetchall()
+        return [
+            GraphSpecRecord(
+                spec_id=row[0],
+                name=row[1],
+                version=row[2],
+                created_at=row[3],
+            )
+            for row in rows
+        ]
+
+    def get_by_id(self, spec_id: int) -> GraphSpecRecord | None:
+        row = self._conn.execute(
+            f"SELECT {_COL_SPEC_ID}, {_COL_NAME}, {_COL_VERSION}, {_COL_CREATED_AT} "
+            f"FROM {_SPEC_TABLE} WHERE {_COL_SPEC_ID} = ?",
+            (spec_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return GraphSpecRecord(
+            spec_id=row[0],
+            name=row[1],
+            version=row[2],
+            created_at=row[3],
+        )
 
     def delete(self, spec_id: int) -> None:
         self._conn.execute(

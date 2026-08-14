@@ -30,7 +30,7 @@ class PluginIntegration:
         self,
         config: dict[str, Any],
         extra_plugin_dirs: list[Path] | None = None,
-    ):
+    ) -> None:
         self.config = config
         self.plugin_manager = PluginManager()
         self._extra_plugin_dirs = list(extra_plugin_dirs) if extra_plugin_dirs else []

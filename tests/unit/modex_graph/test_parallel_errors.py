@@ -379,17 +379,15 @@ class TestConcurrentHooksSafe:
         ctx, runtime = make_tracking_ctx(ErrorState())
         await GraphEngine(compiled).run_async(ctx)
 
-        # a (fan-out) + b + c = 3 nodes executed.
-        assert len(runtime.before_calls) == 3
-        assert len(runtime.after_calls) == 3
-        # The entry node "a" is always first (it fans out to b and c).
-        assert runtime.before_calls[0] == "a"
-        assert runtime.after_calls[0] == "a"
+        assert len(runtime.before_calls) == 5
+        assert len(runtime.after_calls) == 5
+        assert runtime.before_calls[0] == GraphNode.START
+        assert runtime.after_calls[0] == GraphNode.START
         # b and c are in the same batch; both before_node and after_node
         # are called. Order within the batch is deterministic for sync
         # nodes (gather runs them in submission order).
-        assert set(runtime.before_calls[1:]) == {"b", "c"}
-        assert set(runtime.after_calls[1:]) == {"b", "c"}
+        assert set(runtime.before_calls[1:]) == {"a", "b", "c", GraphNode.END}
+        assert set(runtime.after_calls[1:]) == {"a", "b", "c", GraphNode.END}
 
     async def test_concurrent_before_after_node_no_crash(self) -> None:
         """Concurrent before_node / after_node calls don't crash.
@@ -408,9 +406,8 @@ class TestConcurrentHooksSafe:
         # Should complete without raising.
         await GraphEngine(compiled).run_async(ctx)
 
-        # a + b + c = 3 nodes.
-        assert len(runtime.before_calls) == 3
-        assert len(runtime.after_calls) == 3
+        assert len(runtime.before_calls) == 5
+        assert len(runtime.after_calls) == 5
 
 
 # ── Tests: ctx.emit concurrent invocation ─────────────────────────────────

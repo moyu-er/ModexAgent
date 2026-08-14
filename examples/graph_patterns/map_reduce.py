@@ -1,16 +1,21 @@
 """MapReduce graph pattern over `modex_graph`.
 
-Reusable split -> fan-out -> reduce workflow using the deliver/submit API:
+Pure deliver dataflow: no shared state accumulator.
 
 - `MapNode` calls `deliver(item, worker_node, ctx)` for each item (fan-out).
-- Workers append their results directly to shared graph state.
-- `ReduceNode` reads the accumulated list, applies the reducer, writes the
-  result.
+  When the items list is empty, delivers a single `None` to the worker so
+  the worker still fires and forwards to reduce.
+- Workers must call `self.deliver(result, 'reduce', ctx)` to send results
+  to Reduce. Workers do NOT write to shared state.
+- `ReduceNode` reads all worker results from `IntegratedInput.payloads`,
+  applies the reducer, and delivers the reduced result to END.
 
-Under `LinearScheduler`, multiple delivers to the same target group into a
-single worker execution (the worker reads items from state). Under
-`ParallelScheduler`, each deliver creates a separate worker instance
-receiving the item via `integrated_input`.
+Under both `LinearScheduler` and `ParallelScheduler` with `ON_ALL_PREDS`
+(the stable trigger), multiple delivers to the same target batch into a
+single worker invocation — the worker reads all items from
+`integrated_input.payloads` and delivers one result per item to reduce.
+This is the recommended batch semantics: `IntegratedInput` is a batch of
+causal payloads, not exactly one deliver.
 
 This is example code (lives under `examples/` per ADR-0007 rule 9). It
 uses only the public `modex_graph` API — no framework-internal hooks, no
@@ -41,8 +46,13 @@ class MapNode[S: GraphState](Node[S]):
     """Fan-out node: delivers each item to the worker node.
 
     `execute` reads `items_fn(ctx.state)` to get a list of items, then
-    calls `deliver(item, worker_node, ctx)` for each. Under
-    `ParallelScheduler`, each deliver creates a separate worker instance.
+    calls `deliver(item, worker_node, ctx)` for each. Under `ON_ALL_PREDS`
+    (the stable trigger), all delivers batch into a single worker
+    invocation — the worker reads items from `integrated_input.payloads`.
+
+    When the items list is empty, delivers a single `None` to the worker
+    so the worker fires and forwards to reduce — ensuring reduce always
+    executes.
 
     Example::
 
@@ -66,47 +76,36 @@ class MapNode[S: GraphState](Node[S]):
             for item in items:
                 self.deliver(item, self.worker_node, ctx)
         else:
-            self.deliver(None, "reduce", ctx)
+            self.deliver(None, self.worker_node, ctx)
         return None
 
 
 class ReduceNode[S: GraphState](Node[S]):
-    """Fan-in node: reads accumulated list, applies reducer, writes result.
+    """Fan-in node: reads worker results from IntegratedInput, applies reducer, delivers to END.
 
-    `execute` reads `getattr(ctx.state, source_field)`, applies
-    `reducer(values)`, and writes
-    the result to `result_field` via `setattr(ctx.state, result_field,
-    reduced_value)`.
+    Pure deliver dataflow: `execute` reads
+    `[p.content for p in integrated_input.payloads]` to collect all worker
+    results, applies `reducer(values)`, and delivers the reduced result to
+    END via `self.deliver(reduced, GraphNode.END, ctx)`.
 
-    Imperative mode writes the terminal result directly to graph state. The
-    `getattr`/`setattr` dynamic field access is a legitimate extension
-    boundary (rule 6): `ReduceNode` is generic over any `GraphState`
-    subclass and any field names.
+    No shared state accumulator — ReduceNode does not read from or write to
+    `ctx.state`.
 
     Example::
 
-        g.add_node("reduce", ReduceNode(
-            reducer=sum,
-            source_field="squares",
-            result_field="total",
-        ))
+        g.add_node("reduce", ReduceNode(reducer=sum))
     """
 
     def __init__(
         self,
         reducer: Callable[[list[Any]], Any],
-        source_field: str,
-        result_field: str,
     ) -> None:
         self.reducer = reducer
-        self.source_field = source_field
-        self.result_field = result_field
 
     async def execute(self, ctx: GraphContext[S], integrated_input: IntegratedInput) -> None:
-        values = getattr(ctx.state, self.source_field)
+        values = [p.content for p in integrated_input.payloads]
         reduced = self.reducer(values)
-        setattr(ctx.state, self.result_field, reduced)
-        self.deliver(None, GraphNode.END, ctx)
+        self.deliver(reduced, GraphNode.END, ctx)
         return None
 
 
@@ -114,21 +113,22 @@ def build_map_reduce_graph[S: GraphState](
     items_fn: Callable[[S], list[Any]],
     worker_node: Node[S],
     reducer: Callable[[list[Any]], Any],
-    source_field: str,
-    result_field: str,
 ) -> Graph[S]:
-    """Build a split -> fan-out -> reduce topology.
+    """Build a split -> fan-out -> reduce topology (pure deliver dataflow).
 
     Topology::
 
         START -> map -> worker -> reduce -> END
 
     - ``map`` is a `MapNode` that delivers each item to ``worker``.
-    - ``worker`` processes items and appends results to ``source_field``.
-      Under `LinearScheduler`, one execution processes all items; under
-      `ParallelScheduler`, one instance per item.
-    - ``reduce`` reads ``source_field``, applies `reducer(values)`, and writes
-      `result_field`.
+    - Workers must call `self.deliver(result, 'reduce', ctx)` to send
+      results to Reduce. Workers do NOT write to shared state.
+      Under `ON_ALL_PREDS` (the stable trigger), all items batch into a
+      single worker invocation — the worker reads items from
+      `integrated_input.payloads` and delivers one result per item to
+      reduce.
+    - ``reduce`` reads all worker results from `IntegratedInput.payloads`,
+      applies `reducer(values)`, and delivers the reduced result to END.
 
     The worker node is registered as ``"worker"``; `MapNode`'s
     `worker_node` parameter is wired to ``"worker"`` automatically.
@@ -139,17 +139,9 @@ def build_map_reduce_graph[S: GraphState](
     g: Graph[S] = Graph()
     g.add_node("map", MapNode(items_fn=items_fn, worker_node="worker"))
     g.add_node("worker", worker_node)
-    g.add_node(
-        "reduce",
-        ReduceNode(
-            reducer=reducer,
-            source_field=source_field,
-            result_field=result_field,
-        ),
-    )
+    g.add_node("reduce", ReduceNode(reducer=reducer))
     g.add_edge(GraphNode.START, "map")
     g.add_edge("map", "worker")
-    g.add_edge("map", "reduce")
     g.add_edge("worker", "reduce")
     g.add_edge("reduce", GraphNode.END)
     return g

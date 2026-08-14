@@ -8,8 +8,8 @@ from modex_agent.memory.layers.config import (
     SessionMemoryConfig,
     StorageFactory,
 )
-from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.layers.core import ScopedCoreMemoryManager
+from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.layers.session import ScopedSessionMemoryManager
 
 __all__ = [

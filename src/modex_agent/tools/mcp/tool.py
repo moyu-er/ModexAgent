@@ -114,7 +114,7 @@ class MCPTool(Tool):
 
         if not result.get("success"):
             error = result.get("error", "Unknown error")
-            return "(MCP tool call failed: %s)" % error
+            return f"(MCP tool call failed: {error})"
 
         return str(result.get("result", ""))
 
@@ -138,7 +138,7 @@ class MCPResourceTool(Tool):
 
         super().__init__(
             name=full_name,
-            description="[MCP Resource] %s\nURI: %s" % (description, uri),
+            description=f"[MCP Resource] {description}\nURI: {uri}",
             parameters={"type": "object", "properties": {}, "required": []},
             config=effective_config,
         )
@@ -160,7 +160,7 @@ class MCPResourceTool(Tool):
 
         if not result.get("success"):
             error = result.get("error", "Unknown error")
-            return "(MCP resource read failed: %s)" % error
+            return f"(MCP resource read failed: {error})"
 
         return str(result.get("result", ""))
 
@@ -194,8 +194,7 @@ class MCPPromptTool(Tool):
 
         super().__init__(
             name=full_name,
-            description="[MCP Prompt] %s\nReturns a filled prompt template that can be used as a workflow guide."
-            % description,
+            description=f"[MCP Prompt] {description}\nReturns a filled prompt template that can be used as a workflow guide.",
             parameters={
                 "type": "object",
                 "properties": properties,
@@ -221,6 +220,6 @@ class MCPPromptTool(Tool):
 
         if not result.get("success"):
             error = result.get("error", "Unknown error")
-            return "(MCP prompt call failed: %s)" % error
+            return f"(MCP prompt call failed: {error})"
 
         return str(result.get("result", ""))

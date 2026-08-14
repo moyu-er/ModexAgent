@@ -47,7 +47,7 @@ class AgentMessageType(StrEnum):
     EXTERNAL_INPUT = "external_input"
 
     @classmethod
-    def fold_eligible(cls) -> frozenset["AgentMessageType"]:
+    def fold_eligible(cls) -> frozenset[AgentMessageType]:
         """Message kinds the fold-in hook pulls mid-turn (``only_types``).
 
         Every inter-agent kind folds — including ``AGENT_RESULT`` (a subagent

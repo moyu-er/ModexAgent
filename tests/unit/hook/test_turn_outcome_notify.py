@@ -54,7 +54,7 @@ class TestTurnOutcomeNotifyHook:
     async def test_error_with_message_sends_notice(self) -> None:
         svc = _FakeNoticeService()
         hook = TurnOutcomeNotifyHook(notification_service=svc)  # type: ignore[arg-type]
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context(), AgentResult(stop_reason=StopReason.ERROR, error="boom")
         )
         assert len(svc.notices) == 1
@@ -64,7 +64,7 @@ class TestTurnOutcomeNotifyHook:
     async def test_max_iterations_sends_notice(self) -> None:
         svc = _FakeNoticeService()
         hook = TurnOutcomeNotifyHook(notification_service=svc)  # type: ignore[arg-type]
-        await hook.finally_turn(_make_context(), AgentResult(stop_reason=StopReason.MAX_ITERATIONS))
+        await hook.finally_graph(_make_context(), AgentResult(stop_reason=StopReason.MAX_ITERATIONS))
         assert len(svc.notices) == 1
         assert "maximum" in svc.notices[0][1].lower()
 
@@ -81,7 +81,7 @@ class TestTurnOutcomeNotifyHookExclusions:
         fire, or approval suspension would get a duplicate 'error' notice."""
         svc = _FakeNoticeService()
         hook = TurnOutcomeNotifyHook(notification_service=svc)  # type: ignore[arg-type]
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context(),
             AgentResult(stop_reason=StopReason.ERROR, error=None),  # initial result
         )
@@ -92,14 +92,14 @@ class TestTurnOutcomeNotifyHookExclusions:
         """Pause/cancel already acks the user via the control channel."""
         svc = _FakeNoticeService()
         hook = TurnOutcomeNotifyHook(notification_service=svc)  # type: ignore[arg-type]
-        await hook.finally_turn(_make_context(), AgentResult(stop_reason=StopReason.CANCELLED))
+        await hook.finally_graph(_make_context(), AgentResult(stop_reason=StopReason.CANCELLED))
         assert svc.notices == []
 
     @pytest.mark.asyncio
     async def test_turn_cancelled_skipped(self) -> None:
         svc = _FakeNoticeService()
         hook = TurnOutcomeNotifyHook(notification_service=svc)  # type: ignore[arg-type]
-        await hook.finally_turn(_make_context(), AgentResult(stop_reason=StopReason.TURN_CANCELLED))
+        await hook.finally_graph(_make_context(), AgentResult(stop_reason=StopReason.TURN_CANCELLED))
         assert svc.notices == []
 
     @pytest.mark.asyncio
@@ -107,14 +107,14 @@ class TestTurnOutcomeNotifyHookExclusions:
         """Timeout is out of scope for this hook."""
         svc = _FakeNoticeService()
         hook = TurnOutcomeNotifyHook(notification_service=svc)  # type: ignore[arg-type]
-        await hook.finally_turn(_make_context(), AgentResult(stop_reason=StopReason.TIMEOUT))
+        await hook.finally_graph(_make_context(), AgentResult(stop_reason=StopReason.TIMEOUT))
         assert svc.notices == []
 
     @pytest.mark.asyncio
     async def test_completed_skipped(self) -> None:
         svc = _FakeNoticeService()
         hook = TurnOutcomeNotifyHook(notification_service=svc)  # type: ignore[arg-type]
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context(), AgentResult(stop_reason=StopReason.COMPLETED, content="done")
         )
         assert svc.notices == []
@@ -124,7 +124,7 @@ class TestTurnOutcomeNotifyHookExclusions:
         """Only ERROR+error and MAX_ITERATIONS are in scope; other reasons are not."""
         svc = _FakeNoticeService()
         hook = TurnOutcomeNotifyHook(notification_service=svc)  # type: ignore[arg-type]
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context(),
             AgentResult(stop_reason=StopReason.MISSED_COMMUNICATION, error="something"),
         )
@@ -135,7 +135,7 @@ class TestTurnOutcomeNotifyHookExclusions:
         """Subagent outcomes are handled by other hooks — this one is NORMAL-only."""
         svc = _FakeNoticeService()
         hook = TurnOutcomeNotifyHook(notification_service=svc)  # type: ignore[arg-type]
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context(comm_kind=AgentCommKind.SUBAGENT),
             AgentResult(stop_reason=StopReason.ERROR, error="boom"),
         )
@@ -145,14 +145,14 @@ class TestTurnOutcomeNotifyHookExclusions:
     async def test_none_result_skipped(self) -> None:
         svc = _FakeNoticeService()
         hook = TurnOutcomeNotifyHook(notification_service=svc)  # type: ignore[arg-type]
-        await hook.finally_turn(_make_context(), None)
+        await hook.finally_graph(_make_context(), None)
         assert svc.notices == []
 
     @pytest.mark.asyncio
     async def test_no_service_skipped(self) -> None:
         hook = TurnOutcomeNotifyHook(notification_service=None)
         # Must not raise.
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context(), AgentResult(stop_reason=StopReason.ERROR, error="x")
         )
 

@@ -12,7 +12,9 @@ from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.ioc.configs.observability import (
     CassetteScope,
     ObservabilityConfig,
+    PromptCaptureMode,
     TraceBackend,
+    TraceSpanMode,
 )
 
 
@@ -36,6 +38,25 @@ class TestObservabilityConfigDefaults:
         assert cfg.training_relevant is False
         assert cfg.training_max_iterations == 20
         assert cfg.training_max_tokens == 100000
+        assert cfg.prompt_capture is PromptCaptureMode.SUMMARY
+        assert cfg.trace_spans is TraceSpanMode.STANDARD
+        assert cfg.capture_tools is False
+
+    def test_prompt_capture_mode_enum_values(self) -> None:
+        assert PromptCaptureMode.OFF == "off"
+        assert PromptCaptureMode.HASH == "hash"
+        assert PromptCaptureMode.SUMMARY == "summary"
+        assert PromptCaptureMode.FULL == "full"
+
+    def test_trace_span_mode_enum_values(self) -> None:
+        assert TraceSpanMode.MINIMAL == "minimal"
+        assert TraceSpanMode.STANDARD == "standard"
+        assert TraceSpanMode.FULL == "full"
+
+    def test_string_coercion(self) -> None:
+        cfg = ObservabilityConfig(prompt_capture="full", trace_spans="minimal")  # type: ignore[arg-type]
+        assert cfg.prompt_capture is PromptCaptureMode.FULL
+        assert cfg.trace_spans is TraceSpanMode.MINIMAL
 
     def test_frozen(self) -> None:
         cfg = ObservabilityConfig()

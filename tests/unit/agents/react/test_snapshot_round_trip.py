@@ -431,11 +431,13 @@ class TestCheckpointRoundTrip:
             "custom",
             "current_node",
             "iteration",
+            "turn_attempt",
             "llm_response",
             "tool_batches",
             "approval",
             "result",
             "resume_target",
+            "node_scratch",
         }
         assert set(payload.keys()) == expected_keys
 

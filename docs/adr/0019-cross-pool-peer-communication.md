@@ -114,6 +114,48 @@ Peer relationship is **bidirectional by invariant**: the frontend and the
 `PoolStore` validator enforce that adding A→B also adds B→A, and removing one
 side removes the other. A stale half-edge is a configuration error.
 
+### 4. LLM tool surface split — `task` (subagent) vs `send_to_peer` (peer)
+
+**Revision (2026-08-13):** The original implementation exposed a single `task`
+tool that handled both subagent dispatch and peer communication. In practice
+the LLM conflated the two — it would select a peer for routine work that a
+subagent should handle, because both appeared in the same `target_agent` enum
+and the tool description listed peers before subagents.
+
+The tool surface is now split into two strictly-scoped tools, each backed by
+the same `AgentCommunicationService._send` → three-strategy pipeline (no
+transport change):
+
+| Tool | Scope | Params | Registered when | Graph mode |
+|------|-------|--------|-----------------|------------|
+| `task` | subagent dispatch + continuation | `target_agent, content, invocation_id?` | `store.list_subagents()` non-empty | available (subagents visible in graph) |
+| `send_to_peer` | peer communication only | `target_peer, content` | `store.list_peers()` non-empty | **excluded** via `GraphToolPreset.excluded_base_tools` |
+
+Key design properties:
+
+- **Single registration point.** Both tools are registered by one function,
+  `register_communication_tools(instance)`, called once per pool after Phase 2
+  peer wiring. External main agents (no tool surface) are skipped.
+- **Store views.** `CommunicationTargetStore.list_subagents()` /
+  `list_peers()` provide filtered views; each tool's `list_targets()` and
+  `get_dynamic_schema()` enum sees only its own target kind.
+- **Graph-mode exclusion is structural.** `GraphToolPreset` copies the base
+  tool manager into a graph-scoped one, skipping `send_to_peer` by name
+  (`SEND_TO_PEER_TOOL_NAME` constant). Graph nodes use `deliver` (graph edges),
+  not peer messaging. The store's `list_peers()` also returns empty in graph
+  mode (NORMAL targets filtered by `list()`), providing a second defense layer.
+- **Description language.** Tool descriptions use zero implementation terms
+  (no "pool", "main agent", "cross-pool"). `task` defines a subagent as "a
+  worker you dispatch a task to"; `send_to_peer` defines a peer as "a separate,
+  independent assistant — NOT a worker you can assign tasks to" and explicitly
+  says "prefer dispatching a subagent with the `task` tool instead".
+- **Reply contract.** `message_format.py`'s peer reply block now instructs the
+  receiver to reply via `send_to_peer` (was `task`), matching the tool surface.
+
+`modexctl send` (external CLI path) still reaches `_send` directly; graph-mode
+peer rejection at the service layer (`TopologyPolicy`) is deferred — a comment
+in `bot/control/facade.py` marks the future enforcement point.
+
 ## Considered Options (rejected)
 
 ### Rejected: `PeerPoolRouter` ABC as a framework port
@@ -178,7 +220,8 @@ NORMAL agent. Rejected to keep the enum's semantics clean.
   pair-isolated conversations will be surprised. Documented in CONTEXT.md.
 - **No auto-receipt in v1.** When peer agent C finishes a turn triggered by A's
   message, it does not automatically notify A. C must explicitly call
-  `send_to_agent("main", reply)`. This is a real usability limitation.
+  `send_to_peer(target_peer="A", content=...)` to reply. This is a real usability
+  limitation.
 - **One session per (prefix, agent) pair.** v1 does not support multiple
   parallel conversations between the same pair of agents. A second conversation
   between A and C reuses the existing `convA.mainC` session.
@@ -192,7 +235,8 @@ when needed:
    `SubagentAutoSendHook` fires only on `comm_kind=SUBAGENT`. Extending it to
    fire on NORMAL peer contexts (auto-forwarding a result to the originating
    peer) requires knowing *which* peer triggered the turn — which requires a
-   per-turn routing signal that v1 does not have. Blocked on item 2.
+   per-turn routing signal that v1 does not have. Blocked on item 2. In the
+   meantime, peers reply explicitly via the `send_to_peer` tool.
 2. **Communication-log artefact.** A per-session structured record of
    "who-said-what / who-triggered-this-turn", persisted and available to the
    hook for routing and to the agent for multi-peer conversation recall. This

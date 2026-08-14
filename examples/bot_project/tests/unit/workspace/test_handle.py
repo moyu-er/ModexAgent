@@ -5,10 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from bot.workspace.handle import PoolWorkspaceResources, WorkspaceHandle
-from modex_agent.workspace.context import WorkspaceContext
+
 from modex_agent.core.session_store import LocalFileSessionStore
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
+from modex_agent.workspace.context import WorkspaceContext
 
 
 def test_workspace_handle_exposes_current_and_data_dir(tmp_path: Path) -> None:

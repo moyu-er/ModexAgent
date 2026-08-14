@@ -1,15 +1,21 @@
-"""EndNode — builds AgentResult and marks completion."""
+"""EndNode — reads state.result, emits completion events, delivers to END.
+
+The ``AgentResult`` is constructed by ``AfterTurnNode`` (the 4-branch
+CANCELLED / ERROR / normal / max-iter logic) and written to ``state.result``
+(ADR-0033 D9.3, rule 15 convergence — one result construction path).
+``EndNode`` reads it, asserts it is not ``None``, emits the matching
+completion event (``FINAL_OUTPUT`` / ``ERROR``) based on
+``result.stop_reason``, calls ``emit_complete``, marks the turn completed,
+and delivers to ``GraphNode.END``.
+"""
 
 from __future__ import annotations
 
 from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
-from modex_agent.agents.react.constants import (
-    ReActNode,
-)
+from modex_agent.agents.react.constants import ReActHookPoint, ReActNode
 from modex_agent.agents.react.context import get_agent_ctx
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.core.constants import FinishReason, StopReason
-from modex_agent.core.emitter import AgentResult
+from modex_agent.core.constants import StopReason
 from modex_agent.runtime.enums import TurnPhase
 from modex_graph.constants import GraphNode
 from modex_graph.context import GraphContext
@@ -18,7 +24,7 @@ from modex_graph.node import Node
 
 
 class EndNode(Node[ReActTurnState]):
-    """Constructs final result and emits completion events."""
+    """Reads ``state.result``, emits completion events, delivers to ``GraphNode.END``."""
 
     def __init__(self) -> None:
         self.name = ReActNode.END
@@ -30,58 +36,37 @@ class EndNode(Node[ReActTurnState]):
     ) -> None:
         state = ctx.state
         agent_ctx = get_agent_ctx(ctx)
-        response = state.llm_response
         state.current_node = ReActNode.END
 
-        messages = [md.message for md in state.message_delta]
-
-        if state.phase == TurnPhase.CANCELLED:
-            result = AgentResult(
-                content="turn cancelled",
-                stop_reason=StopReason.TURN_CANCELLED,
-                messages=messages,
-                attachments=agent_ctx.attachments,
-            )
-        elif response is not None and response.finish_reason == FinishReason.ERROR.value:
-            error_text = response.error or response.content or "LLM request failed"
-            result = AgentResult(
-                error=error_text,
-                stop_reason=StopReason.ERROR,
-                messages=messages,
-                attachments=agent_ctx.attachments,
-            )
-            await ctx.runtime.emit(GraphReActEvent.ERROR, error_text, ctx)
-        elif response is not None and not response.tool_calls:
-            result = AgentResult(
-                content=response.content or "",
-                reasoning=response.reasoning_content,
-                messages=messages,
-                attachments=agent_ctx.attachments,
-            )
-            await ctx.runtime.emit(GraphReActEvent.FINAL_OUTPUT, result, ctx)
-        else:
-            result = AgentResult(
-                content="max iterations reached",
-                stop_reason=StopReason.MAX_ITERATIONS,
-                messages=messages,
-                attachments=agent_ctx.attachments,
+        result = state.result
+        if result is None:
+            raise RuntimeError(
+                "AfterTurnNode must set state.result before EndNode executes"
             )
 
         state.phase = TurnPhase.COMPLETING
+
+        # Emit the matching completion event based on result.stop_reason.
+        # CANCELLED / MAX_ITERATIONS produce no event (same as pre-refactor);
+        # ERROR emits an ERROR event; everything else emits FINAL_OUTPUT.
+        if result.stop_reason == StopReason.ERROR:
+            error_text = result.error or result.content or "LLM request failed"
+            await ctx.runtime.emit(GraphReActEvent.ERROR, error_text, ctx)
+        elif result.stop_reason not in (
+            StopReason.TURN_CANCELLED,
+            StopReason.MAX_ITERATIONS,
+        ):
+            await ctx.runtime.emit(GraphReActEvent.FINAL_OUTPUT, result, ctx)
 
         # ``emit_complete`` signals end-of-stream — a different method on
         # ``ContentEmitter`` than ``emit``. ``ctx.runtime.emit`` only wraps
         # ``emitter.emit``, so this call stays direct.
         if agent_ctx.emitter is not None:
             await agent_ctx.emitter.emit_complete(result)
-        # ADR-0033 D9.3: write to the explicit ``state.result`` field.
-        # The caller's ``run()`` reads ``state.result`` after the engine returns.
-        # The old ``custom[TurnCustomKey.GRAPH_RESULT]`` dual-write is removed
-        # (ticket 05) — the typed ``state.result`` field is the single source.
-        state.result = result
 
         state.mark_completed()
 
+        await ctx.runtime.dispatch_hook(ReActHookPoint.END_NODE_TURN, ctx)
         self.deliver(result, GraphNode.END, ctx)
         return None
 

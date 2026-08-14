@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from modex_agent.core.types import MessageRole
 from modex_agent.memory.core.lock import AioRWLock, StorageLock
 from modex_agent.memory.core.models import StorageRevision
 from modex_agent.memory.core.split_stores import (
@@ -79,9 +80,24 @@ class InMemoryScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, A
         async with self.get_lock().read():
             return list(self._messages)
 
-    async def load_all_messages(self) -> list[dict[str, Any]]:
+    async def load_all_messages(
+        self,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        if limit is not None and limit < 0:
+            raise ValueError("limit must be non-negative")
+        if limit == 0:
+            return []
         async with self.get_lock().read():
-            return list(self._messages)
+            messages = [
+                message
+                for message in self._messages
+                if message.get("role") != str(MessageRole.COMPACT)
+            ]
+            if limit is None:
+                return messages
+            return messages[-limit:]
 
     async def save_messages(self, messages: list[dict[str, Any]]) -> StorageRevision:
         async with self.get_lock().write():

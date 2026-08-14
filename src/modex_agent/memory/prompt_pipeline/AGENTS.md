@@ -28,7 +28,7 @@ System prompt pipeline — an ordered, versioned collection of `SystemPromptProv
 | `ProviderBlocksProvider` | blocks hash | Provider blocks configured | Custom prompt blocks |
 | `ProviderPrefetchProvider` | prefetch hash | Prefetch configured | Prefetched context |
 | `TodoAwareSystemPromptProvider` | `todo-enabled` / `no-todo` | Agent owns `todo_read` + `todo_write` tools | Task-discipline reminder |
-| `AgentCommunicationSystemPromptProvider` | `comm:<fragments>` / `comm:none` | `task`/`send_to_agent` tools have targets matching sub-module conditions | Composite provider with 3 internal sub-modules: peer reply contract (targets with `bus_ref`, via `task`), subagent dispatch contract (NON-subagent + `task` tool registered, guides LLM to use `task` for new dispatch and continuation), subagent consultation contract (SUBAGENT kind, via `send_to_agent`). Version is `"comm:"` + `|`-joined sub-module fragments; content joins applying sections. |
+| `AgentCommunicationSystemPromptProvider` | `comm:<fragments>` / `comm:none` | `send_to_peer`/`send_to_agent` tools have targets matching sub-module conditions | Composite provider with 3 internal sub-modules: peer reply contract (targets with `tree_ref`, via `send_to_peer`), subagent dispatch contract (NON-subagent + `task` tool registered, guides LLM to use `task` for new dispatch and continuation), subagent consultation contract (SUBAGENT kind, via `send_to_agent`). Version is `"comm:"` + `|`-joined sub-module fragments; content joins applying sections. |
 
 ## For AI Agents
 

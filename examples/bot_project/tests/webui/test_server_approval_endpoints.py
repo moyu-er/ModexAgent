@@ -15,11 +15,11 @@ from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.server import WebUIServer
+
 from modex_agent.agents.react.state import (
     ReActNode,
     ReActRuntimeStateCodec,
@@ -50,7 +50,6 @@ from modex_agent.runtime.models import (
 )
 from modex_agent.runtime.store import JsonFileTurnStateStore
 from modex_agent.workspace.paths import WorkspacePaths
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -83,7 +82,6 @@ def _build_server(tmp_path: Path, *, input_pipeline=None, input_ctx=None) -> Web
     )
     server.set_workspace_index(store)
     server.set_data_dir_name(".modex")
-    server.set_agent_pool_map({"main": "main"})
     if input_pipeline is not None:
         server.set_input_pipeline(input_pipeline)
     if input_ctx is not None:

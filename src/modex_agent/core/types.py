@@ -9,11 +9,11 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.media.models import Attachment
+
 from .constants import DefaultValues, FinishReason
 from .llm_struct import LLMErrorInfo
 from .session_id import SessionInfo
-
-from modex_agent.media.models import Attachment
 
 if TYPE_CHECKING:
     from modex_agent.approval.views import ApprovalDecisionInput

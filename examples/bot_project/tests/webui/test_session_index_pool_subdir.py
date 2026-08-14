@@ -1,6 +1,6 @@
 """Regression: session index files must land in pool subdirectories.
 
-The bug (2026-06-21): ``E:\download\bot\.modex\session_index\87c236de3a2b.coding.json``
+The bug (2026-06-21): ``E:\\download\bot\\.modex\\session_index\\87c236de3a2b.coding.json``
 was directly in ``session_index/`` root, not ``session_index/coding/``.
 
 Root cause: ``wiring.py:209`` created a ``LocalFileSessionStore`` (which writes
@@ -12,13 +12,12 @@ session index writes bypassed the pool subdirectory layer.
 
 from __future__ import annotations
 
-import asyncio
 import tempfile
 from pathlib import Path
 
 import pytest
-
 from bot.service.session_store import WorkspacePoolSessionStore
+
 from modex_agent.core.session_id import SessionInfo, now_ms
 
 _DATA_DIR_NAME = ".modex"

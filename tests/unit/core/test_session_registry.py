@@ -142,3 +142,34 @@ async def test_concurrent_register_is_safe(factory: SessionIdFactory):
     await asyncio.gather(*(reg.register(s) for s in sessions))
     for s in sessions:
         assert await reg.get(s.session_id) is not None
+
+
+async def test_cleanup_removes_session_from_cache(factory: SessionIdFactory):
+    reg = InMemorySessionRegistry()
+    session = factory.create(agent_name="main")
+    await reg.register(session)
+    assert await reg.get(session.session_id) is not None
+
+    await reg.cleanup(session.session_id)
+
+    assert await reg.get(session.session_id) is None
+
+
+async def test_cleanup_removes_session_from_store(tmp_path, factory: SessionIdFactory):
+    from modex_agent.core.session_store import LocalFileSessionStore
+
+    store = LocalFileSessionStore(tmp_path)
+    reg = InMemorySessionRegistry(store=store)
+    session = factory.create(agent_name="main")
+    await reg.register(session)
+    assert await store.get(session.session_id) is not None
+
+    await reg.cleanup(session.session_id)
+
+    assert await store.get(session.session_id) is None
+    assert await reg.get(session.session_id) is None
+
+
+async def test_cleanup_noop_for_unknown_session():
+    reg = InMemorySessionRegistry()
+    await reg.cleanup("nonexistent")

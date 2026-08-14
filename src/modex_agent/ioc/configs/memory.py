@@ -58,20 +58,22 @@ class DreamEngineConfig(BaseModel):
     max_consume_per_run: int = 3  # process up to N archives per run
 
 
-class LossyConfig(BaseModel):
-    """Lossy content compaction for oversized messages.
+class BudgetConfig(BaseModel):
+    """Token-window tool-result pruning configuration.
 
-    Compaction happens in fixed-size steps.  When the conversation length
-    exceeds ``n * compact_range_count + buffer``, the oldest
-    ``n * compact_range_count`` messages become candidates for compaction.
+    Drives ``ContextBudgetGovernance``: when total estimated tokens exceed
+    ``governance_ratio × max_context_tokens``, old tool results outside the
+    protect window are replaced with a fixed placeholder.
+
+    ``governance_ratio`` must be below ``SessionConfig.max_token_ratio``
+    (default 0.85) so governance intervenes *before* persistent compaction.
     """
 
-    tool_result_head_chars: int = 1200
-    assistant_head_chars: int = 1200
-    agent_head_chars: int = 2000
-    user_head_chars: int = 2000
-    tool_args_head_chars: int = 2048
-    compact_range_count: int = 50
+    governance_ratio: float = 0.60
+    protect_tokens: int = 40_000
+    min_gain_tokens: int = 20_000
+    keep_recent: int = 10
+    whitelist_tools: set[str] = Field(default_factory=set)
 
 
 class SessionConfig(BaseModel):
@@ -139,7 +141,7 @@ class GovernanceConfig(BaseModel):
     """
 
     tool_chain_repair: bool = True
-    lossy_compaction: LossyConfig | None = None
+    budget: BudgetConfig | None = None
 
 
 class PrunedCatalogConfig(BaseModel):

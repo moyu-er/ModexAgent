@@ -6,16 +6,13 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
 from bot.webui.emitter import CompositeEmitter, WebBotEmitter
 from bot.webui.events import (
-    AssistantTextEvent as Ate,
-    ToolCallEvent as Tce,
-    ToolResultEvent as Tre,
     WebUIEventType,
 )
 from bot.webui.transcript_store import JSONLTranscriptStore
+
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig
 from modex_agent.core.tool_manager import ToolResult

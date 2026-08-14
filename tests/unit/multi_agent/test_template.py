@@ -36,24 +36,6 @@ def test_agent_template_full():
     assert t.spec.tool_preset == ToolPreset.READ_WRITE
 
 
-def test_agent_template_system_prompt_mode_default() -> None:
-    """Default system_prompt_mode is REPLACE."""
-    from modex_agent.tools.presets import SystemPromptMode
-
-    t = AgentTemplate(spec=SubagentSpec(agent_name="test"))
-    assert t.spec.system_prompt_mode == SystemPromptMode.REPLACE
-
-
-def test_agent_template_system_prompt_mode_append() -> None:
-    """system_prompt_mode can be set to APPEND."""
-    from modex_agent.tools.presets import SystemPromptMode
-
-    t = AgentTemplate(
-        spec=SubagentSpec(agent_name="delegate", system_prompt_mode=SystemPromptMode.APPEND)
-    )
-    assert t.spec.system_prompt_mode == SystemPromptMode.APPEND
-
-
 def test_agent_template_dead_fields_absent():
     """Removed fields must not exist on the dataclass."""
     t = AgentTemplate(spec=SubagentSpec(agent_name="test"))

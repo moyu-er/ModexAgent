@@ -10,13 +10,12 @@ per rule 12). Subclassable so business modules can add type-safe accessors
 Provides:
 
 - `state: S` — the typed Pydantic `GraphState` instance. Nodes read and write
-  it directly (`ctx.state.x = y`).
+  it directly (`ctx.state.x = y`). Per-node working state is accessed via
+  `ctx.scratch` (scoped to `ctx.state.node_scratch[current_node_id]`).
 - `runtime: GraphRuntime` — AOP bridge. Nodes call `ctx.runtime.dispatch_hook`
   etc. for business-specific AOP.
 - `user_data: Any` — turn-scoped business context. For ReAct, holds the
-  `AgentContext`. Shared across forks.
-- `fork(state=..., parent=...)` — create a sub-context with isolated state.
-  See `fork` docstring for shared/isolated semantics.
+  `AgentContext`.
 - `emit(event_type, data)` — convenience for `ctx.runtime.emit(..., ctx)`.
 - `interrupt(value)` — raises `GraphInterrupt(value)` (suspend-without-
   re-execution semantics).
@@ -38,11 +37,13 @@ from typing_extensions import TypeVar
 
 from .constants import SchedulerKind
 from .exceptions import GraphInterrupt
+from .execution_context import get_execution
+from .integration import GraphPayload
 from .run_control import GraphRunControl
 from .runtime import GraphRuntime
 
 if TYPE_CHECKING:
-    from .persistence import GraphPersistenceCoordinator, InvocationContext, NodeStateStore
+    from .persistence import GraphPersistenceCoordinator, NodeStateStore
     from .state import GraphState
 
 S = TypeVar("S", bound="GraphState")
@@ -52,8 +53,8 @@ S = TypeVar("S", bound="GraphState")
 # `set_dispatch_handler`. Under PARALLEL, the handler routes the deliver and
 # queues a new `NodeInstance` according to its trigger mode. Under LINEAR, the
 # handler records the target + payload for the scheduler to pick up as the next
-# node. Raises `RoutingError` if `target` is not in the source node's outgoing
-# edges (PARALLEL only — LINEAR does not validate edges).
+# node. Both schedulers validate that `target` is in the source node's outgoing
+# edges (topology enforcement via `_dispatch_utils.validate_dispatch_target`).
 type DispatchHandler = Callable[[str, str, "dict[str, Any] | None"], None]
 
 
@@ -88,13 +89,11 @@ class GraphContext[S: "GraphState"]:
     ```
 
     Construction: `GraphContext(state=..., runtime=..., coordinator=..., ...)`.
-    The engine constructs the initial context; `fork()` creates sub-contexts.
+    The engine constructs the initial context.
 
     ``coordinator`` is REQUIRED (no None fallback). It drives
     the node invocation lifecycle (begin/integrate/complete/cancel/suspend/
-    crash/finalize) via ``Node.run()``. ``current_invocation`` is set by
-    ``Node.run()`` step 1 to the current ``InvocationContext``; it is ``None``
-    until a node begins executing.
+    crash/finalize) via ``Node.run()``.
     """
 
     def __init__(
@@ -103,109 +102,30 @@ class GraphContext[S: "GraphState"]:
         state: S,
         runtime: GraphRuntime,
         coordinator: GraphPersistenceCoordinator,
+        user_input: GraphPayload | None = None,
         user_data: Any = None,
         scheduler_kind: SchedulerKind = SchedulerKind.LINEAR,
         dispatch_handler: DispatchHandler | None = None,
-        current_instance: str | None = None,
         graph_instance_id: int | None = None,
-        current_invocation: InvocationContext | None = None,
         control: GraphRunControl | None = None,
+        reached_end: bool = False,
     ) -> None:
         self.state: S = state
         self.runtime: GraphRuntime = runtime
-        # Coordinator: deliver routing + recovery queries. Lifecycle is
-        # on ctx.node_state_store (property delegating to coordinator).
         self.coordinator: GraphPersistenceCoordinator = coordinator
+        self.user_input: GraphPayload | None = user_input
         self.user_data: Any = user_data
         self.scheduler_kind: SchedulerKind = scheduler_kind
-        # Default to the no-op handler so direct node.run(ctx) calls in
-        # tests work without a scheduler. Both schedulers overwrite this
-        # via set_dispatch_handler. Pass dispatch_handler=None and the
-        # no-op is still installed; call set_dispatch_handler(None) to
-        # explicitly clear (dispatch then raises RuntimeError).
         self._dispatch_handler: DispatchHandler | None = (
             dispatch_handler if dispatch_handler is not None else _noop_dispatch_handler
         )
-        self._current_instance: str | None = current_instance
-        # Graph instance ID for deliver persistence. None = no persistence
-        # (in-memory accumulation). Set by the scheduler when wiring deliver/submit
-        # into the execution loop.
         self.graph_instance_id: int | None = graph_instance_id
-        # Current invocation context, set by Node.run() step 1.
-        # None until a node begins executing.
-        self.current_invocation: InvocationContext | None = current_invocation
         self.control: GraphRunControl = control if control is not None else GraphRunControl()
-
-    def fork(
-        self,
-        *,
-        state: S | None = None,
-        runtime: GraphRuntime | None = None,
-        coordinator: GraphPersistenceCoordinator | None = None,
-        user_data: Any = None,
-        scheduler_kind: SchedulerKind | None = None,
-        dispatch_handler: DispatchHandler | None = None,
-        current_instance: str | None = None,
-        graph_instance_id: int | None = None,
-        current_invocation: InvocationContext | None = None,
-    ) -> GraphContext[S]:
-        """Create a sub-context with isolated state. Three layers of sharing.
-
-        Per ADR-0033 D5.2:
-
-        - **`runtime` shared** (inherited from parent if `runtime=None`):
-          subtask uses the same AOP services (hook_runner / emitter /
-          snapshot_store). AOP services are turn-scoped, not task-scoped.
-        - **`coordinator` shared** (inherited from parent if
-          `coordinator=None`): a forked sub-context is part of the
-          same graph run, so it shares the same persistence coordinator.
-          Pass an explicit `coordinator` only to override (rare).
-        - **`user_data` shared** (inherited from parent if `user_data=None`):
-          subtask sees the same `AgentContext` (or business context).
-          Turn-internal context does not change across tasks.
-        - **`state` isolated** (if `state` is passed): subtask has its own
-          state. Imperative mutations (`sub_ctx.state.x = y`) do NOT
-          propagate to the parent state unless the caller propagates them.
-          If `state=None` is passed (the default), the subtask shares the
-          parent state and mutations propagate directly. `ParallelScheduler`
-          uses per-task context shells that share the same state object.
-        - **`scheduler_kind` shared** (inherited from parent if
-          `scheduler_kind=None`): subtask sees the same scheduler kind.
-          Needed so `dispatch` checks the right kind under fan-out.
-        - **`dispatch_handler` shared** (inherited from parent if
-          `dispatch_handler=None`): a forked context retains the parent's
-          dispatch handler so it can also dispatch. Both `LINEAR` and
-          `PARALLEL` schedulers register a handler before executing nodes.
-        - **`current_instance` NOT inherited** (defaults to `None` unless
-          explicitly passed): a forked context is a different execution
-          context; it should not claim the parent's instance identity. The
-          `ParallelScheduler` sets `current_instance` explicitly per
-          instance execution via `set_current_instance`.
-        - **`graph_instance_id` shared** (inherited from parent if
-          `graph_instance_id=None`): a forked sub-context is part of the
-          same graph run, so deliver persistence keys to the same instance.
-          Pass an explicit `graph_instance_id` only to override (rare).
-        - **`current_invocation` NOT inherited** (defaults to `None`): each
-          forked context is a different execution scope; it should not
-          claim the parent's invocation identity. `Node.run()` sets this
-          on its own ctx at step 1.
-        """
-        return GraphContext(
-            state=state if state is not None else self.state,
-            runtime=runtime if runtime is not None else self.runtime,
-            coordinator=coordinator if coordinator is not None else self.coordinator,
-            user_data=user_data if user_data is not None else self.user_data,
-            scheduler_kind=scheduler_kind if scheduler_kind is not None else self.scheduler_kind,
-            dispatch_handler=dispatch_handler
-            if dispatch_handler is not None
-            else self._dispatch_handler,
-            current_instance=current_instance,
-            graph_instance_id=graph_instance_id
-            if graph_instance_id is not None
-            else self.graph_instance_id,
-            current_invocation=current_invocation,
-            control=self.control,
-        )
+        # Run-level flag: set True when a dispatch targets GraphNode.END.
+        # The orchestrator reads this after run_async returns to decide
+        # COMPLETED (reached END) vs FAILED (dead-end — no dispatches
+        # produced, graph did not reach END).
+        self.reached_end: bool = reached_end
 
     def emit(self, event_type: str, data: Any) -> None:
         """Fire-and-forget emit via `runtime.emit(..., ctx)`.
@@ -280,7 +200,8 @@ class GraphContext[S: "GraphState"]:
                 "dispatch called but no dispatch_handler is registered. "
                 "The scheduler must set the handler before executing nodes."
             )
-        self._dispatch_handler(self._current_instance or "", target, state_update)
+        source_instance = self._current_instance or ""
+        self._dispatch_handler(source_instance, target, state_update)
 
     def set_dispatch_handler(self, handler: DispatchHandler | None) -> None:
         """Register the dispatch handler. Called by both schedulers.
@@ -294,13 +215,17 @@ class GraphContext[S: "GraphState"]:
         """
         self._dispatch_handler = handler
 
-    def set_current_instance(self, instance_id: str | None) -> None:
-        """Set the currently-executing instance ID. Called by `ParallelScheduler`.
+    @property
+    def _current_instance(self) -> str | None:
+        """The currently-executing instance ID (read-only).
 
-        The dispatch handler uses this to identify the source of each
-        dispatch. Set to `None` to clear (e.g. between executions).
+        Delegates to the invocation-local execution context (ContextVar,
+        task-local). Returns None when no node is executing in the current
+        task. Set by the scheduler via ``set_execution()`` — never
+        write to this property directly.
         """
-        self._current_instance = instance_id
+        exec_ctx = get_execution()
+        return exec_ctx.instance_id if exec_ctx is not None else None
 
     @property
     def node_state_store(self) -> NodeStateStore:
@@ -311,6 +236,35 @@ class GraphContext[S: "GraphState"]:
         crash / cancel / finalize) through this property.
         """
         return self.coordinator.node_state_store
+
+    @property
+    def scratch(self) -> dict[str, Any]:
+        """The current node's scoped working-state region.
+
+        Returns ``ctx.state.node_scratch[current_node_id]`` — the
+        per-node scratch dict where the currently-executing node writes
+        its local working state. Key separation from other nodes provides
+        isolation without context copying.
+
+        Resolves ``current_node_id`` from the invocation-local execution
+        context (ContextVar, task-local). Raises ``RuntimeError`` if no
+        invocation is active.
+
+        Example::
+
+            ctx.scratch["attempt"] = 3
+        """
+        exec_ctx = get_execution()
+        inv = exec_ctx.invocation if exec_ctx is not None else None
+        if inv is None:
+            raise RuntimeError(
+                "ctx.scratch is only valid during node execution "
+                "(no active invocation). Use inside execute()/deliver()."
+            )
+        scratch = self.state.node_scratch
+        if inv.node_id not in scratch:
+            scratch[inv.node_id] = {}
+        return scratch[inv.node_id]
 
 
 __all__ = ["GraphContext", "S", "DispatchHandler"]

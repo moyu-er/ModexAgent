@@ -1,9 +1,8 @@
 """Tests for the per-invocation subagent prompt providers.
 
-AppendParentPromptProvider and ForkContextProvider move the invocation-specific
-parts of a subagent's system prompt (parent prompt, forked context) out of the
-materialize-time baked string and into per-session pipeline providers — mirroring
-OutputMdProvider. A reused instance therefore rebuilds these per invocation.
+ForkContextProvider moves a subagent's invocation-specific forked context out of
+the materialize-time baked string and into a per-session pipeline provider. A
+reused instance therefore rebuilds this context per invocation.
 
 Written test-first: these fail until the providers exist.
 """
@@ -22,69 +21,9 @@ from modex_agent.memory.archive_models import ArchiveChannel
 from modex_agent.memory.core.models import CoreMemoryContents
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.prompt_pipeline.providers import (
-    AppendParentPromptProvider,
     ForkContextProvider,
     ForkContextSpec,
 )
-
-# ── AppendParentPromptProvider ───────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_append_parent_returns_resolved_prompt():
-    async def resolver(sid: str) -> str | None:
-        return "PARENT_PROMPT"
-
-    out = await AppendParentPromptProvider(resolver, "inv1.scout").get_or_refresh()
-    assert "PARENT_PROMPT" in out
-
-
-@pytest.mark.asyncio
-async def test_append_parent_differs_per_session():
-    """Two sessions resolve two different parent prompts — the point of making
-    this per-invocation rather than baked."""
-
-    async def resolver(sid: str) -> str | None:
-        return "PA" if sid == "inv1.scout" else "PB"
-
-    a = await AppendParentPromptProvider(resolver, "inv1.scout").get_or_refresh()
-    b = await AppendParentPromptProvider(resolver, "inv2.scout").get_or_refresh()
-    assert "PA" in a and "PB" not in a
-    assert "PB" in b and "PA" not in b
-
-
-@pytest.mark.asyncio
-async def test_append_parent_empty_when_resolver_returns_none():
-    async def resolver(sid: str) -> str | None:
-        return None
-
-    out = await AppendParentPromptProvider(resolver, "inv1.scout").get_or_refresh()
-    assert out == ""
-
-
-@pytest.mark.asyncio
-async def test_append_parent_swallows_resolver_exception():
-    async def resolver(sid: str) -> str | None:
-        raise RuntimeError("boom")
-
-    out = await AppendParentPromptProvider(resolver, "inv1.scout").get_or_refresh()
-    assert out == ""  # never propagate — pipeline would drop the whole prompt
-
-
-@pytest.mark.asyncio
-async def test_append_parent_caches_within_same_session():
-    """Version = session_id → a second get_or_refresh on the same instance does
-    not re-call the resolver."""
-    calls = {"n": 0}
-
-    async def resolver(sid: str) -> str | None:
-        calls["n"] += 1
-        return "PROMPT"
-
-    provider = AppendParentPromptProvider(resolver, "inv1.scout")
-    await provider.get_or_refresh()
-    await provider.get_or_refresh()
-    assert calls["n"] == 1
 
 
 # ── ForkContextProvider ──────────────────────────────────────────────────
@@ -114,7 +53,9 @@ class _MockMemory(MemorySystem):
     async def get_history(self, context: MemoryContext) -> list[ChatMessage]:
         return []
 
-    async def get_full_history(self, context: MemoryContext) -> list[ChatMessage]:
+    async def get_full_history(
+        self, context: MemoryContext, *, limit: int | None = None
+    ) -> list[ChatMessage]:
         return []
 
     async def search(
@@ -175,7 +116,6 @@ def _spec(builder) -> ForkContextSpec:
         builder=builder,
         agent_type="planner",
         fork_max_messages=10,
-        template_memory=None,
     )
 
 

@@ -5,7 +5,7 @@ Provides:
 - `IdGenerator` ABC (rule 7: ABC, not Protocol) — the single seam for
   generating 64-bit Snowflake-format IDs used as primary keys by the four
   persistence tables (`graph_specs` / `graph_instances` / `node_states` /
-  `deliver_states`, Ticket 10) and by `graph_instance_id` (the persistence
+  `  deliver_states`) and by `graph_instance_id` (the persistence
   unique key that replaces `run_id`).
 - `SnowflakeIdGenerator` — default stdlib-only implementation. Standard
   Twitter Snowflake bit layout: ``timestamp_ms(41) | datacenter(5) |
@@ -75,7 +75,7 @@ class IdGenerator(ABC):
     A single abstract method `generate()` returns a positive 64-bit int
     suitable for use as a SQLite `BIGINT` / `INTEGER PRIMARY KEY`.
 
-    `modex_graph` persistence (Ticket 10) uses `IdGenerator` to mint primary
+    `modex_graph` persistence uses `IdGenerator` to mint primary
     keys for `graph_specs` / `graph_instances` / `node_states` /
     `deliver_states`, and for `graph_instance_id` (the persistence unique key
     that replaces the in-memory `run_id`).
@@ -104,7 +104,7 @@ class SnowflakeIdGenerator(IdGenerator):
     Clock regression handling: if the wall clock reads earlier than the last
     timestamp used, the generator advances to ``last_timestamp + 1`` to
     preserve strict monotonicity (never emits a smaller or equal ID). This is
-    the behavior required by Ticket 10's persistence key contract.
+    the behavior required by the persistence key contract.
 
     Sequence overflow: when 4096 IDs are requested within the same
     millisecond, the generator spin-waits for the next millisecond rather
@@ -146,7 +146,7 @@ class SnowflakeIdGenerator(IdGenerator):
 
             if current_ms < self._last_timestamp_ms:
                 # Clock regressed — advance to last + 1 to keep strict
-                # monotonicity (Ticket 10 contract: IDs never go backwards).
+                # monotonicity (persistence key contract: IDs never go backwards).
                 current_ms = self._last_timestamp_ms + 1
             elif current_ms == self._last_timestamp_ms:
                 # Same millisecond — increment sequence.

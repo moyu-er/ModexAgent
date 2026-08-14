@@ -1,5 +1,11 @@
 # Design: Split `task` Tool Out of `send_to_agent`
 
+> **Update (2026-08-13):** Peer communication has been split out of `task` into
+> a dedicated `send_to_peer` tool. `task` is now strictly subagent-scoped. See
+> ADR-0019 §4 for the tool-surface split design. The original design below is
+> preserved as historical context for the initial `send_to_agent` → `task`
+> split.
+
 > Branch: `feature/split-task-tool`
 > Worktree: `F:/tool/pythonProject/ModexAgent-task-tool`
 > Base: `develop_gyt` @ `ad0c5331`

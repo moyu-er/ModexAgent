@@ -206,3 +206,34 @@ async def test_context_manager_load_omits_role_contract_when_roles_none(system) 
     assert state.system_prompt_pipeline is not None
     prompt = await state.system_prompt_pipeline.get_or_refresh()
     assert '<verification status=' not in prompt
+
+
+async def test_get_full_history_with_limit(system) -> None:
+    """get_full_history(limit=N) returns the most recent N non-COMPACT messages.
+
+    The store layer filters COMPACT messages first, then applies the limit.
+    With 10 messages (1 COMPACT), limit=5 returns the last 5 of the 9
+    non-COMPACT messages.
+    """
+    from modex_agent.core.types import MessageRole
+
+    await system.initialize()
+    ctx = MemoryContext(session_id="full-history-limit")
+
+    messages: list[dict[str, str]] = [
+        {"role": "user", "content": f"msg-{i}"} for i in range(9)
+    ]
+    messages.append({"role": str(MessageRole.COMPACT), "content": "compact summary"})
+    await system.add_messages(ctx, messages)
+
+    limited = await system.get_full_history(ctx, limit=5)
+    assert len(limited) == 5
+    assert limited[0].content == "msg-4"
+    assert limited[-1].content == "msg-8"
+    assert all(m.role != MessageRole.COMPACT for m in limited)
+
+    all_default = await system.get_full_history(ctx)
+    assert len(all_default) == 9
+
+    all_none = await system.get_full_history(ctx, limit=None)
+    assert len(all_none) == 9

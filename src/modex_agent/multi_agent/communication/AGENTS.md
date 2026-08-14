@@ -26,7 +26,7 @@ Pool A (star)                Pool B (star)
           ├── worker                     ├── reviewer
           └── oracle                      └── ...
 
-  mainA ←──── bus_ref peer edge ────→ mainB
+  mainA ←──── tree_ref peer edge ────→ mainB
         (NORMAL→NORMAL cross-pool)
 ```
 
@@ -34,7 +34,7 @@ Pool A (star)                Pool B (star)
   parent NORMAL (recovered from `session.parent_session_id` via
   `resolve_parent_name`). Subagent→subagent and subagent→non-parent-NORMAL
   are rejected by `TopologyPolicy.check`.
-- **Across pools**: NORMAL→peer-NORMAL via `target.bus_ref` — the policy
+- **Across pools**: NORMAL→peer-NORMAL via `target.tree_ref` — the policy
   gate returns `None` for NORMAL senders (no constraint); `PeerNormalStrategy`
   delivers directly to the peer pool's `AgentMessageBus`.
 - **NORMAL→SUBAGENT** (parent dispatch): always allowed; routed to
@@ -60,11 +60,11 @@ routing path, not a topology role.
 
 ## Strategy Dispatch
 
-`_send` selects the strategy with a flat dispatch on `bus_ref` presence +
+`_send` selects the strategy with a flat dispatch on `tree_ref` presence +
 `target.kind`:
 
 ```python
-if target.bus_ref is not None:
+if target.tree_ref is not None:
     strategy = PEER_NORMAL        # cross-pool NORMAL→NORMAL
 elif target.kind == SUBAGENT:
     strategy = SUBAGENT_DISPATCH   # parent→child task dispatch
@@ -93,19 +93,19 @@ Context propagates within the session group as designed behaviour.
 - The service is a **pure router** — never add agent-instance creation logic here.
 - `TopologyPolicy.check` is the **single** enforcement point — do not add
   topology checks to strategies, the service trunk, or interceptors.
-- Strategy dispatch is flat on `bus_ref` + `kind` — do not introduce nested
+- Strategy dispatch is flat on `tree_ref` + `kind` — do not introduce nested
   if-trees.
 - `send_async` and `_send` require a pre-resolved `CommunicationTarget`
 (no name-string lookup). The tool (`TaskDispatchTool.execute` /
 `SendToAgentTool.execute`) does the `store.get(name)` lookup.
-- `CommunicationTarget.bus_ref` is the load-bearing field for cross-pool
+- `CommunicationTarget.tree_ref` is the load-bearing field for cross-pool
   routing: `None` = local (today's behaviour), set = cross-pool.
-- `AgentCommunicationService.__init__` is backward-compatible — new deps
-  (`agent_bus`, `session_registry`, `target_store`, etc.) default to `None`.
+- `AgentCommunicationService.__init__` takes `tree` (required) and optional
+  `session_registry`, `target_store`, etc. — all defaulting to `None`.
 
 ### Common Patterns
-- Strategies receive a frozen `SendDeps` bundle (source, broker,
-  session_factory, agent_bus, session_registry, workspace_path_resolver).
+- Strategies receive a frozen `SendDeps` bundle (source,
+  session_factory, tree, session_registry, workspace_path_resolver).
 - `SendStrategy.execute` is a template method: normalize → session →
   (register) → envelope → deliver → build_result. Concrete strategies
   override individual hooks.
@@ -119,10 +119,9 @@ Context propagates within the session group as designed behaviour.
 - `modex_agent.multi_agent.tools` — `CommunicationTarget`, `CommunicationTargetStore`, `resolve_parent_name`
 - `modex_agent.multi_agent.envelope` — `AgentMessageEnvelope`
 - `modex_agent.multi_agent.message_format` — `build_dispatch_message`, `build_agent_comm_message`, `SourceLabel`, `ResultMeta`
-- `modex_agent.multi_agent.bus` — `AgentMessageBus` (delivery target)
+- `modex_agent.multi_agent.bus` — `AgentMessageBus` (inbox delivery, separate from send path)
 - `modex_agent.multi_agent.address` — `AgentAddress`
 - `modex_agent.core.session_id` — `SessionIdFactory`, `SessionInfo`
 - `modex_agent.core.agent` — `AgentCommKind`, `AgentContext`
-- `modex_agent.messaging.broker` — `MessageBroker` (fallback delivery)
 
 <!-- MANUAL -->

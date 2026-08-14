@@ -282,7 +282,7 @@ class TestPoolRouterSelfHealsStaleRouting:
                 provider=MagicMock(),
                 notification_service=MagicMock(),
                 communication_service=MagicMock(),
-                agent_bus=MagicMock(),
+                tree_manager=MagicMock(),
                 target_store=MagicMock(),
             ),
             "coder": PoolInstance(
@@ -300,7 +300,7 @@ class TestPoolRouterSelfHealsStaleRouting:
                 provider=MagicMock(),
                 notification_service=MagicMock(),
                 communication_service=MagicMock(),
-                agent_bus=MagicMock(),
+                tree_manager=MagicMock(),
                 target_store=MagicMock(),
             ),
         }
@@ -357,7 +357,7 @@ class TestPoolRouterSelfHealsStaleRouting:
                 provider=MagicMock(),
                 notification_service=MagicMock(),
                 communication_service=MagicMock(),
-                agent_bus=MagicMock(),
+                tree_manager=MagicMock(),
                 target_store=MagicMock(),
             ),
         }
@@ -415,7 +415,7 @@ class TestPoolRouterSelfHealsStaleRouting:
                 provider=MagicMock(),
                 notification_service=MagicMock(),
                 communication_service=MagicMock(),
-                agent_bus=MagicMock(),
+                tree_manager=MagicMock(),
                 target_store=MagicMock(),
             ),
         }

@@ -1,7 +1,7 @@
 # ADR-0027: External Coding Agent as Subagent
 
 Date: 2026-07-19
-Status: Proposed
+Status: Accepted (implemented)
 Supersedes: Partial — extends ADR-0022 (external coding agent integration) from main-agent-only to include the subagent path
 Related: ADR-0015 (subagent materialize), ADR-0019 (cross-pool peer), ADR-0022 (external coding integration), ADR-0023 (hybrid persistence), ADR-0025 (execution strategy abstraction), ADR-0026 (agent role descriptors)
 
@@ -155,3 +155,28 @@ The parent agent's decision logic reads only the uniform parts and does not bran
 - Whether `ExternalTurnRunner` should accept a full `HookRunner` or a minimal `list[FinallyTurnHook]`. Implementation will decide; the ADR is neutral.
 - Whether `MAX_WARM_BACKENDS` should be configurable per-pool or fixed at framework level. Default is framework-level constant; per-pool override can be added if needed.
 - Whether a future ADR should add OS-level parent-death protection (`prctl` on Linux, Job Object on Windows) as a fourth cleanup layer for the `SIGKILL` case. Out of scope for this ADR.
+
+## Implementation divergence (2026-08-08)
+
+The ADR is substantially implemented, but several core design elements
+diverged from the specification:
+
+- **`CachingBackendProvider` never implemented.** The LRU cache with
+  `MAX_WARM_BACKENDS` (§4, ~30% of the decision text) was never built.
+  Instead, both main-agent and subagent external paths use
+  `PoolScopedBackendProvider` backed by the `OpenCodeServerManager`
+  singleton (`providers/opencode/server_manager.py`), which manages all
+  `opencode serve` process lifecycles. There is no per-session caching
+  layer. See `src/modex_agent/agents/external/AGENTS.md` for the
+  current authoritative description.
+- **`<replied>` field dropped.** The notification XML no longer includes
+  `<replied>`. The `_check_replied` outbox.jsonl mechanism was never
+  written by production code, and `external_outbox_path` was removed
+  from `SubagentAutoSendHook`'s constructor. The parent agent no longer
+  receives a "did the subagent deliver" signal via XML.
+- **§4 `BackendProvider` ABC is live** but its concrete implementation
+  diverged. The ABC and `PoolScopedBackendProvider` exist; the
+  `CachingBackendProvider` subclass does not. Per ADR governance rules,
+  the BackendProvider revision of ADR-0022's main-agent path should be
+  merged into ADR-0022's Disposition (see ADR-0022 Post-Disposition
+  evolution).

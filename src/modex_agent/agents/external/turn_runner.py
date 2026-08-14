@@ -65,6 +65,9 @@ if TYPE_CHECKING:
     from modex_agent.core.types import InputMessage
     from modex_agent.hook.runner import HookRunner
     from modex_agent.multi_agent.router import RouteResult
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        SessionBindingStore,
+    )
     from modex_agent.pipeline.adapters import OutputAdapter
     from modex_agent.workspace.resources import WorkspaceManager
 
@@ -98,6 +101,7 @@ class ExternalTurnRunner(TurnRunner):
         on_session_end: Callable[[str], Awaitable[None]] | None = None,
         safety: RuntimeSafetyPolicy,
         hook_runner: HookRunner | None = None,
+        session_binding_store: SessionBindingStore | None = None,
     ) -> None:
         self._agent = agent
         self._emitter_factory = emitter_factory
@@ -108,6 +112,7 @@ class ExternalTurnRunner(TurnRunner):
         self._safety = safety
         self._hook_runner = hook_runner
         self._workspace_manager: WorkspaceManager | None = None
+        self._session_binding_store = session_binding_store
 
     def set_pool_context(
         self,
@@ -177,6 +182,14 @@ class ExternalTurnRunner(TurnRunner):
             identity=turn_identity,
         )
 
+        task_id: int | None = None
+        if self._session_binding_store is not None:
+            binding = self._session_binding_store.get(session.session_id)
+            if binding is not None:
+                task_id = binding.task_id
+        if task_id is not None:
+            agent_context.graph_instance_id = task_id
+
         # 3. Direct-input path: external CLI reads this, never history.
         if input_msg.metadata.get("source_agent"):
             # Approved exception: per-turn history is temporary, never persisted
@@ -242,7 +255,7 @@ class ExternalTurnRunner(TurnRunner):
             # No ctx_mgr.flush() — the external CLI persists its own state;
             # the empty ListMessageHistory above is never written to.
             if self._hook_runner is not None:
-                # FINALLY_TURN fires once per turn on every path. asyncio.shield
+                # FINALLY_GRAPH fires once per turn on every path. asyncio.shield
                 # protects dispatch when the turn task itself is being cancelled
                 # (/stop via task.cancel()); the shielded coroutine continues in
                 # the background while the outer await re-raises CancelledError
@@ -250,7 +263,7 @@ class ExternalTurnRunner(TurnRunner):
                 with contextlib.suppress(asyncio.CancelledError):
                     await asyncio.shield(
                         self._hook_runner.dispatch(
-                            HookPoint.FINALLY_TURN,
+                            HookPoint.FINALLY_GRAPH,
                             agent_context,
                             HookPayload(data={"result": result}),
                         )

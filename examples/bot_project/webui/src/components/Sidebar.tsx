@@ -1,5 +1,5 @@
 import { useState, type FC, type CSSProperties } from "react";
-import { ChevronRight, Folder, FolderOpen, Home, Plus, Settings } from "lucide-react";
+import { ChevronRight, Folder, FolderOpen, Home, Plus, Settings, Workflow } from "lucide-react";
 import type { PoolInfo } from "../lib/api";
 import { changeWorkspace } from "../lib/api";
 import { WorkspaceBrowser, type RecentWorkspace } from "./WorkspaceBrowser";
@@ -31,6 +31,8 @@ export interface SidebarProps {
   revealSessionId?: string | null;
   style?: CSSProperties;
   onOpenSettings?: () => void;
+  graphsActive?: boolean;
+  onOpenGraphs?: () => void;
 }
 
 export const Sidebar: FC<SidebarProps> = ({
@@ -53,6 +55,8 @@ export const Sidebar: FC<SidebarProps> = ({
   revealSessionId,
   style,
   onOpenSettings,
+  graphsActive = false,
+  onOpenGraphs,
 }) => {
   const [browserOpen, setBrowserOpen] = useState(false);
   const [recentOpen, setRecentOpen] = useState(false);
@@ -172,6 +176,28 @@ export const Sidebar: FC<SidebarProps> = ({
         }}
         recentWorkspaces={recentFiltered}
       />
+
+      {/* Graphs nav — above conversations, workspace-scoped feature like conversations */}
+      {onOpenGraphs && (
+        <div className="border-b border-hairline px-4 py-2">
+          <Button
+            variant="ghost"
+            size="md"
+            onClick={(): void => {
+              onOpenGraphs();
+              onCloseMobile();
+            }}
+            className={`-ml-2 h-auto w-full justify-start gap-2 rounded-sm px-2 py-1.5 text-base ${
+              graphsActive
+                ? "bg-hairline-soft text-ink"
+                : "text-body hover:bg-hairline-soft hover:text-ink"
+            }`}
+          >
+            <Workflow size={16} className="shrink-0" />
+            {t("sidebar.graphs")}
+          </Button>
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex items-center justify-between border-b border-hairline px-4 py-3">

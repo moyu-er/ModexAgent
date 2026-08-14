@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock
-
-import pytest
 
 from bot.workspace.background import BackgroundTaskRunner
 from bot.workspace.pool_data import PoolData

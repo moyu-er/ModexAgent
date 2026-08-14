@@ -17,13 +17,14 @@ from any channel.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.core.types import OutputMessage
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import OutputMessage
 from modex_agent.pipeline.adapters import OutputAdapter
 
 if TYPE_CHECKING:
@@ -83,7 +84,7 @@ class AdapterSpec:
     enabled: bool
     build: Callable[
         [AdapterBuildContext],
-        tuple["InputAdapter", "OutputAdapter", "ContentEmitter"],
+        tuple[InputAdapter, OutputAdapter, ContentEmitter],
     ]
 
 
@@ -108,7 +109,7 @@ def register(name: str, *, enabled: bool = True):
     def _decorator(
         fn: Callable[
             [AdapterBuildContext],
-            tuple["InputAdapter", "OutputAdapter", "ContentEmitter"],
+            tuple[InputAdapter, OutputAdapter, ContentEmitter],
         ],
     ):
         ADAPTERS.append(AdapterSpec(name=name, enabled=enabled, build=fn))

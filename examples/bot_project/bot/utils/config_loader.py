@@ -72,7 +72,7 @@ class ConfigLoader:
     Loads .env file automatically if python-dotenv is installed.
     """
 
-    def __init__(self, config_dir: Path):
+    def __init__(self, config_dir: Path) -> None:
         self.config_dir = config_dir
         self.project_root = config_dir.parent
         if _DOTENV_AVAILABLE:

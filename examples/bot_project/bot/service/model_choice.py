@@ -1,5 +1,5 @@
 # bot/service/model_choice.py
-"""Per-turn 模型选择的跨 broker 载体 + turn task 内 ContextVar + BeforeTurnHook。
+"""Per-turn 模型选择的跨 broker 载体 + turn task 内 ContextVar + StartNodeTurnHook。
 
 registry 是 session_id -> ResolvedModel 的有界 LRU：input-pipeline task 在 EnqueueStage
 写入，turn task 在 ModelChoiceBindHook 读取。ContextVar 是 hook -> BotModelProvider 的同
@@ -14,7 +14,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
 from modex_agent.core.capabilities import ModelInfo
-from modex_agent.hook.abc import BeforeTurnHook
+from modex_agent.hook.abc import StartNodeTurnHook
 
 from .model_config import BotModelConfig, ResolvedModel
 
@@ -59,8 +59,8 @@ class ModelChoiceRegistry:
         return len(self._store)
 
 
-class ModelChoiceBindHook(BeforeTurnHook):
-    """BeforeTurnHook：把 registry 中本 session 的模型选择快照进 ContextVar，
+class ModelChoiceBindHook(StartNodeTurnHook):
+    """StartNodeTurnHook：把 registry 中本 session 的模型选择快照进 ContextVar，
 
     并把当前模型的 capabilities 覆写到 runtime.services.model_info（按 turn
     切换图片内联行为）。registry 缺失（IM / 后台）时回退默认模型。
@@ -74,7 +74,7 @@ class ModelChoiceBindHook(BeforeTurnHook):
     def name(self) -> str:
         return "model_choice_bind_hook"
 
-    async def before_turn(self, ctx: AgentContext) -> None:
+    async def start_node_turn(self, ctx: AgentContext) -> None:
         session_id = ctx.session.session_id if ctx.session is not None else ""
         resolved = self._registry.get(session_id) if session_id else None
         if resolved is None:

@@ -48,7 +48,6 @@ async def test_base_prompt_empty_string():
 async def test_runtime_contains_date_and_platform():
     provider = RuntimeProvider()
     result = await provider.get_or_refresh()
-    assert "Current Time:" in result
     assert "Platform:" in result
     assert "Working Directory:" not in result
 
@@ -158,6 +157,7 @@ def _make_tool_manager(targets: list, *, with_task: bool = True):
     from modex_agent.multi_agent.tools import (
         CommunicationTargetStore,
         SendToAgentTool,
+        SendToPeerTool,
         TaskDispatchTool,
     )
 
@@ -167,9 +167,6 @@ def _make_tool_manager(targets: list, *, with_task: bool = True):
     tool = SendToAgentTool(
         store=store,
         source=AgentAddress(name="main"),
-        broker=MagicMock(),
-        registry=MagicMock(),
-        agent_bus=MagicMock(spec=AgentMessageBus),
         service=MagicMock(),
     )
     mgr = InMemoryToolManager()
@@ -180,12 +177,16 @@ def _make_tool_manager(targets: list, *, with_task: bool = True):
             TaskDispatchTool(
                 store=store,
                 source=AgentAddress(name="main"),
-                broker=MagicMock(),
-                registry=MagicMock(),
-                agent_bus=MagicMock(spec=AgentMessageBus),
                 service=MagicMock(),
             )
         )
+    mgr.register(
+        SendToPeerTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            service=MagicMock(),
+        )
+    )
     return mgr
 
 
@@ -230,7 +231,7 @@ async def test_comm_provider_peer_target_emits_peer_contract():
         CommunicationTarget(
             name="research-main",
             kind=AgentCommKind.NORMAL,
-            bus_ref=MagicMock(),
+            tree_ref=MagicMock(),
         ),
     ]
     provider = AgentCommunicationSystemPromptProvider(
@@ -239,7 +240,7 @@ async def test_comm_provider_peer_target_emits_peer_contract():
     result = await provider.get_or_refresh()
     assert "Remote Agents" in result
     assert "research-main" in result
-    assert "`task`" in result
+    assert "`send_to_peer`" in result
     assert provider.last_version is not None
     assert provider.last_version.startswith("comm:peer:")
 
@@ -247,7 +248,7 @@ async def test_comm_provider_peer_target_emits_peer_contract():
 @pytest.mark.asyncio
 async def test_comm_provider_subagent_target_does_not_emit_dispatch_contract():
     """_SubagentDispatchSubProvider is deprecated (applies()→False). Subagent
-    targets alone do not produce any comm output without peer bus_ref targets."""
+    targets alone do not produce any comm output without peer tree_ref targets."""
     from modex_agent.core.agent import AgentCommKind
     from modex_agent.memory.prompt_pipeline.providers import (
         AgentCommunicationSystemPromptProvider,
@@ -344,7 +345,7 @@ async def test_comm_provider_peer_emits_without_dispatch():
         CommunicationTarget(
             name="peer-a",
             kind=AgentCommKind.NORMAL,
-            bus_ref=MagicMock(),
+            tree_ref=MagicMock(),
         ),
         CommunicationTarget(
             name="subagent-b",
@@ -375,7 +376,7 @@ async def test_comm_provider_version_combines_sub_modules():
         CommunicationTarget(
             name="alpha",
             kind=AgentCommKind.NORMAL,
-            bus_ref=MagicMock(),
+            tree_ref=MagicMock(),
         ),
         CommunicationTarget(
             name="beta",
@@ -398,7 +399,7 @@ async def test_comm_provider_version_changes_when_target_added():
     from modex_agent.multi_agent.tools import CommunicationTarget, SendToAgentTool
 
     targets = [
-        CommunicationTarget(name="alpha", kind=AgentCommKind.NORMAL, bus_ref=MagicMock()),
+        CommunicationTarget(name="alpha", kind=AgentCommKind.NORMAL, tree_ref=MagicMock()),
     ]
     mgr = _make_tool_manager(targets)
     provider = AgentCommunicationSystemPromptProvider(mgr, AgentCommKind.NORMAL)
@@ -407,7 +408,7 @@ async def test_comm_provider_version_changes_when_target_added():
     tool = mgr.get_tool("send_to_agent")
     assert isinstance(tool, SendToAgentTool)
     tool.add_target(
-        CommunicationTarget(name="beta", kind=AgentCommKind.NORMAL, bus_ref=MagicMock())
+        CommunicationTarget(name="beta", kind=AgentCommKind.NORMAL, tree_ref=MagicMock())
     )
     await provider.get_or_refresh()
     v2 = provider.last_version
@@ -424,7 +425,7 @@ async def test_comm_provider_contract_does_not_expose_pool_concepts():
     from modex_agent.multi_agent.tools import CommunicationTarget
 
     targets = [
-        CommunicationTarget(name="x", kind=AgentCommKind.NORMAL, bus_ref=MagicMock()),
+        CommunicationTarget(name="x", kind=AgentCommKind.NORMAL, tree_ref=MagicMock()),
     ]
     provider = AgentCommunicationSystemPromptProvider(
         _make_tool_manager(targets), AgentCommKind.NORMAL
@@ -611,3 +612,190 @@ async def test_role_contract_order_preserved_in_content():
     planner_marker = "Role Contract — Planner"
     assert rp.index(reviewer_marker) < rp.index(planner_marker)
     assert pr.index(planner_marker) < pr.index(reviewer_marker)
+
+
+# -- GraphWorkflowProvider --
+
+
+@pytest.mark.asyncio
+async def test_graph_workflow_provider_emits_deliver_routing_guidance() -> None:
+    """Prompt text must match the deliver tool's target-required behavior:
+    no 'auto-delivered to ALL downstream nodes' claim (multi-edge raises
+    RoutingError); instead describe single-edge auto-deliver / END fallback
+    and require an explicit target."""
+    from modex_agent.agents.react.state import ReActTurnState
+    from modex_agent.core.agent import AgentContext, current_agent_context
+    from modex_agent.core.history import MessageHistory
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.runtime.models import TurnIdentity
+    from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+    from modex_graph.context import GraphContext
+
+    state = ReActTurnState(identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("test.planner"), turn_id="t1"))
+    state.custom[TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT] = ""
+    ctx = AgentContext(
+        system_prompt="",
+        history=MagicMock(spec=MessageHistory),
+        tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("test.planner"),
+        graph_context=MagicMock(spec=GraphContext),
+        runtime=AgentRuntime(services=AgentRuntimeServices(), state=state),
+    )
+    token = current_agent_context.set(ctx)
+    try:
+        provider = GraphWorkflowProvider()
+        result = await provider._fetch_content()
+        assert result.startswith("## Graph Node Context\n")
+        assert result.count("\n## ") == 0
+        assert "### Workflow Guidance\n" in result
+        assert "**Pattern 1 — Producer**" in result
+        assert "**Pattern 2 — Relay**" in result
+        assert "### Topology\n" not in result
+        assert "### Your Role\n" not in result
+        assert "MUST call `deliver`" in result
+        assert "auto-delivered to ALL downstream nodes" not in result
+    finally:
+        current_agent_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_graph_workflow_provider_emits_topology_and_role_from_turn_state() -> None:
+    from modex_agent.core.agent import AgentContext, current_agent_context
+    from modex_agent.core.history import MessageHistory
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.runtime.models import TurnStateBase
+    from modex_agent.runtime.services import AgentRuntime
+    from modex_graph.context import GraphContext
+
+    runtime = MagicMock(spec=AgentRuntime)
+    runtime.state = MagicMock(spec=TurnStateBase)
+    runtime.state.custom = {
+        TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT: "planner -> implementer",
+        TurnCustomKey.GRAPH_NODE_DESCRIPTION: "Review the implementation.",
+    }
+    ctx = AgentContext(
+        system_prompt="",
+        history=MagicMock(spec=MessageHistory),
+        tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("test.reviewer"),
+        runtime=runtime,
+        graph_context=MagicMock(spec=GraphContext),
+    )
+    token = current_agent_context.set(ctx)
+    try:
+        provider = GraphWorkflowProvider()
+        result = await provider._fetch_content()
+        assert "### Topology\n\nplanner -> implementer\n" in result
+        assert "### Your Role\n\nReview the implementation." in result
+        assert result.index("### Workflow Guidance") < result.index("### Topology")
+        assert result.index("### Topology") < result.index("### Your Role")
+    finally:
+        current_agent_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_graph_workflow_provider_emits_knowledge_base_section_when_knowledge_dir_set() -> None:
+    from modex_agent.core.agent import AgentContext, current_agent_context
+    from modex_agent.core.history import MessageHistory
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.runtime.models import TurnStateBase
+    from modex_agent.runtime.services import AgentRuntime
+    from modex_graph.context import GraphContext
+
+    runtime = MagicMock(spec=AgentRuntime)
+    runtime.state = MagicMock(spec=TurnStateBase)
+    runtime.state.custom = {
+        TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT: "",
+        TurnCustomKey.GRAPH_KNOWLEDGE_DIR: "/tmp/knowledge",
+    }
+    ctx = AgentContext(
+        system_prompt="",
+        history=MagicMock(spec=MessageHistory),
+        tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("test.reviewer"),
+        runtime=runtime,
+        graph_context=MagicMock(spec=GraphContext),
+    )
+    token = current_agent_context.set(ctx)
+    try:
+        provider = GraphWorkflowProvider()
+        result = await provider._fetch_content()
+        assert "### Knowledge Base\n" in result
+        assert "`knowledge_base`" in result
+        assert "findings" in result
+        assert "decisions" in result
+        assert "open_questions" in result
+        assert "changelog" in result
+        assert result.index("### Workflow Guidance") < result.index("### Knowledge Base")
+    finally:
+        current_agent_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_graph_workflow_provider_omits_knowledge_base_section_when_knowledge_dir_not_set() -> None:
+    from modex_agent.core.agent import AgentContext, current_agent_context
+    from modex_agent.core.history import MessageHistory
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.runtime.models import TurnStateBase
+    from modex_agent.runtime.services import AgentRuntime
+    from modex_graph.context import GraphContext
+
+    runtime = MagicMock(spec=AgentRuntime)
+    runtime.state = MagicMock(spec=TurnStateBase)
+    runtime.state.custom = {
+        TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT: "planner -> implementer",
+        TurnCustomKey.GRAPH_NODE_DESCRIPTION: "Review the implementation.",
+    }
+    ctx = AgentContext(
+        system_prompt="",
+        history=MagicMock(spec=MessageHistory),
+        tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("test.reviewer"),
+        runtime=runtime,
+        graph_context=MagicMock(spec=GraphContext),
+    )
+    token = current_agent_context.set(ctx)
+    try:
+        provider = GraphWorkflowProvider()
+        result = await provider._fetch_content()
+        assert "### Knowledge Base" not in result
+        assert "### Topology\n" in result
+        assert "### Your Role\n" in result
+    finally:
+        current_agent_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_graph_workflow_provider_empty_when_no_graph_context() -> None:
+    from modex_agent.core.agent import AgentContext, current_agent_context
+    from modex_agent.core.history import MessageHistory
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+
+    ctx = AgentContext(
+        system_prompt="",
+        history=MagicMock(spec=MessageHistory),
+        tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("test.planner"),
+        graph_context=None,
+    )
+    token = current_agent_context.set(ctx)
+    try:
+        provider = GraphWorkflowProvider()
+        result = await provider._fetch_content()
+        assert result == ""
+    finally:
+        current_agent_context.reset(token)

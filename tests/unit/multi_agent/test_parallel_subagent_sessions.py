@@ -19,6 +19,8 @@ import asyncio
 
 import pytest
 
+from unittest.mock import MagicMock
+
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
@@ -30,6 +32,18 @@ from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.multi_agent.registry import AgentProfile
 from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.tools import CommunicationTarget
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+
+
+def _mock_tree(bus: object) -> SessionTreeManager:
+    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+
+    async def _deliver(sid: str, env: object) -> None:
+        await bus.send(sid, env)  # type: ignore[attr-defined]
+
+    tree.deliver = _deliver
+    return tree
+
 
 
 def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
@@ -149,12 +163,10 @@ def _make_service(
     source_name: str = "main",
 ) -> AgentCommunicationService:
     registry = _FakeRegistry(profiles=profiles, descriptors=descriptors)
-    broker = _FakeBroker()
     return AgentCommunicationService(
         source=AgentAddress(name=source_name),
-        broker=broker,
         registry=registry,  # type: ignore[arg-type]
-        agent_bus=agent_bus,
+        tree=_mock_tree(agent_bus) if agent_bus else MagicMock(spec=SessionTreeManager),
     )
 
 

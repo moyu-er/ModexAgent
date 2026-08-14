@@ -16,8 +16,11 @@ import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import aiohttp
 import pytest
+
+pytest.importorskip("aiohttp", reason="aiohttp not installed")
+
+import aiohttp
 
 from modex_agent.agents.external import Emission, ExternalEvent
 from modex_agent.agents.external.providers.opencode.session_state import (

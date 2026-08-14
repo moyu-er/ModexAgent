@@ -137,9 +137,16 @@ class TurnCustomKey(StrEnum):
     INJECTION_CYCLE_COUNT = "_injection_cycle_count"
     TRACE_ID = "_trace_id"
     # Root invoke_agent span_id for the current turn (G10 multi-agent handoff).
-    # Set by TraceCollectorHook.before_turn; read by AgentCommunicationService
-    # to link the agent.handoff span's parent_span_id to the turn's root span.
+    # Set by RootSpanHook.start_node_turn for child span parentage.
     ROOT_SPAN_ID = "_root_span_id"
+    # Parent span ID for subagent trace linking (G10 multi-agent handoff).
+    # When a subagent's trace should link to a parent span other than the
+    # turn root, the parent's span ID is stored here. Read by
+    # AgentCommunicationService to construct the child trace's parent_span_id.
+    PARENT_SPAN_ID = "parent_span_id"
+    # The parent agent's handoff span ID, stored on the child's turn state
+    # so the child can reference the specific handoff span that spawned it.
+    HANDOFF_SPAN_ID = "handoff_span_id"
     # Resolved image-kind Attachment records for the current turn (ADR-0014 §3 /
     # OpenSpec native-multimodal-inline unit 3). Path-only VOs (path/mime/kind/
     # name/size) — never bytes. Read by the inline renderer (unit 4) to bind
@@ -161,3 +168,35 @@ class TurnCustomKey(StrEnum):
     # SyntheticUserMessageStrategy — Path B) to inject a synthetic user message
     # after tool results.
     TOOL_MEDIA_CACHE = "_tool_media_cache"
+    CONTINUATION_REQUEST = "_continuation_request"
+    # One-shot flag: a hook with progress-driven continuation (currently only
+    # TodoContinuationHook) authorizes the gate to renew MAX_TURNS past the
+    # current upper bound.  Gate pops this alongside CONTINUATION_REQUEST and
+    # increments MAX_TURNS by 1 only once regardless of how many hooks set it.
+    CONTINUATION_RENEW_MAX_TURNS = "_continuation_renew_max_turns"
+    LAST_CONTINUATION_TODO_SIG = "_last_continuation_todo_sig"
+    GRAPH_DELIVER_COUNT = "_graph_deliver_count"
+    MAX_TURNS = "_max_turns"
+    # Per-turn counter for graph knowledge base read actions (read/grep).
+    # Incremented by GraphKnowledgeBaseTool; read and reset by KnowledgeHook
+    # each turn attempt.
+    GRAPH_KNOWLEDGE_READ_COUNT = "_graph_knowledge_read_count"
+    # Per-turn counter for graph knowledge base write actions (write/edit).
+    # Incremented by GraphKnowledgeBaseTool; read and reset by KnowledgeHook
+    # each turn attempt.
+    GRAPH_KNOWLEDGE_WRITE_COUNT = "_graph_knowledge_write_count"
+    # Per-turn path (string) to the graph instance knowledge directory.
+    # Set by BotAgentNode.execute; read by KnowledgeHook to inject
+    # findings/open_questions summaries at turn start.
+    GRAPH_KNOWLEDGE_DIR = "_graph_knowledge_dir"
+    # Per-turn per-node knowledge requirement flags (bools, default False).
+    # Set by BotAgentNode.execute from NodeSpec config; read by
+    # KnowledgeHook to decide whether continuation is needed.
+    GRAPH_KNOWLEDGE_REQUIRE_READ = "_graph_knowledge_require_read"
+    GRAPH_KNOWLEDGE_REQUIRE_WRITE = "_graph_knowledge_require_write"
+    GRAPH_NODE_DESCRIPTION = "_graph_node_description"
+    # Serialized graph topology (markdown) for the ### Topology subsection
+    # of ## Graph Node Context in the system prompt. Set by BotAgentNode.execute
+    # before execute_turn; read by GraphWorkflowProvider._fetch_content.
+    # Empty string when graph_ref is None (test/no-scheduler path).
+    GRAPH_TOPOLOGY_CONTEXT = "_graph_topology_context"

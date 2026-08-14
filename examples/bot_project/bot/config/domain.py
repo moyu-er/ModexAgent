@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, cast, get_args, get_origin
 
@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic.fields import FieldInfo
 
 
-class FieldType(str, Enum):
+class FieldType(StrEnum):
     """Closed set of field kinds a config domain may expose."""
 
     STRING = "string"
@@ -33,7 +33,7 @@ class FieldType(str, Enum):
     OBJECT = "object"
 
 
-class DomainFlavor(str, Enum):
+class DomainFlavor(StrEnum):
     """How a config domain is exposed (single instance vs named registry)."""
 
     SINGLETON = "singleton"

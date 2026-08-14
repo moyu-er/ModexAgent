@@ -7,10 +7,7 @@ build is skipped gracefully (logs a warning and returns).
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from bot.adapters.channels import AdapterBuildContext, get_conv_channel, register
-from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import session_id_prefix_of
 
@@ -20,9 +17,7 @@ def _qq_enabled(ctx: AdapterBuildContext) -> bool:
     qq_cfg = ctx.raw_config.get("qq", {})
     if not qq_cfg:
         return False
-    if not qq_cfg.get("app_id") or not qq_cfg.get("secret"):
-        return False
-    return True
+    return not (not qq_cfg.get("app_id") or not qq_cfg.get("secret"))
 
 
 @register("qq", enabled=True)
@@ -37,8 +32,8 @@ def build_qq(ctx: AdapterBuildContext):
         return None  # type: ignore[return-value]
 
     from bot.adapters.qq import (
-        QQEmitterConfig,
         QQBotEmitter,
+        QQEmitterConfig,
         QQInputAdapter,
         QQOutputAdapter,
     )
@@ -58,7 +53,6 @@ def build_qq(ctx: AdapterBuildContext):
 
     def emitter_factory(session_id: str):
         """Create a channel-filtered QQ emitter for *session_id*."""
-        from bot.adapters.channels import get_conv_channel
 
         class _ChannelFilteredQQEmitter(QQBotEmitter):
             """QQ emitter that only sends for QQ-originated conversations.
@@ -67,7 +61,7 @@ def build_qq(ctx: AdapterBuildContext):
             this emitter silently drops all output — no cross-talk.
             """
 
-            def __init__(self, output_adapter, session_id, config):
+            def __init__(self, output_adapter, session_id, config) -> None:
                 super().__init__(output_adapter, session_id, config)
                 # session_id format: {conv_id}.{agent_name}
                 self._conv_id = session_id_prefix_of(session_id)

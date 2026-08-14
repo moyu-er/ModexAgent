@@ -70,8 +70,8 @@ class TestSafetyPolicyDefaults:
 
     def test_llm_timeout_policy_defaults(self):
         policy = LLMTimeoutPolicy()
-        assert policy.request_timeout_seconds > 0
-        assert policy.stream_idle_timeout_seconds > 0
+        assert policy.request_timeout_seconds is None
+        assert policy.stream_idle_timeout_seconds is None
 
 
 class TestBuildTimeoutResponse:

@@ -17,7 +17,6 @@ correct templates are found regardless of CWD.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 from pathlib import Path
@@ -25,11 +24,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
+from bot.service.pool.memory_defaults import ensure_long_term_defaults
 
+from modex_agent.core.scope import MemoryContext
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.factories.memory import create_memory
-from modex_agent.core.scope import MemoryContext
-from bot.service.pool.memory_defaults import ensure_long_term_defaults
 
 
 def _write_templates(project_dir: Path) -> Path:

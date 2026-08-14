@@ -91,6 +91,26 @@ async def test_human_dm_round_trips_approval_and_attachments() -> None:
     poller = InboxPoller(pool, interval=0.05)
     pool.attach_poller(poller)
 
+    from modex_agent.core.session_registry import InMemorySessionRegistry
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+    from modex_agent.multi_agent.session_tree.store_node import InMemoryTreeNodeStore
+    from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrackStore
+    from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
+
+    tree_manager = SessionTreeManager(
+        tree_store=InMemorySessionTreeStore(),
+        node_store=InMemoryTreeNodeStore(),
+        track_store=InMemoryMessageTrackStore(),
+        bus=bus,
+        poller=poller,
+        pool_name="main",
+        workspace_root="/tmp",
+        session_registry=InMemorySessionRegistry(),
+    )
+    consumer.set_on_consumed(tree_manager.on_consumed)
+    poller.attach_tree_manager(tree_manager)
+    pool.tree = tree_manager
+
     # Register a resident "main" agent with a capturing pipeline.
     instance, captured = _make_capturing_instance("main")
     pool._agents["main"] = instance

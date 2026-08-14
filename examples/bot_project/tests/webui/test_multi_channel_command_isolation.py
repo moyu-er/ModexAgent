@@ -118,7 +118,7 @@ class _FakeAdapter:
 
 
 @pytest.mark.asyncio
-async def test_control_commands_isolated_across_im_channels(tmp_path: Path):
+async def test_control_commands_isolated_across_im_channels(tmp_path: Path) -> None:
     """S2 handles /cd and /exit directly; each adapter's current_ws is updated."""
     from unittest.mock import MagicMock
 
@@ -152,7 +152,6 @@ async def test_control_commands_isolated_across_im_channels(tmp_path: Path):
         default_pool="main",
         available_pools=lambda: {"main", "coding"},
         pool_session_store=MagicMock(),
-        agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
         transcript_store=MagicMock(),
         enqueue_message=MagicMock(),
@@ -170,7 +169,6 @@ async def test_control_commands_isolated_across_im_channels(tmp_path: Path):
         default_pool="main",
         available_pools=lambda: {"main", "coding"},
         pool_session_store=MagicMock(),
-        agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
         transcript_store=MagicMock(),
         enqueue_message=MagicMock(),
@@ -184,12 +182,12 @@ async def test_control_commands_isolated_across_im_channels(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_pool_switch_isolated_across_im_channels():
+async def test_pool_switch_isolated_across_im_channels() -> None:
     """/coding from QQ must only notify QQ; /main from Telegram only Telegram."""
     qq_out = _RecordingOutputAdapter("qq")
     tg_out = _RecordingOutputAdapter("telegram")
     ws_out = _RecordingOutputAdapter("websocket")
-    router = ChannelRouterOutputAdapter({
+    ChannelRouterOutputAdapter({
         "qq": qq_out,
         "telegram": tg_out,
         "websocket": ws_out,
@@ -220,7 +218,7 @@ async def test_pool_switch_isolated_across_im_channels():
 
 
 @pytest.mark.asyncio
-async def test_webui_control_command_does_not_leak_to_im(tmp_path: Path):
+async def test_webui_control_command_does_not_leak_to_im(tmp_path: Path) -> None:
     """A /cd typed in the WebUI input box is handled by S2 for the websocket adapter only."""
     from bot.input_pipeline.context import BotInputContext
     from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
@@ -232,7 +230,7 @@ async def test_webui_control_command_does_not_leak_to_im(tmp_path: Path):
     qq_out = _RecordingOutputAdapter("qq")
     tg_out = _RecordingOutputAdapter("telegram")
     ws_out = _RecordingOutputAdapter("websocket")
-    router = ChannelRouterOutputAdapter({
+    ChannelRouterOutputAdapter({
         "qq": qq_out,
         "telegram": tg_out,
         "websocket": ws_out,
@@ -260,7 +258,6 @@ async def test_webui_control_command_does_not_leak_to_im(tmp_path: Path):
         default_pool="main",
         available_pools=lambda: {"main", "coding"},
         pool_session_store=MagicMock(),
-        agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
         transcript_store=MagicMock(),
         enqueue_message=MagicMock(),
@@ -279,7 +276,7 @@ async def test_webui_control_command_does_not_leak_to_im(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_plain_message_not_intercepted_routes_normally():
+async def test_plain_message_not_intercepted_routes_normally() -> None:
     """Non-command messages from any channel pass through to the merged queue."""
     qq_out = _RecordingOutputAdapter("qq")
     tg_out = _RecordingOutputAdapter("telegram")
@@ -322,7 +319,7 @@ async def test_plain_message_not_intercepted_routes_normally():
 
 
 @pytest.mark.asyncio
-async def test_channel_router_unknown_channel_falls_back_to_websocket():
+async def test_channel_router_unknown_channel_falls_back_to_websocket() -> None:
     """If a conversation has no explicit channel mapping, reply to WebSocket."""
     qq_out = _RecordingOutputAdapter("qq")
     ws_out = _RecordingOutputAdapter("websocket")

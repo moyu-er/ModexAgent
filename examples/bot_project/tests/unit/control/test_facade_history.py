@@ -24,9 +24,7 @@ from bot.control.facade import BotControlFacade, ControlFacadeError
 from bot.control.models import (
     AgentSessionRef,
     ControlError,
-    HistoryMessage,
     HistoryRequest,
-    HistoryResult,
     HistorySource,
 )
 from bot.scope import BotRecordScope
@@ -43,7 +41,9 @@ from bot.webui.transcript_store import TranscriptStore
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.session_store import SessionStore
+from modex_agent.core.types import MessageRole
 from modex_agent.memory.core.split_stores import MessageStore
+from modex_agent.memory.stores.scoped_in_memory import InMemoryScopedStorage
 from modex_agent.multi_agent.pool_config import MainAgentSpec, PoolSpec
 
 # ---------------------------------------------------------------------------
@@ -201,8 +201,8 @@ def _make_facade(
     session_info: SessionInfo | None = None,
     session_not_found: bool = False,
     messages: list[dict[str, Any]] | None = None,
+    real_message_store: MessageStore | None = None,
     pool_spec: PoolSpec | None = None,
-    agent_pool_map: dict[str, str] | None = None,
     transcript_events: list[ServerEvent] | None = None,
     transcript_store_none: bool = False,
 ) -> tuple[BotControlFacade, AsyncMock, AsyncMock]:
@@ -212,13 +212,16 @@ def _make_facade(
     test can assert on either store's load call.
 
     Pass ``session_not_found=True`` to simulate a missing session (the store
-    returns ``None``). Pass ``agent_pool_map={}`` explicitly to test the
-    empty-map case (the default is ``{_AGENT_NAME: _POOL}``).
+    returns ``None``).
 
     Pass ``transcript_events`` to seed the mock ``TranscriptStore.load`` return
     value (used by external tests). Pass ``transcript_store_none=True``
     to make the transcript-store provider raise ``ControlFacadeError(422,
     code="transcript_store_unavailable")``.
+
+    Pass ``real_message_store`` to use a real ``MessageStore`` implementation
+    (e.g. :class:`InMemoryScopedStorage`) instead of the mock — used to verify
+    store-layer filtering (COMPACT exclusion) auto-benefits end-to-end.
     """
     # Mock SessionStore
     mock_session_store = MagicMock(spec=SessionStore)
@@ -262,9 +265,9 @@ def _make_facade(
     async def _workspace_resolver(_root: Path) -> Any:  # noqa: ANN401
         return mock_resources
 
-    # Message store provider returns the mock store
+    # Message store provider returns the real store when provided, else the mock
     async def _message_store_provider(_scope: BotRecordScope, _res: Any) -> MessageStore:  # noqa: ANN401
-        return mock_message_store
+        return real_message_store if real_message_store is not None else mock_message_store
 
     # Transcript store provider
     if transcript_store_none:
@@ -282,7 +285,6 @@ def _make_facade(
 
     facade = BotControlFacade(
         workspace_resolver=_workspace_resolver,
-        agent_pool_map=agent_pool_map if agent_pool_map is not None else {_AGENT_NAME: _POOL},
         message_store_provider=_message_store_provider,
         transcript_store_provider=_transcript_store_provider,
         home_root=_WORKSPACE,
@@ -399,27 +401,95 @@ class TestSoftDeletedIncluded:
 
 
 # ---------------------------------------------------------------------------
+# COMPACT exclusion — auto-benefit from store-layer filtering
+# ---------------------------------------------------------------------------
+
+
+class TestCompactExclusionAutoBenefit:
+    """Verify the facade auto-benefits from store-layer COMPACT filtering.
+
+    ``MessageStore.load_all_messages`` (store layer, todo 1) filters out
+    COMPACT-role messages. ``BotControlFacade.history`` calls
+    ``load_all_messages()`` directly (facade.py:198) with no role-level
+    filtering of its own, so it auto-benefits from that store-layer filter.
+
+    These tests use a REAL :class:`InMemoryScopedStorage` (which implements
+    the COMPACT filter) rather than a ``MagicMock`` — a mock returning a
+    compact message would pass it straight through (the facade does not
+    filter by role), so only a real store can verify the auto-benefit
+    end-to-end.
+    """
+
+    @pytest.mark.asyncio
+    async def test_compact_role_messages_excluded_from_history(self) -> None:
+        store = InMemoryScopedStorage()
+        await store.save_messages(
+            [
+                {
+                    "role": str(MessageRole.USER),
+                    "content": "visible question",
+                    "message_id": "m1",
+                    "created_at": 1000,
+                },
+                {
+                    "role": str(MessageRole.COMPACT),
+                    "content": "compact summary",
+                    "message_id": "m2",
+                    "created_at": 2000,
+                },
+                {
+                    "role": str(MessageRole.ASSISTANT),
+                    "content": "visible reply",
+                    "message_id": "m3",
+                    "created_at": 3000,
+                },
+            ]
+        )
+        facade, _, _ = _make_facade(real_message_store=store)
+        result = await facade.history(_make_request(limit=10))
+
+        roles = {m.role for m in result.items}
+        assert str(MessageRole.COMPACT) not in roles
+        message_ids = {m.message_id for m in result.items}
+        assert "m2" not in message_ids
+        assert len(result.items) == 2
+
+    @pytest.mark.asyncio
+    async def test_soft_deleted_content_returned_matched_by_content(self) -> None:
+        store = InMemoryScopedStorage()
+        unique_content = "soft-deleted-unique-marker-9f3a"
+        await store.save_messages(
+            [
+                {
+                    "role": str(MessageRole.USER),
+                    "content": unique_content,
+                    "message_id": "m_del",
+                    "created_at": 500,
+                    "_deleted": True,
+                },
+                {
+                    "role": str(MessageRole.USER),
+                    "content": "active message",
+                    "message_id": "m1",
+                    "created_at": 1000,
+                },
+            ]
+        )
+        facade, _, _ = _make_facade(real_message_store=store)
+        result = await facade.history(_make_request(limit=10))
+
+        contents = {str(m.content) for m in result.items}
+        assert unique_content in contents
+        for m in result.items:
+            assert "_deleted" not in m.model_dump()
+
+
+# ---------------------------------------------------------------------------
 # Error paths
 # ---------------------------------------------------------------------------
 
 
 class TestErrorPaths:
-    @pytest.mark.asyncio
-    async def test_pool_mismatch_raises_409(self) -> None:
-        facade, _, _ = _make_facade(agent_pool_map={_AGENT_NAME: "other_pool"})
-        with pytest.raises(ControlFacadeError) as exc_info:
-            await facade.history(_make_request(pool="coder_pool"))
-        assert exc_info.value.status == 409
-        assert exc_info.value.error.code == "pool_mismatch"
-
-    @pytest.mark.asyncio
-    async def test_agent_not_in_pool_map_raises_409(self) -> None:
-        facade, _, _ = _make_facade(agent_pool_map={})
-        with pytest.raises(ControlFacadeError) as exc_info:
-            await facade.history(_make_request())
-        assert exc_info.value.status == 409
-        assert exc_info.value.error.code == "agent_not_mapped"
-
     @pytest.mark.asyncio
     async def test_main_agent_can_query_subagent_history_without_session_validation(
         self,
@@ -433,7 +503,6 @@ class TestErrorPaths:
         ]
         facade, _, _ = _make_facade(
             messages=messages,
-            agent_pool_map={_AGENT_NAME: _POOL, "office-expert": _POOL},
         )
         request = HistoryRequest(
             caller=AgentSessionRef(

@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from bot.config.memory_defaults import subagent_memory
 from bot.config.webui_config import build_control_origin
+from bot.scope import BotRecordScope
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from modex_agent.control.channel import InMemoryControlChannel
@@ -34,24 +35,25 @@ from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.session_registry import SessionRegistry
+from modex_agent.core.session_registry import InMemorySessionRegistry, SessionRegistry
 from modex_agent.core.session_store import SessionStore
 from modex_agent.hook import HookRunner
 from modex_agent.hook.notification import AgentNotificationService
+from modex_agent.ioc.factories.session_tree import build_session_tree_stores
 from modex_agent.memory.cleanup_hooks import TodoReorientationHook
 from modex_agent.messaging.broker_bridge import BrokerBridgeService, OutputRoute
 from modex_agent.multi_agent import SessionRetentionPolicy
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
+from modex_agent.multi_agent.inbox_poller import InboxPoller
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.pool_config import PoolAssemblyDeps, PoolStore
 from modex_agent.multi_agent.pool_config.specs import PoolSpec
 from modex_agent.multi_agent.pool_instance import PoolInstance
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
-from modex_agent.multi_agent.tools import TaskDispatchTool
 from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
 from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
@@ -88,6 +90,7 @@ if TYPE_CHECKING:
     # TYPE_CHECKING keeps the import graph acyclic. Runtime references
     # (``WorkspaceHandleRootProvider``) are imported lazily inside
     # ``create_pool`` for the same reason.
+    from bot.kb.provider import KbProvider
     from bot.webui.transcript_store import TranscriptStore
     from bot.workspace.handle import (
         WorkspaceHandle,
@@ -97,6 +100,7 @@ if TYPE_CHECKING:
         ExecutionStrategyRegistry,
     )
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
+    from modex_graph.context import GraphContext
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +108,27 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════
 # Orchestrator
 # ═══════════════════════════════════════════════════════════════════════════
+
+
+def _make_graph_context_resolver(
+    workspace_resolver: WorkspaceResolverCell,
+) -> Callable[[int], GraphContext[Any] | None]:
+    """Build a lazy graph-context resolver closure for the main pipeline.
+
+    Defers ``PoolWorkspaceResources`` resolution + ``graph_orchestrator``
+    dereference to invocation time so the closure stays robust against
+    late workspace materialization (the cell is filled after pool creation)
+    and orchestrator LRU eviction (F6-verified pattern).
+    """
+
+    def resolve(gid: int) -> GraphContext[Any] | None:
+        resources = workspace_resolver.resolve_workspace()
+        orchestrator = resources.graph_orchestrator
+        if orchestrator is None:
+            return None
+        return orchestrator.get_graph_context(gid)
+
+    return resolve
 
 
 async def create_pool(
@@ -137,6 +162,7 @@ async def create_pool(
     mcp_registry: McpConnectionRegistry | None = None,
     persistence: Any | None = None,
     app_config: Any | None = None,
+    kb_provider: KbProvider | None = None,
     strategy_registry: ExecutionStrategyRegistry | None = None,
 ) -> PoolInstance:
     """Build one PoolInstance's DEPLOYMENT resources from PoolSpec + deps.
@@ -204,6 +230,7 @@ async def create_pool(
         control_channel=control_channel,
         pool_data=pool_data,
         transcript_store=transcript_store,
+        kb_provider=kb_provider,
         assembly_deps=assembly_deps,
     )
 
@@ -250,6 +277,12 @@ async def create_pool(
 
     default_resolved = _resolved_or_placeholder(bot_model_config).default_resolved()
 
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        InMemorySessionBindingStore,
+    )
+
+    session_binding_store = InMemorySessionBindingStore()
+
     # Wrap before _build_agent_factory AND AgentMaterializeDeps so both the
     # main-agent _create_with_emitter path and the external-subagent
     # BotSubagentExternalBuilder path receive the same wrapped factory.
@@ -264,6 +297,7 @@ async def create_pool(
         tool_manager,
         skill_manager,
         inbox_server,
+        inbox_consumer,
         shared_hooks,
         shared_hook_runner,
         shared_interceptor_chain,
@@ -274,6 +308,8 @@ async def create_pool(
         external_deps=external_deps,
         observability_config=app_config.observability if app_config is not None else None,
         session_registry=session_registry,
+        session_binding_store=session_binding_store,
+        trace_store=pool_data.trace_store if pool_data is not None else None,
     )
     session_factory = SessionIdFactory()
 
@@ -337,11 +373,41 @@ async def create_pool(
 
     control_origin = build_control_origin(project_dir / "config")
 
+    # Poller + tree_manager are constructed BEFORE deps because deps.tree
+    # is mandatory (todo 16). Consumer is callback-less at construction;
+    # set_on_consumed binds the callback after tree_manager exists (todo 17),
+    # breaking the cycle: consumer → bus → pool/poller → tree_manager →
+    # consumer.set_on_consumed.
+    poller = InboxPoller(pool, interval=0.2)
+    pool.attach_poller(poller)
+    agent_bus.set_poller(poller)
+
+    tree_store, node_store, track_store = build_session_tree_stores(
+        app_config,
+        persistence,
+        data_dir / "session_tree" / pool_name,
+        BotRecordScope(pool=pool_name),
+    )
+    tree_manager = SessionTreeManager(
+        tree_store=tree_store,
+        node_store=node_store,
+        track_store=track_store,
+        bus=agent_bus,
+        poller=poller,
+        pool_name=pool_name,
+        workspace_root=str(project_dir),
+        session_registry=session_registry or InMemorySessionRegistry(),
+        binding_store=session_binding_store,
+    )
+    inbox_consumer.set_on_consumed(tree_manager.on_consumed)
+    poller.attach_tree_manager(tree_manager)
+
     deps = AgentMaterializeDeps(
         agent_factory=factory,
         pool=pool,
         session_factory=session_factory,
         broker=broker,
+        tree=tree_manager,
         safety=safety,
         llm_model=default_resolved.model.model,
         llm_temperature=default_resolved.model.temperature,
@@ -374,15 +440,6 @@ async def create_pool(
     pool.pool_name = pool_name
     pool.context_fork_builder = context_fork_builder
 
-    from modex_agent.multi_agent.inbox_poller import InboxPoller
-
-    poller = InboxPoller(pool, interval=0.2)
-    pool.attach_poller(poller)
-    # Wire bus → poller so every ``bus.send`` (user input, agent-to-agent,
-    # CLI modexctl send, external peer reply) wakes the poller for
-    # ~zero-latency between-turn delivery instead of waiting up to ``interval``.
-    agent_bus.set_poller(poller)
-
     if provider_available:
         await _register_main_agent(
             pool,
@@ -399,6 +456,12 @@ async def create_pool(
         )
     else:
         logger.warning("Pool '%s': main agent registration skipped", pool_name)
+
+    # Recover stale session-tree state BEFORE starting the poller — recovery
+    # of stale terminal nodes and pending-input rebuilds must complete before
+    # dispatch begins (todo 19).
+    for record in await tree_store.list_active():
+        await tree_manager.recover_tree(record.tree_id)
 
     # Start the poller AFTER main agent registration to eliminate the startup
     # race where pending messages from a previous run are dispatched before
@@ -431,12 +494,11 @@ async def create_pool(
     main_service, main_store = _build_communication(
         pool,
         main_agent_name,
-        broker,
-        agent_bus,
         project_dir,
         pool_name,
         templates,
         template_registry,
+        tree=tree_manager,
         session_registry=session_registry,
         workspace_path_resolver=path_resolver,
         trace_enabled=_resolve_trace_enabled(app_config),
@@ -444,21 +506,6 @@ async def create_pool(
     main_service._target_store = main_store
 
     if strategy.requires_main_agent_tools:
-        if main_store.list():
-            tool_manager.register(
-                TaskDispatchTool(
-                    store=main_store,
-                    source=AgentAddress(name=main_agent_name),
-                    broker=broker,
-                    registry=pool,
-                    agent_bus=agent_bus,
-                    service=main_service,
-                )
-            )
-            logger.info("Pool '%s': task tool registered (subagent dispatch + peer communication)", pool_name)
-        else:
-            logger.info("Pool '%s': no communication targets — task tool not registered", pool_name)
-
         _wire_main_pipeline(
             pool,
             main_agent_name,
@@ -478,11 +525,17 @@ async def create_pool(
             model_choice_registry=model_choice_registry,
             cassette_recorder=cassette_recorder,
             control_origin=control_origin,
+            graph_context_resolver=(
+                _make_graph_context_resolver(workspace_resolver)
+                if workspace_resolver is not None
+                else None
+            ),
+            session_binding_store=session_binding_store,
         )
     else:
-        # external path: the external agent has no tool surface and
-        # communicates via ``modexctl send`` CLI (not the ``task`` tool), so
-        # skip task tool registration and the react-only
+        # external path: the external agent has no tool surface (it
+        # communicates via ``modexctl send`` CLI, so communication tools are
+        # skipped by register_communication_tools in Phase 2) and no react-only
         # ``_wire_main_pipeline`` (governance/approval/hooks). Only set
         # ``command_processor`` on the pipeline so pre-lock ``/stop``
         # dispatch still works.
@@ -491,7 +544,7 @@ async def create_pool(
             if main_instance is not None and main_instance.pipeline is not None:
                 main_instance.pipeline.command_processor = command_processor
         logger.info(
-            "Pool '%s': external — skipped task tool + _wire_main_pipeline",
+            "Pool '%s': external — skipped _wire_main_pipeline",
             pool_name,
         )
 
@@ -518,6 +571,8 @@ async def create_pool(
         provider=provider,
         notification_service=notification_service,
         communication_service=main_service,
-        agent_bus=agent_bus,
+        tree_manager=tree_manager,
         target_store=main_store,
+        session_binding_store=session_binding_store,
+        requires_main_agent_tools=strategy.requires_main_agent_tools,
     )

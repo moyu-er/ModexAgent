@@ -160,7 +160,7 @@ ModexAgent/
 
 | 文档 | 说明 |
 | --- | --- |
-| [ADR 索引](docs/adr/) | 架构决策记录（ADR-0001 ~ 0035） |
+| [ADR 索引](docs/adr/) | 架构决策记录（ADR-0001 ~ 0036） |
 | [文档总览](docs/AGENTS.md) | `docs/` 目录索引——ADR、设计文档、Agent 文档 |
 | [CONTEXT.md](CONTEXT.md) | 领域术语表——Pool、Workspace、ReAct Agent、Graph、GraphInterrupt、Assembly 等 |
 | [本地环境搭建](docs/bot-local-setup.md) | 从源码搭建 bot 的详细步骤（前置依赖、venv、配置向导、故障排除） |

@@ -1,6 +1,7 @@
 """Tests for AgentCommunicationService routing logic."""
 
 from __future__ import annotations
+from unittest.mock import MagicMock
 
 from collections.abc import AsyncIterator
 
@@ -17,6 +18,18 @@ from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.multi_agent.registry import AgentProfile
 from modex_agent.multi_agent.tools import CommunicationTarget
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+
+
+def _mock_tree(bus: object) -> SessionTreeManager:
+    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+
+    async def _deliver(sid: str, env: object) -> None:
+        await bus.send(sid, env)  # type: ignore[attr-defined]
+
+    tree.deliver = _deliver
+    return tree
+
 
 
 def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
@@ -146,9 +159,8 @@ class TestCommunicationService:
         broker = _FakeBroker()
         return AgentCommunicationService(
             source=AgentAddress(name=source_name),
-            broker=broker,
             registry=registry,
-            agent_bus=agent_bus,  # type: ignore[arg-type]
+            tree=_mock_tree(agent_bus) if agent_bus else MagicMock(spec=SessionTreeManager),
         )
 
     @pytest.mark.asyncio

@@ -92,7 +92,7 @@ def adapters():
 
 
 @pytest.mark.asyncio
-async def test_channel_router_routes_by_conversation_channel(adapters):
+async def test_channel_router_routes_by_conversation_channel(adapters) -> None:
     """Router delegates to the adapter matching the conversation's channel."""
     qq, ws, router = adapters
 
@@ -107,7 +107,7 @@ async def test_channel_router_routes_by_conversation_channel(adapters):
 
 
 @pytest.mark.asyncio
-async def test_channel_router_defaults_to_websocket(adapters):
+async def test_channel_router_defaults_to_websocket(adapters) -> None:
     """Unknown channels fall back to the websocket adapter."""
     qq, ws, router = adapters
 
@@ -119,7 +119,7 @@ async def test_channel_router_defaults_to_websocket(adapters):
 
 
 @pytest.mark.asyncio
-async def test_control_command_notice_routes_to_websocket(adapters, tmp_path: Path):
+async def test_control_command_notice_routes_to_websocket(adapters, tmp_path: Path) -> None:
     """S2 Terminate response for /cd is surfaced by the adapter to the user."""
     qq, ws, router = adapters
 
@@ -158,7 +158,6 @@ async def test_control_command_notice_routes_to_websocket(adapters, tmp_path: Pa
         default_pool="main",
         available_pools=lambda: {"main", "coding"},
         pool_session_store=MagicMock(),
-        agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
         transcript_store=MagicMock(),
         enqueue_message=MagicMock(),
@@ -176,7 +175,7 @@ async def test_control_command_notice_routes_to_websocket(adapters, tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_control_command_notice_routes_to_qq(adapters, tmp_path: Path):
+async def test_control_command_notice_routes_to_qq(adapters, tmp_path: Path) -> None:
     """S2 Terminate response for /cd on QQ channel."""
     qq, ws, router = adapters
 
@@ -212,7 +211,6 @@ async def test_control_command_notice_routes_to_qq(adapters, tmp_path: Path):
         default_pool="main",
         available_pools=lambda: {"main", "coding"},
         pool_session_store=MagicMock(),
-        agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
         transcript_store=MagicMock(),
         enqueue_message=MagicMock(),
@@ -230,7 +228,7 @@ async def test_control_command_notice_routes_to_qq(adapters, tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_pool_switch_routes_to_qq(adapters):
+async def test_pool_switch_routes_to_qq(adapters) -> None:
     """PoolRouter switch replies go to the originating channel."""
     qq, ws, router = adapters
 
@@ -254,7 +252,7 @@ async def test_pool_switch_routes_to_qq(adapters):
 
 
 @pytest.mark.asyncio
-async def test_pool_switch_routes_to_websocket(adapters):
+async def test_pool_switch_routes_to_websocket(adapters) -> None:
     """PoolRouter switch replies go to WebSocket for WebUI conversations."""
     qq, ws, router = adapters
 
@@ -278,7 +276,7 @@ async def test_pool_switch_routes_to_websocket(adapters):
 
 
 @pytest.mark.asyncio
-async def test_channel_router_send_delta_delegates(adapters):
+async def test_channel_router_send_delta_delegates(adapters) -> None:
     """send_delta/flush_deltas are also routed by conversation channel."""
     qq, ws, router = adapters
 
@@ -291,7 +289,7 @@ async def test_channel_router_send_delta_delegates(adapters):
 
 
 @pytest.mark.asyncio
-async def test_channel_router_unknown_session_uses_websocket_fallback(adapters):
+async def test_channel_router_unknown_session_uses_websocket_fallback(adapters) -> None:
     """If no channel mapping exists, router falls back to websocket."""
     qq, ws, router = adapters
 

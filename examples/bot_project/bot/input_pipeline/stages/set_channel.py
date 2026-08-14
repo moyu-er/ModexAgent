@@ -16,11 +16,10 @@ of the IM adapter).  This encoding mismatch affected ALL IM channels.
 from __future__ import annotations
 
 from bot.adapters.channels import set_conv_channel
+from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import conversation_session_prefix
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
 from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
-
-from bot.input_pipeline.context import BotInputContext
 
 
 class SetChannelStage(InputStage):

@@ -525,14 +525,15 @@ class BotService(AgentBuilderMixin):
         else:
             policy = RuntimeSafetyPolicy(
                 llm=LLMTimeoutPolicy(
-                    request_timeout_seconds=45.0,
-                    stream_idle_timeout_seconds=90.0,
-                    framework_max_retries=1,
+                    request_timeout_seconds=None,
+                    stream_idle_timeout_seconds=None,
+                    framework_max_retries=2,
                     retry_backoff_seconds=(2.0, 8.0),
                 ),
                 turn=TurnTimeoutPolicy(
-                    agent_run_timeout_seconds=420.0,
+                    agent_run_timeout_seconds=600.0,
                     hook_timeout_seconds=10.0,
+                    tool_timeout_seconds=400.0,
                 ),
             )
         self._safety_policy_cache = policy

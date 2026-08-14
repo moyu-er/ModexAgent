@@ -59,7 +59,6 @@ def _ctx(store: SqlitePoolRoutingStore, *, current_ws: Path | None = None) -> Bo
         default_pool="main",
         available_pools=lambda: {"main", "coding"},
         pool_session_store=store,
-        agent_pool_map={"main": "main", "coding": "coding"},
         agent_resolver=lambda p: p,
         transcript_store=MagicMock(),
         enqueue_message=MagicMock(),

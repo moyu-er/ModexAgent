@@ -14,6 +14,7 @@ Mirrors the inline construction in ``_wire_main_pipeline`` (ADR-0022 D6:
 
 from __future__ import annotations
 
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -47,6 +48,11 @@ from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+
+pytestmark = pytest.mark.skipif(
+    shutil.which("modexctl") is None,
+    reason="modexctl CLI not available",
+)
 
 _YML = """
 models:
@@ -254,8 +260,7 @@ def test_wire_main_pipeline_skips_missing_peer_pool_with_warning(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A missing peer pool is logged and skipped — the rest of the
-    pool_map/targets are still wired (matches external_strategy.
-    _build_agent_pool_map / _build_targets try/except pattern)."""
+    pool map and targets are still wired by the external strategy."""
     import logging
 
     project_dir = tmp_path

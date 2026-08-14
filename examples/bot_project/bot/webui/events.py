@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import ClassVar, get_origin, get_type_hints
 
 # ── Protocol enums ────────────────────────────────────────────────────────
 
 
-class WebUIEventType(str, Enum):
+class WebUIEventType(StrEnum):
     """Discriminator for all WebUI server->client event types."""
 
     SERVER_EVENT = "server_event"
@@ -34,13 +35,15 @@ class WebUIEventType(str, Enum):
     ATTACHMENT_CARD = "attachment_card"
 
 
-class WebSocketAction(str, Enum):
+class WebSocketAction(StrEnum):
     """Client->server WebSocket action types."""
 
     ATTACH = "attach"
     SEND_MESSAGE = "send_message"
     DELETE_CONVERSATION = "delete_conversation"
     PAUSE = "pause"
+    SUBSCRIBE_GRAPH = "subscribe_graph"
+    UNSUBSCRIBE_GRAPH = "unsubscribe_graph"
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -116,10 +119,8 @@ class ServerEvent:
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         event_field = cls.__dict__.get("event")
-        try:
+        with contextlib.suppress(AttributeError):
             ServerEvent._registry[event_field.default] = cls
-        except AttributeError:
-            pass
 
     def to_dict(self) -> dict[str, object]:
         hints = get_type_hints(type(self), include_extras=True)

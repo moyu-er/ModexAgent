@@ -12,6 +12,7 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable
+from datetime import UTC
 from typing import Any, ClassVar
 
 import httpx
@@ -55,8 +56,8 @@ class OpenAIProvider(StreamingLLMProvider):
         base_url: str | None = None,
         temperature: float = 0.7,
         max_output_tokens: int | None = None,
-        timeout: float = 45.0,
-        stream_idle_timeout: float = 90.0,
+        timeout: float | None = None,
+        stream_idle_timeout: float | None = None,
         parse_think_tags: bool = True,
         reasoning_effort: ReasoningEffort = ReasoningEffort.NONE,
         extra_headers: dict[str, str] | None = None,
@@ -73,6 +74,11 @@ class OpenAIProvider(StreamingLLMProvider):
             self._timeout = safety.llm.request_timeout_seconds
             self._stream_idle_timeout = safety.llm.stream_idle_timeout_seconds
         else:
+            # Default: no provider-level timeout (None = infinite wait).
+            # The outer turn timeout (agent_run_timeout) + watchdog are the
+            # sole termination mechanism. This prevents premature stream
+            # interruption when the LLM takes a long time to produce a
+            # large response (e.g. long document generation).
             self._timeout = timeout
             self._stream_idle_timeout = stream_idle_timeout
 
@@ -85,6 +91,16 @@ class OpenAIProvider(StreamingLLMProvider):
             default_headers=extra_headers,
             timeout=httpx.Timeout(self._timeout),
             max_retries=0,
+        )
+
+        logger.info(
+            "OpenAIProvider created: model=%s base_url=%s "
+            "request_timeout=%s stream_idle_timeout=%s safety_applied=%s",
+            self._model,
+            base_url,
+            self._timeout,
+            self._stream_idle_timeout,
+            safety is not None,
         )
 
     def get_default_model(self) -> str:
@@ -158,7 +174,14 @@ class OpenAIProvider(StreamingLLMProvider):
             **kwargs,
         )
         t0 = time.monotonic()
-        logger.debug("OpenAI stream start: model=%s", params["model"])
+        logger.info(
+            "OpenAI stream start: model=%s messages=%d "
+            "request_timeout=%s stream_idle_timeout=%s",
+            params["model"],
+            len(messages),
+            self._timeout,
+            self._stream_idle_timeout,
+        )
 
         try:
             stream = await self._client.chat.completions.create(**params)
@@ -168,8 +191,10 @@ class OpenAIProvider(StreamingLLMProvider):
             elapsed_ms = (time.monotonic() - t0) * 1000
             error_info = classify_openai_error(exc)
             logger.warning(
-                "OpenAI stream failed: kind=%s elapsed=%.0fms message=%s",
+                "OpenAI stream failed: kind=%s exc_type=%s elapsed=%.0fms "
+                "message=%s",
                 error_info.kind.value,
+                type(exc).__name__,
                 elapsed_ms,
                 error_info.message[:200],
             )
@@ -225,9 +250,10 @@ class OpenAIProvider(StreamingLLMProvider):
                 partial_content = "".join(content_parts)
                 elapsed_ms = (time.monotonic() - t0) * 1000
                 logger.warning(
-                    "OpenAI stream failed mid-stream: kind=%s elapsed=%.0fms "
-                    "partial_content_len=%d message=%s",
+                    "OpenAI stream failed mid-stream: kind=%s exc_type=%s "
+                    "elapsed=%.0fms partial_content_len=%d message=%s",
                     error_info.kind.value,
+                    type(exc).__name__,
                     elapsed_ms,
                     len(partial_content),
                     error_info.message[:200],
@@ -311,9 +337,9 @@ class OpenAIProvider(StreamingLLMProvider):
 
         completion_start_time: str | None = None
         if first_token_time is not None:
-            from datetime import datetime, timezone
+            from datetime import datetime
             completion_start_time = datetime.fromtimestamp(
-                first_token_time, tz=timezone.utc
+                first_token_time, tz=UTC
             ).isoformat()
 
         return LLMResponse(

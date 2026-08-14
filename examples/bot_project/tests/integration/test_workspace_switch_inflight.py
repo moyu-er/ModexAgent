@@ -38,7 +38,7 @@ def _build_minimal_resources(target: Path) -> PoolWorkspaceResources:
     )
     ctx.paths.mkdir_skeleton()
     overflow_store = LocalFileToolOverflowStore(
-        workspace=ctx.paths.overflow_dir, max_chunk_size=10_000
+        workspace=ctx.paths.overflow_dir
     )
     session_index_store = LocalFileSessionStore(root=ctx.paths.session_index_dir)
     broker = InMemoryMessageBroker()

@@ -23,10 +23,7 @@ from modex_agent.control.graph_control import (
     InMemoryGraphEngineController,
     LiveGraphEngineController,
 )
-from modex_agent.control.graph_recovery import (
-    GraphEngineFactory,
-    GraphRecoveryService,
-)
+from modex_agent.control.graph_recovery import GraphRecoveryService
 from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
 from modex_graph import (
     DeliverConsumptionStatus,
@@ -37,6 +34,7 @@ from modex_graph import (
     GraphPersistenceCoordinator,
     GraphRunControl,
     InMemoryGraphInstanceStore,
+    NullCoordinatorFactory,
     create_null_coordinator,
 )
 
@@ -45,13 +43,13 @@ _SPEC_ID = 1001
 _GID = 9001
 
 
-class _RecordingEngineFactory(GraphEngineFactory):
-    """Concrete factory that records create_and_run calls."""
+class _RecordingOrchestrator:
+    """Mock orchestrator that records _run_existing_instance calls."""
 
     def __init__(self) -> None:
         self.calls: list[GraphInstance] = []
 
-    async def create_and_run(self, instance: GraphInstance) -> None:
+    async def _run_existing_instance(self, instance: GraphInstance) -> None:
         self.calls.append(instance)
 
 
@@ -81,6 +79,12 @@ def _make_instance(graph_instance_id: int = _GID, status: str = "running") -> Gr
             parent_instance_id=None,
             parent_node=None,
             status=GraphInstanceStatus(status),
+            node_id_map={
+                "summarizer": "node-summarizer-001",
+                "worker": "node-worker-002",
+                "alpha": "node-alpha-003",
+                "beta": "node-beta-004",
+            },
         ),
         create_null_coordinator(graph_instance_id),
     )
@@ -120,9 +124,12 @@ def _make_service(
         instance_store.save(instance.metadata)
         if register_nodes:
             for node_name in register_nodes:
-                instance.coordinator.register_node(node_name)
+                instance.coordinator.register_node(instance.metadata.node_id_map[node_name])
     coordinator_lookup = _make_coordinator_lookup(instance)
-    recovery_service = GraphRecoveryService(instance_store, _RecordingEngineFactory())
+    recovery_service = GraphRecoveryService(
+        instance_store, _RecordingOrchestrator(),  # type: ignore[arg-type]
+        coordinator_factory=NullCoordinatorFactory(),
+    )
     service = GraphControlService(instance_store, recovery_service, coordinator_lookup)
     if engine is not None:
         service.register_engine(engine)
@@ -140,7 +147,6 @@ class TestHandleRouting:
         await service.handle(_make_command(ControlCommandType.PAUSE_GRAPH))
         assert engine.pause_called is True
         assert engine.stop_called is False
-        assert engine.resume_called is False
         assert _load_status(instance_store) == GraphInstanceStatus.PAUSED
 
     @pytest.mark.asyncio
@@ -176,12 +182,13 @@ class TestHandleRouting:
         )
         assert len(engine.deliver_calls) == 1
         assert engine.deliver_calls[0] == ("worker", {"k": "v"})
-        store = _get_deliver_store(instance.coordinator, "worker")
-        pending = store.query_consumable(_GID, "worker")
+        node_id = instance.metadata.node_id_map["worker"]
+        store = _get_deliver_store(instance.coordinator, node_id)
+        pending = store.query_consumable(_GID, node_id)
         assert len(pending) == 1
         assert pending[0].content == {"k": "v"}
-        assert pending[0].node_name == "worker"
-        assert pending[0].source_node == "__external__"
+        assert pending[0].node_id == node_id
+        assert pending[0].source_node_id == "__external__"
         assert pending[0].source_invocation_id == 0
         assert pending[0].status == DeliverConsumptionStatus.PENDING
 
@@ -194,12 +201,12 @@ class TestHandleRouting:
         await service.handle(_make_command(ControlCommandType.CANCEL_TURN))
         assert engine.pause_called is False
         assert engine.stop_called is False
-        assert engine.resume_called is False
         assert len(engine.deliver_calls) == 0
         assert _load_status(instance_store) == "running"
         if instance is not None:
-            store = _get_deliver_store(instance.coordinator, "worker")
-            assert store.query_consumable(_GID, "worker") == []
+            node_id = instance.metadata.node_id_map["worker"]
+            store = _get_deliver_store(instance.coordinator, node_id)
+            assert store.query_consumable(_GID, node_id) == []
 
 
 # -- PAUSE --------------------------------------------------------------------
@@ -236,6 +243,24 @@ class TestPause:
         with pytest.raises(ValueError, match="scope.graph_instance_id"):
             await service.handle(cmd)
 
+    @pytest.mark.asyncio
+    async def test_rejects_completed_instance(self) -> None:
+        service, instance_store, _ = _make_service(
+            instance=_make_instance(status=GraphInstanceStatus.COMPLETED.value)
+        )
+
+        with pytest.raises(ValueError, match="must be RUNNING"):
+            await service.handle(_make_command(ControlCommandType.PAUSE_GRAPH))
+
+        assert _load_status(instance_store) == GraphInstanceStatus.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_raises_when_instance_not_found(self) -> None:
+        service, _, _ = _make_service()
+
+        with pytest.raises(ValueError, match="not found"):
+            await service.handle(_make_command(ControlCommandType.PAUSE_GRAPH))
+
 
 # -- STOP ---------------------------------------------------------------------
 
@@ -260,6 +285,17 @@ class TestStop:
         service, _, _ = _make_service(instance=_make_instance(), engine=engine)
         await service.handle(_make_command(ControlCommandType.STOP_GRAPH))
         assert engine.pause_called is False
+
+    @pytest.mark.asyncio
+    async def test_rejects_crashed_instance(self) -> None:
+        service, instance_store, _ = _make_service(
+            instance=_make_instance(status=GraphInstanceStatus.CRASHED.value)
+        )
+
+        with pytest.raises(ValueError, match="must be RUNNING or PAUSED"):
+            await service.handle(_make_command(ControlCommandType.STOP_GRAPH))
+
+        assert _load_status(instance_store) == GraphInstanceStatus.CRASHED
 
 
 # -- RESUME -------------------------------------------------------------------
@@ -297,13 +333,14 @@ class TestDeliver:
                 payload={"node_name": "summarizer", "content": "hello"},
             )
         )
-        store = _get_deliver_store(instance.coordinator, "summarizer")
-        pending = store.query_consumable(_GID, "summarizer")
+        node_id = instance.metadata.node_id_map["summarizer"]
+        store = _get_deliver_store(instance.coordinator, node_id)
+        pending = store.query_consumable(_GID, node_id)
         assert len(pending) == 1
         record = pending[0]
-        assert record.node_name == "summarizer"
+        assert record.node_id == node_id
         assert record.content == "hello"
-        assert record.source_node == "__external__"
+        assert record.source_node_id == "__external__"
         assert record.source_invocation_id == 0
         assert record.status == DeliverConsumptionStatus.PENDING
 
@@ -333,8 +370,9 @@ class TestDeliver:
                 payload={"node_name": "worker", "content": [1, 2, 3]},
             )
         )
-        store = _get_deliver_store(instance.coordinator, "worker")
-        pending = store.query_consumable(_GID, "worker")
+        node_id = instance.metadata.node_id_map["worker"]
+        store = _get_deliver_store(instance.coordinator, node_id)
+        pending = store.query_consumable(_GID, node_id)
         assert len(pending) == 1
         assert pending[0].content == [1, 2, 3]
 
@@ -352,8 +390,9 @@ class TestDeliver:
                     command_id=f"cmd-{i}",
                 )
             )
-        store = _get_deliver_store(instance.coordinator, "worker")
-        pending = store.query_consumable(_GID, "worker")
+        node_id = instance.metadata.node_id_map["worker"]
+        store = _get_deliver_store(instance.coordinator, node_id)
+        pending = store.query_consumable(_GID, node_id)
         assert [r.content for r in pending] == [0, 1, 2]
 
     @pytest.mark.asyncio
@@ -375,12 +414,14 @@ class TestDeliver:
                 command_id="cmd-2",
             )
         )
-        alpha_store = _get_deliver_store(instance.coordinator, "alpha")
-        beta_store = _get_deliver_store(instance.coordinator, "beta")
-        assert len(alpha_store.query_consumable(_GID, "alpha")) == 1
-        assert len(beta_store.query_consumable(_GID, "beta")) == 1
-        assert alpha_store.query_consumable(_GID, "alpha")[0].content == "a"
-        assert beta_store.query_consumable(_GID, "beta")[0].content == "b"
+        alpha_id = instance.metadata.node_id_map["alpha"]
+        beta_id = instance.metadata.node_id_map["beta"]
+        alpha_store = _get_deliver_store(instance.coordinator, alpha_id)
+        beta_store = _get_deliver_store(instance.coordinator, beta_id)
+        assert len(alpha_store.query_consumable(_GID, alpha_id)) == 1
+        assert len(beta_store.query_consumable(_GID, beta_id)) == 1
+        assert alpha_store.query_consumable(_GID, alpha_id)[0].content == "a"
+        assert beta_store.query_consumable(_GID, beta_id)[0].content == "b"
 
     @pytest.mark.asyncio
     async def test_raises_when_node_name_missing(self) -> None:
@@ -440,8 +481,9 @@ class TestDeliver:
                 payload={"node_name": "worker", "content": None},
             )
         )
-        store = _get_deliver_store(instance.coordinator, "worker")
-        pending = store.query_consumable(_GID, "worker")
+        node_id = instance.metadata.node_id_map["worker"]
+        store = _get_deliver_store(instance.coordinator, node_id)
+        pending = store.query_consumable(_GID, node_id)
         assert len(pending) == 1
         assert pending[0].content is None
 
@@ -538,6 +580,7 @@ class TestLiveGraphEngineController:
             )
         )
 
-        store = _get_deliver_store(instance.coordinator, "worker")
-        assert len(store.query_consumable(_GID, "worker")) == 1
+        node_id = instance.metadata.node_id_map["worker"]
+        store = _get_deliver_store(instance.coordinator, node_id)
+        assert len(store.query_consumable(_GID, node_id)) == 1
         assert wakeup.is_set() is True

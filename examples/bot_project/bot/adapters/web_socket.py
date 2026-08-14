@@ -93,6 +93,7 @@ class WebSocketInputAdapter(InputAdapter):
         self._message_queue: asyncio.Queue[InputMessage] = asyncio.Queue()
         self._connections: dict[str, object] = {}
         self._delta_queues: dict[str, asyncio.Queue[DeltaEnvelope]] = {}
+        self._parent_map: dict[str, str] = {}
 
     @property
     def name(self) -> str:
@@ -126,6 +127,11 @@ class WebSocketInputAdapter(InputAdapter):
         """Remove a WebSocket connection and its delta queue."""
         self._connections.pop(session_id, None)
         self._delta_queues.pop(session_id, None)
+        self._parent_map.pop(session_id, None)
+
+    def register_parent(self, child_session_id: str, parent_session_id: str) -> None:
+        """Record the parent-child relationship for a dynamically-created subagent session."""
+        self._parent_map[child_session_id] = parent_session_id
 
     def get_delta_queue(self, session_id: str) -> asyncio.Queue[DeltaEnvelope] | None:
         """Return the delta queue for a session, or None if not registered."""

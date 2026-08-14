@@ -19,6 +19,7 @@ from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.multi_agent.factory import DefaultAgentFactory
+from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 
 
@@ -28,9 +29,11 @@ async def test_factory_auto_injects_inbox_flush_hook_onto_hook_runner() -> None:
     broker = InMemoryMessageBroker()
     await broker.start()
     try:
+        server = InMemoryInboxServer()
         factory = DefaultAgentFactory(
             default_llm_provider=MagicMock(),
-            inbox_server=InMemoryInboxServer(),
+            inbox_server=server,
+            inbox_consumer=InboxConsumer(server),
             default_hook_runner=HookRunner(),
         )
         descriptor = AgentDescriptor(address=AgentAddress(kind="agent", name="scout"))
@@ -53,9 +56,11 @@ async def test_factory_no_inbox_flush_hook_when_strategy_none() -> None:
     broker = InMemoryMessageBroker()
     await broker.start()
     try:
+        server = InMemoryInboxServer()
         factory = DefaultAgentFactory(
             default_llm_provider=MagicMock(),
-            inbox_server=InMemoryInboxServer(),
+            inbox_server=server,
+            inbox_consumer=InboxConsumer(server),
             default_hook_runner=HookRunner(),
         )
         descriptor = AgentDescriptor(
@@ -72,3 +77,12 @@ async def test_factory_no_inbox_flush_hook_when_strategy_none() -> None:
         )
     finally:
         await broker.stop()
+
+
+def test_factory_uses_external_inbox_consumer() -> None:
+    server = InMemoryInboxServer()
+    consumer = InboxConsumer(server)
+
+    factory = DefaultAgentFactory(inbox_server=server, inbox_consumer=consumer)
+
+    assert factory._inbox_consumer is consumer

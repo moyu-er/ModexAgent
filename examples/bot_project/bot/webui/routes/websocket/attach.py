@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 from bot.webui.events import DeltaEnvelope, WebUIEventType
-from bot.webui.types import _DEFAULT_AGENT_NAME, _WsConnectionState, _safe_send_json
+from bot.webui.types import _DEFAULT_AGENT_NAME, _safe_send_json, _WsConnectionState
 from modex_agent.core.session_id import (
     SessionInfo,
     agent_of,
@@ -143,7 +143,6 @@ async def handle_attach(
         session_id = f"{uuid_prefix_raw}.{agent_name}"
         session_prefix = uuid_prefix_raw
         uuid_prefix = uuid_prefix_raw
-        explicit_agent = agent_name
 
         # Defensive: if a transcript already exists for this session_id
         # (reattach of a persisted session that already received a message),
@@ -168,13 +167,14 @@ async def handle_attach(
         resolved = await server._resolve_session(session_id, index_dir=attach_index_dir)
         session_prefix = resolved.session_id_prefix
         uuid_prefix = session_prefix
-        explicit_agent = resolved.agent_name
 
     # Unregister any previous sessions and cancel their forward tasks.
     # cleanup() sets state._stopped (to halt the previous watcher); reset
     # it here because this state is being reused for a fresh attach cycle
-    # and the new watcher spawned below must run.
-    await state.cleanup(server._input)
+    # and the new watcher spawned below must run. Graph subscriptions are
+    # orthogonal to the attached conversation -- switching sessions must
+    # NOT clear them, so they are excluded from this cleanup.
+    await state.cleanup(server._input, include_graphs=False)
     state._stopped = False
 
     server._input.register_connection(session_id, ws)
@@ -184,13 +184,7 @@ async def handle_attach(
     # pool_from_client is the user's explicit choice from the UI dropdown;
     # use it directly as the pool name without going through agent_pool_map
     # (which may not yet be populated in every edge case).
-    pool_name = pool_from_client if pool_from_client else None
-    if not pool_name and explicit_agent and server._agent_pool_map:
-        pool_name = server._agent_pool_map.get(explicit_agent)
-    if not pool_name and server._pool_resolver is not None:
-        pool_name = server._pool_resolver(uuid_prefix)
-    if not pool_name:
-        pool_name = _DEFAULT_AGENT_NAME
+    pool_name = server._resolve_pool_for_request(pool_from_client or None, uuid_prefix)
     if server._pool_switch_callback is not None:
         await asyncio.to_thread(server._pool_switch_callback, session_prefix, pool_name)
     # Failsafe: if the callback is not wired (edge case during early
@@ -261,13 +255,14 @@ async def handle_attach(
     state.forward_tasks.append(asyncio.create_task(forward_deltas(server, session_id, ws)))
 
     att_agent = await server._resolve_agent(session_id, index_dir=attach_index_dir)
+    att_pool = server._resolve_pool_for_request(pool_name or None, uuid_prefix)
     await _safe_send_json(
         ws,
         DeltaEnvelope(
             session_id=session_id,
             agent_name=att_agent,
             event_type=WebUIEventType.ATTACHED.value,
-            pool=server._pool_of_agent(att_agent),
+            pool=att_pool,
         ).to_dict(),
     )
 

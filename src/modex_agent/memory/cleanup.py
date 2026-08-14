@@ -252,6 +252,7 @@ async def _commit_session_phase(
     keep_messages: list[dict[str, Any]],
     pruned_messages: list[dict[str, Any]],
     compact_outcome: _CompactOutcome,
+    estimator: TokenEstimator,
 ) -> tuple[int, int] | None:
     """Phase 3: replace session messages with [compact_summary] + [tail].
 
@@ -264,6 +265,10 @@ async def _commit_session_phase(
         compact_msg: dict[str, Any] = {
             "role": str(MessageRole.COMPACT),
             "content": compact_outcome.summary,
+            # Stamp token_count so the next boundary computation is accurate
+            # instead of falling back to a transient re-estimate.
+            "token_count": estimator.estimate_text(compact_outcome.summary)
+            + TokenEstimator.MESSAGE_OVERHEAD,
         }
         final_keep = [compact_msg] + final_keep
 
@@ -573,6 +578,7 @@ async def cleanup_session(
         plan.keep_messages,
         plan.pruned_messages,
         compact_outcome,
+        estimator,
     )
     if commit_result is None:
         # Revision conflict.

@@ -25,19 +25,24 @@ from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
 from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
 
+# Mechanism-A enrichment layer (native-multimodal-inline unit 5/6, ADR-0014)
+from modex_agent.agents.react.nodes.llm import enrich_inline_attachments
+from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
+from modex_agent.ioc.configs.llm import Modality, ModelCapabilities
 from modex_agent.media.models import Attachment, AttachmentLocator, Kind
+from modex_agent.memory.history import ListMessageHistory
 from modex_agent.memory.system import MemorySystemContextManager, create_memory_system
 from modex_agent.messaging.broker import Address
 from modex_agent.messaging.broker_bridge import build_input_broker_message
@@ -45,18 +50,10 @@ from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.pool import input_message_from_dispatch_envelope
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.workspace.runtime import bind_workspace_root
-
-# Mechanism-A enrichment layer (native-multimodal-inline unit 5/6, ADR-0014)
-from modex_agent.agents.react.nodes.llm import enrich_inline_attachments
-from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.core.agent import AgentContext
-from modex_agent.core.session_id import SessionInfo
-from modex_agent.ioc.configs.llm import ModelCapabilities, Modality
-from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.workspace.runtime import bind_workspace_root
 
 _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 40
 # JPEG SOI + APP0/JFIF header
@@ -133,7 +130,6 @@ async def test_attachment_flow_to_llm_injection_and_asymmetry() -> None:
 
         media_store = WorkspaceScopedMediaStore(data_dir_name=".modex")
         transcript_store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-        transcript_store.set_agent_pool_map({"main": "main"})
 
         pool_store = MagicMock()
         pool_store.get.return_value = "main"
@@ -145,7 +141,6 @@ async def test_attachment_flow_to_llm_injection_and_asymmetry() -> None:
             default_pool="main",
             available_pools=lambda: {"main"},
             pool_session_store=pool_store,
-            agent_pool_map={"main": "main"},
             agent_resolver=lambda p: p,
             transcript_store=transcript_store,
             enqueue_message=enqueued.append,

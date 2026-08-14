@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from modex_agent.core.tool_manager import Tool
-from modex_agent.workspace.runtime import resolve_workspace_root
 from modex_agent.tools.ast.engine import (
     _EXT_MAP,
     AST_UNAVAILABLE_MSG,
@@ -15,6 +14,7 @@ from modex_agent.tools.ast.engine import (
     search_in_directory,
     search_in_file,
 )
+from modex_agent.workspace.runtime import resolve_workspace_root
 
 
 class AstGrepSearchTool(Tool):

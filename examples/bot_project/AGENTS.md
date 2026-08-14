@@ -1,4 +1,4 @@
-<!-- Updated: 2026-06-22 | WorkspaceManager refactor -->
+<!-- Updated: 2026-08-08 | G08 graph visualization audit -->
 
 # bot_project
 
@@ -114,17 +114,24 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/webui/transcript_store.py` | Per-agent transcript persistence (JSONL) for history replay |
 | `bot/webui/events.py` | WebUI event types (model deltas, tool calls, turn lifecycle) |
 | `bot/webui/emitter/` | Emits WebUI events via fan-in adapter — split into 4 modules |
+| `bot/graph/` | Graph scheduling bridge — `BotAgentNode` (agent-backed graph node), `BotAgentNodeFactory` (spec → node), `GraphSpecLoader` (YAML → compiled spec store), `WebUIGraphOutputAdapter` (dual-channel event emission: REST store + WS fan-out) |
+| `bot/webui/routes/graph_routes.py` | Graph REST API — specs CRUD, instance lifecycle (run/pause/resume/stop), events, deliver, topology endpoint |
 | `modexbot/cli.py` | CLI entry point — 3-layer process discovery for start/stop/restart |
 | `modexbot/main.py` | CLI→service bootstrap |
 | `config/bot_config.yml` | Agent, memory, tool, runtime, observability config. `${ENV_VAR}` interpolation |
 | `config/mcp/*.json` | MCP server configs per agent (stdio/SSE/streamable_http) |
 | `config/pools/*.yml` | Pool definitions — agents, roles, subagent templates |
+| `config/graphs/*.yml` | Declarative graph specifications (DAG workflows) — loaded by `GraphSpecLoader` at startup |
 
 ## Multi-Agent Setup
 
 - `default` pool: General-purpose assistant with file/shell tools, MCP tools (playwright), communication tools + subagents (office-expert).
-- `coder` pool: Main agent (orchestrator) + subagents (explore, coder). Orchestrator handles exploration/planning/review directly; delegates deep investigation to explore and code modification to coder (external).
-- Communication: `send_to_agent` (async inbox-based).
+- `coder` pool: Main agent (orchestrator) + subagents (explore, general). Orchestrator is the primary implementer — investigates, plans, writes code, and verifies. Delegates to explore for read-only codebase investigation and to general for tasks needing a fresh, isolated context.
+- Communication: `task` (subagent dispatch, main agent only) + `send_to_peer`
+  (peer messaging, session-mode only) + `send_to_agent` (subagent→parent
+  consultation). All converge on `AgentCommunicationService.send_async`.
+  Tools are registered by a single `register_communication_tools()` call in
+  Phase 2 — `task` when subagents exist, `send_to_peer` when peers exist.
 - `SubagentAutoSendHook` auto-forwards subagent output to parent.
 - Session ID format: `{conversation_id}.{agent_name}[.{invocation_id}]` (via `DefaultSessionIdStrategy`).
 
@@ -274,7 +281,7 @@ All three must be active for experience to function:
    so the LLM sees `<available_experiences>` and can call the `experience` tool.
 
 2. **ExperienceReviewHook** (`wiring.py:539-552`: registered on the main
-   agent's `pipeline.hook_runner`. Fires `after_turn` when
+   agent's `pipeline.hook_runner`. Fires `after_graph` when
    `stop_reason == completed` and history ≥ `min_messages`. Spawns a
    background task that runs `ExperienceReviewAgent.review()` — a ReAct loop
 using **the bot-global default LLM provider** (`service._default_provider`,
@@ -391,6 +398,18 @@ python -m pytest examples/bot_project/tests -q
 cd examples/bot_project/webui && npm test -- --run
 ```
 
-Backend tests cover WebUI endpoints, streaming isolation, pool routing, input pipeline stages, and transcript store. Frontend tests cover the `useWebUIStream` reducer for per-conversation event filtering and `request_id`-based message dedup.
+Backend tests cover WebUI endpoints, streaming isolation, pool routing, input pipeline stages, transcript store, graph scheduling (node-level events, WS subscription protocol, topology endpoint), and graph REST routes. Frontend tests cover the `useWebUIStream` reducer, `request_id`-based message dedup, graph topology components (deliver pulse, active ring, diff logic, YAML editor, execution viewer, spec/instance list pages), and i18n/token coverage.
 
 <!-- MANUAL -->
+
+<!-- BEGIN MODEX-RUNTIME (auto-managed; do not edit) -->
+## ModexAgent runtime
+
+You are running as a subagent inside ModexAgent.
+
+Your final reply is your deliverable — it is forwarded to your caller automatically when your turn ends. Output your result in your reply text.
+
+Use `modexctl send --to <name> --content <text>` only to ask a question or request a decision when you cannot proceed without input.
+
+- The `.modex/` directory is framework-managed internal state. Do NOT read, modify, or delete anything under `.modex/`.
+<!-- END MODEX-RUNTIME -->

@@ -68,7 +68,7 @@ def _relative_to_workspace(stored_path: Path, ws_root: Path) -> str:
     branch is not expected in normal operation).
     """
     try:
-        rel = stored_path.relative_to(ws_root)
+        rel = stored_path.resolve().relative_to(ws_root.resolve())
     except ValueError:
         return str(stored_path)
     # Forward slashes keep the record portable across platforms (the transcript

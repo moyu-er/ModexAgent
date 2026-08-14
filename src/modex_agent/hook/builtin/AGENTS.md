@@ -1,10 +1,10 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-07-28 -->
+<!-- Updated: 2026-08-12 -->
 
 # builtin hooks
 
 ## Purpose
-Framework-provided hooks covering logging, context tracking, multi-agent communication, environment injection, and loop detection.
+Framework-provided hooks covering logging, context tracking, multi-agent communication, environment injection, loop detection, deliver retry, todo continuation, and current-time injection.
 Session-cleanup re-orientation now lives in `memory/cleanup_hooks.py`
 (`TodoReorientationHook`, a `MemoryHook` — not a ReAct `HookRunner` hook).
 Also hosts `control_drain.py`, which despite living under
@@ -12,15 +12,37 @@ Also hosts `control_drain.py`, which despite living under
 channel — see the separate table below.
 
 ## Hooks
-| File | Class | HookPoint(s) | Status | Description |
-|------|-------|--------------|--------|-------------|
-| `logging.py` | `RunLoggingHook` | after_llm_response, before/after_tool_execution | live | Basic execution logging |
-| `runtime_context.py` | `RuntimeContextHook` | before_turn, before/after_tool_execution | live | Tracks tool calls per session via RuntimeContextManager |
-| `inbox_flush.py` | `InboxFlushHook` | before_turn, before_iteration | live | Flushes inbox messages at turn start |
-| `subagent_auto_send.py` | `SubagentAutoSendHook` | after_turn | live | On subagent turn completion, writes the numbered OUTPUT_<n>.md deliverable (hook-owned, not subagent-written) and notifies the parent via the bus (notification truncated ≤300 chars; result metadata carries only the output path) |
-| `env_injection.py` | `NativeEnvInjectionHook` | before_turn | live | Populates `MODEX_*` env contextvars for native agent subprocess tools |
-| `loop_detection.py` | `LoopDetectionHook` | after_llm_response | live | Detects ReAct tool-repeating loops and force-exits the turn (stateless) |
-| `experience_review.py` | `ExperienceReviewAgent` driver | — | live | Background conversation-review agent; spawns its own task. |
+| File | Class | ABC(s) | HookPoint(s) | Description |
+|------|-------|--------|--------------|-------------|
+| `logging.py` | `RunLoggingHook` | `AfterLLMResponseHook`, `BeforeToolExecutionHook`, `AfterToolExecutionHook` | after_llm_response, before/after_tool_execution | Basic execution logging |
+| `runtime_context.py` | `RuntimeContextHook` | `StartNodeTurnHook`, `BeforeToolExecutionHook`, `AfterToolExecutionHook` | start_node_turn, before/after_tool_execution | Tracks tool calls per session via RuntimeContextManager |
+| `inbox_flush.py` | `InboxFlushHook` | `StartNodeTurnHook`, `BeforeIterationHook` | start_node_turn, before_iteration | Flushes inbox messages at fresh-turn start |
+| `subagent_auto_send.py` | `SubagentAutoSendHook` | `FinallyGraphHook` | finally_graph | On subagent turn completion, writes the numbered OUTPUT_<n>.md deliverable (hook-owned, not subagent-written) and notifies the parent via the bus (notification truncated ≤300 chars; result metadata carries only the output path) |
+| `env_injection.py` | `NativeEnvInjectionHook` | `BeforeGraphHook` | before_graph | Populates `MODEX_*` env contextvars for native agent subprocess tools |
+| `loop_detection.py` | `LoopDetectionHook` | `AfterLLMResponseHook` | after_llm_response | Detects ReAct tool-repeating loops and force-exits the turn (stateless) |
+| `experience_review.py` | `ExperienceReviewHook` | `AfterGraphHook` | after_graph | Background conversation-review agent; spawns its own task after graph execution |
+| `deliver_retry.py` | `DeliverRetryHook` | `AfterTurnHook` | after_turn | Injects a deliver-reminder and sets `CONTINUATION_REQUEST` (only when `turn_attempt < MAX_TURNS`) when the agent stops without calling `deliver`. Reminder is always injected so the agent understands why it stopped, even at the turn budget limit. Independent of other AfterTurnHook continuation sources — no OR/AND coordination. Does not set `CONTINUATION_RENEW_MAX_TURNS` (binary signal, no watchdog renewal). Covers both normal stop and max-iteration exits |
+| `current_time.py` | `CurrentTimeInjectionHook` | `StartNodeTurnHook` | start_node_turn | Injects second-precision current time (with timezone and weekday) as a system-reminder at fresh-turn start |
+| `todo_continuation.py` | `TodoContinuationHook` | `AfterTurnHook` | after_turn | The primary continuation driver. Registered first among AfterTurnHook sources. Injects a system-reminder with the full active (pending + in_progress) todo list, sets `CONTINUATION_REQUEST`, and sets `CONTINUATION_RENEW_MAX_TURNS` (watchdog: authorizes the gate to extend `MAX_TURNS` by 1 when the agent is still making progress). Anti-deadlock: caches sha256 signature of active todo content+status; skips if unchanged since last check. Clears the cached signature when no active todos remain. Independent of other hooks — no OR/AND coordination |
+| `checkpoint.py` | `CheckpointHook` | `AfterIterationHook` | after_iteration | Captures per-iteration checkpoint snapshots |
+| `training_data.py` | `TrainingDataHook` | `FinallyGraphHook` | finally_graph | Records training data at graph teardown |
+
+## Continuation Gate (AfterTurnNode)
+
+`AfterTurnNode` consumes two one-shot flags set by AfterTurnHook continuation
+sources and routes to `BEFORE` (continuation) or `END` (terminal):
+
+- **`CONTINUATION_REQUEST`** — any hook wants another turn attempt.
+- **`CONTINUATION_RENEW_MAX_TURNS`** — a hook authorizes extending `MAX_TURNS`
+  past the current upper bound (watchdog renewal). Currently only
+  `TodoContinuationHook` sets this. The gate increments `MAX_TURNS` by 1 only
+  once regardless of how many hooks set it.
+
+Default `MAX_TURNS` is 3 (set in `TurnContextBuilder.build_runtime_and_context`).
+Hooks act independently — each checks its own trigger condition, injects its own
+reminder, and sets flags without consulting other hooks. Multiple hooks setting
+the same flag is harmless (dict assignment). The gate pops both flags on every
+path, ensuring clean state for the next turn attempt.
 
 ## Non-Hook Files In This Directory
 `control_drain.py` defines **interceptors**, not hooks, and is the single shared
@@ -35,7 +57,7 @@ cancel-drain utility:
 
 ## Design Rules
 - One hook class per file
-- Each hook inherits from per-point ABCs (BeforeTurnHook, AfterToolExecutionHook, etc.) via multiple inheritance
+- Each hook inherits from per-point ABCs (`BeforeGraphHook`, `StartNodeTurnHook`, `BeforeTurnHook`, `AfterTurnHook`, `AfterLLMResponseHook`, etc.) via multiple inheritance
 - **Hooks MUST be stateless** — see `hook/AGENTS.md` Rule 1. Per-turn state goes in `ctx.runtime.state.custom` via `TurnCustomKey`; the ONLY acceptable instance attributes are immutable configuration injected at construction. Never use `self._state[session_id]` dicts — they leak across the pool's lifetime.
 - Register via `HookRunner.add(HookSpec(hook=MyHook(), on_error=...))`
 

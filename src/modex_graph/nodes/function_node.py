@@ -1,7 +1,7 @@
 # ruff: noqa: ANN401
 """`FunctionNode` + `FunctionNodeFactory` — wrap a sync/async function as a Node.
 
-Ticket 02 (P2.7): a generic node type that wraps a deterministic function
+A generic node type that wraps a deterministic function
 ( sync or async ) into the `Node` ABC. The function receives the
 `GraphContext`, returns a result, and `FunctionNode` delivers it to the next
 node via `self.deliver(result, next_node, ctx)`.
@@ -50,7 +50,7 @@ class FunctionNodeConfig(BaseModel):
 
 
 class FunctionNode(Node[Any]):
-    """Wraps a sync/async function as a `Node` (ticket 02).
+    """Wraps a sync/async function as a `Node`.
 
     The function is called during `execute()`. Its return value is delivered
     to the next node via `self.deliver(result, next_node, ctx)`.
@@ -93,7 +93,7 @@ class FunctionNode(Node[Any]):
 
 
 class FunctionNodeFactory(NodeFactory):
-    """Creates `FunctionNode` from a function registry (ticket 02).
+    """Creates `FunctionNode` from a function registry.
 
     The factory holds a `dict[str, Callable]` mapping names to functions.
     `NodeSpec.config = {"function": "<registered_name>",

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from modex_agent.core.scope import RecordScope
+from modex_agent.core.types import MessageRole
 from modex_agent.persistence import ConnectionManager
 from modex_agent.persistence.adapters.message_store import SqliteMessageStore
 
@@ -55,6 +58,58 @@ class TestMessageLoadSaveAppend:
         await message_store.pin_message("alt0")
         loaded = await message_store.load_messages()
         assert loaded[0].get("_pinned") is True
+
+
+class TestLoadAllMessages:
+    async def test_load_all_excludes_compact(
+        self, message_store: SqliteMessageStore
+    ) -> None:
+        await message_store.append_message(msg("before"))
+        await message_store.append_message(msg("compact", role=MessageRole.COMPACT))
+        await message_store.append_message(msg("after"))
+
+        loaded = await message_store.load_all_messages()
+
+        assert [message["id"] for message in loaded] == ["before", "after"]
+
+    async def test_load_messages_still_includes_compact(
+        self, message_store: SqliteMessageStore
+    ) -> None:
+        await message_store.append_message(msg("compact", role=MessageRole.COMPACT))
+
+        loaded = await message_store.load_messages()
+
+        assert [message["role"] for message in loaded] == [str(MessageRole.COMPACT)]
+
+    async def test_load_all_limit_returns_latest_non_compact_chronologically(
+        self, message_store: SqliteMessageStore
+    ) -> None:
+        await message_store.append_message(msg("m0"))
+        await message_store.append_message(msg("compact-0", role=MessageRole.COMPACT))
+        await message_store.append_message(msg("m1"))
+        await message_store.append_message(msg("compact-1", role=MessageRole.COMPACT))
+        await message_store.append_message(msg("m2"))
+        await message_store.prune_messages(1)
+
+        loaded = await message_store.load_all_messages(limit=2)
+
+        assert [message["id"] for message in loaded] == ["m1", "m2"]
+        assert loaded[0].get("_deleted") is True
+
+    async def test_load_all_limit_zero_returns_empty(
+        self, message_store: SqliteMessageStore
+    ) -> None:
+        await message_store.append_message(msg("m0"))
+
+        loaded = await message_store.load_all_messages(limit=0)
+
+        assert loaded == []
+
+    async def test_load_all_negative_limit_raises(
+        self, message_store: SqliteMessageStore
+    ) -> None:
+        with pytest.raises(ValueError, match="^limit must be non-negative$"):
+            await message_store.load_all_messages(limit=-1)
 
 
 class TestMessageStateMachine:

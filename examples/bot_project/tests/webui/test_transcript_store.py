@@ -7,7 +7,6 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
 from bot.webui.events import (
     AssistantTextEvent,
     AssistantTurnEvent,
@@ -20,7 +19,6 @@ from bot.webui.events import (
 )
 from bot.webui.transcript_store import (
     JSONLTranscriptStore,
-    MaterializedTurn,
     ResilientTranscriptStore,
     TranscriptStore,
 )
@@ -493,6 +491,7 @@ async def test_workspace_store_append_is_resilient(
     user-message persist stage can crash an agent turn.
     """
     from bot.service.workspace_store import WorkspaceScopedTranscriptStore
+
     from modex_agent.workspace.runtime import bind_workspace_root
 
     def _workspace() -> str:

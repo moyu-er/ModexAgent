@@ -326,19 +326,23 @@ async def test_pause_cancel_resume_parallel_sqlite(tmp_path: Path) -> None:
     assert await asyncio.wait_for(execution, timeout=_TIMEOUT) == graph_instance_id
 
     assert _status(instance_store, graph_instance_id) == GraphInstanceStatus.PAUSED
+    metadata = instance_store.load(graph_instance_id)
+    assert metadata is not None
+    node_ids = metadata.node_id_map
     coordinator = SqliteCoordinatorFactory(connection).create(graph_instance_id, instance_store)
     for branch in ("branch_a", "branch_b"):
-        latest = coordinator.node_state_store.load_latest(branch)
+        latest = coordinator.node_state_store.load_latest(node_ids[branch])
         assert latest is not None
         assert latest.status == InvocationStatus.CRASHED
-    assert coordinator.node_state_store.load_latest("queued") is None
-    queued_store = coordinator.get_deliver_store("queued")
+    assert coordinator.node_state_store.load_latest(node_ids["queued"]) is None
+    queued_store = coordinator.get_deliver_store(node_ids["queued"])
     assert queued_store is None
-    coordinator.register_node("queued")
-    queued_store = coordinator.get_deliver_store("queued")
+    coordinator.register_node(node_ids["queued"])
+    queued_store = coordinator.get_deliver_store(node_ids["queued"])
     assert queued_store is not None
     assert [
-        record.content for record in queued_store.query_consumable(graph_instance_id, "queued")
+        record.content
+        for record in queued_store.query_consumable(graph_instance_id, node_ids["queued"])
     ] == ["external"]
     assert "queued" not in executions
 
@@ -352,10 +356,10 @@ async def test_pause_cancel_resume_parallel_sqlite(tmp_path: Path) -> None:
     assert executions.count("queued") == 1
     recovered = SqliteCoordinatorFactory(connection).create(graph_instance_id, instance_store)
     for branch in ("branch_a", "branch_b"):
-        assert [record.status for record in recovered.node_state_store.query_versions(branch)] == [
-            InvocationStatus.COMPLETED,
-            InvocationStatus.CRASHED,
-        ]
+        assert [
+            record.status
+            for record in recovered.node_state_store.query_versions(node_ids[branch])
+        ] == [InvocationStatus.COMPLETED, InvocationStatus.CRASHED]
     connection.close()
 
 
@@ -455,13 +459,16 @@ async def test_process_crash_recovers_without_replaying_completed_prefix(
     coordinator = SqliteCoordinatorFactory(recovered_connection).create(
         graph_instance_id, recovered_instance_store
     )
-    assert [record.status for record in coordinator.node_state_store.query_versions("prepare")] == [
-        InvocationStatus.COMPLETED
-    ]
-    assert [record.status for record in coordinator.node_state_store.query_versions("work")] == [
-        InvocationStatus.COMPLETED,
-        InvocationStatus.CRASHED,
-    ]
+    metadata = recovered_instance_store.load(graph_instance_id)
+    assert metadata is not None
+    assert [
+        record.status
+        for record in coordinator.node_state_store.query_versions(metadata.node_id_map["prepare"])
+    ] == [InvocationStatus.COMPLETED]
+    assert [
+        record.status
+        for record in coordinator.node_state_store.query_versions(metadata.node_id_map["work"])
+    ] == [InvocationStatus.COMPLETED, InvocationStatus.CRASHED]
     recovered_connection.close()
 
 
@@ -495,12 +502,15 @@ async def test_deliver_overlap_is_at_least_once_without_source_dedup(
     with pytest.raises(RuntimeError, match="source crashed after submit"):
         await orchestrator.create_and_run(spec_id)
     graph_instance_id = _single_instance_id(instance_store, GraphInstanceStatus.CRASHED)
+    metadata = instance_store.load(graph_instance_id)
+    assert metadata is not None
+    node_b_id = metadata.node_id_map["b"]
     coordinator = SqliteCoordinatorFactory(connection).create(graph_instance_id, instance_store)
-    coordinator.register_node("b")
-    deliver_store = coordinator.get_deliver_store("b")
+    coordinator.register_node(node_b_id)
+    deliver_store = coordinator.get_deliver_store(node_b_id)
     assert deliver_store is not None
     assert [
-        record.content for record in deliver_store.query_consumable(graph_instance_id, "b")
+        record.content for record in deliver_store.query_consumable(graph_instance_id, node_b_id)
     ] == ["from-a"]
 
     assert await orchestrator.recover_crashed() == [graph_instance_id]
@@ -510,8 +520,8 @@ async def test_deliver_overlap_is_at_least_once_without_source_dedup(
     assert target_inputs == [["from-a", "from-a"]]
     statuses = connection.execute(
         "SELECT status FROM deliver_states "
-        "WHERE graph_instance_id = ? AND node_name = ? ORDER BY deliver_id",
-        (graph_instance_id, "b"),
+        "WHERE graph_instance_id = ? AND node_id = ? ORDER BY deliver_id",
+        (graph_instance_id, node_b_id),
     ).fetchall()
     assert statuses == [
         (DeliverConsumptionStatus.CONSUMED_COMPLETED.value,),
@@ -574,12 +584,20 @@ async def test_ring_recovery_uses_latest_version_chain_head(tmp_path: Path) -> N
     coordinator = SqliteCoordinatorFactory(recovered_connection).create(
         graph_instance_id, recovered_instance_store
     )
-    assert [record.status for record in coordinator.node_state_store.query_versions("a")] == [
+    metadata = recovered_instance_store.load(graph_instance_id)
+    assert metadata is not None
+    assert [
+        record.status
+        for record in coordinator.node_state_store.query_versions(metadata.node_id_map["a"])
+    ] == [
         InvocationStatus.COMPLETED,
         InvocationStatus.COMPLETED,
         InvocationStatus.COMPLETED,
     ]
-    assert [record.status for record in coordinator.node_state_store.query_versions("b")] == [
+    assert [
+        record.status
+        for record in coordinator.node_state_store.query_versions(metadata.node_id_map["b"])
+    ] == [
         InvocationStatus.COMPLETED,
         InvocationStatus.CRASHED,
         InvocationStatus.COMPLETED,
@@ -622,9 +640,8 @@ async def test_null_persistence_fails_safe_and_fresh_start_runs() -> None:
 
     coordinator = coordinator_factory.create(graph_instance_id, instance_store)
     coordinator.register_node("entry")
-    recovery = coordinator.load_for_recovery()
-    assert recovery.node_states == {"entry": None}
-    assert recovery.rebuilt_main_state == {}
+    assert coordinator.node_state_store.load_latest("entry") is None
+    assert coordinator.rebuild_main_state() == {}
 
 
 async def test_in_memory_recovery_has_expected_two_state_degradation() -> None:
@@ -664,14 +681,22 @@ async def test_in_memory_recovery_has_expected_two_state_degradation() -> None:
     with pytest.raises(RuntimeError, match="worker crashed"):
         await orchestrator.create_and_run(spec_id)
     graph_instance_id = _single_instance_id(instance_store, GraphInstanceStatus.CRASHED)
-    active = orchestrator._active_instances[graph_instance_id]
+    # CRASHED instance is evicted from _active_instances — access the
+    # shared deliver stores via a recovery coordinator that re-registers
+    # all nodes in the original order (START, END, source, worker).
+    metadata = instance_store.load(graph_instance_id)
+    assert metadata is not None
+    node_ids = metadata.node_id_map
+    recovery_coord = coordinator_factory.create(graph_instance_id, instance_store)
+    for node_id in node_ids.values():
+        recovery_coord.register_node(node_id)
     worker_store = cast(
         InMemoryDeliverStore,
-        active.coordinator.get_deliver_store("worker"),
+        recovery_coord.get_deliver_store(node_ids["worker"]),
     )
     records = worker_store._records[graph_instance_id]  # noqa: SLF001
     assert [record.status for record in records] == [DeliverConsumptionStatus.CONSUMED]
-    assert worker_store.query_consumable(graph_instance_id, "worker") == []
+    assert worker_store.query_consumable(graph_instance_id, node_ids["worker"]) == []
 
     assert await orchestrator.recover_crashed() == [graph_instance_id]
 
@@ -680,10 +705,11 @@ async def test_in_memory_recovery_has_expected_two_state_degradation() -> None:
     assert worker_inputs == [["payload"], []]
     assert all(record.status != DeliverConsumptionStatus.CONSUMED_PENDING for record in records)
     coordinator = coordinator_factory.create(graph_instance_id, instance_store)
-    assert [record.status for record in coordinator.node_state_store.query_versions("source")] == [
-        InvocationStatus.COMPLETED
-    ]
-    assert [record.status for record in coordinator.node_state_store.query_versions("worker")] == [
-        InvocationStatus.COMPLETED,
-        InvocationStatus.CRASHED,
-    ]
+    assert [
+        record.status
+        for record in coordinator.node_state_store.query_versions(node_ids["source"])
+    ] == [InvocationStatus.COMPLETED]
+    assert [
+        record.status
+        for record in coordinator.node_state_store.query_versions(node_ids["worker"])
+    ] == [InvocationStatus.COMPLETED, InvocationStatus.CRASHED]

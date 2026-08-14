@@ -1,16 +1,19 @@
-"""Tests for GraphSpecStore ABC + InMemoryGraphSpecStore + SqliteGraphSpecStore (P1C.6).
+"""Tests for GraphSpecStore ABC + InMemoryGraphSpecStore + SqliteGraphSpecStore.
+
+Spec immutability (ADR-0040 change 3): ``save`` always INSERTs a new row;
+``save_if_changed`` deduplicates by comparing ``spec_json``; ``list_records``
+returns only the latest ``spec_id`` per name.
 
 Covers:
 
-- `GraphSpecStore` ABC (rule 7: ABC, not Protocol): 5 abstract methods.
-- `InMemoryGraphSpecStore`: save, load_by_id, load_by_name, list_all, delete.
-  Uses `default_id_generator()` for Snowflake IDs.
-- `SqliteGraphSpecStore`: same CRUD + idempotent schema, timestamps epoch
+- ``GraphSpecStore`` ABC (rule 7: ABC, not Protocol): 8 abstract methods.
+- ``InMemoryGraphSpecStore``: immutable save, content-deduplicated save,
+  spec loading, record listing (latest per name), delete.
+- ``SqliteGraphSpecStore``: same CRUD + idempotent schema, timestamps epoch
   ms, table/column constants, indexes created, file-based persistence,
-  `GraphSpec.model_dump_json()` / `model_validate_json()` round-trip.
-- Cross-spec isolation (different `spec_id`).
-- `delete` on non-existent ID is a no-op.
-- Follows the EXACT pattern of `test_deliver_store.py`.
+  ``GraphSpec.model_dump_json()`` / ``model_validate_json()`` round-trip.
+- Cross-spec isolation (different ``spec_id``).
+- ``delete`` on non-existent ID is a no-op.
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ from modex_graph import (
     SchedulerKind,
     SqliteGraphSpecStore,
 )
+from modex_graph.spec_record import GraphSpecRecord
 
 # ── Test helpers ──────────────────────────────────────────────────────────
 
@@ -74,8 +78,17 @@ class TestGraphSpecStoreABC:
         with pytest.raises(TypeError):
             GraphSpecStore()  # type: ignore[abstract]
 
-    def test_five_abstract_methods(self) -> None:
-        expected = {"save", "load_by_id", "load_by_name", "list_all", "delete"}
+    def test_eight_abstract_methods(self) -> None:
+        expected = {
+            "save",
+            "save_if_changed",
+            "load_by_id",
+            "load_by_name",
+            "list_all",
+            "list_records",
+            "get_by_id",
+            "delete",
+        }
         assert set(GraphSpecStore.__abstractmethods__) == expected
 
     def test_in_memory_is_subclass(self) -> None:
@@ -171,6 +184,46 @@ class TestGraphSpecStoreCRUD:
         store = _store_factory(kind)()
         assert store.list_all() == []
 
+    def test_list_records_returns_rest_friendly_records(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        first_id = store.save(_make_spec(name="g1", version="1.0"))
+        second_id = store.save(_make_spec(name="g2", version="2.0"))
+
+        records = store.list_records()
+
+        assert records == [
+            GraphSpecRecord(
+                spec_id=first_id,
+                name="g1",
+                version="1.0",
+                created_at=records[0].created_at,
+            ),
+            GraphSpecRecord(
+                spec_id=second_id,
+                name="g2",
+                version="2.0",
+                created_at=records[1].created_at,
+            ),
+        ]
+        assert set(GraphSpecRecord.model_fields) == {"spec_id", "name", "version", "created_at"}
+
+    def test_get_by_id_returns_record(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        spec_id = store.save(_make_spec(name="by_id", version="3.0"))
+
+        record = store.get_by_id(spec_id)
+
+        assert record is not None
+        assert record.spec_id == spec_id
+        assert record.name == "by_id"
+        assert record.version == "3.0"
+        assert record.created_at > 1_700_000_000_000
+
+    def test_get_by_id_returns_none_for_missing_record(self, kind: str) -> None:
+        store = _store_factory(kind)()
+
+        assert store.get_by_id(99999) is None
+
     def test_delete_removes_spec(self, kind: str) -> None:
         store = _store_factory(kind)()
         spec_id = store.save(_make_spec(name="to_delete"))
@@ -181,7 +234,7 @@ class TestGraphSpecStoreCRUD:
         store = _store_factory(kind)()
         store.delete(99999)
 
-    def test_delete_removes_from_name_index(self, kind: str) -> None:
+    def test_delete_removes_from_name_lookup(self, kind: str) -> None:
         store = _store_factory(kind)()
         spec_id = store.save(_make_spec(name="indexed"))
         store.delete(spec_id)
@@ -235,22 +288,167 @@ class TestGraphSpecStoreCRUD:
         assert s1.name == "g1"
         assert s2.name == "g2"
 
-    def test_same_name_version_rejected(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        store.save(_make_spec(name="dup", version="1.0"))
-        with pytest.raises((ValueError, sqlite3.IntegrityError)):
-            store.save(_make_spec(name="dup", version="1.0"))
 
-    def test_same_name_different_version_ok(self, kind: str) -> None:
+# ── Spec immutability: save always INSERTs (ADR-0040 change 3) ────────────
+
+
+@pytest.mark.parametrize("kind", STORE_KINDS)
+class TestSpecImmutability:
+    def test_save_same_name_version_creates_new_row(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        first_id = store.save(_make_spec(name="dup", version="1.0"))
+        updated_spec = _make_spec(name="dup", version="1.0").model_copy(
+            update={"max_iterations": 99}
+        )
+
+        second_id = store.save(updated_spec)
+
+        assert second_id != first_id
+        assert store.load_by_id(first_id) is not None
+        assert store.load_by_id(first_id) != updated_spec
+        assert store.load_by_id(second_id) == updated_spec
+        assert len(store.list_all()) == 2
+
+    def test_save_same_content_creates_new_row(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        spec = _make_spec(name="same", version="1.0")
+        first_id = store.save(spec)
+        second_id = store.save(spec)
+
+        assert second_id != first_id
+        assert len(store.list_all()) == 2
+
+    def test_load_by_name_returns_latest_after_multiple_saves(self, kind: str) -> None:
         store = _store_factory(kind)()
         store.save(_make_spec(name="multi", version="1.0"))
-        store.save(_make_spec(name="multi", version="2.0"))
-        v1 = store.load_by_name("multi", "1.0")
-        v2 = store.load_by_name("multi", "2.0")
-        assert v1 is not None
-        assert v2 is not None
-        assert v1.version == "1.0"
-        assert v2.version == "2.0"
+        latest_spec = _make_spec(name="multi", version="2.0")
+        store.save(latest_spec)
+
+        loaded = store.load_by_name("multi")
+
+        assert loaded is not None
+        assert loaded.version == "2.0"
+        assert loaded == latest_spec
+
+    def test_list_records_returns_latest_per_name(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        store.save(_make_spec(name="g1", version="1.0"))
+        g1_latest_id = store.save(_make_spec(name="g1", version="2.0"))
+        store.save(_make_spec(name="g2", version="1.0"))
+
+        records = store.list_records()
+
+        names_to_ids = {r.name: r.spec_id for r in records}
+        assert names_to_ids == {"g1": g1_latest_id, "g2": names_to_ids["g2"]}
+        assert len(records) == 2
+
+    def test_historical_spec_accessible_by_id(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        old_id = store.save(_make_spec(name="hist", version="1.0"))
+        store.save(_make_spec(name="hist", version="2.0"))
+
+        records = store.list_records()
+        assert all(r.spec_id != old_id for r in records)
+
+        old_spec = store.load_by_id(old_id)
+        assert old_spec is not None
+        assert old_spec.version == "1.0"
+        old_record = store.get_by_id(old_id)
+        assert old_record is not None
+        assert old_record.version == "1.0"
+
+
+# ── save_if_changed: content-deduplicated save (ADR-0040 change 3) ────────
+
+
+@pytest.mark.parametrize("kind", STORE_KINDS)
+class TestSaveIfChanged:
+    def test_first_save_creates_new_spec_id(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        spec_id = store.save_if_changed(_make_spec(name="new"))
+
+        assert isinstance(spec_id, int)
+        assert spec_id > 0
+        assert store.load_by_id(spec_id) is not None
+
+    def test_same_content_returns_existing_spec_id(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        spec = _make_spec(name="dedup", version="1.0")
+        first_id = store.save_if_changed(spec)
+
+        second_id = store.save_if_changed(spec)
+
+        assert second_id == first_id
+        assert len(store.list_all()) == 1
+
+    def test_different_content_creates_new_spec_id(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        original = _make_spec(name="changed", version="1.0")
+        first_id = store.save_if_changed(original)
+
+        modified = original.model_copy(update={"max_iterations": 99})
+        second_id = store.save_if_changed(modified)
+
+        assert second_id != first_id
+        assert len(store.list_all()) == 2
+        assert store.load_by_id(first_id) == original
+        assert store.load_by_id(second_id) == modified
+
+    def test_explicit_spec_id_on_new_row(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        spec = _make_spec(name="explicit")
+        spec_id = store.save_if_changed(spec, spec_id=777)
+
+        assert spec_id == 777
+        assert store.load_by_id(777) is not None
+
+    def test_idempotent_across_multiple_calls(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        spec = _make_spec(name="idem")
+        first = store.save_if_changed(spec)
+        second = store.save_if_changed(spec)
+        third = store.save_if_changed(spec)
+
+        assert first == second == third
+        assert len(store.list_all()) == 1
+
+    def test_dedup_compares_json_not_object_identity(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        spec1 = _make_spec(name="json_eq", version="1.0")
+        first_id = store.save_if_changed(spec1)
+
+        spec2 = _make_spec(name="json_eq", version="1.0")
+        second_id = store.save_if_changed(spec2)
+
+        assert second_id == first_id
+
+    def test_dedup_after_content_then_revert(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        original = _make_spec(name="revert", version="1.0")
+        first_id = store.save_if_changed(original)
+
+        modified = original.model_copy(update={"max_iterations": 99})
+        second_id = store.save_if_changed(modified)
+        assert second_id != first_id
+
+        third_id = store.save_if_changed(original)
+        assert third_id != second_id
+        assert third_id != first_id
+
+    def test_dedup_is_per_name(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        spec_a = _make_spec(name="a", version="1.0")
+        spec_b = _make_spec(name="b", version="1.0")
+        id_a = store.save_if_changed(spec_a)
+        id_b = store.save_if_changed(spec_b)
+
+        assert id_a != id_b
+
+        id_a2 = store.save_if_changed(spec_a)
+        id_b2 = store.save_if_changed(spec_b)
+
+        assert id_a2 == id_a
+        assert id_b2 == id_b
 
 
 # ── SqliteGraphSpecStore specifics ────────────────────────────────────────
@@ -342,12 +540,51 @@ class TestSqliteGraphSpecStoreSpecifics:
         assert data["name"] == "json_check"
         conn.close()
 
-    def test_unique_name_version_constraint(self) -> None:
+    def test_no_unique_name_version_constraint(self) -> None:
         conn = sqlite3.connect(":memory:")
         store = SqliteGraphSpecStore(conn)
-        store.save(_make_spec(name="uniq", version="1.0"))
-        with pytest.raises(sqlite3.IntegrityError):
-            store.save(_make_spec(name="uniq", version="1.0"))
+        first_id = store.save(_make_spec(name="dup", version="1.0"))
+        second_id = store.save(_make_spec(name="dup", version="1.0"))
+        row_count = conn.execute("SELECT COUNT(*) FROM graph_specs").fetchone()
+
+        assert second_id != first_id
+        assert row_count == (2,)
+        conn.close()
+
+    def test_no_auto_update_trigger(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        SqliteGraphSpecStore(conn)
+        triggers = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name = ?",
+            ("graph_specs",),
+        ).fetchall()
+        assert triggers == []
+        conn.close()
+
+    def test_save_if_changed_sqlite_dedup(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        store = SqliteGraphSpecStore(conn)
+        spec = _make_spec(name="sqlite_dedup")
+        first_id = store.save_if_changed(spec)
+        second_id = store.save_if_changed(spec)
+
+        assert second_id == first_id
+        row_count = conn.execute("SELECT COUNT(*) FROM graph_specs").fetchone()
+        assert row_count == (1,)
+        conn.close()
+
+    def test_list_records_sqlite_latest_per_name(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        store = SqliteGraphSpecStore(conn)
+        store.save(_make_spec(name="g1", version="1.0"))
+        latest_g1 = store.save(_make_spec(name="g1", version="2.0"))
+        store.save(_make_spec(name="g2", version="1.0"))
+
+        records = store.list_records()
+
+        names_to_ids = {r.name: r.spec_id for r in records}
+        assert names_to_ids["g1"] == latest_g1
+        assert len(records) == 2
         conn.close()
 
 
@@ -361,13 +598,33 @@ class TestInMemoryGraphSpecStoreSpecifics:
         assert spec_id in store._specs
         assert store._specs[spec_id].name == "internal"
 
-    def test_name_version_index_populated(self) -> None:
+    def test_no_by_name_version_field(self) -> None:
         store = InMemoryGraphSpecStore()
-        spec_id = store.save(_make_spec(name="indexed", version="2.0"))
-        assert store._by_name_version[("indexed", "2.0")] == spec_id
+        assert not hasattr(store, "_by_name_version")
 
-    def test_delete_cleans_name_index(self) -> None:
+    def test_delete_removes_from_specs(self) -> None:
         store = InMemoryGraphSpecStore()
         spec_id = store.save(_make_spec(name="to_remove"))
         store.delete(spec_id)
-        assert ("to_remove", "1.0") not in store._by_name_version
+        assert spec_id not in store._specs
+
+    def test_save_if_changed_memory_dedup(self) -> None:
+        store = InMemoryGraphSpecStore()
+        spec = _make_spec(name="mem_dedup")
+        first_id = store.save_if_changed(spec)
+        second_id = store.save_if_changed(spec)
+
+        assert second_id == first_id
+        assert len(store._specs) == 1
+
+    def test_list_records_memory_latest_per_name(self) -> None:
+        store = InMemoryGraphSpecStore()
+        store.save(_make_spec(name="g1", version="1.0"))
+        latest_g1 = store.save(_make_spec(name="g1", version="2.0"))
+        store.save(_make_spec(name="g2", version="1.0"))
+
+        records = store.list_records()
+
+        names_to_ids = {r.name: r.spec_id for r in records}
+        assert names_to_ids["g1"] == latest_g1
+        assert len(records) == 2

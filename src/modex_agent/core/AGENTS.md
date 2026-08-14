@@ -23,7 +23,7 @@ The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMP
 | `frontmatter.py` | Shared YAML frontmatter parsing (`parse_frontmatter()`) for markdown docs (skills, experiences) |
 | `governance.py` | `GovernanceResult` — context governance result type |
 | `history.py` | `MessageHistory` ABC — message append/filter/get |
-| `llm_struct.py` | `LLMErrorInfo` (Pydantic `BaseModel(frozen=True)`, ADR-0033 D14 Stage 2), `LLMErrorKind` (StrEnum), `ProviderKind` (StrEnum), `LLMTimeoutPolicy`, `TurnTimeoutPolicy`, `RuntimeSafetyPolicy`, `LLMProviderConfig` — all config/policy types are now frozen Pydantic `BaseModel` (B4) |
+| `llm_struct.py` | `LLMErrorInfo` (Pydantic `BaseModel(frozen=True)`, ADR-0033 D14 Stage 2), `LLMErrorKind` (StrEnum), `ProviderKind` (StrEnum), `LLMTimeoutPolicy` (defaults `None` — no provider-level timeout), `TurnTimeoutPolicy` (`agent_run_timeout_seconds`=600s per-iteration DispatchDeadline renewal, `tool_timeout_seconds`=400s), `RuntimeSafetyPolicy`, `LLMProviderConfig` — all config/policy types are now frozen Pydantic `BaseModel` (B4) |
 | `message.py` | `ChatMessage` (BaseModel, `extra="allow"`) — `role: MessageRole`, `content: str | list[ContentPart] | None`, `tool_calls: list[ToolCall] | None`. `ContentFormat` (StrEnum), `ContentPart` discriminated union (`TextPart | ImageUrlPart`). `to_dict()` serializes `tool_calls` to OpenAI wire format |
 | `message_utils.py` | `normalize_agent_messages_for_llm()` — normalizes messages to LLM-compatible format |
 | `prompt.py` | Prompt building utilities |

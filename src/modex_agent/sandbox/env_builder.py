@@ -10,10 +10,10 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class EnvPolicy(str, Enum):
+class EnvPolicy(StrEnum):
     """How aggressively to sanitize the environment."""
 
     MINIMAL = "minimal"  # Essential vars only

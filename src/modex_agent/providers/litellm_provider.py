@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib.util
 import json
 import logging
 import time
 from collections.abc import Callable
+from datetime import UTC
 from typing import Any, ClassVar
 
 from modex_agent.core.constants import DefaultValues, FinishReason, ReasoningEffort, ToolChoice
@@ -28,8 +30,6 @@ from modex_agent.core.tool_call_accumulator import (
 from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.providers.shared.constants import inject_cache_control, inject_reasoning_effort
 from modex_agent.utils.think_tag import ThinkTagExtractor
-
-import importlib.util
 
 _LITELLM_AVAILABLE = importlib.util.find_spec("litellm") is not None
 
@@ -84,8 +84,8 @@ class LiteLLMProvider(StreamingLLMProvider):
         base_url: str | None = None,
         temperature: float = DefaultValues.TEMPERATURE,
         max_output_tokens: int | None = None,
-        timeout: float = DefaultValues.TIMEOUT_SECONDS,
-        stream_idle_timeout: float = 90.0,
+        timeout: float | None = None,
+        stream_idle_timeout: float | None = None,
         parse_think_tags: bool = True,
         reasoning_effort: ReasoningEffort = ReasoningEffort.NONE,
         safety: RuntimeSafetyPolicy | None = None,
@@ -121,6 +121,16 @@ class LiteLLMProvider(StreamingLLMProvider):
 
         retry_backoff = safety.llm.retry_backoff_seconds if safety is not None else (2.0, 8.0)
         super().__init__(retry_backoff_seconds=retry_backoff)
+
+        logger.info(
+            "LiteLLMProvider created: model=%s base_url=%s "
+            "request_timeout=%s stream_idle_timeout=%s safety_applied=%s",
+            self._model,
+            base_url,
+            self._timeout,
+            self._stream_idle_timeout,
+            safety is not None,
+        )
 
     def get_default_model(self) -> str:
         return self._model
@@ -196,10 +206,11 @@ class LiteLLMProvider(StreamingLLMProvider):
             "base_url": self._base_url,
             "temperature": temperature if temperature is not None else self._temperature,
             "max_tokens": max_output_tokens if max_output_tokens is not None else self._max_output_tokens,
-            "timeout": self._timeout,
             **self._extra_kwargs,
             **kwargs,
         }
+        if self._timeout is not None:
+            params["timeout"] = self._timeout
 
         if stream:
             params["stream"] = True
@@ -284,7 +295,14 @@ class LiteLLMProvider(StreamingLLMProvider):
         )
 
         t0 = time.monotonic()
-        logger.debug("LLM stream attempt start: model=%s", params.get("model"))
+        logger.info(
+            "LiteLLM stream start: model=%s messages=%d "
+            "request_timeout=%s stream_idle_timeout=%s",
+            params.get("model"),
+            len(messages),
+            self._timeout,
+            self._stream_idle_timeout,
+        )
         try:
             response = await self._acompletion(**params)
         except asyncio.CancelledError:
@@ -293,8 +311,10 @@ class LiteLLMProvider(StreamingLLMProvider):
             elapsed_ms = (time.monotonic() - t0) * 1000
             error_info = classify_litellm_error(exc)
             logger.warning(
-                "LLM stream attempt failed: kind=%s provider=%s elapsed=%.0fms message=%s",
+                "LiteLLM stream failed: kind=%s exc_type=%s provider=%s "
+                "elapsed=%.0fms message=%s",
                 error_info.kind.value,
+                type(exc).__name__,
                 error_info.provider,
                 elapsed_ms,
                 error_info.message[:200],
@@ -361,8 +381,10 @@ class LiteLLMProvider(StreamingLLMProvider):
                 error_info = classify_litellm_error(exc)
                 partial_content = "".join(content_parts)
                 logger.warning(
-                    "LiteLLM stream failed mid-stream: kind=%s partial_content_len=%d message=%s",
+                    "LiteLLM stream failed mid-stream: kind=%s exc_type=%s "
+                    "partial_content_len=%d message=%s",
                     error_info.kind.value,
+                    type(exc).__name__,
                     len(partial_content),
                     error_info.message[:200],
                 )
@@ -437,9 +459,9 @@ class LiteLLMProvider(StreamingLLMProvider):
 
         completion_start_time: str | None = None
         if first_token_time is not None:
-            from datetime import datetime, timezone
+            from datetime import datetime
             completion_start_time = datetime.fromtimestamp(
-                first_token_time, tz=timezone.utc
+                first_token_time, tz=UTC
             ).isoformat()
 
         return LLMResponse(

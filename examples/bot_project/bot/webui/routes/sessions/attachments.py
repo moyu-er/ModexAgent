@@ -15,8 +15,8 @@ from uuid import uuid4
 
 from aiohttp import web
 
-from bot.webui.routes.sessions import resolve_agent
 from bot.webui.types import _UPLOAD_CHUNK_BYTES
+from modex_agent.core.session_id import session_id_prefix_of
 
 if TYPE_CHECKING:
     from bot.webui.server import WebUIServer
@@ -56,6 +56,7 @@ async def handle_download_attachment(request: web.Request) -> web.Response:
     from bot.service.attachment_index import find_attachment
     from modex_agent.media.models import AttachmentLocator
 
+
     server: WebUIServer = request.app["server"]
     session_id: str = request.match_info["session_id"]
     attachment_id: str = request.match_info["attachment_id"]
@@ -68,14 +69,9 @@ async def handle_download_attachment(request: web.Request) -> web.Response:
 
     path: Path | None
     if att.locator is AttachmentLocator.MEDIA:
-        # Inbound: bytes are under the managed media dir. Resolve the pool
-        # for the media resolver the same way the other read handlers
-        # resolve it (agent_name -> pool), then read through the business
-        # WorkspaceScopedMediaStore with an explicit media_dir (HTTP readers
-        # run outside any dispatch turn, so the ctxvar root is unbound).
-        index_dir = server._index_dir_of_ws(ws_raw)
-        agent_name = await resolve_agent(server, session_id, index_dir=index_dir)
-        pool = server._pool_of_agent(agent_name)
+        server._index_dir_of_ws(ws_raw)
+        session_prefix = session_id_prefix_of(session_id)
+        pool = server._resolve_pool_for_request(request.query.get("pool"), session_prefix)
         media_store = server._input_ctx.media_store if server._input_ctx is not None else None
         if media_store is None:
             # No media resolver wired — cannot serve inbound bytes.
@@ -170,13 +166,14 @@ async def handle_upload_attachment(request: web.Request) -> web.Response:
     """
     from modex_agent.multi_agent.pool_config.media import MediaConfig
 
+
     server: WebUIServer = request.app["server"]
     session_id: str = request.match_info["session_id"]
     ws_raw = request.query.get("ws", "")
 
-    index_dir = server._index_dir_of_ws(ws_raw)
-    agent_name = await resolve_agent(server, session_id, index_dir=index_dir)
-    pool = server._pool_of_agent(agent_name)
+    server._index_dir_of_ws(ws_raw)
+    session_prefix = session_id_prefix_of(session_id)
+    pool = server._resolve_pool_for_request(request.query.get("pool"), session_prefix)
 
     reader = await request.multipart()
     part = await reader.next()

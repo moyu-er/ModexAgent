@@ -3,7 +3,7 @@
 """``NodeStateStore`` — lifecycle + version chain + CAS authority for node invocations.
 
 The store is scoped to ONE ``graph_instance_id`` (captured at construction).
-All methods take ``node_name`` only — the ``graph_instance_id`` is implicit.
+All methods take ``node_id`` only — the ``graph_instance_id`` is implicit.
 
 Lifecycle (rule 15: single authority — no parallel ``NodeState`` path):
 
@@ -26,7 +26,7 @@ SQL schema (``node_states`` table):
 
     node_state_id     BIGINT PRIMARY KEY,
     graph_instance_id BIGINT NOT NULL,
-    node_name         TEXT NOT NULL,
+    node_id           TEXT NOT NULL,
     version           INTEGER NOT NULL,
     parent_version    INTEGER,
     invocation_id     BIGINT NOT NULL,
@@ -36,7 +36,7 @@ SQL schema (``node_states`` table):
     suspended         INTEGER NOT NULL DEFAULT 0,
     created_at        INTEGER NOT NULL,
     updated_at        INTEGER NOT NULL,
-    UNIQUE (graph_instance_id, node_name, version)
+    UNIQUE (graph_instance_id, node_id, version)
 
 Implementations:
 
@@ -65,7 +65,7 @@ from .graph_metadata import InvocationContext, NodeInvocationRecord
 _NODE_STATE_TABLE = "node_states"
 _COL_NODE_STATE_ID = "node_state_id"
 _COL_GRAPH_INSTANCE_ID = "graph_instance_id"
-_COL_NODE_NAME = "node_name"
+_COL_NODE_ID = "node_id"
 _COL_VERSION = "version"
 _COL_PARENT_VERSION = "parent_version"
 _COL_STATUS = "status"
@@ -78,7 +78,7 @@ _COL_UPDATED_AT = "updated_at"
 # Columns selected in every query, in order expected by _row_to_record.
 _SELECT_COLUMNS = (
     f"{_COL_NODE_STATE_ID}, {_COL_GRAPH_INSTANCE_ID}, "
-    f"{_COL_NODE_NAME}, {_COL_VERSION}, {_COL_PARENT_VERSION}, "
+    f"{_COL_NODE_ID}, {_COL_VERSION}, {_COL_PARENT_VERSION}, "
     f"{_COL_STATUS}, {_COL_INVOCATION_ID}, {_COL_STATE_JSON}, "
     f"{_COL_SUSPENDED}, {_COL_CREATED_AT}, {_COL_UPDATED_AT}"
 )
@@ -88,7 +88,7 @@ class NodeStateStore(ABC):
     """Lifecycle + version chain + CAS authority for node invocations.
 
     Scoped to ONE ``graph_instance_id`` (captured at construction). All
-    methods take ``node_name`` only.
+    methods take ``node_id`` only.
 
     Rule 15: this is the SINGLE lifecycle authority — no parallel
     ``NodeState`` path. ``Node.run()`` calls these methods directly via
@@ -109,7 +109,7 @@ class NodeStateStore(ABC):
     # ── Lifecycle ───────────────────────────────────────────────────────
 
     @abstractmethod
-    def begin_invocation(self, node_name: str) -> InvocationContext:
+    def begin_invocation(self, node_id: str) -> InvocationContext:
         """Begin a new invocation. INSERT a new RUNNING record.
 
         If a prior non-suspended RUNNING record exists, mark it CRASHED
@@ -155,22 +155,22 @@ class NodeStateStore(ABC):
     # ── Query ───────────────────────────────────────────────────────────
 
     @abstractmethod
-    def load_latest(self, node_name: str) -> NodeInvocationRecord | None:
+    def load_latest(self, node_id: str) -> NodeInvocationRecord | None:
         """Load the latest record for a node (highest version)."""
         ...
 
     @abstractmethod
-    def load_latest_completed(self, node_name: str) -> NodeInvocationRecord | None:
+    def load_latest_completed(self, node_id: str) -> NodeInvocationRecord | None:
         """Load the latest COMPLETED record for a node."""
         ...
 
     @abstractmethod
     def load_by_invocation_id(
-        self, node_name: str, invocation_id: int
+        self, node_id: str, invocation_id: int
     ) -> NodeInvocationRecord | None:
         """Load a record by its ``invocation_id`` within a node's version chain.
 
-        Returns ``None`` if no record for ``node_name`` has the given
+        Returns ``None`` if no record for ``node_id`` has the given
         ``invocation_id``. Used by recovery to check whether a specific
         consuming invocation is COMPLETED (auto-promote delivers).
         """
@@ -179,7 +179,7 @@ class NodeStateStore(ABC):
     @abstractmethod
     def query_versions(
         self,
-        node_name: str,
+        node_id: str,
         status_filter: set[InvocationStatus] | None = None,
     ) -> list[NodeInvocationRecord]:
         """Query versions for a node, optionally filtered by status."""
@@ -187,7 +187,7 @@ class NodeStateStore(ABC):
 
     @abstractmethod
     def list_nodes(self) -> list[str]:
-        """List all node names that have state snapshots."""
+        """List all node IDs that have state snapshots."""
         ...
 
     @abstractmethod
@@ -213,11 +213,11 @@ class NullNodeStateStore(NodeStateStore):
     ``create_null_coordinator``.
     """
 
-    def begin_invocation(self, node_name: str) -> InvocationContext:
+    def begin_invocation(self, node_id: str) -> InvocationContext:
         invocation_id = default_id_generator().generate()
         return InvocationContext(
             invocation_id=invocation_id,
-            node_name=node_name,
+            node_id=node_id,
             version=0,
             parent_version=None,
         )
@@ -237,20 +237,20 @@ class NullNodeStateStore(NodeStateStore):
     def finalize_invocation(self, invocation: InvocationContext) -> None:
         pass
 
-    def load_latest(self, node_name: str) -> NodeInvocationRecord | None:
+    def load_latest(self, node_id: str) -> NodeInvocationRecord | None:
         return None
 
-    def load_latest_completed(self, node_name: str) -> NodeInvocationRecord | None:
+    def load_latest_completed(self, node_id: str) -> NodeInvocationRecord | None:
         return None
 
     def load_by_invocation_id(
-        self, node_name: str, invocation_id: int
+        self, node_id: str, invocation_id: int
     ) -> NodeInvocationRecord | None:
         return None
 
     def query_versions(
         self,
-        node_name: str,
+        node_id: str,
         status_filter: set[InvocationStatus] | None = None,
     ) -> list[NodeInvocationRecord]:
         return []
@@ -271,7 +271,7 @@ class NullNodeStateStore(NodeStateStore):
 class InMemoryNodeStateStore(NodeStateStore):
     """Dict-backed ``NodeStateStore``. Default for tests + single-process runs.
 
-    Stores records in a dict keyed by ``node_name``. Each node has a list
+    Stores records in a dict keyed by ``node_id``. Each node has a list
     of ``NodeInvocationRecord`` ordered by version ascending. Lifecycle
     methods mutate records in place (CAS via status check).
     """
@@ -280,9 +280,9 @@ class InMemoryNodeStateStore(NodeStateStore):
         super().__init__(graph_instance_id)
         self._records: dict[str, list[NodeInvocationRecord]] = {}
 
-    def begin_invocation(self, node_name: str) -> InvocationContext:
+    def begin_invocation(self, node_id: str) -> InvocationContext:
         gid = self._graph_instance_id
-        records = self._records.get(node_name, [])
+        records = self._records.get(node_id, [])
 
         # Orphan cleanup: prior non-suspended RUNNING → CRASHED.
         if records:
@@ -293,7 +293,7 @@ class InMemoryNodeStateStore(NodeStateStore):
                     update={"status": InvocationStatus.CRASHED, "updated_at": ts}
                 )
                 records[-1] = crashed
-                self._records[node_name] = records
+                self._records[node_id] = records
 
         # version = max(all existing versions) + 1.
         version = max((r.version for r in records), default=-1) + 1
@@ -307,7 +307,7 @@ class InMemoryNodeStateStore(NodeStateStore):
         record = NodeInvocationRecord(
             invocation_id=invocation_id,
             graph_instance_id=gid,
-            node_name=node_name,
+            node_id=node_id,
             version=version,
             parent_version=parent_version,
             status=InvocationStatus.RUNNING,
@@ -317,17 +317,17 @@ class InMemoryNodeStateStore(NodeStateStore):
             updated_at=ts,
         )
         records.append(record)
-        self._records[node_name] = records
+        self._records[node_id] = records
 
         return InvocationContext(
             invocation_id=invocation_id,
-            node_name=node_name,
+            node_id=node_id,
             version=version,
             parent_version=parent_version,
         )
 
     def _find_current(self, invocation: InvocationContext) -> NodeInvocationRecord | None:
-        records = self._records.get(invocation.node_name, [])
+        records = self._records.get(invocation.node_id, [])
         for r in records:
             if r.version == invocation.version:
                 return r
@@ -337,11 +337,11 @@ class InMemoryNodeStateStore(NodeStateStore):
         current = self._find_current(invocation)
         if current is None:
             raise InvocationStateError(
-                f"No record found for {invocation.node_name!r} version {invocation.version}."
+                f"No record found for {invocation.node_id!r} version {invocation.version}."
             )
         if current.status != InvocationStatus.RUNNING or current.suspended:
             raise InvocationStateError(
-                f"CAS failed: {invocation.node_name!r} v{invocation.version} "
+                f"CAS failed: {invocation.node_id!r} v{invocation.version} "
                 f"is {current.status.value} (suspended={current.suspended}), "
                 f"expected non-suspended RUNNING."
             )
@@ -353,7 +353,7 @@ class InMemoryNodeStateStore(NodeStateStore):
                 "updated_at": ts,
             }
         )
-        records = self._records[invocation.node_name]
+        records = self._records[invocation.node_id]
         idx = records.index(current)
         records[idx] = updated
 
@@ -361,11 +361,11 @@ class InMemoryNodeStateStore(NodeStateStore):
         current = self._find_current(invocation)
         if current is None:
             raise InvocationStateError(
-                f"No record found for {invocation.node_name!r} version {invocation.version}."
+                f"No record found for {invocation.node_id!r} version {invocation.version}."
             )
         if current.status != InvocationStatus.RUNNING or current.suspended:
             raise InvocationStateError(
-                f"CAS failed: {invocation.node_name!r} v{invocation.version} "
+                f"CAS failed: {invocation.node_id!r} v{invocation.version} "
                 f"is {current.status.value} (suspended={current.suspended}), "
                 f"expected non-suspended RUNNING."
             )
@@ -378,7 +378,7 @@ class InMemoryNodeStateStore(NodeStateStore):
                 "updated_at": ts,
             }
         )
-        records = self._records[invocation.node_name]
+        records = self._records[invocation.node_id]
         idx = records.index(current)
         records[idx] = updated
 
@@ -386,11 +386,11 @@ class InMemoryNodeStateStore(NodeStateStore):
         current = self._find_current(invocation)
         if current is None:
             raise InvocationStateError(
-                f"No record found for {invocation.node_name!r} version {invocation.version}."
+                f"No record found for {invocation.node_id!r} version {invocation.version}."
             )
         if current.status != InvocationStatus.RUNNING or current.suspended:
             raise InvocationStateError(
-                f"CAS failed: {invocation.node_name!r} v{invocation.version} "
+                f"CAS failed: {invocation.node_id!r} v{invocation.version} "
                 f"is {current.status.value} (suspended={current.suspended}), "
                 f"expected non-suspended RUNNING."
             )
@@ -401,7 +401,7 @@ class InMemoryNodeStateStore(NodeStateStore):
                 "updated_at": ts,
             }
         )
-        records = self._records[invocation.node_name]
+        records = self._records[invocation.node_id]
         idx = records.index(current)
         records[idx] = updated
 
@@ -419,7 +419,7 @@ class InMemoryNodeStateStore(NodeStateStore):
                 "updated_at": ts,
             }
         )
-        records = self._records[invocation.node_name]
+        records = self._records[invocation.node_id]
         idx = records.index(current)
         records[idx] = updated
 
@@ -445,27 +445,27 @@ class InMemoryNodeStateStore(NodeStateStore):
                 "updated_at": ts,
             }
         )
-        records = self._records[invocation.node_name]
+        records = self._records[invocation.node_id]
         idx = records.index(current)
         records[idx] = updated
 
-    def load_latest(self, node_name: str) -> NodeInvocationRecord | None:
-        records = self._records.get(node_name, [])
+    def load_latest(self, node_id: str) -> NodeInvocationRecord | None:
+        records = self._records.get(node_id, [])
         if not records:
             return None
         return records[-1]
 
-    def load_latest_completed(self, node_name: str) -> NodeInvocationRecord | None:
-        records = self._records.get(node_name, [])
+    def load_latest_completed(self, node_id: str) -> NodeInvocationRecord | None:
+        records = self._records.get(node_id, [])
         completed = [r for r in records if r.status == InvocationStatus.COMPLETED]
         if not completed:
             return None
         return max(completed, key=lambda r: r.version)
 
     def load_by_invocation_id(
-        self, node_name: str, invocation_id: int
+        self, node_id: str, invocation_id: int
     ) -> NodeInvocationRecord | None:
-        records = self._records.get(node_name, [])
+        records = self._records.get(node_id, [])
         for r in records:
             if r.invocation_id == invocation_id:
                 return r
@@ -473,10 +473,10 @@ class InMemoryNodeStateStore(NodeStateStore):
 
     def query_versions(
         self,
-        node_name: str,
+        node_id: str,
         status_filter: set[InvocationStatus] | None = None,
     ) -> list[NodeInvocationRecord]:
-        records = self._records.get(node_name, [])
+        records = self._records.get(node_id, [])
         filtered = (
             [r for r in records if r.status in status_filter]
             if status_filter is not None
@@ -491,7 +491,7 @@ class InMemoryNodeStateStore(NodeStateStore):
         result: list[NodeInvocationRecord] = []
         for records in self._records.values():
             result.extend(r for r in records if r.status in status_filter)
-        return sorted(result, key=lambda r: (r.node_name, r.version), reverse=True)
+        return sorted(result, key=lambda r: (r.node_id, r.version), reverse=True)
 
     def clear(self) -> None:
         self._records.clear()
@@ -521,8 +521,14 @@ class SqliteNodeStateStore(NodeStateStore):
     def _init_schema(self) -> None:
         """Create the `node_states` table + indexes if they don't exist.
 
+        Detects old-schema tables (missing ``node_id`` column) and rebuilds
+        them from scratch — SQLite ``ALTER TABLE`` cannot remove NOT NULL
+        constraints or change CHECK constraints, so a full rebuild is the
+        only correct path. Safe because there is no production data to
+        preserve.
+
         The DDL matches `001_initial.sql` table 18 (including the `status`
-        CHECK constraint and the ``UNIQUE (graph_instance_id, node_name,
+        CHECK constraint and the ``UNIQUE (graph_instance_id, node_id,
         version)`` constraint). The ``json_valid(state_json)`` CHECK from
         the migration is omitted here — JSON1 may not be compiled in on
         all standalone builds; the migration includes it for workspace DBs
@@ -530,11 +536,16 @@ class SqliteNodeStateStore(NodeStateStore):
         ``SqliteGraphSpecStore`` and ``SqliteDeliverStore``).
         """
         conn = self._conn
+        existing = {
+            row[1] for row in conn.execute(f"PRAGMA table_info({_NODE_STATE_TABLE})").fetchall()
+        }
+        if existing and _COL_NODE_ID not in existing:
+            conn.execute(f"DROP TABLE IF EXISTS {_NODE_STATE_TABLE}")
         conn.execute(
             f"CREATE TABLE IF NOT EXISTS {_NODE_STATE_TABLE} ("
             f"{_COL_NODE_STATE_ID} INTEGER PRIMARY KEY, "
             f"{_COL_GRAPH_INSTANCE_ID} INTEGER NOT NULL, "
-            f"{_COL_NODE_NAME} TEXT NOT NULL, "
+            f"{_COL_NODE_ID} TEXT NOT NULL, "
             f"{_COL_VERSION} INTEGER NOT NULL DEFAULT 0, "
             f"{_COL_PARENT_VERSION} INTEGER, "
             f"{_COL_STATUS} TEXT NOT NULL DEFAULT '{InvocationStatus.RUNNING.value}' "
@@ -549,44 +560,44 @@ class SqliteNodeStateStore(NodeStateStore):
             f"{_COL_SUSPENDED} INTEGER NOT NULL DEFAULT 0, "
             f"{_COL_CREATED_AT} INTEGER NOT NULL, "
             f"{_COL_UPDATED_AT} INTEGER NOT NULL, "
-            f"UNIQUE ({_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_NAME}, {_COL_VERSION})"
+            f"UNIQUE ({_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_ID}, {_COL_VERSION})"
             f")"
         )
         conn.execute(
             f"CREATE INDEX IF NOT EXISTS idx_{_NODE_STATE_TABLE}_latest "
             f"ON {_NODE_STATE_TABLE} "
-            f"({_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_NAME}, {_COL_VERSION} DESC)"
+            f"({_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_ID}, {_COL_VERSION} DESC)"
         )
         conn.execute(
             f"CREATE INDEX IF NOT EXISTS idx_{_NODE_STATE_TABLE}_node "
-            f"ON {_NODE_STATE_TABLE} ({_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_NAME})"
+            f"ON {_NODE_STATE_TABLE} ({_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_ID})"
         )
         conn.execute(
             f"CREATE INDEX IF NOT EXISTS idx_{_NODE_STATE_TABLE}_status "
-            f"ON {_NODE_STATE_TABLE} ({_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_NAME}, {_COL_STATUS})"
+            f"ON {_NODE_STATE_TABLE} ({_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_ID}, {_COL_STATUS})"
         )
         conn.commit()
 
     # ── Lifecycle ───────────────────────────────────────────────────────
 
-    def begin_invocation(self, node_name: str) -> InvocationContext:
+    def begin_invocation(self, node_id: str) -> InvocationContext:
         gid = self._graph_instance_id
         conn = self._conn
 
         # Orphan cleanup: prior non-suspended RUNNING → CRASHED (tolerant CAS).
-        latest = self.load_latest(node_name)
+        latest = self.load_latest(node_id)
         if latest is not None and latest.status == InvocationStatus.RUNNING and not latest.suspended:
             ts = now_ms()
             conn.execute(
                 f"UPDATE {_NODE_STATE_TABLE} "
                 f"SET {_COL_STATUS} = ?, {_COL_STATE_JSON} = ?, {_COL_SUSPENDED} = 0, {_COL_UPDATED_AT} = ? "
-                f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+                f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_ID} = ? "
                 f"AND {_COL_VERSION} = ? AND {_COL_STATUS} = ? AND {_COL_SUSPENDED} = 0",
                 (
                     InvocationStatus.CRASHED.value,
                     json.dumps({}),
                     ts,
-                    gid, node_name, latest.version,
+                    gid, node_id, latest.version,
                     InvocationStatus.RUNNING.value,
                 ),
             )
@@ -595,13 +606,13 @@ class SqliteNodeStateStore(NodeStateStore):
         # version = max(all existing versions) + 1.
         row = conn.execute(
             f"SELECT MAX({_COL_VERSION}) FROM {_NODE_STATE_TABLE} "
-            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ?",
-            (gid, node_name),
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_ID} = ?",
+            (gid, node_id),
         ).fetchone()
         version = (row[0] + 1) if row[0] is not None else 0
 
         # parent_version from load_latest_completed.
-        latest_completed = self.load_latest_completed(node_name)
+        latest_completed = self.load_latest_completed(node_id)
         parent_version = latest_completed.version if latest_completed is not None else None
 
         invocation_id = default_id_generator().generate()
@@ -609,7 +620,7 @@ class SqliteNodeStateStore(NodeStateStore):
         ts = now_ms()
         conn.execute(
             f"INSERT INTO {_NODE_STATE_TABLE} "
-            f"({_COL_NODE_STATE_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_NAME}, "
+            f"({_COL_NODE_STATE_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_ID}, "
             f"{_COL_VERSION}, {_COL_PARENT_VERSION}, {_COL_STATUS}, "
             f"{_COL_INVOCATION_ID}, {_COL_STATE_JSON}, {_COL_SUSPENDED}, "
             f"{_COL_CREATED_AT}, {_COL_UPDATED_AT}) "
@@ -617,7 +628,7 @@ class SqliteNodeStateStore(NodeStateStore):
             (
                 node_state_id,
                 gid,
-                node_name,
+                node_id,
                 version,
                 parent_version,
                 InvocationStatus.RUNNING.value,
@@ -632,7 +643,7 @@ class SqliteNodeStateStore(NodeStateStore):
 
         return InvocationContext(
             invocation_id=invocation_id,
-            node_name=node_name,
+            node_id=node_id,
             version=version,
             parent_version=parent_version,
         )
@@ -691,12 +702,12 @@ class SqliteNodeStateStore(NodeStateStore):
             set_clauses.append(f"{_COL_SUSPENDED} = ?")
             params.append(1 if suspended else 0)
 
-        params.extend([gid, invocation.node_name, invocation.version])
+        params.extend([gid, invocation.node_id, invocation.version])
 
         cursor = conn.execute(
             f"UPDATE {_NODE_STATE_TABLE} "
             f"SET {', '.join(set_clauses)} "
-            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_ID} = ? "
             f"AND {_COL_VERSION} = ? "
             f"AND {_COL_STATUS} = ? AND {_COL_SUSPENDED} = 0",
             (*params, InvocationStatus.RUNNING.value),
@@ -704,11 +715,11 @@ class SqliteNodeStateStore(NodeStateStore):
         conn.commit()
 
         if cursor.rowcount == 0:
-            current = self.load_latest(invocation.node_name)
+            current = self.load_latest(invocation.node_id)
             cur_status = current.status.value if current else "missing"
             cur_suspended = current.suspended if current else False
             raise InvocationStateError(
-                f"CAS failed: {invocation.node_name!r} v{invocation.version} "
+                f"CAS failed: {invocation.node_id!r} v{invocation.version} "
                 f"is {cur_status} (suspended={cur_suspended}), "
                 f"expected non-suspended RUNNING."
             )
@@ -721,14 +732,14 @@ class SqliteNodeStateStore(NodeStateStore):
         conn.execute(
             f"UPDATE {_NODE_STATE_TABLE} "
             f"SET {_COL_STATUS} = ?, {_COL_STATE_JSON} = ?, {_COL_SUSPENDED} = 0, {_COL_UPDATED_AT} = ? "
-            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_ID} = ? "
             f"AND {_COL_VERSION} = ? AND {_COL_STATUS} = ?",
             (
                 InvocationStatus.CRASHED.value,
                 json.dumps({}),
                 ts,
                 gid,
-                invocation.node_name,
+                invocation.node_id,
                 invocation.version,
                 InvocationStatus.RUNNING.value,
             ),
@@ -746,14 +757,14 @@ class SqliteNodeStateStore(NodeStateStore):
         conn.execute(
             f"UPDATE {_NODE_STATE_TABLE} "
             f"SET {_COL_STATUS} = ?, {_COL_STATE_JSON} = ?, {_COL_SUSPENDED} = 0, {_COL_UPDATED_AT} = ? "
-            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_ID} = ? "
             f"AND {_COL_VERSION} = ? AND {_COL_STATUS} = ? AND {_COL_SUSPENDED} = 0",
             (
                 InvocationStatus.CRASHED.value,
                 json.dumps({}),
                 ts,
                 gid,
-                invocation.node_name,
+                invocation.node_id,
                 invocation.version,
                 InvocationStatus.RUNNING.value,
             ),
@@ -762,70 +773,70 @@ class SqliteNodeStateStore(NodeStateStore):
 
     # ── Query ───────────────────────────────────────────────────────────
 
-    def load_latest(self, node_name: str) -> NodeInvocationRecord | None:
+    def load_latest(self, node_id: str) -> NodeInvocationRecord | None:
         gid = self._graph_instance_id
         row = self._conn.execute(
             f"SELECT {_SELECT_COLUMNS} FROM {_NODE_STATE_TABLE} "
-            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_ID} = ? "
             f"ORDER BY {_COL_VERSION} DESC LIMIT 1",
-            (gid, node_name),
+            (gid, node_id),
         ).fetchone()
         return self._row_to_record(row) if row is not None else None
 
-    def load_latest_completed(self, node_name: str) -> NodeInvocationRecord | None:
+    def load_latest_completed(self, node_id: str) -> NodeInvocationRecord | None:
         gid = self._graph_instance_id
         row = self._conn.execute(
             f"SELECT {_SELECT_COLUMNS} FROM {_NODE_STATE_TABLE} "
-            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_ID} = ? "
             f"AND {_COL_STATUS} = ? "
             f"ORDER BY {_COL_VERSION} DESC LIMIT 1",
-            (gid, node_name, InvocationStatus.COMPLETED.value),
+            (gid, node_id, InvocationStatus.COMPLETED.value),
         ).fetchone()
         return self._row_to_record(row) if row is not None else None
 
     def load_by_invocation_id(
-        self, node_name: str, invocation_id: int
+        self, node_id: str, invocation_id: int
     ) -> NodeInvocationRecord | None:
         gid = self._graph_instance_id
         row = self._conn.execute(
             f"SELECT {_SELECT_COLUMNS} FROM {_NODE_STATE_TABLE} "
-            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_ID} = ? "
             f"AND {_COL_INVOCATION_ID} = ? "
             f"ORDER BY {_COL_VERSION} DESC LIMIT 1",
-            (gid, node_name, invocation_id),
+            (gid, node_id, invocation_id),
         ).fetchone()
         return self._row_to_record(row) if row is not None else None
 
     def query_versions(
         self,
-        node_name: str,
+        node_id: str,
         status_filter: set[InvocationStatus] | None = None,
     ) -> list[NodeInvocationRecord]:
         gid = self._graph_instance_id
         if status_filter is None:
             rows = self._conn.execute(
                 f"SELECT {_SELECT_COLUMNS} FROM {_NODE_STATE_TABLE} "
-                f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+                f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_ID} = ? "
                 f"ORDER BY {_COL_VERSION} DESC",
-                (gid, node_name),
+                (gid, node_id),
             ).fetchall()
         else:
             placeholders = ",".join("?" for _ in status_filter)
             rows = self._conn.execute(
                 f"SELECT {_SELECT_COLUMNS} FROM {_NODE_STATE_TABLE} "
-                f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+                f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_ID} = ? "
                 f"AND {_COL_STATUS} IN ({placeholders}) "
                 f"ORDER BY {_COL_VERSION} DESC",
-                (gid, node_name, *[s.value for s in status_filter]),
+                (gid, node_id, *[s.value for s in status_filter]),
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
     def list_nodes(self) -> list[str]:
         gid = self._graph_instance_id
         rows = self._conn.execute(
-            f"SELECT DISTINCT {_COL_NODE_NAME} FROM {_NODE_STATE_TABLE} "
+            f"SELECT DISTINCT {_COL_NODE_ID} FROM {_NODE_STATE_TABLE} "
             f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? "
-            f"ORDER BY {_COL_NODE_NAME}",
+            f"ORDER BY {_COL_NODE_ID}",
             (gid,),
         ).fetchall()
         return [r[0] for r in rows]
@@ -837,7 +848,7 @@ class SqliteNodeStateStore(NodeStateStore):
             f"SELECT {_SELECT_COLUMNS} FROM {_NODE_STATE_TABLE} "
             f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? "
             f"AND {_COL_STATUS} IN ({placeholders}) "
-            f"ORDER BY {_COL_NODE_NAME}, {_COL_VERSION} DESC",
+            f"ORDER BY {_COL_NODE_ID}, {_COL_VERSION} DESC",
             (gid, *[s.value for s in status_filter]),
         ).fetchall()
         return [self._row_to_record(row) for row in rows]
@@ -855,7 +866,7 @@ class SqliteNodeStateStore(NodeStateStore):
         (
             _node_state_id,
             graph_instance_id,
-            node_name,
+            node_id,
             version,
             parent_version,
             status,
@@ -868,7 +879,7 @@ class SqliteNodeStateStore(NodeStateStore):
         return NodeInvocationRecord(
             invocation_id=invocation_id,
             graph_instance_id=graph_instance_id,
-            node_name=node_name,
+            node_id=node_id,
             version=version,
             parent_version=parent_version,
             status=InvocationStatus(status),

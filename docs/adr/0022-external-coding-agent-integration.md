@@ -579,3 +579,27 @@ rollback, cancellation, final reap after forced kill, spawn/close races,
 all-settled multi-child cleanup, repeated close after failure, concurrent
 agent/pool shutdown, failed-owner retention, fallback first-error preservation,
 and real Windows `taskkill /T` grandchild-tree termination.
+
+### Post-Disposition evolution (2026-07-31)
+
+The `agents/external/AGENTS.md` (updated 2026-07-31) documents further
+evolution beyond the Disposition above:
+
+- **`OpenCodeServerManager` singleton** replaced the per-backend warm
+  server model. Both main-agent and subagent external paths now use
+  `PoolScopedBackendProvider` backed by a single `OpenCodeServerManager`
+  instance that manages all `opencode serve` process lifecycles. The
+  per-backend warm server + fallback pattern described above was
+  simplified into this singleton manager.
+- **`_OpenCodeFallbackBackend` deleted** — the fallback path was removed
+  as the singleton manager handles process lifecycle directly.
+- **`SSEUnavailableError` deleted** — no longer needed.
+- **`close_all()` removed** in favor of `lifecycle()` for backend
+  lifecycle management.
+- **Env-var isolation** via `shell.env` plugin + per-session env snapshots
+  added for process isolation.
+- **Child session capture** added (see
+  `docs/design/external-coding-agent-integration/child-session-capture.md`).
+
+See `src/modex_agent/agents/external/AGENTS.md` for the current
+authoritative description.

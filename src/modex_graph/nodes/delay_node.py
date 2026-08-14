@@ -1,7 +1,7 @@
 # ruff: noqa: ANN401
 """`DelayNode` + `DelayNodeFactory` — async delay / rate-limiting node.
 
-Ticket 02 (P2.9): a generic node that sleeps for a configured duration,
+A generic node that sleeps for a configured duration,
 then delivers a tick signal. Useful for rate limiting, polling intervals,
 or pacing between nodes.
 
@@ -41,7 +41,7 @@ class DelayNodeConfig(BaseModel):
 
 
 class DelayNode(Node[Any]):
-    """Async delay / rate-limiting node (ticket 02).
+    """Async delay / rate-limiting node.
 
     `execute()` sleeps for the configured `delay_seconds`, then delivers
     `{"delayed_seconds": <float>}` to the next node. The sleep uses
@@ -76,7 +76,7 @@ class DelayNode(Node[Any]):
 
 
 class DelayNodeFactory(NodeFactory):
-    """Creates `DelayNode` from config (ticket 02).
+    """Creates `DelayNode` from config.
 
     `NodeSpec.config = {"delay_seconds": <float>, "next_node": <str> (optional)}`.
 

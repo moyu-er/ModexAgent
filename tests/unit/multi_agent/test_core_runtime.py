@@ -115,6 +115,9 @@ async def test_agent_pool_session_cap_evicts_lru_after_touching_oldest(any_broke
         agent_factory=MagicMock(),
         retention=SessionRetentionPolicy(max_sessions_per_subagent=2),
     )
+    mock_tree = MagicMock()
+    mock_tree.on_session_evicted = AsyncMock()
+    pool._tree = mock_tree
     pool._agents["worker"] = fake_instance
     try:
         pool._track_session("conv:worker:inv_old", "worker", is_dynamic=True)

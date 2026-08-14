@@ -689,9 +689,9 @@ class TestGlobalScopePath:
         # Verify knowledge directory has no user subdirectory
         knowledge_dir = tmp_path / "mem" / "core"
         assert knowledge_dir.exists(), f"Knowledge dir should exist at {knowledge_dir}"
-        # Default knowledge files (memory.md etc) should be directly in core/
-        assert (knowledge_dir / "memory.md").exists(), (
-            "memory.md should be at core/memory.md, not in a subdirectory"
+        # Default knowledge files (MEMORY.md etc) should be directly in core/
+        assert (knowledge_dir / "MEMORY.md").exists(), (
+            "MEMORY.md should be at core/MEMORY.md, not in a subdirectory"
         )
 
         await registry.close()
@@ -853,7 +853,7 @@ class TestScopePathPersistence:
 
         knowledge_dir = tmp_path / "mem" / "core" / "user-xyz"
         assert knowledge_dir.exists(), f"Knowledge dir missing: {knowledge_dir}"
-        assert (knowledge_dir / "memory.md").exists(), "memory.md missing"
+        assert (knowledge_dir / "MEMORY.md").exists(), "MEMORY.md missing"
 
         await registry.close()
 
@@ -1011,7 +1011,7 @@ class TestScopeFlexibility:
 
         knowledge_dir = tmp_path / "mem" / "core" / "conv-abc.main"
         assert knowledge_dir.exists(), f"SessionScope knowledge: {knowledge_dir}"
-        assert (knowledge_dir / "memory.md").exists()
+        assert (knowledge_dir / "MEMORY.md").exists()
 
         await registry.close()
 

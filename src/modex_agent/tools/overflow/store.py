@@ -40,25 +40,6 @@ class ToolOverflowStore(ABC):
         pass
 
     @abstractmethod
-    async def read_chunk(
-        self,
-        session_id: str,
-        tool_call_id: str,
-        chunk_index: int,
-    ) -> str | None:
-        """Read a single full chunk by index.
-
-        Args:
-            session_id: The session identifier.
-            tool_call_id: The unique tool call identifier.
-            chunk_index: 1-based chunk index.
-
-        Returns:
-            The raw chunk content, or None if not found.
-        """
-        pass
-
-    @abstractmethod
     async def read_metadata(
         self,
         session_id: str,

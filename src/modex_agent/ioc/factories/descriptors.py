@@ -10,7 +10,6 @@ imports — :func:`build_session_only_memory` and :data:`DEFAULT_SYSTEM_PROMPT`.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -37,20 +36,12 @@ def build_session_only_memory(
     system_prompt: str = "",
     pruned_manager: Any | None = None,
     output_base_dir: Path | None = None,
-    parent_prompt_lookup: Callable[[str], Awaitable[str | None]] | None = None,
     fork_context_spec: ForkContextSpec | None = None,
     roles: list[str] | None = None,
     store_registry: MemoryStoreRegistry | None = None,
     comm_kind: AgentCommKind | None = None,
 ) -> MemorySystemContextManager:
-    """Create a session-only memory system for a subagent.
-
-    ``parent_prompt_lookup`` / ``fork_context_spec`` wire the per-invocation
-    APPEND/FORK prompt providers (subagent-only). Both default to None — normal
-    agents skip the providers. The lookup takes the parent session id (supplied
-    per turn via runtime_info) and resolves the parent's prompt from the
-    in-memory pool — it never reads a session store.
-    """
+    """Create a session-only memory system for a subagent."""
     layer_config = MemoryLayerConfigSet(
         session=SessionMemoryConfig(),
         archive=None,
@@ -83,7 +74,6 @@ def build_session_only_memory(
         base_system_prompt=system_prompt,
         injection_policy=RestrictedInjectionPolicy(),
         output_base_dir=output_base_dir,
-        parent_prompt_lookup=parent_prompt_lookup,
         fork_context_spec=fork_context_spec,
         roles=roles,
         comm_kind=comm_kind,

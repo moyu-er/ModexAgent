@@ -19,10 +19,10 @@ override individual hooks (`normalize_invocation_id`, `build_session`,
 
 | File | Description |
 |------|-------------|
-| `base.py` | `SendStrategy` ABC + `SendDeps`/`SendRequest` frozen dataclasses + `SendStrategyKind` StrEnum. The `execute` template method (normalize → session → register → envelope → deliver → build_result). Shared helpers: `_resolve_source`, `_deliver` (bus or broker fallback), `_subagent_runtime_dir`/`_subagent_trace_dir`. |
+| `base.py` | `SendStrategy` ABC + `SendDeps`/`SendRequest` frozen dataclasses + `SendStrategyKind` StrEnum. The `execute` template method (normalize → session → register → envelope → deliver → build_result). Shared helpers: `_resolve_source`, `_deliver` (tree.deliver — converged single path), `_subagent_runtime_dir`/`_subagent_trace_dir`. |
 | `subagent_dispatch.py` | `SubagentDispatchStrategy` — NORMAL→SUBAGENT. Mints fresh invocation_id when none provided, creates task-scoped subagent session (`create_with_prefix(prefix=invocation_id, parent=sender)`), builds `TASK_REQUEST` envelope, surfaces invocation_id in ack, registers session in sender's `SessionRegistry`. `build_result` selects ack field shape per `req.target.execution_strategy` (ADR-0025 D5 runtime per-target site): native targets get trace/output paths appended; external targets (ADR-0027) get a trimmed result without them. |
 | `parent_reply.py` | `ParentReplyStrategy` — SUBAGENT→parent NORMAL. Reuses parent session (via `parent_session_id`), builds `AGENT_MESSAGE` envelope, hides invocation_id from ack. Fallback for in-pool NORMAL→NORMAL (effectively unreachable in v1 — each pool has one main agent). |
-| `peer_normal.py` | `PeerNormalStrategy` — NORMAL→peer-NORMAL cross-pool (ADR-0019). Reuses sender's session prefix as receiver's prefix (root session, no parent), hides invocation_id from ack and XML, delivers to `target.bus_ref` (peer pool's bus) with fallback to local bus, uses `build_agent_comm_message` with `SourceLabel.PEER_AGENT` + `reply_contract` block, marks result `is_peer_send=True`. |
+| `peer_normal.py` | `PeerNormalStrategy` — NORMAL→peer-NORMAL cross-pool (ADR-0019). Reuses sender's session prefix as receiver's prefix (root session, no parent), hides invocation_id from ack and XML, delivers to `target.tree_ref` (peer pool's tree) with fallback to `self._deps.tree`, uses `build_agent_comm_message` with `SourceLabel.PEER_AGENT` + `reply_contract` block, marks result `is_peer_send=True`. |
 | `__init__.py` | Re-exports all public types. |
 
 ## SendStrategy Contract
@@ -58,14 +58,14 @@ class SendStrategy(ABC):
 | Aspect | SubagentDispatch | ParentReply | PeerNormal |
 |---|---|---|---|
 | Sender kind | NORMAL | SUBAGENT | NORMAL |
-| Target kind | SUBAGENT | NORMAL | NORMAL (with `bus_ref`) |
+| Target kind | SUBAGENT | NORMAL | NORMAL (with `tree_ref`) |
 | Session | fresh `prefix=invocation_id`, parent=sender | reuse `parent_session_id` | `prefix=sender_prefix`, no parent (root) |
 | Register session | True (sender's pool) | False | False (receiver's poller registers) |
 | invocation_id in ack | surfaced | hidden (None) | hidden (None) |
 | invocation_id in message | surfaced | hidden | hidden |
 | message_type | `TASK_REQUEST` | `AGENT_MESSAGE` | `AGENT_MESSAGE` |
 | Message builder | `build_agent_comm_message` (AGENT) | `build_agent_comm_message` (AGENT) | `build_agent_comm_message` (PEER_AGENT + reply_contract) |
-| Delivery | local bus | local bus | `target.bus_ref` (fallback: local bus) |
+| Delivery | tree.deliver | tree.deliver | `target.tree_ref` (fallback: `self._deps.tree`) |
 | Result flags | `created_new_task`, trace/output paths | — | `is_peer_send=True` |
 
 ## For AI Agents
@@ -95,8 +95,8 @@ class SendStrategy(ABC):
 - `SendRequest` is the input bundle (target, content, invocation_id, context).
 - `_resolve_source(req)` reads `context.session.agent_name` with fallback to
   `deps.source`.
-- `_deliver(env)` is the default delivery: `bus.send` when wired, else
-  `broker.send_to` fallback. PeerNormal overrides `deliver` to use `target.bus_ref`.
+- `_deliver(env)` is the default delivery: `tree.deliver` (converged — single
+  path, no bus/broker fallback). PeerNormal overrides `deliver` to use `target.tree_ref`.
 
 ## Dependencies
 
@@ -111,8 +111,6 @@ class SendStrategy(ABC):
 - `modex_agent.core.agent` — `AgentCommKind`, `AgentContext`
 - `modex_agent.core.session_id` — `SessionIdFactory`, `SessionInfo`
 - `modex_agent.core.session_registry` — `SessionRegistry`
-- `modex_agent.messaging.broker` — `MessageBroker`
-- `modex_agent.multi_agent.bus` — `AgentMessageBus`
 - `modex_agent.multi_agent.workspace_paths` — `WorkspacePathResolver`
 
 <!-- MANUAL -->

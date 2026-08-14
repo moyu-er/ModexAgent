@@ -95,7 +95,7 @@ class AstGrepReplaceTool(Tool):
                 lines: list[str] = [f"--- {file_path.name}"]
                 old_lines = source.split("\n")
                 new_lines = new_source.split("\n")
-                for i, (old, new) in enumerate(zip(old_lines, new_lines)):
+                for _i, (old, new) in enumerate(zip(old_lines, new_lines, strict=False)):
                     if old != new:
                         lines.append(f"- {old}")
                         lines.append(f"+ {new}")

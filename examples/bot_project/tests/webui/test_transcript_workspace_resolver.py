@@ -16,18 +16,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import tempfile
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.emitter import CompositeEmitter, WebBotEmitter
 from bot.webui.events import AssistantTextEvent
-from modex_agent.core.emitter import EmitterConfig
-from modex_agent.workspace.runtime import bind_workspace_root, is_workspace_root_bound
+
+from modex_agent.workspace.runtime import is_workspace_root_bound
 
 _DATA_DIR_NAME = ".modex"
 
@@ -36,9 +34,7 @@ _DATA_DIR_NAME = ".modex"
 
 
 def _build_store() -> WorkspaceScopedTranscriptStore:
-    store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
-    store.set_agent_pool_map({"main": "main"})
-    return store
+    return WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
 
 
 def _event(sid: str = "conv.main") -> AssistantTextEvent:
@@ -133,7 +129,7 @@ async def test_emitter_with_provider_writes_to_cell_workspace(
 
     transcript = sessions_a / "main" / "conv.main.jsonl"
     assert transcript.exists(), (
-        f"emitter with provider must write under sessions_a, not cwd"
+        "emitter with provider must write under sessions_a, not cwd"
     )
 
 

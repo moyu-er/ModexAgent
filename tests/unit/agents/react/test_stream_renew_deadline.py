@@ -3,7 +3,9 @@
 Verifies that:
 1. renew_dispatch_deadline() is called on every content/reasoning delta
 2. The default renew amount is 3.0 seconds (DispatchDeadline.DEFAULT_RENEW_SECONDS)
-3. The hard ceiling (DEFAULT_MAX_TOTAL_SECONDS = 600s) caps repeated renewals
+3. The sliding ceiling (DEFAULT_MAX_AHEAD_SECONDS = 1200s) caps each renew's
+   forward reach, but slides forward with each renew — so continuous activity
+   can keep the turn alive indefinitely.
 4. Both _stream_with_control and _stream_plain paths renew per-chunk
 """
 
@@ -81,8 +83,8 @@ class _FakeEmitter:
 class _RenewCountingDeadline(DispatchDeadline):
     """Wraps DispatchDeadline to count renew() calls and their arguments."""
 
-    def __init__(self, initial_timeout: float, *, max_total_seconds: float | None = None):
-        super().__init__(initial_timeout, max_total_seconds=max_total_seconds)
+    def __init__(self, initial_timeout: float, *, max_ahead_seconds: float | None = None):
+        super().__init__(initial_timeout, max_ahead_seconds=max_ahead_seconds)
         self.renew_count = 0
         self.renew_args: list[float] = []
 
@@ -127,8 +129,8 @@ class TestDispatchDeadlineDefaults:
     def test_default_renew_seconds_is_3(self):
         assert DispatchDeadline.DEFAULT_RENEW_SECONDS == 3.0
 
-    def test_default_max_total_seconds_is_600(self):
-        assert DispatchDeadline.DEFAULT_MAX_TOTAL_SECONDS == 600.0
+    def test_default_max_ahead_seconds_is_1200(self):
+        assert DispatchDeadline.DEFAULT_MAX_AHEAD_SECONDS == 1200.0
 
     def test_renew_dispatch_deadline_noop_when_unset(self):
         assert current_dispatch_deadline.get() is None
@@ -145,7 +147,7 @@ class TestPerChunkRenewalStreamWithControl:
         provider = _TrackingStreamProvider(["a", "b", "c"])
         ctx.runtime.services.interceptors = _PassthroughInterceptorChain()
 
-        deadline = _RenewCountingDeadline(initial_timeout=0.01, max_total_seconds=600.0)
+        deadline = _RenewCountingDeadline(initial_timeout=0.01, max_ahead_seconds=600.0)
         token = current_dispatch_deadline.set(deadline)
 
         try:
@@ -166,7 +168,7 @@ class TestPerChunkRenewalStreamWithControl:
         )
         ctx.runtime.services.interceptors = _PassthroughInterceptorChain()
 
-        deadline = _RenewCountingDeadline(initial_timeout=0.01, max_total_seconds=600.0)
+        deadline = _RenewCountingDeadline(initial_timeout=0.01, max_ahead_seconds=600.0)
         token = current_dispatch_deadline.set(deadline)
 
         try:
@@ -184,7 +186,7 @@ class TestPerChunkRenewalStreamWithControl:
         provider = _TrackingStreamProvider(["x"])
         ctx.runtime.services.interceptors = _PassthroughInterceptorChain()
 
-        deadline = DispatchDeadline(initial_timeout=0.0, max_total_seconds=600.0)
+        deadline = DispatchDeadline(initial_timeout=0.0, max_ahead_seconds=600.0)
         token = current_dispatch_deadline.set(deadline)
 
         try:
@@ -202,7 +204,7 @@ class TestPerChunkRenewalStreamWithControl:
         provider = _TrackingStreamProvider(["a", "b", "c"], delay=0.02)
         ctx.runtime.services.interceptors = _PassthroughInterceptorChain()
 
-        deadline = DispatchDeadline(initial_timeout=0.05, max_total_seconds=600.0)
+        deadline = DispatchDeadline(initial_timeout=0.05, max_ahead_seconds=600.0)
         token = current_dispatch_deadline.set(deadline)
 
         try:
@@ -221,7 +223,7 @@ class TestPerChunkRenewalStreamPlain:
         ctx.emitter = _FakeEmitter()
         provider = _TrackingStreamProvider(["a", "b"])
 
-        deadline = _RenewCountingDeadline(initial_timeout=0.01, max_total_seconds=600.0)
+        deadline = _RenewCountingDeadline(initial_timeout=0.01, max_ahead_seconds=600.0)
         token = current_dispatch_deadline.set(deadline)
 
         try:
@@ -241,7 +243,7 @@ class TestPerChunkRenewalStreamPlain:
             reasoning_deltas=["think1", "think2"],
         )
 
-        deadline = _RenewCountingDeadline(initial_timeout=0.01, max_total_seconds=600.0)
+        deadline = _RenewCountingDeadline(initial_timeout=0.01, max_ahead_seconds=600.0)
         token = current_dispatch_deadline.set(deadline)
 
         try:
@@ -265,7 +267,7 @@ class TestCeilingDuringStreaming:
 
         deadline = DispatchDeadline(
             initial_timeout=0.5,
-            max_total_seconds=1.0,
+            max_ahead_seconds=1.0,
         )
         token = current_dispatch_deadline.set(deadline)
 
@@ -285,7 +287,7 @@ class TestCeilingDuringStreaming:
 
         deadline = DispatchDeadline(
             initial_timeout=0.05,
-            max_total_seconds=0.3,
+            max_ahead_seconds=0.3,
         )
         token = current_dispatch_deadline.set(deadline)
 
@@ -299,7 +301,7 @@ class TestCeilingDuringStreaming:
 
 class TestRenewDispatchDeadlineHelper:
     def test_renew_with_default_3s(self):
-        d = DispatchDeadline(initial_timeout=0.0, max_total_seconds=600.0)
+        d = DispatchDeadline(initial_timeout=0.0, max_ahead_seconds=600.0)
         token = current_dispatch_deadline.set(d)
         try:
             time.sleep(0.01)
@@ -311,7 +313,7 @@ class TestRenewDispatchDeadlineHelper:
             current_dispatch_deadline.reset(token)
 
     def test_renew_with_explicit_seconds(self):
-        d = DispatchDeadline(initial_timeout=0.0, max_total_seconds=600.0)
+        d = DispatchDeadline(initial_timeout=0.0, max_ahead_seconds=600.0)
         token = current_dispatch_deadline.set(d)
         try:
             time.sleep(0.01)

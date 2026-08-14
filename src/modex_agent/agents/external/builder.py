@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from ...core.session_id import SessionIdFactory
     from ...core.session_registry import SessionRegistry
     from ...multi_agent.descriptor import AgentDescriptor
+    from ...multi_agent.session_tree.session_binding import SessionBindingStore
     from ...pipeline.adapters import OutputAdapter
     from .child_discovery import ChildSessionDiscoverySink
     from .events import ExternalEvent
@@ -256,6 +257,7 @@ class ExternalAgentBuilder:
         control_channel: Any | None = None,
         output_adapter: Any | None = None,
         context_manager: Any | None = None,
+        session_binding_store: SessionBindingStore | None = None,
     ) -> Any:
         """Assemble broker I/O + emitter + turn runner + pipeline + instance.
 
@@ -311,6 +313,7 @@ class ExternalAgentBuilder:
             on_session_end=None,
             safety=safety or RuntimeSafetyPolicy(),
             hook_runner=hook_runner,
+            session_binding_store=session_binding_store,
         )
 
         pipeline = AgentPipeline(

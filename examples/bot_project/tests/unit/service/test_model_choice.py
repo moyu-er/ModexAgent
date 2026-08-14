@@ -74,7 +74,7 @@ async def test_hook_sets_ctxvar_from_registry(tmp_path: Path) -> None:
     reg.set("sessX", m1)
     current_model_choice.set(None)
     hook = ModelChoiceBindHook(cfg, reg)
-    await hook.before_turn(_ctx("sessX"))
+    await hook.start_node_turn(_ctx("sessX"))
     assert current_model_choice.get() is m1
 
 
@@ -84,7 +84,7 @@ async def test_hook_falls_back_to_default_when_absent(tmp_path: Path) -> None:
     reg = ModelChoiceRegistry()
     current_model_choice.set(None)
     hook = ModelChoiceBindHook(cfg, reg)
-    await hook.before_turn(_ctx("unknown"))
+    await hook.start_node_turn(_ctx("unknown"))
     assert current_model_choice.get() == cfg.default_resolved()
 
 
@@ -94,5 +94,5 @@ async def test_hook_overrides_model_info(tmp_path: Path) -> None:
     reg = ModelChoiceRegistry()
     services = SimpleNamespace(model_info=None)
     hook = ModelChoiceBindHook(cfg, reg)
-    await hook.before_turn(_ctx("s", services=services))
+    await hook.start_node_turn(_ctx("s", services=services))
     assert services.model_info is not None

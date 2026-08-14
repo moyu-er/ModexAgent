@@ -47,8 +47,7 @@ from bot.webui.transcript_store import (
     ResilientTranscriptStore,
     TranscriptStore,
 )
-from bot.webui.types import WorkspaceIndex
-from modex_agent.core.session_id import agent_of, session_id_prefix_of
+from bot.webui.types import _DEFAULT_AGENT_NAME, WorkspaceIndex
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import is_workspace_root_bound, resolve_workspace_root
 
@@ -56,7 +55,7 @@ WorkspaceTranscriptStoreResolver = Callable[[Path], Awaitable[TranscriptStore]]
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_POOL: str = "main"
+_DEFAULT_POOL: str = _DEFAULT_AGENT_NAME
 
 
 def _pool_sanitized(pool: str) -> str:
@@ -67,30 +66,11 @@ def _pool_sanitized(pool: str) -> str:
     return sanitized.strip("_") or _DEFAULT_POOL
 
 
-def _agent_of(session_id: str) -> str:
-    """Return the agent segment (2nd) of a full session id.
-
-    ``{conv}.{agent}[.{invocation_id}]`` → ``agent``.  Defaults to ``main``
-    for malformed ids without an agent segment.
-    """
-    return agent_of(session_id, default=_DEFAULT_POOL)
-
-
-def _conversation_prefix(session_id: str) -> str:
-    """Return the conversation prefix (segment before the first ``.``)."""
-    return session_id_prefix_of(session_id)
-
-
 class _FileWorkspaceTranscriptStore(TranscriptStore):
     """One workspace's pool-partitioned JSONL transcript adapter."""
 
-    def __init__(
-        self,
-        sessions_dir: Path,
-        pool_for_agent: Callable[[str], str],
-    ) -> None:
+    def __init__(self, sessions_dir: Path) -> None:
         self._sessions_dir = sessions_dir
-        self._pool_for_agent = pool_for_agent
 
     def _store_for(self, pool: str) -> TranscriptStore:
         return ResilientTranscriptStore(
@@ -107,7 +87,7 @@ class _FileWorkspaceTranscriptStore(TranscriptStore):
             store = self._store_for(pool)
             if session_id in await store.list_sessions():
                 return store
-        return self._store_for(self._pool_for_agent(_agent_of(session_id)))
+        return self._store_for(_DEFAULT_POOL)
 
     async def append(
         self,
@@ -116,7 +96,7 @@ class _FileWorkspaceTranscriptStore(TranscriptStore):
         *,
         pool: str = _DEFAULT_POOL,
     ) -> None:
-        owner = pool if pool != _DEFAULT_POOL else self._pool_for_agent(_agent_of(session_id))
+        owner = pool
         await self._store_for(owner).append(session_id, event, pool=_pool_sanitized(owner))
 
     async def load(self, session_id: str) -> list[ServerEvent]:
@@ -187,8 +167,6 @@ class WorkspaceScopedTranscriptStore(TranscriptStore, WorkspaceIndex):
         store_resolver: WorkspaceTranscriptStoreResolver | None = None,
     ) -> None:
         self._data_dir_name: str = data_dir_name
-        # agent_name -> pool_name (main agents); set by the service after pools built.
-        self._agent_pool_map: dict[str, str] = {}
         self._store_resolver = store_resolver
         self._workspace_stores: dict[Path, TranscriptStore] = {}
         self._inflight: dict[Path, asyncio.Task[TranscriptStore]] = {}
@@ -230,7 +208,7 @@ class WorkspaceScopedTranscriptStore(TranscriptStore, WorkspaceIndex):
             store = (
                 await resolver(sessions_dir)
                 if resolver is not None
-                else _FileWorkspaceTranscriptStore(sessions_dir, self._pool_for_agent)
+                else _FileWorkspaceTranscriptStore(sessions_dir)
             )
             if self._generations.get(sessions_dir, 0) == generation:
                 self._workspace_stores[sessions_dir] = store
@@ -242,12 +220,6 @@ class WorkspaceScopedTranscriptStore(TranscriptStore, WorkspaceIndex):
 
     # ------------------------------------------------------------------
     # Configuration
-    # ------------------------------------------------------------------
-
-    def set_agent_pool_map(self, mapping: dict[str, str]) -> None:
-        """Set agent_name -> pool_name mapping (main agents)."""
-        self._agent_pool_map = dict(mapping)
-
     # ------------------------------------------------------------------
     # Directory resolution
     # ------------------------------------------------------------------
@@ -270,24 +242,6 @@ class WorkspaceScopedTranscriptStore(TranscriptStore, WorkspaceIndex):
         should pass an explicit ``sessions_dir`` to the read methods instead.
         """
         return self._ctxvar_sessions_dir()
-
-    def _pool_for_agent(self, agent: str) -> str:
-        """Resolve the pool for an agent from the configured map.
-
-        The map (set by the service from pool configs + subagent templates)
-        covers main agents, resident subagents, and dynamic-subagent template
-        types.  Dynamic instances named ``{type}-{id}`` match by prefix.
-        Unknown agents default to the main pool.
-        """
-        if agent in self._agent_pool_map:
-            return self._agent_pool_map[agent]
-        # Dynamic subagent: "{template_type}-{invocation_id}".
-        for tmpl_type, pool in self._agent_pool_map.items():
-            if "-" in tmpl_type:
-                continue
-            if agent.startswith(f"{tmpl_type}-"):
-                return pool
-        return _DEFAULT_POOL
 
     # ------------------------------------------------------------------
     # TranscriptStore interface
@@ -319,11 +273,10 @@ class WorkspaceScopedTranscriptStore(TranscriptStore, WorkspaceIndex):
                     resolve_workspace_root(),
                 )
             resolved = self._ctxvar_sessions_dir()
-        pool_key = pool if pool != _DEFAULT_POOL else self._pool_for_agent(_agent_of(session_id))
         await (await self._workspace_store(resolved)).append(
             session_id,
             event,
-            pool=_pool_sanitized(pool_key),
+            pool=_pool_sanitized(pool),
         )
 
     async def load(self, session_id: str, sessions_dir: Path | None = None) -> list[ServerEvent]:

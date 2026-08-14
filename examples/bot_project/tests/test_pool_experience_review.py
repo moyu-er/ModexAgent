@@ -18,8 +18,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.message import ChatMessage
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import MessageRole
 from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
+from modex_agent.memory.core.system import MemorySystem
 
 
 class TestExperienceReviewHookExecution:
@@ -115,8 +118,8 @@ class TestExperienceReviewHookExecution:
             )
 
     @pytest.mark.asyncio
-    async def test_experience_review_hook_after_turn_logs_info(self, tmp_path: Path) -> None:
-        """ExperienceReviewHook.after_turn must log INFO when triggering review."""
+    async def test_experience_review_hook_after_graph_logs_info(self, tmp_path: Path) -> None:
+        """ExperienceReviewHook.after_graph must log INFO when triggering review."""
         from modex_agent.agents.experience.review_agent import ExperienceReviewAgent
         from modex_agent.core.constants import StopReason
         from modex_agent.core.emitter import AgentResult
@@ -129,9 +132,14 @@ class TestExperienceReviewHookExecution:
 
         review_agent = MagicMock(spec=ExperienceReviewAgent)
         review_agent.review = AsyncMock(return_value=True)
+        memory_system = MagicMock(spec=MemorySystem)
+        memory_system.get_full_history = AsyncMock(
+            return_value=[ChatMessage(role=MessageRole.USER, content="full history")]
+        )
 
         hook = ExperienceReviewHook(
             review_agent=review_agent,
+            memory_system=memory_system,
             experience_dir=exp_dir,
             meta_store=meta,
             min_messages=2,
@@ -140,6 +148,7 @@ class TestExperienceReviewHookExecution:
         hook._turn_counter = 10
 
         ctx = MagicMock()
+        ctx.session = SessionInfo.from_str("pool-review.main")
         ctx.history = ListMessageHistory(
             [
                 {"role": "user", "content": "hello"},
@@ -164,7 +173,7 @@ class TestExperienceReviewHookExecution:
         logger.addHandler(handler)
 
         try:
-            await hook.after_turn(ctx, result)
+            await hook.after_graph(ctx, result)
             await asyncio.sleep(0.15)
         finally:
             logger.removeHandler(handler)

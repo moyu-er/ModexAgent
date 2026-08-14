@@ -14,7 +14,7 @@ from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook import HookErrorPolicy, HookPayload, HookPoint, HookRunner, HookSpec
-from modex_agent.hook.abc import FinallyTurnHook
+from modex_agent.hook.abc import FinallyGraphHook
 from modex_agent.hook.builtin.training_data import TRAINING_RELEVANT_ATTR, TrainingDataHook
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.address import AgentAddress
@@ -46,7 +46,7 @@ class _RecordingOtelStore(OtelSpanTraceStore):
     """In-memory OtelSpanTraceStore: records every save_span and answers queries.
 
     ``seed()`` pre-populates spans (used to simulate prior chat spans
-    being visible to the hook at finally_turn time).
+    being visible to the hook at finally_graph time).
     """
 
     def __init__(self) -> None:
@@ -139,7 +139,7 @@ async def _fire(
     result: AgentResult | None,
 ) -> None:
     payload = HookPayload(data={"result": result})
-    await _runner(hook).dispatch(HookPoint.FINALLY_TURN, ctx, payload)
+    await _runner(hook).dispatch(HookPoint.FINALLY_GRAPH, ctx, payload)
 
 
 def _chat_span(
@@ -544,9 +544,9 @@ async def test_factory_passes_max_iterations_and_max_tokens_to_hook() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_training_data_hook_is_finally_turn_hook() -> None:
+def test_training_data_hook_is_finally_graph_hook() -> None:
     hook = TrainingDataHook()
-    assert isinstance(hook, FinallyTurnHook)
+    assert isinstance(hook, FinallyGraphHook)
     assert hook.name == "training_data"
 
 

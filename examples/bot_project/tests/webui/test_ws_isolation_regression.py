@@ -26,16 +26,18 @@ from bot.webui.events import UserMessageEvent, _unwrap_envelope
 from bot.webui.server import WebUIServer
 
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
+from modex_agent.multi_agent.pool_router import PoolSessionStore
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
 
 _DATA_DIR_NAME = ".modex"
 
 
-def _build_server(home: Path):
+def _build_server(
+    home: Path,
+) -> tuple[WebUIServer, WorkspaceScopedTranscriptStore, PoolSessionStore]:
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
-    store.set_agent_pool_map({"main": "main", "coding": "coding"})
     home_sessions_dir = WorkspacePaths(root=home / _DATA_DIR_NAME).sessions_dir
     server = WebUIServer(
         input_adapter,
@@ -46,13 +48,15 @@ def _build_server(home: Path):
     )
     server.set_workspace_index(store)
     server.set_data_dir_name(_DATA_DIR_NAME)
-    server.set_agent_pool_map({"main": "main", "coding": "coding"})
     server.set_pool_agent_names(["main", "coding"])
     server.set_session_factory(SessionIdFactory())
-    agent_pool_map = {"main": "main", "coding": "coding"}
+    routing_store = PoolSessionStore(data_dir=home)
+    server.set_pool_switch_callback(routing_store.set_pool)
+    server.set_pool_resolver(routing_store.get_pool)
+    pool_by_agent = {"main": "main", "coding": "coding"}
 
     def _pool_resolver(s: SessionInfo) -> str:
-        return agent_pool_map.get(s.agent_name, "main")
+        return pool_by_agent.get(s.agent_name, "main")
 
     async def session_store_factory(index_dir: Path) -> WorkspacePoolSessionStore:
         return WorkspacePoolSessionStore(
@@ -61,10 +65,15 @@ def _build_server(home: Path):
         )
 
     server.set_session_store_factory(session_store_factory)
-    return server, store
+    return server, store, routing_store
 
 
-async def _seed(store, ws_root: Path, session_id: str, content: str) -> None:
+async def _seed(
+    store: WorkspaceScopedTranscriptStore,
+    ws_root: Path,
+    session_id: str,
+    content: str,
+) -> None:
     """Append a user message under *ws_root* (routes via the ctxvar root)."""
     with bind_workspace_root(ws_root):
         await store.append(
@@ -81,10 +90,12 @@ async def test_home_does_not_leak_other_ws_sessions() -> None:
         home.mkdir()
         ws_a = Path(tmp) / "ws_a"
         ws_a.mkdir()
-        server, store = _build_server(home)
+        server, store, routing_store = _build_server(home)
 
         sid_home = "convH.main"
         sid_a = "convA.main"
+        routing_store.set_pool("convH", "main")
+        routing_store.set_pool("convA", "main")
         await _seed(store, home, sid_home, "msg in home")
         await _seed(store, ws_a, sid_a, "msg in ws_a")
 
@@ -122,7 +133,7 @@ async def test_message_roundtrip_with_ws() -> None:
         home.mkdir()
         ws_a = Path(tmp) / "ws_a"
         ws_a.mkdir()
-        server, store = _build_server(home)
+        server, store, _ = _build_server(home)
 
         sid_a = "convA.main"
         await _seed(store, ws_a, sid_a, "hello from ws_a")
@@ -151,7 +162,7 @@ async def test_message_lost_without_ws_frontend_behaviour() -> None:
         home.mkdir()
         ws_a = Path(tmp) / "ws_a"
         ws_a.mkdir()
-        server, store = _build_server(home)
+        server, store, _ = _build_server(home)
 
         sid_a = "convA.main"
         await _seed(store, ws_a, sid_a, "hello from ws_a")
@@ -191,12 +202,15 @@ async def test_send_message_then_attach_under_ws_finds_history() -> None:
         home.mkdir()
         ws_a = Path(tmp) / "ws_a"
         ws_a.mkdir()
-        server, store = _build_server(home)
+        server, store, routing_store = _build_server(home)
         from tests.webui._pipeline_fixture import attach_default_pipeline
 
         attach_default_pipeline(
-            server, store, server._input, workspace_root=home,
-            agent_pool_map={"main": "main", "coding": "coding"},
+            server,
+            store,
+            server._input,
+            pool_session_store=routing_store,
+            workspace_root=home,
         )
 
         client = TestClient(TestServer(server.app))
@@ -249,13 +263,19 @@ async def test_send_message_then_attach_under_ws_finds_history() -> None:
             await client.close()
 
 
-async def _seed_for_pool(store, ws_root: Path, session_id: str, content: str) -> None:
+async def _seed_for_pool(
+    store: WorkspaceScopedTranscriptStore,
+    ws_root: Path,
+    session_id: str,
+    content: str,
+) -> None:
     """Append a user message for a specific agent under *ws_root*."""
     agent_name = session_id.split(".")[1] if "." in session_id else "main"
     with bind_workspace_root(ws_root):
         await store.append(
             session_id,
             UserMessageEvent(session_id=session_id, agent_name=agent_name, content=content),
+            pool=agent_name,
         )
 
 
@@ -270,7 +290,7 @@ async def test_get_messages_does_not_leak_across_pools() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         home = Path(tmp) / "home"
         home.mkdir()
-        server, store = _build_server(home)
+        server, store, _ = _build_server(home)
 
         conv_prefix = "convA"
         sid_main = f"{conv_prefix}.main"
@@ -283,7 +303,10 @@ async def test_get_messages_does_not_leak_across_pools() -> None:
         await client.start_server()
         try:
             main_events = await (
-                await client.get(f"/api/sessions/{sid_main}/messages")
+                await client.get(
+                    f"/api/sessions/{sid_main}/messages",
+                    params={"pool": "main"},
+                )
             ).json()
             main_msgs = [e for e in main_events if e.get("event") == "user_message"]
             main_contents = {e.get("content", "") for e in main_msgs}
@@ -295,7 +318,10 @@ async def test_get_messages_does_not_leak_across_pools() -> None:
             )
 
             coding_events = await (
-                await client.get(f"/api/sessions/{sid_coding}/messages")
+                await client.get(
+                    f"/api/sessions/{sid_coding}/messages",
+                    params={"pool": "coding"},
+                )
             ).json()
             coding_msgs = [e for e in coding_events if e.get("event") == "user_message"]
             coding_contents = {e.get("content", "") for e in coding_msgs}

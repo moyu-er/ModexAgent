@@ -10,7 +10,7 @@ from modex_agent.messaging.broker import AddressKind
 
 if TYPE_CHECKING:
     from modex_agent.multi_agent.envelope import AgentMessageEnvelope
-    from modex_agent.multi_agent.inbox.consumer import BaseInboxConsumer
+    from modex_agent.multi_agent.inbox.consumer import InboxConsumer
     from modex_agent.multi_agent.inbox.producer import BaseInboxProducer
     from modex_agent.multi_agent.inbox.types import InboxMessage
     from modex_agent.multi_agent.inbox_poller import InboxPoller
@@ -28,8 +28,12 @@ class AgentMessageBus(ABC):
     """
 
     @abstractmethod
-    async def send(self, session_id: str, envelope: AgentMessageEnvelope) -> None:
-        """Persist ``envelope`` for ``session_id`` and wake the pool poller."""
+    async def send(self, session_id: str, envelope: AgentMessageEnvelope) -> bool:
+        """Persist ``envelope`` for ``session_id`` and wake the pool poller.
+
+        Returns ``True`` when the envelope was persisted, ``False`` when it
+        was deduplicated (already in the inbox).
+        """
         ...
 
     @abstractmethod
@@ -86,7 +90,7 @@ class LocalAgentMessageBus(AgentMessageBus):
     def __init__(
         self,
         producer: BaseInboxProducer,
-        consumer: BaseInboxConsumer,
+        consumer: InboxConsumer,
     ) -> None:
         self._producer = producer
         self._consumer = consumer
@@ -101,17 +105,19 @@ class LocalAgentMessageBus(AgentMessageBus):
         """
         self._poller = poller
 
-    async def send(self, session_id: str, envelope: AgentMessageEnvelope) -> None:
+    async def send(self, session_id: str, envelope: AgentMessageEnvelope) -> bool:
         """Persist the envelope, then wake the pool poller for immediate rescan.
 
+        Returns ``True`` when persisted, ``False`` when deduplicated.
         ``signal_wakeup`` is a non-blocking ``Event.set``; it never awaits the
         poller. If no poller is wired yet the call degrades to persist-only
         and the poller's tick fallback picks the message up within one
         ``interval``.
         """
-        await self._producer.send(session_id, envelope)
+        result = await self._producer.send(session_id, envelope)
         if self._poller is not None:
             self._poller.signal_wakeup()
+        return result
 
     async def consume(
         self,
@@ -128,6 +134,9 @@ class LocalAgentMessageBus(AgentMessageBus):
         """Non-destructive read of up to ``limit`` pending envelopes."""
         messages = await self._consumer.peek(session_id, limit=limit)
         return [self._reconstruct(msg, session_id) for msg in messages]
+
+    async def contains_pending(self, session_id: str, message_id: str) -> bool:
+        return await self._consumer.contains_pending(session_id, message_id)
 
     @staticmethod
     def _reconstruct(msg: InboxMessage, session_id: str) -> AgentMessageEnvelope:
@@ -162,7 +171,7 @@ class LocalAgentMessageBus(AgentMessageBus):
             },
         )
 
-    async def sessions_with_pending(self) -> list[str]:  # type: ignore[override]
+    async def sessions_with_pending(self) -> list[str]:
         """Forward to the consumer's session enumeration."""
         return await self._consumer.sessions_with_pending()
 

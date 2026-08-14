@@ -4,7 +4,7 @@
 The unit tests exercise each link in isolation:
 
 - EnqueueStage writes the registry (input_pipeline/test_enqueue_model_choice.py)
-- ModelChoiceBindHook.before_turn sets current_model_choice (unit/service/test_model_choice.py)
+- ModelChoiceBindHook.start_node_turn sets current_model_choice (unit/service/test_model_choice.py)
 - BotModelProvider.chat_stream reads the ContextVar (unit/service/test_model_provider.py)
 
 NO test joins the three REAL components in one async turn task. This file does —
@@ -62,7 +62,7 @@ def _cfg(tmp_path: Path) -> BotModelConfig:
 
 
 def _ctx(session_id: str) -> SimpleNamespace:
-    """Minimal AgentContext shape consumed by ModelChoiceBindHook.before_turn."""
+    """Minimal AgentContext shape consumed by ModelChoiceBindHook.start_node_turn."""
     services = SimpleNamespace(model_info=None)
     runtime = SimpleNamespace(services=services)
     return SimpleNamespace(session=SimpleNamespace(session_id=session_id), runtime=runtime)
@@ -110,7 +110,7 @@ async def test_chain_registry_to_hook_to_provider_uses_m2(tmp_path: Path) -> Non
     # 2. Hook reads the registry (same session_id key EnqueueStage wrote) and
     #    snapshots the choice into the ContextVar.
     hook = ModelChoiceBindHook(cfg, registry)
-    await hook.before_turn(_ctx(sid))
+    await hook.start_node_turn(_ctx(sid))
 
     # The ContextVar is set within this turn task.
     assert current_model_choice.get() is m2_resolved
@@ -150,7 +150,7 @@ async def test_chain_unregistered_session_falls_back_to_default_m1(
     # No registry.set for "sess.main" — simulates IM/background or key drift.
 
     hook = ModelChoiceBindHook(cfg, registry)
-    await hook.before_turn(_ctx("sess.main"))
+    await hook.start_node_turn(_ctx("sess.main"))
 
     default_resolved = cfg.default_resolved()
     assert current_model_choice.get() == default_resolved

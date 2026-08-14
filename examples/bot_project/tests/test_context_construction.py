@@ -8,8 +8,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.context import InMemoryContextManager
-from modex_agent.memory.history import ListMessageHistory
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.memory.history import ListMessageHistory
 
 
 class TestContextManagerConstruction:

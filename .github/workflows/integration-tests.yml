@@ -1,0 +1,44 @@
+name: Integration Tests
+
+on:
+  pull_request:
+    branches: [main, develop*]
+  push:
+    branches: [main, develop*]
+
+concurrency:
+  group: integration-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-graph:
+    name: E2E Graph Workflow Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      UV_PYTHON: "3.13"
+      TEST_LLM_PROVIDER_KEY: ${{ secrets.TEST_LLM_PROVIDER_KEY }}
+      TEST_LLM_PROVIDER_NAME: ${{ secrets.TEST_LLM_PROVIDER_NAME }}
+      TEST_LLM_BASE_URL: ${{ secrets.TEST_LLM_BASE_URL }}
+      TEST_LLM_API_KEY: ${{ secrets.TEST_LLM_API_KEY }}
+      TEST_LLM_MODEL: ${{ secrets.TEST_LLM_MODEL }}
+      TEST_LLM_REASONING_EFFORT: ${{ secrets.TEST_LLM_REASONING_EFFORT }}
+      TEST_LLM_TEMPERATURE: "0.7"
+      TEST_LLM_MAX_OUTPUT_TOKENS: "2000"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - run: uv python install 3.13
+      - run: uv venv --python 3.13
+      - run: uv pip install -e ".[dev,llm,ast,terminal]"
+      - run: uv pip install -e "examples/bot_project"
+      - name: Run E2E integration tests
+        run: |
+          uv run pytest examples/bot_project/tests/integration/ \
+            -q --tb=short -v -m integration
+      - name: Report skipped tests
+        if: always()
+        run: |
+          echo "::notice::E2E tests that skip indicate missing TEST_LLM_* secrets in repo settings."

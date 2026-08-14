@@ -31,7 +31,6 @@ _DATA_DIR_NAME = ".modex"
 def _make_server(data_dir: Path) -> tuple[WebUIServer, WebSocketInputAdapter]:
     inp = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
-    store.set_agent_pool_map({"main": "main", "coding": "coding"})
     home_sessions_dir = WorkspacePaths(root=data_dir / _DATA_DIR_NAME).sessions_dir
     server = WebUIServer(
         inp,
@@ -43,7 +42,6 @@ def _make_server(data_dir: Path) -> tuple[WebUIServer, WebSocketInputAdapter]:
     server.set_data_dir_name(_DATA_DIR_NAME)
     server.set_workspace_index(store)
     server.set_pool_agent_names(["main", "coding"])
-    server.set_agent_pool_map({"main": "main", "coding": "coding"})
     return server, inp
 
 
@@ -73,6 +71,7 @@ async def test_pool_fixed_on_creation_not_overridden_by_attach() -> None:
     server, inp = _make_server(data_dir)
     callback, real_store, calls = _make_callback(data_dir)
     server.set_pool_switch_callback(callback)
+    server.set_pool_resolver(real_store.get_pool)
 
     # Inject the WebUI input pipeline so _ws_send_message works.
     from tests.webui._pipeline_fixture import attach_default_pipeline
@@ -126,6 +125,7 @@ async def test_pool_survives_multiple_attach_cycles() -> None:
     server, inp = _make_server(data_dir)
     callback, real_store, calls = _make_callback(data_dir)
     server.set_pool_switch_callback(callback)
+    server.set_pool_resolver(real_store.get_pool)
 
     # Inject the WebUI input pipeline so _ws_send_message works.
     from tests.webui._pipeline_fixture import attach_default_pipeline
@@ -191,11 +191,13 @@ async def test_im_conversation_stored_in_current_workspace() -> None:
 
     data_dir = Path(tempfile.mkdtemp())
     server, inp = _make_server(data_dir)
+    routing_store = PoolSessionStore(data_dir=data_dir)
+    server.set_pool_resolver(routing_store.get_pool)
 
-    agent_pool_map = {"main": "main", "coding": "coding"}
+    pool_by_agent = {"main": "main", "coding": "coding"}
     session_store = WorkspacePoolSessionStore(
         base_dir=data_dir,
-        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+        pool_resolver=lambda s: pool_by_agent.get(s.agent_name, "main"),
     )
     server.set_session_store(session_store)
 
@@ -204,6 +206,7 @@ async def test_im_conversation_stored_in_current_workspace() -> None:
     try:
         im_conv_id = "qq_user_999"
         im_sid = f"{im_conv_id}.main"
+        routing_store.set_pool(im_conv_id, "main")
         event = UserMessageEvent(
             session_id=im_sid,
             agent_name="main",
@@ -247,16 +250,18 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
     data_dir_b = Path(tempfile.mkdtemp())
 
     server, inp = _make_server(data_dir_a)
+    routing_store = PoolSessionStore(data_dir=data_dir_a)
+    server.set_pool_resolver(routing_store.get_pool)
 
     ws_ctx = MagicMock()
     ws_ctx.current = Path("/ws-a")
     ws_ctx.home = Path("/ws-a")
     server.set_workspace_control(ws_ctx)
 
-    agent_pool_map = {"main": "main", "coding": "coding"}
+    pool_by_agent = {"main": "main", "coding": "coding"}
     session_store_a = WorkspacePoolSessionStore(
         base_dir=data_dir_a,
-        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+        pool_resolver=lambda s: pool_by_agent.get(s.agent_name, "main"),
     )
     server.set_session_store(session_store_a)
 
@@ -265,6 +270,7 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
     try:
         sid_a = f"{_new_uuid_prefix()}.main"
         conv_a = sid_a.split(".")[0]
+        routing_store.set_pool(conv_a, "main")
 
         event_a = UserMessageEvent(
             session_id=sid_a, agent_name="main", content="ws-a msg"
@@ -285,12 +291,13 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
         # Switch session store to workspace B (for SessionInfo saves).
         session_store_b = WorkspacePoolSessionStore(
             base_dir=data_dir_b,
-            pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+            pool_resolver=lambda s: pool_by_agent.get(s.agent_name, "main"),
         )
         server.set_session_store(session_store_b)
 
         sid_b = f"{_new_uuid_prefix()}.main"
         conv_b = sid_b.split(".")[0]
+        routing_store.set_pool(conv_b, "main")
 
         event_b = UserMessageEvent(
             session_id=sid_b, agent_name="main", content="ws-b msg"
@@ -343,7 +350,6 @@ async def test_append_follows_current_workspace_after_switch() -> None:
     ws_b = Path(tempfile.mkdtemp())
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
-    store.set_agent_pool_map({"main": "main"})
     sid = "conv-q1.main"
 
     # 1. Write in workspace A (default)
@@ -389,7 +395,6 @@ async def test_append_follows_repeated_workspace_switches() -> None:
     ws_c = Path(tempfile.mkdtemp())
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
-    store.set_agent_pool_map({"main": "main"})
     sid = "conv-r1.main"
 
     # W1 → A
@@ -513,7 +518,6 @@ async def test_transcript_store_resolver_routes_writes_correctly() -> None:
         ws_dir = Path(ws_tmp)
 
         store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
-        store.set_agent_pool_map({"main": "main"})
 
         # Unmapped prefix -> home
         sid_home = "conv1.main"
@@ -562,7 +566,6 @@ async def test_transcript_store_prefix_resolver_routes_to_restored_workspace() -
 
         # Store created with no resolver — writes route by the bound root.
         store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
-        store.set_agent_pool_map({"main": "main"})
         sid = "conv1.main"
 
         # Write goes directly to the restored workspace (bound root)

@@ -115,7 +115,7 @@ async def test_pool_pi_boots_with_external_strategy(
             target = default_pi.target_store.get("pi")
             assert target is not None
             assert target.pool_name == "pool_pi"
-            assert target.bus_ref is pool_pi.agent_bus
+            assert target.tree_ref is pool_pi.tree_manager
 
             # pool_pi main agent registered as a resident.
             resident_names = [d.address.name for d in pool_pi.pool.list_agents()]
@@ -175,7 +175,7 @@ async def test_pool_pi_skips_main_agent_when_provider_missing(
             # task dispatch tool is also absent (external pool has no tool surface).
             assert "task" not in pool_pi.tool_manager.list_tools()
             # Pool is still structurally intact for peer routing.
-            assert pool_pi.agent_bus is not None
+            assert pool_pi.tree_manager is not None
             assert pool_pi.target_store is not None
         finally:
             await service.stop()

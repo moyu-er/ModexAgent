@@ -130,7 +130,7 @@ def test_peer_message_has_reply_contract_separator():
     )
     assert "---" in result
     assert "To reply" in result
-    assert "task tool" in result
+    assert "send_to_peer tool" in result
 
 
 def test_peer_message_names_source_as_reply_target():
@@ -140,7 +140,7 @@ def test_peer_message_names_source_as_reply_target():
         content="hi",
         reply_contract=AgentImplementation.NATIVE,
     )
-    assert 'target_agent = "coding"' in result
+    assert 'target_peer = "coding"' in result
 
 
 def test_peer_message_marks_reply_optional():
@@ -177,15 +177,17 @@ def test_peer_message_external_uses_modexctl_cli():
     assert "task tool" not in result
 
 
-def test_peer_message_native_uses_task_tool():
+def test_peer_message_native_uses_send_to_peer():
     result = build_agent_comm_message(
         source_label=SourceLabel.PEER_AGENT,
         source="main",
         content="hi",
         reply_contract=AgentImplementation.NATIVE,
     )
-    assert "task tool" in result
+    assert "send_to_peer tool" in result
+    assert "target_peer" in result
     assert "modexctl send" not in result
+    assert "task tool" not in result
 
 
 def test_peer_message_warns_output_invisible():

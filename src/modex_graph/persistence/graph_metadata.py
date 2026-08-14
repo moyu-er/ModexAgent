@@ -10,20 +10,38 @@ from ..constants import GraphInstanceStatus, InvocationStatus
 
 
 class GraphMetadata(BaseModel):
-    """Graph instance metadata — basic identity and lifecycle status.
+    """Graph instance metadata — identity, version chain, and lifecycle status.
 
-    Scheduler bookkeeping (instance_seq, iteration_count,
-    activated_sources, pending_dispatches) is derived at recovery time
-    from the node_states and deliver stores, not persisted here.
+    One ``graph_instance_id`` per spec; each execution creates a new
+    ``version`` row. ``node_id_map`` is frozen at v0 and copied
+    across versions.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     graph_instance_id: int
     spec_id: int
-    parent_instance_id: int | None
-    parent_node: str | None
+    version: int = 0
+    parent_instance_id: int | None = None
+    parent_node: str | None = None
     status: GraphInstanceStatus
+    node_id_map: dict[str, str] = {}
+    created_at: int = 0
+    updated_at: int = 0
+
+
+class GraphInvocationContext(BaseModel):
+    """Context returned when a graph instance invocation begins.
+
+    Carries ``(graph_instance_id, version)`` for CAS on subsequent
+    ``complete_invocation`` / ``suspend_invocation`` / ``crash_invocation``
+    / ``finalize_invocation`` calls.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    graph_instance_id: int
+    version: int
 
 
 class InvocationContext(BaseModel):
@@ -32,7 +50,7 @@ class InvocationContext(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     invocation_id: int
-    node_name: str
+    node_id: str
     version: int
     parent_version: int | None
 
@@ -40,7 +58,7 @@ class InvocationContext(BaseModel):
 class NodeInvocationRecord(BaseModel):
     """Persistent record for one node invocation.
 
-    One row per ``(graph_instance_id, node_name, version)`` in the
+    One row per ``(graph_instance_id, node_id, version)`` in the
     ``node_states`` table. The record tracks the invocation lifecycle:
     ``status`` transitions from ``RUNNING`` (initial) to a terminal state
     (``COMPLETED`` / ``CANCELED`` / ``CRASHED``). ``suspended=True``
@@ -52,7 +70,7 @@ class NodeInvocationRecord(BaseModel):
 
     invocation_id: int
     graph_instance_id: int
-    node_name: str
+    node_id: str
     version: int
     parent_version: int | None
     status: InvocationStatus
@@ -60,16 +78,6 @@ class NodeInvocationRecord(BaseModel):
     suspended: bool = False
     created_at: int
     updated_at: int
-
-
-class RecoveryContext(BaseModel):
-    """State used to recover a graph instance."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    metadata: GraphMetadata
-    node_states: dict[str, NodeInvocationRecord | None]
-    rebuilt_main_state: dict[str, Any]
 
 
 class GraphStateSnapshot(BaseModel):
@@ -83,8 +91,8 @@ class GraphStateSnapshot(BaseModel):
 
 __all__ = [
     "GraphMetadata",
+    "GraphInvocationContext",
     "InvocationContext",
     "NodeInvocationRecord",
-    "RecoveryContext",
     "GraphStateSnapshot",
 ]

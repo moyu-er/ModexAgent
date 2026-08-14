@@ -144,8 +144,9 @@ class TestLinearSchedulerControl:
         graph.add_edge("b", "c")
         graph.add_edge("c", GraphNode.END)
         compiled = graph.compile()
-        coordinator = _persistent_coordinator("a", "b", "c")
-        coordinator.route_deliver("a", "seed", "external", 1)
+        node_ids = {name: node.node_id for name, node in compiled.nodes.items()}
+        coordinator = _persistent_coordinator(*node_ids.values())
+        coordinator.route_deliver(node_ids["a"], "seed", "external", 1)
         ctx = GraphContext(
             state=CounterState(),
             runtime=_PauseAfterNodeRuntime(),
@@ -156,13 +157,13 @@ class TestLinearSchedulerControl:
             await LinearScheduler(compiled).run_async(ctx)
 
         assert ctx.state.count == 1
-        a_record = coordinator.node_state_store.load_latest("a")
+        a_record = coordinator.node_state_store.load_latest(node_ids["a"])
         assert a_record is not None
         assert a_record.status == InvocationStatus.COMPLETED
-        assert coordinator.collect_consumable_delivers("a", 0) == []
-        pending_for_b = coordinator.collect_consumable_delivers("b", 0)
+        assert coordinator.collect_consumable_delivers(node_ids["a"], 0) == []
+        pending_for_b = coordinator.collect_consumable_delivers(node_ids["b"], 0)
         assert len(pending_for_b) == 1
-        assert coordinator.node_state_store.load_latest("b") is None
+        assert coordinator.node_state_store.load_latest(node_ids["b"]) is None
 
 
 class TestParallelSchedulerControl:
@@ -179,7 +180,8 @@ class TestParallelSchedulerControl:
         graph.add_edge("blocking", GraphNode.END)
         graph.add_edge("queued", GraphNode.END)
         compiled = graph.compile(scheduler=SchedulerKind.PARALLEL)
-        coordinator = _persistent_coordinator("blocking", "queued")
+        node_ids = {name: node.node_id for name, node in compiled.nodes.items()}
+        coordinator = _persistent_coordinator(*node_ids.values())
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_runtime(),
@@ -200,7 +202,7 @@ class TestParallelSchedulerControl:
 
         assert blocking.completed is False
         assert queued.inputs == []
-        blocking_record = coordinator.node_state_store.load_latest("blocking")
+        blocking_record = coordinator.node_state_store.load_latest(node_ids["blocking"])
         assert blocking_record is not None
         assert blocking_record.status == InvocationStatus.CRASHED
 
@@ -221,7 +223,8 @@ class TestParallelSchedulerControl:
             scheduler=SchedulerKind.PARALLEL,
             default_trigger=NodeTrigger.ON_RECEIVE,
         )
-        coordinator = _persistent_coordinator("blocking", "target")
+        node_ids = {name: node.node_id for name, node in compiled.nodes.items()}
+        coordinator = _persistent_coordinator(*node_ids.values())
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_runtime(),
@@ -232,7 +235,7 @@ class TestParallelSchedulerControl:
         run_task = asyncio.create_task(scheduler.run_async(ctx))
         await asyncio.wait_for(started.wait(), timeout=1)
 
-        coordinator.route_deliver("target", "external payload", "external", 1)
+        coordinator.route_deliver(node_ids["target"], "external payload", "external", 1)
         ctx.control.notify_deliver("target")
         await asyncio.wait_for(target_executed.wait(), timeout=1)
         release.set()

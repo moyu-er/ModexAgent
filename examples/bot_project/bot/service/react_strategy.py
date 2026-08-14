@@ -128,6 +128,7 @@ class ReactExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategy):
             mcp_registry=ctx.mcp_registry,
             persistence=ctx.persistence,
             app_config=app_config,
+            kb_provider=ctx.kb_provider,
         )
 
         cassette_enabled, cassette_scope, cassette_base_dir = self._resolve_cassette_config(

@@ -217,7 +217,7 @@ async def test_peer_targets_wired_after_assembly(
         assert target_beta.name == "beta"
         assert target_beta.kind == AgentCommKind.NORMAL
         assert target_beta.pool_name == "beta"
-        assert target_beta.bus_ref is pool_beta.agent_bus
+        assert target_beta.tree_ref is pool_beta.tree_manager
 
         # Pool beta's store has a reciprocal peer target for alpha's main agent.
         target_alpha = pool_beta.target_store.get("alpha")
@@ -225,7 +225,7 @@ async def test_peer_targets_wired_after_assembly(
         assert target_alpha.name == "alpha"
         assert target_alpha.kind == AgentCommKind.NORMAL
         assert target_alpha.pool_name == "alpha"
-        assert target_alpha.bus_ref is pool_alpha.agent_bus
+        assert target_alpha.tree_ref is pool_alpha.tree_manager
 
         # Subagent targets (Phase 1) precede peer targets (Phase 2) in list order.
         alpha_names = [t.name for t in pool_alpha.target_store.list()]

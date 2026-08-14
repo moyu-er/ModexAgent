@@ -5,13 +5,12 @@ from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from bot.input_pipeline.assembly import build_im_pipeline, build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
 from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import UserMessageEvent
+
 from modex_agent.core.session_id import SessionIdFactory, encode_snowflake
 from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
@@ -74,12 +73,12 @@ def _make_ctx(
     if workspace_root is None:
         current_ws_provider = resolve_workspace_root
     else:
-        current_ws_provider = (lambda root=workspace_root: root)
+        def current_ws_provider(root=workspace_root):
+            return (root)
     return BotInputContext(
         default_pool="main",
         available_pools=lambda: {"main", "coding"},
         pool_session_store=pool_store,
-        agent_pool_map={"main": "main", "coding": "coding"},
         agent_resolver=lambda p: p,
         transcript_store=store,
         enqueue_message=(sink.append if enqueued is not None else sink),
@@ -95,7 +94,6 @@ async def test_im_normal_message_persisted_and_enqueued() -> None:
         root = Path(tmp)
         with bind_workspace_root(root):
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
             pipe = build_im_pipeline(
@@ -117,7 +115,6 @@ async def test_webui_explicit_coding_pool_persisted_to_coding() -> None:
         root = Path(tmp)
         with bind_workspace_root(root):
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"coding": "coding"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
             pipe = build_webui_pipeline(
@@ -140,7 +137,6 @@ async def test_im_stop_command_not_persisted() -> None:
         root = Path(tmp)
         with bind_workspace_root(root):
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main"})
             cmd_adapter = MagicMock()
             # _try_intercept_control is async in the framework -> AsyncMock
             cmd_adapter._try_intercept_control = AsyncMock(return_value=True)
@@ -160,7 +156,6 @@ async def test_im_continue_command_not_persisted_but_enqueued() -> None:
         root = Path(tmp)
         with bind_workspace_root(root):
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
             pipe = build_im_pipeline(skill_registry=_NoSkill(), known_pools={"main"})
@@ -180,7 +175,6 @@ async def test_webui_continue_command_handled() -> None:
         root = Path(tmp)
         with bind_workspace_root(root):
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
             pipe = build_webui_pipeline(
@@ -212,7 +206,6 @@ async def test_im_cd_command_terminates_in_s2() -> None:
         target_dir.mkdir()
         with bind_workspace_root(root):
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             # Provide a command adapter with home so S2 can reset on /exit
             cmd_adapter = MagicMock()
@@ -257,7 +250,6 @@ async def test_im_pool_command_switches_pool_and_terminates() -> None:
         root = Path(tmp)
         with bind_workspace_root(root):
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
             # pool_session_store.get returns "main" by default; /coding switches
@@ -283,7 +275,6 @@ async def test_im_exit_command_terminates_in_s2() -> None:
         workspace_dir.mkdir()
         with bind_workspace_root(root):
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             cmd_adapter = MagicMock()
             cmd_adapter.name = "qq"
@@ -309,7 +300,6 @@ async def test_im_valid_skill_persisted_raw_llm_gets_xml() -> None:
         root = Path(tmp)
         with bind_workspace_root(root):
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
             pipe = build_im_pipeline(
@@ -338,7 +328,6 @@ async def test_im_invalid_skill_terminates_not_persisted() -> None:
         root = Path(tmp)
         with bind_workspace_root(root):
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
             pipe = build_im_pipeline(
@@ -362,7 +351,6 @@ async def test_webui_invalid_skill_terminates_not_persisted() -> None:
         root = Path(tmp)
         with bind_workspace_root(root):
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
             pipe = build_webui_pipeline(
@@ -389,7 +377,6 @@ async def test_multi_channel_pool_isolation() -> None:
         root = Path(tmp)
         with bind_workspace_root(root):
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main", "coding": "coding"})
 
             # Shared pool_session_store with per-conversation keys
             pool_store = MagicMock()
@@ -404,7 +391,6 @@ async def test_multi_channel_pool_isolation() -> None:
                 default_pool="main",
                 available_pools=lambda: {"main", "coding"},
                 pool_session_store=pool_store,
-                agent_pool_map={"main": "main", "coding": "coding"},
                 agent_resolver=lambda p: p,
                 transcript_store=store,
                 enqueue_message=enqueued_im.append,
@@ -422,7 +408,6 @@ async def test_multi_channel_pool_isolation() -> None:
                 default_pool="main",
                 available_pools=lambda: {"main", "coding"},
                 pool_session_store=pool_store,
-                agent_pool_map={"main": "main", "coding": "coding"},
                 agent_resolver=lambda p: p,
                 transcript_store=store,
                 enqueue_message=enqueued_ws.append,
@@ -468,7 +453,6 @@ async def test_webui_slash_cd_produces_error_not_enqueued() -> None:
         root = Path(tmp)
         with bind_workspace_root(root):
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
             pipe = build_webui_pipeline(
@@ -500,7 +484,6 @@ async def test_im_pwd_command_terminates_in_s2() -> None:
         workspace_dir.mkdir()
         with bind_workspace_root(root):
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             cmd_adapter = MagicMock()
             cmd_adapter.name = "qq"
@@ -550,7 +533,6 @@ async def test_skill_resolved_from_correct_pool() -> None:
         root = Path(tmp)
         with bind_workspace_root(root):
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main", "coding": "coding"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
 
@@ -603,7 +585,6 @@ async def test_skill_pool_isolation_webui() -> None:
         root = Path(tmp)
         with bind_workspace_root(root):
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-            store.set_agent_pool_map({"main": "main", "coding": "coding"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
 

@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from modex_agent.core.types import InputMessage
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.multi_agent.router import RouteResult
+    from modex_agent.pipeline.turn_context_config import TurnContextDescriptor
     from modex_agent.runtime.store import TurnStateStore
     from modex_agent.workspace import WorkspaceManager
 
@@ -49,7 +50,6 @@ from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import view_from_request
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
-from modex_graph.exceptions import GraphInterrupt
 from modex_agent.memory.history import inject_attachments_to_history
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
@@ -60,6 +60,7 @@ from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.runtime.models import TurnSnapshot
 from modex_agent.workspace.runtime import bind_workspace_root
+from modex_graph.exceptions import GraphInterrupt
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +243,50 @@ class ReActTurnRunner(TurnRunner):
         return (
             self._agent_descriptor is not None
             and self._agent_descriptor.comm_kind == AgentCommKind.SUBAGENT
+        )
+
+    def _build_turn_descriptor(
+        self,
+        session: SessionInfo,
+        pool_data: PoolDataSnapshot | None,
+    ) -> TurnContextDescriptor:
+        """Build a TurnContextDescriptor from per-turn inputs.
+
+        Reads graph mode information exclusively from the session binding store.
+        The binding store is populated by
+        ``tree.deliver`` (auto-creates from ``envelope.metadata``) and by
+        ``BotAgentNode.execute`` (creates full binding with graph artifacts).
+        Envelope transport carries ``graph_instance_id`` only for the binding
+        store to read at ``deliver`` time; receivers do not read envelopes.
+        """
+        from modex_agent.core import AgentCommKind
+        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.pipeline.turn_context_config import TurnContextDescriptor
+
+        agent_kind = AgentCommKind.SUBAGENT if self._is_subagent() else AgentCommKind.NORMAL
+
+        binding_store = self._builder.session_binding_store
+        binding = binding_store.get(session.session_id) if binding_store is not None else None
+
+        task_id = binding.task_id if binding is not None else None
+        graph_node_name = binding.graph_node_name if binding is not None else None
+        is_node_execution = binding.is_node_execution if binding is not None else False
+        graph_artifacts = binding.graph_artifacts if binding is not None else None
+
+        graph_context = None
+        if task_id is not None:
+            resolver = self._builder.graph_context_resolver
+            if resolver is not None:
+                graph_context = resolver(task_id)
+
+        return TurnContextDescriptor(
+            agent_kind=agent_kind,
+            execution_strategy=ExecutionStrategyKind.REACT,
+            graph_context=graph_context,
+            graph_node_name=graph_node_name,
+            graph_instance_id=task_id,
+            is_node_execution=is_node_execution,
+            graph_artifacts=graph_artifacts,
         )
 
     async def execute_turn(
@@ -457,7 +502,7 @@ class ReActTurnRunner(TurnRunner):
         # subagent inherits the main prompt and loses its task context.
         # (turn_store below is still shared — it is
         # pool-level and session-isolated, and the subagent needs it so its
-        # runtime + FINALLY_TURN hooks are constructed.)
+        # runtime + FINALLY_GRAPH hooks are constructed.)
         if pool_data is not None and not self._is_subagent():
             ctx_mgr = pool_data.context_manager
 
@@ -520,6 +565,9 @@ class ReActTurnRunner(TurnRunner):
             is_approval_cmd,
             append_user_message=turn_request.append_user_message,
         )
+        turn_descriptor = self._build_turn_descriptor(
+            session, pool_data
+        )
         agent_context, emitter = self._builder.build_runtime_and_context(
             session,
             context_state,
@@ -528,6 +576,7 @@ class ReActTurnRunner(TurnRunner):
             pool_data=pool_data,
             inline_attachments=input_msg.attachments_resolved,
             workspace=input_msg.workspace,
+            turn_descriptor=turn_descriptor,
         )
         agent_context.current_input = sanitized_content
 

@@ -7,7 +7,6 @@ interceptor-level flow through ToolResultOverflowHandler.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -16,17 +15,11 @@ from modex_agent.tools.overflow.cleaner import OverflowCleaner
 from modex_agent.tools.overflow.handler import ToolResultOverflowHandler
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 
-# ── helpers ──────────────────────────────────────────────────────────────────
-
-def _read_meta(entry_dir: Path) -> dict:
-    return json.loads((entry_dir / ".meta.json").read_text(encoding="utf-8"))
-
-
 # ── fixtures ─────────────────────────────────────────────────────────────────
 
 @pytest.fixture
 def store(tmp_path: Path) -> LocalFileToolOverflowStore:
-    return LocalFileToolOverflowStore(workspace=tmp_path, max_chunk_size=500)
+    return LocalFileToolOverflowStore(workspace=tmp_path)
 
 
 @pytest.fixture
@@ -46,30 +39,31 @@ def handler(store: LocalFileToolOverflowStore, cleaner: OverflowCleaner) -> Tool
 class TestStoreSyncGeneration:
     @pytest.mark.asyncio
     async def test_store_creates_directory_layout(self, store: LocalFileToolOverflowStore) -> None:
-        """store() creates the expected directory tree with all chunk files."""
+        """store() creates metadata and one complete output file."""
         await store.initialize()
         ref = await store.store(
             session_id="30932BC02F825E64D069B1E67347C8FF:main",
             tool_call_id="call_function_yq3r3mt0hx3g_1",
             tool_name="read_file",
-            content="hello world!" * 200,  # 12*200 = 2400 chars → 5 chunks @ max_chunk_size=500
+            content="hello world!" * 200,
         )
 
         entry_dir = Path(ref.dir_path)
         assert entry_dir.exists(), f"dir should exist: {entry_dir}"
         assert entry_dir.name == "call_function_yq3r3mt0hx3g_1"
 
-        # Meta
         assert (entry_dir / ".meta.json").exists()
-        meta = _read_meta(entry_dir)
-        assert meta["tool_name"] == "read_file"
-        assert meta["tool_call_id"] == "call_function_yq3r3mt0hx3g_1"
-        assert meta["total_chars"] == 2400
+        assert {path.name for path in entry_dir.iterdir()} == {".meta.json", "full.txt"}
+        assert (entry_dir / "full.txt").read_text(encoding="utf-8") == "hello world!" * 200
 
-        # Chunk files — 5 chunks (2400 / 500 = 4.8 → 5)
-        assert ref.chunk_count == 5
-        for idx in range(1, 6):
-            assert (entry_dir / f"{idx}.full.txt").exists()
+        meta = await store.read_metadata(
+            "30932BC02F825E64D069B1E67347C8FF:main",
+            "call_function_yq3r3mt0hx3g_1",
+        )
+        assert meta is not None
+        assert meta.tool_name == "read_file"
+        assert meta.tool_call_id == "call_function_yq3r3mt0hx3g_1"
+        assert meta.total_chars == 2400
 
     @pytest.mark.asyncio
     async def test_store_sanitizes_session_id_colon(self, store: LocalFileToolOverflowStore) -> None:
@@ -96,7 +90,7 @@ class TestStoreSyncGeneration:
         entry_dir = Path(ref.dir_path)
         assert entry_dir.exists()
         assert (entry_dir / ".meta.json").exists()
-        assert (entry_dir / "1.full.txt").exists()
+        assert (entry_dir / "full.txt").read_text(encoding="utf-8") == "immediate" * 30
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -105,14 +99,10 @@ class TestStoreSyncGeneration:
 
 class TestHandlerEndToEnd:
     @pytest.mark.asyncio
-    async def test_handler_returns_xml_with_first_chunk(
-        self, handler: ToolResultOverflowHandler, tmp_path: Path,
+    async def test_handler_returns_truncated_text_with_file_notice(
+        self, handler: ToolResultOverflowHandler,
     ) -> None:
-        """store_overflow returns a structured XML document containing
-        the first chunk in CDATA, plus metadata for the LLM. The
-        interceptor's overflow_processed flag (not the XML length)
-        prevents re-overflow."""
-        content = "data-" + ("X" * 2000)
+        content = "data-" + ("X" * 60_000)
         notice, ref = await handler.store_overflow(
             session_id="sid_main",
             tool_call_id="call_handler_1",
@@ -120,22 +110,17 @@ class TestHandlerEndToEnd:
             content=content,
         )
 
-        assert notice.startswith("<tool_result_overflow")
-        assert 'tool="read_file"' in notice
-        assert str(ref.total_chars) in notice
-        assert str(ref.chunk_count) in notice
-        assert ref.dir_path in notice
-        assert ".full.txt" in notice
-        assert "data-" in notice
-        # Chunk content is present (xml_text skips CDATA when no special chars)
-        assert '<chunk index="1">' in notice
-        assert "data-" in notice
+        assert notice.startswith(content[:50_000])
+        assert notice.endswith(
+            f"[Full output ({len(content)} chars total) saved to: {ref.dir_path}/full.txt]"
+        )
+        assert not notice.startswith("<")
 
     @pytest.mark.asyncio
     async def test_handler_writes_full_content_to_disk(
-        self, handler: ToolResultOverflowHandler, tmp_path: Path,
+        self, handler: ToolResultOverflowHandler,
     ) -> None:
-        """All chunks are written to disk; reconstructing yields original content."""
+        """The complete result is written to one file."""
         content = "FULL-" + ("Y" * 2500)
         _, ref = await handler.store_overflow(
             session_id="sid_full",
@@ -145,18 +130,13 @@ class TestHandlerEndToEnd:
         )
 
         entry_dir = Path(ref.dir_path)
-        all_text = ""
-        for idx in range(1, ref.chunk_count + 1):
-            chunk = (entry_dir / f"{idx}.full.txt").read_text(encoding="utf-8")
-            all_text += chunk
-        assert all_text == content
+        assert {path.name for path in entry_dir.iterdir()} == {".meta.json", "full.txt"}
+        assert (entry_dir / "full.txt").read_text(encoding="utf-8") == content
 
     @pytest.mark.asyncio
-    async def test_overflow_xml_prevents_re_overflow(
-        self, handler: ToolResultOverflowHandler, tmp_path: Path,
+    async def test_handler_marks_notice_with_saved_output_path(
+        self, handler: ToolResultOverflowHandler,
     ) -> None:
-        """The returned XML carries overflow metadata; the interceptor's
-        overflow_processed flag prevents infinite re-processing."""
         content = "Z" * 50000
         notice, ref = await handler.store_overflow(
             session_id="sid_short",
@@ -164,7 +144,8 @@ class TestHandlerEndToEnd:
             tool_name="search",
             content=content,
         )
-        assert notice.startswith("<tool_result_overflow")
+        assert notice.startswith(content)
+        assert f"{ref.dir_path}/full.txt" in notice
         assert ref.total_chars == 50000
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -15,6 +16,7 @@ from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.strategies.base import SendDeps, SendRequest
 from modex_agent.multi_agent.communication.strategies.parent_reply import ParentReplyStrategy
 from modex_agent.multi_agent.message_type import AgentMessageType
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import CommunicationTarget
 
 
@@ -116,11 +118,17 @@ def _make_request(
 def _make_deps(
     bus: object | None = None,
 ) -> SendDeps:
+    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+    if bus is not None:
+        async def _deliver(sid: str, env: object) -> None:
+            await bus.send(sid, env)  # type: ignore[attr-defined]
+        tree.deliver = _deliver
+    else:
+        tree.deliver = AsyncMock()
     return SendDeps(
         source=AgentAddress(name="worker"),
-        broker=_FakeBroker(),
         session_factory=SessionIdFactory(),
-        agent_bus=bus,
+        tree=tree,
     )
 
 

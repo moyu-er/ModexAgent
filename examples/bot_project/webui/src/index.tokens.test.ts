@@ -99,6 +99,29 @@ const REQUIRED_TOKENS = [
   "--tracking-normal",
   "--tracking-wide",
   "--tracking-eyebrow",
+  // Graph visualization semantic tokens (graph PRD §7.1)
+  "--color-graph-node-fill",
+  "--color-graph-node-fill-done",
+  "--color-graph-node-border",
+  "--color-graph-node-border-active",
+  "--color-graph-edge",
+  "--color-graph-edge-active",
+  "--color-graph-arrow",
+  "--color-graph-arrow-active",
+  "--color-graph-deliver",
+  "--color-graph-deliver-glow",
+  "--color-graph-deliver-trail",
+  "--color-graph-active-ring",
+  "--color-graph-mini-node",
+  "--color-graph-mini-edge",
+  "--color-graph-mini-start",
+  "--color-graph-mini-end",
+  // Graph motion tokens (graph PRD §7.2)
+  "--dur-deliver",
+  "--ease-deliver",
+  "--dur-ring-pulse",
+  "--ease-ring-pulse",
+  "--dur-layout",
 ] as const;
 
 /** Legacy emerald values that must not survive the retokening. */
@@ -172,6 +195,30 @@ describe("Teal & Ember design tokens (index.css)", () => {
   it("leaves no legacy font family names behind (§3 — Inter system)", () => {
     for (const family of LEGACY_FONTS) {
       expect(css).not.toContain(family);
+    }
+  });
+
+  it("pins graph tokens to existing-token aliases (graph PRD §7, Rev 2)", () => {
+    for (const block of [light, dark]) {
+      // Node/edge derive from existing canvas/hairline/border-strong tokens —
+      // no new color values may be introduced for the graph language.
+      expect(block).toContain("--color-graph-node-fill: var(--color-canvas-elevated)");
+      expect(block).toContain("--color-graph-node-fill-done: color-mix(in srgb, var(--color-brand) 18%, transparent)");
+      expect(block).toContain("--color-graph-node-border: var(--color-hairline)");
+      expect(block).toContain("--color-graph-node-border-active: var(--color-brand)");
+      // Rev 2 §C.3: edges/arrows use border-strong, not hairline.
+      expect(block).toContain("--color-graph-edge: var(--color-border-strong)");
+      expect(block).toContain("--color-graph-arrow: var(--color-border-strong)");
+      // Deliver pulse + active ring are brand-family color-mix tints.
+      expect(block).toContain("--color-graph-deliver: var(--color-brand-bright)");
+      expect(block).toContain(
+        "--color-graph-active-ring: color-mix(in srgb, var(--color-brand) 30%, transparent)",
+      );
+      // Motion tokens (§7.2).
+      expect(block).toContain("--dur-deliver: 600ms");
+      expect(block).toContain("--ease-deliver: var(--ease-out)");
+      expect(block).toContain("--dur-ring-pulse: 1200ms");
+      expect(block).toContain("--dur-layout: 350ms");
     }
   });
 });

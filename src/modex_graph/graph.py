@@ -25,6 +25,7 @@ from typing_extensions import TypeVar
 
 from .constants import GraphNode, NodeTrigger, SchedulerKind
 from .node import Node
+from .utils import generate_id
 
 if TYPE_CHECKING:
     from .compiled_graph import CompiledGraph
@@ -75,12 +76,19 @@ class Graph[S: "GraphState"]:
         self.name: str = name
         self._nodes: dict[str, Node[S]] = {}
         self._edges: list[Edge] = []
+        from .nodes.end_node import EndNode
+        from .nodes.start_node import StartNode
+
+        self.add_node(GraphNode.START, StartNode())
+        self.add_node(GraphNode.END, EndNode())
 
     # ── Node registry ──────────────────────────────────────────────────
 
     def add_node(self, name: str, node: Node[S]) -> None:
         """Register `node` under `name`. Sets `node.name = name`."""
         node.name = name
+        if not node.node_id:
+            node.node_id = generate_id(prefix="node")
         self._nodes[name] = node
 
     def get_node(self, name: str) -> Node[S]:
@@ -139,7 +147,34 @@ class Graph[S: "GraphState"]:
         `default_trigger` (Task 06) is the graph-level default trigger mode
         under `ParallelScheduler`. A per-node `Node.trigger` overrides it
         for that node. Ignored under `LINEAR`.
+
+        `ON_RECEIVE` is deprecated — `Graph.compile()` emits a
+        `DeprecationWarning` when `default_trigger` or any registered node's
+        `trigger` is `NodeTrigger.ON_RECEIVE`. Use `ON_ALL_PREDS` for
+        production graphs. `GraphSpec` (declarative API) rejects
+        `ON_RECEIVE` entirely.
         """
+        import warnings
+
+        if default_trigger == NodeTrigger.ON_RECEIVE:
+            warnings.warn(
+                "NodeTrigger.ON_RECEIVE is deprecated/experimental and is not "
+                "part of the stable scheduling contract. Use "
+                "NodeTrigger.ON_ALL_PREDS for production graphs.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        on_receive_nodes = [
+            name for name, node in self._nodes.items()
+            if node.trigger == NodeTrigger.ON_RECEIVE
+        ]
+        if on_receive_nodes:
+            warnings.warn(
+                f"Nodes {on_receive_nodes} declare trigger=ON_RECEIVE, which is "
+                "deprecated/experimental. Use ON_ALL_PREDS for production graphs.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         from .compiled_graph import CompiledGraph
 
         # 1. Exactly one entry node (exactly one edge from GraphNode.START).
@@ -153,20 +188,18 @@ class Graph[S: "GraphState"]:
                 f"Graph has multiple entry nodes ({len(start_edges)} edges from "
                 f"GraphNode.START). Exactly one is required."
             )
-        entry_node = start_edges[0].target
-        if entry_node == GraphNode.END:
-            raise RoutingError("Entry node cannot be GraphNode.END.")
-        if entry_node not in self._nodes:
-            raise RoutingError(f"Entry node {entry_node!r} is not a registered node.")
+        entry_target = start_edges[0].target
+        if entry_target not in self._nodes:
+            raise RoutingError(f"Entry node {entry_target!r} is not a registered node.")
 
-        # 2. All edge sources/targets exist (except START/END sentinels).
+        # 2. All edge sources/targets are registered executable nodes.
         for edge in self._edges:
-            if edge.source != GraphNode.START and edge.source not in self._nodes:
+            if edge.source not in self._nodes:
                 raise RoutingError(
                     f"Edge source {edge.source!r} is not a registered node "
                     f"(edge: {edge.source!r} → {edge.target!r})."
                 )
-            if edge.target != GraphNode.END and edge.target not in self._nodes:
+            if edge.target not in self._nodes:
                 raise RoutingError(
                     f"Edge target {edge.target!r} is not a registered node "
                     f"(edge: {edge.source!r} → {edge.target!r})."
@@ -181,7 +214,7 @@ class Graph[S: "GraphState"]:
                 raise RoutingError(f"Node registered as {name!r} has name attribute {node.name!r}.")
 
         # 4. Cycle detection (optional, warn default).
-        cycles = self._detect_cycles(entry_node)
+        cycles = self._detect_cycles(GraphNode.START)
         if cycles:
             msg = f"Graph contains cycles: {cycles}"
             if cycle_detection == "raise":
@@ -198,13 +231,13 @@ class Graph[S: "GraphState"]:
         # (reverse BFS from END). LINEAR skips both checks — it follows a
         # single path and unreachable nodes are simply never visited.
         if scheduler == SchedulerKind.PARALLEL:
-            self._validate_reachability(entry_node)
+            self._validate_reachability(GraphNode.START)
 
         return CompiledGraph(
             name=self.name,
             nodes=dict(self._nodes),
             edges=list(self._edges),
-            entry_node=entry_node,
+            entry_node=GraphNode.START,
             max_iterations=max_iterations,
             scheduler=scheduler,
             default_trigger=default_trigger,
@@ -274,7 +307,7 @@ class Graph[S: "GraphState"]:
                 if neighbor not in visited_from_start:
                     queue.append(neighbor)
 
-        unreachable = set(self._nodes) - visited_from_start
+        unreachable = set(self._nodes) - {GraphNode.START, GraphNode.END} - visited_from_start
         if unreachable:
             raise RoutingError(
                 f"Nodes unreachable from entry node {entry_node!r}: "
@@ -287,7 +320,7 @@ class Graph[S: "GraphState"]:
         for edge in self._edges:
             reverse_adj.setdefault(edge.target, set()).add(edge.source)
 
-        visited_to_end: set[str] = set()
+        visited_to_end: set[str] = {GraphNode.END}
         queue = [GraphNode.END]
         while queue:
             current = queue.pop(0)

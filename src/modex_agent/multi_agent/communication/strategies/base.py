@@ -12,13 +12,13 @@ from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.runtime.enums import TurnCustomKey
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.session_id import SessionIdFactory, SessionInfo
     from modex_agent.core.session_registry import SessionRegistry
-    from modex_agent.messaging.broker import MessageBroker
-    from modex_agent.multi_agent.bus import AgentMessageBus
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
     from modex_agent.multi_agent.tools import CommunicationTarget
     from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
 
@@ -40,9 +40,8 @@ class SendDeps:
     """Dependencies shared by all send strategies."""
 
     source: AgentAddress
-    broker: MessageBroker
     session_factory: SessionIdFactory
-    agent_bus: AgentMessageBus | None = None
+    tree: SessionTreeManager
     session_registry: SessionRegistry | None = None
     workspace_path_resolver: WorkspacePathResolver | None = None
     trace_enabled: bool = True
@@ -79,6 +78,17 @@ class SendStrategy(ABC):
         if self.should_register_session() and self._deps.session_registry is not None:
             await self._deps.session_registry.register(session)
         envelope = self.build_envelope(req, session, invocation_id)
+        if self.should_propagate_graph_instance_id() and req.context.graph_instance_id is not None:
+            envelope.metadata["graph_instance_id"] = req.context.graph_instance_id
+        if self.should_propagate_graph_instance_id():
+            runtime = req.context.runtime
+            if runtime is not None:
+                trace_id = runtime.state.custom.get(TurnCustomKey.TRACE_ID)
+                if trace_id is not None:
+                    envelope.metadata["trace_id"] = str(trace_id)
+                handoff_span_id = runtime.state.custom.get(TurnCustomKey.HANDOFF_SPAN_ID)
+                if handoff_span_id is not None:
+                    envelope.metadata["parent_span_id"] = str(handoff_span_id)
         deliver_err = await self.deliver(envelope, req.target)
         if deliver_err is not None:
             return AgentSendResult.with_error(
@@ -104,9 +114,9 @@ class SendStrategy(ABC):
     ) -> AgentMessageEnvelope: ...
 
     async def deliver(self, env: AgentMessageEnvelope, target: CommunicationTarget) -> str | None:
-        """Default delivery: local agent bus or broker fallback.
+        """Default delivery: tree.deliver (converged — single path, no fallback).
 
-        Subclasses with a different delivery target (e.g. peer-pool bus)
+        Subclasses with a different delivery target (e.g. peer-pool tree)
         override this.
         """
         _ = target
@@ -121,6 +131,26 @@ class SendStrategy(ABC):
         (subagent sessions are owned by the sender's pool).
         Peer-normal sessions are registered by the *receiver's* poller, not
         the sender — so the default is False.
+        """
+        return False
+
+    def should_propagate_graph_instance_id(self) -> bool:
+        """Whether to stamp ``graph_instance_id`` onto the envelope metadata.
+
+        Default: False. Only same-graph intra-tree communication propagates
+        it — ``SubagentDispatchStrategy`` (main→subagent) and
+        ``ParentReplyStrategy`` (subagent→parent) override to True.
+        ``PeerNormalStrategy`` does NOT override (peer sends cross trees;
+        the sender's graph_instance_id is meaningless in the receiver's tree
+        and would contaminate the receiver's binding store).
+
+        Propagation matrix (see ``docs/design/session-tree/layered-config-matrix.md``):
+
+        | Strategy             | Propagates graph_instance_id |
+        |----------------------|------------------------------|
+        | SubagentDispatch     | Yes (intra-tree)             |
+        | ParentReply          | Yes (intra-tree)             |
+        | PeerNormal           | No (cross-tree)              |
         """
         return False
 
@@ -150,7 +180,9 @@ class SendStrategy(ABC):
 
     # --- shared helpers ---------------------------------------------------
 
-    def _envelope_payload(self, content: str, message_type: str, req: SendRequest) -> dict[str, Any]:
+    def _envelope_payload(
+        self, content: str, message_type: str, req: SendRequest
+    ) -> dict[str, Any]:
         """Build the envelope payload dict, including workspace when bound."""
         payload: dict[str, Any] = {"content": content, "message_type": message_type}
         if req.context.workspace is not None:
@@ -164,14 +196,9 @@ class SendStrategy(ABC):
         return self._deps.source
 
     async def _deliver(self, envelope: AgentMessageEnvelope) -> str | None:
-        """Single delivery path: bus.send when wired, else broker fallback."""
-        if self._deps.agent_bus is not None:
-            await self._deps.agent_bus.send(envelope.agent_session_id, envelope)
-            return None
-        if envelope.target is not None:
-            await self._deps.broker.send_to(envelope.target, envelope.to_broker_message())
-            return None
-        return "No target address for broker delivery"
+        """Single delivery path: tree.deliver (converged — no fallback)."""
+        await self._deps.tree.deliver(envelope.agent_session_id, envelope)
+        return None
 
     def _subagent_runtime_dir(self, target_kind: AgentCommKind | None) -> Path | None:
         """Resolved runtime_dir for SUBAGENT targets, else None."""

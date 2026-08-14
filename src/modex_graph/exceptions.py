@@ -76,6 +76,11 @@ class RoutingError(Exception):
     Deliver-only routing: nodes must call ``deliver(content, next_node, ctx)``
     during ``execute()``. If a node produces no delivers and has no downstream
     edges, ``RoutingError`` is raised.
+
+    Topology ``RoutingError``\\s (ambiguous routing, missing topology, invalid
+    dispatch target) propagate as CRASHED. A dead-end graph (no dispatches
+    produced) terminates with ``ctx.reached_end = False`` → FAILED, detected
+    natively by the schedulers without raising.
     """
 
 

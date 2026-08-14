@@ -1,4 +1,5 @@
 -- Workspace DB initial schema.
+-- NOTE: Modifying 001 requires DB rebuild for existing deployments.
 -- Target schema per ADR-0028 (RecordScope base/subclass split, pool removal),
 -- ADR-0029 (epoch-ms timestamps + updated_at triggers), and
 -- ADR-0031 (scope/scope_key merge, dead-table drops, inbox_topics minimization,
@@ -390,6 +391,10 @@ END;
 -- ---------------------------------------------------------------------------
 -- 16. graph_specs — graph definition persistence (full GraphSpec serialization).
 --     spec_id is a Snowflake ID (BIGINT, application-generated; not AUTOINCREMENT).
+--     Spec is immutable (ADR-0040 change 3): each save with changed content
+--     creates a new row (new spec_id). No UNIQUE(name, version) — multiple
+--     rows with the same (name, version) are allowed, distinguished by spec_id.
+--     No auto-update trigger — immutable rows are never UPDATEd.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS graph_specs (
     spec_id         BIGINT  PRIMARY KEY,
@@ -397,20 +402,10 @@ CREATE TABLE IF NOT EXISTS graph_specs (
     version         TEXT    NOT NULL DEFAULT '1.0',
     spec_json       TEXT    NOT NULL CHECK (json_valid(spec_json)),
     created_at      INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
-    updated_at      INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
-    UNIQUE (name, version)
+    updated_at      INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
 );
 
 CREATE INDEX IF NOT EXISTS idx_graph_specs_name ON graph_specs (name);
-
-CREATE TRIGGER IF NOT EXISTS trg_graph_specs_auto_updated_at
-AFTER UPDATE ON graph_specs
-FOR EACH ROW
-WHEN NEW.updated_at IS OLD.updated_at
-BEGIN
-    UPDATE graph_specs SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
-    WHERE rowid = NEW.rowid;
-END;
 
 -- ---------------------------------------------------------------------------
 -- 17. graph_instances — runtime graph instances (graph_instance_id is the
@@ -421,14 +416,17 @@ END;
 --     FK enforcement is off by default).
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS graph_instances (
-    graph_instance_id   BIGINT  PRIMARY KEY,
+    graph_instance_id   BIGINT  NOT NULL,
     spec_id             BIGINT  NOT NULL,
+    version             INTEGER NOT NULL DEFAULT 0,
     parent_instance_id  BIGINT,
     parent_node         TEXT,
-    status              TEXT    NOT NULL DEFAULT 'running'
-                        CHECK (status IN ('running', 'paused', 'stopped', 'crashed', 'completed', 'failed')),
+    status              TEXT    NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'running', 'paused', 'stopped', 'crashed', 'completed', 'failed')),
+    node_id_map_json    TEXT    NOT NULL DEFAULT '{}' CHECK (json_valid(node_id_map_json)),
     created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
-    updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+    updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    PRIMARY KEY (graph_instance_id, version)
 );
 
 CREATE INDEX IF NOT EXISTS idx_graph_instances_spec
@@ -453,7 +451,7 @@ END;
 
 -- ---------------------------------------------------------------------------
 -- 18. node_states — per-node invocation version chain.
---     One row per (graph_instance_id, node_name, version). All versions
+--     One row per (graph_instance_id, node_id, version). All versions
 --     retained for MVCC rollback. `status` tracks the InvocationStatus
 --     lifecycle (running → completed/canceled/crashed); no pending or
 --     superseded states. `invocation_id` links the version to its producing
@@ -467,7 +465,8 @@ END;
 CREATE TABLE IF NOT EXISTS node_states (
     node_state_id       BIGINT  PRIMARY KEY,
     graph_instance_id   BIGINT  NOT NULL,
-    node_name           TEXT    NOT NULL,
+    node_name           TEXT,
+    node_id             TEXT    NOT NULL,
     version             INTEGER NOT NULL DEFAULT 0,
     parent_version      INTEGER,
     status              TEXT    NOT NULL DEFAULT 'running'
@@ -478,28 +477,28 @@ CREATE TABLE IF NOT EXISTS node_states (
     suspended           INTEGER NOT NULL DEFAULT 0,
     created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
     updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
-    UNIQUE (graph_instance_id, node_name, version)
+    UNIQUE (graph_instance_id, node_id, version)
 );
 
 CREATE INDEX IF NOT EXISTS idx_node_states_latest
-    ON node_states (graph_instance_id, node_name, version DESC);
+    ON node_states (graph_instance_id, node_id, version DESC);
 
 CREATE INDEX IF NOT EXISTS idx_node_states_node
-    ON node_states (graph_instance_id, node_name);
+    ON node_states (graph_instance_id, node_id);
 
 CREATE INDEX IF NOT EXISTS idx_node_states_status
-    ON node_states (graph_instance_id, node_name, status);
+    ON node_states (graph_instance_id, node_id, status);
 
 CREATE INDEX IF NOT EXISTS idx_node_states_cross
-    ON node_states (graph_instance_id, node_name, invocation_id);
+    ON node_states (graph_instance_id, node_id, invocation_id);
 
 CREATE INDEX IF NOT EXISTS idx_node_states_global
     ON node_states (graph_instance_id, invocation_id DESC);
 
 -- ---------------------------------------------------------------------------
 -- 19. deliver_states — accumulated deliver payloads with consumption state machine.
---     node_name is the accumulating node; next_node is the target downstream.
---     `source_node` / `source_invocation_id` record the delivering node;
+--     node_id is the accumulating node; next_node_id is the target downstream.
+--     `source_node_id` / `source_invocation_id` record the delivering node;
 --     `consumed_by_invocation_id` records the consumer (NULL until consumed).
 --     `status` transitions: PENDING → CONSUMED_PENDING → CONSUMED_COMPLETED
 --     (three-state machine). Default is 'pending'.
@@ -508,9 +507,12 @@ CREATE INDEX IF NOT EXISTS idx_node_states_global
 CREATE TABLE IF NOT EXISTS deliver_states (
     deliver_id          BIGINT  PRIMARY KEY,
     graph_instance_id   BIGINT  NOT NULL,
-    node_name           TEXT    NOT NULL,
-    next_node           TEXT    NOT NULL,
+    node_name           TEXT,
+    node_id             TEXT    NOT NULL,
+    next_node           TEXT,
+    next_node_id        TEXT    NOT NULL,
     source_node         TEXT    NOT NULL DEFAULT '',
+    source_node_id      TEXT    NOT NULL DEFAULT '',
     source_invocation_id INTEGER NOT NULL DEFAULT 0,
     consumed_by_invocation_id INTEGER,
     content_json        TEXT    NOT NULL CHECK (json_valid(content_json)),
@@ -522,10 +524,13 @@ CREATE TABLE IF NOT EXISTS deliver_states (
 );
 
 CREATE INDEX IF NOT EXISTS idx_deliver_states_node
-    ON deliver_states (graph_instance_id, node_name, status);
+    ON deliver_states (graph_instance_id, node_id, status);
 
 CREATE INDEX IF NOT EXISTS idx_deliver_states_target
-    ON deliver_states (graph_instance_id, next_node, status);
+    ON deliver_states (graph_instance_id, next_node_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_deliver_states_source
+    ON deliver_states (graph_instance_id, source_node_id, source_invocation_id);
 
 CREATE TRIGGER IF NOT EXISTS trg_deliver_states_auto_updated_at
 AFTER UPDATE ON deliver_states
@@ -535,3 +540,92 @@ BEGIN
     UPDATE deliver_states SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
     WHERE rowid = NEW.rowid;
 END;
+
+-- ---------------------------------------------------------------------------
+-- 20. session_trees — root anchor for a session execution tree.
+--     One row per tree; root_node_session_id is the spawning session.
+--     status tracks tree lifecycle (active -> completed/cancelled).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS session_trees (
+    tree_id               TEXT    PRIMARY KEY,
+    root_node_session_id  TEXT    NOT NULL,
+    pool_name             TEXT    NOT NULL,
+    workspace_root        TEXT    NOT NULL,
+    scope_key             TEXT    NOT NULL COLLATE BINARY,
+    owner_scope_key       TEXT    NOT NULL COLLATE BINARY,
+    status                TEXT    NOT NULL DEFAULT 'active'
+                          CHECK (status IN ('active', 'completed', 'cancelled')),
+    created_at            INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    updated_at            INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    completed_at          INTEGER
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_session_trees_auto_updated_at
+AFTER UPDATE ON session_trees
+FOR EACH ROW
+WHEN NEW.updated_at IS OLD.updated_at
+BEGIN
+    UPDATE session_trees SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+    WHERE rowid = NEW.rowid;
+END;
+
+-- ---------------------------------------------------------------------------
+-- 21. tree_nodes — node entries within a session tree.
+--     One row per (tree_id, session_id); parent_session_id is NULL for root.
+--     version/parent_version chain node re-invocations. status tracks the
+--     node lifecycle (running -> completed/cancelled).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tree_nodes (
+    tree_id             TEXT    NOT NULL,
+    session_id          TEXT    NOT NULL,
+    parent_session_id   TEXT,
+    agent_name          TEXT    NOT NULL,
+    version             INTEGER NOT NULL DEFAULT 0,
+    parent_version      INTEGER,
+    status              TEXT    NOT NULL DEFAULT 'running'
+                        CHECK (status IN ('running', 'completed', 'cancelled')),
+    scope_key           TEXT    NOT NULL COLLATE BINARY,
+    owner_scope_key     TEXT    NOT NULL COLLATE BINARY,
+    created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    UNIQUE (tree_id, session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tree_nodes_tree    ON tree_nodes (tree_id);
+CREATE INDEX IF NOT EXISTS idx_tree_nodes_session ON tree_nodes (session_id);
+
+CREATE TRIGGER IF NOT EXISTS trg_tree_nodes_auto_updated_at
+AFTER UPDATE ON tree_nodes
+FOR EACH ROW
+WHEN NEW.updated_at IS OLD.updated_at
+BEGIN
+    UPDATE tree_nodes SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+    WHERE rowid = NEW.rowid;
+END;
+
+-- ---------------------------------------------------------------------------
+-- 22. message_tracks — delivery tracking for inter-node routed messages.
+--     message_type is restricted to routed payloads only (task_request,
+--     agent_result); external_input and agent_message do not get tracks.
+--     Short-lived (dispatched -> consumed/cancelled); no updated_at trigger,
+--     mirroring the inbox_delivered_ids append-only pattern.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS message_tracks (
+    track_id            TEXT    PRIMARY KEY,
+    tree_id             TEXT    NOT NULL,
+    message_id          TEXT    NOT NULL,
+    message_type        TEXT    NOT NULL
+                        CHECK (message_type IN ('task_request', 'agent_result', 'external_input')),
+    invocation_id       TEXT,
+    target_session_id   TEXT    NOT NULL,
+    source_session_id   TEXT    NOT NULL,
+    status              TEXT    NOT NULL DEFAULT 'dispatched'
+                        CHECK (status IN ('dispatched', 'consumed', 'cancelled')),
+    scope_key           TEXT    NOT NULL COLLATE BINARY,
+    owner_scope_key     TEXT    NOT NULL COLLATE BINARY,
+    dispatched_at       INTEGER NOT NULL,
+    consumed_at         INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_tracks_tree_status    ON message_tracks (tree_id, status);
+CREATE INDEX IF NOT EXISTS idx_message_tracks_target_session ON message_tracks (target_session_id);

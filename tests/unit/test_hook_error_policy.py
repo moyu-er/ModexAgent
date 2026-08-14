@@ -6,27 +6,27 @@ import pytest
 
 from modex_agent.control.exceptions import PolicyViolation
 from modex_agent.hook import HookErrorPolicy, HookPoint, HookPayload, HookRunner, HookSpec
-from modex_agent.hook.abc import BeforeIterationHook, BeforeTurnHook
+from modex_agent.hook.abc import BeforeIterationHook, BeforeGraphHook
 
 
-class BrokenHook(BeforeTurnHook, BeforeIterationHook):
+class BrokenHook(BeforeGraphHook, BeforeIterationHook):
     @property
     def name(self) -> str:
         return "broken_hook"
 
-    async def before_turn(self, ctx):
+    async def before_graph(self, ctx):
         raise RuntimeError("boom")
 
     async def before_iteration(self, ctx):
         raise RuntimeError("boom")
 
 
-class GoodHook(BeforeTurnHook):
+class GoodHook(BeforeGraphHook):
     @property
     def name(self) -> str:
         return "good_hook"
 
-    async def before_turn(self, ctx):
+    async def before_graph(self, ctx):
         pass
 
 
@@ -39,24 +39,24 @@ class TestHookErrorPolicyIgnore:
             HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.IGNORE),
         ])
         # Should not raise
-        result = await runner.dispatch(HookPoint.BEFORE_TURN, None)
+        result = await runner.dispatch(HookPoint.BEFORE_GRAPH, None)
         assert result is None
 
     @pytest.mark.asyncio
     async def test_ignore_allows_subsequent_hooks(self):
         calls: list[str] = []
 
-        class TrackingHook(BeforeTurnHook):
+        class TrackingHook(BeforeGraphHook):
             @property
             def name(self) -> str: return "tracking_hook"
-            async def before_turn(self, ctx):
+            async def before_graph(self, ctx):
                 calls.append("track")
 
         runner = HookRunner([
             HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.IGNORE),
             HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.IGNORE),
         ])
-        await runner.dispatch(HookPoint.BEFORE_TURN, None)
+        await runner.dispatch(HookPoint.BEFORE_GRAPH, None)
         assert calls == ["track"]
 
 
@@ -71,7 +71,7 @@ class TestHookErrorPolicyLog:
             HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.LOG),
         ])
         with caplog.at_level(logging.WARNING, logger="modex_agent.hook.runner"):
-            result = await runner.dispatch(HookPoint.BEFORE_TURN, None)
+            result = await runner.dispatch(HookPoint.BEFORE_GRAPH, None)
         assert result is None
         assert any("broken_hook" in r.message for r in caplog.records)
 
@@ -79,17 +79,17 @@ class TestHookErrorPolicyLog:
     async def test_log_allows_subsequent_hooks(self):
         calls: list[str] = []
 
-        class TrackingHook(BeforeTurnHook):
+        class TrackingHook(BeforeGraphHook):
             @property
             def name(self) -> str: return "tracking_hook"
-            async def before_turn(self, ctx):
+            async def before_graph(self, ctx):
                 calls.append("track")
 
         runner = HookRunner([
             HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.LOG),
             HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.LOG),
         ])
-        await runner.dispatch(HookPoint.BEFORE_TURN, None)
+        await runner.dispatch(HookPoint.BEFORE_GRAPH, None)
         assert calls == ["track"]
 
 
@@ -102,16 +102,16 @@ class TestHookErrorPolicyAbort:
             HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.ABORT),
         ])
         with pytest.raises(PolicyViolation):
-            await runner.dispatch(HookPoint.BEFORE_TURN, None)
+            await runner.dispatch(HookPoint.BEFORE_GRAPH, None)
 
     @pytest.mark.asyncio
     async def test_abort_stops_subsequent_hooks(self):
         calls: list[str] = []
 
-        class TrackingHook(BeforeTurnHook):
+        class TrackingHook(BeforeGraphHook):
             @property
             def name(self) -> str: return "tracking_hook"
-            async def before_turn(self, ctx):
+            async def before_graph(self, ctx):
                 calls.append("track")
 
         runner = HookRunner([
@@ -119,17 +119,17 @@ class TestHookErrorPolicyAbort:
             HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.ABORT),
         ])
         with pytest.raises(PolicyViolation):
-            await runner.dispatch(HookPoint.BEFORE_TURN, None)
+            await runner.dispatch(HookPoint.BEFORE_GRAPH, None)
         assert calls == []
 
     @pytest.mark.asyncio
     async def test_abort_distinguishes_timeout_vs_error(self):
         import asyncio
 
-        class SlowHook(BeforeTurnHook):
+        class SlowHook(BeforeGraphHook):
             @property
             def name(self) -> str: return "slow_hook"
-            async def before_turn(self, ctx):
+            async def before_graph(self, ctx):
                 await asyncio.sleep(100)
 
         runner = HookRunner([
@@ -137,7 +137,7 @@ class TestHookErrorPolicyAbort:
         ])
         with pytest.raises(PolicyViolation) as exc_info:
             await runner.dispatch(
-                HookPoint.BEFORE_TURN, None, hook_timeout=0.01
+                HookPoint.BEFORE_GRAPH, None, hook_timeout=0.01
             )
         assert "timeout" in str(exc_info.value)
 
@@ -151,10 +151,10 @@ class TestHookErrorPolicyMixed:
 
         calls: list[str] = []
 
-        class TrackingHook(BeforeTurnHook):
+        class TrackingHook(BeforeGraphHook):
             @property
             def name(self) -> str: return "tracking_hook"
-            async def before_turn(self, ctx):
+            async def before_graph(self, ctx):
                 calls.append("track")
 
         runner = HookRunner([
@@ -163,7 +163,7 @@ class TestHookErrorPolicyMixed:
             HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.ABORT),
         ])
         with caplog.at_level(logging.WARNING, logger="modex_agent.hook.runner"):
-            await runner.dispatch(HookPoint.BEFORE_TURN, None)
+            await runner.dispatch(HookPoint.BEFORE_GRAPH, None)
         assert calls == ["track"]
         # LOG policy should have produced a record
         assert any("broken_hook" in r.message for r in caplog.records)

@@ -24,8 +24,8 @@ from bot.control.models import (
 
 from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.constants import ExecutionStrategyKind
-from modex_agent.multi_agent.bus import AgentMessageBus
 from modex_agent.multi_agent.communication.result import AgentSendResult
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
 
 # ---------------------------------------------------------------------------
@@ -47,6 +47,7 @@ def _make_request(
     parent_session_id: str | None = None,
     content: str = "hello",
     invocation_id: str | None = None,
+    graph_instance_id: int | None = None,
 ) -> SendRequest:
     return SendRequest(
         caller=AgentSessionRef(
@@ -60,13 +61,14 @@ def _make_request(
         target_agent=target_agent,
         content=content,
         invocation_id=invocation_id,
+        graph_instance_id=graph_instance_id,
     )
 
 
 def _make_target(
     *,
     kind: AgentCommKind = AgentCommKind.NORMAL,
-    bus_ref: AgentMessageBus | None = None,
+    tree_ref: SessionTreeManager | None = None,
     execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
     name: str = _TARGET_AGENT,
 ) -> CommunicationTarget:
@@ -74,7 +76,7 @@ def _make_target(
         name=name,
         kind=kind,
         pool_name=_TARGET_POOL,
-        bus_ref=bus_ref,
+        tree_ref=tree_ref,
         execution_strategy=execution_strategy,
     )
 
@@ -105,7 +107,6 @@ def _make_facade(
     target: CommunicationTarget | None = None,
     send_result: AgentSendResult | None = None,
     target_not_found: bool = False,
-    agent_pool_map: dict[str, str] | None = None,
     pool_not_materialized: bool = False,
     session_exists: bool = False,
     main_agent_name: str = "main",
@@ -159,7 +160,6 @@ def _make_facade(
 
     facade = BotControlFacade(
         workspace_resolver=_workspace_resolver,
-        agent_pool_map=agent_pool_map if agent_pool_map is not None else {_AGENT_NAME: _POOL},
         message_store_provider=_message_store_provider,
         transcript_store_provider=_transcript_store_provider,
         communication_service_provider=_comm_service_provider,
@@ -227,7 +227,6 @@ class TestTargetNotFound:
             target_not_found=True,
             main_agent_name="main",
             send_result=send_result,
-            agent_pool_map={"office-expert": _POOL, "main": _POOL},
         )
         request = SendRequest(
             caller=AgentSessionRef(
@@ -256,7 +255,7 @@ class TestPeerNormalSend:
     async def test_peer_send_maps_to_not_applicable(self) -> None:
         target = _make_target(
             kind=AgentCommKind.NORMAL,
-            bus_ref=MagicMock(),
+            tree_ref=MagicMock(),
             execution_strategy=ExecutionStrategyKind.REACT,
         )
         result = _make_send_result(
@@ -277,7 +276,7 @@ class TestPeerNormalSend:
 
     @pytest.mark.asyncio
     async def test_peer_send_passes_correct_args_to_service(self) -> None:
-        target = _make_target(bus_ref=MagicMock())
+        target = _make_target(tree_ref=MagicMock())
         result = _make_send_result(is_peer_send=True, created_new_task=False)
         facade, mock_service = _make_facade(target=target, send_result=result)
         await facade.send(_make_request(content="test message"))
@@ -298,7 +297,7 @@ class TestPeerNormalSend:
 class TestParentReply:
     @pytest.mark.asyncio
     async def test_parent_reply_maps_to_not_applicable(self) -> None:
-        target = _make_target(kind=AgentCommKind.NORMAL, bus_ref=None)
+        target = _make_target(kind=AgentCommKind.NORMAL, tree_ref=None)
         result = _make_send_result(
             target_kind=AgentCommKind.NORMAL,
             is_peer_send=False,
@@ -534,7 +533,7 @@ class TestInvocationIdExistence:
     @pytest.mark.asyncio
     async def test_peer_send_does_not_check_session_store(self) -> None:
         target = _make_target(
-            kind=AgentCommKind.NORMAL, bus_ref=MagicMock()
+            kind=AgentCommKind.NORMAL, tree_ref=MagicMock()
         )
         result = _make_send_result(
             target_kind=AgentCommKind.NORMAL,
@@ -552,7 +551,7 @@ class TestInvocationIdExistence:
 
     @pytest.mark.asyncio
     async def test_parent_reply_does_not_check_session_store(self) -> None:
-        target = _make_target(kind=AgentCommKind.NORMAL, bus_ref=None)
+        target = _make_target(kind=AgentCommKind.NORMAL, tree_ref=None)
         result = _make_send_result(
             target_kind=AgentCommKind.NORMAL,
             is_peer_send=False,
@@ -590,3 +589,76 @@ class TestInvocationIdExistence:
 
         assert send_result.dispatch_outcome == DispatchOutcome.RESUMED
         assert send_result.is_external_target is True
+
+
+# ---------------------------------------------------------------------------
+# graph_instance_id propagation (Site 4)
+# ---------------------------------------------------------------------------
+
+
+class TestSendRequestGraphInstanceId:
+    def test_graph_instance_id_defaults_to_none(self) -> None:
+        request = _make_request()
+        assert request.graph_instance_id is None
+
+    def test_graph_instance_id_accepted(self) -> None:
+        request = _make_request(graph_instance_id=42)
+        assert request.graph_instance_id == 42
+
+    def test_graph_instance_id_rejects_extra_fields(self) -> None:
+        """SendRequest is frozen + extra='forbid' — unknown keys rejected."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            SendRequest(
+                caller=AgentSessionRef(
+                    workspace=_WORKSPACE,
+                    pool=_POOL,
+                    session_id=_SESSION_ID,
+                    agent_name=_AGENT_NAME,
+                ),
+                comm_kind="normal",
+                target_agent=_TARGET_AGENT,
+                content="hello",
+                graph_instance_id=1,
+                unknown_extra="rejected",  # type: ignore[call-arg]
+            )
+
+
+class TestGraphInstanceIdPropagation:
+    @pytest.mark.asyncio
+    async def test_graph_instance_id_propagates_to_agent_context(self) -> None:
+        """When SendRequest carries graph_instance_id, facade sets it on AgentContext."""
+        facade, mock_service = _make_facade()
+        await facade.send(_make_request(graph_instance_id=42))
+
+        context = mock_service._send.call_args.kwargs["context"]
+        assert context.graph_instance_id == 42
+
+    @pytest.mark.asyncio
+    async def test_graph_instance_id_none_propagates_when_omitted(self) -> None:
+        """When SendRequest omits graph_instance_id, AgentContext.graph_instance_id is None."""
+        facade, mock_service = _make_facade()
+        await facade.send(_make_request())
+
+        context = mock_service._send.call_args.kwargs["context"]
+        assert context.graph_instance_id is None
+
+    @pytest.mark.asyncio
+    async def test_graph_instance_id_propagates_for_subagent_dispatch(self) -> None:
+        """graph_instance_id propagates through the subagent dispatch path too."""
+        target = _make_target(
+            kind=AgentCommKind.SUBAGENT,
+            execution_strategy=ExecutionStrategyKind.REACT,
+        )
+        result = _make_send_result(
+            target_kind=AgentCommKind.SUBAGENT,
+            created_new_task=True,
+            invocation_id="inv-graph",
+            session_id="inv-graph.coder",
+        )
+        facade, mock_service = _make_facade(target=target, send_result=result)
+        await facade.send(_make_request(graph_instance_id=7))
+
+        context = mock_service._send.call_args.kwargs["context"]
+        assert context.graph_instance_id == 7

@@ -35,14 +35,12 @@ def _make_server(workspace_root: Path, *, media_config: MediaConfig | None = Non
         input_adapter, store, static_dist=None, home_sessions_dir=home_sessions_dir
     )
     server.set_workspace_index(store)
-    server.set_agent_pool_map({"main": "main"})
     server.set_pool_agent_names(["main"])
 
     ctx = BotInputContext(
         default_pool="main",
         available_pools=lambda: {"main"},
         pool_session_store=MagicMock(),
-        agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
         transcript_store=store,
         enqueue_message=lambda *_a, **_k: None,

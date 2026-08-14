@@ -101,7 +101,7 @@ describe("useWebUIStream approval fetch/render/submit", () => {
         status: "pending",
       },
     ]);
-    expect(fetchApprovals).toHaveBeenCalledWith(sessionId, undefined);
+    expect(fetchApprovals).toHaveBeenCalledWith(sessionId, undefined, undefined);
   });
 
   it("exposes an empty list (not undefined) for the selected session", async () => {
@@ -118,7 +118,7 @@ describe("useWebUIStream approval fetch/render/submit", () => {
       result.current.connect();
     });
 
-    await waitFor(() => expect(fetchApprovals).toHaveBeenCalledWith(sessionId, undefined));
+    await waitFor(() => expect(fetchApprovals).toHaveBeenCalledWith(sessionId, undefined, undefined));
     expect(result.current.pendingApprovals).toEqual([]);
   });
 
@@ -135,7 +135,7 @@ describe("useWebUIStream approval fetch/render/submit", () => {
       useWebUIStream(sessionId, getPoolForUuid, undefined, undefined, workspace),
     );
 
-    await waitFor(() => expect(fetchApprovals).toHaveBeenCalledWith(sessionId, workspace));
+    await waitFor(() => expect(fetchApprovals).toHaveBeenCalledWith(sessionId, workspace, undefined));
   });
 
   it("re-fetches approvals when turn_end arrives via WebSocket", async () => {
@@ -228,7 +228,7 @@ describe("useWebUIStream approval fetch/render/submit", () => {
       await result.current.submitApproval("tc_1", "allow");
     });
 
-    expect(submitApproval).toHaveBeenCalledWith(sessionId, "tc_1", "allow", undefined);
+    expect(submitApproval).toHaveBeenCalledWith(sessionId, "tc_1", "allow", undefined, undefined);
     expect(result.current.pendingApprovals).toEqual([]);
     // Batch lock resets to false after completion (was true while in flight).
     expect(result.current.isApprovingBatch).toBe(false);
@@ -296,7 +296,7 @@ describe("useWebUIStream approval fetch/render/submit", () => {
       "tc_a",
       "tc_b",
     ]);
-    expect(fetchApprovals).toHaveBeenCalledWith(sessionId, undefined);
+    expect(fetchApprovals).toHaveBeenCalledWith(sessionId, undefined, undefined);
   });
 
   it("clears isStreaming for its session when approval_request arrives", async () => {
@@ -313,7 +313,7 @@ describe("useWebUIStream approval fetch/render/submit", () => {
       result.current.connect();
     });
 
-    await waitFor(() => expect(fetchApprovals).toHaveBeenCalledWith(sessionId, undefined));
+    await waitFor(() => expect(fetchApprovals).toHaveBeenCalledWith(sessionId, undefined, undefined));
 
     // Simulate a streaming turn in progress, then a suspend-for-approval.
     act(() => {
@@ -552,9 +552,9 @@ describe("useWebUIStream approval fetch/render/submit", () => {
     await act(async () => { await result.current.submitApproval("tc_B", "allow"); });
     await act(async () => { await result.current.submitApproval("tc_C", "allow"); });
 
-    expect(submitApproval).toHaveBeenCalledWith(sessionId, "tc_A", "allow", undefined);
-    expect(submitApproval).toHaveBeenCalledWith(sessionId, "tc_B", "allow", undefined);
-    expect(submitApproval).toHaveBeenCalledWith(sessionId, "tc_C", "allow", undefined);
+    expect(submitApproval).toHaveBeenCalledWith(sessionId, "tc_A", "allow", undefined, undefined);
+    expect(submitApproval).toHaveBeenCalledWith(sessionId, "tc_B", "allow", undefined, undefined);
+    expect(submitApproval).toHaveBeenCalledWith(sessionId, "tc_C", "allow", undefined, undefined);
 
     // Terminal state: all cards cleared, batch lock released.
     expect(result.current.pendingApprovals).toEqual([]);

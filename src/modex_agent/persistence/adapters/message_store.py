@@ -29,6 +29,7 @@ from enum import StrEnum
 from sqlite3 import Row
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.types import MessageRole
 from modex_agent.memory.core.models import StorageRevision
 from modex_agent.memory.core.split_stores import MessageStore, message_signature
 from modex_agent.persistence.column_projection import (
@@ -189,15 +190,31 @@ class SqliteMessageStore(MessageStore):
             messages.append(message)
         return messages
 
-    async def load_all_messages(self) -> list[dict[str, Any]]:
+    async def load_all_messages(self, *, limit: int | None = None) -> list[dict[str, Any]]:
+        if limit is not None and limit < 0:
+            raise ValueError("limit must be non-negative")
+        if limit == 0:
+            return []
+
         states = MessageRowState.all_visible()
+        order_and_limit = "ORDER BY seq" if limit is None else "ORDER BY seq DESC LIMIT ?"
+        params: tuple[str | int, ...] = (
+            self._scope_json,
+            *states,
+            str(MessageRole.COMPACT),
+        )
+        if limit is not None:
+            params = (*params, limit)
         rows = await self._connection.query_all(
             f"SELECT {_PROJECTION_SELECT}, state FROM memory_session_messages "
             f"WHERE scope_key = ? "
             f"AND state IN ({_placeholders(len(states))}) "
-            f"ORDER BY seq",
-            (self._scope_json, *states),
+            f"AND role != ? "
+            f"{order_and_limit}",
+            params,
         )
+        if limit is not None:
+            rows.reverse()
         messages: list[dict[str, Any]] = []
         for row in rows:
             message = _assemble_message(row)

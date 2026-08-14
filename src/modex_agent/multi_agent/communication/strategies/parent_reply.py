@@ -79,3 +79,7 @@ class ParentReplyStrategy(SendStrategy):
         """NORMAL targets hide invocation_id from the sender's ack."""
         _ = invocation_id
         return None
+
+    def should_propagate_graph_instance_id(self) -> bool:
+        """Subagent→parent reply is intra-tree (same graph instance)."""
+        return True

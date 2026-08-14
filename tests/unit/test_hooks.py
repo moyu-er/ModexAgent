@@ -11,20 +11,20 @@ from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.hook import HookPoint, HookPayload, HookRunner, HookSpec, HookErrorPolicy
 from modex_agent.hook.abc import (
-    AfterIterationHook, AfterLLMResponseHook, AfterTurnHook,
-    BeforeIterationHook, BeforeTurnHook, FinalizeContentHook,
+    AfterIterationHook, AfterLLMResponseHook, AfterGraphHook,
+    BeforeIterationHook, BeforeGraphHook, FinalizeContentHook,
 )
 from modex_agent.hook.builtin import RunLoggingHook
 
-class BrokenHook(BeforeTurnHook, BeforeIterationHook, AfterIterationHook, AfterTurnHook, AfterLLMResponseHook):
+class BrokenHook(BeforeGraphHook, BeforeIterationHook, AfterIterationHook, AfterGraphHook, AfterLLMResponseHook):
     """Hook that raises in every async method."""
 
     @property
     def name(self) -> str:
         return "broken_hook"
 
-    async def before_turn(self, ctx):
-        raise RuntimeError("before_turn boom")
+    async def before_graph(self, ctx):
+        raise RuntimeError("before_graph boom")
 
     async def before_iteration(self, ctx):
         raise RuntimeError("before_iteration boom")
@@ -32,8 +32,8 @@ class BrokenHook(BeforeTurnHook, BeforeIterationHook, AfterIterationHook, AfterT
     async def after_iteration(self, ctx):
         raise RuntimeError("after_iteration boom")
 
-    async def after_turn(self, ctx, result):
-        raise RuntimeError("after_turn boom")
+    async def after_graph(self, ctx, result):
+        raise RuntimeError("after_graph boom")
 
     async def after_llm_response(self, ctx, response):
         raise RuntimeError("after_llm_response boom")
@@ -49,7 +49,7 @@ class TestHookRunnerLogging:
         async_ctx = None
 
         with caplog.at_level(logging.DEBUG, logger="modex_agent.hook.runner"):
-            await runner.dispatch(HookPoint.BEFORE_TURN, async_ctx)
+            await runner.dispatch(HookPoint.BEFORE_GRAPH, async_ctx)
             await runner.dispatch(HookPoint.BEFORE_ITERATION, async_ctx)
             await runner.dispatch(
                 HookPoint.AFTER_LLM_RESPONSE,
@@ -57,7 +57,7 @@ class TestHookRunnerLogging:
                 HookPayload(data={"response": LLMResponse(content="hello")}),
             )
             await runner.dispatch(HookPoint.AFTER_ITERATION, async_ctx)
-            await runner.dispatch(HookPoint.AFTER_TURN, async_ctx, HookPayload(data={"result": None}))
+            await runner.dispatch(HookPoint.AFTER_GRAPH, async_ctx, HookPayload(data={"result": None}))
 
         assert len(caplog.records) == 5
         for record in caplog.records:
@@ -67,10 +67,10 @@ class TestHookRunnerLogging:
     async def test_other_hooks_still_run_after_exception(self):
         calls: list[str] = []
 
-        class TrackingHook(BeforeTurnHook):
+        class TrackingHook(BeforeGraphHook):
             @property
             def name(self) -> str: return "tracking_hook"
-            async def before_turn(self, ctx):
+            async def before_graph(self, ctx):
                 calls.append("track")
 
         hooks = [
@@ -78,7 +78,7 @@ class TestHookRunnerLogging:
             HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.LOG),
         ]
         runner = HookRunner(hooks)
-        await runner.dispatch(HookPoint.BEFORE_TURN, None)
+        await runner.dispatch(HookPoint.BEFORE_GRAPH, None)
         assert calls == ["track"]
 
     def test_finalize_content_chains_through_all_hooks(self):

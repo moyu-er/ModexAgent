@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.context_fork import ContextForkBuilder
     from modex_agent.multi_agent.inbox_poller import InboxPoller
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
     from modex_agent.multi_agent.template import AgentTemplate
     from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 
@@ -122,6 +123,9 @@ class AgentPool(AgentRegistry):
         self._materialize_deps: AgentMaterializeDeps | None = None
         self._template_registry: AgentTemplateRegistry | None = None
         self._pool_name: str | None = None
+        # ── SessionTreeManager — sole inbox write path (todo 16 convergence).
+        #    Set from materialize_deps or directly via the tree property. ──
+        self._tree: SessionTreeManager | None = None
         # ── ADR-0015 D5 fork-context cleanup (set by Task 2.9 wiring) ──
         self._context_fork_builder: ContextForkBuilder | None = None
         # ── Per-poll InboxPoller (Task 7): attached by create_pool; started
@@ -197,6 +201,16 @@ class AgentPool(AgentRegistry):
     @materialize_deps.setter
     def materialize_deps(self, value: AgentMaterializeDeps | None) -> None:
         self._materialize_deps = value
+        if value is not None:
+            self._tree = value.tree
+
+    @property
+    def tree(self) -> SessionTreeManager | None:
+        return self._tree
+
+    @tree.setter
+    def tree(self, value: SessionTreeManager | None) -> None:
+        self._tree = value
 
     @property
     def template_registry(self) -> AgentTemplateRegistry | None:
@@ -283,28 +297,30 @@ class AgentPool(AgentRegistry):
             agent_session_id=session_id,
             parent_session_id=parent_sid,
         )
-        if self._agent_bus is not None:
-            await self._agent_bus.send(session_id, envelope)
+        if self._tree is None:
+            raise RuntimeError(
+                "AgentPool.tree not wired: pool assembly must inject "
+                "materialize_deps.tree before submit_input"
+            )
+        await self._tree.deliver(session_id, envelope)
 
     async def sessions_with_pending(self) -> list[str]:
         """Session ids that currently have ≥1 pending inbox message."""
-        if self._agent_bus is not None:
-            return await self._agent_bus.sessions_with_pending()
-        if self._inbox_consumer is not None:
-            return await self._inbox_consumer.sessions_with_pending()
-        return []
+        if self._agent_bus is None:
+            raise RuntimeError("AgentPool.agent_bus not wired")
+        return await self._agent_bus.sessions_with_pending()
 
     async def consume_inbox(
         self, session_id: str, *, only_types: set[str] | None = None
     ) -> list[AgentMessageEnvelope]:
         """Non-blocking consume of a batch of inbox envelopes for a session."""
-        if self._agent_bus is not None:
-            return await self._agent_bus.consume(
-                session_id,
-                limit=self._DRAIN_BATCH_LIMIT,
-                only_types=only_types,
-            )
-        return []
+        if self._agent_bus is None:
+            raise RuntimeError("AgentPool.agent_bus not wired")
+        return await self._agent_bus.consume(
+            session_id,
+            limit=self._DRAIN_BATCH_LIMIT,
+            only_types=only_types,
+        )
 
     async def peek_inbox(self, session_id: str, limit: int = 1) -> list[AgentMessageEnvelope]:
         """Non-destructive read of up to ``limit`` pending envelopes.
@@ -313,9 +329,9 @@ class AgentPool(AgentRegistry):
         envelope WITHOUT consuming the batch — so a materialize failure still
         leaves the messages in the inbox.
         """
-        if self._agent_bus is not None:
-            return await self._agent_bus.peek(session_id, limit=limit)
-        return []
+        if self._agent_bus is None:
+            raise RuntimeError("AgentPool.agent_bus not wired")
+        return await self._agent_bus.peek(session_id, limit=limit)
 
     async def materialize_agent(
         self,
@@ -502,10 +518,8 @@ class AgentPool(AgentRegistry):
         finally:
             if watchdog_task is not None and not watchdog_task.done():
                 watchdog_task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await watchdog_task
-                except asyncio.CancelledError:
-                    pass
             if deadline is not None and token is not None:
                 current_dispatch_deadline.reset(token)
             remaining = max(0, self._active_session_counts.get(agent_name, 1) - 1)
@@ -640,6 +654,32 @@ class AgentPool(AgentRegistry):
         self._session_lru.pop(session_id, None)
         self._dynamic_sessions.discard(session_id)
 
+    async def _finalize_session_eviction(self, session_id: str) -> None:
+        """Converged eviction seam — tree cleanup + context clear + registry + tracking.
+
+        Called by both TTL (``_try_evict_if_stale``) and LRU
+        (``_evict_dynamic_session``) eviction paths. Convergence rule 15:
+        one async seam, no parallel eviction paths.
+        """
+        if self._tree is None:
+            raise RuntimeError(
+                "AgentPool.tree not wired before session eviction"
+            )
+        with contextlib.suppress(Exception):
+            await self._tree.on_session_evicted(session_id)
+        agent_name = self._session_agents.get(session_id)
+        if agent_name is not None:
+            instance = self._agents.get(agent_name)
+            if instance and instance.context_manager:
+                with contextlib.suppress(Exception):
+                    await instance.context_manager.clear(session_id)
+        if self._session_registry is not None:
+            self._fire_and_forget_registry(
+                f"cleanup session {session_id}",
+                self._session_registry.cleanup(session_id),
+            )
+        self._evict_session_tracking(session_id)
+
     async def _try_evict_if_stale(self, session_id: str) -> None:
         """Evict a session if stale by TTL.
 
@@ -653,18 +693,13 @@ class AgentPool(AgentRegistry):
         if session_id not in self._dynamic_sessions:
             return
 
-        agent_name = self._session_agents[session_id]
         activity = self._session_activity.get(session_id)
         if activity is None:
             return
         if time.monotonic() - activity.last_active < self._retention.ttl_seconds:
             return
 
-        instance = self._agents.get(agent_name)
-        if instance and instance.context_manager:
-            with contextlib.suppress(Exception):
-                await instance.context_manager.clear(session_id)
-        self._evict_session_tracking(session_id)
+        await self._finalize_session_eviction(session_id)
 
     async def _cleanup_stale_sessions(self) -> None:
         """Background task: TTL eviction with concurrency safety."""
@@ -689,7 +724,7 @@ class AgentPool(AgentRegistry):
         dynamic_sessions = sorted(
             (
                 sid
-                for sid in self._session_activity.keys()
+                for sid in self._session_activity
                 if self._session_agents.get(sid) == agent_name and sid in self._dynamic_sessions
             ),
             key=lambda sid: self._session_lru.get(sid, 0),
@@ -703,21 +738,13 @@ class AgentPool(AgentRegistry):
     async def _evict_dynamic_session(self, session_id: str) -> None:
         """Evict a dynamic session selected by policy.
 
-        Clears the agent context and the fork context, then removes tracking.
-        (The per-session Drainer coordination that used to live here was
-        removed in Task 10; the between-turn driver is now the per-pool
-        InboxPoller.)
+        Delegates to the converged ``_finalize_session_eviction`` seam
+        (tree cleanup + context clear + registry + tracking removal).
         """
         if session_id not in self._dynamic_sessions:
             self._evict_session_tracking(session_id)
             return
-        agent_name = self._session_agents.get(session_id)
-        if agent_name is not None:
-            instance = self._agents.get(agent_name)
-            if instance and instance.context_manager:
-                with contextlib.suppress(Exception):
-                    await instance.context_manager.clear(session_id)
-        self._evict_session_tracking(session_id)
+        await self._finalize_session_eviction(session_id)
 
     def list_agents(self) -> list[AgentDescriptor]:
         return [inst.descriptor for inst in self._agents.values()]

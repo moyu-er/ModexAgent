@@ -78,9 +78,7 @@ class ReActEvent(AgentEvent, Enum):
 
 def _get_turn_messages(ctx: AgentContext) -> list[dict[str, Any]]:
     """Extract current-turn messages from typed state or metadata fallback."""
-    from modex_agent.agents.react.state import get_react_state as _grs
-
-    state = _grs(ctx)
+    state = get_react_state(ctx)
     if state is not None:
         return [
             md.message.to_dict() if hasattr(md.message, "to_dict") else md.message
@@ -244,7 +242,7 @@ class ReActAgent(Agent[ReActEvent]):
         ctx_token = current_agent_context.set(context)
 
         # ``result`` stays None on a GraphInterrupt (approval suspend) so the
-        # FINALLY_TURN notification hook skips -- suspend is an expected pause,
+        # FINALLY_GRAPH notification hook skips -- suspend is an expected pause,
         # not a turn end. Every other path (success / cancel / error) reassigns
         # it to a concrete AgentResult before the ``finally`` runs.
         result: AgentResult | None = AgentResult(content="", stop_reason=StopReason.ERROR)
@@ -252,7 +250,7 @@ class ReActAgent(Agent[ReActEvent]):
         async def actual_turn():
             nonlocal result
             if runtime.hooks:
-                await runtime.hooks.dispatch(HookPoint.BEFORE_TURN, context)
+                await runtime.hooks.dispatch(HookPoint.BEFORE_GRAPH, context)
 
             # Drain control commands before starting turn
             if context.runtime and context.runtime.control_channel:
@@ -269,13 +267,21 @@ class ReActAgent(Agent[ReActEvent]):
             # (D9.3 layer 1) — N is larger than the business max
             # (``context.max_iterations``) so the node-level check in
             # ``LLMNode`` routes to END via a static edge before this fires.
+            max_turns = 1
+            if context.runtime and context.runtime.state:
+                max_turns = context.runtime.state.custom.get(
+                    TurnCustomKey.MAX_TURNS,
+                    1,
+                )
             graph = build_react_graph(
                 llm_client=self._llm_client,
                 injection_drainer=self._injection_drainer,
                 tool_executor=self._tool_executor,
                 mode=self.mode,
                 deduplicator=ToolCallDeduplicator(),
-            ).compile(max_iterations=context.max_iterations * 4 + 10)
+            ).compile(
+                max_iterations=context.max_iterations * max_turns * 4 + 10
+            )
             engine = GraphEngine(graph)
             react_state = get_react_state(context)
             assert react_state is not None  # constructed just above if previously None
@@ -284,8 +290,8 @@ class ReActAgent(Agent[ReActEvent]):
             from modex_graph import create_null_coordinator
 
             coordinator = create_null_coordinator()
-            for node_name in graph.nodes:
-                coordinator.register_node(node_name)
+            for node in graph.nodes.values():
+                coordinator.register_node(node.node_id)
             graph_ctx = ReActGraphContext(
                 state=react_state,
                 runtime=graph_runtime,
@@ -305,7 +311,7 @@ class ReActAgent(Agent[ReActEvent]):
                 await runtime.hooks.dispatch(HookPoint.AFTER_ITERATION, context)
             if runtime.hooks:
                 await runtime.hooks.dispatch(
-                    HookPoint.AFTER_TURN,
+                    HookPoint.AFTER_GRAPH,
                     context,
                     HookPayload(data={"result": result}),
                 )
@@ -325,7 +331,7 @@ class ReActAgent(Agent[ReActEvent]):
         except GraphInterrupt:
             # Approval suspend is an EXPECTED pause (a tool awaited human
             # approval), not a turn end -- and definitely not an error. The
-            # ``finally`` below dispatches FINALLY_TURN with whatever ``result``
+            # ``finally`` below dispatches FINALLY_GRAPH with whatever ``result``
             # holds; leaving the initial ``AgentResult(stop_reason=ERROR)``
             # default here would make TurnOutcomeNotifyHook misreport every
             # approval suspend as "The turn ended unexpectedly due to an error".
@@ -388,17 +394,17 @@ class ReActAgent(Agent[ReActEvent]):
             await emitter.emit_complete(result)
             return result
         finally:
-            # FINALLY_TURN: fires regardless of success/error/cancel.
+            # FINALLY_GRAPH: fires regardless of success/error/cancel.
             # SubagentAutoSendHook and cleanup hooks always execute.
             if runtime.hooks:
                 try:
                     await runtime.hooks.dispatch(
-                        HookPoint.FINALLY_TURN,
+                        HookPoint.FINALLY_GRAPH,
                         context,
                         HookPayload(data={"result": result}),
                     )
                 except Exception:
-                    logger.exception("FINALLY_TURN hook dispatch failed")
+                    logger.exception("FINALLY_GRAPH hook dispatch failed")
             # Clean up typed state
             state = get_react_state(context)
             if state is not None:

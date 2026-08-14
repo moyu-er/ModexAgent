@@ -137,7 +137,12 @@ class TestHitlInterruptResume:
         assert ctx.state.count == 42
 
     async def test_resume_re_enters_from_entry_node(self) -> None:
-        """Resume: engine starts from entry_node; topology detects suspended state."""
+        """Resume: engine starts from entry_node; topology detects suspended state.
+
+        Clears node state between runs so bootstrap returns [entry_node]
+        (fresh start). State survives in ctx.state across the interrupt
+        boundary.
+        """
 
         class StartNode(Node[CounterState]):
             """Detects suspended state: if count > 0, route to 'after_resume'."""
@@ -163,18 +168,26 @@ class TestHitlInterruptResume:
         g.add_edge("after_resume", GraphNode.END)
         compiled = g.compile()
 
-        # First run: start → interrupt → raises.
+        # First run: start -> interrupt -> raises.
         ctx = make_ctx(CounterState(count=0))
         with pytest.raises(GraphInterrupt):
             await GraphEngine(compiled).run_async(ctx)
         assert ctx.state.count == 1
 
-        # Resume: same engine, same entry_node. start detects count > 0 → after_resume.
+        # Clear node state so bootstrap returns [entry_node] on resume.
+        ctx.coordinator.node_state_store.clear()
+
+        # Resume: start detects count > 0 -> after_resume.
         result = await GraphEngine(compiled).run_async(ctx)
         assert result.count == 101
 
     async def test_resume_routes_via_resume_target_channel(self) -> None:
-        """Resume routing via state.resume_target + deliver()."""
+        """Resume routing via state.resume_target + deliver().
+
+        Clears node state between runs so bootstrap returns [entry_node]
+        (fresh start). State survives in ctx.state across the interrupt
+        boundary.
+        """
 
         class EntryNode(Node[CounterState]):
             async def execute(
@@ -203,6 +216,7 @@ class TestHitlInterruptResume:
         g.add_node("after_resume", AddNode(amount=100))
         g.add_edge(GraphNode.START, "start")
         g.add_edge("start", "suspend")
+        g.add_edge("start", "after_resume")
         g.add_edge("suspend", GraphNode.END)
         g.add_edge("after_resume", GraphNode.END)
         compiled = g.compile()
@@ -212,6 +226,9 @@ class TestHitlInterruptResume:
             await GraphEngine(compiled).run_async(ctx)
         assert ctx.state.count == 1
         assert ctx.state.resume_target == "after_resume"
+
+        # Clear node state so bootstrap returns [entry_node] on resume.
+        ctx.coordinator.node_state_store.clear()
 
         result = await GraphEngine(compiled).run_async(ctx)
         assert result.count == 101

@@ -8,7 +8,7 @@ result/error types.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 from modex_agent.workspace.models import CdError, CdResult
 from modex_agent.workspace.parse import parse_user_path
@@ -18,7 +18,7 @@ from modex_agent.workspace.registry import WorkspaceRegistry
 R = TypeVar("R")
 
 
-class WorkspaceController(WorkspaceControlPort, Generic[R]):
+class WorkspaceController[R](WorkspaceControlPort):
     """Drives /cd /pwd /exit for a conversation via registry.
 
     Implements :class:`framework.workspace.port.WorkspaceControlPort` so the

@@ -3,17 +3,17 @@
 集中管理所有硬编码字符串、枚举值和默认配置，避免分散在各个模块中。
 """
 
-from enum import Enum, StrEnum
+from enum import StrEnum
 from pathlib import Path
 
 
-class ToolCallType(str, Enum):
+class ToolCallType(StrEnum):
     """工具调用类型"""
 
     FUNCTION = "function"
 
 
-class ToolChoice(str, Enum):
+class ToolChoice(StrEnum):
     """工具选择策略"""
 
     AUTO = "auto"
@@ -21,7 +21,7 @@ class ToolChoice(str, Enum):
     REQUIRED = "required"
 
 
-class FinishReason(str, Enum):
+class FinishReason(StrEnum):
     """LLM 响应完成原因"""
 
     STOP = "stop"
@@ -168,7 +168,7 @@ class DefaultValues:
     MAX_ITERATIONS = 10
     MAX_TOOL_CALLS = 10
     TIMEOUT_SECONDS = 60.0
-    TOOL_TIMEOUT_SECONDS = 120.0
+    TOOL_TIMEOUT_SECONDS = 400.0
     TOOL_VERSION = "1.0"
     TOOL_CATEGORY = "general"
     CALL_ID_PREFIX = "call_"

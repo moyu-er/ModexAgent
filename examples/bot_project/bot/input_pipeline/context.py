@@ -50,7 +50,6 @@ class BotInputContext(InputContext):
         *,
         default_pool: str | None,
         pool_session_store: PoolRoutingStore,
-        agent_pool_map: dict[str, str],
         agent_resolver: Callable[[str], str],
         transcript_store: TranscriptStore,
         enqueue_message: Callable[[InputMessage], None],
@@ -65,7 +64,6 @@ class BotInputContext(InputContext):
     ) -> None:
         self._default_pool = default_pool
         self._pool_session_store = pool_session_store
-        self._agent_pool_map = dict(agent_pool_map)
         self._agent_resolver = agent_resolver
         self._transcript_store = transcript_store
         self._enqueue_message = enqueue_message
@@ -84,9 +82,6 @@ class BotInputContext(InputContext):
     @property
     def default_pool(self) -> str | None:
         return self._default_pool
-
-    def pool_for_agent(self, agent: str) -> str | None:
-        return self._agent_pool_map.get(agent, self._default_pool)
 
     def agent_for_pool(self, pool: str) -> str:
         return self._agent_resolver(pool)

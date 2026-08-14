@@ -12,6 +12,7 @@ from modex_agent.core.constants import ReasoningEffort
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 
 
 def test_constructs_with_required_fields() -> None:
@@ -20,6 +21,7 @@ def test_constructs_with_required_fields() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
         safety=RuntimeSafetyPolicy(),
         llm_model="gpt-4o",
         llm_temperature=0.7,
@@ -43,6 +45,7 @@ def test_is_frozen() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
     )
     with pytest.raises(FrozenInstanceError):
         deps.llm_model = "x"  # type: ignore[misc]
@@ -54,6 +57,7 @@ def test_optional_fields_default_none() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
     )
     assert deps.project_dir is None
     assert deps.on_subagent_created is None
@@ -65,6 +69,7 @@ def test_context_fork_builder_defaults_none_and_settable() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
     )
     assert deps_default.context_fork_builder is None
 
@@ -74,6 +79,7 @@ def test_context_fork_builder_defaults_none_and_settable() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
         context_fork_builder=fork_builder,
     )
     assert deps_set.context_fork_builder is fork_builder
@@ -85,6 +91,7 @@ def test_workspace_path_resolver_defaults_none_and_settable() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
     )
     assert deps_default.workspace_path_resolver is None
 
@@ -94,6 +101,7 @@ def test_workspace_path_resolver_defaults_none_and_settable() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
         workspace_path_resolver=resolver,
     )
     assert deps_set.workspace_path_resolver is resolver
@@ -105,6 +113,7 @@ def test_mcp_registry_defaults_none_and_settable() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
     )
     assert deps_default.mcp_registry is None
 
@@ -114,6 +123,7 @@ def test_mcp_registry_defaults_none_and_settable() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
         mcp_registry=registry,
     )
     assert deps_set.mcp_registry is registry
@@ -125,6 +135,7 @@ def test_llm_reasoning_effort_defaults_to_none_and_settable() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
     )
     assert deps_default.llm_reasoning_effort == ReasoningEffort.NONE
 
@@ -133,6 +144,7 @@ def test_llm_reasoning_effort_defaults_to_none_and_settable() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
         llm_reasoning_effort=ReasoningEffort.HIGH,
     )
     assert deps_set.llm_reasoning_effort == ReasoningEffort.HIGH
@@ -144,6 +156,7 @@ def test_subagent_external_builder_defaults_none_and_settable() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
     )
     assert deps_default.subagent_external_builder is None
 
@@ -153,6 +166,7 @@ def test_subagent_external_builder_defaults_none_and_settable() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
         subagent_external_builder=builder,  # type: ignore[arg-type]
     )
     assert deps_set.subagent_external_builder is builder
@@ -164,6 +178,7 @@ def test_control_origin_defaults_empty_and_settable() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
     )
     assert deps_default.control_origin == ""
 
@@ -172,6 +187,7 @@ def test_control_origin_defaults_empty_and_settable() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
         control_origin="http://127.0.0.1:21800",
     )
     assert deps_set.control_origin == "http://127.0.0.1:21800"

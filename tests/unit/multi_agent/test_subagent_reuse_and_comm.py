@@ -37,6 +37,18 @@ from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.pool_config.specs import SubagentSpec
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.multi_agent.tools import CommunicationTarget
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+
+
+def _mock_tree(bus: object) -> SessionTreeManager:
+    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+
+    async def _deliver(sid: str, env: object) -> None:
+        await bus.send(sid, env)  # type: ignore[attr-defined]
+
+    tree.deliver = _deliver
+    return tree
+
 
 
 def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
@@ -44,7 +56,7 @@ def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
 
 
 from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
-from modex_agent.tools.presets import ContextMode, SystemPromptMode
+from modex_agent.tools.presets import ContextMode
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -106,6 +118,7 @@ def _deps(
         pool=pool,
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
         safety=RuntimeSafetyPolicy(),
         llm_model="gpt-4o",
         project_dir=None,
@@ -132,38 +145,6 @@ async def _assembled_prompt(ctx_mgr, session_id: str, parent_sid: str | None = N
     runtime_info = {"parent_session_id": parent_sid} if parent_sid else None
     state = await ctx_mgr.load(session_id=session_id, runtime_info=runtime_info)
     return await state.system_prompt_pipeline.get_or_refresh()
-
-
-@pytest.mark.asyncio
-async def test_materialize_appends_the_current_parent_prompt():
-    """APPEND mode now rebuilds per invocation via a provider: a reused instance
-    resolves each session's own parent prompt through ``load()``. The parent
-    text is NOT in the static ``descriptor.system_prompt_template`` anymore."""
-    deps, factory = _deps()
-    parent_a = _instance("mainA", prompt="PROMPT_A")
-    parent_b = _instance("mainB", prompt="PROMPT_B")
-    deps.pool.get = MagicMock(side_effect=lambda n: parent_a if n == "mainA" else parent_b)
-
-    template = AgentTemplate(
-        spec=SubagentSpec(agent_name="scout", system_prompt_mode=SystemPromptMode.APPEND)
-    )
-    await template.materialize(
-        parent_session=SessionIdFactory().create(agent_name="mainA"),
-        invocation_id="inv1",
-        deps=deps,
-    )
-    ctx_mgr = factory.create_agent.call_args.kwargs["context_manager"]
-    static = _descriptor_of(factory.create_agent.call_args).system_prompt_template
-
-    # Parent link now travels via runtime_info (the dispatch envelope path),
-    # not a registry resolver. Each session's own parent selects its prompt.
-    prompt_a = await _assembled_prompt(ctx_mgr, "inv1.scout", parent_sid="conv.mainA")
-    prompt_b = await _assembled_prompt(ctx_mgr, "inv2.scout", parent_sid="conv.mainB")
-
-    # APPEND content lives in the per-session pipeline, not the static template.
-    assert "PROMPT_A" not in static
-    assert "PROMPT_A" in prompt_a and "PROMPT_B" not in prompt_a
-    assert "PROMPT_B" in prompt_b and "PROMPT_A" not in prompt_b
 
 
 @pytest.mark.asyncio
@@ -197,41 +178,6 @@ async def test_materialize_forks_per_parent_via_load():
     assert "CONTEXT_A" not in static  # not baked
     assert "CONTEXT_A" in prompt_a and "CONTEXT_B" not in prompt_a
     assert "CONTEXT_B" in prompt_b and "CONTEXT_A" not in prompt_b
-
-
-@pytest.mark.asyncio
-async def test_reused_instance_serves_per_invocation_append_and_fork():
-    """The direct proof of the fix: ONE materialized instance, loaded for two
-    sessions, yields two prompts that each carry their own invocation-specific
-    APPEND + FORK — instance reused, prompt rebuilt per invocation."""
-    fork = _FakeForkBuilder()
-    fork.register("mainA", "<fork>FA</fork>")
-    fork.register("mainB", "<fork>FB</fork>")
-    deps, factory = _deps(fork=fork)
-    parent_a = _instance("mainA", prompt="PA")
-    parent_b = _instance("mainB", prompt="PB")
-    deps.pool.get = MagicMock(side_effect=lambda n: parent_a if n == "mainA" else parent_b)
-
-    template = AgentTemplate(
-        spec=SubagentSpec(
-            agent_name="planner",
-            system_prompt_mode=SystemPromptMode.APPEND,
-            context_mode=ContextMode.FORK,
-            fork_max_messages=10,
-        )
-    )
-    await template.materialize(
-        parent_session=SessionIdFactory().create(agent_name="mainA"),
-        invocation_id="inv1",
-        deps=deps,
-    )
-    ctx_mgr = factory.create_agent.call_args.kwargs["context_manager"]
-
-    a = await _assembled_prompt(ctx_mgr, "inv1.planner", parent_sid="conv.mainA")
-    b = await _assembled_prompt(ctx_mgr, "inv2.planner", parent_sid="conv.mainB")
-
-    assert "PA" in a and "FA" in a and "PB" not in a and "FB" not in a
-    assert "PB" in b and "FB" in b and "PA" not in b and "FA" not in b
 
 
 # ── Q2: reuse defeats per-invocation rebuild ────────────────────────────
@@ -396,9 +342,9 @@ async def test_each_pool_has_an_isolated_agent_registry():
 
 
 @pytest.mark.asyncio
-async def test_send_to_agent_routes_through_agent_bus():
+async def test_send_to_agent_routes_through_tree():
     """The outbound task_request path (SendToAgentTool -> _send) enqueues via
-    agent_bus.send when a subagent template matches — same carrier as the
+    tree.deliver when a subagent template matches — same carrier as the
     auto-send hook below."""
     from modex_agent.multi_agent.communication import AgentCommunicationService
 
@@ -411,9 +357,8 @@ async def test_send_to_agent_routes_through_agent_bus():
     registry.get_profile = MagicMock(return_value=None)
     svc = AgentCommunicationService(
         source=AgentAddress(name="main"),
-        broker=MagicMock(),
         registry=registry,
-        agent_bus=bus,
+        tree=_mock_tree(bus),
         session_factory=SessionIdFactory(),
         session_registry=AsyncMock(),
         template_registry=template_registry,
@@ -423,6 +368,7 @@ async def test_send_to_agent_routes_through_agent_bus():
         session=SessionIdFactory().create(agent_name="main"),
         comm_kind=AgentCommKind.NORMAL,
         workspace=None,
+        graph_instance_id=None,
     )
     await svc._send(
         target=_tgt("scout", AgentCommKind.SUBAGENT),
@@ -444,7 +390,7 @@ async def test_subagent_auto_send_hook_routes_through_same_bus():
     bus = MagicMock()
     bus.send = AsyncMock()
     hook = SubagentAutoSendHook(
-        agent_bus=bus,
+    tree=_mock_tree(bus),
         self_name="scout",
         parent_name="main",
         runtime_dir=Path("."),
@@ -454,7 +400,7 @@ async def test_subagent_auto_send_hook_routes_through_same_bus():
         session_id_prefix="inv1",
         parent_session_id="abc123.main",
     )
-    ctx = SimpleNamespace(session=session)
+    ctx = SimpleNamespace(session=session, graph_instance_id=None)
     await hook._notify_parent(ctx, "inv1.scout", "<subagent_result/>")
     assert bus.send.await_count == 1
     inbox_key, envelope = bus.send.await_args.args

@@ -79,7 +79,7 @@ class FileExperienceSource:
         return [d / scope_key for d in self._directories]
 
     async def list_experiences(
-        self, context: "MemoryContext | None" = None
+        self, context: MemoryContext | None = None
     ) -> list[ExperienceSummary]:
         """Scan all directories for EXPERIENCE.md files, return metadata only."""
         summaries: list[ExperienceSummary] = []
@@ -115,7 +115,7 @@ class FileExperienceSource:
         return summaries
 
     async def load_experience(
-        self, name: str, context: "MemoryContext | None" = None
+        self, name: str, context: MemoryContext | None = None
     ) -> Experience | None:
         """Load full EXPERIENCE.md content by directory *name*.
 

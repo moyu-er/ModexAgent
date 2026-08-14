@@ -1,5 +1,6 @@
-"""MessageStore conformance — same assertions for ``file`` and ``sqlite`` backends.
+"""MessageStore conformance for in-memory, file, and SQLite backends.
 
+In-memory: :class:`InMemoryScopedStorage`.
 File: :class:`DefaultScopedStorage` (one instance implementing all four split
 store ABCs).
 SQLite: :class:`SqliteMessageStore`.
@@ -17,6 +18,7 @@ from modex_agent.core.scope import MemoryLayerName, RecordScope
 from modex_agent.core.types import MessageRole
 from modex_agent.memory.core.split_stores import MessageStore
 from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
+from modex_agent.memory.stores.scoped_in_memory import InMemoryScopedStorage
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.message_store import SqliteMessageStore
 
@@ -28,28 +30,31 @@ def msg(mid: str, content: str = "x", **extra: object) -> dict[str, Any]:
     return result
 
 
-@pytest.fixture(params=["file", "sqlite"])
+@pytest.fixture(params=["memory", "file", "sqlite"])
 async def message_store(
     request: pytest.FixtureRequest,
     tmp_path: Path,
     scope: RecordScope,
 ) -> AsyncGenerator[MessageStore]:
-    """Parametrized MessageStore — file (DefaultScopedStorage) or sqlite."""
+    """Parametrized MessageStore for all supported backends."""
+    if request.param == "memory":
+        yield InMemoryScopedStorage()
+        return
     if request.param == "file":
         yield DefaultScopedStorage(
             tmp_path / "msg_file",
             layer=MemoryLayerName.SESSION,
         )
-    else:
-        mgr = ConnectionManager(tmp_path / "workspace.db", DatabaseKind.WORKSPACE)
-        await mgr.open()
-        # ttl=0 so cleanup_expired picks up soft-deleted immediately
-        yield SqliteMessageStore(mgr, scope, ttl_seconds=0.0)
-        await mgr.close()
+        return
+    mgr = ConnectionManager(tmp_path / "workspace.db", DatabaseKind.WORKSPACE)
+    await mgr.open()
+    # ttl=0 so cleanup_expired picks up soft-deleted immediately
+    yield SqliteMessageStore(mgr, scope, ttl_seconds=0.0)
+    await mgr.close()
 
 
 class TestMessageStoreConformance:
-    """Same behavior on both backends."""
+    """Same behavior on every backend."""
 
     async def test_load_empty_returns_empty(self, message_store: MessageStore) -> None:
         assert await message_store.load_messages() == []
@@ -173,11 +178,65 @@ class TestRetainMessages:
 
 
 class TestLoadAllMessages:
-    """``load_all_messages`` — returns including soft-deleted (SQLite) or same
-    as ``load_messages`` (FILE)."""
+    """``load_all_messages`` history filtering and limiting contract."""
 
     async def test_load_all_equals_load_when_no_pruning(self, message_store: MessageStore) -> None:
         await message_store.save_messages([msg("m1"), msg("m2")])
         active = await message_store.load_messages()
         all_msgs = await message_store.load_all_messages()
         assert len(all_msgs) == len(active)
+
+    async def test_load_all_excludes_compact(self, message_store: MessageStore) -> None:
+        await message_store.save_messages(
+            [msg("normal"), msg("compact", role=str(MessageRole.COMPACT))]
+        )
+
+        loaded = await message_store.load_all_messages()
+
+        assert [message["id"] for message in loaded] == ["normal"]
+
+    async def test_load_all_limit_returns_last_non_compact_messages(
+        self,
+        message_store: MessageStore,
+    ) -> None:
+        messages = [
+            msg(
+                f"m{index}",
+                role=(
+                    str(MessageRole.COMPACT)
+                    if index == 8
+                    else str(MessageRole.USER)
+                ),
+            )
+            for index in range(10)
+        ]
+        await message_store.save_messages(messages)
+
+        loaded = await message_store.load_all_messages(limit=3)
+
+        assert [message["id"] for message in loaded] == ["m6", "m7", "m9"]
+
+    async def test_load_messages_includes_compact(self, message_store: MessageStore) -> None:
+        await message_store.save_messages(
+            [msg("normal"), msg("compact", role=str(MessageRole.COMPACT))]
+        )
+
+        loaded = await message_store.load_messages()
+
+        assert [message["id"] for message in loaded] == ["normal", "compact"]
+
+    async def test_load_all_limit_exceeds_total_returns_all(self, message_store: MessageStore) -> None:
+        await message_store.save_messages([msg("m1"), msg("m2"), msg("m3")])
+
+        loaded = await message_store.load_all_messages(limit=100)
+
+        assert [message["id"] for message in loaded] == ["m1", "m2", "m3"]
+
+    async def test_load_all_all_compact_returns_empty(self, message_store: MessageStore) -> None:
+        await message_store.save_messages(
+            [msg("c1", role=str(MessageRole.COMPACT)), msg("c2", role=str(MessageRole.COMPACT))]
+        )
+
+        loaded = await message_store.load_all_messages()
+
+        assert loaded == []

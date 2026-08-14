@@ -6,7 +6,7 @@ env vars into spawned processes.
 
 External coding agents get their env via ``ExternalEnvBuilder.build()`` at
 spawn time; native agents (ReAct) have no spawn boundary, so this hook sets
-the contextvar at ``BEFORE_TURN`` — the same point the agent's tools will
+    the contextvar at ``BEFORE_GRAPH`` — the same point the agent's tools will
 read it.
 
 Per ADR-0022 D6, no other site constructs ``MODEX_*`` vars — this hook calls
@@ -18,12 +18,12 @@ from __future__ import annotations
 from modex_agent.agents.external.env_builder import ExternalEnvBuilder, join_modexctl_path
 from modex_agent.agents.external.types import ExternalEnvSpec
 from modex_agent.core.agent import AgentCommKind, AgentContext
-from modex_agent.hook.abc import BeforeTurnHook
+from modex_agent.hook.abc import BeforeGraphHook
 from modex_agent.runtime.env_context import _current_session_id, _modex_env
 from modex_agent.tools.terminal.env import build_full_env
 
 
-class NativeEnvInjectionHook(BeforeTurnHook):
+class NativeEnvInjectionHook(BeforeGraphHook):
     """Populate ``_modex_env`` and ``_current_session_id`` at turn start.
 
     Native agent bash/terminal subprocess tools (``SubprocessExecutor``,
@@ -59,7 +59,7 @@ class NativeEnvInjectionHook(BeforeTurnHook):
     def name(self) -> str:
         return "native_env_injection"
 
-    async def before_turn(self, ctx: AgentContext) -> None:
+    async def before_graph(self, ctx: AgentContext) -> None:
         overrides: dict[str, str | AgentCommKind | None] = {
             "session_id": ctx.session.session_id,
             "agent_name": ctx.session.agent_name,

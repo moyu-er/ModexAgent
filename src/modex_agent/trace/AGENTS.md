@@ -18,7 +18,7 @@ provides cassette-based deterministic replay and training-data derivation.
 | `otel_store.py` | `OtelSpanTraceStore(TraceQuery)` — writes `spans.jsonl` + optional OTLP export via OTel SDK `Tracer`. `build_trace_stores()` factory with config-driven selection + `ImportError` guard for `[observability]` extra |
 | `semconv.py` | `GenAiAttr`/`SpanName`/`SpanKind`/`SpanStatusCode` StrEnums centralizing all `gen_ai.*` attribute names and span name mappings |
 | `hooks.py` | `TraceCollectorHook` — implements 5 hook ABCs, constructs `SpanModel` directly, maintains `_root_span_info` for parent linking |
-| `cassette.py` | `CassetteRecorder` (wraps LLM provider + tool dispatcher for bit-identical replay), `CassetteReplayEngine`, `CassetteFlushHook(FinallyTurnHook)`, content-addressed storage |
+| `cassette.py` | `CassetteRecorder` (wraps LLM provider + tool dispatcher for bit-identical replay), `CassetteReplayEngine`, `CassetteFlushHook(FinallyGraphHook)`, content-addressed storage |
 | `training_exporter.py` | `TrainingDataExporter` — derives SFT OpenAI messages JSONL + DPO preference-pair JSONL from traced spans. L2 scoring, 3-tier dedup, scope-aware filtering |
 
 ## Subdirectories
@@ -44,7 +44,7 @@ OtelSpanTraceStore
 
 ```
 invoke_agent (INTERNAL, parent_span_id=null)
-    ← written at finally_turn with full duration + stop_reason + error
+    ← written at finally_graph with full duration + stop_reason + error
     │
     ├─ chat (CLIENT) — each LLM call
     ├─ execute_tool_batch (INTERNAL) — tool batch start
@@ -54,7 +54,7 @@ invoke_agent (INTERNAL, parent_span_id=null)
 ```
 
 `_root_span_info: dict[trace_id, (span_id, start_time)]` is set at
-`before_turn` (pre-registration) and consumed at `finally_turn` (root span
+`before_graph` (pre-registration) and consumed at `finally_graph` (root span
 write + cleanup). Child spans reference the root via `parent_span_id`.
 
 ### Design Rules
@@ -65,7 +65,7 @@ write + cleanup). Child spans reference the root via `parent_span_id`.
 - `trace_backend=FILE` (default) writes local JSONL only.
 - `otel_endpoint` set → concurrent local + remote OTLP export.
 - OTel SDK import is lazy (inside `build_trace_stores`), not at module level.
-- `_root_span_info` is cleaned up in `finally_turn` (no memory leak).
+- `_root_span_info` is cleaned up in `finally_graph` (no memory leak).
 
 ### Query Interface
 
@@ -94,4 +94,3 @@ See `ObservabilityConfig` in `ioc/configs/observability.py`:
   (`[observability]` extra), required only for OTLP remote export
 
 <!-- MANUAL: -->
-

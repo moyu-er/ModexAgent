@@ -379,7 +379,9 @@ export function useSessions(): UseSessionsResult {
         }
         return;
       }
-      deleteConversation(sessionId, isHome ? undefined : (workspace || undefined))
+      const pool =
+        sessions.find((s) => s.session_id === sessionId)?.pool ?? activePool;
+      deleteConversation(sessionId, isHome ? undefined : (workspace || undefined), pool)
         .then(() => {
           setSessions((prev) =>
             prev.filter((s) => s.session_id !== sessionId),
@@ -392,7 +394,7 @@ export function useSessions(): UseSessionsResult {
           console.error("Failed to delete conversation:", err);
         });
     },
-    [selectedId, workspace, isHome],
+    [selectedId, workspace, isHome, sessions, activePool],
   );
 
   const handleWorkspaceChanged = useCallback(

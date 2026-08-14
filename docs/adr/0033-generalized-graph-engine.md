@@ -47,7 +47,7 @@ practice has only one consumer (`ReActAgent`). Other agents bypass it:
 `SummarizerAgent` is deprecated and unused (separate removal tracked below).
 Tool-using agents that need the graph (`ArchiveSummarizer` /
 `KnowledgeConsolidator` / `ExperienceReviewAgent` — `KnowledgeConsolidator`
-was renamed to `CoreMemoryConsolidator` per ADR-0035; the new name is used
+was renamed to `CoreMemoryConsolidator`; the new name is used
 in code) inherit `ScopedFileAgent` and internally construct a `ReActAgent`
 in clean mode — they use the graph indirectly through ReAct, never as a
 standalone engine.
@@ -135,10 +135,11 @@ The graph engine has three structural defects that block generalization:
    outer turn graph embeds inner agent graph; `Command(goto=..., graph=...)`
    cross-graph routing; `ParentCommand` exception for subgraph→parent
    routing.
-3. **`GraphDrained` cooperative shutdown.** The exception class exists but
-   is not raised. ADR-0034 realized Phase c via continuous scheduling (no
-   superstep boundaries), so `GraphDrained` wiring is deferred until a
-   SIGTERM-style cooperative shutdown requirement materializes.
+3. **`GraphDrained` cooperative shutdown.** Now raised at scheduler safe
+   points — `LiveGraphEngineController` wires pause/stop via
+   `ctx.control.check()` (both `LinearScheduler` and `ParallelScheduler`
+   call it). See `docs/design/graph-orchestration/external-control.md`
+   (tickets 34-35 landed).
 4. **Additional channel types.** Only `LastValue` + `ReducerChannel` ship
    in Phase a. Phase c adds channels when real second use cases appear:
    `Topic` (PubSub with dedup, for `Task` fan-out), `EphemeralValue`
@@ -223,6 +224,17 @@ sync↔async boundary. The unified-ABC cost is one `inspect.isawaitable`
 call per node execution (negligible).
 
 ### D4 — State model: shared Pydantic `BaseModel` (imperative mutate + full snapshot)
+
+**Scratchpad refinement (2026-08-11):** The shared-state model below
+was replaced with a per-node scratchpad pattern. `GraphState` now
+carries `node_scratch: dict[str, Any]` — each node writes only to
+`node_scratch[self.node_id]`, providing isolation through key
+separation rather than object copying. `copy(ctx)` was removed from
+ParallelScheduler; ctx is passed directly. Cross-node data flows
+through deliver → IntegratedInput exclusively. Framework fields
+(`resume_target`, `result` on `DefaultGraphState`) remain
+framework-managed. The historical shared-state model is preserved
+below for traceability.
 
 **Current contract (2026-08-05 refinement):** State is a plain
 `GraphState(BaseModel)` subclass. Fields are ordinary Pydantic fields —
@@ -445,6 +457,12 @@ fan-out. Three layers of sharing:
 
 This three-layer semantics is the contract for `Task`-based fan-out.
 
+**DEPRECATED (2026-08-11):** `fork()` is retained on `GraphContext`
+but is never called by schedulers. The scratchpad model (D4
+refinement) replaces fork-based isolation — per-node state lives in
+`node_scratch[self.node_id]`, and `ParallelScheduler` passes `ctx`
+directly without copying.
+
 ### D6 — Routing: deliver / submit (current contract)
 
 **Current contract (2026-08-05 refinement):** Routing is deliver-only.
@@ -467,8 +485,27 @@ class Node[S](ABC):
   downstream / END) in `_resolve_default_target`.
 - `next_node=GraphNode.END` skips `route_deliver` (END has no
   `DeliverStore`).
-- A node that produces no delivers and has no default downstream edge
-  raises `RoutingError` ("Node X did not deliver").
+- A node that produces no delivers after exhausting `max_retry` raises
+  `UndeliveredError` (subclass of `RoutingError`). Schedulers catch
+  `UndeliveredError` specifically and return normally with
+  `ctx.reached_end = False`, which the orchestrator maps to
+  `GraphInstanceStatus.FAILED`. Topology `RoutingError`s (ambiguous
+  routing, missing topology, invalid dispatch target) are NOT subclasses
+  and propagate as `GraphInstanceStatus.CRASHED`.
+
+**T11 dead-end → FAILED refinement (2026-08-11):** `UndeliveredError`
+was introduced to distinguish "node forgot to deliver" (a dead-end —
+recoverable as FAILED) from "topology is broken" (a bug — CRASHED).
+`GraphContext.reached_end` is a run-level flag set `True` by
+`route_deliver_from_dispatch` when any dispatch targets `GraphNode.END`.
+The orchestrator reads `ctx.reached_end` after `run_async` returns:
+`COMPLETED` if `True`, `FAILED` if `False`. `reached_end` is NOT
+propagated by `fork()` — forked sub-contexts start fresh. The linear
+scheduler catches `UndeliveredError` and breaks (dead-end terminates the
+chain); the parallel scheduler catches it and passes (the dead-end
+instance is treated as done, the graph continues). `linear.py` line 126
+`raise RoutingError` is unreachable dead code (Node.run raises before
+the scheduler checks dispatches) — retained as a safety net.
 
 **Historical context (preserved for traceability):** The original
 Phase-a design specified four coexisting routing mechanisms with
@@ -682,8 +719,9 @@ All current ReAct exit mechanisms are preserved through the migration:
 | `max_iterations` | LLMNode checks, returns `transition="max_iterations"` → static edge to END | Same; `max_iterations` configured at `compile()` time | a ✅ |
 | `turn_cancelled` | ToolNode checks, returns `transition="turn_cancelled"` → static edge to END | Same | a ✅ |
 | `llm_error` | LLMNode checks, returns `transition="llm_error"` → static edge to END | Same | a ✅ |
-| `GraphDrained` (cooperative shutdown) | N/A | `GraphBubbleUp` subclass; class exists, never raised (wiring deferred) | c (deferred) |
+| `GraphDrained` (cooperative shutdown) | N/A | `GraphBubbleUp` subclass; now raised at scheduler safe points via `ctx.control.check()` (see `external-control.md`) | c ✅ |
 | `ParentCommand` (subgraph→parent routing) | N/A | `GraphBubbleUp` subclass | c |
+| Dead-end (node exhausted `max_retry` without delivering) | `RoutingError` → CRASHED | `UndeliveredError` (subclass of `RoutingError`) → caught by scheduler → `ctx.reached_end=False` → `GraphInstanceStatus.FAILED` (persisted via `update_status`) | T11 ✅ |
 
 **`GraphInterrupt` suspend-without-re-execution model is preserved.**
 Node authors write linear code; already-applied state updates persist
@@ -805,7 +843,7 @@ end-to-end example is NOT required for Phase-a merge.
 | Subroutine (call subgraph as a node) | Graph-is-a-Node type wiring | a (wired) / c (exercised) |
 | Graph-of-graphs (outer turn graph embeds inner agent graph) | Graph-is-a-Node + `Command(goto=..., graph=...)` | c |
 | HITL suspend/resume (approval) | `GraphInterrupt` + `Command(resume=...)` | a ✅ |
-| Cooperative shutdown (SIGTERM) | `GraphDrained` (class exists, wiring deferred) | c (deferred) |
+| Cooperative shutdown (SIGTERM) | `GraphDrained` (now raised via `ctx.control.check()`) | c ✅ |
 | Parallel fan-out with multi-write detection | `Task` parallel + `LastValue` multi-write guard | c → [ADR-0034](0034-parallel-scheduling-engine.md) |
 
 **Phase-a validation criterion**: the engine API must be capable of

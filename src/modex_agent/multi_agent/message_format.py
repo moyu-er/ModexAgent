@@ -125,7 +125,7 @@ def _build_contract_block(
 
     ``reply_contract`` selects the concrete reply mechanism wording based
     on what the **receiver** can use:
-    - :attr:`AgentImplementation.NATIVE` -- reply via the ``task`` tool
+    - :attr:`AgentImplementation.NATIVE` -- reply via the ``send_to_peer`` tool
     - :attr:`AgentImplementation.EXTERNAL` -- reply via ``modexctl send`` CLI
 
     The sender's implementation is invisible to agents -- only the receiver's
@@ -145,8 +145,8 @@ def _build_contract_block(
         ]
     else:
         method_lines = [
-            "To reply, you MUST call the task tool with:",
-            f'  target_agent = "{source}"',
+            "To reply, you MUST call the send_to_peer tool with:",
+            f'  target_peer = "{source}"',
             '  content = "<your full reply>"',
         ]
 
@@ -235,7 +235,7 @@ def build_dispatch_message(
     subagent/parent paths: the reply is auto-delivered by
     ``SubagentAutoSendHook`` (native subagents via the hook's native content
     path; external subagents via the hook's EXTERNAL content path that
-    notifies the parent on ``FINALLY_TURN``), so no reply-contract block is
+    notifies the parent on ``FINALLY_GRAPH``), so no reply-contract block is
     injected. Injecting the WARNING + ``modexctl send`` instructions here
     would cause a double reply -- the subagent would manually send AND the
     hook would auto-forward.

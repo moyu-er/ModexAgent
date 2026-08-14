@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -16,6 +16,7 @@ from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 
 
 def _make_bus(tmpdir: Path) -> LocalAgentMessageBus:
@@ -50,8 +51,16 @@ def _make_hook(
     *,
     execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
 ) -> SubagentAutoSendHook:
+    tree: SessionTreeManager | None = None
+    if bus is not None:
+        tree = MagicMock(spec=SessionTreeManager)
+
+        async def _deliver(sid: str, env: object) -> None:
+            await bus.send(sid, env)  # type: ignore[arg-type]
+
+        tree.deliver = _deliver
     return SubagentAutoSendHook(
-        agent_bus=bus,
+        tree=tree,
         self_name="worker",
         parent_name="main",
         runtime_dir=runtime_dir,
@@ -80,7 +89,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         bus = _make_bus(tmp_path)
         hook = _make_hook(bus, runtime_dir)
 
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context(session_id),
             AgentResult(content=content, stop_reason=StopReason.COMPLETED),
         )
@@ -99,9 +108,9 @@ class TestSubagentAutoSendHookFinallyTurn:
         hook = _make_hook(bus, runtime_dir)
         ctx = _make_context(session_id)
 
-        await hook.finally_turn(ctx, AgentResult(content="first"))
+        await hook.finally_graph(ctx, AgentResult(content="first"))
         await bus.consume("conv123.main")
-        await hook.finally_turn(ctx, AgentResult(content="second"))
+        await hook.finally_graph(ctx, AgentResult(content="second"))
 
         output_dir = runtime_dir / "output" / session_id
         assert (output_dir / "OUTPUT_1.md").read_text() == "first"
@@ -118,7 +127,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         bus = _make_bus(tmp_path)
         hook = _make_hook(bus, runtime_dir)
 
-        await hook.finally_turn(_make_context(session_id), AgentResult(content="new"))
+        await hook.finally_graph(_make_context(session_id), AgentResult(content="new"))
 
         assert (output_dir / "OUTPUT_1.md").read_text() == "existing"
         assert (output_dir / "OUTPUT_2.md").read_text() == "new"
@@ -137,7 +146,7 @@ class TestSubagentAutoSendHookFinallyTurn:
             ],
         )
 
-        await hook.finally_turn(_make_context(session_id), result)
+        await hook.finally_graph(_make_context(session_id), result)
 
         output_path = runtime_dir / "output" / session_id / "OUTPUT_1.md"
         notification = await _consume_content(bus)
@@ -152,7 +161,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         bus = _make_bus(tmp_path)
         hook = _make_hook(bus, runtime_dir)
 
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context(session_id),
             AgentResult(content="Partial work", stop_reason=StopReason.MAX_ITERATIONS),
         )
@@ -171,7 +180,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         bus = _make_bus(tmp_path)
         hook = _make_hook(bus, runtime_dir)
 
-        await hook.finally_turn(_make_context(session_id), result=None)
+        await hook.finally_graph(_make_context(session_id), result=None)
 
         output_path = runtime_dir / "output" / session_id / "OUTPUT_1.md"
         notification = await _consume_content(bus)
@@ -198,7 +207,7 @@ class TestSubagentAutoSendHookFinallyTurn:
             ],
         )
 
-        await hook.finally_turn(_make_context(session_id), result)
+        await hook.finally_graph(_make_context(session_id), result)
 
         assert (
             runtime_dir / "output" / session_id / "OUTPUT_1.md"
@@ -217,7 +226,7 @@ class TestSubagentAutoSendHookFinallyTurn:
             messages=[ChatMessage(role=MessageRole.USER, content="do it")],
         )
 
-        await hook.finally_turn(_make_context(session_id), result)
+        await hook.finally_graph(_make_context(session_id), result)
 
         assert (
             runtime_dir / "output" / session_id / "OUTPUT_1.md"
@@ -233,7 +242,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         hook = _make_hook(bus, runtime_dir)
         result = AgentResult(content="<think\nsecret\n</think\nActual answer")
 
-        await hook.finally_turn(_make_context(session_id), result)
+        await hook.finally_graph(_make_context(session_id), result)
 
         file_content = (
             runtime_dir / "output" / session_id / "OUTPUT_1.md"
@@ -253,21 +262,22 @@ class TestSubagentAutoSendHookFinallyTurn:
         bus = _make_bus(tmp_path)
         hook = _make_hook(bus, runtime_dir)
 
-        await hook.finally_turn(_make_context(session_id), AgentResult(content=content))
+        await hook.finally_graph(_make_context(session_id), AgentResult(content=content))
 
         assert (
             runtime_dir / "output" / session_id / "OUTPUT_1.md"
         ).read_text() == content
         assert len(_result_body(await _consume_content(bus))) <= 300
 
-    async def test_no_agent_bus_is_noop_without_writing(self, tmp_path: Path) -> None:
+    async def test_no_tree_raises_without_writing(self, tmp_path: Path) -> None:
         runtime_dir = tmp_path / "runtime"
         hook = _make_hook(None, runtime_dir)
 
-        await hook.finally_turn(
-            _make_context("a1b2c3d4.worker"),
-            AgentResult(content="Done"),
-        )
+        with pytest.raises(RuntimeError, match="tree not wired"):
+            await hook.finally_graph(
+                _make_context("a1b2c3d4.worker"),
+                AgentResult(content="Done"),
+            )
 
         assert not (runtime_dir / "output").exists()
 
@@ -369,7 +379,7 @@ class TestSubagentAutoSendHookWriteFail:
             "_write_output_file",
             side_effect=OSError("disk unavailable"),
         ):
-            await hook.finally_turn(
+            await hook.finally_graph(
                 _make_context("a1b2c3d4.worker"),
                 AgentResult(content="Done", stop_reason=StopReason.COMPLETED),
             )
@@ -389,7 +399,7 @@ class TestSubagentAutoSendHookWriteFail:
             "_write_output_file",
             return_value=(None, "permission denied"),
         ):
-            await hook.finally_turn(
+            await hook.finally_graph(
                 _make_context("a1b2c3d4.worker"),
                 AgentResult(content="Done"),
             )
@@ -406,7 +416,7 @@ class TestSubagentAutoSendHookWriteFail:
             "_write_output_file",
             return_value=(None, "permission denied"),
         ):
-            await hook.finally_turn(
+            await hook.finally_graph(
                 _make_context("a1b2c3d4.worker"),
                 AgentResult(content="x" * 500),
             )
@@ -422,7 +432,7 @@ class TestSubagentAutoSendHookNotifyTruncate:
         bus = _make_bus(tmp_path)
         hook = _make_hook(bus, runtime_dir)
 
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context("a1b2c3d4.worker"),
             AgentResult(content="short result"),
         )
@@ -440,7 +450,7 @@ class TestSubagentAutoSendHookNotifyTruncate:
         bus = _make_bus(tmp_path)
         hook = _make_hook(bus, runtime_dir)
 
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context(session_id),
             AgentResult(content="x" * 500),
         )
@@ -466,7 +476,7 @@ class TestSubagentAutoSendHookExternalBranch:
             execution_strategy=ExecutionStrategyKind.EXTERNAL,
         )
 
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context("abc12345.pi_worker", agent_name="pi_worker"),
             AgentResult(content="done", stop_reason=StopReason.COMPLETED),
         )
@@ -486,7 +496,7 @@ class TestSubagentAutoSendHookExternalBranch:
             execution_strategy=ExecutionStrategyKind.EXTERNAL,
         )
 
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context("abc12345.pi_worker", agent_name="pi_worker"),
             AgentResult(content="Final answer", stop_reason=StopReason.COMPLETED),
         )
@@ -507,7 +517,7 @@ class TestSubagentAutoSendHookExternalBranch:
             execution_strategy=ExecutionStrategyKind.EXTERNAL,
         )
 
-        await hook.finally_turn(
+        await hook.finally_graph(
             _make_context("abc12345.pi_worker", agent_name="pi_worker"),
             AgentResult(
                 content="",

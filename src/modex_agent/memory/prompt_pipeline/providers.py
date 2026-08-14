@@ -11,13 +11,12 @@ import logging
 import sys
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.agent import AgentCommKind
+from modex_agent.core.agent import AgentCommKind, AgentContext, current_agent_context
 from modex_agent.core.capabilities import Modality, ModelInfo
 from modex_agent.core.constants import (
     _NO_DIR_SENTINEL,
@@ -32,6 +31,7 @@ from modex_agent.memory.injection.archive import (
     ArchiveInjectionSection,
     build_archive_injection_section,
 )
+from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.utils.timezone import get_user_timezone
 
 if TYPE_CHECKING:
@@ -42,37 +42,41 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TODO_TASK_DISCIPLINE_PROMPT = """\
-## Task Tracking — read before every reply
+## Task Tracking
 
-You own `todo_write` and `todo_read`. The list is the user's window into your
-progress, so an out-of-date list is a failure of the task itself, not just
-bookkeeping. Two obligations, in this order:
+You own `todo_write` and `todo_read`. Use them frequently — if you skip
+planning, you will forget tasks, and that is unacceptable.
 
-1. **Update BEFORE you reply.** The instant you finish a task — before writing
-   any summary or ending the turn — call `todo_write`: mark the finished item
-   `completed` and promote the next `pending` item to `in_progress`. Describing
-   work as done in prose while the list still shows it `in_progress` is the
-   single most common mistake; do not make it.
-2. **Never end with stale work.** Do not end your turn while `pending` or
-   `in_progress` items remain, unless you are blocked or explicitly waiting on
-   the user. If blocked, keep the item `in_progress` and add a `pending` item
-   describing the blocker.
+**Plan first, then execute.** When a task has 3+ steps, call `todo_write`
+with ALL items as `pending` before doing any work. Never create items
+already marked `completed` — that defeats the purpose of tracking.
 
-On resume / "continue" / "try again": call `todo_read` first, then continue the
-`in_progress` item.
+**Update at every transition.** The instant you start an item, mark it
+`in_progress`. The instant you finish one — before any prose summary —
+mark it `completed` and promote the next `pending` to `in_progress`.
+Describing work as done in prose while the list still shows `in_progress`
+is the most common mistake.
 
-Worked example — note that `todo_write` is called at EVERY transition, never
-batched to the end:
+**Never end with stale work.** Do not end your turn while `pending` or
+`in_progress` items remain, unless blocked or waiting on the user. If
+blocked, keep `in_progress` and add a `pending` item for the blocker.
+
+On resume / "continue" / "try again": call `todo_read` first, then
+continue the `in_progress` item.
+
+Worked example:
 
   user: "Run the tests and fix any failures"
-  -> todo_write: [Run tests: in_progress] [Fix failures: pending]
-  -> (run tests; 3 failures found)
-  -> todo_write: [Run tests: completed] [Fix A: in_progress] [Fix B,C: pending]
-  -> (fix A)
-  -> todo_write: [Fix A: completed] [Fix B: in_progress] [Fix C: pending]
-  -> (fix B, fix C)
-  -> todo_write: [Fix A: completed] [Fix B: completed] [Fix C: completed]
-  -> "Done — 3 failures fixed, tests green."
+
+  todo_write: [Run tests: pending] [Fix failures: pending]
+  todo_write: [Run tests: in_progress] [Fix failures: pending]
+  (run tests; 3 failures found)
+  todo_write: [Run tests: completed] [Fix A: in_progress] [Fix B: pending] [Fix C: pending]
+  (fix A)
+  todo_write: [Run tests: completed] [Fix A: completed] [Fix B: in_progress] [Fix C: pending]
+  (fix B, fix C)
+  todo_write: [Run tests: completed] [Fix A: completed] [Fix B: completed] [Fix C: completed]
+  "Done — 3 failures fixed, tests green."
 """
 
 
@@ -142,11 +146,11 @@ class _PeerCommSubProvider(_CommSubProvider):
     """Remote-agent reply contract — moved from the deleted
     ``PeerCommunicationSystemPromptProvider``.
 
-    Fires when the agent owns ``task`` AND at least one target is a
-    remote agent (a ``CommunicationTarget`` whose ``bus_ref`` is set — the
+    Fires when the agent owns ``send_to_peer`` AND at least one target is a
+    remote agent (a ``CommunicationTarget`` whose ``tree_ref`` is set — the
     target does not share this agent's bus, so there is no implicit reply
     path). For those targets the agent's ordinary output is invisible and a
-    reply is only possible via ``task``.
+    reply is only possible via ``send_to_peer``.
     """
 
     def __init__(self, tool_manager: ToolManager | None) -> None:
@@ -155,14 +159,14 @@ class _PeerCommSubProvider(_CommSubProvider):
     def _remote_target_names(self) -> list[str]:
         if self._tool_manager is None:
             return []
-        tool = self._tool_manager.get_tool("task")
+        tool = self._tool_manager.get_tool("send_to_peer")
         if tool is None:
             return []
-        from modex_agent.multi_agent.tools import TaskDispatchTool
+        from modex_agent.multi_agent.tools import SendToPeerTool
 
-        if not isinstance(tool, TaskDispatchTool):
+        if not isinstance(tool, SendToPeerTool):
             return []
-        return sorted(t.name for t in tool.list_targets() if t.bus_ref is not None)
+        return sorted(t.name for t in tool.list_targets() if t.tree_ref is not None)
 
     def applies(self) -> bool:
         return bool(self._remote_target_names())
@@ -178,13 +182,13 @@ class _PeerCommSubProvider(_CommSubProvider):
         name_list = "\n".join(f"  - {name}" for name in names)
         return (
             "## Communicating With Remote Agents\n\n"
-            "Some agents you can reach via `task` cannot see anything "
+            "Some agents you can reach via `send_to_peer` cannot see anything "
             "you produce normally — not this reply, not your reasoning, not your "
             "tool output. For these agents the ONLY way they ever hear from you "
-            "is a `task` call aimed at them.\n\n"
+            "is a `send_to_peer` call aimed at them.\n\n"
             "Agents that require explicit sends:\n"
             f"{name_list}\n\n"
-            "Replies are OPTIONAL. Only call `task` back when the sender "
+            "Replies are OPTIONAL. Only call `send_to_peer` back when the sender "
             "actually needs your response — do NOT acknowledge just to be polite, "
             "and do NOT ping-pong. If the incoming message does not require action "
             "from you, end your turn without replying.\n"
@@ -290,7 +294,7 @@ class AgentCommunicationSystemPromptProvider(SystemPromptProvider):
     (``comm_kind``) and the shape of its ``send_to_agent`` target set:
 
     - ``_PeerCommSubProvider`` — remote-agent reply contract (peer targets
-      whose ``bus_ref`` is set).
+      whose ``tree_ref`` is set).
     - ``_SubagentConsultationSubProvider`` — SUBAGENT consultation contract
       (ask parent for input via ``send_to_agent``).
 
@@ -346,7 +350,6 @@ class RuntimeProvider(SystemPromptProvider):
         return f"{hour}:{directory_version}"
 
     async def _fetch_content(self) -> str:
-        current_time = datetime.now(get_user_timezone()).strftime("%Y-%m-%d %Hh")
         platform_raw = sys.platform
         platform_name = {
             "win32": "Windows",
@@ -355,7 +358,6 @@ class RuntimeProvider(SystemPromptProvider):
         }.get(platform_raw, platform_raw)
         lines = [
             "## Runtime",
-            f"Current Time: {current_time} (hour precision, not exact)",
             f"Platform: {platform_name}",
         ]
         dir_line = format_working_directory_line(self._working_directory)
@@ -684,14 +686,6 @@ class OutputMdProvider(SystemPromptProvider):
         )
 
 
-# ── Subagent per-invocation context (APPEND parent prompt + FORK context) ──
-#
-# These two move the invocation-specific parts of a subagent's system prompt
-# out of the materialize-time baked string. A reused instance (the pool keeps
-# one per agent_type) rebuilds them per invocation via load(session_id), so the
-# 2nd+ invocation no longer inherits the 1st's parent prompt / fork snapshot.
-
-
 @dataclass(frozen=True)
 class ForkContextSpec:
     """Wiring holder for ForkContextProvider.
@@ -709,42 +703,6 @@ class ForkContextSpec:
     builder: Any
     agent_type: str
     fork_max_messages: int
-    template_memory: Any
-
-
-class AppendParentPromptProvider(SystemPromptProvider):
-    """Subagent APPEND mode — prepend the current parent's system prompt.
-
-    Per-invocation: rebuilt every ``load()``. ``parent_session_id`` is the
-    authoritative parent for THIS turn (threaded from the dispatch envelope via
-    runtime_info, not recovered from a store); ``lookup(parent_session_id)``
-    resolves the parent's ``system_prompt_template`` from the in-memory pool (or
-    ``None``), so a reused instance reflects each invocation's own parent.
-    """
-
-    def __init__(
-        self,
-        lookup: Callable[[str], Awaitable[str | None]],
-        parent_session_id: str,
-    ) -> None:
-        super().__init__()
-        self._lookup = lookup
-        self._parent_session_id = parent_session_id
-
-    async def _fetch_version(self) -> str:
-        return self._parent_session_id  # refresh when the parent changes
-
-    async def _fetch_content(self) -> str:
-        try:
-            prompt = await self._lookup(self._parent_session_id)
-        except Exception:
-            logger.warning(
-                "AppendParentPromptProvider: lookup failed for parent %s",
-                self._parent_session_id,
-                exc_info=True,
-            )
-            return ""
-        return prompt or ""
 
 
 class ForkContextProvider(SystemPromptProvider):
@@ -782,7 +740,6 @@ class ForkContextProvider(SystemPromptProvider):
                 agent_type=self._spec.agent_type,
                 invocation_id=invocation_id,
                 fork_max_messages=self._spec.fork_max_messages,
-                template_memory=self._spec.template_memory,
                 subagent_memory_system=self._memory_system,
                 parent_name=parent_name,
             )
@@ -797,3 +754,141 @@ class ForkContextProvider(SystemPromptProvider):
         except Exception:
             logger.warning("ForkContextProvider: failed for %s", self._session_id, exc_info=True)
             return ""
+
+
+class GraphWorkflowProvider(SystemPromptProvider):
+    """Graph workflow guidance — deliver-tool routing instructions.
+
+    Fires only when the agent is a graph node main agent (``is_node_execution``
+    + ``graph_context`` both set). This is the upper layer: graph mode sits
+    above the normal/subagent split, so subagents — even in graph mode —
+    never receive graph workflow content. They are atomic agents whose
+    results flow back to the parent graph node.
+
+    In normal sessions ``graph_context`` is ``None`` so version is
+    ``no-graph`` and content is empty — the pipeline skips it entirely.
+
+    Gate: ``_is_graph_node_execution(ctx)`` checks ``graph_context`` is set
+    AND ``GRAPH_TOPOLOGY_CONTEXT`` state key exists (set only by
+    ``GraphTopologyConfigurator`` whose gate is ``is_node_execution and
+    NORMAL``). This excludes subagents who have ``graph_context`` but no
+    topology key.
+
+    Configuration matrix (see ``docs/design/session-tree/layered-config-matrix.md``):
+
+    | Mode                  | GraphWorkflowProvider |
+    |-----------------------|-----------------------|
+    | native main session   | empty (no-graph)      |
+    | native main graph     | full content          |
+    | native sub session    | empty                 |
+    | native sub graph      | empty (excluded)      |
+    | external (any)        | not used (no pipeline)|
+    """
+
+    async def _fetch_version(self) -> str:
+        ctx = _get_agent_context()
+        if not _is_graph_node_execution(ctx):
+            return "no-graph"
+        return "graph"
+
+    async def _fetch_content(self) -> str:
+        ctx = _get_agent_context()
+        if not _is_graph_node_execution(ctx):
+            return ""
+        assert ctx is not None  # narrowed by _is_graph_node_execution
+        from modex_agent.runtime.enums import TurnCustomKey
+
+        parts: list[str] = ["## Graph Node Context\n"]
+
+        parts.append("### Workflow Guidance\n\n")
+        parts.append(
+            "You are a node in a graph workflow. Your regular text output "
+            "is NOT delivered to anyone — it stays in your local context "
+            "only. The ONLY way to route your work to downstream nodes is "
+            "the `deliver` tool.\n\n"
+            "You MUST call `deliver` before finishing. Check the `deliver` "
+            "tool description for available targets and their roles.\n\n"
+            "**Deliver Content Guidelines**\n\n"
+            "Your deliver `content` is the ONLY information downstream nodes "
+            "receive from you. They cannot see your reasoning, tool calls, "
+            "or intermediate steps. Write it as a handoff to the next "
+            "agent — enough context to continue, not a full transcript.\n\n"
+            "**Pattern 1 — Producer** (you produce new work):\n"
+            "- Task: What you were asked to do (one or two sentences).\n"
+            "- Result: What you produced or found. Reference files by "
+            "path instead of pasting full content. Include key decisions "
+            "and their rationale.\n"
+            "- Status: Done / partial / blocked. If partial, state "
+            "what remains. If blocked, state the obstacle.\n\n"
+            "**Pattern 2 — Relay** (you selectively pass upstream content "
+            "downstream):\n"
+            "Use this when your role is to filter and summarize upstream "
+            "content for downstream nodes, not to produce new content. Do "
+            "NOT forward upstream content verbatim — select and transform it.\n"
+            "- Source: Which upstream node(s) this content is derived from.\n"
+            "- Selection: What you included and why it's relevant to the "
+            "downstream node.\n"
+            "- Summary: The filtered/summarized content, written for the "
+            "downstream node's needs.\n"
+            "- Omitted: What you excluded (briefly — so downstream knows "
+            "what's missing).\n\n"
+            "If you deliver multiple times, later delivers can be short "
+            "fragments — but your final deliver should be self-contained "
+            "enough for the downstream node to act on without re-reading "
+            "your inputs.\n"
+        )
+
+        if ctx.runtime is not None and ctx.runtime.state is not None:
+            topology = ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT)
+            if topology:
+                parts.append("### Topology\n\n")
+                parts.append(topology)
+                parts.append("\n")
+            desc = ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_NODE_DESCRIPTION)
+            if desc:
+                parts.append("\n### Your Role\n\n")
+                parts.append(desc)
+            knowledge_dir = ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_KNOWLEDGE_DIR)
+            if knowledge_dir:
+                parts.append("\n### Knowledge Base\n\n")
+                parts.append(
+                    "A shared knowledge base is available via the `knowledge_base` "
+                    "tool. It lets you record findings, decisions, and questions that "
+                    "other nodes can read, even if they are not directly downstream "
+                    "from you.\n\n"
+                    "Use it to:\n"
+                    "- Record important discoveries in `findings` (append by convention).\n"
+                    "- Log key decisions in `decisions` (append by convention).\n"
+                    "- Track unresolved questions in `open_questions`.\n"
+                    "- Use `grep` to check if a topic has already been recorded before "
+                    "writing a duplicate entry.\n"
+                    "- The `changelog` is auto-maintained - do not write to it directly.\n\n"
+                    "A summary of recent findings and open questions is injected at the "
+                    "start of each turn. Use the tool for full content or searches.\n"
+                )
+
+        return "".join(parts)
+
+
+def _get_agent_context() -> AgentContext | None:
+    return current_agent_context.get(None)
+
+
+def _is_graph_node_execution(ctx: AgentContext | None) -> bool:
+    """True when this turn is a graph node main agent execution.
+
+    Graph mode is the upper layer: it requires both ``graph_context`` (the
+    graph runtime is active) and the ``GRAPH_TOPOLOGY_CONTEXT`` state key
+    (set only by ``GraphTopologyConfigurator`` whose gate is
+    ``is_node_execution and agent_kind == NORMAL``). Subagents — even in
+    graph mode — never have the topology key, so they are excluded.
+
+    This keeps graph workflow content (deliver guidance, topology, knowledge
+    base instructions) strictly on graph node main agents, while subagents
+    remain atomic agents regardless of whether they run inside a graph.
+    """
+    if ctx is None or ctx.graph_context is None:
+        return False
+    if ctx.runtime is None or ctx.runtime.state is None:
+        return False
+    return ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT) is not None

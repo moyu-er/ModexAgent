@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.memory.core.lock import StorageLock
+from modex_agent.memory.core.lock import AioRWLock, StorageLock
 from modex_agent.memory.core.models import StorageRevision
 from modex_agent.memory.core.split_stores import (
     ArchiveStore,
@@ -49,8 +49,6 @@ class DirArchiveStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Archi
     """
 
     def __init__(self, base_dir: Path) -> None:
-        from modex_agent.memory.core.lock import AioRWLock
-
         self._lock = AioRWLock()
         self._base = base_dir
 
@@ -232,7 +230,13 @@ class DirArchiveStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Archi
     async def load_messages(self) -> list[dict[str, Any]]:
         return []
 
-    async def load_all_messages(self) -> list[dict[str, Any]]:
+    async def load_all_messages(
+        self,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        if limit is not None and limit < 0:
+            raise ValueError("limit must be non-negative")
         return []
 
     async def save_messages(self, messages: list[dict[str, Any]]) -> StorageRevision:

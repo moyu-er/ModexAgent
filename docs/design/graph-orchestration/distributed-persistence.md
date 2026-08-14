@@ -624,13 +624,13 @@ dispatch 到 ON_RECEIVE node X:
 
 N 个 dispatch 到同一 ON_RECEIVE node → N 个串行执行(instance 一个接一个)。语义保留(每 dispatch 一个 instance),只是不并发。
 
-### 11.2 谨慎使用
+### 11.2 谨慎使用(已升级为 deprecated)
 
 串行门是 in-memory only,不跨 crash 持久化。Crash 时 queue 里的 dispatch 丢失。恢复时 `_rebuild_pending_from_delivers` 重新扫描 PENDING delivers,但 queued(未 fire)的 dispatch 状态不重建。
 
 这意味着: 如果 ON_RECEIVE node 在有 queued dispatch 时 crash,恢复后这些 dispatch 不会自动重新 fire。它们对应的 delivers 是 PENDING(已 `accumulate` 但未 `mark_consumed`),会被 `_rebuild_pending_from_delivers` 扫到。如果 target 有 in-flight instance(被 re-dispatch),running instance 会消费它们。如果 target 无 in-flight instance,会创建新 instance 处理。但 queue 里的 dispatch 顺序不保留。
 
-因此 ON_RECEIVE 标记谨慎使用。大多数 node 用 `ON_ALL_PREDS`(默认),它的 pending dispatch 会通过 `_recheck_pending` 重新评估,语义可恢复。
+**ON_RECEIVE 已降级为 deprecated / experimental**(2026-08-12):`Graph.compile()` 对其发 `DeprecationWarning`,`GraphSpec` 声明式 API 直接拒绝。大多数 node 用 `ON_ALL_PREDS`(默认),它的 pending dispatch 会通过 `_recheck_pending` 重新评估,语义可恢复。新生产图不要使用 ON_RECEIVE。
 
 ## 12. 连接与线程契约
 

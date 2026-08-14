@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import os
 import shutil
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 _IS_UNIX = hasattr(os, "fork")
 
 
-def _apply_resource_limits(memory_limit_mb: int | None):
+def _apply_resource_limits(memory_limit_mb: int | None) -> None:
     if memory_limit_mb is None or not _IS_UNIX:
         return
     import resource
@@ -137,7 +138,8 @@ class SubprocessSandbox(SandboxAdapter):
 
             preexec_fn = None
             if cfg.memory_limit_mb is not None and _IS_UNIX:
-                preexec_fn = lambda: _apply_resource_limits(cfg.memory_limit_mb)
+                def preexec_fn():
+                    return _apply_resource_limits(cfg.memory_limit_mb)
 
             proc = subprocess.Popen(
                 cmd,
@@ -186,10 +188,8 @@ class SubprocessSandbox(SandboxAdapter):
             )
         finally:
             if tmpdir and os.path.exists(tmpdir):
-                try:
+                with contextlib.suppress(Exception):
                     shutil.rmtree(tmpdir)
-                except Exception:
-                    pass
 
     async def execute_command(
         self,
@@ -233,7 +233,8 @@ class SubprocessSandbox(SandboxAdapter):
 
             preexec_fn = None
             if cfg.memory_limit_mb is not None and _IS_UNIX:
-                preexec_fn = lambda: _apply_resource_limits(cfg.memory_limit_mb)
+                def preexec_fn():
+                    return _apply_resource_limits(cfg.memory_limit_mb)
 
             proc = subprocess.Popen(
                 isolated_cmd,

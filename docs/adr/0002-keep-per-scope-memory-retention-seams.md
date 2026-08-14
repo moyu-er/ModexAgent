@@ -2,7 +2,7 @@
 
 The memory maintenance layer keeps `ArchiveRetentionPolicy` and
 `CoreMemoryRetentionPolicy` as ABCs (with their `Default*` implementations;
-renamed from `KnowledgeRetentionPolicy` per ADR-0035) rather than collapsing
+renamed from `KnowledgeRetentionPolicy`) rather than collapsing
 them into a single flat `MemoryMaintenanceConfig`.
 `DefaultMemoryMaintenancePolicy.scan_once` calls
 `self._archive_retention.get_max_entries(ctx)` — retention thresholds vary by

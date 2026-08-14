@@ -60,7 +60,6 @@ async def test_pipeline_turns_attachment_ref_into_persisted_attachment() -> None
 
         media_store = WorkspaceScopedMediaStore(data_dir_name=".modex")
         transcript_store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-        transcript_store.set_agent_pool_map({"main": "main"})
 
         pool_store = MagicMock()
         pool_store.get.return_value = "main"
@@ -71,7 +70,6 @@ async def test_pipeline_turns_attachment_ref_into_persisted_attachment() -> None
             default_pool="main",
             available_pools=lambda: {"main"},
             pool_session_store=pool_store,
-            agent_pool_map={"main": "main"},
             agent_resolver=lambda p: p,
             transcript_store=transcript_store,
             enqueue_message=MagicMock(),
@@ -116,7 +114,6 @@ async def test_pipeline_noop_when_no_attachments() -> None:
         root = Path(tmp)
         media_store = WorkspaceScopedMediaStore(data_dir_name=".modex")
         transcript_store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-        transcript_store.set_agent_pool_map({"main": "main"})
 
         pool_store = MagicMock()
         pool_store.get.return_value = "main"
@@ -127,7 +124,6 @@ async def test_pipeline_noop_when_no_attachments() -> None:
             default_pool="main",
             available_pools=lambda: {"main"},
             pool_session_store=pool_store,
-            agent_pool_map={"main": "main"},
             agent_resolver=lambda p: p,
             transcript_store=transcript_store,
             enqueue_message=MagicMock(),

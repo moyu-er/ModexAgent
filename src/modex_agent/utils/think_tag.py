@@ -84,10 +84,7 @@ class ThinkTagExtractor:
 
     def _starts_like_any_format(self, text: str) -> bool:
         ch = text[0]
-        for fmt in self._formats:
-            if fmt.open_literal[0] == ch:
-                return True
-        return False
+        return any(fmt.open_literal[0] == ch for fmt in self._formats)
 
     def _try_match_format(self, text: str) -> ThinkExtractionResult | None:
         lower = text.lower()
@@ -181,7 +178,7 @@ class ThinkTagExtractor:
 def _close_tag_suffix(text: str, end_marker: str) -> str:
     """Return the longest suffix of *text* that is a prefix of *end_marker*."""
     end_lower = end_marker.lower()
-    text_lower = text.lower()
+    text.lower()
     max_check = min(len(text), len(end_marker) - 1)
     for i in range(max_check, 0, -1):
         suffix = text[-i:]

@@ -69,7 +69,8 @@ class ToolNode(Node[ReActTurnState]):
             await self._resume_suspended_batch(ctx)
             return None
         if state.llm_response is None:
-            self.deliver(None, ReActNode.END, ctx)
+            state.phase = TurnPhase.FAILED
+            self.deliver(None, ReActNode.AFTER, ctx)
             return None
 
         response = state.llm_response
@@ -103,7 +104,8 @@ class ToolNode(Node[ReActTurnState]):
                 f"Exceeded max_tools_per_turn ({max_tools})",
                 ctx,
             )
-            self.deliver(None, ReActNode.END, ctx)
+            state.phase = TurnPhase.FAILED
+            self.deliver(None, ReActNode.AFTER, ctx)
             return None
 
         decisions = self._classify_all(tool_calls, agent_ctx)
@@ -143,7 +145,8 @@ class ToolNode(Node[ReActTurnState]):
         agent_ctx = get_agent_ctx(ctx)
         if agent_ctx.runtime is None or agent_ctx.runtime.turn_store is None:
             logger.error("ToolNode: approval required but no TurnStateStore configured")
-            self.deliver(None, ReActNode.END, ctx)
+            state.phase = TurnPhase.FAILED
+            self.deliver(None, ReActNode.AFTER, ctx)
             return None
 
         approval_id = uuid4().hex
@@ -189,11 +192,13 @@ class ToolNode(Node[ReActTurnState]):
     async def _resume_suspended_batch(self, ctx: GraphContext[ReActTurnState]) -> None:
         state = ctx.state
         if state.approval is None:
-            self.deliver(None, ReActNode.END, ctx)
+            state.phase = TurnPhase.FAILED
+            self.deliver(None, ReActNode.AFTER, ctx)
             return None
         batch = state.active_tool_batch()
         if batch is None:
-            self.deliver(None, ReActNode.END, ctx)
+            state.phase = TurnPhase.FAILED
+            self.deliver(None, ReActNode.AFTER, ctx)
             return None
 
         pending_requests = [
@@ -383,7 +388,7 @@ class ToolNode(Node[ReActTurnState]):
 
         if dedup_stop:
             state.phase = TurnPhase.CANCELLED
-            self.deliver(None, ReActNode.END, ctx)
+            self.deliver(None, ReActNode.AFTER, ctx)
             return None
 
         if denied_encountered:
@@ -398,7 +403,7 @@ class ToolNode(Node[ReActTurnState]):
                 deny_policy = agent_ctx.runtime.approval.default_deny_policy
             if deny_policy == ApprovalDenyPolicy.CANCEL_TURN:
                 state.phase = TurnPhase.CANCELLED
-                self.deliver(None, ReActNode.END, ctx)
+                self.deliver(None, ReActNode.AFTER, ctx)
                 return None
 
         self.deliver(tool_results, ReActNode.LLM, ctx)

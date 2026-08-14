@@ -24,9 +24,10 @@ helpers here normalize both.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any
 
 from modex_agent.control.exceptions import LoopDetectedError
 from modex_agent.core.constants import FinishReason
@@ -72,7 +73,7 @@ def _canonical_args(arguments: Any) -> str:
 
 def _extract_tool_pairs(
     tool_calls: list[ToolCall | dict[str, Any]] | None,
-) -> "Iterator[tuple[str, Any]]":
+) -> Iterator[tuple[str, Any]]:
     """Yield ``(name, arguments)`` for each valid tool call, in order.
 
     Accepts either OpenAI dict format (history) or ``ToolCall`` dataclass
@@ -134,7 +135,7 @@ def _view_from_message(msg: ChatMessage) -> _AssistantView:
     )
 
 
-def _view_from_response(response: "LLMResponse") -> _AssistantView:
+def _view_from_response(response: LLMResponse) -> _AssistantView:
     return _AssistantView(
         content=response.content or "",
         tool_fp=_tool_calls_fingerprint(response.tool_calls),
@@ -144,7 +145,7 @@ def _view_from_response(response: "LLMResponse") -> _AssistantView:
 
 def _collect_recent_assistants(
     history_messages: list[ChatMessage],
-    current_response: "LLMResponse",
+    current_response: LLMResponse,
 ) -> list[_AssistantView]:
     """Trailing run of consecutive tool-bearing assistant views of the current
     turn, oldest→newest, ending with the in-flight response.
@@ -258,7 +259,7 @@ class LoopDetectionHook(AfterLLMResponseHook):
         return "loop_detection"
 
     async def after_llm_response(
-        self, ctx: "AgentContext", response: "LLMResponse"
+        self, ctx: AgentContext, response: LLMResponse
     ) -> None:
         if not self._enabled:
             return

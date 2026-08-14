@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import tempfile
@@ -179,10 +180,8 @@ class PerFileExperienceMetaStore(ExperienceMetaStore):
                     f.flush()
                 safe_atomic_replace(Path(tmp), path)
             except BaseException:
-                try:
+                with contextlib.suppress(OSError):
                     Path(tmp).unlink()
-                except OSError:
-                    pass
                 raise
         except Exception:
             logger.debug("Failed to write meta file: %s", path, exc_info=True)

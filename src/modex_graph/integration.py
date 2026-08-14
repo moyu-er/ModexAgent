@@ -1,7 +1,7 @@
 # ruff: noqa: ANN401
 
 """`IntegratedPayload` + `IntegratedInput` + `InputIntegrator` — the
-deliver/submit input integration layer (ticket 07).
+deliver/submit input integration layer (the deliver/submit design).
 
 Provides:
 
@@ -15,7 +15,7 @@ Provides:
 - `DefaultInputIntegrator` — default impl: concatenates all payloads.
   `integrated_content = [p.content for p in payloads]`.
 
-Per ticket 07: the deliver/submit model is the SOLE routing mechanism,
+The deliver/submit model is the sole routing mechanism,
 having fully replaced `transition`/`command`/`_compile_routing` (P3.4b
 convergence — rule 15). Both `LinearScheduler` and `ParallelScheduler`
 call `node.run()` which integrates upstream payloads via
@@ -29,6 +29,14 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class GraphPayload(BaseModel):
+    """Static-graph payload shared by graph input and output nodes."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    content: str
 
 
 class IntegratedPayload(BaseModel):
@@ -125,6 +133,7 @@ class DefaultInputIntegrator(InputIntegrator):
 
 
 __all__ = [
+    "GraphPayload",
     "IntegratedPayload",
     "IntegratedInput",
     "InputIntegrator",

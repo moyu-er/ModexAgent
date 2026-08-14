@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel, ValidationError
 
 from modex_graph import (
+    Graph,
     GraphContext,
     GraphState,
     IntegratedInput,
@@ -17,6 +19,7 @@ from modex_graph import (
     NodeRegistry,
     NodeSpec,
     NodeTrigger,
+    generate_id,
 )
 
 
@@ -109,6 +112,28 @@ class TestNodeRegistry:
         node = registry.create(NodeSpec(name="my_node", node_type="echo"))
         assert node.name == "my_node"
 
+    def test_create_sets_unique_sortable_node_ids(self) -> None:
+        registry = NodeRegistry()
+        registry.register("echo", _EchoFactory())
+
+        first = registry.create(NodeSpec(name="first", node_type="echo"))
+        second = registry.create(NodeSpec(name="second", node_type="echo"))
+
+        assert re.fullmatch(r"node_[0-9a-f]{12}[0-9A-Za-z]{14}", first.node_id)
+        assert re.fullmatch(r"node_[0-9a-f]{12}[0-9A-Za-z]{14}", second.node_id)
+        assert first.node_id != second.node_id
+
+    def test_graph_add_node_preserves_registry_assigned_id(self) -> None:
+        registry = NodeRegistry()
+        registry.register("echo", _EchoFactory())
+        node = registry.create(NodeSpec(name="original", node_type="echo"))
+        assigned_id = node.node_id
+        graph: Graph[GraphState] = Graph()
+
+        graph.add_node("renamed", node)
+
+        assert node.node_id == assigned_id
+
     def test_create_applies_trigger_override(self) -> None:
         registry = NodeRegistry()
         registry.register("echo", _EchoFactory())
@@ -149,7 +174,7 @@ class TestNodeRegistry:
         registry.register("zeta", _NoSchemaFactory())
         registry.register("alpha", _NoSchemaFactory())
         registry.register("mid", _NoSchemaFactory())
-        assert registry.registered_types() == ["alpha", "mid", "zeta"]
+        assert registry.registered_types() == ["alpha", "end", "mid", "start", "zeta"]
 
     def test_no_schema_factory_skips_validation(self) -> None:
         registry = NodeRegistry()
@@ -192,3 +217,15 @@ class TestNodeRegistry:
 
     def test_no_schema_factory_no_config_model(self) -> None:
         assert _NoSchemaFactory().config_schema() is None
+
+
+class TestGenerateId:
+    def test_without_prefix_has_fixed_length_body(self) -> None:
+        generated = generate_id()
+
+        assert re.fullmatch(r"[0-9a-f]{12}[0-9A-Za-z]{14}", generated)
+
+    def test_custom_separator_is_applied_to_trimmed_prefix(self) -> None:
+        generated = generate_id(prefix=" node ", separator="-")
+
+        assert re.fullmatch(r"node-[0-9a-f]{12}[0-9A-Za-z]{14}", generated)

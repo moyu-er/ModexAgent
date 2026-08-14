@@ -194,6 +194,7 @@ class ExternalAwareFactory(DefaultAgentFactory):
         self._default_interceptor_chain = kwargs.get("default_interceptor_chain")
         self._default_turn_store = kwargs.get("default_turn_store")
         self._trace_store = kwargs.get("trace_store")
+        self._session_binding_store = kwargs.get("session_binding_store")
         self._inbox_producer = None
         self._inbox_consumer = None
         self._runtime_context_manager: Any = None
@@ -270,11 +271,12 @@ class ExternalAwareFactory(DefaultAgentFactory):
             agent,
             broker=broker,
             safety=safety,
-            hook_runner=None,  # main agents don't fire FINALLY_TURN
+            hook_runner=None,  # main agents don't fire FINALLY_GRAPH
             session_registry=self._session_registry,
             control_channel=self._control_channel,
             output_adapter=output_adapter if isinstance(output_adapter, OutputAdapter) else None,
             context_manager=context_manager,
+            session_binding_store=self._session_binding_store,
         )
 
 

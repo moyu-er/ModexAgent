@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import shutil
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from bot.kb.provider import KbProvider
     from bot.service.core import BotService
     from modex_agent.persistence.managers import WorkspacePersistenceManager
 
@@ -16,6 +18,7 @@ from bot.service._runtime_builders import (
     _build_main_command_processor,
     _collect_run_hooks,
 )
+from bot.service.pool.communication import register_communication_tools
 from bot.workspace.background import BackgroundTaskRunner
 from bot.workspace.handle import (
     PoolWorkspaceResources,
@@ -24,6 +27,10 @@ from bot.workspace.handle import (
 )
 from bot.workspace.pool_data import build_pool_data
 from modex_agent.approval.ui import IMUserInterface
+from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
+from modex_agent.hook.builtin import CurrentTimeInjectionHook, TodoContinuationHook
+from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
+from modex_agent.hook.builtin.knowledge_hook import KnowledgeHook
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.comm_kind import AgentCommKind
@@ -136,18 +143,39 @@ async def _assemble_resources(
     # 1. Workspace-level stores.
     ctx.paths.mkdir_skeleton()
     overflow_store = LocalFileToolOverflowStore(
-        workspace=ctx.paths.overflow_dir, max_chunk_size=10_000
+        workspace=ctx.paths.overflow_dir
     )
     session_index_store = build_session_store(
         app_config,
         persistence,
         session_index_dir=ctx.paths.session_index_dir,
-        pool_resolver=lambda session: service._pool_for_agent(session.agent_name),
+        pool_resolver=lambda session: (
+            service._pool_session_store.get(session.session_id_prefix, "")
+            if service._pool_session_store is not None
+            else ""
+        ) or "main",
         data_dir_name=app_config.paths.data_dir_name,
     )
     from modex_agent.core.session_registry import InMemorySessionRegistry
 
-    session_registry = InMemorySessionRegistry(store=session_index_store)
+    _routing_store = service._pool_session_store
+
+    async def _on_session_registered(session: SessionInfo) -> None:
+        if _routing_store is None:
+            return
+        prefix = session.session_id_prefix
+        if _routing_store.get(prefix, None) is not None:
+            return
+        pool = session.metadata.get("pool")
+        if pool is None and session.parent_session_id is not None:
+            parent_prefix = session_id_prefix_of(session.parent_session_id)
+            pool = _routing_store.get(parent_prefix, None)
+        if pool is not None:
+            _routing_store.set(prefix, str(pool))
+
+    session_registry = InMemorySessionRegistry(
+        store=session_index_store, on_register=_on_session_registered
+    )
     await session_registry.load_all()
 
     # 2. Per-workspace broker (cross-process wakeup). The inbox/bus are now
@@ -162,6 +190,11 @@ async def _assemble_resources(
         from bot.persistence.transcript import build_database_transcript_store
 
         workspace_transcript_store = await build_database_transcript_store(persistence.connection)
+    kb_provider: KbProvider | None = None
+    if persistence is not None:
+        from bot.kb.builder import build_default_kb_provider
+
+        kb_provider = await build_default_kb_provider(persistence.connection)
     resources = PoolWorkspaceResources(
         target=ctx.target,
         ctx=ctx,
@@ -176,13 +209,20 @@ async def _assemble_resources(
         owns_persistence=owns_persistence,
         transcript_store=service._transcript_store,
         workspace_transcript_store=workspace_transcript_store,
+        kb_provider=kb_provider,
     )
     state.resources = resources
     # 3. Per-workspace interceptor chain, rooted at THIS workspace's overflow dir.
     shared_interceptor_chain = _build_workspace_interceptor_chain(service, overflow_store)
 
     # Shared (service-level) infra reused across this workspace's pools.
-    shared_hooks = _collect_run_hooks(service.plugin_integration, app_config)
+    shared_hooks = [
+        CurrentTimeInjectionHook(),       # StartNodeTurnHook
+        TodoContinuationHook(),           # AfterTurnHook — must be first: only hook that sets CONTINUATION_RENEW_MAX_TURNS (watchdog renewal), reminder includes active todo list
+        DeliverRetryHook(),               # AfterTurnHook — independent, no renewal
+        KnowledgeHook(),                  # BeforeTurnHook + AfterTurnHook — independent, no renewal
+        *_collect_run_hooks(service.plugin_integration, app_config),
+    ]
     shared_hook_runner = _build_hook_runner(shared_hooks)
     im_ui = IMUserInterface(
         output_adapter=service.output_adapter,
@@ -245,11 +285,14 @@ async def _assemble_resources(
             mcp_registry=service._mcp_registry,
             persistence=persistence,
             app_config=app_config,
+            kb_provider=resources.kb_provider,
             strategy_registry=service._strategy_registry,
         )
 
-    # Phase 2: cross-pool peer wiring. Must run after all Phase 1 pools are built
-    # so subagent targets precede peer targets in each store's insertion order.
+    # Phase 2: cross-pool peer wiring + communication tool registration. Must
+    # run after all Phase 1 pools are built so subagent targets precede peer
+    # targets in each store's insertion order, and so communication tools
+    # (task / send_to_peer) are registered once with the full target set.
     pool_store = PoolStore(base_dir=service.project_dir)
     for pool_name, instance in resources.pools.items():
         pool_tree = pool_store.read_pool(pool_name)
@@ -261,11 +304,13 @@ async def _assemble_resources(
                 name=peer_instance.main_agent_name,
                 kind=AgentCommKind.NORMAL,
                 pool_name=peer_pool_name,
-                bus_ref=peer_instance.agent_bus,
+                tree_ref=peer_instance.tree_manager,
                 description=description,
                 execution_strategy=peer_tree.main.execution_strategy,
             )
             instance.target_store.add(target)
+        if instance.requires_main_agent_tools:
+            register_communication_tools(instance)
 
     # Wire each pool's main pipeline + communication service to THIS workspace
     # (R), then run the experience-hook wiring that used to live in
@@ -284,6 +329,75 @@ async def _assemble_resources(
         # otherwise a switched-to / newly-created workspace's turns run but
         # their output never leaves the broker (the agent looks silent).
         await pi.broker_bridge.start()
+
+    # 8. Graph orchestrator -- static graph scheduling subsystem.
+    #    The graph uses its OWN sync sqlite3.Connection pointing to the same
+    #    state.db file as the workspace async aiosqlite connection. Graph
+    #    stores manage their own schema on this connection, separate from the
+    #    workspace's message/kv/cursor/archive tables.
+    import sqlite3 as _sqlite3
+
+    from bot.graph.agent_node_factory import BotAgentNodeFactory
+    from bot.graph.output_adapter import WebUIGraphOutputAdapter
+    from bot.graph.spec_loader import GraphSpecLoader
+    from modex_agent.orchestration import GraphOrchestrator, SqliteCoordinatorFactory
+    from modex_graph import (
+        DefaultGraphState,
+        DelayNodeFactory,
+        FunctionNodeFactory,
+        GraphOutput,
+        HumanInputNodeFactory,
+        NodeRegistry,
+        SqliteGraphInstanceStore,
+        SqliteGraphIORecordStore,
+        SqliteGraphSpecStore,
+    )
+
+    node_registry = NodeRegistry()
+    node_registry.register("agent", BotAgentNodeFactory(resolver_cell))
+    node_registry.register("function", FunctionNodeFactory())
+    node_registry.register("delay", DelayNodeFactory())
+    node_registry.register("human_input", HumanInputNodeFactory())
+    state_classes = {"default": DefaultGraphState}
+
+    graph_conn = _sqlite3.connect(str(ctx.paths.state_db), check_same_thread=False)
+    graph_spec_store = SqliteGraphSpecStore(graph_conn)
+    graph_instance_store = SqliteGraphInstanceStore(graph_conn)
+    graph_io_store = SqliteGraphIORecordStore(graph_conn)
+    coordinator_factory = SqliteCoordinatorFactory(connection=graph_conn)
+
+    graph_event_store: dict[int, list[GraphOutput]] = {}
+    graph_event_subscribers: dict[int, list[asyncio.Queue[GraphOutput]]] = {}
+    output_adapter = WebUIGraphOutputAdapter(graph_event_store, graph_event_subscribers)
+
+    graph_orchestrator = GraphOrchestrator(
+        node_registry=node_registry,
+        state_classes=state_classes,
+        spec_store=graph_spec_store,
+        instance_store=graph_instance_store,
+        coordinator_factory=coordinator_factory,
+        output_adapter=output_adapter,
+        io_store=graph_io_store,
+    )
+
+    # Per-workspace config/graphs: first materialize copies from the global
+    # template; subsequent boots load the workspace-local copy so PUT edits
+    # survive restart. ctx.target (== resources.target) converges with
+    # handle_put_spec; ctx.paths.root would be the .modex data subdir instead.
+    workspace_graphs_dir = ctx.target / "config" / "graphs"
+    global_graphs_dir = service._project_dir / "config" / "graphs"
+    if not workspace_graphs_dir.exists() and global_graphs_dir.exists():
+        shutil.copytree(global_graphs_dir, workspace_graphs_dir)
+    if workspace_graphs_dir.exists():
+        GraphSpecLoader(graph_spec_store, compiler=graph_orchestrator._compiler).load_from_dir(
+            workspace_graphs_dir
+        )
+
+    resources.graph_orchestrator = graph_orchestrator
+    resources.graph_output_adapter = output_adapter
+    resources.graph_event_store = graph_event_store
+    resources.graph_event_subscribers = graph_event_subscribers
+    resources.graph_conn = graph_conn
 
     default_pool = service._default_pool_name
     if default_pool is None:
@@ -355,10 +469,35 @@ async def _stop_resources(resources: PoolWorkspaceResources) -> None:
     """Tear down one workspace's resources (re-home of _on_workspace_deactivate).
 
     Stop order: background tasks → terminals → pools (MCP release + shutdown +
-    broker bridges) → broker. The workspace DB closes LAST (after all
-    DB-writing producers have stopped and final flushes complete) so no write
-    races a closing connection.
+    broker bridges) → broker → graph orchestrator → graph connection. The
+    workspace DB closes LAST (after all DB-writing producers have stopped and
+    final flushes complete) so no write races a closing connection.
     """
+    pools_ok = False
+    try:
+        await _stop_pools(resources)
+        pools_ok = True
+    finally:
+        try:
+            if resources.graph_orchestrator is not None:
+                try:
+                    await resources.graph_orchestrator.pause_all_active()
+                finally:
+                    await resources.graph_orchestrator.cleanup()
+        finally:
+            try:
+                if resources.graph_conn is not None:
+                    resources.graph_conn.close()
+            finally:
+                if (
+                    resources.persistence is not None
+                    and resources.owns_persistence
+                    and pools_ok
+                ):
+                    await resources.persistence.close()
+
+
+async def _stop_pools(resources: PoolWorkspaceResources) -> None:
     if resources.background is not None:
         with contextlib.suppress(BaseException):
             await resources.background.stop()
@@ -398,9 +537,6 @@ async def _stop_resources(resources: PoolWorkspaceResources) -> None:
     if resources.owned_pool_routing_store is not None:
         with contextlib.suppress(BaseException):
             resources.owned_pool_routing_store.close()
-    if resources.persistence is not None and resources.owns_persistence:
-        with contextlib.suppress(BaseException):
-            await resources.persistence.close()
 
 
 async def _close_terminal(mgr: TerminalManagerBase, name: str) -> None:

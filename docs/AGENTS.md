@@ -10,17 +10,27 @@ Documentation index for the ModexAgent project — ADRs, design docs, and agent 
 ```
 docs/
 ├── AGENTS.md              ← this file (docs index)
-├── adr/                   ← Architecture Decision Records (ADR-0001 ~ 0035)
+├── adr/                   ← Architecture Decision Records (ADR-0001 ~ 0036)
 │   ├── history/            ← Historical/superseded ADRs
 │   └── AGENTS.md          ← ADR index + conventions
-├── design/                ← Feature design docs (PRD + tickets per feature)
-│   ├── agent-observability/           (ADR-0024)
+├── design/                ← Feature design docs (PRD per feature; completed tickets in _archive/)
+│   ├── _archive/                      ← Superseded PRDs + completed tickets
+│   ├── graph-orchestration/           (ADR-0033/0034)
+│   ├── static-graph-scheduling/       (ADR-0036)
+│   ├── modexctl-control-plane/        (ADR-0035)
 │   ├── hybrid-persistence/            (ADR-0023)
-│   ├── external-agent-integration/  (ADR-0022)
+│   ├── persistence-schema-optimization/ (ADR-0028~0031)
+│   ├── external-coding-subagent/      (ADR-0027)
+│   ├── agent-observability/           (ADR-0024)
+│   ├── external-coding-agent-integration/ (ADR-0022)
 │   ├── model-reasoning-effort/        (ADR-0021)
 │   ├── pool-config-convergence/       (ADR-0020)
 │   ├── cross-pool-peer-communication/ (ADR-0019)
-│   └── session-gc/                    (ADR-0018)
+│   ├── session-gc/                    (ADR-0018)
+│   ├── memory-context-management/     (compact, governance)
+│   ├── prompt-configuration/          (ADR-0020)
+│   ├── config-ux-overhaul/            (ADR-0020/0023)
+│   └── split-task-tool/               (task tool)
 ├── agents/                ← Agent skill docs (issue tracker, triage, domain)
 ├── bot-local-setup.md     ← Bot from-source setup guide
 └── handoff/               ← Working/transient docs (gitignored, not tracked)
@@ -30,7 +40,7 @@ docs/
 
 | Document | Location | Description |
 |----------|----------|-------------|
-| ADR index | `adr/` | 35 Architecture Decision Records (ADR-0001~0035) — see `adr/AGENTS.md` for the full index |
+| ADR index | `adr/` | 36 Architecture Decision Records (ADR-0001~0036) — see `adr/AGENTS.md` for the full index |
 | Bot local setup | `bot-local-setup.md` | Step-by-step bot setup from source (prerequisites, venv, config, troubleshooting) |
 | Issue tracker | `agents/issue-tracker.md` | Issues live as local markdown under `docs/design/<feature>/` |
 | Triage labels | `agents/triage-labels.md` | Canonical triage label vocabulary |
@@ -45,18 +55,22 @@ Each feature has a directory under `design/<feature-slug>/` containing:
 
 | Feature | ADR | Key files |
 |---------|-----|-----------|
+| Graph orchestration (persistence, external control) | ADR-0033/0034 | distributed-persistence.md, external-control.md, backlog.md, future-capabilities.md, state-consistency.md |
+| Static graph scheduling | ADR-0036 | PRD.md, todo.md, closure-map.md |
 | modexctl Control Plane | ADR-0035 | PRD.md, contract.md, decisions.md, glossary.md, issues/ |
-| Parallel scheduling engine | ADR-0034 | PRD.md |
-| Phase 1 persistence schema optimization | ADR-0028, ADR-0029, ADR-0030, ADR-0031 | PRD.md, tickets.md |
-| External coding subagent | ADR-0027 | PRD.md, tickets.md |
-| Execution strategy refactor | ADR-0025 | PRD.md, spec.md, tickets.md |
-| Agent observability | ADR-0024 | PRD.md, tickets.md |
-| Hybrid persistence | ADR-0023 | PRD.md, SCHEMA-DESIGN.md, tickets.md, sqlite-deployment-and-lifecycle.md, webui-transcript-sqlite.md |
-| External coding agent integration | ADR-0022 | spec.md, tickets.md, glossary.md |
-| Model reasoning effort | ADR-0021 | PRD.md, tickets.md |
-| Pool config convergence | ADR-0020 | PRD.md, tickets.md |
-| Cross-pool peer communication | ADR-0019 | PRD.md, tickets.md |
+| Phase 1 persistence schema optimization | ADR-0028/0029/0030/0031 | PRD.md |
+| External coding subagent | ADR-0027 | PRD.md |
+| Agent observability | ADR-0024 | PRD.md |
+| Hybrid persistence | ADR-0023 | PRD.md, sqlite-deployment-and-lifecycle.md, webui-transcript-sqlite.md |
+| External coding agent integration | ADR-0022 | spec.md, glossary.md, child-session-capture.md |
+| Model reasoning effort | ADR-0021 | PRD.md |
+| Pool config convergence | ADR-0020 | PRD.md |
+| Cross-pool peer communication | ADR-0019 | PRD.md |
 | Session GC | ADR-0018 | PRD.md, PLAN.md |
+| Memory context management (compact, governance) | — | compact-design.md, decisions.md |
+| Prompt configuration | ADR-0020 | PRD.md |
+| Config UX overhaul | ADR-0020/0023 | PRD.md |
+| Split-task-tool | — | DESIGN.md, PLAN.md |
 
 ## Conventions
 

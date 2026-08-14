@@ -35,7 +35,6 @@ def _service(home: Path, app_config: AppConfig) -> MagicMock:
     service.command_processor = MagicMock()
     service._collect_run_hooks.return_value = []
     service._build_hook_runner.return_value = MagicMock()
-    service._pool_for_agent.side_effect = lambda agent: agent
     return service
 
 

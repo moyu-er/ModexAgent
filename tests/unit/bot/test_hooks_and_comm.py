@@ -27,7 +27,6 @@ class TestHookConfiguration:
         from modex_agent.hook.builtin import SubagentAutoSendHook
 
         hook = SubagentAutoSendHook(
-            agent_bus=None,
             self_name="reviewer",
             parent_name="coding",
             runtime_dir=Path("/tmp/runtime"),
@@ -171,7 +170,6 @@ class TestHookWiringPerAgent:
         from modex_agent.hook.builtin import SubagentAutoSendHook
 
         hook = SubagentAutoSendHook(
-            agent_bus=None,
             self_name="test_sub",
             parent_name="test_main",
             runtime_dir=Path("/tmp/rt"),

@@ -11,9 +11,9 @@ continues normally. build_webui_pipeline accepts BotModelConfig | None.
 from __future__ import annotations
 
 import pytest
-
 from bot.input_pipeline.stages.model_choice import ModelChoiceStage
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
+
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
 
 

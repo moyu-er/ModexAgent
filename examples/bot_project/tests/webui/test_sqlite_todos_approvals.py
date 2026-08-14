@@ -64,9 +64,10 @@ class TestSqliteTodosEndpoint:
         conn.close()
 
         # Build a SqliteTodoStore for the resolver.
+        from bot.scope import BotRecordScope
+
         from modex_agent.persistence import ConnectionManager, DatabaseKind
         from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
-        from bot.scope import BotRecordScope
 
         mgr = ConnectionManager(sqlite_db, DatabaseKind.WORKSPACE)
         await mgr.open()
@@ -78,7 +79,6 @@ class TestSqliteTodosEndpoint:
             home_sessions_dir=tmp_path / ".modex" / "sessions",
         )
         server.set_data_dir_name(".modex")
-        server.set_agent_pool_map({"default": "default"})
         server.set_store_resolver(
             lambda ws_root, pool: _async_return(RuntimeStores(todo_store=todo_store))
         )
@@ -177,7 +177,6 @@ class TestSqliteApprovalsEndpoint:
             home_sessions_dir=tmp_path / ".modex" / "sessions",
         )
         server.set_data_dir_name(".modex")
-        server.set_agent_pool_map({"default": "default"})
         server.set_store_resolver(
             lambda ws_root, pool: _async_return(RuntimeStores(turn_store=turn_store))
         )

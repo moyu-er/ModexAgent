@@ -7,7 +7,7 @@ import type {
 } from "../types/events";
 import type { MediaConfigResponse, UploadAttachmentResponse } from "../types/attachments";
 import type { ConfigPayload } from "../types/config";
-import { appendWsParam } from "./url";
+import { appendScopeParams } from "./url";
 
 export const API_BASE = "/api";
 
@@ -153,11 +153,12 @@ export async function createConversation(
 export async function deleteConversation(
   sessionId: string,
   ws?: string,
+  pool?: string,
 ): Promise<{ deleted: string }> {
   // ws (workspace) scopes the delete to the session's workspace, so it removes
   // the transcript + index record from the right workspace, not home.
-  const params = ws ? `?ws=${encodeURIComponent(ws)}` : "";
-  const resp = await fetch(`${API_BASE}/sessions/${sessionId}${params}`, {
+  const url = appendScopeParams(`${API_BASE}/sessions/${sessionId}`, ws, pool);
+  const resp = await fetch(url, {
     method: "DELETE",
   });
   await assertOk(resp);
@@ -170,11 +171,12 @@ async function fetchSessionResource<T>(
   sessionId: string,
   ws: string | undefined,
   resource: "messages" | "todos" | "approvals",
+  pool?: string,
 ): Promise<T> {
   // ws (workspace) scopes the read to the session's workspace — without it the
   // server reads home and a message written under another workspace is lost.
-  const params = ws ? `?ws=${encodeURIComponent(ws)}` : "";
-  const resp = await fetch(`${API_BASE}/sessions/${sessionId}/${resource}${params}`);
+  const url = appendScopeParams(`${API_BASE}/sessions/${sessionId}/${resource}`, ws, pool);
+  const resp = await fetch(url);
   await assertOk(resp);
   return resp.json() as Promise<T>;
 }
@@ -182,22 +184,25 @@ async function fetchSessionResource<T>(
 export async function fetchMessages(
   sessionId: string,
   ws?: string,
+  pool?: string,
 ): Promise<ServerEventUnion[]> {
-  return fetchSessionResource<ServerEventUnion[]>(sessionId, ws, "messages");
+  return fetchSessionResource<ServerEventUnion[]>(sessionId, ws, "messages", pool);
 }
 
 export async function fetchTodos(
   sessionId: string,
   ws?: string,
+  pool?: string,
 ): Promise<TodoItemDTO[]> {
-  return fetchSessionResource<TodoItemDTO[]>(sessionId, ws, "todos");
+  return fetchSessionResource<TodoItemDTO[]>(sessionId, ws, "todos", pool);
 }
 
 export async function fetchApprovals(
   sessionId: string,
   ws?: string,
+  pool?: string,
 ): Promise<ApprovalRequestView[]> {
-  return fetchSessionResource<ApprovalRequestView[]>(sessionId, ws, "approvals");
+  return fetchSessionResource<ApprovalRequestView[]>(sessionId, ws, "approvals", pool);
 }
 
 export async function submitApproval(
@@ -205,9 +210,10 @@ export async function submitApproval(
   toolCallId: string,
   action: "allow" | "deny",
   ws?: string,
+  pool?: string,
 ): Promise<{ accepted: boolean }> {
-  const params = ws ? `?ws=${encodeURIComponent(ws)}` : "";
-  const resp = await fetch(`${API_BASE}/sessions/${sessionId}/approvals${params}`, {
+  const url = appendScopeParams(`${API_BASE}/sessions/${sessionId}/approvals`, ws, pool);
+  const resp = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ tool_call_id: toolCallId, action }),
@@ -283,11 +289,12 @@ export async function uploadAttachment(
   sessionId: string,
   file: File,
   ws?: string,
+  pool?: string,
 ): Promise<UploadAttachmentResponse> {
   const form = new FormData();
   form.append("file", file);
-  const params = ws ? `?ws=${encodeURIComponent(ws)}` : "";
-  const resp = await fetch(`${API_BASE}/sessions/${sessionId}/attachments${params}`, {
+  const url = appendScopeParams(`${API_BASE}/sessions/${sessionId}/attachments`, ws, pool);
+  const resp = await fetch(url, {
     method: "POST",
     body: form,
   });
@@ -304,10 +311,12 @@ export function attachmentDownloadUrl(
   sessionId: string,
   attachmentId: string,
   ws?: string,
+  pool?: string,
 ): string {
-  return appendWsParam(
+  return appendScopeParams(
     `${API_BASE}/sessions/${sessionId}/attachments/${attachmentId}`,
     ws,
+    pool,
   );
 }
 

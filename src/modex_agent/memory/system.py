@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -122,7 +121,6 @@ class MemorySystemContextManager(ContextManager):
         injection_policy: MemoryInjectionPolicy | None = None,
         experience_manager: ExperienceManager | None = None,
         output_base_dir: Path | None = None,
-        parent_prompt_lookup: Callable[[str], Awaitable[str | None]] | None = None,
         fork_context_spec: ForkContextSpec | None = None,
         archive_injection_config: ArchiveInjectionConfig | None = None,
         roles: list[str] | None = None,
@@ -142,13 +140,6 @@ class MemorySystemContextManager(ContextManager):
         self._max_context_cache_size = 1000
         self._experience_manager = experience_manager
         self._output_base_dir: Path | None = output_base_dir
-        # Subagent per-invocation context (APPEND parent prompt + FORK context).
-        # None for normal agents → providers are skipped, so load() is unchanged
-        # for every non-subagent caller. The parent *value* arrives per turn via
-        # runtime_info[RuntimeInfoKey.PARENT_SESSION_ID] (set by dispatch_envelope from the
-        # envelope); the lookup closure only resolves the parent's prompt from
-        # the in-memory pool, never from a session store.
-        self._parent_prompt_lookup = parent_prompt_lookup
         self._fork_context_spec = fork_context_spec
         self._roles: list[str] = list(roles) if roles else []
         self._comm_kind: AgentCommKind | None = comm_kind
@@ -215,6 +206,7 @@ class MemorySystemContextManager(ContextManager):
             BasePromptProvider,
             CoreMemoryProvider,
             ExperienceProvider,
+            GraphWorkflowProvider,
             ModelInfoProvider,
             ProviderBlocksProvider,
             ProviderPrefetchProvider,
@@ -242,25 +234,13 @@ class MemorySystemContextManager(ContextManager):
                 ModelInfoProvider(runtime_info.get(RuntimeInfoKey.MODEL_INFO))
             )
 
-        # 1b. APPEND parent prompt — per-invocation (subagents only). Sits BEFORE
-        # the base prompt so the agent's own prompt follows its parent's, mirroring
-        # the pre-refactor "[parent] --- [base]" ordering. The parent arrives via
-        # runtime_info (threaded from the envelope by dispatch_envelope), not by
-        # recovering it from a session store.
-        parent_sid = (runtime_info or {}).get(RuntimeInfoKey.PARENT_SESSION_ID) if runtime_info else None
-        if self._parent_prompt_lookup is not None and parent_sid:
-            from modex_agent.memory.prompt_pipeline.providers import (
-                AppendParentPromptProvider,
-            )
-
-            providers.append(AppendParentPromptProvider(self._parent_prompt_lookup, parent_sid))
-
         # 2. Base system prompt (static)
         if self.base_system_prompt:
             providers.append(BasePromptProvider(self.base_system_prompt))
 
         # 2a. FORK context — per-invocation (subagents only). Sits AFTER the base
         # prompt as READ-ONLY reference, mirroring the pre-refactor ordering.
+        parent_sid = (runtime_info or {}).get(RuntimeInfoKey.PARENT_SESSION_ID) if runtime_info else None
         if self._fork_context_spec is not None and parent_sid:
             from modex_agent.memory.prompt_pipeline.providers import (
                 ForkContextProvider,
@@ -337,6 +317,9 @@ class MemorySystemContextManager(ContextManager):
         # 10. Agent role contracts (after business providers; near end).
         if self._roles:
             providers.append(AgentRoleContractProvider(self._roles))
+
+        # 11. Graph workflow guidance (only fires when graph_context is set).
+        providers.append(GraphWorkflowProvider())
 
         pipeline = SystemPromptPipeline(providers)
 
@@ -513,16 +496,8 @@ class MemorySystemContextManager(ContextManager):
     @staticmethod
     def _format_runtime_info(info: dict[str, Any]) -> str:
         import sys
-        from datetime import datetime
-
-        from modex_agent.utils.timezone import get_user_timezone
 
         lines = ["## Runtime"]
-        current_time = str(
-            info.get("current_time") or datetime.now(get_user_timezone()).strftime("%Y-%m-%d %Hh")
-        )
-        lines.append(f"Current Time: {current_time} (hour precision, not exact)")
-
         platform_raw = str(info.get("platform") or sys.platform)
         platform_name = {"win32": "Windows", "darwin": "macOS", "linux": "Linux"}.get(
             platform_raw, platform_raw

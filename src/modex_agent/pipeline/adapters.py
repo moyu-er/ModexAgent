@@ -14,9 +14,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.adapters.platform import StreamingMode
-
-from modex_agent.core.types import InputMessage, OutputMessage
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import InputMessage, OutputMessage
 from modex_agent.pipeline.filters import ContentFilter
 
 if TYPE_CHECKING:
@@ -53,8 +52,8 @@ class InputAdapter(ABC):
         self._turn_uuid_getter: Callable[[str], str | None] | None = None
         # Set by configure_input_pipeline (default impl); overrides may use
         # different attr names.
-        self._input_pipeline: "UserInputPipeline | None" = None
-        self._input_ctx: "InputContext | None" = None
+        self._input_pipeline: UserInputPipeline | None = None
+        self._input_ctx: InputContext | None = None
         self._output_adapter: OutputAdapter | None = None
         # Per-channel current workspace; overridden by subclasses that
         # support workspace switching (e.g. QQ).  Default is CWD.
@@ -93,8 +92,8 @@ class InputAdapter(ABC):
 
     def configure_input_pipeline(
         self,
-        pipeline: "UserInputPipeline",
-        ctx: "InputContext",
+        pipeline: UserInputPipeline,
+        ctx: InputContext,
         output: OutputAdapter | None,
     ) -> None:
         """Inject the converged input pipeline for this channel.

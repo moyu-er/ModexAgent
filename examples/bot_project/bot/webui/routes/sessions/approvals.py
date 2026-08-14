@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from bot.webui.routes.sessions import resolve_agent, resolve_session
+from bot.webui.routes.sessions import resolve_session
+from modex_agent.core.session_id import session_id_prefix_of
 from modex_agent.workspace.paths import WorkspacePaths
 
 if TYPE_CHECKING:
@@ -45,14 +46,13 @@ async def handle_get_approvals(request: web.Request) -> web.Response:
     from modex_agent.runtime.models import StateQueryScope
     from modex_agent.runtime.store import JsonFileTurnStateStore
 
+
     server: WebUIServer = request.app["server"]
     session_id: str = request.match_info["session_id"]
     ws_raw = request.query.get("ws", "")
     sessions_dir = server._sessions_dir_of_ws(ws_raw)
-    agent_name: str = await resolve_agent(
-        server, session_id, index_dir=server._index_dir_of_ws(ws_raw)
-    )
-    pool: str = server._pool_of_agent(agent_name)
+    session_prefix = session_id_prefix_of(session_id)
+    pool: str = server._resolve_pool_for_request(request.query.get("pool"), session_prefix)
 
     turn_store = None
     if server._store_resolver is not None:
@@ -114,6 +114,7 @@ async def handle_post_approval(request: web.Request) -> web.Response:
 
     decision = ApprovalDecisionInput(tool_call_id=tool_call_id, action=action)
     ws_raw = request.query.get("ws", "")
+    pool = request.query.get("pool") or ""
     session = await resolve_session(server, session_id, index_dir=server._index_dir_of_ws(ws_raw))
     envelope = UserInputEnvelope(
         external_id=session_id,
@@ -122,9 +123,8 @@ async def handle_post_approval(request: web.Request) -> web.Response:
         metadata={RoutingMeta.APPROVAL_DECISION: decision},
         pre_resolved_session=session,
     )
-    # Stamp the workspace (same resolver as _ws_send_message) so resume
-    # reads the turn store that holds this snapshot — without it, the
-    # decision silently lands on the home workspace.
+    if pool:
+        envelope.metadata[RoutingMeta.RESOLVED_POOL] = pool
     envelope.metadata[RoutingMeta.WORKSPACE] = str(server._ws_root_of(ws_raw))
     # _input_pipeline / _input_ctx are injected by WebUIService. They may
     # be None in minimal test setups -- guard so the handler degrades cleanly.

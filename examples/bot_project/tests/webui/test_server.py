@@ -11,17 +11,18 @@ from unittest.mock import MagicMock
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
+from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.emitter import WebBotEmitter
+from bot.webui.events import DeltaEnvelope, _unwrap_envelope
 from bot.webui.server import (
     WebUIServer,
     _new_uuid_prefix,
     _safe_send_json,
 )
-from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import DeltaEnvelope, _unwrap_envelope
-from bot.webui.transcript_store import JSONLTranscriptStore
-from modex_agent.workspace.paths import WorkspacePaths
+
 from modex_agent.core.emitter import AgentResult, EmitterConfig
+from modex_agent.multi_agent.pool_router import PoolSessionStore
+from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
 
 
@@ -475,25 +476,27 @@ async def test_no_static_fallback() -> None:
 async def test_sessions_list_includes_pool() -> None:
     """GET /api/sessions returns one entry per session with session_id and pool."""
     from bot.service.session_store import WorkspacePoolSessionStore
+
     from modex_agent.core.session_id import SessionIdFactory
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     home_sessions_dir = WorkspacePaths(root=data_dir / ".modex").sessions_dir
-    store.set_agent_pool_map({"coding": "coding", "main": "main"})
     server = WebUIServer(
         input_adapter, store, static_dist=None, data_dir=data_dir, home_sessions_dir=home_sessions_dir
     )
     server.set_workspace_index(store)
-    server.set_agent_pool_map({"coding": "coding", "main": "main"})
 
     server.set_pool_agent_names(["main", "coding"])
-    agent_pool_map = {"coding": "coding", "main": "main"}
+    pool_by_agent = {"coding": "coding", "main": "main"}
+    routing_store = PoolSessionStore(data_dir / ".modex")
+    server.set_pool_switch_callback(routing_store.set)
+    server.set_pool_resolver(routing_store.get_pool)
     factory = SessionIdFactory()
     session_store = WorkspacePoolSessionStore(
         base_dir=WorkspacePaths(root=data_dir / ".modex").session_index_dir,
-        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+        pool_resolver=lambda s: pool_by_agent.get(s.agent_name, "main"),
     )
     server.set_session_store(session_store)
     server.set_session_factory(factory)
@@ -523,7 +526,8 @@ async def test_sessions_list_includes_pool() -> None:
         from bot.webui.events import UserMessageEvent
         with bind_workspace_root(data_dir):
             await server._store.append(s1_sid,
-                UserMessageEvent(session_id=s1_sid, agent_name="coding", content="hi"))
+                UserMessageEvent(session_id=s1_sid, agent_name="coding", content="hi"),
+                pool="coding")
             await server._store.append(s2_sid,
                 UserMessageEvent(session_id=s2_sid, agent_name="main", content="hi"))
 
@@ -548,14 +552,15 @@ async def test_delete_session_cleans_up_metadata() -> None:
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     home_sessions_dir = WorkspacePaths(root=data_dir / ".modex").sessions_dir
-    store.set_agent_pool_map({"coding": "coding", "main": "main"})
     server = WebUIServer(
         input_adapter, store, static_dist=None, data_dir=data_dir, home_sessions_dir=home_sessions_dir
     )
     server.set_workspace_index(store)
-    server.set_agent_pool_map({"coding": "coding", "main": "main"})
 
     server.set_pool_agent_names(["main", "coding"])
+    routing_store = PoolSessionStore(data_dir / ".modex")
+    server.set_pool_switch_callback(routing_store.set)
+    server.set_pool_resolver(routing_store.get_pool)
 
     from bot.service.session_gc import SessionGarbageCollector, SessionGcConfig
 
@@ -581,7 +586,8 @@ async def test_delete_session_cleans_up_metadata() -> None:
         with bind_workspace_root(data_dir):
             await store.append(
                 session_id,
-                UserMessageEvent(session_id=session_id, agent_name="coding", content="test")
+                UserMessageEvent(session_id=session_id, agent_name="coding", content="test"),
+                pool="coding",
             )
         transcript_file = data_dir / ".modex" / "sessions" / "coding" / f"{session_id}.jsonl"
         assert transcript_file.exists()
@@ -610,20 +616,19 @@ async def test_delete_session_delegates_to_collector() -> None:
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     home_sessions_dir = WorkspacePaths(root=data_dir / ".modex").sessions_dir
-    store.set_agent_pool_map({"main": "main", "coding": "coding"})
     server = WebUIServer(
         input_adapter, store, static_dist=None, data_dir=data_dir, home_sessions_dir=home_sessions_dir
     )
     server.set_workspace_index(store)
-    server.set_agent_pool_map({"main": "main", "coding": "coding"})
     server.set_pool_agent_names(["main", "coding"])
 
     class FakeGC:
         def __init__(self) -> None:
             self.calls: list[tuple[str, str | None]] = []
 
-        async def delete_session_tree(self, root_session_id, ws_root=None, pool=None):
+        async def delete_session_tree(self, root_session_id, ws_root=None, pool=None) -> bool:
             self.calls.append((root_session_id, pool))
+            return True
 
     fake = FakeGC()
     server.set_session_gc(fake)
@@ -654,8 +659,9 @@ async def test_ws_send_message_uses_stored_pool() -> None:
     # Wire resolver so the send path derives agent_name from pool_name.
     server.set_pool_resolver(lambda cid: "coding")
 
-    from tests.webui._pipeline_fixture import attach_default_pipeline
     from unittest.mock import MagicMock
+
+    from tests.webui._pipeline_fixture import attach_default_pipeline
     pool_store = MagicMock()
     pool_store.get = lambda key, default=None: "coding"
     pool_store.set = MagicMock()
@@ -725,15 +731,15 @@ async def test_ws_attach_restores_pool_routing() -> None:
 async def test_pool_mapping_persistence_across_restart() -> None:
     """Pool mapping survives server restart via physical transcript layout."""
     from bot.service.session_store import WorkspacePoolSessionStore
+
     from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     home_sessions_dir = WorkspacePaths(root=data_dir / ".modex").sessions_dir
-    store.set_agent_pool_map({"main": "main", "coding": "coding"})
-
-    agent_pool_map = {"main": "main", "coding": "coding"}
+    pool_by_agent = {"main": "main", "coding": "coding"}
+    routing_store = PoolSessionStore(data_dir / ".modex")
 
     # First server instance — create a session in the coding pool and send a
     # message so the transcript is persisted to disk (empty sessions are not).
@@ -741,15 +747,22 @@ async def test_pool_mapping_persistence_across_restart() -> None:
         input_adapter, store, static_dist=None, data_dir=data_dir, home_sessions_dir=home_sessions_dir
     )
     server1.set_workspace_index(store)
-    server1.set_agent_pool_map(agent_pool_map)
     server1.set_pool_agent_names(["main", "coding"])
+    server1.set_pool_switch_callback(routing_store.set)
+    server1.set_pool_resolver(routing_store.get_pool)
     session_store1 = WorkspacePoolSessionStore(
         base_dir=WorkspacePaths(root=data_dir / ".modex").session_index_dir,
-        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+        pool_resolver=lambda s: pool_by_agent.get(s.agent_name, "main"),
     )
     server1.set_session_store(session_store1)
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server1, store, input_adapter, workspace_root=data_dir)
+    attach_default_pipeline(
+        server1,
+        store,
+        input_adapter,
+        pool_session_store=routing_store,
+        workspace_root=data_dir,
+    )
     client1 = TestClient(TestServer(server1.app))
     await client1.start_server()
     try:
@@ -787,16 +800,15 @@ async def test_pool_mapping_persistence_across_restart() -> None:
 
     # Second server instance — fresh store scanning the same disk layout.
     store2 = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    store2.set_agent_pool_map(agent_pool_map)
     server2 = WebUIServer(
         input_adapter, store2, static_dist=None, data_dir=data_dir, home_sessions_dir=home_sessions_dir
     )
     server2.set_workspace_index(store2)
-    server2.set_agent_pool_map(agent_pool_map)
     server2.set_pool_agent_names(["main", "coding"])
+    server2.set_pool_resolver(routing_store.get_pool)
     session_store2 = WorkspacePoolSessionStore(
         base_dir=WorkspacePaths(root=data_dir / ".modex").session_index_dir,
-        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+        pool_resolver=lambda s: pool_by_agent.get(s.agent_name, "main"),
     )
     server2.set_session_store(session_store2)
     client2 = TestClient(TestServer(server2.app))
@@ -824,29 +836,37 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
     """
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
+
     from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     home_sessions_dir = WorkspacePaths(root=data_dir / ".modex").sessions_dir
-    store.set_agent_pool_map({"main": "main", "coding": "coding"})
     server = WebUIServer(
         input_adapter, store, static_dist=None, data_dir=data_dir, home_sessions_dir=home_sessions_dir
     )
     server.set_workspace_index(store)
     server.set_pool_agent_names(["main", "coding"])
-    server.set_agent_pool_map({"main": "main", "coding": "coding"})
 
-    agent_pool_map = {"main": "main", "coding": "coding"}
+    pool_by_agent = {"main": "main", "coding": "coding"}
+    routing_store = PoolSessionStore(data_dir / ".modex")
+    server.set_pool_switch_callback(routing_store.set)
+    server.set_pool_resolver(routing_store.get_pool)
     session_store = WorkspacePoolSessionStore(
         base_dir=WorkspacePaths(root=data_dir / ".modex").session_index_dir,
-        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+        pool_resolver=lambda s: pool_by_agent.get(s.agent_name, "main"),
     )
     server.set_session_store(session_store)
 
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server, store, input_adapter, workspace_root=data_dir)
+    attach_default_pipeline(
+        server,
+        store,
+        input_adapter,
+        pool_session_store=routing_store,
+        workspace_root=data_dir,
+    )
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -889,6 +909,7 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
 
         qq_conv_id = "qq:group:12345"
         qq_sid = f"{qq_conv_id}.main"
+        routing_store.set(qq_conv_id, "main")
         with bind_workspace_root(data_dir):
             await server._store.append(
                 qq_sid,
@@ -1009,18 +1030,17 @@ async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
     """GET /api/sessions includes subagent sessions that have parent relationships."""
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
+
     from modex_agent.core.session_id import SessionInfo
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     home_sessions_dir = WorkspacePaths(root=data_dir / ".modex").sessions_dir
-    store.set_agent_pool_map({"coding": "coding", "main": "main"})
     server = WebUIServer(
         input_adapter, store, static_dist=None, data_dir=data_dir, home_sessions_dir=home_sessions_dir
     )
     server.set_workspace_index(store)
-    server.set_agent_pool_map({"coding": "coding", "main": "main", "reviewer": "coding"})
     server.set_pool_agent_names(["main", "coding", "reviewer"])
 
     # Create session store and record parent→child via SessionInfo
@@ -1030,6 +1050,7 @@ async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
         WorkspacePaths(root=data_dir / ".modex").session_index_dir,
         pool_resolver=lambda s: "coding",
     )
+    server.set_pool_resolver(lambda session_prefix: "coding" if session_prefix == "abc" else None)
     parent_session = SessionInfo(
         session_id=parent_sid, agent_name="coding"
 )
@@ -1044,9 +1065,11 @@ async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
     # Add transcript data for both parent and child
     with bind_workspace_root(data_dir):
         await store.append(parent_sid,
-            UserMessageEvent(session_id=parent_sid, agent_name="coding", content="hi"))
+            UserMessageEvent(session_id=parent_sid, agent_name="coding", content="hi"),
+            pool="coding")
         await store.append(child_sid,
-            UserMessageEvent(session_id=child_sid, agent_name="reviewer", content="reviewing"))
+            UserMessageEvent(session_id=child_sid, agent_name="reviewer", content="reviewing"),
+            pool="coding")
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -1075,18 +1098,17 @@ async def test_api_messages_loads_subagent_transcript() -> None:
     """GET /api/sessions/{subagent_id}/messages loads subagent transcript events."""
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
+
     from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     home_sessions_dir = WorkspacePaths(root=data_dir / ".modex").sessions_dir
-    store.set_agent_pool_map({"coding": "coding", "reviewer": "coding"})
     server = WebUIServer(
         input_adapter, store, static_dist=None, data_dir=data_dir, home_sessions_dir=home_sessions_dir
     )
     server.set_workspace_index(store)
-    server.set_agent_pool_map({"coding": "coding", "reviewer": "coding"})
     server.set_pool_agent_names(["coding"])
 
     # Session store so _resolve_agent finds correct agent_name for subagent.
@@ -1094,6 +1116,7 @@ async def test_api_messages_loads_subagent_transcript() -> None:
         base_dir=WorkspacePaths(root=data_dir / ".modex").session_index_dir,
         pool_resolver=lambda s: "coding",
     )
+    server.set_pool_resolver(lambda session_prefix: "coding" if session_prefix == "abc" else None)
     server.set_session_store(session_store)
 
     parent_sid = "abc.coding"
@@ -1102,9 +1125,11 @@ async def test_api_messages_loads_subagent_transcript() -> None:
     # Write transcript data for the subagent session
     with bind_workspace_root(data_dir):
         await store.append(parent_sid,
-            UserMessageEvent(session_id=parent_sid, agent_name="coding", content="hi"))
+            UserMessageEvent(session_id=parent_sid, agent_name="coding", content="hi"),
+            pool="coding")
         await store.append(child_sid,
-            UserMessageEvent(session_id=child_sid, agent_name="reviewer", content="review result"))
+            UserMessageEvent(session_id=child_sid, agent_name="reviewer", content="review result"),
+            pool="coding")
 
     # Save subagent session to the store so _resolve_agent finds "reviewer".
     await session_store.save(SessionInfo(
@@ -1140,12 +1165,10 @@ async def test_subagent_streaming_delta_arrives_at_ws_client() -> None:
     output_adapter = WebSocketOutputAdapter(input_adapter)
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     home_sessions_dir = WorkspacePaths(root=data_dir / ".modex").sessions_dir
-    store.set_agent_pool_map({"coding": "coding", "reviewer": "coding"})
     server = WebUIServer(
         input_adapter, store, static_dist=None, data_dir=data_dir, home_sessions_dir=home_sessions_dir
     )
     server.set_workspace_index(store)
-    server.set_agent_pool_map({"coding": "coding", "reviewer": "coding"})
     server.set_pool_agent_names(["coding"])
 
     client = TestClient(TestServer(server.app))
@@ -1414,28 +1437,30 @@ async def test_api_sessions_falls_back_to_transcripts_when_index_empty() -> None
     """
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
+
     from modex_agent.core.session_id import SessionIdFactory
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     home_sessions_dir = WorkspacePaths(root=data_dir / ".modex").sessions_dir
-    store.set_agent_pool_map({"coding": "coding", "main": "main"})
     server = WebUIServer(
         input_adapter, store, static_dist=None, data_dir=data_dir, home_sessions_dir=home_sessions_dir
     )
     server.set_workspace_index(store)
-    server.set_agent_pool_map({"coding": "coding", "main": "main"})
     server.set_pool_agent_names(["main", "coding"])
 
     # Empty session store — no SessionInfo index entries yet.
-    agent_pool_map = {"coding": "coding", "main": "main"}
+    pool_by_agent = {"coding": "coding", "main": "main"}
     session_store = WorkspacePoolSessionStore(
         base_dir=WorkspacePaths(root=data_dir / ".modex").session_index_dir,
-        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+        pool_resolver=lambda s: pool_by_agent.get(s.agent_name, "main"),
     )
     server.set_session_store(session_store)
     server.set_session_factory(SessionIdFactory())
+    server.set_pool_resolver(
+        lambda session_prefix: "coding" if session_prefix == "legacy123" else None
+    )
 
     # Write a legacy transcript directly into the coding pool directory.
     legacy_sid = "legacy123.coding"
@@ -1445,6 +1470,7 @@ async def test_api_sessions_falls_back_to_transcripts_when_index_empty() -> None
             UserMessageEvent(
                 session_id=legacy_sid, agent_name="coding", content="hi"
             ),
+            pool="coding",
         )
 
     client = TestClient(TestServer(server.app))
@@ -1471,27 +1497,29 @@ async def test_api_sessions_falls_back_preserves_index_entries() -> None:
     """
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
-    from modex_agent.core.session_id import SessionInfo, SessionIdFactory, now_ms
+
+    from modex_agent.core.session_id import SessionIdFactory, SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     home_sessions_dir = WorkspacePaths(root=data_dir / ".modex").sessions_dir
-    store.set_agent_pool_map({"coding": "coding"})
     server = WebUIServer(
         input_adapter, store, static_dist=None, data_dir=data_dir, home_sessions_dir=home_sessions_dir
     )
     server.set_workspace_index(store)
-    server.set_agent_pool_map({"coding": "coding"})
     server.set_pool_agent_names(["coding"])
 
-    agent_pool_map = {"coding": "coding"}
+    pool_by_agent = {"coding": "coding"}
     session_store = WorkspacePoolSessionStore(
         base_dir=WorkspacePaths(root=data_dir / ".modex").session_index_dir,
-        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+        pool_resolver=lambda s: pool_by_agent.get(s.agent_name, "main"),
     )
     server.set_session_store(session_store)
     server.set_session_factory(SessionIdFactory())
+    server.set_pool_resolver(
+        lambda session_prefix: "coding" if session_prefix == "idx456" else None
+    )
 
     indexed_sid = "idx456.coding"
     await session_store.save(
@@ -1510,6 +1538,7 @@ async def test_api_sessions_falls_back_preserves_index_entries() -> None:
             UserMessageEvent(
                 session_id=indexed_sid, agent_name="coding", content="hi"
             ),
+            pool="coding",
         )
 
     client = TestClient(TestServer(server.app))
@@ -1539,9 +1568,8 @@ async def test_workspace_cd_switches_current_workspace() -> None:
     the binding correctly isolates writes.
     """
     from bot.service.session_store import WorkspacePoolSessionStore
+
     from modex_agent.core.session_id import SessionInfo, now_ms
-    from modex_agent.workspace.models import CdResult
-    from modex_agent.workspace.port import WorkspaceControlPort
 
     home = Path(tempfile.mkdtemp())
     ws_a = home / "ws-a"
@@ -1558,11 +1586,9 @@ async def test_workspace_cd_switches_current_workspace() -> None:
     # accept an explicit ``sessions_dir`` override (used by the server's
     # ``home_sessions_dir``).
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    store.set_agent_pool_map({"main": "main"})
     inp = WebSocketInputAdapter()
     server = WebUIServer(inp, store, static_dist=None, data_dir=home, home_sessions_dir=sessions_a)
     server.set_workspace_index(store)
-    server.set_agent_pool_map({"main": "main"})
     server.set_pool_agent_names(["main"])
 
     # Session store for session listing.
@@ -1571,6 +1597,7 @@ async def test_workspace_cd_switches_current_workspace() -> None:
         pool_resolver=lambda s: "main",
     )
     server.set_session_store(session_store)
+    server.set_pool_resolver(lambda session_prefix: "main")
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -1634,26 +1661,28 @@ async def test_api_sessions_includes_subagent_sessions() -> None:
     """
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
+
     from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     home_sessions_dir = WorkspacePaths(root=data_dir / ".modex").sessions_dir
-    store.set_agent_pool_map({"coding": "coding", "reviewer": "coding"})
     server = WebUIServer(
         input_adapter, store, static_dist=None, data_dir=data_dir, home_sessions_dir=home_sessions_dir
     )
     server.set_workspace_index(store)
-    server.set_agent_pool_map({"coding": "coding", "reviewer": "coding"})
     server.set_pool_agent_names(["coding"])
 
-    agent_pool_map = {"coding": "coding", "reviewer": "coding"}
+    pool_by_agent = {"coding": "coding", "reviewer": "coding"}
     session_store = WorkspacePoolSessionStore(
         base_dir=WorkspacePaths(root=data_dir / ".modex").session_index_dir,
-        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+        pool_resolver=lambda s: pool_by_agent.get(s.agent_name, "main"),
     )
     server.set_session_store(session_store)
+    server.set_pool_resolver(
+        lambda session_prefix: "coding" if session_prefix == "abc" else None
+    )
 
     parent_sid = "abc.coding"
     child_sid = "abc.coding.reviewer.ee11"
@@ -1680,6 +1709,7 @@ async def test_api_sessions_includes_subagent_sessions() -> None:
             UserMessageEvent(
                 session_id=child_sid, agent_name="reviewer", content="review done"
             ),
+            pool="coding",
         )
 
     client = TestClient(TestServer(server.app))
@@ -1706,26 +1736,28 @@ async def test_api_sessions_includes_dynamic_subagent_instance() -> None:
     of their template type and must appear in the session list.
     """
     from bot.service.session_store import WorkspacePoolSessionStore
+
     from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     home_sessions_dir = WorkspacePaths(root=data_dir / ".modex").sessions_dir
-    store.set_agent_pool_map({"coding": "coding", "reviewer": "coding"})
     server = WebUIServer(
         input_adapter, store, static_dist=None, data_dir=data_dir, home_sessions_dir=home_sessions_dir
     )
     server.set_workspace_index(store)
-    server.set_agent_pool_map({"coding": "coding", "reviewer": "coding"})
     server.set_pool_agent_names(["coding"])
 
-    agent_pool_map = {"coding": "coding", "reviewer": "coding"}
+    pool_by_agent = {"coding": "coding", "reviewer": "coding"}
     session_store = WorkspacePoolSessionStore(
         base_dir=WorkspacePaths(root=data_dir / ".modex").session_index_dir,
-        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+        pool_resolver=lambda s: pool_by_agent.get(s.agent_name, "main"),
     )
     server.set_session_store(session_store)
+    server.set_pool_resolver(
+        lambda session_prefix: "coding" if session_prefix == "abc" else None
+    )
 
     dynamic_sid = "abc.coding.reviewer-instance-7"
     await session_store.save(
@@ -1768,7 +1800,6 @@ async def test_ws_attach_starts_forward_deltas_for_main_session() -> None:
     workspace_root = Path(tempfile.mkdtemp())
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     home_sessions_dir = WorkspacePaths(root=workspace_root / ".modex").sessions_dir
-    store.set_agent_pool_map({"main": "main"})
     server = WebUIServer(ws_input, store, static_dist=None, home_sessions_dir=home_sessions_dir)
     server.set_workspace_index(store)
 
@@ -1863,7 +1894,6 @@ async def test_subagent_invocation_id_matching_agent_name_still_registered() -> 
         input_adapter = WebSocketInputAdapter()
         store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
         home_sessions_dir = WorkspacePaths(root=workspace_root / ".modex").sessions_dir
-        store.set_agent_pool_map({"main": "main", "reviewer": "main"})
         server = WebUIServer(input_adapter, store, static_dist=None, home_sessions_dir=home_sessions_dir)
         server.set_workspace_index(store)
         server.set_pool_agent_names(["main", "reviewer"])
@@ -2007,4 +2037,3 @@ async def test_create_session_graceful_on_malformed_json() -> None:
             assert data["session_id"].endswith(".main")
         finally:
             await client.close()
-

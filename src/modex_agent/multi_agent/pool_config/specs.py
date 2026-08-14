@@ -10,7 +10,6 @@ from modex_agent.tools.presets import (
     DEFAULT_FORK_MAX_MESSAGES,
     MAX_FORK_MAX_MESSAGES,
     ContextMode,
-    SystemPromptMode,
     ToolPreset,
     ToolSupplement,
 )
@@ -115,7 +114,6 @@ class SubagentSpec(BaseModel):
     tool_supplements: list[ToolSupplement] = Field(default_factory=list)
     context_mode: ContextMode = ContextMode.FRESH
     mcp: list[str] = Field(default_factory=list)
-    system_prompt_mode: SystemPromptMode = SystemPromptMode.REPLACE
     fork_max_messages: int = Field(
         default=DEFAULT_FORK_MAX_MESSAGES, ge=1, le=MAX_FORK_MAX_MESSAGES
     )

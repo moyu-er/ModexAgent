@@ -52,11 +52,13 @@ async def handle_pause(
         return
 
     ws_raw = str(data.get("ws", ""))
+    pool_from_payload = str(data.get("pool", ""))
     index_dir = server._index_dir_of_ws(ws_raw)
     resolved = await server._resolve_session(session_id, index_dir=index_dir)
     handled = await server._input._try_intercept_control("/stop", resolved.session_id)
     if not handled:
-        pool = server._pool_of_agent(resolved.agent_name)
+        session_prefix = resolved.session_id_prefix
+        pool = server._resolve_pool_for_request(pool_from_payload or None, session_prefix)
         await _safe_send_json(
             ws,
             DeltaEnvelope(
@@ -86,10 +88,12 @@ async def handle_delete_conversation(
     if "." not in session_id:
         return
     ws_raw = str(data.get("ws", ""))
+    pool_from_payload = str(data.get("pool", ""))
     index_dir = server._index_dir_of_ws(ws_raw)
     resolved = await server._resolve_session(session_id, index_dir=index_dir)
     agent_name = resolved.agent_name
-    pool = server._pool_of_agent(agent_name)
+    session_prefix = resolved.session_id_prefix
+    pool = server._resolve_pool_for_request(pool_from_payload or None, session_prefix)
     if server._session_gc is not None:
         await server._session_gc.delete_session_tree(
             session_id, ws_root=server._ws_root_of(ws_raw), pool=pool

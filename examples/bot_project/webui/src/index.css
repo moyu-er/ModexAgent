@@ -114,6 +114,34 @@
   --color-session-hover: color-mix(in oklab, var(--color-brand) 6%, var(--color-canvas-sidebar));
   --color-session-active: color-mix(in oklab, var(--color-brand) 10%, var(--color-canvas-sidebar));
 
+  /* ── Graph visualization semantic tokens (graph PRD §7.1/§7.2) ──────────
+     All values derive from existing tokens — no new colors introduced.
+     Theme-invariant aliases: they reference --color-* tokens that flip under
+     .dark, so both blocks carry the same declarations. */
+  --color-graph-node-fill: var(--color-canvas-elevated);
+  --color-graph-dot-pending: var(--color-mute);
+  --color-graph-dot-canceled: color-mix(in srgb, var(--color-mute) 45%, transparent);
+  --color-graph-node-fill-done: color-mix(in srgb, var(--color-brand) 18%, transparent); /* completed 双通道编码: 底色 tint (18% brand) */
+  --color-graph-node-border: var(--color-hairline);
+  --color-graph-node-border-active: var(--color-brand);
+  --color-graph-edge: var(--color-border-strong);
+  --color-graph-edge-active: color-mix(in srgb, var(--color-brand) 60%, transparent);
+  --color-graph-arrow: var(--color-border-strong);
+  --color-graph-arrow-active: color-mix(in srgb, var(--color-brand) 60%, transparent);
+  --color-graph-deliver: var(--color-brand-bright);
+  --color-graph-deliver-glow: color-mix(in srgb, var(--color-brand-bright) 12%, transparent);
+  --color-graph-deliver-trail: color-mix(in srgb, var(--color-brand) 40%, transparent);
+  --color-graph-active-ring: color-mix(in srgb, var(--color-brand) 30%, transparent);
+  --color-graph-mini-node: var(--color-faint);
+  --color-graph-mini-edge: var(--color-hairline);
+  --color-graph-mini-start: var(--color-brand);
+  --color-graph-mini-end: var(--color-brand);
+  --dur-deliver: 600ms;
+  --ease-deliver: var(--ease-out);
+  --dur-ring-pulse: 1200ms;
+  --ease-ring-pulse: ease-in-out;
+  --dur-layout: 350ms; /* = --dur-slow */
+
   /* Radius (§4) — one scale, no exceptions */
   --radius-xs: 6px;
   --radius-sm: 8px;
@@ -256,6 +284,33 @@
   /* Session-row brand tints (§8) — solid tokens (see :root note). */
   --color-session-hover: color-mix(in oklab, var(--color-brand) 8%, var(--color-canvas-sidebar));
   --color-session-active: color-mix(in oklab, var(--color-brand) 12%, var(--color-canvas-sidebar));
+
+  /* ── Graph visualization semantic tokens (graph PRD §7.1/§7.2) ──────────
+     Same declarations as :root — they alias --color-* tokens that flip per
+     theme; restated so both blocks carry the full set. */
+  --color-graph-node-fill: var(--color-canvas-elevated);
+  --color-graph-dot-pending: var(--color-mute);
+  --color-graph-dot-canceled: color-mix(in srgb, var(--color-mute) 45%, transparent);
+  --color-graph-node-fill-done: color-mix(in srgb, var(--color-brand) 18%, transparent);
+  --color-graph-node-border: var(--color-hairline);
+  --color-graph-node-border-active: var(--color-brand);
+  --color-graph-edge: var(--color-border-strong);
+  --color-graph-edge-active: color-mix(in srgb, var(--color-brand) 60%, transparent);
+  --color-graph-arrow: var(--color-border-strong);
+  --color-graph-arrow-active: color-mix(in srgb, var(--color-brand) 60%, transparent);
+  --color-graph-deliver: var(--color-brand-bright);
+  --color-graph-deliver-glow: color-mix(in srgb, var(--color-brand-bright) 12%, transparent);
+  --color-graph-deliver-trail: color-mix(in srgb, var(--color-brand) 40%, transparent);
+  --color-graph-active-ring: color-mix(in srgb, var(--color-brand) 30%, transparent);
+  --color-graph-mini-node: var(--color-faint);
+  --color-graph-mini-edge: var(--color-hairline);
+  --color-graph-mini-start: var(--color-brand);
+  --color-graph-mini-end: var(--color-brand);
+  --dur-deliver: 600ms;
+  --ease-deliver: var(--ease-out);
+  --dur-ring-pulse: 1200ms;
+  --ease-ring-pulse: ease-in-out;
+  --dur-layout: 350ms; /* = --dur-slow */
 
   /* Radius (§4) — theme-invariant, restated so both blocks carry the full set */
   --radius-xs: 6px;
@@ -805,6 +860,15 @@
     animation: modal-panel-in 180ms var(--ease-out) both;
   }
 
+  /* Slide-in-right panel (graph YAML editor side panel). */
+  @keyframes slide-in-right {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+  }
+  .slide-in-right {
+    animation: slide-in-right 220ms var(--ease-out) both;
+  }
+
   /* Toast entry (§5.4): quick fade + 4px rise into the viewport corner. */
   @keyframes toast-in {
     from {
@@ -985,6 +1049,24 @@
     }
   }
 }
+
+  /* ── Graph active node ring pulse (§4.4) ───────────────────────────────
+   * Running 节点外扩同形圆角矩形的脉动描边。stroke-opacity 在 0.3→0.6→0.3
+   * 之间循环,1.2s ease-in-out。降级由全局 prefers-reduced-motion guard 处理:
+   * 改为静态 brand 40% 描边(不脉动)。 */
+  @keyframes graph-ring-pulse {
+    0%,
+    100% {
+      stroke-opacity: 0.3;
+    }
+    50% {
+      stroke-opacity: 0.6;
+    }
+  }
+  .graph-ring-pulse {
+    animation: graph-ring-pulse var(--dur-ring-pulse) var(--ease-ring-pulse)
+      infinite;
+  }
 
 @layer utilities {
   /* ── Markdown prose (.prose-chat) — chat message body (§3, §6) ───────────
@@ -1331,6 +1413,12 @@
     animation: none;
     opacity: 0.7;
     transform: none;
+  }
+  /* Graph active node ring — static brand 40% alpha (§4.4 降级)。 */
+  .graph-ring-pulse {
+    animation: none;
+    stroke: color-mix(in srgb, var(--color-brand) 40%, transparent);
+    stroke-opacity: 1;
   }
   .collapse-grid {
     transition: none;

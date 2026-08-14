@@ -7,8 +7,7 @@ runtime class holding ``coordinator + GraphMetadata``:
 - Property delegation: ``graph_instance_id`` / ``spec_id`` /
   ``parent_instance_id`` / ``parent_node`` / ``status`` delegate to
   ``metadata``.
-- Method delegation: ``get_state()`` / ``load_for_recovery()`` delegate to
-  ``coordinator``.
+- Method delegation: ``get_state()`` delegates to ``coordinator``.
 - ``metadata`` is the serializable value object (frozen Pydantic).
 - ``coordinator`` lifecycle is bound to the ``GraphInstance`` lifecycle.
 - Status transitions are routed directly through ``GraphInstanceStore`` by
@@ -28,7 +27,6 @@ from modex_graph import (
     GraphInstanceStatus,
     GraphMetadata,
     GraphStateSnapshot,
-    RecoveryContext,
     create_null_coordinator,
 )
 
@@ -152,25 +150,6 @@ class TestGraphInstanceGetState:
         instance = make_graph_instance(gid=1)
         state = instance.get_state()
         assert state.nodes == {}
-
-
-class TestGraphInstanceLoadForRecovery:
-    def test_load_for_recovery_returns_recovery_context(self) -> None:
-        """load_for_recovery() delegates to coordinator.load_for_recovery()."""
-        instance = make_graph_instance(gid=42)
-        ctx = instance.load_for_recovery()
-        assert isinstance(ctx, RecoveryContext)
-
-    def test_load_for_recovery_metadata_has_correct_instance_id(self) -> None:
-        instance = make_graph_instance(gid=42)
-        ctx = instance.load_for_recovery()
-        assert ctx.metadata.graph_instance_id == 42
-
-    def test_load_for_recovery_empty_main_state_for_null_coordinator(self) -> None:
-        """A null coordinator returns empty rebuilt_main_state."""
-        instance = make_graph_instance(gid=1)
-        ctx = instance.load_for_recovery()
-        assert ctx.rebuilt_main_state == {}
 
 
 class TestGraphInstanceNoUpdateStatusMethod:

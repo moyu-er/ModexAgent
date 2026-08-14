@@ -1,3 +1,4 @@
+import contextlib
 import shutil
 import tempfile
 import time
@@ -121,22 +122,22 @@ class DockerSandbox(SandboxAdapter):
                 artifacts_dir: {"bind": "/app/artifacts", "mode": "rw"},
             }
 
-            run_kwargs = dict(
-                image=image,
-                command="python /app/main.py",
-                volumes=volumes,
-                working_dir="/app",
-                network_mode="none" if not cfg.enable_network else "bridge",
-                detach=True,
-                stdout=True,
-                stderr=True,
-                read_only=True,
-                cap_drop=["ALL"],
-                security_opt=["no-new-privileges:true"],
-                user="1000:1000",
-                pids_limit=64,
-                environment=env,
-            )
+            run_kwargs = {
+                "image": image,
+                "command": "python /app/main.py",
+                "volumes": volumes,
+                "working_dir": "/app",
+                "network_mode": "none" if not cfg.enable_network else "bridge",
+                "detach": True,
+                "stdout": True,
+                "stderr": True,
+                "read_only": True,
+                "cap_drop": ["ALL"],
+                "security_opt": ["no-new-privileges:true"],
+                "user": "1000:1000",
+                "pids_limit": 64,
+                "environment": env,
+            }
 
             if cfg.memory_limit_mb is not None:
                 run_kwargs["mem_limit"] = f"{cfg.memory_limit_mb}m"
@@ -173,15 +174,11 @@ class DockerSandbox(SandboxAdapter):
             )
         finally:
             if container:
-                try:
+                with contextlib.suppress(Exception):
                     container.remove(force=True)
-                except Exception:
-                    pass
             if tmpdir and Path(tmpdir).exists():
-                try:
+                with contextlib.suppress(Exception):
                     shutil.rmtree(tmpdir)
-                except Exception:
-                    pass
 
     async def execute_command(
         self,
@@ -221,22 +218,22 @@ class DockerSandbox(SandboxAdapter):
                 artifacts_dir: {"bind": "/app/artifacts", "mode": "rw"},
             }
 
-            run_kwargs = dict(
-                image=image,
-                command=f"sh -c '{command}'",
-                volumes=volumes,
-                working_dir=work_dir,
-                network_mode="none" if not cfg.enable_network else "bridge",
-                detach=True,
-                stdout=True,
-                stderr=True,
-                read_only=True,
-                cap_drop=["ALL"],
-                security_opt=["no-new-privileges:true"],
-                user="1000:1000",
-                pids_limit=64,
-                environment=env,
-            )
+            run_kwargs = {
+                "image": image,
+                "command": f"sh -c '{command}'",
+                "volumes": volumes,
+                "working_dir": work_dir,
+                "network_mode": "none" if not cfg.enable_network else "bridge",
+                "detach": True,
+                "stdout": True,
+                "stderr": True,
+                "read_only": True,
+                "cap_drop": ["ALL"],
+                "security_opt": ["no-new-privileges:true"],
+                "user": "1000:1000",
+                "pids_limit": 64,
+                "environment": env,
+            }
 
             if cfg.memory_limit_mb is not None:
                 run_kwargs["mem_limit"] = f"{cfg.memory_limit_mb}m"
@@ -273,15 +270,11 @@ class DockerSandbox(SandboxAdapter):
             )
         finally:
             if container:
-                try:
+                with contextlib.suppress(Exception):
                     container.remove(force=True)
-                except Exception:
-                    pass
             if tmpdir and Path(tmpdir).exists():
-                try:
+                with contextlib.suppress(Exception):
                     shutil.rmtree(tmpdir)
-                except Exception:
-                    pass
 
     async def cleanup(self, sandbox_id: str | None = None) -> None:
         if sandbox_id:

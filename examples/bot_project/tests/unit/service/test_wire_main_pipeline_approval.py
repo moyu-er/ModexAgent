@@ -15,10 +15,13 @@ contract; the function has no role-based branching to regress.
 
 from __future__ import annotations
 
+import shutil
 import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
+
+import pytest
 
 # Bot tests resolve ``bot.*`` via the repo root inserted into sys.path.
 sys.path.insert(0, str(Path(__file__).parents[3]))
@@ -29,20 +32,33 @@ from bot.service.pool.pipeline_wiring import _wire_main_pipeline
 
 from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.core.emitter import AgentResult
+from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
-from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
+from modex_agent.pipeline.turn_context_config import (
+    GraphApprovalConfigurator,
+    GraphContextBindingConfigurator,
+    GraphKnowledgeConfigurator,
+    GraphMaxTurnsConfigurator,
+    GraphToolConfigurator,
+    GraphTopologyConfigurator,
+    TurnContextConfigPipeline,
+)
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.runtime.services import AgentRuntimeServices
+
+pytestmark = pytest.mark.skipif(
+    shutil.which("modexctl") is None,
+    reason="modexctl CLI not available",
+)
 
 _YML = """
 models:
@@ -303,3 +319,55 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
         )
         == ApprovalTier.DANGEROUS
     )
+
+
+def test_wires_graph_context_resolver_and_config_pipeline_when_passed() -> None:
+    """When ``graph_context_resolver`` is passed, the builder gets both the
+    resolver and a 6-configurator ``TurnContextConfigPipeline`` wired on."""
+    pipeline = _make_pipeline()
+    pool = _StandInPool("main", pipeline)
+    main_spec = _make_main_spec(approval=None)
+
+    def _resolver(gid: int) -> None:
+        return None
+
+    _wire_main_pipeline(
+        pool=pool,
+        main_agent_name="main",
+        inbox_consumer=MagicMock(name="inbox_consumer"),
+        notification_service=MagicMock(name="notification_service"),
+        shared_interceptor_chain=MagicMock(name="interceptor_chain"),
+        im_ui=MagicMock(name="im_ui"),
+        main_spec=main_spec,
+        assembly_deps=PoolAssemblyDeps(),
+        project_dir=Path("/proj"),
+        command_processor=None,
+        pool_name="main",
+        tool_manager=InMemoryToolManager(),
+        pool_spec=PoolSpec(name="main", main_agent_name="main", main=main_spec),
+        bot_model_config=_BOT_CFG,
+        model_choice_registry=_REGISTRY,
+        graph_context_resolver=_resolver,
+    )
+
+    builder = pipeline._turn_runner.turn_context_builder
+    assert builder is not None
+    assert builder.graph_context_resolver is _resolver
+    assert isinstance(builder.config_pipeline, TurnContextConfigPipeline)
+    configurators = builder.config_pipeline._configurators
+    assert len(configurators) == 6
+    assert isinstance(configurators[0], GraphContextBindingConfigurator)
+    assert isinstance(configurators[1], GraphApprovalConfigurator)
+    assert isinstance(configurators[2], GraphMaxTurnsConfigurator)
+    assert isinstance(configurators[3], GraphToolConfigurator)
+    assert isinstance(configurators[4], GraphTopologyConfigurator)
+    assert isinstance(configurators[5], GraphKnowledgeConfigurator)
+
+
+def test_leaves_graph_wiring_unset_when_resolver_not_passed() -> None:
+    """Default ``graph_context_resolver=None`` leaves both builder fields None."""
+    pipeline = _wire(approval=None)
+    builder = pipeline._turn_runner.turn_context_builder
+    assert builder is not None
+    assert builder.graph_context_resolver is None
+    assert builder.config_pipeline is None

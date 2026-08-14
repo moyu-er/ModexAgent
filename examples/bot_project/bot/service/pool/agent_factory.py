@@ -20,6 +20,9 @@ from modex_agent.multi_agent import DefaultAgentFactory
 
 if TYPE_CHECKING:
     from bot.workspace.handle import WorkspaceResolverCell
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        SessionBindingStore,
+    )
 
 
 class _WorkspaceEmitterFactory:
@@ -78,6 +81,7 @@ def _build_agent_factory(
     tool_manager: Any,
     skill_manager: Any,
     inbox_server: Any,
+    inbox_consumer: Any,
     shared_hooks: Any,
     shared_hook_runner: Any,
     shared_interceptor_chain: Any,
@@ -89,6 +93,8 @@ def _build_agent_factory(
     external_deps: dict[str, Any] | None = None,
     observability_config: ObservabilityConfig | None = None,
     session_registry: SessionRegistry | None = None,
+    session_binding_store: SessionBindingStore | None = None,
+    trace_store: Any | None = None,
 ) -> DefaultAgentFactory:
     if external_deps is not None:
         factory: DefaultAgentFactory = ExternalAwareFactory(
@@ -96,6 +102,7 @@ def _build_agent_factory(
             default_tool_manager=tool_manager,
             skill_manager=skill_manager,
             inbox_server=inbox_server,
+            inbox_consumer=inbox_consumer,
             default_hooks=shared_hooks,
             default_hook_runner=shared_hook_runner,
             default_interceptor_chain=shared_interceptor_chain,
@@ -103,6 +110,8 @@ def _build_agent_factory(
             external_deps=external_deps,
             observability_config=observability_config,
             session_registry=session_registry,
+            session_binding_store=session_binding_store,
+            trace_store=trace_store,
         )
     else:
         factory = DefaultAgentFactory(
@@ -110,11 +119,13 @@ def _build_agent_factory(
             default_tool_manager=tool_manager,
             skill_manager=skill_manager,
             inbox_server=inbox_server,
+            inbox_consumer=inbox_consumer,
             default_hooks=shared_hooks,
             default_hook_runner=shared_hook_runner,
             default_interceptor_chain=shared_interceptor_chain,
             control_channel=control_channel,
             observability_config=observability_config,
+            trace_store=trace_store,
         )
 
     _orig_create = factory.create_agent

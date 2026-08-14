@@ -57,8 +57,14 @@ class MemorySystem(ABC):
     async def get_full_history(
         self,
         context: MemoryContext,
+        *,
+        limit: int | None = None,
     ) -> list[ChatMessage]:
-        """Return all messages including soft-deleted ones (for context fork)."""
+        """Return all messages including soft-deleted ones (for context fork).
+
+        COMPACT role messages are excluded at the store layer.  If *limit* is
+        provided, returns only the most recent *limit* messages.
+        """
         ...
 
     @abstractmethod
@@ -162,8 +168,15 @@ class ContextManagedMemorySystem(
     async def get_full_history(
         self,
         context: MemoryContext,
+        *,
+        limit: int | None = None,
     ) -> list[ChatMessage]:
-        """Default: same as get_history (backends without soft-delete)."""
+        """Default: same as get_history (backends without soft-delete).
+
+        Limit is ignored in this default implementation — backends without
+        soft-delete do not support limit on the full-history path.
+        """
+        _ = limit
         return await self.get_history(context)
 
     @abstractmethod

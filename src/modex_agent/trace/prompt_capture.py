@@ -1,14 +1,17 @@
 """Prompt capture strategies for trace span attributes (G2).
 
-Defines the :class:`PromptCaptureStrategy` ABC and the default
-:class:`SummaryPromptCapture` implementation. The strategy produces the
-``gen_ai.input.*`` span attribute payload from the LLM request messages,
-enabling prompt capture without baking the capture logic into the hook.
+Defines the :class:`PromptCaptureStrategy` ABC and four implementations:
+:class:`OffPromptCapture`, :class:`HashPromptCapture`,
+:class:`SummaryPromptCapture` (default), and :class:`FullPromptCapture`.
+The strategy produces the ``gen_ai.input.*`` span attribute payload from
+the LLM request messages, enabling prompt capture without baking the
+capture logic into the hook.
 
-The hook calls ``strategy.capture(messages, model)`` in ``before_llm`` and
-merges the returned dict into the ``chat`` span attributes in
-``after_llm_response``. Subclassing :class:`PromptCaptureStrategy` replaces
-the capture logic without any hook code change.
+The hook calls ``strategy.capture(messages, model, tools=..., system_prompt=...)``
+in ``before_llm`` and merges the returned dict into the ``chat`` span
+attributes in ``after_llm_response``. Subclassing
+:class:`PromptCaptureStrategy` replaces the capture logic without any hook
+code change.
 
 Messages follow the OpenTelemetry GenAI parts-based format: each entry is
 ``{"role": ..., "parts": [<part>, ...]}`` where part shapes include
@@ -23,9 +26,11 @@ import hashlib
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from typing import Any
 
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.types import MessageRole
+from modex_agent.ioc.configs.observability import PromptCaptureMode
 from modex_agent.trace.semconv import GenAiAttr
 
 
@@ -42,12 +47,20 @@ class PromptCaptureStrategy(ABC):
         self,
         messages: Sequence[ChatMessage],
         model: str | None,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        system_prompt: str | None = None,
     ) -> dict[str, object]:
         """Return span attribute payload for the LLM request.
 
         Args:
             messages: The request messages being sent to the LLM provider.
             model: The configured model name (may be ``None`` if unknown).
+            tools: OpenAI-format tool definitions sent with the request
+                (list of dicts with ``"type"``, ``"function"``, etc.).
+                ``None`` if no tools were sent.
+            system_prompt: The resolved system prompt string, if available
+                separately from the messages. ``None`` if not provided.
 
         Returns:
             A dict of span attributes (e.g. ``{"gen_ai.input.messages": [...],
@@ -55,6 +68,60 @@ class PromptCaptureStrategy(ABC):
             parts-based format (``{"role": ..., "parts": [...]}``).
         """
         ...
+
+
+class OffPromptCapture(PromptCaptureStrategy):
+    """No prompt capture — returns only the model name (if provided).
+
+    Produces an empty dict when no model is given, or
+    ``{gen_ai.request.model: ...}`` when a model name is supplied. No
+    messages, system prompt, or tool definitions are captured. Use when
+    tracing is enabled but prompt content must not be persisted.
+    """
+
+    def capture(
+        self,
+        messages: Sequence[ChatMessage],
+        model: str | None,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        system_prompt: str | None = None,
+    ) -> dict[str, object]:
+        if model is not None:
+            return {GenAiAttr.REQUEST_MODEL: model}
+        return {}
+
+
+class HashPromptCapture(PromptCaptureStrategy):
+    """Hash-only capture — system prompt hash + length, no messages.
+
+    Records ``gen_ai.system.prompt_hash`` (SHA-256 first 16 chars) and
+    ``gen_ai.system.prompt_length`` for the system prompt, but does NOT
+    capture any messages or tool definitions. The system prompt is taken
+    from the ``system_prompt`` kwarg if provided, otherwise extracted from
+    the first system-role message in ``messages`` (same fallback as
+    :class:`SummaryPromptCapture`).
+    """
+
+    def capture(
+        self,
+        messages: Sequence[ChatMessage],
+        model: str | None,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        system_prompt: str | None = None,
+    ) -> dict[str, object]:
+        attrs: dict[str, object] = {}
+        if model is not None:
+            attrs[GenAiAttr.REQUEST_MODEL] = model
+
+        resolved = _resolve_system_prompt(messages, system_prompt)
+        if resolved is not None:
+            attrs[GenAiAttr.SYSTEM_PROMPT_HASH] = hashlib.sha256(
+                resolved.encode("utf-8")
+            ).hexdigest()[:16]
+            attrs[GenAiAttr.SYSTEM_PROMPT_LENGTH] = len(resolved)
+        return attrs
 
 
 class SummaryPromptCapture(PromptCaptureStrategy):
@@ -84,64 +151,82 @@ class SummaryPromptCapture(PromptCaptureStrategy):
         self,
         messages: Sequence[ChatMessage],
         model: str | None,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        system_prompt: str | None = None,
     ) -> dict[str, object]:
         attrs: dict[str, object] = {}
         if model is not None:
             attrs[GenAiAttr.REQUEST_MODEL] = model
 
-        system_hash: str | None = None
-        system_length: int | None = None
-        for msg in messages:
-            if msg.role == MessageRole.SYSTEM:
-                content = msg.content
-                if isinstance(content, str):
-                    system_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
-                    system_length = len(content)
-                break
-        if system_hash is not None:
-            attrs[GenAiAttr.SYSTEM_PROMPT_HASH] = system_hash
-        if system_length is not None:
-            attrs[GenAiAttr.SYSTEM_PROMPT_LENGTH] = system_length
+        resolved = _resolve_system_prompt(messages, system_prompt)
+        if resolved is not None:
+            attrs[GenAiAttr.SYSTEM_PROMPT_HASH] = hashlib.sha256(
+                resolved.encode("utf-8")
+            ).hexdigest()[:16]
+            attrs[GenAiAttr.SYSTEM_PROMPT_LENGTH] = len(resolved)
 
-        non_system = [m for m in messages if m.role != MessageRole.SYSTEM]
-        tail = non_system[-self._max_messages :] if self._max_messages > 0 else []
-        captured: list[dict[str, object]] = []
-        for msg in tail:
-            parts: list[dict[str, object]] = []
-            # Tool result messages: a single tool_call_response part.
-            if msg.role == MessageRole.TOOL:
-                response_text = _content_to_text(msg, self._max_text_chars)
-                part: dict[str, object] = {"type": "tool_call_response", "response": response_text}
-                if msg.tool_call_id is not None:
-                    part["id"] = msg.tool_call_id
-                parts.append(part)
-                captured.append({"role": str(msg.role), "parts": parts})
-                continue
-            # user / assistant / agent: text part (if any) then tool_call parts.
-            text = _content_to_text(msg, self._max_text_chars)
-            if text:
-                parts.append({"type": "text", "content": text})
-            if msg.tool_calls:
-                for tc in msg.tool_calls:
-                    tc_part: dict[str, object] = {
-                        "type": "tool_call",
-                        "name": tc.tool_name,
-                        "arguments": _truncate_json(tc.arguments, self._max_tool_args_chars),
-                    }
-                    if tc.call_id is not None:
-                        tc_part["id"] = tc.call_id
-                    parts.append(tc_part)
-            captured.append({"role": str(msg.role), "parts": parts})
-        attrs[GenAiAttr.INPUT_MESSAGES] = captured
+        attrs[GenAiAttr.INPUT_MESSAGES] = _capture_message_parts(
+            messages,
+            max_messages=self._max_messages,
+            max_text_chars=self._max_text_chars,
+            max_tool_args_chars=self._max_tool_args_chars,
+            include_system=False,
+        )
         return attrs
 
 
-def build_prompt_capture(config_value: str) -> PromptCaptureStrategy:
-    """Build a :class:`PromptCaptureStrategy` from a config string.
+class FullPromptCapture(PromptCaptureStrategy):
+    """Full prompt capture — system prompt, tools, and all messages untruncated.
+
+    Captures the complete system prompt via ``gen_ai.system_instructions``,
+    full tool definitions via ``gen_ai.tool.definitions``, and all messages
+    (no truncation, not just the last N) in the OTel parts-based format.
+    Also includes the system prompt hash + length for compatibility with
+    hash-based consumers. Use when full prompt reproducibility is required
+    and content retention is acceptable.
+    """
+
+    def capture(
+        self,
+        messages: Sequence[ChatMessage],
+        model: str | None,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        system_prompt: str | None = None,
+    ) -> dict[str, object]:
+        attrs: dict[str, object] = {}
+        if model is not None:
+            attrs[GenAiAttr.REQUEST_MODEL] = model
+
+        resolved = _resolve_system_prompt(messages, system_prompt)
+        if resolved is not None:
+            attrs[GenAiAttr.SYSTEM_INSTRUCTIONS] = resolved
+            attrs[GenAiAttr.SYSTEM_PROMPT_HASH] = hashlib.sha256(
+                resolved.encode("utf-8")
+            ).hexdigest()[:16]
+            attrs[GenAiAttr.SYSTEM_PROMPT_LENGTH] = len(resolved)
+
+        if tools is not None:
+            attrs[GenAiAttr.REQUEST_TOOLS] = tools
+
+        attrs[GenAiAttr.INPUT_MESSAGES] = _capture_message_parts(
+            messages,
+            max_messages=None,
+            max_text_chars=0,
+            max_tool_args_chars=0,
+            include_system=True,
+        )
+        return attrs
+
+
+def build_prompt_capture(config_value: PromptCaptureMode | str) -> PromptCaptureStrategy:
+    """Build a :class:`PromptCaptureStrategy` from a config value.
 
     Args:
-        config_value: The strategy name from :attr:`ObservabilityConfig.prompt_capture`.
-            Currently only ``"summary"`` is supported.
+        config_value: The strategy name from
+            :attr:`ObservabilityConfig.prompt_capture`. Accepts a
+            :class:`PromptCaptureMode` enum or its string value.
 
     Returns:
         A :class:`PromptCaptureStrategy` instance.
@@ -149,13 +234,95 @@ def build_prompt_capture(config_value: str) -> PromptCaptureStrategy:
     Raises:
         ValueError: If *config_value* is not a recognized strategy name.
     """
-    if config_value == "summary":
+    if config_value == PromptCaptureMode.OFF:
+        return OffPromptCapture()
+    if config_value == PromptCaptureMode.HASH:
+        return HashPromptCapture()
+    if config_value == PromptCaptureMode.SUMMARY:
         return SummaryPromptCapture()
-    raise ValueError(f"Unknown prompt_capture strategy: {config_value!r}. Supported: 'summary'.")
+    if config_value == PromptCaptureMode.FULL:
+        return FullPromptCapture()
+    raise ValueError(
+        f"Unknown prompt_capture strategy: {config_value!r}. "
+        f"Supported: 'off', 'hash', 'summary', 'full'."
+    )
+
+
+def _resolve_system_prompt(
+    messages: Sequence[ChatMessage],
+    system_prompt: str | None,
+) -> str | None:
+    """Return the system prompt from the kwarg or the first system message."""
+    if system_prompt is not None:
+        return system_prompt
+    for msg in messages:
+        if msg.role == MessageRole.SYSTEM:
+            content = msg.content
+            if isinstance(content, str):
+                return content
+            break
+    return None
+
+
+def _capture_message_parts(
+    messages: Sequence[ChatMessage],
+    *,
+    max_messages: int | None = None,
+    max_text_chars: int = 2000,
+    max_tool_args_chars: int = 1000,
+    include_system: bool = False,
+) -> list[dict[str, object]]:
+    """Convert messages to the OTel parts-based format.
+
+    Args:
+        messages: The full message sequence.
+        max_messages: If not ``None`` and > 0, only the last N messages are
+            captured. ``None`` means all messages.
+        max_text_chars: Max chars per text part. ``0`` means no truncation.
+        max_tool_args_chars: Max chars per tool-call arguments field.
+            ``0`` means no truncation.
+        include_system: If ``True``, system-role messages are included in
+            the output. If ``False``, they are filtered out (system prompt
+            is captured separately via hash/instructions).
+    """
+    if include_system:
+        relevant: list[ChatMessage] = list(messages)
+    else:
+        relevant = [m for m in messages if m.role != MessageRole.SYSTEM]
+
+    if max_messages is not None and max_messages > 0:
+        relevant = relevant[-max_messages:]
+
+    captured: list[dict[str, object]] = []
+    for msg in relevant:
+        parts: list[dict[str, object]] = []
+        if msg.role == MessageRole.TOOL:
+            response_text = _content_to_text(msg, max_text_chars)
+            part: dict[str, object] = {"type": "tool_call_response", "response": response_text}
+            if msg.tool_call_id is not None:
+                part["id"] = msg.tool_call_id
+            parts.append(part)
+            captured.append({"role": str(msg.role), "parts": parts})
+            continue
+        text = _content_to_text(msg, max_text_chars)
+        if text:
+            parts.append({"type": "text", "content": text})
+        if msg.tool_calls:
+            for tc in msg.tool_calls:
+                tc_part: dict[str, object] = {
+                    "type": "tool_call",
+                    "name": tc.tool_name,
+                    "arguments": _truncate_json(tc.arguments, max_tool_args_chars),
+                }
+                if tc.call_id is not None:
+                    tc_part["id"] = tc.call_id
+                parts.append(tc_part)
+        captured.append({"role": str(msg.role), "parts": parts})
+    return captured
 
 
 def _truncate(text: str, max_chars: int) -> str:
-    if len(text) <= max_chars:
+    if max_chars <= 0 or len(text) <= max_chars:
         return text
     return text[:max_chars] + f"\n\n[...truncated, {len(text) - max_chars} more chars]"
 

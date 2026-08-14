@@ -24,6 +24,8 @@ from contextlib import asynccontextmanager
 
 import pytest
 
+pytest.importorskip("aiohttp", reason="aiohttp not installed")
+
 from modex_agent.tools.mcp.manager import MCPClientManager
 
 

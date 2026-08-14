@@ -20,6 +20,8 @@ class ReActNode(StrEnum):
     LLM = "llm"
     TOOL = "tool"
     END = "end"
+    BEFORE = "before"
+    AFTER = "after"
 
 
 class InterruptReason(StrEnum):
@@ -45,10 +47,11 @@ class ReActHookPoint(StrEnum):
     ``ctx.runtime.dispatch_hook(ReActHookPoint.X, ctx)``. They map 1:1 to
     ``modex_agent.hook.HookPoint`` values in ``ReactGraphRuntime``.
 
-    NOTE: ``BEFORE_TURN`` / ``AFTER_TURN`` / ``FINALLY_TURN`` are NOT here —
-    they are turn-level hooks dispatched in ``ReActAgent.run()`` directly
-    via ``hook_runner.dispatch(HookPoint.X, agent_ctx)``, not through the
-    graph runtime. This preserves hook timing exactly (ADR-0033 D5 rule 1).
+    NOTE: ``BEFORE_TURN`` / ``AFTER_TURN`` (turn-attempt level) ARE here now —
+    they are dispatched in ``BeforeTurnNode`` / ``AfterTurnNode`` via
+    ``ctx.runtime.dispatch_hook()``. ``BEFORE_GRAPH`` / ``AFTER_GRAPH`` /
+    ``FINALLY_GRAPH`` (graph-level) are still NOT here — they stay in
+    ``actual_turn()`` dispatched via ``hook_runner.dispatch()`` directly.
     """
 
     BEFORE_ITERATION = "before_iteration"
@@ -58,6 +61,10 @@ class ReActHookPoint(StrEnum):
     AFTER_TOOL_EXECUTION = "after_tool_execution"
     FINALIZE_CONTENT = "finalize_content"
     BEFORE_LLM = "before_llm"
+    START_NODE_TURN = "start_node_turn"
+    END_NODE_TURN = "end_node_turn"
+    BEFORE_TURN = "before_turn"
+    AFTER_TURN = "after_turn"
 
 
 class ReActScope(StrEnum):

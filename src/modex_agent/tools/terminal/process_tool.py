@@ -16,6 +16,7 @@ from modex_agent.tools.terminal.process_registry import (
     ProcessRegistry,
     ProcessSession,
 )
+from modex_agent.tools.terminal.prompt import sanitize_terminal_output
 from modex_agent.tools.terminal.pty_keys import (
     ENTER_KEY,
     CursorKeyMode,
@@ -27,8 +28,6 @@ from modex_agent.tools.terminal.pty_keys import (
 from modex_agent.tools.terminal.session import TerminalSession
 from modex_agent.tools.terminal.types import ProcessStatus
 from modex_agent.utils.xml import xml_text
-
-from modex_agent.tools.terminal.prompt import sanitize_terminal_output
 
 # Re-export ProcessAction for test / external use
 __all__ = [
@@ -518,7 +517,7 @@ class ProcessTool(Tool):
             status=ProcessStatus.KILLED,
         )
         return _build_process_xml(
-            f"Killed the running command. Terminal tab remains open.",
+            "Killed the running command. Terminal tab remains open.",
         )
 
     async def _do_clear(self) -> str:
@@ -529,8 +528,8 @@ class ProcessTool(Tool):
             )
         self._registry.delete(finished.id)
         return _build_process_xml(
-            f"Cleared the finished command record.",
-            
+            "Cleared the finished command record.",
+
         )
 
     async def _do_remove(self) -> str:
@@ -546,15 +545,15 @@ class ProcessTool(Tool):
             )
             self._registry.delete(running.id)
             return _build_process_xml(
-            f"Killed and removed the running command.",
-                
+            "Killed and removed the running command.",
+
             )
 
         if finished is not None:
             self._registry.delete(finished.id)
             return _build_process_xml(
-            f"Removed the finished command record.",
-                
+            "Removed the finished command record.",
+
             )
 
         return _build_process_xml(

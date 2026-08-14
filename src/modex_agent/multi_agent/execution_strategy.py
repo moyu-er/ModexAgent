@@ -75,12 +75,12 @@ if TYPE_CHECKING:
     from modex_agent.pipeline.snapshot import PoolDataSnapshot
     from modex_agent.pipeline.turn_runner_abc import TurnRunner
     from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+    from modex_agent.runtime.store import JsonFileTodoStore
     from modex_agent.tools.mcp.manager import MCPClientManager
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
     from modex_agent.tools.terminal.managers import BaseTerminalManager
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
     from modex_agent.trace.cassette import CassetteRecorder
-    from modex_agent.runtime.store import JsonFileTodoStore
 
 __all__ = [
     "ExecutionStrategy",
@@ -169,7 +169,7 @@ class PoolAssemblyContext:
 
     Bot-side-only types (``workspace_handle``, ``workspace_resolver``,
     ``persistence``, ``bot_model_config``, ``model_choice_registry``,
-    ``transcript_store``) are typed as ``Any`` — these are bot-layer objects
+    ``transcript_store``, ``kb_provider``) are typed as ``Any`` — these are bot-layer objects
     the framework does not import; ``Any`` is the documented escape hatch at
     the framework/bot boundary.
     """
@@ -216,6 +216,7 @@ class PoolAssemblyContext:
 
     pool_data: PoolDataSnapshot | None = None
     transcript_store: Any | None = None
+    kb_provider: Any | None = None
 
     on_session_start: Callable[[str], Awaitable[None]] | None = None
     on_session_end: Callable[[str], Awaitable[None]] | None = None

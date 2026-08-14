@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 from modex_agent.workspace.context import WorkspaceContext
 
 R = TypeVar("R")
 
 
-class ResourceFactory(ABC, Generic[R]):
+class ResourceFactory[R](ABC):
     """Builds/tears down a workspace's heavy resources (business-supplied).
 
     Generic over the resource type ``R``. The generic package never names a

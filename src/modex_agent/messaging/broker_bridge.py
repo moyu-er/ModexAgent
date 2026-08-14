@@ -8,11 +8,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.core.session_id import SessionIdFactory, SessionInfo
+from modex_agent.media.models import Attachment
+
 from ..adapters.platform import StreamingMode
 from ..core.constants import DefaultValues
 from ..core.types import InputMessage, OutputMessage
-from modex_agent.core.session_id import SessionInfo, SessionIdFactory
-from modex_agent.media.models import Attachment
 from ..pipeline.adapters import InputAdapter, OutputAdapter
 from .broker import Address, BrokerMessage, MessageBroker
 
@@ -251,7 +252,6 @@ class BrokerOutputAdapter(OutputAdapter):
         broker_msg = BrokerMessage(
             payload={
                 "content": message.content,
-                "session_id": session_id,
                 "metadata": metadata,
                 "session_id": metadata.get("session_id", session_id),
                 "agent_session_id": metadata.get("agent_session_id", session_id),

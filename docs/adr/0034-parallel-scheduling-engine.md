@@ -168,6 +168,19 @@ The re-check scope is bounded: it scans only the `ON_ALL_PREDS` pending
 queue (typically 1-3 nodes), not all instances. The BFS itself is O(V+E)
 over static graph edges (typically < 20 nodes).
 
+**Fan-in closure fix (2026-08-11):** `_can_reach_active` now scans
+`DeliverStore` PENDING delivers as a **third BFS start-source** (in
+addition to active instances and pending dispatches). Nodes with any
+unconsumed PENDING deliver in their `DeliverStore` are treated as
+active sources for reachability. This prevents premature fan-in firing
+when workers complete sequentially: e.g., Map delivers 3 items, Worker#1
+completes fast and delivers to Reduce, but Workers #2/#3 still have
+PENDING delivers. Without the third source, `_can_reach_active("reduce")`
+returns False (no RUNNING worker, no pending dispatches) and Reduce
+fires prematurely with only 1 of 3 results. The third source keeps
+Reduce blocked until all PENDING delivers are consumed. The target
+node itself is excluded from the third source to prevent self-blocking.
+
 ### D5 — Dispatch interface
 
 `ctx.dispatch(target: str, state_update: dict | None = None)` is the
@@ -217,6 +230,25 @@ consumption state machine, not through state deltas.
 
 ### D7 — Multi-instance model with shared state (per-task context shells)
 
+**ContextVar refinement (2026-08-12):** Invocation identity is no longer
+stored in shared ctx fields at all. `instance_id` and the current
+`InvocationContext` live in a task-local `ContextVar` execution context
+(`execution_context.py: NodeExecution`), set by the scheduler around
+`before_node`/`run`/`after_node` with token-based reset (correct under
+subgraph nesting). `GraphContext._current_instance` is a read-only
+property delegating to the ContextVar; `set_current_instance()` was
+removed; `ctx.current_invocation` remains a plain field written by
+`Node.run()` for direct-run test access. `ctx.dispatch()` /
+`ctx.scratch` / `Node._submit()` resolve identity from the ContextVar.
+
+**Scratchpad refinement (2026-08-11):** The `copy(ctx)` per-task
+context shell was removed. ParallelScheduler now passes `ctx` directly
+— state isolation is via per-node scratchpad keys
+(`node_scratch[self.node_id]`), not context copying. The
+`set_current_instance` / `current_invocation` invocation-local fields
+are still set on the shared ctx. The historical `copy(ctx)` model is
+preserved below for traceability.
+
 **Current contract (2026-08-05 refinement):** Every node execution
 creates an independent **instance** identified by
 `{node_name}#{global_seq}`. Instances are immutable lifecycle objects:
@@ -251,7 +283,22 @@ removed (execute is async void), channels were removed (state is a
 plain `BaseModel`), and the merge step was replaced by direct shared
 mutation + full-snapshot persistence on `complete_invocation`.
 
+**Known debt — ReAct shared-state communication:** ReAct's LLM/TOOL
+nodes communicate via shared `ReActTurnState` fields rather than
+deliver → IntegratedInput. This is known debt — ReAct uses
+`LinearScheduler` (sequential, no concurrency risk). A future
+deliver-based rewrite is deferred.
+
 ### D8 — State merge semantics (removed; shared state + full snapshots)
+
+**Scratchpad refinement (2026-08-11):** The shared-state + full-snapshot
+model below was refined: `ctx.state` is now framework-managed (nodes
+read but do not write to framework fields). Per-node working state
+lives in `node_scratch: dict[str, Any]` where each node writes only to
+its own key. The full-snapshot persistence path is unchanged —
+`checkpoint()` includes `node_scratch` automatically via
+`model_dump()`. The historical shared-state model is preserved below
+for traceability.
 
 **Current contract (2026-08-05 refinement):** There is no merge step.
 The graph has one **main state** (`ctx.state`), shared across all
@@ -522,6 +569,14 @@ checkpoint after each merge + `load_latest` resume path. The
 recovery is fully wired via the deliver scan. The
 `ConcurrentWriteTracker` state was never persisted (it was a runtime
 safety mechanism); with the tracker removed, this is moot.
+
+**Bootstrap convergence (post-ADR):** Both `LinearScheduler` and
+`ParallelScheduler` now share a unified `bootstrap(ctx, graph)` entry
+point (`scheduler/bootstrap.py`) that wraps the recovery steps above.
+The named methods (`_restore_from_recovery`, `_redispatch_from_recovery`,
+`_rebuild_pending_from_delivers`) were consolidated into `bootstrap` +
+`_recheck_pending`. See `src/modex_graph/AGENTS.md` "Scheduling
+Convergence" section.
 
 ### D20 — Extensibility seams
 

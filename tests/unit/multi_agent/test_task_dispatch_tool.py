@@ -69,9 +69,6 @@ def _task_tool(
     return TaskDispatchTool(
         store=store,
         source=AgentAddress(name="test"),
-        broker=MagicMock(),
-        registry=MagicMock(),
-        agent_bus=MagicMock(),
         service=service or _RecordingService(),  # type: ignore[arg-type]
     )
 
@@ -105,14 +102,14 @@ class TestTaskDispatchToolParams:
 
 
 class TestTaskDispatchToolDynamicSchema:
-    def test_target_agent_enum_includes_all_targets(self) -> None:
+    def test_target_agent_enum_includes_only_subagents(self) -> None:
         store = CommunicationTargetStore()
         store.add(CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT))
         store.add(CommunicationTarget(name="peer-main", kind=AgentCommKind.NORMAL))
         tool = _task_tool(store)
         schema = tool.get_dynamic_schema()
         target_schema = schema["function"]["parameters"]["properties"]["target_agent"]
-        assert target_schema.get("enum") == ["scout", "peer-main"]
+        assert target_schema.get("enum") == ["scout"]
 
     def test_dynamic_schema_not_mutating_static_params(self) -> None:
         store = _store_with_subagent_target()
@@ -182,7 +179,7 @@ class TestTaskDispatchToolExecute:
 
         assert "Error" in result
         assert "nonexistent" in result
-        assert "Available:" in result
+        assert "Available subagents:" in result
         assert "office-expert" in result
         assert service.last_target is None
 
@@ -225,7 +222,7 @@ class TestTaskDispatchToolExecute:
         )
 
     @pytest.mark.asyncio
-    async def test_execute_peer_target_ignores_invocation_id(self) -> None:
+    async def test_execute_rejects_peer_target(self) -> None:
         service = _RecordingService()
         store = CommunicationTargetStore()
         store.add(CommunicationTarget(name="peer-main", kind=AgentCommKind.NORMAL))
@@ -235,32 +232,13 @@ class TestTaskDispatchToolExecute:
             result = await tool.execute(
                 target_agent="peer-main",
                 content="test",
-                invocation_id="abc123",
             )
         finally:
             current_agent_context.reset(token)
 
-        assert result == "ok"
-        assert service.async_invocation_id is None
-
-    @pytest.mark.asyncio
-    async def test_execute_peer_target_succeeds(self) -> None:
-        service = _RecordingService()
-        store = CommunicationTargetStore()
-        peer = CommunicationTarget(name="peer-main", kind=AgentCommKind.NORMAL)
-        store.add(peer)
-        tool = _task_tool(store, service)
-        token = current_agent_context.set(_context())
-        try:
-            result = await tool.execute(
-                target_agent="peer-main",
-                content="test",
-            )
-        finally:
-            current_agent_context.reset(token)
-
-        assert result == "ok"
-        assert service.last_target is peer
+        assert "Error" in result
+        assert "peer-main" in result
+        assert service.last_target is None
 
     @pytest.mark.asyncio
     async def test_self_dispatch_rejected(self) -> None:
@@ -330,10 +308,10 @@ class TestTaskDispatchToolDescription:
     def test_description_no_subagents_available(self) -> None:
         tool = _task_tool(CommunicationTargetStore())
         desc = tool.description
-        assert "No agents currently available" in desc
+        assert "No subagents currently available" in desc
 
-    def test_description_lists_peer_agents(self) -> None:
-        store = CommunicationTargetStore()
+    def test_description_ignores_peer_targets(self) -> None:
+        store = _store_with_subagent_target()
         store.add(
             CommunicationTarget(
                 name="peer-main",
@@ -343,17 +321,9 @@ class TestTaskDispatchToolDescription:
         )
         desc = _task_tool(store).description
 
-        assert "## Peer Agents" in desc
-        assert "Available peer agents:" in desc
-        assert "peer-main" in desc
-        assert "Planning partner" in desc
-
-    def test_description_peer_and_subagent_sections_both_present(self) -> None:
-        store = _store_with_subagent_target()
-        store.add(CommunicationTarget(name="peer-main", kind=AgentCommKind.NORMAL))
-        desc = _task_tool(store).description
-
-        assert "## Peer Agents" in desc
+        assert "## Peer Agents" not in desc
+        assert "peer-main" not in desc
+        assert "Planning partner" not in desc
         assert "## Subagents" in desc
 
     def test_description_no_peer_section_when_only_subagents(self) -> None:
@@ -361,12 +331,13 @@ class TestTaskDispatchToolDescription:
 
         assert "## Peer Agents" not in desc
 
-    def test_description_no_subagent_section_when_only_peers(self) -> None:
+    def test_description_only_peers_reports_no_subagents(self) -> None:
         store = CommunicationTargetStore()
         store.add(CommunicationTarget(name="peer-main", kind=AgentCommKind.NORMAL))
         desc = _task_tool(store).description
 
         assert "## Subagents" not in desc
+        assert "No subagents currently available" in desc
 
     def test_description_no_forbidden_words(self) -> None:
         store = _store_with_subagent_target()

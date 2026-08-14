@@ -5,17 +5,21 @@
 
 ## Span Types Emitted
 
-ModexAgent emits 6 span types. Each hook independently emits its own span —
-no central collection at turn end.
+ModexAgent emits 8 span types, assembled by `build_trace_hooks()` based
+on the configured `TraceSpanMode` tier (see [Tier Configuration](#tier-configuration)).
+Each specialized hook class independently emits its own span — no central
+collection at turn end.
 
 ### 1. Agent turn (`invoke_agent` span)
 
-Span kind: `INTERNAL`. Root span — emitted twice with the same `span_id`:
-- `before_turn`: start span with `langfuse.observation.input` (trigger message)
-- `finally_turn`: complete span with `langfuse.observation.output` (final reply),
-  `end_time`, aggregated `gen_ai.usage.*`
-
-Langfuse merges both emissions by `span_id`.
+Span kind: `INTERNAL`. Root span — emitted once at `finally_graph` by
+`RootSpanHook`. The span is pre-registered at `start_node_turn` (span_id +
+start_time stored in `TraceSessionState`, trigger message captured) but not
+written until `finally_graph`, which emits the complete span with input +
+output + `end_time` + aggregated `gen_ai.usage.*` + `stop_reason` in a
+single write. This avoids the Langfuse v4 immutability issue where
+double-emission (start at `before_turn` + complete at `finally_turn`)
+produced two separate observations instead of one merged span.
 
 | Attribute | Type | Status |
 |-----------|------|--------|
@@ -38,7 +42,23 @@ Langfuse merges both emissions by `span_id`.
 | `langfuse.trace.name` | string | emitted (`{session_id}.{turn_id}`) |
 | `langfuse.internal.as_root` | bool | emitted (`true`) |
 
-### 2. LLM call (`chat` span)
+### 2. Agent start (`agent.start` span)
+
+Span kind: `INTERNAL`. Emitted at `start_node_turn` by `AgentStartSpanHook`
+(registered after `RootSpanHook`, so the root span ID is available). Fresh
+turn only. Carries the system prompt and tool definitions. `FULL` tier only.
+
+| Attribute | Type | Status |
+|-----------|------|--------|
+| `gen_ai.system_instructions` | string | emitted (full system prompt, when `prompt_capture != off`) |
+| `gen_ai.system.prompt_hash` | string | emitted (SHA-256 first 16 chars, when `prompt_capture != off`) |
+| `gen_ai.system.prompt_length` | int | emitted (when `prompt_capture != off`) |
+| `gen_ai.tool.definitions` | list | emitted (full tool definitions, when `capture_tools = True`) |
+| `gen_ai.agent.name` | string | emitted |
+| `gen_ai.operation.name` | enum | emitted |
+| `langfuse.observation.type` | `span` | emitted |
+
+### 3. LLM call (`chat` span)
 
 Span kind: `CLIENT`. Emitted at `after_llm_response`.
 
@@ -65,7 +85,22 @@ Span kind: `CLIENT`. Emitted at `after_llm_response`.
 | `langfuse.observation.input` | JSON string | emitted (captured messages) |
 | `langfuse.observation.output` | JSON string | emitted (LLM response, includes tool_calls) |
 
-### 3. Tool execution (`execute_tool` span)
+### 4. Tool batch (`execute_tool_batch` span)
+
+Span kind: `INTERNAL`. Emitted by `ToolSpanHook` at `after_tool_execution`.
+One per tool batch — groups the individual `execute_tool` child spans that
+follow. The batch span ID is cached at `before_tool_execution` so each
+per-tool span parents to it.
+
+| Attribute | Type | Status |
+|-----------|------|--------|
+| `gen_ai.operation.name` | enum (`execute_tool`) | emitted |
+| `gen_ai.tool.count` | int | emitted (custom) |
+| `gen_ai.tool.names` | string[] | emitted (custom) |
+| `gen_ai.agent.name` | string | emitted |
+| `langfuse.observation.type` | `span` | emitted |
+
+### 5. Tool execution (`execute_tool` span)
 
 Span kind: `INTERNAL`. One per tool result.
 
@@ -83,7 +118,7 @@ Span kind: `INTERNAL`. One per tool result.
 | `langfuse.observation.input` | JSON string | emitted (`{tool_name: ...}`) |
 | `langfuse.observation.output` | JSON string | emitted (`{result: ...}`) |
 
-### 4. Iteration (`iteration` span)
+### 6. Iteration (`iteration` span)
 
 Span kind: `INTERNAL`. One per ReAct iteration — `before_iteration` caches
 start time, `after_iteration` emits the complete span.
@@ -95,7 +130,7 @@ start time, `after_iteration` emits the complete span.
 | `langfuse.observation.input` | JSON string | emitted (`{iteration: N}`) |
 | `langfuse.observation.output` | JSON string | emitted (`{iteration: N, duration_ms: ...}`) |
 
-### 5. Human review (`human_review` span)
+### 7. Human review (`human_review` span)
 
 Span kind: `INTERNAL`. Emitted at `after_approval`.
 
@@ -104,7 +139,7 @@ Span kind: `INTERNAL`. Emitted at `after_approval`.
 | `langfuse.observation.type` | `event` | emitted |
 | `langfuse.observation.level` | enum | emitted (`WARNING` on denial, `DEFAULT` otherwise) |
 
-### 6. Multi-agent handoff (`agent.handoff` span)
+### 8. Multi-agent handoff (`agent.handoff` span)
 
 Span kind: `INTERNAL`. Emitted at `send_to_agent` dispatch point.
 
@@ -139,24 +174,55 @@ block the bot.
 
 ## Hook → Span Mapping
 
-All data collection is through hook ABCs — no hardcoded trace emission in
-business code.
+All data collection is through 7 specialized hook classes, assembled by
+`build_trace_hooks()` based on the `TraceSpanMode` tier (see
+[Tier Configuration](#tier-configuration)). No hardcoded trace emission in
+business code. One `TraceSessionState` is shared across every hook in a
+single factory call so child spans can resolve the root span ID seeded by
+`RootSpanHook`.
 
-| Hook ABC | Method | Span emitted | obs type |
-|---|---|---|---|
-| `BeforeTurnHook` | `before_turn` | `invoke_agent` (initial: input + as_root) | agent |
-| `BeforeLLMHook` | `before_llm` | — (caches request) | — |
-| `AfterLLMResponseHook` | `after_llm_response` | `chat` | generation |
-| `BeforeToolExecutionHook` | `before_tool_execution` | — (caches tool_calls) | — |
-| `AfterToolExecutionHook` | `after_tool_execution` | `execute_tool` + `agent.handoff`* | tool / span |
-| `BeforeIterationHook` | `before_iteration` | `iteration.start` | span |
-| `AfterIterationHook` | `after_iteration` | `iteration.end` | span |
-| `AfterApprovalHook` | `after_approval` | `human.review` | event |
-| `FinallyTurnHook` | `finally_turn` | `invoke_agent` (completed: output + usage) | agent |
+| Hook class | Hook ABC(s) | Method(s) | Span(s) emitted | obs type |
+|---|---|---|---|---|
+| `RootSpanHook` | `StartNodeTurnHook`, `FinallyGraphHook` | `start_node_turn`, `finally_graph` | `invoke_agent` (once, at `finally_graph`) | agent |
+| `AgentStartSpanHook` | `StartNodeTurnHook` | `start_node_turn` | `agent.start` | span |
+| `ChatSpanHook` | `BeforeLLMHook`, `AfterLLMResponseHook` | `before_llm`, `after_llm_response` | `chat` | generation |
+| `ToolSpanHook` | `BeforeToolExecutionHook`, `AfterToolExecutionHook` | `before_tool_execution`, `after_tool_execution` | `execute_tool_batch` + `execute_tool` | span / tool |
+| `HandoffSpanHook` | `AfterToolExecutionHook` | `after_tool_execution` | `agent.handoff`* | span |
+| `ApprovalSpanHook` | `AfterApprovalHook` | `after_approval` | `human.review` | event |
+| `IterationSpanHook` | `BeforeIterationHook`, `AfterIterationHook` | `before_iteration`, `after_iteration` | `iteration.start` + `iteration.end` | span |
 
-\* `agent.handoff` emitted only when `tool_name == "send_to_agent"` — detects
-multi-agent control transfer via the tool execution hook, replacing the
-previous hardcoded `_emit_handoff_span` in `AgentCommunicationService`.
+\* `agent.handoff` emitted only when `tool_name` is `send_to_agent` or `task`
+— detects multi-agent control transfer via the tool execution hook.
+
+Registration order is execution order (`HookRunner` dispatches in
+registration order). `RootSpanHook` is always first (seeds the trace/root
+span IDs). `ToolSpanHook` precedes `HandoffSpanHook` so the batch span the
+handoff parents to exists by the time the handoff hook reads it. Each hook
+is wrapped in a `HookSpec` with `HookErrorPolicy.LOG` so a failing trace
+hook logs and continues rather than crashing the agent.
+
+## Tier Configuration
+
+`TraceSpanMode` controls which hooks are registered, and therefore which
+spans are emitted. The factory (`build_trace_hooks()`) selects hooks based
+on the `trace_spans` config field.
+
+| Tier | Hooks | Spans emitted |
+|---|---|---|
+| `minimal` | `RootSpanHook` (1) | `invoke_agent` only |
+| `standard` (default) | root + chat + tool + handoff + approval (5) | `invoke_agent`, `chat`, `execute_tool_batch`, `execute_tool`, `agent.handoff`, `human.review` |
+| `full` | all 7 hooks | standard spans + `agent.start` + `iteration.start` + `iteration.end` |
+
+Two additional config fields control prompt and tool capture scope:
+
+- `prompt_capture: PromptCaptureMode` — `off` (no prompt content), `hash`
+  (system prompt hash + length only), `summary` (default: hash + length +
+  last N messages truncated), `full` (full system prompt + tools + all
+  messages untruncated). Controls the `chat` span's input message capture
+  and the `agent.start` span's system prompt storage (`off` disables both).
+- `capture_tools: bool` — when `True`, `gen_ai.tool.definitions` is
+  included on the `agent.start` span. Default `False`. Only effective at
+  `full` tier (the `agent.start` span is not emitted at lower tiers).
 
 ## Backend Modes (trace_backend config)
 
@@ -207,7 +273,6 @@ Content is not truncated — full message text is stored.
 | `gen_ai.response.id` | `LLMResponse` has no `id` field (provider doesn't surface response ID) |
 | `gen_ai.tool.call.arguments` (per-tool span) | `ToolResult` carries no `arguments` (args live on `ToolCall`, captured at batch level) |
 | `gen_ai.request.top_p` / `frequency_penalty` / `presence_penalty` | `LLMConfig` has no corresponding fields |
-| `gen_ai.system_instructions` (raw text) | Only hash + length emitted (PII protection); raw text is opt-in and not enabled |
 
 ## Audit Status
 

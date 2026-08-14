@@ -90,13 +90,19 @@ class NodeTrigger(StrEnum):
 
     Controls when a node becomes READY given inbound dispatches:
 
-    - `ON_ALL_PREDS` (default): the node waits until every "activated source"
-      (a predecessor that has actually dispatched to it) has dispatched at
-      least once AND no active instance can reach it via outgoing edges.
-      One instance is then created consuming one dispatch per source.
-    - `ON_RECEIVE`: each dispatch creates a new instance immediately.
-      Reachability is NOT checked for ON_RECEIVE — the instance is marked
-      READY unconditionally.
+    - `ON_ALL_PREDS` (default, **stable**): the node waits until every
+      "activated source" (a predecessor that has actually dispatched to it)
+      has dispatched at least once AND no active instance can reach it via
+      outgoing edges. One instance is then created consuming all currently
+      pending dispatches from the activated sources (batch semantics:
+      IntegratedInput may contain multiple payloads per source). This is
+      the recommended trigger for all production graphs.
+    - `ON_RECEIVE` (**deprecated / experimental**): each dispatch creates a
+      new instance immediately. Reachability is NOT checked. The per-node
+      FIFO serial gate is in-memory only and not persisted across crashes.
+      Not recommended for new production graphs — use `ON_ALL_PREDS`.
+      `Graph.compile()` emits a `DeprecationWarning` when this trigger is
+      used; `GraphSpec` (declarative API) rejects it entirely.
     """
 
     ON_ALL_PREDS = "on_all_preds"
@@ -126,21 +132,13 @@ class GraphInstanceStatus(StrEnum):
     - `completed` / `failed`: terminal — no recovery.
     """
 
+    PENDING = "pending"
     RUNNING = "running"
     PAUSED = "paused"
     STOPPED = "stopped"
     CRASHED = "crashed"
     COMPLETED = "completed"
     FAILED = "failed"
-
-
-class SchedulerInstanceStatus(StrEnum):
-    """Scheduler state for whether an instance is ready to execute."""
-
-    DORMANT = "dormant"
-    READY = "ready"
-    RUNNING = "running"
-    COMPLETED = "completed"
 
 
 class InvocationStatus(StrEnum):
@@ -165,3 +163,24 @@ class DeliverConsumptionStatus(StrEnum):
     CONSUMED = "consumed"
     CONSUMED_PENDING = "consumed_pending"
     CONSUMED_COMPLETED = "consumed_completed"
+
+
+# ── Framework-injected payload source sentinels ──────────────────────────
+# Used as ``IntegratedPayload.source_node`` when the payload is injected by
+# the framework (resume snapshot, undelivered-retry error feedback) rather
+# than by a real upstream node. StrEnum so they never collide with real
+# node IDs (which are ``node_`` prefixed IDs from ``generate_id``).
+
+
+class FrameworkPayloadSource(StrEnum):
+    """Sentinel ``source_node`` values for framework-injected payloads.
+
+    These are NOT real nodes — they mark payloads injected by the engine
+    during resume (``RESUME``) or undelivered-retry feedback
+    (``FRAMEWORK``). Using a StrEnum instead of bare strings prevents
+    collision with real node IDs and satisfies type-safety rule 1
+    (constants over raw strings).
+    """
+
+    RESUME = "__resume__"
+    FRAMEWORK = "__framework__"

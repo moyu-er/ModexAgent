@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
-from modex_agent.agents.react.constants import ReActNode
+from modex_agent.agents.react.constants import ReActHookPoint, ReActNode
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.runtime.enums import TurnPhase
 from modex_graph.context import GraphContext
@@ -12,7 +12,7 @@ from modex_graph.node import Node
 
 
 class StartNode(Node[ReActTurnState]):
-    """Routes to LLM normally, or to ``state.resume_target`` when resuming."""
+    """Routes to BEFORE normally, or to ``state.resume_target`` when resuming."""
 
     def __init__(self) -> None:
         self.name = ReActNode.START
@@ -35,7 +35,8 @@ class StartNode(Node[ReActTurnState]):
         state.iteration = 0
 
         await ctx.runtime.emit(GraphReActEvent.START, None, ctx)
-        self.deliver(None, ReActNode.LLM, ctx)
+        await ctx.runtime.dispatch_hook(ReActHookPoint.START_NODE_TURN, ctx)
+        self.deliver(None, ReActNode.BEFORE, ctx)
         return None
 
 

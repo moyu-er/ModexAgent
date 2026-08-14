@@ -118,7 +118,7 @@ tool_supplements: ["ast_grep"]
     assert t.spec.tool_supplements == [ToolSupplement.AST_GREP]
 
 
-def test_template_memory_block_is_ignored(tmp_path: Path) -> None:
+def test_on_disk_memory_block_is_ignored(tmp_path: Path) -> None:
     """A ``memory:`` block on disk is ignored by PoolStore; subagent memory is
     always the caller's baked default (spec §9)."""
     pool_dir = _pool_dir(tmp_path, "main")

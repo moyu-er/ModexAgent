@@ -28,7 +28,7 @@ import asyncio
 import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from modex_agent.core.types import InputMessage, OutputMessage
@@ -48,7 +48,7 @@ _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _CODE_RE = re.compile(r"`(.+?)`")
 
 
-class TelegramMediaKind(str, Enum):
+class TelegramMediaKind(StrEnum):
     """Closed set of outbound media classifications for Telegram."""
 
     PHOTO = "photo"

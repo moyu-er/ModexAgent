@@ -64,7 +64,7 @@ class AciEditTool(EditFileTool):
         new_string: str,
         replace_all: bool = False,
         **kwargs: Any,  # noqa: ANN401  — matches parent EditFileTool.execute signature
-    ) -> str | Any:  # type: ignore[override]  # noqa: ANN401
+    ) -> str | Any:  # noqa: ANN401
         # Delegate to the parent EditFileTool.execute — it handles all
         # the edit logic (fuzzy matching, quote preservation, encoding,
         # replace_all, error cases, file creation via empty old_string).

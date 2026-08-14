@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
@@ -10,8 +12,8 @@ from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 
 
 @pytest.fixture
-async def handler(tmp_path: Path) -> ToolResultOverflowHandler:
-    store = LocalFileToolOverflowStore(workspace=tmp_path, max_chunk_size=50)
+async def handler(tmp_path: Path) -> AsyncGenerator[ToolResultOverflowHandler]:
+    store = LocalFileToolOverflowStore(workspace=tmp_path)
     await store.initialize()
     cleaner = OverflowCleaner(store)
     h = ToolResultOverflowHandler(store=store, cleaner=cleaner)
@@ -21,97 +23,100 @@ async def handler(tmp_path: Path) -> ToolResultOverflowHandler:
 
 class TestStoreOverflow:
     @pytest.mark.asyncio
-    async def test_store_overflow_returns_xml(self, tmp_path: Path, handler: ToolResultOverflowHandler) -> None:
+    async def test_store_overflow_returns_prefix_and_file_notice(
+        self, handler: ToolResultOverflowHandler
+    ) -> None:
         content = "x" * 250
-        xml, ref = await handler.store_overflow(
+        text, ref = await handler.store_overflow(
             session_id="sess_1",
             tool_call_id="call_1",
             tool_name="read_file",
             content=content,
+            max_chars=50,
         )
 
-        assert xml.startswith('<tool_result_overflow')
-        assert 'tool="read_file"' in xml
-        assert 'total_chars="250"' in xml
-        assert 'total_chunks="5"' in xml
-        assert 'current_chunk="1"' in xml
-        assert '<storage dir=' in xml
-        assert '<instruction>' in xml
-        assert '<chunk index="1">' in xml
-        # Chunk content is present (xml_text skips CDATA when no special chars)
-        assert "x" * 50 in xml
+        assert text.startswith("x" * 50)
+        assert f"[Full output (250 chars total) saved to: {ref.dir_path}/full.txt]" in text
+        assert not text.startswith("<")
         assert ref.total_chars == 250
-        assert ref.chunk_count == 5
+        assert Path(ref.metadata_path) == Path(ref.dir_path, ".meta.json")
+        assert {field.name for field in fields(ref)} == {
+            "dir_path",
+            "total_chars",
+            "metadata_path",
+        }
 
     @pytest.mark.asyncio
-    async def test_store_overflow_short_content(self, tmp_path: Path, handler: ToolResultOverflowHandler) -> None:
+    async def test_store_overflow_short_content(self, handler: ToolResultOverflowHandler) -> None:
         content = "short content"
-        xml, ref = await handler.store_overflow(
+        text, ref = await handler.store_overflow(
             session_id="sess_1",
             tool_call_id="call_1",
             tool_name="read_file",
             content=content,
+            max_chars=50,
         )
 
-        assert xml.startswith('<tool_result_overflow')
+        assert text.startswith("short content\n\n[Full output")
         assert ref.total_chars == 13
-        assert ref.chunk_count == 1
-        assert "short content" in xml
+        assert Path(ref.dir_path, "full.txt").read_text(encoding="utf-8") == content
 
     @pytest.mark.asyncio
-    async def test_store_overflow_escapes_cdata(self, tmp_path: Path, handler: ToolResultOverflowHandler) -> None:
-        content = "hello ]]> world"
-        xml, ref = await handler.store_overflow(
+    async def test_store_overflow_preserves_plain_text(self, handler: ToolResultOverflowHandler) -> None:
+        content = "hello [special] world"
+        text, ref = await handler.store_overflow(
             session_id="sess_1",
             tool_call_id="call_2",
             tool_name="read_file",
             content=content,
+            max_chars=50,
         )
 
-        assert "hello ]]]]><![CDATA[> world" in xml
+        assert text.startswith(content)
+        assert Path(ref.dir_path, "full.txt").read_text(encoding="utf-8") == content
 
     @pytest.mark.asyncio
-    async def test_store_overflow_empty_content(self, tmp_path: Path, handler: ToolResultOverflowHandler) -> None:
-        """Empty content produces 1 chunk with empty CDATA."""
-        xml, ref = await handler.store_overflow(
+    async def test_store_overflow_empty_content(self, handler: ToolResultOverflowHandler) -> None:
+        text, ref = await handler.store_overflow(
             session_id="sess_1",
             tool_call_id="call_empty",
             tool_name="read_file",
             content="",
+            max_chars=50,
         )
 
-        assert xml.startswith('<tool_result_overflow')
+        assert text.startswith("\n\n[Full output (0 chars total) saved to:")
         assert ref.total_chars == 0
-        assert ref.chunk_count == 1
-        # Empty content: chunk element exists with empty text (no CDATA needed)
-        assert '<chunk index="1"></chunk>' in xml
+        assert Path(ref.dir_path, "full.txt").read_text(encoding="utf-8") == ""
 
     @pytest.mark.asyncio
-    async def test_store_overflow_exactly_max_chunk_size(self, tmp_path: Path, handler: ToolResultOverflowHandler) -> None:
-        """Content of exactly max_chunk_size chars produces exactly 1 chunk."""
-        content = "A" * 50  # fixture uses max_chunk_size=50
-        xml, ref = await handler.store_overflow(
+    async def test_store_overflow_exactly_max_chars(self, handler: ToolResultOverflowHandler) -> None:
+        content = "A" * 50
+        text, ref = await handler.store_overflow(
             session_id="sess_1",
             tool_call_id="call_exact",
             tool_name="read_file",
             content=content,
+            max_chars=50,
         )
 
         assert ref.total_chars == 50
-        assert ref.chunk_count == 1
-        assert "A" * 50 in xml
+        assert text.startswith(content + "\n\n[Full output")
 
     @pytest.mark.asyncio
-    async def test_store_overflow_instruction_template_fields(self, tmp_path: Path, handler: ToolResultOverflowHandler) -> None:
-        """Instruction text interpolates all template variables from ref."""
-        content = "x" * 250  # 250 / 50 = 5 chunks
-        xml, ref = await handler.store_overflow(
+    async def test_store_overflow_notice_points_to_complete_file(
+        self, handler: ToolResultOverflowHandler
+    ) -> None:
+        content = "x" * 250
+        text, ref = await handler.store_overflow(
             session_id="sess_1",
             tool_call_id="call_tmpl",
             tool_name="read_file",
             content=content,
+            max_chars=50,
         )
 
-        assert "split into 5 chunk(s)" in xml
-        assert '$CHUNK.full.txt' in xml
-        assert str(ref.dir_path) in xml
+        assert text == (
+            "x" * 50
+            + f"\n\n[Full output (250 chars total) saved to: {ref.dir_path}/full.txt]"
+        )

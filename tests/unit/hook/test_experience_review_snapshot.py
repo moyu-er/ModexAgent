@@ -14,7 +14,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.core.experience.meta import PerFileExperienceMetaStore
+from modex_agent.core.message import ChatMessage
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import MessageRole
 from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
+from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.history import ListMessageHistory
 
 
@@ -35,6 +39,14 @@ class _Snapshot:
         self.experience_dir = experience_dir
 
 
+def _memory_system() -> MagicMock:
+    memory_system = MagicMock(spec=MemorySystem)
+    memory_system.get_full_history = AsyncMock(
+        return_value=[ChatMessage(role=MessageRole.USER, content="full history")]
+    )
+    return memory_system
+
+
 def test_resolve_dir_prefers_snapshot_over_fallback(
     tmp_path: Path, meta_store: PerFileExperienceMetaStore
 ):
@@ -45,6 +57,7 @@ def test_resolve_dir_prefers_snapshot_over_fallback(
 
     hook = ExperienceReviewHook(
         review_agent=MagicMock(),
+        memory_system=_memory_system(),
         experience_dir=fallback_dir,
         meta_store=meta_store,
     )
@@ -62,6 +75,7 @@ def test_resolve_dir_falls_back_when_no_snapshot(
 
     hook = ExperienceReviewHook(
         review_agent=MagicMock(),
+        memory_system=_memory_system(),
         experience_dir=fallback_dir,
         meta_store=meta_store,
     )
@@ -71,10 +85,10 @@ def test_resolve_dir_falls_back_when_no_snapshot(
 
 
 @pytest.mark.asyncio
-async def test_after_turn_uses_snapshot_dir_for_review(
+async def test_after_graph_uses_snapshot_dir_for_review(
     tmp_path: Path, meta_store: PerFileExperienceMetaStore
 ):
-    """End-to-end: after_turn triggers a review whose experience_dir is the
+    """End-to-end: after_graph triggers a review whose experience_dir is the
     snapshot dir, even though the hook's configured fallback is different."""
     fallback_dir = tmp_path / "fallback"
     fallback_dir.mkdir()
@@ -85,6 +99,7 @@ async def test_after_turn_uses_snapshot_dir_for_review(
     agent.review = AsyncMock()
     hook = ExperienceReviewHook(
         review_agent=agent,
+        memory_system=_memory_system(),
         experience_dir=fallback_dir,
         meta_store=meta_store,
         min_messages=2,
@@ -92,6 +107,7 @@ async def test_after_turn_uses_snapshot_dir_for_review(
     )
 
     ctx = MagicMock()
+    ctx.session = SessionInfo.from_str("snapshot-review.main")
     ctx.workspace_snapshot = _Snapshot(snapshot_dir)
     ctx.history = ListMessageHistory(
         [{"role": "user", "content": "hi"}] * 3
@@ -101,7 +117,7 @@ async def test_after_turn_uses_snapshot_dir_for_review(
         messages=[{"role": "assistant", "content": "response"}],
     )
 
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     # Let the background review task run to completion, then drain it.
     import asyncio
 

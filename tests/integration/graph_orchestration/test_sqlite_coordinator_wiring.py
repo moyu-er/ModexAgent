@@ -135,8 +135,10 @@ async def test_sqlite_restart_recovers_from_crashed_node(tmp_path: Path) -> None
             graph_instance_id,
             recovered_instance_store,
         )
-        prepare_versions = coordinator.node_state_store.query_versions("prepare")
-        work_versions = coordinator.node_state_store.query_versions("work")
+        prepare_versions = coordinator.node_state_store.query_versions(
+            metadata.node_id_map["prepare"]
+        )
+        work_versions = coordinator.node_state_store.query_versions(metadata.node_id_map["work"])
         assert [record.status for record in prepare_versions] == [InvocationStatus.COMPLETED]
         assert [record.status for record in work_versions] == [
             InvocationStatus.COMPLETED,

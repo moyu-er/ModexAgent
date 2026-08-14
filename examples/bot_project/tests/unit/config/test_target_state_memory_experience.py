@@ -16,7 +16,7 @@ The contract:
 
 | Agent type | memory | experience | governance | hooks |
 |---|---|---|---|---|
-| native main | session + compact + governance + pruned | enabled (ExperienceReviewHook fires) | create_governance (lossy + tool_chain_repair) | MaxIter + TurnOutcome + ModelChoiceBind + ExperienceReview |
+| native main | session + compact + governance + pruned | enabled (ExperienceReviewHook fires) | create_governance (budget + tool_chain_repair) | MaxIter + TurnOutcome + ModelChoiceBind + ExperienceReview |
 | native subagent | session + compact + governance + pruned | N/A | create_subagent_governance (tool_chain_repair only) | SubagentAutoSend + MaxIter |
 | external main | skipped structurally | skipped | skipped | skipped |
 | external subagent | skipped structurally | skipped | skipped | skipped |
@@ -209,8 +209,8 @@ class TestMemoryDefaultsContract:
         assert m.governance is not None, "governance must be enabled for main agents"
         assert isinstance(m.governance, GovernanceConfig)
         assert m.governance.tool_chain_repair is True
-        assert m.governance.lossy_compaction is not None, (
-            "main agent governance MUST have lossy_compaction — without it, "
+        assert m.governance.budget is not None, (
+            "main agent governance MUST have budget — without it, "
             "oversized tool results will blow up the context window"
         )
 
@@ -251,7 +251,7 @@ class TestMemoryDefaultsContract:
         - archive (no long-term history needed)
         - core (no SOUL/USER/MEMORY.md)
         - dream_engine (no offline consolidation)
-        - lossy_compaction (small context windows, not worth the overhead)
+        - budget (small context windows, not worth the overhead)
 
         They MUST have:
         - session (token-budget compression)
@@ -273,8 +273,8 @@ class TestMemoryDefaultsContract:
         assert m.archive is None, "subagent must NOT have archive"
         assert m.core is None, "subagent must NOT have core memory"
         assert m.dream_engine is None, "subagent must NOT have dream_engine"
-        assert m.governance.lossy_compaction is None, (
-            "subagent governance must NOT have lossy_compaction"
+        assert m.governance.budget is None, (
+            "subagent governance must NOT have budget"
         )
 
     def test_no_subagent_experience_preset_exists(self) -> None:
@@ -319,7 +319,7 @@ class TestAssemblyDepsUniformInjection:
             assert m.core is None      # default off
             assert m.dream_engine is None  # default off
             assert m.compact is not None and m.compact.enabled  # compact always on
-            assert m.governance is not None and m.governance.lossy_compaction is not None
+            assert m.governance is not None and m.governance.budget is not None
             assert m.pruned is not None and m.pruned.enabled
             assert m.session.max_context_tokens == 50000
 

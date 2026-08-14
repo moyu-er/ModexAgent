@@ -262,8 +262,10 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
     async def get_full_history(
         self,
         context: MemoryContext,
+        *,
+        limit: int | None = None,
     ) -> list[ChatMessage]:
-        return await self._layers.session.get_all_messages_raw(context)
+        return await self._layers.session.get_all_messages_raw(context, limit=limit)
 
     async def search(
         self,

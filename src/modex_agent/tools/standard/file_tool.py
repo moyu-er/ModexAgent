@@ -835,7 +835,11 @@ class ListDirTool(Tool):
 
     @property
     def description(self) -> str:
-        return "List the contents of a directory."
+        return (
+            "List the contents of a directory. Returns one entry per line, "
+            "sorted alphabetically — directories end with \"/\" and files "
+            'do not. Dotfiles are included.'
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -855,8 +859,8 @@ class ListDirTool(Tool):
 
             items = []
             for item in sorted(dir_path.iterdir()):
-                prefix = "📁 " if item.is_dir() else "📄 "
-                items.append(f"{prefix}{item.name}")
+                suffix = "/" if item.is_dir() else ""
+                items.append(f"{item.name}{suffix}")
 
             if not items:
                 return f"Directory {path} is empty"

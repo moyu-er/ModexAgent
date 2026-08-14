@@ -40,7 +40,7 @@ class TestSniffMimeMagicBytes:
 
     def test_extension_fallback_when_no_known_magic(self) -> None:
         # A binary blob with no known magic and no recognizable extension → None.
-        assert sniff_mime(b"\x00\x01\x02\x03garbage", "blob.xyz") is None
+        assert sniff_mime(b"\x00\x01\x02\x03garbage", "blob.unknownext") is None
 
     def test_pdf_detected_by_magic_regardless_of_extension(self) -> None:
         # PDF magic (%PDF-) is authoritative: a PDF stream with a .txt or

@@ -21,7 +21,7 @@ class PeerNormalStrategy(SendStrategy):
     Reuses the sender's session prefix so the receiver sees a stable,
     sender-scoped conversation id. The ``invocation_id`` is hidden from
     the sender's ack and from the receiver's XML. Delivery targets the
-    peer pool's bus via ``target.bus_ref``. Orchestration is inherited
+    peer pool's tree via ``target.tree_ref``. Orchestration is inherited
     from :meth:`SendStrategy.execute`.
     """
 
@@ -70,11 +70,9 @@ class PeerNormalStrategy(SendStrategy):
         )
 
     async def deliver(self, env: AgentMessageEnvelope, target: CommunicationTarget) -> str | None:
-        """Deliver to the target's bus, falling back to the local bus."""
-        bus = target.bus_ref or self._deps.agent_bus
-        if bus is None:
-            return "No bus available for delivery"
-        await bus.send(env.agent_session_id, env)
+        """Deliver via the target's tree, falling back to the local tree."""
+        tree = target.tree_ref if target.tree_ref is not None else self._deps.tree
+        await tree.deliver(env.agent_session_id, env)
         return None
 
     def result_invocation_id(self, invocation_id: str) -> str | None:

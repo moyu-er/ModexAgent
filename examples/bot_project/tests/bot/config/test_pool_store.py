@@ -189,11 +189,10 @@ class TestWritePoolRoundTrip:
         assert reread.subagents[0].description == "recon"
         assert reread.subagents[1].max_steps == 150
 
-    def test_llm_not_persisted_and_memory_not_persisted(
+    def test_llm_not_persisted_and_memory_toggle_persisted(
         self, store: PoolStore, tmp_path: Path
     ) -> None:
-        """llm is no longer a pool-level key; memory is a baked main-agent
-        default injected at pool-build, never persisted."""
+        """llm is global while the main-agent memory toggle is pool-editable."""
         pool_dir = tmp_path / "config" / "pools" / "main"
         pool_dir.mkdir(parents=True)
         (pool_dir / "pool.yml").write_text(
@@ -201,7 +200,7 @@ class TestWritePoolRoundTrip:
                 {
                     "main_agent_name": "main",
                     "llm": {"model": "claude-opus-4"},
-                    "memory": {"session": {"max_token_ratio": 0.9}},
+                    "memory": {"archive_enabled": True, "core_enabled": False},
                     "agents": [{"name": "main", "role": "main", "max_steps": 10}],
                 },
                 sort_keys=False,
@@ -212,7 +211,7 @@ class TestWritePoolRoundTrip:
         store.write_pool("main", tree)
         raw = yaml.safe_load((pool_dir / "pool.yml").read_text(encoding="utf-8"))
         assert "llm" not in raw  # removed: model config lives in model.yml
-        assert "memory" not in raw  # baked default, not persisted
+        assert raw["memory"] == {"archive_enabled": True, "core_enabled": False}
         assert "name" not in raw  # pool name = dir name, not persisted
 
     def test_experience_not_persisted(self, store: PoolStore, tmp_path: Path) -> None:
@@ -233,8 +232,7 @@ class TestWritePoolRoundTrip:
         """read_pool -> write_pool round-trips editable subagent fields and
         omits at-default noise.
 
-        ``system_prompt_mode``/``fork_max_messages`` are now editable: a
-        non-default value survives; a default value ("replace") is omitted.
+        ``fork_max_messages`` is editable: a non-default value survives.
         ``memory`` is never persisted (registry injects it at load).
         """
         _seed_pool_yml(tmp_path, "coding", main_agent="coding")
@@ -246,7 +244,6 @@ class TestWritePoolRoundTrip:
             max_steps=60,
             tool_preset="read_only",
             context_mode="fresh",
-            system_prompt_mode="append",
             fork_max_messages=60,
             memory={
                 "session": {"max_token_ratio": 0.85, "keep_ratio": 0.3},
@@ -262,7 +259,6 @@ class TestWritePoolRoundTrip:
             )
         )
         # Non-default editable values are persisted.
-        assert raw["system_prompt_mode"] == "append"
         assert raw["fork_max_messages"] == 60
         # memory is NOT persisted — registry injects subagent_memory() at load.
         assert "memory" not in raw
@@ -282,12 +278,11 @@ class TestWritePoolRoundTrip:
             )
         )
         assert raw2["max_steps"] == 99
-        assert raw2["system_prompt_mode"] == "append"
         assert raw2["fork_max_messages"] == 60
 
     def test_round_trip_omits_at_default_editable(self, store: PoolStore, tmp_path: Path) -> None:
-        """At-default editable values (system_prompt_mode=replace, fork=80,
-        tool_supplements/mcp=[]) are omitted from the file."""
+        """At-default editable values (fork=80, tool_supplements/mcp=[])
+        are omitted from the file."""
         _seed_pool_yml(tmp_path, "coding", main_agent="coding")
         _seed_template(
             tmp_path,
@@ -303,7 +298,6 @@ class TestWritePoolRoundTrip:
                 "utf-8"
             )
         )
-        assert "system_prompt_mode" not in raw
         assert "fork_max_messages" not in raw
         assert "tool_supplements" not in raw
         assert "mcp" not in raw
@@ -318,7 +312,6 @@ class TestWritePoolRoundTrip:
             tmp_path,
             "coding",
             "scout",
-            system_prompt_mode="append",
             fork_max_messages=42,
             memory={"session": {"max_token_ratio": 0.85}},
         )
@@ -328,7 +321,6 @@ class TestWritePoolRoundTrip:
         tdir = tmp_path / "config" / "pools" / "coding" / "templates"
         assert not (tdir / "scout.yml").exists()
         raw = yaml.safe_load((tdir / "recon-agent.yml").read_text("utf-8"))
-        assert raw["system_prompt_mode"] == "append"
         assert raw["fork_max_messages"] == 42
         assert "memory" not in raw
 

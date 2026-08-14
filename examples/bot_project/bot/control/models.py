@@ -143,7 +143,9 @@ class SendRequest(BaseModel):
     replying to its parent. ``parent_session_id`` is required when
     ``comm_kind == "subagent"`` so the topology gate can verify the target
     is the caller's parent. ``invocation_id`` is ``None`` in T06 (T07 adds
-    the continuation path).
+    the continuation path). ``graph_instance_id`` optionally binds the
+    dispatched turn to a running graph instance so the agent receives it
+    in :class:`AgentContext.graph_instance_id`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -154,6 +156,7 @@ class SendRequest(BaseModel):
     target_agent: str
     content: str
     invocation_id: str | None = None
+    graph_instance_id: int | None = None
 
 
 class SendResult(BaseModel):

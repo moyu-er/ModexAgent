@@ -33,7 +33,6 @@ from modex_agent.control.exceptions import AgentControlError
 from modex_agent.core.agent import Agent
 from modex_agent.core.agent_runtime_config import BusyInputMode
 from modex_agent.core.emitter import AgentResult
-from modex_graph.exceptions import GraphInterrupt
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.types import InputMessage, OutputMessageType
 from modex_agent.memory.consolidation import DreamEngine
@@ -45,6 +44,7 @@ from modex_agent.pipeline.turn_runner_abc import TurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.models import TurnSnapshot
 from modex_agent.utils.deduplicator import MessageDeduplicator
+from modex_graph.exceptions import GraphInterrupt
 
 logger = logging.getLogger(__name__)
 

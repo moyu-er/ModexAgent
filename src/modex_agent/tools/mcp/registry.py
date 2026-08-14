@@ -79,7 +79,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from contextlib import AsyncExitStack, suppress
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from modex_agent.tools.mcp.backend import McpBackend
@@ -100,7 +100,7 @@ _logger = logging.getLogger(__name__)
 ConnectFn = Callable[..., Awaitable[BaseMCPClient]]
 
 
-class McpConnectionState(str, Enum):
+class McpConnectionState(StrEnum):
     """Lifecycle state of a registry-tracked connection.
 
     Transitions: ``CONNECTING`` → ``READY`` (success, idles until shutdown) or

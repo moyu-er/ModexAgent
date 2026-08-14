@@ -27,9 +27,6 @@ class ResolveWorkspaceStage(InputStage):
         self, envelope: UserInputEnvelope, ctx: BotInputContext
     ) -> StageResult:
         explicit = envelope.metadata.get(RoutingMeta.WORKSPACE)
-        if explicit is not None:
-            resolved = Path(str(explicit))
-        else:
-            resolved = ctx.current_ws()
+        resolved = Path(str(explicit)) if explicit is not None else ctx.current_ws()
         envelope.metadata[RoutingMeta.WORKSPACE] = str(resolved)
         return Continue(value=envelope)

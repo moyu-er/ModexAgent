@@ -25,6 +25,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+pytest.importorskip("aiohttp")  # skip if aiohttp not installed (CI [dev] doesn't include gateway deps)
+
 from modex_agent.agents.external import os_layer
 from modex_agent.agents.external.providers.opencode import server_manager as opencode_server_manager
 from modex_agent.agents.external.providers.opencode.server_manager import (

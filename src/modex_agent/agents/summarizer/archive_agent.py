@@ -6,6 +6,7 @@ Extends :class:`ScopedFileAgent` for common ReAct wiring.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import tempfile
 from collections.abc import Sequence
@@ -146,10 +147,8 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
                 if isinstance(raw, datetime):
                     timestamps.append(raw)
                 elif isinstance(raw, str):
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         timestamps.append(datetime.fromisoformat(raw))
-                    except (ValueError, TypeError):
-                        pass
         if timestamps:
             start = min(timestamps).strftime("%Y-%m-%d %H:%M")
             end = max(timestamps).strftime("%Y-%m-%d %H:%M")

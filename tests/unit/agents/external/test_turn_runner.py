@@ -25,7 +25,8 @@ from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage
-from modex_agent.hook import FinallyTurnHook, HookRunner, HookSpec
+from modex_agent.hook import FinallyGraphHook, HookRunner, HookSpec
+from modex_agent.multi_agent.session_tree.session_binding import SessionBindingStore
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.workspace.runtime import (
     is_workspace_root_bound,
@@ -83,17 +84,17 @@ class _CancelAgent:
         raise asyncio.CancelledError()
 
 
-class _StubFinallyTurnHook(FinallyTurnHook):
-    """Records ``(ctx, result)`` for each ``finally_turn`` invocation."""
+class _StubFinallyGraphHook(FinallyGraphHook):
+    """Records ``(ctx, result)`` for each ``finally_graph`` invocation."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[AgentContext, AgentResult | None]] = []
 
     @property
     def name(self) -> str:
-        return "stub_finally_turn_external"
+        return "stub_finally_graph_external"
 
-    async def finally_turn(self, ctx: AgentContext, result: AgentResult | None) -> None:
+    async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None:
         self.calls.append((ctx, result))
 
 
@@ -127,6 +128,7 @@ def _make_runner(
     on_session_end: Any = None,
     safety: RuntimeSafetyPolicy | None = None,
     hook_runner: HookRunner | None = None,
+    session_binding_store: SessionBindingStore | None = None,
 ) -> ExternalTurnRunner:
     resolved_agent: Any = agent if agent is not None else _RecordingAgent()
     return ExternalTurnRunner(
@@ -138,6 +140,7 @@ def _make_runner(
         on_session_end=on_session_end,
         safety=safety or RuntimeSafetyPolicy(),
         hook_runner=hook_runner,
+        session_binding_store=session_binding_store,
     )
 
 
@@ -499,17 +502,17 @@ async def test_turn_identity_set() -> None:
 
 
 # ---------------------------------------------------------------------------
-# FINALLY_TURN hook dispatch (T3 — Seam 4 partial)
+# FINALLY_GRAPH hook dispatch (T3 — Seam 4 partial)
 # ---------------------------------------------------------------------------
 
 
-def _hook_runner_with(hook: _StubFinallyTurnHook) -> HookRunner:
+def _hook_runner_with(hook: _StubFinallyGraphHook) -> HookRunner:
     return HookRunner([HookSpec(hook)])
 
 
-async def test_finally_turn_hook_fires_once_on_success() -> None:
+async def test_finally_graph_hook_fires_once_on_success() -> None:
     """Hook fires exactly once with the success ``AgentResult``."""
-    hook = _StubFinallyTurnHook()
+    hook = _StubFinallyGraphHook()
     runner = _make_runner(
         agent=_RecordingAgent(result=AgentResult(content="ok", stop_reason=StopReason.COMPLETED)),
         hook_runner=_hook_runner_with(hook),
@@ -523,9 +526,9 @@ async def test_finally_turn_hook_fires_once_on_success() -> None:
     assert hook.calls[0][1] is result
 
 
-async def test_finally_turn_hook_fires_once_on_exception() -> None:
+async def test_finally_graph_hook_fires_once_on_exception() -> None:
     """Hook fires exactly once with the error ``AgentResult`` on agent exception."""
-    hook = _StubFinallyTurnHook()
+    hook = _StubFinallyGraphHook()
     runner = _make_runner(agent=_ErrorAgent(), hook_runner=_hook_runner_with(hook))
 
     result = await runner.process_locked(_make_input(), "s1", session=_session())
@@ -537,16 +540,16 @@ async def test_finally_turn_hook_fires_once_on_exception() -> None:
     assert hook.calls[0][1] is result
 
 
-async def test_finally_turn_hook_fires_once_on_cancelled_error() -> None:
+async def test_finally_graph_hook_fires_once_on_cancelled_error() -> None:
     """Hook fires exactly once with ``result=None`` when ``agent.run`` raises
     ``CancelledError``.
 
-    The finally block dispatches ``FINALLY_TURN`` (shielded) before
+    The finally block dispatches ``FINALLY_GRAPH`` (shielded) before
     re-propagating the cancellation. ``result`` stays ``None`` because the
     ``CancelledError`` except block emits a CANCELLED result but does NOT
     assign it to the local ``result`` variable.
     """
-    hook = _StubFinallyTurnHook()
+    hook = _StubFinallyGraphHook()
     runner = _make_runner(agent=_CancelAgent(), hook_runner=_hook_runner_with(hook))
 
     with pytest.raises(asyncio.CancelledError):
@@ -556,7 +559,7 @@ async def test_finally_turn_hook_fires_once_on_cancelled_error() -> None:
     assert hook.calls[0][1] is None
 
 
-async def test_finally_turn_hook_no_dispatch_when_hook_runner_none() -> None:
+async def test_finally_graph_hook_no_dispatch_when_hook_runner_none() -> None:
     """When ``hook_runner=None`` (main-agent external pool default) no dispatch
     happens — behavior is unchanged.
 
@@ -572,9 +575,9 @@ async def test_finally_turn_hook_no_dispatch_when_hook_runner_none() -> None:
     assert result is expected
 
 
-async def test_finally_turn_hook_receives_agent_context() -> None:
+async def test_finally_graph_hook_receives_agent_context() -> None:
     """The hook receives the same ``AgentContext`` built for the turn."""
-    hook = _StubFinallyTurnHook()
+    hook = _StubFinallyGraphHook()
     runner = _make_runner(agent=_RecordingAgent(), hook_runner=_hook_runner_with(hook))
 
     await runner.process_locked(_make_input("ctx-check"), "s1", session=_session())
@@ -621,3 +624,40 @@ async def test_workspace_root_not_bound_without_manager() -> None:
     await runner.process_locked(_make_input("hello"), "s1", session=_session())
 
     assert agent.bound_during_run is False
+
+
+async def test_graph_instance_id_set_from_metadata() -> None:
+    # Given
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        InMemorySessionBindingStore,
+        SessionBinding,
+    )
+
+    agent = _RecordingAgent()
+    session = _session()
+    binding_store = InMemorySessionBindingStore()
+    binding_store.bind(session.session_id, SessionBinding(task_id=42))
+    runner = _make_runner(agent=agent, session_binding_store=binding_store)
+    input_msg = _make_input("hello")
+
+    # When
+    await runner.process_locked(input_msg, "s1", session=session)
+
+    # Then
+    ctx = agent.received_context
+    assert ctx is not None
+    assert ctx.graph_instance_id == 42
+
+
+async def test_graph_instance_id_none_when_metadata_absent() -> None:
+    # Given
+    agent = _RecordingAgent()
+    runner = _make_runner(agent=agent)
+
+    # When
+    await runner.process_locked(_make_input("hello"), "s1", session=_session())
+
+    # Then
+    ctx = agent.received_context
+    assert ctx is not None
+    assert ctx.graph_instance_id is None

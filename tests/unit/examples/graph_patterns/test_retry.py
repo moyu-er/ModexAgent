@@ -10,6 +10,11 @@ Verifies:
   exhausting retries.
 - ``build_retry_graph`` does not raise ``GraphRecursionError`` when
   ``max_iterations`` is set appropriately.
+
+The retry counter lives in ``ctx.scratch`` (the current node's scoped
+region of ``ctx.state.node_scratch[self.node_id]``, graph-run-scoped,
+resets per run). Tests assert on ``result.attempts`` (body call count
+written by the body node itself).
 """
 
 from __future__ import annotations
@@ -57,10 +62,11 @@ class _AutoRegCoord(GraphPersistenceCoordinator):
         content: Any,
         source_node: str,
         source_invocation_id: int,
+        source_node_name: str | None = None,
     ) -> int | None:
         if target_node != GraphNode.END and self.get_deliver_store(target_node) is None:
             self.register_node(target_node)
-        return super().route_deliver(target_node, content, source_node, source_invocation_id)
+        return super().route_deliver(target_node, content, source_node, source_invocation_id, source_node_name)
 
 
 def _make_coordinator() -> _AutoRegCoord:
@@ -80,9 +86,13 @@ class RetryState(GraphState):
 
 
 class TopologyRetryState(GraphState):
-    """State for build_retry_graph tests: counter + body call count."""
+    """State for build_retry_graph tests: body call count + exit path.
 
-    retries: int = 0
+    The retry counter is now an instance variable on ``_RetryBodyWrapper``
+    (``self._attempt_count``), not a state field. ``attempts`` tracks how
+    many times the body was called (written by the body node itself).
+    """
+
     attempts: int = 0
     exit_path: str = ""
 
@@ -237,12 +247,10 @@ class TestBuildRetryGraph:
             body_node=body,
             max_retries=3,
             is_failure=_is_topology_failure,
-            counter_state_field="retries",
         )
         ctx = _make_topology_ctx()
         result = await GraphEngine(compiled).run_async(ctx)
         assert result.attempts == 1
-        assert result.retries == 1
 
     async def test_exits_correctly_on_failure_after_exhausting_retries(self) -> None:
         body = AlwaysFailBody()
@@ -250,12 +258,10 @@ class TestBuildRetryGraph:
             body_node=body,
             max_retries=3,
             is_failure=_is_topology_failure,
-            counter_state_field="retries",
         )
         ctx = _make_topology_ctx()
         result = await GraphEngine(compiled).run_async(ctx)
         assert result.attempts == 3
-        assert result.retries == 3
 
     async def test_does_not_raise_recursion_error_with_appropriate_max_iterations(
         self,
@@ -265,9 +271,7 @@ class TestBuildRetryGraph:
             body_node=body,
             max_retries=10,
             is_failure=_is_topology_failure,
-            counter_state_field="retries",
         )
         ctx = _make_topology_ctx()
         result = await GraphEngine(compiled).run_async(ctx)
         assert result.attempts == 10
-        assert result.retries == 10

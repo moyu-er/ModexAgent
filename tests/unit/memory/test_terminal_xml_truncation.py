@@ -60,6 +60,7 @@ def test_get_truncatable_paths_detects_command_result() -> None:
     from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
 
     paths = get_terminal_xml_truncatable_paths(COMMAND_RESULT)
+    assert paths is not None
     assert "output" in paths
 
 
@@ -76,19 +77,6 @@ def test_get_truncatable_paths_detects_terminal_result() -> None:
     paths = get_terminal_xml_truncatable_paths(TERMINAL_RESULT)
     assert paths is not None
     assert "output" in paths
-
-
-def test_get_truncatable_paths_detects_overflow_result() -> None:
-    from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
-
-    overflow_xml = (
-        '<tool_result_overflow tool="read_file" total_chars="60000" '
-        'total_chunks="6" current_chunk="1">\n'
-        '  <chunk index="1"><![CDATA[chunk content]]></chunk>\n'
-        '</tool_result_overflow>'
-    )
-    paths = get_terminal_xml_truncatable_paths(overflow_xml)
-    assert paths == ["chunk", "instruction"]
 
 
 # ── truncation tests: command_result ──
@@ -168,38 +156,6 @@ def test_terminal_result_short_is_unchanged() -> None:
     assert "No active terminals." in result
     assert "<output>" in result
     assert len(result) < 500  # fits, so unchanged
-
-
-# ── metadata is carried by ToolResult.to_message() when declared ──
-
-def test_tool_result_to_message_carries_declared_overflow_metadata() -> None:
-    """ToolResult.to_message() emits metadata that was declared on the result.
-
-    Under ADR-0006 the ToolManager no longer sniffs terminal XML itself; tools
-    declare metadata via ``result_metadata`` and the ToolManager stores it on
-    the ToolResult. The overflow layer constructs ToolResults for
-    ``<tool_result_overflow>`` output and passes the metadata explicitly.
-    """
-    from modex_agent.core.message import ContentFormat, TextPart
-    from modex_agent.core.tool_manager import ToolResult
-
-    xml = (
-        '<tool_result_overflow tool="read_file" total_chars="60000" '
-        'total_chunks="6" current_chunk="1">\n'
-        '  <chunk index="1"><![CDATA[chunk content]]></chunk>\n'
-        '</tool_result_overflow>'
-    )
-    result = ToolResult(
-        tool_name="read_file",
-        content=[TextPart(text=xml)],
-        call_id="tc_1",
-        content_format=ContentFormat.XML,
-        truncatable_paths=["chunk", "instruction"],
-    )
-    msg = result.to_message()
-
-    assert msg.get("content_format") == "xml"
-    assert msg.get("truncatable_paths") == ["chunk", "instruction"]
 
 
 def test_tool_result_to_message_no_metadata_when_undeclared() -> None:

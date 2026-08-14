@@ -1,6 +1,6 @@
 """`TopologyValidator` + `TopologyError` — pure deterministic graph validation.
 
-Per ticket 08: `TopologyValidator` is a pure, deterministic, side-effect-free
+`TopologyValidator` is a pure, deterministic, side-effect-free
 validator that runs AFTER `GraphSpec`'s basic structural validation (which
 lives in `GraphSpec._validate_structure`) and BEFORE `Graph.compile()`.
 
@@ -48,7 +48,7 @@ _SENTINELS = frozenset({GraphNode.START, GraphNode.END})
 
 
 class TopologyError(Exception):
-    """Raised when graph topology validation fails (ticket 08).
+    """Raised when graph topology validation fails.
 
     Distinct from `RoutingError` (raised by `Graph.compile()` at build time)
     and `GraphRecursionError` (raised by the engine at run time).
@@ -58,7 +58,7 @@ class TopologyError(Exception):
 
 
 class TopologyValidator:
-    """Pure deterministic graph topology validator (ticket 08).
+    """Pure deterministic graph topology validator.
 
     No LLM, no I/O, no side effects. See module docstring for the full list
     of validation checks.
@@ -95,7 +95,7 @@ class TopologyValidator:
             max_nodes: optional cap on the number of declared nodes. If
                 `None`, no node-count check is performed.
         """
-        node_names = [n.name for n in spec.nodes]
+        node_names = [n.name for n in spec.nodes if n.name not in _SENTINELS]
         node_name_set = set(node_names)
         sentinels = _SENTINELS
 
@@ -112,7 +112,7 @@ class TopologyValidator:
                         f"endpoints must be declared in `nodes`."
                     )
 
-        # 2. Entry edge — exactly one edge from GraphNode.START to a real node.
+        # 2. Entry edge — exactly one edge from GraphNode.START.
         start_edges = [e for e in spec.edges if e.source == GraphNode.START]
         if len(start_edges) == 0:
             raise TopologyError(
@@ -127,15 +127,11 @@ class TopologyValidator:
                 f"Exactly one entry edge is required."
             )
         entry_node = start_edges[0].target
-        if entry_node == GraphNode.END:
-            raise TopologyError(
-                f"Entry edge target cannot be {GraphNode.END!r} — the entry must be a real node."
-            )
         if entry_node == GraphNode.START:
             raise TopologyError(
                 f"Entry edge target cannot be {GraphNode.START!r} — the entry must be a real node."
             )
-        # entry_node is in node_name_set (step 1 guarantees this).
+        # entry_node is in node_name_set (the sentinel validation step guarantees this).
 
         # 3. Exit edge — at least one edge to GraphNode.END.
         end_edges = [e for e in spec.edges if e.target == GraphNode.END]
@@ -159,7 +155,7 @@ class TopologyValidator:
         # 5. No self-loops — source == target for non-sentinel nodes.
         # A real node looping directly to itself is a spec error. ReAct-style
         # loops use two distinct nodes (LLM → TOOL → LLM). Sentinel
-        # "self-loops" (START→START, END→END) are blocked by step 1 (sentinels
+        # "self-loops" (START→START, END→END) are blocked by the sentinel validation step (sentinels
         # aren't real nodes) and by the entry/exit checks, so the only case
         # that reaches here is a real-node self-loop.
         for edge in spec.edges:
@@ -179,7 +175,7 @@ class TopologyValidator:
 
         # 7. START reachability — forward BFS from entry_node.
         visited_from_start: set[str] = set()
-        queue: deque[str] = deque([entry_node])
+        queue: deque[str] = deque([] if entry_node == GraphNode.END else [entry_node])
         while queue:
             current = queue.popleft()
             if current in visited_from_start:
@@ -270,7 +266,7 @@ class TopologyValidator:
         (simple path). Cycles are traversed only once per path — the DFS
         backtracks when it hits a node already on the current path.
 
-        The caller guarantees that `entry_node` can reach END (step 8 of
+        The caller guarantees that `entry_node` can reach END (the reachability check of
         `validate`), so at least one terminal node is reachable and the
         return value is `>= 2`.
         """

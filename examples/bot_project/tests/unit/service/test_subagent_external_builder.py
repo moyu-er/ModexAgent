@@ -138,12 +138,14 @@ def _make_deps(
     workspace_path_resolver: Any | None = None,
     session_registry: Any | None = None,
     emitter_factory: Any | None = None,
+    tree: Any | None = None,
 ) -> AgentMaterializeDeps:
     return AgentMaterializeDeps(
         agent_factory=MagicMock(),
         pool=pool or MagicMock(),
         session_factory=MagicMock(),
         broker=broker,
+        tree=tree or MagicMock(),
         agent_bus=agent_bus,
         project_dir=project_dir,
         workspace_path_resolver=workspace_path_resolver,
@@ -209,7 +211,7 @@ async def test_build_constructs_external_turn_runner_with_hook_runner(
 
     turn_runner = _external_turn_runner(instance)
     assert isinstance(turn_runner, ExternalTurnRunner)
-    # T3: ExternalTurnRunner.hook_runner must be wired so FINALLY_TURN fires.
+    # T3: ExternalTurnRunner.hook_runner must be wired so FINALLY_GRAPH fires.
     assert turn_runner._hook_runner is not None
 
 

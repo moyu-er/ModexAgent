@@ -8,10 +8,10 @@ dead (zero readers; production wiring goes through ``AgentPipeline`` /
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class BusyInputMode(str, Enum):
+class BusyInputMode(StrEnum):
     """Agent 忙碌时收到新消息的处理模式。"""
 
     INTERRUPT = "interrupt"  # 中断当前 turn → 新消息

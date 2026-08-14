@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from modex_agent.core.session_registry import SessionRegistry
     from modex_agent.multi_agent.descriptor import AgentInstance
     from modex_agent.multi_agent.pool import AgentPool
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
     from modex_agent.multi_agent.template import AgentTemplate
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ class InboxPoller:
         self._inflight: dict[str, asyncio.Task[None]] = {}
         self._orphan_logged: set[str] = set()
         self._task: asyncio.Task[None] | None = None
+        self._tree_manager: SessionTreeManager | None = None
         # Pool-level wakeup signal. Set by ``signal_wakeup`` (bus writers,
         # turn-completion finally), awaited in ``_loop``. Cleared once before
         # each ``_tick`` so a signal set DURING the tick survives to wake the
@@ -88,6 +90,9 @@ class InboxPoller:
         ``Event`` is a no-op. Safe to call from any coroutine in the loop.
         """
         self._wakeup_event.set()
+
+    def attach_tree_manager(self, tree_manager: SessionTreeManager) -> None:
+        self._tree_manager = tree_manager
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -188,20 +193,28 @@ class InboxPoller:
         exclusive in time (idle vs busy), a given message is consumed exactly
         once by exactly one of them.
         """
+        if self._tree_manager is not None:
+            await self._tree_manager.on_dispatch_start(sid)
         batch = await self._pool.consume_inbox(sid)
         for envelope in batch:
             await self._pool.dispatch_envelope(sid, instance, envelope)
+
+    async def _end_dispatch(self, sid: str) -> None:
+        try:
+            if self._tree_manager is not None:
+                await self._tree_manager.on_dispatch_end(sid)
+        except Exception:
+            logger.exception("on_dispatch_end failed for %s", sid)
+        finally:
+            self._inflight.pop(sid, None)
+            self.signal_wakeup()
 
     async def _run_turn(self, sid: str, instance: AgentInstance) -> None:
         try:
             await self._ensure_session_registered(sid)
             await self._dispatch_batch(sid, instance)
         finally:
-            self._inflight.pop(sid, None)
-            # Re-signal so a message that arrived during this busy turn (and
-            # was therefore skipped by single-flight) is scanned immediately
-            # rather than waiting up to one ``interval``.
-            self.signal_wakeup()
+            await self._end_dispatch(sid)
 
     async def _ensure_session_registered(
         self, sid: str, *, parent_session_id: str | None = None
@@ -249,7 +262,4 @@ class InboxPoller:
         except Exception:
             logger.exception("Materialize/turn failed for %s; message stays in inbox", sid)
         finally:
-            self._inflight.pop(sid, None)
-            # Same re-signal as ``_run_turn``: on materialize failure the
-            # message stays pending and must be retried promptly.
-            self.signal_wakeup()
+            await self._end_dispatch(sid)

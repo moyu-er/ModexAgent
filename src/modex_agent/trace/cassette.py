@@ -39,7 +39,7 @@ from modex_agent.core.tool_manager import (
     ToolResult,
 )
 from modex_agent.core.types import LLMResponse, ToolCall
-from modex_agent.hook.abc import FinallyTurnHook
+from modex_agent.hook.abc import FinallyGraphHook
 from modex_agent.ioc.configs.observability import CassetteScope
 from modex_agent.runtime.enums import TurnCustomKey
 
@@ -635,14 +635,13 @@ def apply_cassette_wrapping(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class CassetteFlushHook(FinallyTurnHook):
+class CassetteFlushHook(FinallyGraphHook):
     """Persist the in-memory cassette to disk at turn end.
 
     The recorder accumulates entries in memory as the wrapping provider /
     tool executor intercepts calls during the turn; without this hook the
     cassette is never flushed in the production path. Fires at
-    ``HookPoint.FINALLY_TURN`` so the trace_id (set per turn by
-    ``TraceCollectorHook`` in ``TurnCustomKey.TRACE_ID``) is available and
+    ``HookPoint.FINALLY_GRAPH`` so the per-turn trace_id is available and
     every LLM/tool call of the turn has already been recorded.
 
     A flush failure is non-fatal: the hook logs a warning and returns so a
@@ -656,7 +655,7 @@ class CassetteFlushHook(FinallyTurnHook):
     def name(self) -> str:
         return "cassette_flush"
 
-    async def finally_turn(self, ctx: AgentContext, result: AgentResult | None) -> None:
+    async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None:
         runtime = ctx.runtime
         if runtime is None:
             return
@@ -666,8 +665,4 @@ class CassetteFlushHook(FinallyTurnHook):
         try:
             self._recorder.save(str(trace_id))
         except Exception:
-            logger.warning(
-                "CassetteFlushHook failed to save cassette for trace %s",
-                trace_id,
-                exc_info=True,
-            )
+            logger.warning("CassetteFlushHook failed to save cassette for trace %s", trace_id)

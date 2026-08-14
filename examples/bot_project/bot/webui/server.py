@@ -29,7 +29,11 @@ from bot.control.routes import (
 from bot.service.config_controller import ConfigController
 from bot.service.model_config import BotModelConfig
 from bot.service.pool_config_controller import PoolConfigController
-from bot.webui.model_fetch import fetch_provider_models  # noqa: F401 — re-export; tests monkeypatch bot.webui.server.fetch_provider_models
+from bot.webui.model_fetch import (
+    fetch_provider_models,  # noqa: F401 — re-export; tests monkeypatch bot.webui.server.fetch_provider_models
+)
+from bot.webui.routes.graph_routes import register_graph_routes
+from bot.webui.routes.kb_routes import register_kb_routes
 from bot.webui.routes.models import register_models_routes
 from bot.webui.routes.pool_config import register_pool_config_routes
 from bot.webui.routes.sessions import register_sessions_routes
@@ -49,6 +53,7 @@ if TYPE_CHECKING:
     from aiohttp import ClientSession
 
     from bot.service.session_gc import SessionGarbageCollector
+    from bot.workspace.handle import PoolWorkspaceResources
 
 logger = logging.getLogger(__name__)
 
@@ -59,12 +64,11 @@ from bot.webui.types import (  # noqa: F401 — re-exports for backward compatib
     _WEBUI_STATIC_PREFIX,
     RuntimeStores,
     WorkspaceIndex,
-    _WsConnectionState,
     _materialize_partial_deltas,
     _new_uuid_prefix,
     _safe_send_json,
+    _WsConnectionState,
 )
-
 
 # ── Server ─────────────────────────────────────────────────────────────────
 
@@ -119,7 +123,7 @@ class WebUIServer:
         self._pool_switch_callback: Callable[[str, str], None] | None = None
         self._pool_resolver: Callable[[str], str | None] | None = None
         self._agent_resolver: Callable[[str], str] | None = None
-        self._agent_pool_map: dict[str, str] = {}
+        self._agent_pool_resolver: Callable[[str], str | None] | None = None
         self._recent_workspaces = None  # set by WebUIService
         self._input_pipeline = None  # injected by WebUIService
         self._input_ctx = None
@@ -141,6 +145,11 @@ class WebUIServer:
         # -> RuntimeStores``. Injected by WebUIService so the todos/approvals
         # endpoints read from the same backend the agent writes to.
         self._store_resolver: Callable[[Path, str], Awaitable[RuntimeStores]] | None = None
+        # Graph workspace resolver — injected after init via
+        # ``set_graph_workspace_resolver``. Takes a workspace_id string and
+        # returns the PoolWorkspaceResources for that workspace. When
+        # ``None``, graph REST handlers return 503.
+        self._graph_workspace_resolver: Callable[[str], PoolWorkspaceResources | None] | None = None
 
         # Lazy-shared aiohttp ClientSession for outbound provider model-list
         # fetches. Lifecycle owned by :mod:`bot.webui.routes.models`.
@@ -173,9 +182,7 @@ class WebUIServer:
             ws_raw=ws_raw,
             home_root=self._home_sessions_dir.parent.parent,
             relative_base=(
-                self._workspace_control.home
-                if self._workspace_control is not None
-                else None
+                self._workspace_control.home if self._workspace_control is not None else None
             ),
         )
 
@@ -264,23 +271,32 @@ class WebUIServer:
 
         sweep_media_tmp_orphans(self)
 
-    def _pool_of_agent(self, agent_name: str) -> str:
-        """Return the pool an agent belongs to (default main)."""
-        return self._pool_for_agent_name(agent_name) or _DEFAULT_AGENT_NAME
+    def _resolve_pool_by_prefix(self, session_prefix: str) -> str | None:
+        """Resolve pool via the authoritative PoolSessionStore (session_prefix → pool).
 
-    def _pool_for_agent_name(self, agent_name: str) -> str | None:
-        """Return the pool for *agent_name*, including dynamic subagent instances.
-
-        The agent→pool map contains main agents and template types.  Dynamic
-        subagent instances have names like ``reviewer-abc123``; they inherit
-        the pool of their template type.
+        This replaces the former ``_pool_for_agent_name`` reverse-lookup.
+        Pool is a first-class partition key carried by every API request;
+        this method is the backend fallback when the client does not send
+        pool explicitly (e.g. session listing).
         """
-        if agent_name in self._agent_pool_map:
-            return self._agent_pool_map[agent_name]
-        for template_type, pool in self._agent_pool_map.items():
-            if agent_name.startswith(f"{template_type}-"):
-                return pool
+        if self._pool_resolver is not None:
+            return self._pool_resolver(session_prefix)
         return None
+
+    def _resolve_pool_for_request(
+        self, client_pool: str | None, session_prefix: str
+    ) -> str:
+        """Resolve pool for a request: client-provided → store fallback → default.
+
+        Single convergence point for REST/WS handlers. ``client_pool`` comes
+        from the query param or WS payload; when absent, falls back to the
+        authoritative PoolSessionStore; when that also misses, returns the
+        default pool name.
+        """
+        if client_pool:
+            return client_pool
+        resolved = self._resolve_pool_by_prefix(session_prefix)
+        return resolved if resolved else _DEFAULT_AGENT_NAME
 
     # ------------------------------------------------------------------
     # Late-binding configuration (called by WebUIService after init)
@@ -306,10 +322,6 @@ class WebUIServer:
         """Set the data directory name (e.g. '.modex') for workspace path resolution."""
         self._data_dir_name = data_dir_name
 
-    def set_agent_pool_map(self, mapping: dict[str, str]) -> None:
-        """Set mapping from main_agent_name -> pool_name for session list labels."""
-        self._agent_pool_map = dict(mapping)
-
     def set_workspace_control(self, control: WorkspaceControlPort) -> None:
         """Inject the WorkspaceControlPort for the workspace API."""
         self._workspace_control = control
@@ -330,6 +342,18 @@ class WebUIServer:
         the same backend the agent writes to.
         """
         self._store_resolver = resolver
+
+    def set_graph_workspace_resolver(
+        self,
+        resolver: Callable[[str], PoolWorkspaceResources | None] | None,
+    ) -> None:
+        """Inject the graph workspace resolver for the graph REST API.
+
+        The resolver takes a workspace_id string and returns the
+        ``PoolWorkspaceResources`` for that workspace, from which graph
+        route handlers read ``graph_orchestrator`` and ``graph_event_store``.
+        """
+        self._graph_workspace_resolver = resolver
 
     def set_workspace_index(self, index: WorkspaceIndex) -> None:
         """Inject the session→workspace membership index."""
@@ -456,6 +480,12 @@ class WebUIServer:
         register_pool_config_routes(self)
         # WebSocket route (extracted to :mod:`bot.webui.routes.websocket`).
         register_websocket_routes(self)
+        # Graph REST API (T13). Each handler resolves workspace resources
+        # via ``server._graph_workspace_resolver``; returns 503 when
+        # the resolver is not yet injected (matches the degradation pattern
+        # for ConfigController / PoolConfigController).
+        register_graph_routes(self, self._graph_workspace_resolver)
+        register_kb_routes(self)
 
         # Control API (T04). The handler checks ``app["control_facade"]`` and
         # returns 503 when the facade is not wired (matches the
@@ -515,13 +545,20 @@ class WebUIServer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _queue_belongs_to_connection(attached_sessions: list[str], session_id: str) -> bool:
+    def _queue_belongs_to_connection(
+        attached_sessions: list[str],
+        session_id: str,
+        parent_map: dict[str, str] | None = None,
+    ) -> bool:
         """Thin delegate -- implementation in :func:`bot.webui.routes.websocket.streaming._queue_belongs_to_connection`.
 
         Kept so ``tests/webui/test_ws_partitioning_convergence.py`` (which calls
         ``WebUIServer._queue_belongs_to_connection`` as a static method)
-        continues to work without change.
+        continues to work. ``parent_map`` defaults to empty for backward
+        compatibility with tests that don't exercise subagent nesting.
         """
         from bot.webui.routes.websocket.streaming import _queue_belongs_to_connection
 
-        return _queue_belongs_to_connection(attached_sessions, session_id)
+        return _queue_belongs_to_connection(
+            attached_sessions, session_id, parent_map or {}
+        )

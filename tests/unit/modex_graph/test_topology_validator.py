@@ -63,6 +63,14 @@ class TestTopologyError:
 
 
 class TestValidGraph:
+    def test_direct_start_to_end_passes(self) -> None:
+        spec = _spec(
+            nodes=[],
+            edges=[EdgeSpec(source=GraphNode.START, target=GraphNode.END)],
+        )
+
+        TopologyValidator().validate(spec)
+
     def test_minimal_linear_graph_passes(self) -> None:
         spec = _spec(
             nodes=[_node("n1")],
@@ -134,15 +142,13 @@ class TestEntryEdgeChecks:
         with pytest.raises(TopologyError, match="multiple entry edges"):
             TopologyValidator().validate(spec)
 
-    def test_entry_to_end_fails(self) -> None:
+    def test_direct_entry_to_end_with_declared_orphan_fails(self) -> None:
         raw = _raw_spec(
             nodes=[_node("n1")],
-            edges=[
-                EdgeSpec(source=GraphNode.START, target=GraphNode.END),
-                EdgeSpec(source="n1", target=GraphNode.END),
-            ],
+            edges=[EdgeSpec(source=GraphNode.START, target=GraphNode.END)],
         )
-        with pytest.raises(TopologyError, match="cannot be"):
+
+        with pytest.raises(TopologyError, match="unreachable"):
             TopologyValidator().validate(raw)
 
 

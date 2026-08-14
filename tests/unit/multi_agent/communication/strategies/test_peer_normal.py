@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -15,6 +16,7 @@ from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.strategies.base import SendDeps, SendRequest
 from modex_agent.multi_agent.communication.strategies.peer_normal import PeerNormalStrategy
 from modex_agent.multi_agent.message_type import AgentMessageType
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import CommunicationTarget
 
 
@@ -78,6 +80,17 @@ class _FakeBus:
         self.sent.append((session_id, envelope))
 
 
+def _make_tree_ref(bus: _FakeBus) -> SessionTreeManager:
+    """Mock SessionTreeManager whose deliver() delegates to bus.send()."""
+    tree = MagicMock(spec=SessionTreeManager)
+
+    async def _deliver(sid: str, env: object) -> None:
+        await bus.send(sid, env)
+
+    tree.deliver = _deliver
+    return tree
+
+
 def _make_context(agent_name: str = "mainA") -> AgentContext:
     return AgentContext(
         system_prompt="test",
@@ -94,14 +107,14 @@ def _make_context(agent_name: str = "mainA") -> AgentContext:
 def _make_request(
     target_name: str = "mainB",
     pool_name: str = "B",
-    bus_ref: _FakeBus | None = None,
+    tree_ref: SessionTreeManager | None = None,
 ) -> SendRequest:
     return SendRequest(
         target=CommunicationTarget(
             name=target_name,
             kind=AgentCommKind.NORMAL,
             pool_name=pool_name,
-            bus_ref=bus_ref,
+            tree_ref=tree_ref,
         ),
         content="hello peer",
         invocation_id=None,
@@ -112,11 +125,17 @@ def _make_request(
 def _make_deps(
     bus: _FakeBus | None = None,
 ) -> SendDeps:
+    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+    if bus is not None:
+        async def _deliver(sid: str, env: object) -> None:
+            await bus.send(sid, env)
+        tree.deliver = _deliver
+    else:
+        tree.deliver = AsyncMock()
     return SendDeps(
         source=AgentAddress(name="mainA"),
-        broker=_FakeBroker(),
         session_factory=SessionIdFactory(),
-        agent_bus=bus,
+        tree=tree,
     )
 
 
@@ -162,11 +181,11 @@ class TestPeerNormalStrategy:
         assert "Message from peer agent 'mainA'" in envelope.payload["content"]
 
     @pytest.mark.asyncio
-    async def test_deliver_prefers_target_bus_ref(self) -> None:
+    async def test_deliver_prefers_target_tree_ref(self) -> None:
         local_bus = _FakeBus()
         peer_bus = _FakeBus()
         strategy = PeerNormalStrategy(_make_deps(bus=local_bus))
-        req = _make_request(bus_ref=peer_bus)
+        req = _make_request(tree_ref=_make_tree_ref(peer_bus))
         session = strategy.build_session(req, "convA")
         envelope = strategy.build_envelope(req, session, "convA")
 
@@ -181,7 +200,7 @@ class TestPeerNormalStrategy:
     async def test_deliver_falls_back_to_local_bus(self) -> None:
         local_bus = _FakeBus()
         strategy = PeerNormalStrategy(_make_deps(bus=local_bus))
-        req = _make_request(bus_ref=None)
+        req = _make_request(tree_ref=None)
         session = strategy.build_session(req, "convA")
         envelope = strategy.build_envelope(req, session, "convA")
 
@@ -192,16 +211,15 @@ class TestPeerNormalStrategy:
         assert local_bus.sent[0][0] == "convA.mainB"
 
     @pytest.mark.asyncio
-    async def test_deliver_returns_error_when_no_bus(self) -> None:
+    async def test_deliver_uses_deps_tree_when_no_tree_ref(self) -> None:
         strategy = PeerNormalStrategy(_make_deps())
-        req = _make_request(bus_ref=None)
+        req = _make_request(tree_ref=None)
         session = strategy.build_session(req, "convA")
         envelope = strategy.build_envelope(req, session, "convA")
 
         err = await strategy.deliver(envelope, req.target)
 
-        assert err is not None
-        assert "No bus available" in err
+        assert err is None
 
     def test_build_session_reuses_sender_prefix_no_parent(self) -> None:
         strategy = PeerNormalStrategy(_make_deps())

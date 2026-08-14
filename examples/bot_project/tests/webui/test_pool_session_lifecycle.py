@@ -7,12 +7,12 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.session_store import WorkspacePoolSessionStore
-from bot.service.web_ui_service import WebUIService
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import AssistantTurnEvent, UserMessageEvent
 from bot.webui.server import WebUIServer
 
 from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.multi_agent.pool_router import PoolSessionStore
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
 
@@ -20,19 +20,6 @@ from modex_agent.workspace.runtime import bind_workspace_root
 def _real_project_dir() -> Path:
     """Return the real bot project directory for config loading."""
     return Path(__file__).resolve().parent.parent.parent
-
-
-def _real_agent_pool_map() -> dict[str, str]:
-    """Build the production agent->pool mapping from the loaded AppConfig."""
-    from modex_agent.ioc.configs.app import AppConfig
-
-    project_dir = _real_project_dir()
-
-    class _Source:
-        _project_dir = project_dir
-        _app_config = AppConfig.from_yaml(project_dir / "config" / "bot_config.yml")
-
-    return WebUIService._build_agent_pool_map(_Source())
 
 
 def _real_pool_to_main_agent() -> dict[str, str]:
@@ -55,7 +42,7 @@ def _real_pool_to_main_agent() -> dict[str, str]:
 
 def _make_server(
     data_dir: Path,
-) -> tuple[WebUIServer, WebSocketInputAdapter]:
+) -> tuple[WebUIServer, WebSocketInputAdapter, PoolSessionStore]:
     """Create a fully wired WebUIServer with the real production pool map.
 
     ``data_dir`` is treated as the workspace root: writes (routed by the bound
@@ -63,10 +50,8 @@ def _make_server(
     reads from that same directory via ``home_sessions_dir``.
     """
     inp = WebSocketInputAdapter()
-    mapping = _real_agent_pool_map()
     pool_to_main_agent = _real_pool_to_main_agent()
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    store.set_agent_pool_map(mapping)
     server = WebUIServer(
         inp,
         store,
@@ -77,18 +62,27 @@ def _make_server(
     server.set_workspace_index(store)
     server.set_data_dir_name(".modex")
     server.set_pool_agent_names(list(pool_to_main_agent.values()))
-    server.set_agent_pool_map(mapping)
     server.set_agent_resolver(
         lambda pool_name: pool_to_main_agent.get(pool_name, pool_name)
     )
+    routing_store = PoolSessionStore(data_dir=data_dir)
+    server.set_pool_switch_callback(routing_store.set_pool)
+    server.set_pool_resolver(routing_store.get_pool)
     # Inject session store + factory so POST /api/sessions auto-saves.
     session_store = WorkspacePoolSessionStore(
         base_dir=data_dir,
-        pool_resolver=lambda s: mapping.get(s.agent_name, "default"),
+        pool_resolver=lambda s: next(
+            (
+                pool
+                for pool, main_agent in pool_to_main_agent.items()
+                if main_agent == s.agent_name
+            ),
+            "default",
+        ),
     )
     server.set_session_store(session_store)
     server.set_session_factory(SessionIdFactory())
-    return server, inp
+    return server, inp, routing_store
 
 
 async def _simulate_qa_turn(
@@ -98,6 +92,7 @@ async def _simulate_qa_turn(
     user_content: str,
     assistant_content: str,
     workspace_root: Path,
+    pool: str,
 ) -> None:
     """Materialise one Q/A turn by writing user + assistant events.
 
@@ -113,6 +108,7 @@ async def _simulate_qa_turn(
                 agent_name=agent_name,
                 content=user_content,
             ),
+            pool=pool,
         )
         await store.append(
             session_id,
@@ -123,6 +119,7 @@ async def _simulate_qa_turn(
                 blocks=[{"type": "text", "text": assistant_content}],
                 latency_ms=0,
             ),
+            pool=pool,
         )
 
 
@@ -130,15 +127,15 @@ async def _simulate_qa_turn(
 async def test_pool_filter_hides_and_shows_sessions() -> None:
     """GET /api/sessions?pool=X only returns sessions whose agent maps to pool X."""
     data_dir = Path(tempfile.mkdtemp())
-    server, _ = _make_server(data_dir)
+    server, _, routing_store = _make_server(data_dir)
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
         # Write transcripts directly (no session store entries — test transcript fallback).
-        # The coder pool's main agent is `orchestrator`; the transcript file lands
-        # under coder/ because agent_pool_map["orchestrator"] = "coder".
-        await _simulate_qa_turn(server._store, "conv1", "orchestrator", "hi", "hello", data_dir)
-        await _simulate_qa_turn(server._store, "conv2", "default", "hi", "hello", data_dir)
+        routing_store.set_pool("conv1", "coder")
+        routing_store.set_pool("conv2", "default")
+        await _simulate_qa_turn(server._store, "conv1", "orchestrator", "hi", "hello", data_dir, "coder")
+        await _simulate_qa_turn(server._store, "conv2", "default", "hi", "hello", data_dir, "default")
 
         # Without pool filter, both sessions visible.
         resp = await client.get("/api/sessions")
@@ -178,7 +175,7 @@ async def test_workspace_switch_hides_and_shows_sessions() -> None:
     data_dir_a.mkdir(parents=True, exist_ok=True)
     data_dir_b.mkdir(parents=True, exist_ok=True)
 
-    server, _ = _make_server(data_dir_a)
+    server, _, _ = _make_server(data_dir_a)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -188,7 +185,7 @@ async def test_workspace_switch_hides_and_shows_sessions() -> None:
         session_a = await resp.json()
         sid_a: str = session_a["session_id"]
         conv_a = sid_a.split(".")[0]
-        await _simulate_qa_turn(server._store, conv_a, "default", "hi A", "hello A", data_dir_a)
+        await _simulate_qa_turn(server._store, conv_a, "default", "hi A", "hello A", data_dir_a, "default")
 
         # Verify workspace A transcript exists
         assert (data_dir_a / ".modex" / "sessions" / "default" / f"{sid_a}.jsonl").exists()
@@ -199,7 +196,7 @@ async def test_workspace_switch_hides_and_shows_sessions() -> None:
         session_b = await resp.json()
         sid_b: str = session_b["session_id"]
         conv_b = sid_b.split(".")[0]
-        await _simulate_qa_turn(server._store, conv_b, "default", "hi B", "hello B", data_dir_b)
+        await _simulate_qa_turn(server._store, conv_b, "default", "hi B", "hello B", data_dir_b, "default")
 
         # Verify workspace B transcript exists and A's is not in B
         assert (data_dir_b / ".modex" / "sessions" / "default" / f"{sid_b}.jsonl").exists()
@@ -219,20 +216,17 @@ async def test_pool_and_workspace_filter_combined() -> None:
     data_dir_a.mkdir(parents=True, exist_ok=True)
     data_dir_b.mkdir(parents=True, exist_ok=True)
 
-    server, _ = _make_server(data_dir_a)
+    server, _, _ = _make_server(data_dir_a)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
-        # coder pool's main agent is `orchestrator`; session_id suffix is the
-        # agent name, so sid_a ends with `.orchestrator`. The transcript lands
-        # under the `coder/` pool directory via agent_pool_map routing.
         resp = await client.post("/api/sessions", json={"pool": "coder"})
         assert resp.status == 200
         coder_a = await resp.json()
         sid_a: str = coder_a["session_id"]
         conv_a = sid_a.split(".")[0]
-        await _simulate_qa_turn(server._store, conv_a, "orchestrator", "hi", "hello", data_dir_a)
+        await _simulate_qa_turn(server._store, conv_a, "orchestrator", "hi", "hello", data_dir_a, "coder")
 
         # Switch to workspace B (route this turn's writes to data_dir_b).
         resp = await client.post("/api/sessions", json={"pool": "default"})
@@ -240,7 +234,7 @@ async def test_pool_and_workspace_filter_combined() -> None:
         main_b = await resp.json()
         sid_b: str = main_b["session_id"]
         conv_b = sid_b.split(".")[0]
-        await _simulate_qa_turn(server._store, conv_b, "default", "hi", "hello", data_dir_b)
+        await _simulate_qa_turn(server._store, conv_b, "default", "hi", "hello", data_dir_b, "default")
 
         # Verify physical isolation: each session is in its workspace dir.
         # Pool dir is `coder` (pool name); filename suffix is `orchestrator` (agent name).
@@ -256,7 +250,7 @@ async def test_pool_and_workspace_filter_combined() -> None:
 async def test_sessions_list_includes_updated_at() -> None:
     """GET /api/sessions returns an updated_at timestamp for each session."""
     data_dir = Path(tempfile.mkdtemp())
-    server, _ = _make_server(data_dir)
+    server, _, _ = _make_server(data_dir)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -266,7 +260,7 @@ async def test_sessions_list_includes_updated_at() -> None:
         session = await resp.json()
         sid: str = session["session_id"]
         conv = sid.split(".")[0]
-        await _simulate_qa_turn(server._store, conv, "default", "hi", "hello", data_dir)
+        await _simulate_qa_turn(server._store, conv, "default", "hi", "hello", data_dir, "default")
 
         resp = await client.get("/api/sessions")
         assert resp.status == 200

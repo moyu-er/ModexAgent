@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import os as _os
 from pathlib import Path
 
 import pytest
-
-import os as _os
-
 from bot.service.session_store import WorkspacePoolSessionStore
-from modex_agent.core.session_id import SessionInfo, SessionIdFactory
+
+from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.core.session_store import LocalFileSessionStore
 
 
@@ -24,7 +23,7 @@ def _pool_of(s: SessionInfo) -> str:
 
 async def test_save_writes_under_pool_dir(
     tmp_path: Path, factory: SessionIdFactory
-):
+) -> None:
     """Save writes to ``<root>/<pool>/<safe_id>.json``."""
     store = WorkspacePoolSessionStore(tmp_path, pool_resolver=_pool_of)
     session = factory.create(agent_name="main", metadata={"pool": "coding"})
@@ -47,7 +46,7 @@ async def test_save_writes_under_pool_dir(
 
 async def test_different_pools_land_in_different_dirs(
     tmp_path: Path, factory: SessionIdFactory
-):
+) -> None:
     """Main and coding pool sessions go to separate directories."""
     store = WorkspacePoolSessionStore(tmp_path, pool_resolver=_pool_of)
     main_s = factory.create(agent_name="main")
@@ -61,7 +60,7 @@ async def test_different_pools_land_in_different_dirs(
     assert len(listed) == 2
 
 
-async def test_delete_removes_file(tmp_path: Path, factory: SessionIdFactory):
+async def test_delete_removes_file(tmp_path: Path, factory: SessionIdFactory) -> None:
     store = WorkspacePoolSessionStore(tmp_path, pool_resolver=_pool_of)
     session = factory.create(agent_name="main")
     await store.save(session)
@@ -72,7 +71,7 @@ async def test_delete_removes_file(tmp_path: Path, factory: SessionIdFactory):
 
 async def test_list_and_children(
     tmp_path: Path, factory: SessionIdFactory
-):
+) -> None:
     store = WorkspacePoolSessionStore(tmp_path, pool_resolver=_pool_of)
     parent = factory.create(agent_name="main")
     child = factory.create(agent_name="reviewer", parent_session_id=parent)
@@ -92,7 +91,7 @@ async def test_list_and_children(
 
 async def test_pool_save_preserves_existing_record_if_replace_fails(
     tmp_path: Path, factory: SessionIdFactory, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     """If the final atomic replace fails, the existing record stays intact.
 
     Simulates a crash between writing the temp file and replacing the target.
@@ -122,7 +121,7 @@ async def test_pool_save_preserves_existing_record_if_replace_fails(
 
 async def test_base_save_preserves_existing_record_if_replace_fails(
     tmp_path: Path, factory: SessionIdFactory, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     """Same atomicity guarantee for the base LocalFileSessionStore."""
     store = LocalFileSessionStore(tmp_path)
     session = factory.create(agent_name="main")
@@ -151,7 +150,7 @@ def _raise_runtime_error(*args: object, **kwargs: object) -> None:
 
 async def test_delete_sessions_by_prefix_removes_conversation_index(
     tmp_path: Path, factory: SessionIdFactory
-):
+) -> None:
     """Deleting a conversation's prefix removes all its index records.
 
     A conversation owns the main session plus every subagent invocation
@@ -185,7 +184,7 @@ async def test_delete_sessions_by_prefix_removes_conversation_index(
 
 async def test_delete_sessions_by_prefix_unknown_is_noop(
     tmp_path: Path, factory: SessionIdFactory
-):
+) -> None:
     store = WorkspacePoolSessionStore(tmp_path, pool_resolver=_pool_of)
     session = factory.create(agent_name="main")
     await store.save(session)

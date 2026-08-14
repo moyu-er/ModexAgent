@@ -8,8 +8,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from bot.scope import BotRecordScope
-from bot.service.external_strategy import build_external_env_spec
 from bot.service.builders import build_inbox
+from bot.service.external_strategy import build_external_env_spec
 
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxMQ

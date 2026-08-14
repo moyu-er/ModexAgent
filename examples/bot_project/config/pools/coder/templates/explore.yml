@@ -7,7 +7,9 @@ description: >-
   when parallel analysis of independent questions is valuable.
 max_steps: 60
 tool_preset: read_only
+tool_supplements:
+- ast_grep
+- todo
 context_mode: fresh
-system_prompt_mode: append
 roles:
 - scout

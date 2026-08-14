@@ -10,8 +10,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 _BOT_PROJECT = Path(__file__).resolve().parents[3]
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
@@ -23,6 +21,7 @@ from bot.config.mcp_registry import (
     upsert_server,
     write_registry,
 )
+
 from modex_agent.ioc.configs.mcp import MCPServerEntry
 
 

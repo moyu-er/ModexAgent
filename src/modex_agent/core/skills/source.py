@@ -135,10 +135,7 @@ class FileSkillSource(SkillSource):
                     text = path.read_text(encoding="utf-8")
                     frontmatter, _ = _parse_frontmatter(text)
                     # Default name: directory name in directory layout, filename stem in flat layout
-                    if self._layout == "directory":
-                        default_name = path.parent.name
-                    else:
-                        default_name = path.stem
+                    default_name = path.parent.name if self._layout == "directory" else path.stem
                     raw_name = frontmatter.get("name", default_name)
                     meta = SkillMetadata.from_dict(frontmatter)
 

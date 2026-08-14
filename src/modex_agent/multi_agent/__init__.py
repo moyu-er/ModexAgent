@@ -16,7 +16,11 @@ from modex_agent.multi_agent.pool_router import (
     LocalFilePoolRoutingStore as PoolSessionStore,
 )
 from modex_agent.multi_agent.registry import AgentRegistry
-from modex_agent.multi_agent.tools import SendToAgentTool, TaskDispatchTool
+from modex_agent.multi_agent.tools import (
+    SendToAgentTool,
+    SendToPeerTool,
+    TaskDispatchTool,
+)
 
 __all__ = [
     "AgentDescriptor",
@@ -32,6 +36,7 @@ __all__ = [
     "PoolRoutingStore",
     "PoolSessionStore",
     "SendToAgentTool",
+    "SendToPeerTool",
     "SessionRetentionPolicy",
     "TaskDispatchTool",
 ]

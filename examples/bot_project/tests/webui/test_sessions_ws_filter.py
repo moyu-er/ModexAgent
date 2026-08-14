@@ -12,12 +12,13 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.session_store import WorkspacePoolSessionStore
-from bot.service.web_ui_service import WebUIService
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import AssistantTurnEvent, UserMessageEvent
 from bot.webui.server import WebUIServer
-from modex_agent.workspace.paths import WorkspacePaths
+
 from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.multi_agent.pool_router import PoolSessionStore
+from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
 
 
@@ -26,31 +27,16 @@ def _real_project_dir() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
 
-def _real_agent_pool_map() -> dict[str, str]:
-    """Build the production agent->pool mapping from the loaded AppConfig."""
-    from modex_agent.ioc.configs.app import AppConfig
-
-    project_dir = _real_project_dir()
-
-    class _Source:
-        _project_dir = project_dir
-        _app_config = AppConfig.from_yaml(project_dir / "config" / "bot_config.yml")
-
-    return WebUIService._build_agent_pool_map(_Source())
-
-
 def _make_server(
     data_dir: Path,
-) -> tuple[WebUIServer, WebSocketInputAdapter]:
+) -> tuple[WebUIServer, WebSocketInputAdapter, PoolSessionStore]:
     """Create a fully wired WebUIServer with the real production pool map.
 
     ``data_dir`` is the workspace ROOT whose ``.modex/sessions`` becomes the
     server's ``home_sessions_dir`` (read when no ``?ws=`` is given).
     """
     inp = WebSocketInputAdapter()
-    mapping = _real_agent_pool_map()
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    store.set_agent_pool_map(mapping)
     home_sessions_dir = WorkspacePaths(root=data_dir / ".modex").sessions_dir
     server = WebUIServer(
         inp,
@@ -62,16 +48,18 @@ def _make_server(
     server.set_workspace_index(store)
     server.set_data_dir_name(".modex")
     server.set_pool_agent_names(["default", "coding"])
-    server.set_agent_pool_map(mapping)
-    server.set_agent_resolver(lambda pool_name: mapping.get(pool_name, pool_name))
+    server.set_agent_resolver(lambda pool_name: pool_name)
+    routing_store = PoolSessionStore(data_dir=data_dir)
+    server.set_pool_switch_callback(routing_store.set_pool)
+    server.set_pool_resolver(routing_store.get_pool)
     # Inject session store + factory so POST /api/sessions auto-saves.
     session_store = WorkspacePoolSessionStore(
         base_dir=data_dir,
-        pool_resolver=lambda s: mapping.get(s.agent_name, "default"),
+        pool_resolver=lambda s: "default",
     )
     server.set_session_store(session_store)
     server.set_session_factory(SessionIdFactory())
-    return server, inp
+    return server, inp, routing_store
 
 
 async def _simulate_qa_turn(
@@ -95,6 +83,7 @@ async def _simulate_qa_turn(
                 agent_name=agent_name,
                 content=user_content,
             ),
+            pool="default",
         )
         await store.append(
             session_id,
@@ -105,6 +94,7 @@ async def _simulate_qa_turn(
                 blocks=[{"type": "text", "text": assistant_content}],
                 latency_ms=0,
             ),
+            pool="default",
         )
 
 
@@ -120,7 +110,9 @@ async def test_sessions_filter_by_workspace() -> None:
     # ``home_sessions_dir`` base, so queries without ``?ws=`` find nothing.
     data_dir = Path(tempfile.mkdtemp())
 
-    server2, _ = _make_server(data_dir)
+    server2, _, routing_store = _make_server(data_dir)
+    routing_store.set_pool("conv-a", "default")
+    routing_store.set_pool("conv-b", "default")
     client2 = TestClient(TestServer(server2.app))
     await client2.start_server()
 
@@ -180,7 +172,8 @@ async def test_sessions_filter_by_workspace_with_relative_path() -> None:
     ws_ctrl.current = home
 
     # Pass the workspace ROOT so the server's home is home/.modex/sessions.
-    server, _ = _make_server(home)
+    server, _, routing_store = _make_server(home)
+    routing_store.set_pool("conv-sub", "default")
     server.set_workspace_control(ws_ctrl)
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -188,7 +181,6 @@ async def test_sessions_filter_by_workspace_with_relative_path() -> None:
     try:
         # Write a transcript in the sub workspace; route via ctxvar binding.
         store_sub = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-        store_sub.set_agent_pool_map(_real_agent_pool_map())
         await _simulate_qa_turn(
             store_sub, "conv-sub", "default", "hi sub", "hello sub", root=sub
         )

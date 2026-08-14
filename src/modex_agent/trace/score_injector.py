@@ -6,15 +6,13 @@ Posts ``score-create`` events to the Langfuse ingestion API
 Langfuse trace.
 
 Fire-and-forget by design: every failure path is logged as a warning and
-swallowed.  The injector is called from
-:class:`~modex_agent.trace.hooks.TraceCollectorHook.finally_turn` after the
-root span has been emitted; a score-posting failure must never break the turn.
+swallowed. A score-posting failure must never break the turn.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -40,8 +38,7 @@ class L2ScoreInjector:
     """Inject L2 heuristic scores into Langfuse via the ingestion API.
 
     Fire-and-forget: failures are logged as warnings and never propagated.
-    Called from :meth:`TraceCollectorHook.finally_turn` after the root span
-    is emitted.
+    Called after the root span is emitted.
     """
 
     def __init__(self, *, ingestion_url: str, headers: dict[str, str]) -> None:
@@ -82,11 +79,7 @@ class L2ScoreInjector:
                     headers=self._headers,
                 )
         except Exception:
-            logger.warning(
-                "L2ScoreInjector: failed to POST scores to Langfuse (trace_id=%s)",
-                trace_id,
-                exc_info=True,
-            )
+            logger.warning("L2ScoreInjector: failed to POST scores to Langfuse (trace_id=%s)", trace_id)
             return
 
         if response.status_code != 207:
@@ -138,7 +131,7 @@ def _build_score_batch(
         "trajectory_compactness": scores.trajectory_compactness,
         "overall": overall_score(scores),
     }
-    timestamp = datetime.now(timezone.utc).isoformat()
+    timestamp = datetime.now(UTC).isoformat()
     batch: list[dict[str, Any]] = []
     for name in _SCORE_NAMES:
         body: dict[str, Any] = {

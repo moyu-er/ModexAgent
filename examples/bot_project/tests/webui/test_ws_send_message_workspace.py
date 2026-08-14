@@ -12,8 +12,8 @@ from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import _unwrap_envelope
 from bot.webui.server import WebUIServer
+
 from modex_agent.workspace.paths import WorkspacePaths
-from modex_agent.workspace.runtime import bind_workspace_root
 
 
 @pytest.mark.asyncio

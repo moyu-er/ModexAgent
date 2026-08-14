@@ -27,27 +27,34 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from modex_agent.commands.models import CommandHandlingResult, CommandProcessor
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.agent import Agent, AgentContext
     from modex_agent.core.context import ContextManager, ContextState
     from modex_agent.core.emitter import ContentEmitter
+    from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.runtime_context import RuntimeContextManager
+    from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.core.types import InputMessage
     from modex_agent.hook.runner import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
+    from modex_agent.media.media_utils import MediaBlock, MediaProcessor
     from modex_agent.memory.context_governance import ContextGovernance
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.multi_agent.router import RouteResult
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        SessionBindingStore,
+    )
+    from modex_agent.pipeline.adapters import OutputAdapter
+    from modex_agent.pipeline.turn_context_config import (
+        TurnContextConfigPipeline,
+        TurnContextDescriptor,
+    )
+    from modex_agent.runtime.models import TurnSnapshot
     from modex_agent.runtime.store import TurnStateStore
     from modex_agent.utils.context_builder import MultiAgentContextBuilder
-    from modex_agent.media.media_utils import MediaBlock, MediaProcessor
-
-    from modex_agent.commands.models import CommandHandlingResult, CommandProcessor
-    from modex_agent.core.skills import SkillManager
-    from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-    from modex_agent.pipeline.adapters import OutputAdapter
-    from modex_agent.runtime.models import TurnSnapshot
+    from modex_graph.context import GraphContext
 
 from modex_agent.approval.response import parse_input_command
 from modex_agent.approval.types import ApprovalAction
@@ -169,6 +176,9 @@ class TurnContextBuilder:
         self._output_adapter = output_adapter
         self._turn_store = turn_store
         self._registry = registry
+        self._graph_context_resolver: Callable[[int], GraphContext[Any] | None] | None = None
+        self._config_pipeline: TurnContextConfigPipeline | None = None
+        self._session_binding_store: SessionBindingStore | None = None
 
     # ── Post-construction wiring (typed setters) ─────────────────────────
     #
@@ -210,6 +220,32 @@ class TurnContextBuilder:
     @emitter_factory.setter
     def emitter_factory(self, value: Callable[..., ContentEmitter[Any]] | None) -> None:
         self._emitter_factory = value
+
+    @property
+    def graph_context_resolver(self) -> Callable[[int], GraphContext[Any] | None] | None:
+        return self._graph_context_resolver
+
+    @graph_context_resolver.setter
+    def graph_context_resolver(
+        self, value: Callable[[int], GraphContext[Any] | None] | None
+    ) -> None:
+        self._graph_context_resolver = value
+
+    @property
+    def config_pipeline(self) -> TurnContextConfigPipeline | None:
+        return self._config_pipeline
+
+    @config_pipeline.setter
+    def config_pipeline(self, value: TurnContextConfigPipeline | None) -> None:
+        self._config_pipeline = value
+
+    @property
+    def session_binding_store(self) -> SessionBindingStore | None:
+        return self._session_binding_store
+
+    @session_binding_store.setter
+    def session_binding_store(self, value: SessionBindingStore | None) -> None:
+        self._session_binding_store = value
 
     async def build_turn_request(
         self,
@@ -405,6 +441,7 @@ class TurnContextBuilder:
         pool_data: PoolDataSnapshot | None = None,
         inline_attachments: Sequence[Attachment] | None = None,
         workspace: Path | None = None,
+        turn_descriptor: TurnContextDescriptor | None = None,
     ) -> tuple[AgentContext, ContentEmitter]:
         """Build AgentContext and emitter for the turn.
 
@@ -499,6 +536,7 @@ class TurnContextBuilder:
             )
             agent_context.runtime = AgentRuntime(services=services, state=react_state)
             agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
+            agent_context.runtime.state.custom[TurnCustomKey.MAX_TURNS] = 3
         elif governance is not None:
             # Lightweight runtime for governance-only mode (no turn_store)
             from modex_agent.agents.react.state import ReActTurnState
@@ -534,6 +572,15 @@ class TurnContextBuilder:
                 else []
             )
             agent_context.runtime.state.custom[TurnCustomKey.INLINE_ATTACHMENTS] = images
+            if input_metadata is not None:
+                trace_id = input_metadata.get("trace_id")
+                if trace_id is not None:
+                    agent_context.runtime.state.custom[TurnCustomKey.TRACE_ID] = str(trace_id)
+                parent_span_id = input_metadata.get("parent_span_id")
+                if parent_span_id is not None:
+                    agent_context.runtime.state.custom[TurnCustomKey.PARENT_SPAN_ID] = str(
+                        parent_span_id
+                    )
 
         # Emitter selection
         if self._emitter_factory:
@@ -544,5 +591,8 @@ class TurnContextBuilder:
                 session_id=session.session_id,
                 send_timeout=self._safety.turn.output_send_timeout_seconds,
             )
+
+        if turn_descriptor is not None and self._config_pipeline is not None:
+            self._config_pipeline.configure(agent_context, turn_descriptor)
 
         return agent_context, emitter

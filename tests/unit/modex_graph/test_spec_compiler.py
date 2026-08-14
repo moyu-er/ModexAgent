@@ -140,9 +140,22 @@ class TestCompileValidSpec:
             ],
         )
         compiled = compiler.compile(spec)
-        assert set(compiled.nodes.keys()) == {"a", "b", "c"}
-        for node in compiled.nodes.values():
+        assert set(compiled.nodes.keys()) == {GraphNode.START, "a", "b", "c", GraphNode.END}
+        for node in (compiled.nodes["a"], compiled.nodes["b"], compiled.nodes["c"]):
             assert isinstance(node, _NoOpNode)
+
+    def test_empty_graph_materializes_start_and_end_nodes(self) -> None:
+        nodes, states = _registries()
+        compiler = GraphSpecCompiler(nodes, states)
+        spec = _spec(
+            nodes=[],
+            edges=[EdgeSpec(source=GraphNode.START, target=GraphNode.END)],
+        )
+
+        compiled = compiler.compile(spec)
+
+        assert set(compiled.nodes) == {GraphNode.START, GraphNode.END}
+        assert compiled.entry_node == GraphNode.START
 
     def test_compiled_graph_has_correct_edges(self) -> None:
         nodes, states = _registries()
@@ -241,7 +254,7 @@ class TestCompileValidSpec:
             ],
         )
         compiled = compiler.compile(spec)
-        assert compiled.entry_node == "llm"
+        assert compiled.entry_node == GraphNode.START
 
 
 class TestUnregisteredNodeType:
@@ -310,6 +323,21 @@ class TestStateClassResolution:
 
 
 class TestTopologyErrorPropagation:
+    def test_validate_runs_topology_check_without_compiling(self) -> None:
+        nodes = NodeRegistry()
+        recorder = _RecordingValidator()
+        compiler = GraphSpecCompiler(nodes, {}, validator=recorder)
+        spec = _spec(
+            nodes=[],
+            edges=[EdgeSpec(source=GraphNode.START, target=GraphNode.END)],
+            state_class="unregistered",
+        )
+
+        result = compiler.validate(spec)
+
+        assert result is None
+        assert recorder.calls == [spec]
+
     def test_topology_error_propagates_from_validator(self) -> None:
         nodes, states = _registries()
         forced = TopologyError("forced topology failure")

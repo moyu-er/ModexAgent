@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import tempfile
 from pathlib import Path
 
@@ -11,6 +10,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.server import WebUIServer
+
 from modex_agent.core.types import TodoStatus
 from modex_agent.runtime.store import JsonFileTodoStore, TodoItem
 from modex_agent.workspace.paths import WorkspacePaths
@@ -29,7 +29,6 @@ async def test_get_todos_returns_active_items_only() -> None:
         )
         server.set_workspace_index(store)
         server.set_data_dir_name(".modex")
-        server.set_agent_pool_map({"main": "main"})
 
         session_id = "abc123.main"
         todo_dir = workspace_root / ".modex" / "runtime_state" / "main" / "todos"
@@ -71,7 +70,6 @@ async def test_get_todos_empty_when_no_store() -> None:
         )
         server.set_workspace_index(store)
         server.set_data_dir_name(".modex")
-        server.set_agent_pool_map({"main": "main"})
 
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -97,7 +95,6 @@ async def test_get_todos_excludes_completed_and_cancelled() -> None:
         )
         server.set_workspace_index(store)
         server.set_data_dir_name(".modex")
-        server.set_agent_pool_map({"main": "main"})
 
         session_id = "abc123.main"
         todo_dir = workspace_root / ".modex" / "runtime_state" / "main" / "todos"

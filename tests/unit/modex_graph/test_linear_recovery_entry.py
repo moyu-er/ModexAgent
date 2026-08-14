@@ -63,9 +63,9 @@ class FailAfterNodeRuntime(GraphRuntime):
 
 
 class FailCompleteOnceNodeStateStore(InMemoryNodeStateStore):
-    def __init__(self, graph_instance_id: int, node_name: str) -> None:
+    def __init__(self, graph_instance_id: int, node_id: str) -> None:
         super().__init__(graph_instance_id)
-        self._node_name = node_name
+        self._node_id = node_id
         self._failed = False
 
     def complete_invocation(
@@ -73,9 +73,9 @@ class FailCompleteOnceNodeStateStore(InMemoryNodeStateStore):
         invocation: InvocationContext,
         state: dict[str, Any],
     ) -> None:
-        if invocation.node_name == self._node_name and not self._failed:
+        if invocation.node_id == self._node_id and not self._failed:
             self._failed = True
-            raise RuntimeError(f"complete failed for {invocation.node_name}")
+            raise RuntimeError(f"complete failed for {invocation.node_id}")
         super().complete_invocation(invocation, state)
 
 
@@ -165,7 +165,9 @@ async def test_recovery_starts_after_completed_linear_prefix() -> None:
     graph.add_edge("b", "c")
     graph.add_edge("c", GraphNode.END)
     compiled = graph.compile()
-    coordinator = make_persistent_coordinator(3601, ("a", "b", "c"))
+    coordinator = make_persistent_coordinator(
+        3601, tuple(node.node_id for node in compiled.nodes.values())
+    )
 
     with pytest.raises(RuntimeError, match="failed after b"):
         await LinearScheduler(compiled).run_async(
@@ -188,14 +190,16 @@ async def test_pending_deliver_recovers_target_with_no_invocation() -> None:
     graph.add_edge("a", "b")
     graph.add_edge("b", GraphNode.END)
     compiled = graph.compile()
-    coordinator = make_persistent_coordinator(3602, ("a", "b"))
+    coordinator = make_persistent_coordinator(
+        3602, tuple(node.node_id for node in compiled.nodes.values())
+    )
 
     with pytest.raises(RuntimeError, match="failed after a"):
         await LinearScheduler(compiled).run_async(
             make_linear_context(coordinator, runtime=FailAfterNodeRuntime("a"))
         )
 
-    assert coordinator.node_state_store.load_latest("b") is None
+    assert coordinator.node_state_store.load_latest(compiled.nodes["b"].node_id) is None
     await LinearScheduler(compiled).run_async(make_linear_context(coordinator))
 
     assert executions == ["a", "b"]
@@ -212,8 +216,10 @@ async def test_pending_deliver_is_witness_for_disconnected_target() -> None:
     graph.add_edge("a", GraphNode.END)
     graph.add_edge("b", GraphNode.END)
     compiled = graph.compile()
-    coordinator = make_persistent_coordinator(3606, ("a", "b"))
-    coordinator.route_deliver("b", "external", "external", 0)
+    coordinator = make_persistent_coordinator(
+        3606, tuple(node.node_id for node in compiled.nodes.values())
+    )
+    coordinator.route_deliver(compiled.nodes["b"].node_id, "external", "external", 0)
 
     await LinearScheduler(compiled).run_async(make_linear_context(coordinator))
 
@@ -231,17 +237,17 @@ async def test_submit_persists_deliver_before_completion_failure() -> None:
     graph.add_edge("a", "b")
     graph.add_edge("b", GraphNode.END)
     compiled = graph.compile()
-    store = FailCompleteOnceNodeStateStore(graph_instance_id, "a")
+    store = FailCompleteOnceNodeStateStore(graph_instance_id, compiled.nodes["a"].node_id)
     coordinator = make_persistent_coordinator(
         graph_instance_id,
-        ("a", "b"),
+        tuple(node.node_id for node in compiled.nodes.values()),
         node_state_store=store,
     )
 
-    with pytest.raises(RuntimeError, match="complete failed for a"):
+    with pytest.raises(RuntimeError, match="complete failed for node_"):
         await LinearScheduler(compiled).run_async(make_linear_context(coordinator))
 
-    pending = coordinator.collect_consumable_delivers("b", 0)
+    pending = coordinator.collect_consumable_delivers(compiled.nodes["b"].node_id, 0)
     assert [record.content for record in pending] == ["persisted"]
     assert all(record.status == DeliverConsumptionStatus.PENDING for record in pending)
 
@@ -260,11 +266,13 @@ async def test_recovery_delivers_old_and_retried_payload_at_least_once() -> None
     compiled = graph.compile()
     coordinator = make_persistent_coordinator(
         graph_instance_id,
-        ("a", "b"),
-        node_state_store=FailCompleteOnceNodeStateStore(graph_instance_id, "a"),
+        tuple(node.node_id for node in compiled.nodes.values()),
+        node_state_store=FailCompleteOnceNodeStateStore(
+            graph_instance_id, compiled.nodes["a"].node_id
+        ),
     )
 
-    with pytest.raises(RuntimeError, match="complete failed for a"):
+    with pytest.raises(RuntimeError, match="complete failed for node_"):
         await LinearScheduler(compiled).run_async(make_linear_context(coordinator))
 
     await LinearScheduler(compiled).run_async(make_linear_context(coordinator))
@@ -286,7 +294,9 @@ async def test_ring_recovery_uses_latest_non_terminal_version_head() -> None:
     graph.add_edge("a", GraphNode.END)
     graph.add_edge("b", GraphNode.END)
     compiled = graph.compile(cycle_detection="off")
-    coordinator = make_persistent_coordinator(3605, ("a", "b"))
+    coordinator = make_persistent_coordinator(
+        3605, tuple(node.node_id for node in compiled.nodes.values())
+    )
 
     with pytest.raises(RuntimeError, match="b crashed"):
         await LinearScheduler(compiled).run_async(make_linear_context(coordinator))
@@ -295,7 +305,7 @@ async def test_ring_recovery_uses_latest_non_terminal_version_head() -> None:
     recovered = make_linear_context(coordinator, runtime=recovery_runtime)
     await LinearScheduler(compiled).run_async(recovered)
 
-    assert recovery_runtime.before_calls == ["b", "a"]
+    assert recovery_runtime.before_calls == ["b", "a", GraphNode.END]
     assert executions == ["a", "b", "a", "b", "b", "a"]
     assert recovered.state.count == 5
 

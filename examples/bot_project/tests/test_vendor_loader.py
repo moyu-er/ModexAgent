@@ -9,7 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from bot.memory import vendor_loader as vl
 from bot.memory.vendor_loader import (
     EXPECTED_SHA256,

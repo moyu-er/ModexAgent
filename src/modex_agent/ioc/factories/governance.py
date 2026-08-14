@@ -12,13 +12,16 @@ from modex_agent.ioc.configs.memory import GovernanceConfig, MemoryConfig
 
 def create_governance(
     cfg: MemoryConfig | None,
+    token_estimator: Any | None = None,
 ) -> Any | None:
     """Build ContextGovernance chain from IOC config.
 
-    Chain order: lossy_compaction → tool_chain_repair
+    Chain order: context_budget → tool_chain_repair
 
     Args:
         cfg: Memory configuration (governance lives inside it).
+        token_estimator: Token estimator to inject into ContextBudgetGovernance.
+            When ``None`` the governance uses ``CharTokenEstimator`` internally.
 
     Returns:
         CompositeGovernance or None if disabled.
@@ -32,27 +35,29 @@ def create_governance(
 
     from modex_agent.memory.context_governance import (
         CompositeGovernance,
-        LossyContentCompactionGovernance,
+        ContextBudgetGovernance,
         ToolChainRepairGovernance,
     )
 
     strategies: list[Any] = []
 
-    # Lossy compaction — truncates oversized content and tool-call arguments
-    if _gov.lossy_compaction is not None:
-        lc = _gov.lossy_compaction
+    # Context budget governance — token-window tool-result pruning
+    if _gov.budget is not None:
+        b = _gov.budget
+        max_ctx = cfg.session.max_context_tokens if cfg.session else 200_000
         strategies.append(
-            LossyContentCompactionGovernance(
-                tool_result_head_chars=lc.tool_result_head_chars,
-                assistant_head_chars=lc.assistant_head_chars,
-                agent_head_chars=lc.agent_head_chars,
-                user_head_chars=lc.user_head_chars,
-                tool_args_head_chars=lc.tool_args_head_chars,
-                compact_range_count=lc.compact_range_count,
+            ContextBudgetGovernance(
+                max_context_tokens=max_ctx,
+                token_estimator=token_estimator,
+                governance_ratio=b.governance_ratio,
+                protect_tokens=b.protect_tokens,
+                min_gain_tokens=b.min_gain_tokens,
+                keep_recent=b.keep_recent,
+                whitelist_tools=frozenset(b.whitelist_tools) if b.whitelist_tools else None,
             )
         )
 
-    # Tool chain repair runs last (after compaction) so it can
+    # Tool chain repair runs last (after pruning) so it can
     # clean up any structural issues before sending to the LLM.
     strategies.append(ToolChainRepairGovernance())
     return CompositeGovernance(strategies)
@@ -64,17 +69,14 @@ def create_subagent_governance(
     """Build lightweight governance for subagents.
 
     Chain: ToolChainRepair only.
-    No lossy compaction (that's main-agent only).
+    No budget pruning (subagents are short-lived, small context).
     """
     from modex_agent.memory.context_governance import (
         CompositeGovernance,
         ToolChainRepairGovernance,
     )
 
-    if cfg is None or cfg.governance is None:
-        _gov = GovernanceConfig()
-    else:
-        _gov = cfg.governance
+    _gov = GovernanceConfig() if cfg is None or cfg.governance is None else cfg.governance
 
     if not _gov.tool_chain_repair:
         return None

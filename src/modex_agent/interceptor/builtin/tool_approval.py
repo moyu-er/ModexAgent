@@ -69,10 +69,7 @@ class ArgumentMatcher:
         if not paths:
             return True
         base = self._base()  # hoisted — invariant for the duration of this call
-        for raw in paths:
-            if not self._match_any(self._resolve_path(raw, base), allowed_paths):
-                return False
-        return True
+        return all(self._match_any(self._resolve_path(raw, base), allowed_paths) for raw in paths)
 
     def _resolve_path(self, raw: str, base: Path | None = None) -> Path:
         """Resolve *raw* to a real absolute path.
@@ -97,10 +94,7 @@ class ArgumentMatcher:
         ``_allowed_root`` so we don't redo it here.
         """
         resolved = path.resolve(strict=False)
-        for pattern in patterns:
-            if self._matches_pattern(resolved, pattern):
-                return True
-        return False
+        return any(self._matches_pattern(resolved, pattern) for pattern in patterns)
 
     def _matches_pattern(self, path: Path, pattern: str) -> bool:
         stripped = pattern.strip()

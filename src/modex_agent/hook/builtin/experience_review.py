@@ -1,4 +1,4 @@
-"""ExperienceReviewHook — AfterTurn hook that spawns an ExperienceReviewAgent.
+"""ExperienceReviewHook — AfterGraph hook that spawns an ExperienceReviewAgent.
 
 Features:
 - Triggers at "conversation segment completion" (plain assistant turn with
@@ -14,6 +14,7 @@ Features:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import uuid
@@ -33,7 +34,9 @@ from modex_agent.core.experience import (
     validate_experience_md,
 )
 from modex_agent.core.message import ChatMessage
-from modex_agent.hook.abc import AfterTurnHook
+from modex_agent.core.scope import MemoryContext
+from modex_agent.hook.abc import AfterGraphHook
+from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.snapshot import (
     DEFAULT_SNAPSHOT_MAX_CONTENT_LEN,
     DEFAULT_SNAPSHOT_MAX_MESSAGES,
@@ -43,8 +46,8 @@ from modex_agent.memory.snapshot import (
 logger = logging.getLogger(__name__)
 
 
-class ExperienceReviewHook(AfterTurnHook):
-    """AfterTurn hook that spawns an ExperienceReviewAgent.
+class ExperienceReviewHook(AfterGraphHook):
+    """AfterGraph hook that spawns an ExperienceReviewAgent.
 
     Triggers only when the agent finishes a conversational exchange with a
     plain text response (``stop_reason == "completed"``).  The hook keeps
@@ -63,6 +66,7 @@ class ExperienceReviewHook(AfterTurnHook):
     def __init__(
         self,
         review_agent: ExperienceReviewAgent,
+        memory_system: MemorySystem,
         experience_dir: Path | Callable[[], Path],
         meta_store: ExperienceMetaStore,
         min_messages: int = 10,
@@ -71,6 +75,7 @@ class ExperienceReviewHook(AfterTurnHook):
         snapshot_max_content_len: int = DEFAULT_SNAPSHOT_MAX_CONTENT_LEN,
     ) -> None:
         self._agent = review_agent
+        self._memory_system = memory_system
         self._get_dir: Callable[[], Path] = (
             experience_dir if callable(experience_dir) else lambda: experience_dir
         )
@@ -99,7 +104,7 @@ class ExperienceReviewHook(AfterTurnHook):
 
     # -- hook lifecycle --------------------------------------------------
 
-    async def after_turn(
+    async def after_graph(
         self,
         ctx: AgentContext,
         result: AgentResult,
@@ -158,11 +163,17 @@ class ExperienceReviewHook(AfterTurnHook):
         # Gather existing experiences for user message
         existing_xml = await self._build_existing_experiences_xml(exp_dir)
 
-        # Fork mode: pass the raw history (preserving tool_calls / tool_results
-        # / structured content) to the reviewer so its ReAct loop can inspect
-        # the real conversation. Falls back to the text snapshot when history
-        # cannot be converted to ChatMessage objects.
-        fork_messages = self._build_fork_messages(history_list)
+        context = MemoryContext(session_id=str(ctx.session))
+        fork_messages = await self._memory_system.get_full_history(
+            context,
+            limit=self._snapshot_max_messages,
+        )
+        if not fork_messages:
+            logger.info(
+                "ExperienceReviewHook: no messages to review, skipping turn=%s",
+                self._turn_counter,
+            )
+            return
 
         invocation_id = uuid.uuid4().hex
         logger.info(
@@ -230,7 +241,7 @@ class ExperienceReviewHook(AfterTurnHook):
         existing_xml: str,
         invocation_id: str,
         exp_dir: Path,
-        fork_messages: list[ChatMessage] | None = None,
+        fork_messages: list[ChatMessage],
     ) -> None:
         before = self._scan_experience_dir(exp_dir)
         try:
@@ -271,10 +282,8 @@ class ExperienceReviewHook(AfterTurnHook):
                 continue
             md = entry / "EXPERIENCE.md"
             if md.exists():
-                try:
+                with contextlib.suppress(OSError):
                     result[entry.name] = md.stat().st_mtime
-                except OSError:
-                    pass
         return result
 
     async def _cleanup(
@@ -315,10 +324,8 @@ class ExperienceReviewHook(AfterTurnHook):
 
             result = validate_experience_md(text, dir_name=name)
             if not result.valid:
-                try:
+                with contextlib.suppress(OSError):
                     md_path.unlink()
-                except OSError:
-                    pass
                 dir_path = exp_dir / name
                 try:
                     if dir_path.exists() and not any(dir_path.iterdir()):
@@ -351,7 +358,7 @@ class ExperienceReviewHook(AfterTurnHook):
                 run immediately after the agent edits experiences.
         Gate 3: Sufficient conversation history length (>= threshold).
                 During cooldown the effective threshold is doubled.
-        Gate 4: Non-empty snapshot (checked separately in after_turn).
+        Gate 4: Non-empty snapshot (checked separately in after_graph).
         """
         # Gate 1: Plain completion
         if result.stop_reason != StopReason.COMPLETED:
@@ -449,36 +456,6 @@ class ExperienceReviewHook(AfterTurnHook):
                     pass
 
         return False
-
-    def _build_fork_messages(
-        self,
-        history_list: Sequence[Any],
-    ) -> list[ChatMessage] | None:
-        """Convert raw history dicts to ChatMessage objects for fork mode.
-
-        Returns ``None`` when conversion fails (caller falls back to text
-        snapshot). Truncates to ``snapshot_max_messages`` to bound the
-        reviewer's context window.
-        """
-        if not history_list:
-            return None
-        truncated = list(history_list[-self._snapshot_max_messages :])
-        forked: list[ChatMessage] = []
-        for msg in truncated:
-            try:
-                if isinstance(msg, ChatMessage):
-                    forked.append(msg)
-                elif isinstance(msg, dict):
-                    forked.append(ChatMessage.model_validate(msg))
-                else:
-                    return None
-            except Exception:
-                logger.debug(
-                    "Fork message conversion failed — falling back to text snapshot",
-                    exc_info=True,
-                )
-                return None
-        return forked if forked else None
 
     def _capture_snapshot(self, messages: Sequence[Any]) -> str:
         """Extract recent user/assistant messages as a text snapshot."""

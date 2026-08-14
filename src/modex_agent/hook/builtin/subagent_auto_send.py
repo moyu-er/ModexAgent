@@ -1,6 +1,6 @@
 """SubagentAutoSendHook — always-fire result notification for subagents.
 
-Fires on FINALLY_TURN (guaranteed) — no communication tool check needed.
+Fires on FINALLY_GRAPH (guaranteed) — no communication tool check needed.
 Subagents have no communication tools; this hook is the sole notification path.
 
 The notification markdown is consumed **by the parent agent's LLM** (injected as a
@@ -69,26 +69,26 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.constants import ExecutionStrategyKind, StopReason
 from modex_agent.core.message_utils import sanitize_reminder_content
 from modex_agent.core.types import ReminderKind
-from modex_agent.hook.abc import FinallyTurnHook
+from modex_agent.hook.abc import FinallyGraphHook
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.emitter import AgentResult
     from modex_agent.core.message import ChatMessage
-    from modex_agent.multi_agent.bus import AgentMessageBus
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 
 logger = logging.getLogger(__name__)
 
 
-class SubagentAutoSendHook(FinallyTurnHook):
+class SubagentAutoSendHook(FinallyGraphHook):
     """Always-fire result notification for subagents.
 
-    Fires on FINALLY_TURN (success, error, cancel, max_iterations — always).
+    Fires on FINALLY_GRAPH (success, error, cancel, max_iterations — always).
     Sends a markdown result notification to the parent inbox via
     ``build_agent_comm_message`` from ``message_format.py``.
 
@@ -115,7 +115,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
 
     def __init__(
         self,
-        agent_bus: AgentMessageBus | None = None,
+        tree: SessionTreeManager | None = None,
         self_name: str = "",
         parent_name: str = "main",
         runtime_dir: Path | None = None,
@@ -123,7 +123,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
         execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
         max_result_chars: int = NOTIFY_MAX_RESULT_CHARS,
     ) -> None:
-        self._agent_bus = agent_bus
+        self._tree = tree
         self._self_name = self_name
         self._parent_name = parent_name
         self._runtime_dir = runtime_dir or Path(".")
@@ -131,11 +131,14 @@ class SubagentAutoSendHook(FinallyTurnHook):
         self._execution_strategy = execution_strategy
         self._max_result_chars = max_result_chars
 
-    # -- FINALLY_TURN (always fires) ------------------------------------------
+    # -- FINALLY_GRAPH (always fires) ------------------------------------------
 
-    async def finally_turn(self, ctx: AgentContext, result: AgentResult | None) -> None:
-        if self._agent_bus is None:
-            return
+    async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None:
+        if self._tree is None:
+            raise RuntimeError(
+                "SubagentAutoSendHook.tree not wired — "
+                "subagent result notification dropped"
+            )
 
         invocation_id = ctx.session.session_id_prefix
         session_id = str(ctx.session)
@@ -439,8 +442,11 @@ class SubagentAutoSendHook(FinallyTurnHook):
         content: str,
     ) -> None:
         """Send markdown notification to parent agent's inbox."""
-        if self._agent_bus is None:
-            return
+        if self._tree is None:
+            raise RuntimeError(
+                "SubagentAutoSendHook.tree not wired — "
+                "subagent result notification dropped"
+            )
 
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.envelope import AgentMessageEnvelope
@@ -460,6 +466,11 @@ class SubagentAutoSendHook(FinallyTurnHook):
         # Strip think tags from the content (defense in depth)
         content = sanitize_reminder_content(content)
 
+        metadata: dict[str, Any] = {"reminder_kind": ReminderKind.SUBAGENT_RESULT}
+        gid = ctx.graph_instance_id
+        if gid is not None:
+            metadata["graph_instance_id"] = gid
+
         envelope = AgentMessageEnvelope(
             payload={
                 "content": content,
@@ -471,11 +482,11 @@ class SubagentAutoSendHook(FinallyTurnHook):
             session_id=session_id,
             agent_session_id=inbox_key,
             invocation_id=invocation_id,
-            metadata={"reminder_kind": ReminderKind.SUBAGENT_RESULT},
+            metadata=metadata,
         )
 
         try:
-            await self._agent_bus.send(inbox_key, envelope)
+            await self._tree.deliver(inbox_key, envelope)
             logger.info(
                 "SubagentAutoSendHook: notified parent %s (agent=%s, session=%s)",
                 self._parent_name,

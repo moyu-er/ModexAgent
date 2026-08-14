@@ -31,8 +31,8 @@ def deep_merge(
                 continue
             if isinstance(val, Mapping) and isinstance(base.get(key), Mapping):
                 result[key] = deep_merge(
-                    dict(base[key]),  # type: ignore[arg-type, call-overload]
-                    dict(val),  # type: ignore[arg-type, call-overload]
+                    dict(base[key]),
+                    dict(val),
                 )
             else:
                 result[key] = val

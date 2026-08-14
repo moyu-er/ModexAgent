@@ -1,225 +1,144 @@
-# ruff: noqa: ANN401
-"""`AgentNode` + `AgentNodeFactory` — wrap an `Agent` instance as a `Node`.
-
-Ticket 02 (P3.1): the business-layer `Node` that wraps a complete agent
-call. ``AgentNode.execute`` constructs an ``AgentContext`` from the
-``GraphContext`` (via an injected factory function), creates a
-``CollectorEmitter``, calls ``await agent.run(agent_ctx, emitter)``, and
-delivers the ``AgentResult`` to the next node via ``self.deliver``.
-
-Dual-input model (ticket 02 §2):
-
-- Input 1 (trigger): graph state — upstream submit writes. The
-  ``integrated_input`` parameter carries upstream payloads.
-- Input 2 (execution): inbox messages — the agent's own ``InboxFlushHook``
-  pulls these during its react loop. The graph layer is unaware of inbox;
-  ``AgentNode`` does NOT wire it.
-
-Dependency injection (ticket 02 §3):
-
-- ``AgentNode`` holds a reference to an ``Agent`` instance (injected at
-  construction by the bot factory).
-- ``AgentContext`` construction is delegated to an injected factory function
-  ``agent_context_factory: Callable[[GraphContext], AgentContext]``. This
-  keeps ``AgentNode`` generic — not tied to ReAct-specific context assembly.
-
-Pattern mirrors ``FunctionNode`` (the reference ``Node`` implementation).
-"""
+"""Graph node base class for agent-backed scheduling."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
+from abc import ABC, abstractmethod
+from enum import Enum
+from typing import TYPE_CHECKING, Any, assert_never
 
-from pydantic import BaseModel
-
-from modex_agent.core.agent import Agent, AgentContext
-from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.core.events import EmitterConfig
+from modex_agent.core.session_id import SessionIdFactory, SessionInfo
+from modex_agent.core.session_registry import SessionRegistry
+from modex_graph.compiled_graph import CompiledGraph
+from modex_graph.constants import DeliverConsumptionStatus, FrameworkPayloadSource
 from modex_graph.context import GraphContext
-from modex_graph.integration import IntegratedInput
+from modex_graph.integration import IntegratedInput, IntegratedPayload
 from modex_graph.node import Node
-from modex_graph.node_factory import NodeFactory
-from modex_graph.spec import NodeSpec
+from modex_graph.utils.id import generate_id
+
+if TYPE_CHECKING:
+    from modex_graph.persistence.graph_metadata import InvocationContext
+    from modex_graph.persistence.persistence_coordinator import (
+        GraphPersistenceCoordinator,
+    )
 
 
-class CollectorEmitter(ContentEmitter[Any]):
-    """Simple emitter that collects events and buffers content.
+class SessionStrategy(Enum):
+    """Control how an agent node allocates sessions across invocations."""
 
-    Created by ``AgentNode`` to serve as a sink for agent events. The
-    agent's final output is captured in the ``AgentResult`` (returned from
-    ``agent.run()`` and delivered to the next node). This emitter prevents
-    crashes and stores events for inspection / debugging.
+    CACHED = "cached"
+    PER_INVOCATION = "per_invocation"
 
-    Mirrors the buffering pattern of ``_BufferingEmitter`` (test helper)
-    and ``SummarizerTrajectoryEmitter`` — both subclass
-    ``ContentEmitter[Any]`` and accumulate content / events.
+
+class AgentNode(Node[Any], ABC):
+    """Base graph node with agent session lifecycle management.
+
+    Overrides ``_integrate_upstream`` to always filter ``CONSUMED_PENDING``
+    delivers. Agent session memory (ReAct MessageStore) persists upstream
+    input as SYSTEM_REMINDER across invocations — crash recovery must not
+    re-consume already-injected delivers, or the agent's session history
+    would contain duplicate input messages.
+
+    See ADR-0038 decision 5 for the full rationale.
     """
 
-    def __init__(self, config: EmitterConfig | None = None) -> None:
-        super().__init__(config)
-        self.content_buffer: str = ""
-        self.reasoning_buffer: str = ""
-        self.events: list[tuple[Any, Any]] = []
-        self.result: AgentResult | None = None
-        self.error: str | None = None
-
-    async def _on_event(self, event: Any, data: Any = None) -> None:
-        self.events.append((event, data))
-
-    async def emit_delta(self, delta: str) -> None:
-        if delta:
-            self.content_buffer += delta
-
-    async def emit_content(self, full_content: str) -> None:
-        if full_content:
-            self.content_buffer += full_content
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        self.result = result
-
-    async def emit_error(self, error: str) -> None:
-        self.error = error
-
-
-class AgentNode(Node[Any]):
-    """Wraps an ``Agent`` instance as a graph ``Node`` (ticket 02).
-
-    ``execute`` constructs an ``AgentContext`` from the ``GraphContext``
-    via the injected factory, creates a ``CollectorEmitter``, calls
-    ``await agent.run(agent_ctx, emitter)``, and delivers the
-    ``AgentResult`` to ``next_node`` via ``self.deliver``.
-
-    The node is stateless per execution — the agent holds its own state
-    via ``AgentContext``.
-    """
+    DESCRIPTION_NOT_FOUND = "[not found]"
 
     def __init__(
         self,
-        agent: Agent[Any],
-        agent_context_factory: Callable[[GraphContext[Any]], AgentContext],
         *,
-        next_node: str | None = None,
+        session_strategy: SessionStrategy = SessionStrategy.CACHED,
     ) -> None:
-        """Initialize the agent wrapper.
+        self._session_strategy = session_strategy
+        self._session: SessionInfo | None = None
+        self._graph_ref: CompiledGraph[Any] | None = None
 
-        Args:
-            agent: the ``Agent`` instance to wrap. Injected at construction
-                by the bot factory.
-            agent_context_factory: constructs an ``AgentContext`` from the
-                ``GraphContext``. This is business wiring — ``AgentNode``
-                itself does not know how to build ``AgentContext``.
-            next_node: the explicit deliver target. If ``None``,
-                ``_resolve_default_target`` resolves via topology (P3.4b.2).
-        """
-        self._agent = agent
-        self._agent_context_factory = agent_context_factory
-        self._next_node = next_node
+    @abstractmethod
+    def agent_name(self) -> str:
+        """Return the name used to bind this node's agent session."""
+        ...
 
-    async def execute(
+    @abstractmethod
+    async def _resolve_session_registry(self) -> SessionRegistry:
+        ...
+
+    async def _ensure_session(self, ctx: GraphContext[Any]) -> SessionInfo:
+        match self._session_strategy:
+            case SessionStrategy.CACHED:
+                if self._session is None:
+                    self._session = await self._create_session(ctx)
+                return self._session
+            case SessionStrategy.PER_INVOCATION:
+                return await self._create_session(ctx)
+            case unreachable:
+                assert_never(unreachable)
+
+    async def _create_session(self, ctx: GraphContext[Any]) -> SessionInfo:
+        agent_name = self.agent_name()
+        match self._session_strategy:
+            case SessionStrategy.CACHED:
+                external_id = f"{self.node_id}.{agent_name}"
+            case SessionStrategy.PER_INVOCATION:
+                external_id = f"{self.node_id}.{agent_name}.{generate_id()}"
+            case unreachable:
+                assert_never(unreachable)
+        session = SessionIdFactory().create(agent_name, external_id=external_id)
+        registry = await self._resolve_session_registry()
+        await registry.register(session)
+        return session
+
+    def resolve_description(self) -> str:
+        """Return the agent description exposed to graph tooling."""
+        return AgentNode.DESCRIPTION_NOT_FOUND
+
+    def _integrate_upstream(
         self,
-        ctx: GraphContext[Any],
-        integrated_input: IntegratedInput,
-    ) -> None:
-        """Construct context, run the agent, deliver the result."""
-        agent_ctx = self._agent_context_factory(ctx)
-        emitter = CollectorEmitter()
-        agent_ctx.emitter = emitter
-        result = await self._agent.run(agent_ctx, emitter)
-        self.deliver(result, self._next_node, ctx)
-        return None
+        coordinator: GraphPersistenceCoordinator,
+        invocation: InvocationContext,
+        *,
+        resume_snapshot: dict[str, Any] | None,
+    ) -> IntegratedInput:
+        """Collect upstream delivers with agent-memory-aware filtering.
 
+        Agent node session memory persists upstream input across invocations.
+        ``CONSUMED_PENDING`` delivers (consumed by a prior crashed invocation)
+        are always filtered — re-injecting them would duplicate the
+        SYSTEM_REMINDER in the agent's session history.
 
-class AgentNodeFactory(NodeFactory):
-    """Creates ``AgentNode`` from an agent registry (ticket 02).
-
-    Holds a registry of agent instances by name plus their matching
-    ``agent_context_factory`` callables. ``NodeSpec.config =
-    {"agent": "<name>", "next_node": "<target>" (optional)}``.
-
-    Pattern mirrors ``FunctionNodeFactory``: the factory holds a
-    name→resource mapping, validates config in ``create()``, and returns
-    ``None`` from ``config_schema()``.
-    """
-
-    def __init__(
-        self,
-        agents: dict[str, Agent[Any]] | None = None,
-        context_factories: dict[str, Callable[[GraphContext[Any]], AgentContext]] | None = None,
-    ) -> None:
-        """Initialize with optional pre-populated registries.
-
-        Args:
-            agents: initial name→agent mapping. May be ``None`` (empty);
-                use ``register_agent`` to add entries after construction.
-            context_factories: initial name→factory mapping. Must cover the
-                same keys as ``agents``. May be ``None`` (empty).
+        On crash recovery with no new PENDING delivers, this returns an empty
+        ``IntegratedInput``. The agent runs with its existing session memory
+        (which already contains the upstream input from the crashed attempt).
         """
-        self._agents: dict[str, Agent[Any]] = dict(agents) if agents is not None else {}
-        self._context_factories: dict[str, Callable[[GraphContext[Any]], AgentContext]] = (
-            dict(context_factories) if context_factories is not None else {}
+        is_resume = resume_snapshot is not None
+        delivers = coordinator.collect_consumable_delivers(
+            self.node_id, invocation.invocation_id
         )
-
-    def register_agent(
-        self,
-        name: str,
-        agent: Agent[Any],
-        context_factory: Callable[[GraphContext[Any]], AgentContext],
-    ) -> None:
-        """Register an agent + its context factory under ``name``.
-
-        Raises:
-            ValueError: if ``name`` is already registered (no silent override).
-        """
-        if name in self._agents:
-            raise ValueError(
-                f"Agent {name!r} is already registered. Use a different name or unregister first."
+        delivers = [
+            d for d in delivers
+            if d.status == DeliverConsumptionStatus.PENDING
+        ]
+        if delivers:
+            coordinator.mark_delivers_consumed(
+                self.node_id,
+                [r.deliver_id for r in delivers],
+                invocation.invocation_id,
             )
-        self._agents[name] = agent
-        self._context_factories[name] = context_factory
-
-    def unregister_agent(self, name: str) -> None:
-        """Remove ``name`` from both registries. No-op if not registered."""
-        self._agents.pop(name, None)
-        self._context_factories.pop(name, None)
-
-    def create(self, spec: NodeSpec) -> Node[Any]:
-        """Create an ``AgentNode`` from the spec's ``agent`` config key.
-
-        Raises:
-            ValueError: if ``config["agent"]`` is missing, not a string,
-                or not a registered agent name; or if the matching context
-                factory is missing; or if ``next_node`` is not a string.
-        """
-        agent_name = spec.config.get("agent")
-        if not agent_name or not isinstance(agent_name, str):
-            raise ValueError(
-                f"AgentNode requires an 'agent' config key (string). "
-                f"Got: {agent_name!r}. Spec: {spec!r}."
-            )
-        agent = self._agents.get(agent_name)
-        if agent is None:
-            raise ValueError(
-                f"Agent {agent_name!r} is not registered. "
-                f"Registered agents: {sorted(self._agents.keys())}."
-            )
-        context_factory = self._context_factories.get(agent_name)
-        if context_factory is None:
-            raise ValueError(
-                f"No context factory registered for agent {agent_name!r}. "
-                f"Use register_agent(name, agent, context_factory) to "
-                f"register both together."
-            )
-        next_node = spec.config.get("next_node")
-        if next_node is not None and not isinstance(next_node, str):
-            raise ValueError(
-                f"AgentNode 'next_node' config must be a string or None. Got: {next_node!r}."
-            )
-        return AgentNode(agent, context_factory, next_node=next_node)
-
-    def config_schema(self) -> type[BaseModel] | None:
-        """No Pydantic schema — config is validated in ``create()``."""
-        return None
+            payloads = [
+                IntegratedPayload(
+                    source_node=r.source_node_id,
+                    content=r.content,
+                )
+                for r in delivers
+            ]
+        else:
+            payloads = []
+        if is_resume:
+            payloads = [
+                IntegratedPayload(
+                    source_node=FrameworkPayloadSource.RESUME,
+                    content=resume_snapshot,
+                )
+            ] + payloads
+        return self.input_integrator.integrate(payloads)
 
 
-__all__ = ["AgentNode", "AgentNodeFactory", "CollectorEmitter"]
+__all__ = ["AgentNode", "SessionStrategy"]

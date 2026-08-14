@@ -1,12 +1,16 @@
 """Tests for ExperienceReviewHook."""
 import asyncio
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from modex_agent.core.experience.meta import PerFileExperienceMetaStore
+from modex_agent.core.message import ChatMessage
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import MessageRole
 from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
+from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.history import ListMessageHistory
 
 
@@ -15,12 +19,30 @@ def meta_store(tmp_path: Path) -> PerFileExperienceMetaStore:
     return PerFileExperienceMetaStore(tmp_path)
 
 
+def _memory_system() -> MagicMock:
+    memory_system = MagicMock(spec=MemorySystem)
+    memory_system.get_full_history = AsyncMock(
+        return_value=[ChatMessage(role=MessageRole.USER, content="full history")] * 6
+    )
+    return memory_system
+
+
 @pytest.fixture
-def hook(tmp_path: Path, meta_store: PerFileExperienceMetaStore) -> ExperienceReviewHook:
+def memory_system() -> MagicMock:
+    return _memory_system()
+
+
+@pytest.fixture
+def hook(
+    tmp_path: Path,
+    meta_store: PerFileExperienceMetaStore,
+    memory_system: MagicMock,
+) -> ExperienceReviewHook:
     agent = MagicMock()
-    agent.review = MagicMock()
+    agent.review = AsyncMock(return_value=True)
     return ExperienceReviewHook(
         review_agent=agent,
+        memory_system=memory_system,
         experience_dir=tmp_path,
         meta_store=meta_store,
         min_messages=6,
@@ -35,7 +57,7 @@ async def test_hook_skips_when_not_plain_completion(hook: ExperienceReviewHook):
     ctx.history = ListMessageHistory([{"role": "user", "content": "hi"}] * 6)
     result = MagicMock(stop_reason="max_iterations", messages=[])
 
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     assert not hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
 
 
@@ -46,7 +68,7 @@ async def test_hook_skips_when_insufficient_messages(hook: ExperienceReviewHook)
     ctx.history = ListMessageHistory([{"role": "user", "content": "hi"}] * 3)
     result = MagicMock(stop_reason="completed", messages=[])
 
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     assert not hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
 
 
@@ -61,10 +83,30 @@ async def test_hook_triggers_on_plain_turn_with_enough_messages(
         stop_reason="completed",
         messages=[{"role": "assistant", "content": "response"}],
     )
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     # Give the background task a moment
     await asyncio.sleep(0.05)
     assert hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
+
+
+@pytest.mark.asyncio
+async def test_hook_skips_when_full_history_is_empty(
+    hook: ExperienceReviewHook,
+    memory_system: MagicMock,
+) -> None:
+    memory_system.get_full_history = AsyncMock(return_value=[])
+    ctx = MagicMock()
+    ctx.session = SessionInfo.from_str("empty-review.main")
+    ctx.history = ListMessageHistory([{"role": "user", "content": "hello"}] * 6)
+    result = MagicMock(
+        stop_reason="completed",
+        messages=[{"role": "assistant", "content": "response"}],
+    )
+
+    await hook.after_graph(ctx, result)
+    await asyncio.sleep(0)
+
+    assert not hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
 
 
 @pytest.mark.asyncio
@@ -85,7 +127,7 @@ async def test_hook_skips_during_cooldown_with_enough_messages(
     hook._last_exp_tool_turn = 1
 
     # Next turn (turn 2): still in cooldown (3 turns), threshold doubled to 12
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     assert not hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
 
 
@@ -106,7 +148,7 @@ async def test_cooldown_expires_after_enough_turns(
     hook._turn_counter = 4
     hook._last_exp_tool_turn = 1
 
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     await asyncio.sleep(0.05)
     assert hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
 
@@ -132,9 +174,9 @@ async def test_exp_tool_usage_sets_cooldown(
     hook._turn_counter = 5
     hook._last_exp_tool_turn = 0
 
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     assert not hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
-    assert hook._last_exp_tool_turn == 6  # incremented in after_turn then set in _should_review
+    assert hook._last_exp_tool_turn == 6  # incremented in after_graph then set in _should_review
 
 
 @pytest.mark.asyncio
@@ -142,7 +184,7 @@ async def test_hook_skips_when_mutex_busy(hook: ExperienceReviewHook):
     hook._pending.add(asyncio.create_task(asyncio.sleep(0.001)))
     ctx = MagicMock()
     result = MagicMock(stop_reason="completed", messages=[])
-    await hook.after_turn(ctx, result)
+    await hook.after_graph(ctx, result)
     # Mutex busy — review should NOT be called
 
 
@@ -209,6 +251,7 @@ def test_detect_exp_edit_unified_experience_read(hook: ExperienceReviewHook):
 def test_scan_experience_dir(tmp_path: Path, meta_store: PerFileExperienceMetaStore):
     hook = ExperienceReviewHook(
         review_agent=MagicMock(),
+        memory_system=_memory_system(),
         experience_dir=tmp_path,
         meta_store=meta_store,
     )
@@ -231,6 +274,7 @@ def test_scan_experience_dir(tmp_path: Path, meta_store: PerFileExperienceMetaSt
 async def test_cleanup_removes_deleted(tmp_path: Path, meta_store: PerFileExperienceMetaStore):
     hook = ExperienceReviewHook(
         review_agent=MagicMock(),
+        memory_system=_memory_system(),
         experience_dir=tmp_path,
         meta_store=meta_store,
     )
@@ -250,6 +294,7 @@ async def test_cleanup_removes_deleted(tmp_path: Path, meta_store: PerFileExperi
 async def test_cleanup_removes_invalid(tmp_path: Path, meta_store: PerFileExperienceMetaStore):
     hook = ExperienceReviewHook(
         review_agent=MagicMock(),
+        memory_system=_memory_system(),
         experience_dir=tmp_path,
         meta_store=meta_store,
     )
@@ -274,6 +319,7 @@ async def test_cleanup_fixes_dir_name_mismatch(
 ):
     hook = ExperienceReviewHook(
         review_agent=MagicMock(),
+        memory_system=_memory_system(),
         experience_dir=tmp_path,
         meta_store=meta_store,
     )
@@ -304,6 +350,7 @@ async def test_cleanup_skips_name_mismatch_if_target_exists(
 ):
     hook = ExperienceReviewHook(
         review_agent=MagicMock(),
+        memory_system=_memory_system(),
         experience_dir=tmp_path,
         meta_store=meta_store,
     )

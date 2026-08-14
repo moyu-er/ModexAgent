@@ -169,7 +169,6 @@ async def test_non_home_workspace_routes_to_coding_with_shared_store() -> None:
 
         inp = WebSocketInputAdapter()
         store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-        store.set_agent_pool_map({"main": "main", "coding": "coding"})
         server = WebUIServer(
             inp,
             store,
@@ -180,7 +179,6 @@ async def test_non_home_workspace_routes_to_coding_with_shared_store() -> None:
         server.set_workspace_index(store)
         server.set_data_dir_name(".modex")
         server.set_pool_agent_names(["main", "coding"])
-        server.set_agent_pool_map({"main": "main", "coding": "coding"})
         server.set_agent_resolver(
             lambda p: {"main": "main", "coding": "coding"}.get(p, p)
         )
@@ -189,6 +187,7 @@ async def test_non_home_workspace_routes_to_coding_with_shared_store() -> None:
         # Production wiring: callback writes through the home pool_router, which
         # now shares the service-level store.
         server.set_pool_switch_callback(home_resources.pool_router.set_pool)
+        server.set_pool_resolver(home_resources.pool_router._session_store.get_pool)
 
         pipe = build_webui_pipeline(
             skill_registry=_NoSkillRegistry(), bot_model_config=_bot_model_config()
@@ -199,7 +198,6 @@ async def test_non_home_workspace_routes_to_coding_with_shared_store() -> None:
             default_pool="main",
             available_pools=lambda: {"main", "coding"},
             pool_session_store=shared_store,
-            agent_pool_map={"main": "main", "coding": "coding"},
             agent_resolver=lambda p: {"main": "main", "coding": "coding"}.get(p, p),
             transcript_store=store,
             enqueue_message=inp.put_input_message,
@@ -270,7 +268,6 @@ async def test_home_workspace_coding_conversation_routes_to_coding() -> None:
 
         inp = WebSocketInputAdapter()
         store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-        store.set_agent_pool_map({"main": "main", "coding": "coding"})
         server = WebUIServer(
             inp,
             store,
@@ -281,13 +278,13 @@ async def test_home_workspace_coding_conversation_routes_to_coding() -> None:
         server.set_workspace_index(store)
         server.set_data_dir_name(".modex")
         server.set_pool_agent_names(["main", "coding"])
-        server.set_agent_pool_map({"main": "main", "coding": "coding"})
         server.set_agent_resolver(
             lambda p: {"main": "main", "coding": "coding"}.get(p, p)
         )
         server.set_session_factory(SessionIdFactory())
         server.set_session_store(home_resources.session_index_store)
         server.set_pool_switch_callback(home_resources.pool_router.set_pool)
+        server.set_pool_resolver(home_resources.pool_router._session_store.get_pool)
 
         pipe = build_webui_pipeline(
             skill_registry=_NoSkillRegistry(), bot_model_config=_bot_model_config()
@@ -297,7 +294,6 @@ async def test_home_workspace_coding_conversation_routes_to_coding() -> None:
             default_pool="main",
             available_pools=lambda: {"main", "coding"},
             pool_session_store=shared_store,
-            agent_pool_map={"main": "main", "coding": "coding"},
             agent_resolver=lambda p: {"main": "main", "coding": "coding"}.get(p, p),
             transcript_store=store,
             enqueue_message=inp.put_input_message,

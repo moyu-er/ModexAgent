@@ -12,8 +12,8 @@ from modex_agent.memory.core.layers import CoreMemoryManager
 from modex_agent.memory.core.models import CoreMemoryContents
 from modex_agent.memory.core.store_metadata import StoreMetadata
 from modex_agent.memory.core_memory_search import (
-    FullDumpCoreMemoryStrategy,
     CoreMemorySearchStrategy,
+    FullDumpCoreMemoryStrategy,
 )
 from modex_agent.memory.layers.config import CoreMemoryConfig, StorageFactory
 from modex_agent.memory.utils import estimate_text_tokens

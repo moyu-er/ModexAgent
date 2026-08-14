@@ -19,77 +19,43 @@ The shared per-instance flow is:
    would recover state from DB.
 3. Create `GraphInstance(metadata, coordinator)`.
 4. Set status to `RUNNING` (in `GraphInstanceStore`).
-5. Call `engine_factory.create_and_run(instance)` — the factory (wired to
-   `GraphOrchestrator._run_existing_instance` via `_EngineFactoryAdapter`)
-   handles eviction, node registration, registry insertion, and
-   `_execute`. The scheduler's `run_async` calls
-   `coordinator.load_for_recovery → _restore_from_recovery → re-dispatch`.
+5. Call `orchestrator._run_existing_instance(instance)` directly — the
+   orchestrator handles eviction, spec compile, node_id restore, node
+   registration, registry insertion, and `run_instance`. The scheduler's
+   `run_async` calls `bootstrap(ctx, graph)` to derive seed nodes from
+   persisted state.
 
-`GraphEngineFactory` is an ABC (rule 7) because actual engine creation
-depends on business wiring (node registries, state classes, etc.) which
-lives in the bot factory. It is the second consumer of
-`GraphInstance` after `GraphSpecCompiler` — a real seam (rule 6).
+`GraphRecoveryService` holds a direct reference to the
+`GraphOrchestrator` rather than going through an adapter ABC — recovery
+is a single internal call path (rule 15: converge), not a pluggable
+seam. The orchestrator's `_run_existing_instance` performs the 7-step
+re-registration before the scheduler takes over normal scheduling.
 
-Recovery state loading happens INSIDE `ParallelScheduler.run_async`
-(called by the engine factory) — the scheduler calls
-`ctx.coordinator.load_for_recovery()` at the top of `run_async`, which
-returns a `RecoveryContext` with metadata + node_states + rebuilt
-main_state. The scheduler rebuilds its in-memory state from this context.
+Recovery state loading happens INSIDE the scheduler's `run_async` (called
+by `run_instance`) — the scheduler calls `bootstrap(ctx, graph)` at the
+top of `run_async`, which queries the persistence store and derives seed
+nodes (non-terminal invocations + nodes with PENDING delivers). The
+scheduler rebuilds its in-memory state from these seeds.
 """
 
 from __future__ import annotations
 
 import logging
-from abc import ABC, abstractmethod
+from contextlib import suppress
+from typing import TYPE_CHECKING
 
 from modex_graph import (
     CoordinatorFactory,
     GraphInstance,
     GraphInstanceStatus,
     GraphInstanceStore,
-    NullCoordinatorFactory,
+    GraphInterrupt,
 )
 
+if TYPE_CHECKING:
+    from modex_agent.orchestration.graph_orchestrator import GraphOrchestrator
+
 logger = logging.getLogger(__name__)
-
-_NULL_COORDINATOR_FACTORY = NullCoordinatorFactory()
-
-
-class GraphEngineFactory(ABC):
-    """ABC for creating and running a `GraphEngine` for a recovered instance.
-
-    The factory is the business-wiring seam (rule 6: the second consumer
-    of `GraphInstance` after `GraphSpecCompiler` — a real seam, not a
-    hypothetical one). The actual engine creation depends on
-    node registries, state classes, `GraphSpecStore`, etc., which live in
-    the bot factory. The framework provides the contract; the bot
-    factory provides the implementation.
-
-    The implementation must:
-
-    - Load the `GraphSpec` from `instance.spec_id` via `GraphSpecStore`.
-    - Compile it via `GraphSpecCompiler` to get a `CompiledGraph`.
-    - Construct a `GraphEngine` and a `GraphContext` with a coordinator
-      wired to the same persistence stores used in the original run.
-    - Call `engine.run_async(ctx)` so the scheduler's `run_async` calls
-      `coordinator.load_for_recovery()` and restores state.
-    """
-
-    @abstractmethod
-    async def create_and_run(self, instance: GraphInstance) -> None:
-        """Create a `GraphEngine` for the instance and run it.
-
-        Recovery = `run_async` with the existing `graph_instance_id`.
-        The scheduler's `run_async` calls `coordinator.load_for_recovery()`
-        at the top; if prior state exists, state is rebuilt via
-        `_restore_from_recovery` and pending dispatches are re-dispatched.
-        If no prior state exists, fresh start.
-
-        Args:
-            instance: The `GraphInstance` to recover. Its
-                `graph_instance_id` is the persistence key.
-        """
-        ...
 
 
 class GraphRecoveryService:
@@ -108,24 +74,23 @@ class GraphRecoveryService:
     The only difference between the two types is the trigger condition
     and the status filter. The per-instance recovery flow is identical:
     load metadata → reconstruct coordinator → create GraphInstance →
-    set status to `RUNNING` → call `engine_factory.create_and_run`.
+    set status to `RUNNING` → call `orchestrator._run_existing_instance`.
 
-    The engine factory (wired to `GraphOrchestrator._run_existing_instance`
-    via `_EngineFactoryAdapter`) handles eviction, node registration,
-    registry insertion, and `_execute`. Recovery state loading is
-    delegated to `ParallelScheduler.run_async` inside the engine factory's
-    `create_and_run` call, which calls `coordinator.load_for_recovery()`.
+    The orchestrator's `_run_existing_instance` handles eviction, node
+    registration, registry insertion, and `run_instance`. Recovery state
+    loading is delegated to the scheduler's `run_async` inside
+    `run_instance`, which calls `bootstrap(ctx, graph)`.
     """
 
     def __init__(
         self,
         instance_store: GraphInstanceStore,
-        engine_factory: GraphEngineFactory,
+        orchestrator: GraphOrchestrator,
         *,
-        coordinator_factory: CoordinatorFactory = _NULL_COORDINATOR_FACTORY,
+        coordinator_factory: CoordinatorFactory,
     ) -> None:
         self._instance_store = instance_store
-        self._engine_factory = engine_factory
+        self._orchestrator = orchestrator
         self._coordinator_factory = coordinator_factory
 
     async def recover_crashed(self) -> list[int]:
@@ -211,11 +176,11 @@ class GraphRecoveryService:
         coordinator via ``coordinator_factory.create``):
 
         1. Set status to `RUNNING` (in `GraphInstanceStore`).
-        2. Call `engine_factory.create_and_run(instance)` — the factory
-           (wired to ``GraphOrchestrator._run_existing_instance``) handles
-           eviction, node registration, registry insertion, and
-           `_execute`. The engine loads recovery state via
-           `coordinator.load_for_recovery()` and re-dispatches.
+        2. Call `orchestrator._run_existing_instance(instance)` — the
+           orchestrator handles eviction, spec compile, node_id
+           restore, node registration, registry insertion, and
+           `run_instance`. The scheduler loads recovery state via
+           `bootstrap(ctx, graph)` and re-dispatches.
 
         Per-instance failures are isolated: if one instance raises, the
         remaining are still attempted. Failed instances are left in
@@ -226,23 +191,29 @@ class GraphRecoveryService:
         """
         recovered: list[int] = []
         for instance in instances:
-            self._instance_store.update_status(
-                instance.graph_instance_id,
-                GraphInstanceStatus.RUNNING,
-            )
             try:
-                await self._engine_factory.create_and_run(instance)
+                self._instance_store.update_status(
+                    instance.graph_instance_id,
+                    GraphInstanceStatus.RUNNING,
+                )
+                await self._orchestrator._run_existing_instance(instance)
                 recovered.append(instance.graph_instance_id)
+            except GraphInterrupt:
+                raise
             except Exception:
                 logger.exception(
                     "Recovery failed for graph instance %s; "
                     "continuing to next candidate",
                     instance.graph_instance_id,
                 )
+                with suppress(Exception):
+                    self._instance_store.update_status(
+                        instance.graph_instance_id,
+                        GraphInstanceStatus.CRASHED,
+                    )
         return recovered
 
 
 __all__ = [
-    "GraphEngineFactory",
     "GraphRecoveryService",
 ]

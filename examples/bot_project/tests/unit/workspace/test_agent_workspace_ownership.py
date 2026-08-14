@@ -10,8 +10,11 @@ Verifies that:
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
+from unittest.mock import MagicMock
 
+import pytest
 from bot.workspace.handle import (
     PoolWorkspaceResources,
     WorkspaceHandle,
@@ -29,6 +32,11 @@ from modex_agent.tools.workspace_scoped import (
     WorkspaceScopedTool,
 )
 from modex_agent.workspace.context import WorkspaceContext
+
+pytestmark = pytest.mark.skipif(
+    shutil.which("modexctl") is None,
+    reason="modexctl CLI not available",
+)
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -150,6 +158,7 @@ async def test_subagent_tool_manager_uses_workspace_root_provider(tmp_path: Path
         pool=object(),  # type: ignore[arg-type]  # not used by _build_tool_manager
         session_factory=None,  # not used by _build_tool_manager
         broker=InMemoryMessageBroker(),
+        tree=MagicMock(),
         root_provider=provider,
     )
     template = AgentTemplate(

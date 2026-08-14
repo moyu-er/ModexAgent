@@ -10,6 +10,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("opentelemetry.sdk")  # skip if opentelemetry-sdk not installed (CI [dev] doesn't include [observability] deps)
+
 from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
 from modex_agent.trace.otel_store import (
     OtelSpanTraceStore,

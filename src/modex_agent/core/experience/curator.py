@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import shutil
 from collections.abc import Callable
@@ -49,10 +50,8 @@ class ExperienceCurator:
             last_used = record.last_used_at
             last_dt = None
             if last_used:
-                try:
+                with contextlib.suppress(ValueError, TypeError):
                     last_dt = datetime.fromisoformat(last_used)
-                except (ValueError, TypeError):
-                    pass
             evictable.append((name, last_dt))
 
         excess = total - self._max_experiences

@@ -252,21 +252,22 @@ class TestExecuteBasic:
     async def test_execute_with_upstream_payloads(self) -> None:
         node = _ReadIntegratedInputNode()
         node.name = "read_integrated"
+        node.node_id = "node-read-integrated"
         ctx = _make_linear_ctx(CounterState(name=""))
-        ctx.coordinator.register_node("read_integrated")
-        store = ctx.coordinator.get_deliver_store("read_integrated")
+        ctx.coordinator.register_node(node.node_id)
+        store = ctx.coordinator.get_deliver_store(node.node_id)
         assert store is not None
         store.accumulate(
             graph_instance_id=0,
-            target_node="read_integrated",
-            source_node="up_a",
+            node_id=node.node_id,
+            source_node_id="up_a",
             source_invocation_id=1,
             content="hello",
         )
         store.accumulate(
             graph_instance_id=0,
-            target_node="read_integrated",
-            source_node="up_b",
+            node_id=node.node_id,
+            source_node_id="up_b",
             source_invocation_id=2,
             content="world",
         )
@@ -276,6 +277,7 @@ class TestExecuteBasic:
     async def test_execute_with_no_upstream_payloads(self) -> None:
         node = _ReadIntegratedInputNode()
         node.name = "read_integrated"
+        node.node_id = "node-read-integrated"
         ctx = _make_linear_ctx(CounterState(name="initial"))
         await node.run(ctx)
         # Default integrator on empty list -> integrated_content = []
@@ -286,20 +288,20 @@ class TestExecuteBasic:
         node.name = "read_integrated"
         node.input_integrator = _JoinIntegrator()
         ctx = _make_linear_ctx(CounterState(name=""))
-        ctx.coordinator.register_node("read_integrated")
-        store = ctx.coordinator.get_deliver_store("read_integrated")
+        ctx.coordinator.register_node(node.node_id)
+        store = ctx.coordinator.get_deliver_store(node.node_id)
         assert store is not None
         store.accumulate(
             graph_instance_id=0,
-            target_node="read_integrated",
-            source_node="up_a",
+            node_id=node.node_id,
+            source_node_id="up_a",
             source_invocation_id=1,
             content="hello",
         )
         store.accumulate(
             graph_instance_id=0,
-            target_node="read_integrated",
-            source_node="up_b",
+            node_id=node.node_id,
+            source_node_id="up_b",
             source_invocation_id=2,
             content="world",
         )
@@ -396,21 +398,24 @@ class TestSubmitGrouping:
         node.name = "multi_deliver"
         ctx, dispatch_calls = _make_parallel_ctx()
         await node.run(ctx)
-        assert len(dispatch_calls) == 2
-        targets = {call[1] for call in dispatch_calls}
-        assert targets == {"target_x", "target_y"}
+        assert len(dispatch_calls) == 3
+        targets = [call[1] for call in dispatch_calls]
+        assert targets.count("target_x") == 2
+        assert targets.count("target_y") == 1
 
-    async def test_submit_under_parallel_multi_entry_group_dispatches_list(self) -> None:
+    async def test_submit_under_parallel_multi_entry_group_dispatches_individually(self) -> None:
         node = _MultiDeliverNode()
         node.name = "multi_deliver"
         ctx, dispatch_calls = _make_parallel_ctx()
         await node.run(ctx)
-        # target_x has 2 entries -> dispatched as a list.
-        for _source, target, payload in dispatch_calls:
-            if target == "target_x":
-                assert payload and payload["delivered"] == ["data_1", "data_2"]
-            elif target == "target_y":
-                assert payload and payload["delivered"] == "data_3"
+        # target_x has 2 entries -> 2 separate dispatches, each with one content.
+        target_x_payloads = [p for _s, t, p in dispatch_calls if t == "target_x"]
+        target_y_payloads = [p for _s, t, p in dispatch_calls if t == "target_y"]
+        assert len(target_x_payloads) == 2
+        assert target_x_payloads[0]["delivered"] == "data_1"
+        assert target_x_payloads[1]["delivered"] == "data_2"
+        assert len(target_y_payloads) == 1
+        assert target_y_payloads[0]["delivered"] == "data_3"
 
     async def test_custom_submit_override(self) -> None:
         node = _CustomSubmitNode()
@@ -484,6 +489,65 @@ class TestResolveDefaultTargetLimitation:
         scheduler = LinearScheduler(compiled)
         result = await scheduler.run_async(ctx)
         assert result.count == 1
+
+    def test_resolve_default_target_strict_multi_edge_raises(self) -> None:
+        """Strict policy (default) raises on multiple downstream edges."""
+        from helpers import AddNode
+
+        from modex_graph import Graph, GraphNode
+
+        g: Graph[CounterState] = Graph()
+        g.add_node("multi", _NullNextNodeDeliver())
+        g.add_node("target_a", AddNode(amount=1))
+        g.add_node("target_b", AddNode(amount=2))
+        g.add_edge(GraphNode.START, "multi")
+        g.add_edge("multi", "target_a")
+        g.add_edge("multi", "target_b")
+        compiled = g.compile()
+        node = _NullNextNodeDeliver()
+        node.name = "multi"
+        node._graph_ref = compiled
+        ctx = _make_linear_ctx()
+        with pytest.raises(RoutingError, match="downstream targets"):
+            node._resolve_default_target(ctx)
+
+    def test_resolve_default_target_graceful_multi_edge_returns_end(self) -> None:
+        """Graceful policy returns [END] on multiple downstream edges."""
+        from helpers import AddNode
+
+        from modex_graph import Graph, GraphNode
+
+        g: Graph[CounterState] = Graph()
+        g.add_node("multi", _NullNextNodeDeliver())
+        g.add_node("target_a", AddNode(amount=1))
+        g.add_node("target_b", AddNode(amount=2))
+        g.add_edge(GraphNode.START, "multi")
+        g.add_edge("multi", "target_a")
+        g.add_edge("multi", "target_b")
+        compiled = g.compile()
+        node = _NullNextNodeDeliver()
+        node.name = "multi"
+        node._graph_ref = compiled
+        ctx = _make_linear_ctx()
+        assert node._resolve_default_target(ctx, policy="graceful") == [GraphNode.END]
+
+    def test_resolve_default_target_graceful_single_edge_returns_target(self) -> None:
+        """Graceful policy with one downstream edge returns that target."""
+        from helpers import AddNode
+
+        from modex_graph import Graph, GraphNode
+
+        g: Graph[CounterState] = Graph()
+        g.add_node("single", _NullNextNodeDeliver())
+        g.add_node("only_down", AddNode(amount=1))
+        g.add_edge(GraphNode.START, "single")
+        g.add_edge("single", "only_down")
+        compiled = g.compile()
+        node = _NullNextNodeDeliver()
+        node.name = "single"
+        node._graph_ref = compiled
+        ctx = _make_linear_ctx()
+        assert node._resolve_default_target(ctx, policy="graceful") == ["only_down"]
 
 
 # ── DeliverStore-backed persistence ───────────────────────────────────────
@@ -651,21 +715,22 @@ class TestFullFlowWithStore:
 
         node = _TransformNode()
         node.name = "transform"
+        node.node_id = "node-transform"
         ctx = _make_linear_ctx()
-        ctx.coordinator.register_node("transform")
-        store = ctx.coordinator.get_deliver_store("transform")
+        ctx.coordinator.register_node(node.node_id)
+        store = ctx.coordinator.get_deliver_store(node.node_id)
         assert store is not None
         store.accumulate(
             graph_instance_id=0,
-            target_node="transform",
-            source_node="up_a",
+            node_id=node.node_id,
+            source_node_id="up_a",
             source_invocation_id=1,
             content="input1",
         )
         store.accumulate(
             graph_instance_id=0,
-            target_node="transform",
-            source_node="up_b",
+            node_id=node.node_id,
+            source_node_id="up_b",
             source_invocation_id=2,
             content="input2",
         )
@@ -705,132 +770,6 @@ class TestDeliverToEnd:
         _source, target, payload = dispatch_calls[0]
         assert target == GraphNode.END
         assert payload and payload["delivered"] == "terminal_data"
-
-
-# ── Undelivered detection ─────────────────────────────────────
-
-
-class _RetrySucceedsNode(Node[CounterState]):
-    """Does not deliver on first execute; delivers on second (retry)."""
-
-    def __init__(self) -> None:
-        self.execute_count = 0
-
-    async def execute(
-        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-    ) -> None:
-        self.execute_count += 1
-        if self.execute_count >= 2:
-            self.deliver("recovered", "downstream", ctx)
-        return None
-
-
-class _NeverDeliverNode(Node[CounterState]):
-    """Never calls deliver — triggers RoutingError after max_retry."""
-
-    def __init__(self) -> None:
-        self.execute_count = 0
-
-    async def execute(
-        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-    ) -> None:
-        self.execute_count += 1
-        return None
-
-
-class _CountingDeliverNode(Node[CounterState]):
-    """Always delivers. Tracks execute count to verify no retry."""
-
-    def __init__(self) -> None:
-        self.execute_count = 0
-
-    async def execute(
-        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-    ) -> None:
-        self.execute_count += 1
-        self.deliver("data", "target", ctx)
-        return None
-
-
-class _ErrorFeedbackInspectorNode(Node[CounterState]):
-    """Records integrated input on each execute. Delivers on second."""
-
-    def __init__(self) -> None:
-        self.execute_count = 0
-        self.seen_integrated_inputs: list[IntegratedInput] = []
-
-    async def execute(
-        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-    ) -> None:
-        self.execute_count += 1
-        self.seen_integrated_inputs.append(integrated_input)
-        if self.execute_count >= 2:
-            self.deliver("done", "target", ctx)
-        return None
-
-
-class TestUndeliveredDetection:
-    async def test_undelivered_detection_retries_with_error_feedback(self) -> None:
-        node = _RetrySucceedsNode()
-        node.name = "retry_succeeds"
-        ctx = _make_linear_ctx()
-        result = await node.run(ctx)
-        assert result is None
-        assert node.execute_count == 2
-        assert "downstream" in node._submit_result
-
-    async def test_undelivered_detection_raises_after_max_retry(self) -> None:
-        node = _NeverDeliverNode()
-        node.name = "never_deliver"
-        ctx = _make_linear_ctx()
-        with pytest.raises(RoutingError, match="produced no delivers"):
-            await node.run(ctx)
-        assert node.execute_count == 4
-
-    async def test_undelivered_detection_custom_max_retry(self) -> None:
-        node = _NeverDeliverNode()
-        node.name = "never_deliver"
-        node.max_retry = 1
-        ctx = _make_linear_ctx()
-        with pytest.raises(RoutingError, match="produced no delivers"):
-            await node.run(ctx)
-        assert node.execute_count == 2
-
-    async def test_undelivered_detection_no_retry_when_delivers_present(self) -> None:
-        node = _CountingDeliverNode()
-        node.name = "always_deliver"
-        ctx = _make_linear_ctx()
-        await node.run(ctx)
-        assert node.execute_count == 1
-        assert "target" in node._submit_result
-
-    async def test_undelivered_detection_error_feedback_in_integrated_input(self) -> None:
-        node = _ErrorFeedbackInspectorNode()
-        node.name = "inspector"
-        ctx = _make_linear_ctx()
-        await node.run(ctx)
-        assert node.execute_count == 2
-        first_input = node.seen_integrated_inputs[0]
-        assert first_input is not None
-        assert first_input.payloads == []
-        second_input = node.seen_integrated_inputs[1]
-        assert second_input is not None
-        assert len(second_input.payloads) == 1
-        feedback = second_input.payloads[0]
-        assert feedback.source_node == "__framework__"
-        assert isinstance(feedback.content, dict)
-        assert feedback.content["error"] == "undelivered"
-        assert feedback.metadata["error_type"] == "undelivered"
-        assert feedback.metadata["retry"] == 1
-
-    async def test_undelivered_detection_max_retry_zero(self) -> None:
-        node = _NeverDeliverNode()
-        node.name = "never_deliver"
-        node.max_retry = 0
-        ctx = _make_linear_ctx()
-        with pytest.raises(RoutingError, match="produced no delivers"):
-            await node.run(ctx)
-        assert node.execute_count == 1
 
 
 # ── Rule 15 convergence: _submit calls ctx.dispatch for BOTH schedulers ───
@@ -899,9 +838,10 @@ class TestSubmitDispatchConvergence:
             node.name = "multi_deliver"
             ctx, calls = make_ctx_with_handler(kind)
             await node.run(ctx)
-            assert len(calls) == 2, f"Expected 2 dispatches under {kind}, got {len(calls)}"
-            targets = {c[1] for c in calls}
-            assert targets == {"target_x", "target_y"}
+            assert len(calls) == 3, f"Expected 3 dispatches under {kind}, got {len(calls)}"
+            targets = [c[1] for c in calls]
+            assert targets.count("target_x") == 2
+            assert targets.count("target_y") == 1
 
 
 # ── upstream_payloads flow: deliver → integrated_input ────────────────────
@@ -967,7 +907,7 @@ class TestUpstreamPayloadsFlow:
         assert len(sink.seen_inputs) == 1
         integrated = sink.seen_inputs[0]
         assert len(integrated.payloads) == 1
-        assert integrated.payloads[0].source_node == "a"
+        assert integrated.payloads[0].source_node == compiled.nodes["a"].node_id
         assert integrated.payloads[0].content == "from_a"
         assert integrated.integrated_content == ["from_a"]
 
@@ -999,12 +939,11 @@ class TestUpstreamPayloadsFlow:
 
         assert len(sink.seen_inputs) == 1
         integrated = sink.seen_inputs[0]
-        # _submit groups multiple delivers to the same target into one
-        # dispatch with a list payload → one IntegratedPayload.
-        assert len(integrated.payloads) == 1
-        assert integrated.payloads[0].source_node == "a"
-        assert integrated.payloads[0].content == ["first", "second"]
-        assert integrated.integrated_content == [["first", "second"]]
+        assert len(integrated.payloads) == 2
+        assert integrated.payloads[0].source_node == compiled.nodes["a"].node_id
+        assert integrated.payloads[0].content == "first"
+        assert integrated.payloads[1].content == "second"
+        assert integrated.integrated_content == ["first", "second"]
 
     async def test_flow_under_parallel_on_receive(self) -> None:
         """Under PARALLEL + ON_RECEIVE: Node A delivers → Node B receives
@@ -1038,7 +977,7 @@ class TestUpstreamPayloadsFlow:
         assert len(sink.seen_inputs) == 1
         integrated = sink.seen_inputs[0]
         assert len(integrated.payloads) == 1
-        assert integrated.payloads[0].source_node == "a"
+        assert integrated.payloads[0].source_node == compiled.nodes["a"].node_id
         assert integrated.payloads[0].content == {"data": 42}
 
     async def test_flow_under_parallel_on_all_preds(self) -> None:
@@ -1089,10 +1028,12 @@ class TestUpstreamPayloadsFlow:
         # Two different sources (b, c) → two IntegratedPayloads.
         assert len(integrated.payloads) == 2
         by_source = {p.source_node: p.content for p in integrated.payloads}
-        assert by_source == {"b": "from_b", "c": "from_c"}
+        assert by_source == {
+            compiled.nodes["b"].node_id: "from_b",
+            compiled.nodes["c"].node_id: "from_c",
+        }
 
-    async def test_entry_node_receives_empty_integrated_input(self) -> None:
-        """The entry node has no upstream — integrated_input is empty (not None)."""
+    async def test_entry_node_receives_start_payload(self) -> None:
         from modex_graph import Graph, LinearScheduler
 
         sink = _RecordingSinkNode()
@@ -1107,5 +1048,6 @@ class TestUpstreamPayloadsFlow:
 
         assert len(sink.seen_inputs) == 1
         integrated = sink.seen_inputs[0]
-        assert integrated.payloads == []
-        assert integrated.integrated_content == []
+        assert len(integrated.payloads) == 1
+        assert integrated.payloads[0].source_node == compiled.nodes[GraphNode.START].node_id
+        assert integrated.integrated_content == [None]

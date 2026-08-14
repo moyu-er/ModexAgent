@@ -1,10 +1,10 @@
 """Shared snapshot helpers for context-fork and experience-review paths.
 
-Both paths extract recent messages and feed them to a child/reviewer agent.
-This module converges the truncation window, per-message content cap, and
-message field extraction that were previously duplicated (and diverging)
-between ``ContextForkBuilder._messages_to_xml`` and
-``ExperienceReviewHook._capture_snapshot``.
+Both paths extract recent messages and feed them to a child/reviewer agent:
+``ContextForkBuilder.build`` calls ``format_snapshot_xml`` for the subagent
+fork context, and ``ExperienceReviewHook._capture_snapshot`` calls
+``format_snapshot_text`` for the experience-review snapshot. This module owns
+the truncation window, per-message content cap, and message field extraction.
 """
 
 from __future__ import annotations

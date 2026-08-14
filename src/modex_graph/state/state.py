@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Self
+from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 
 class GraphState(BaseModel):
@@ -26,6 +26,11 @@ class GraphState(BaseModel):
     # entry node routes via ``deliver(content, target, ctx)`` on re-entry,
     # then clears it. Replaces entry-node phase hardcoding.
     resume_target: str | None = None
+
+    # Per-node working state. Each node writes only to
+    # ``node_scratch[self.node_id]`` (accessible via ``ctx.scratch``
+    # during execution); key separation provides isolation.
+    node_scratch: dict[str, Any] = Field(default_factory=dict)
 
     def checkpoint(self) -> dict[str, JsonValue]:
         """Serialize state to a JSON-compatible dictionary."""

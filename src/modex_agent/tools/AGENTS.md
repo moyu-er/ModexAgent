@@ -19,6 +19,8 @@ Tool subsystem — registry, type definitions, filtering, metadata parsing, MCP 
 | `mcp_adapter.py` | `MCPToolAdapter`, `MCPToolRegistry` — bridges MCP protocol tools to the framework `Tool` interface |
 | `mcp_loader.py` | `load_per_agent_mcp` — per-agent MCP server loading (relocated from `multi_agent/communication.py` per ADR-0019 T1). Resolves agent MCP server selection via `bot.config.mcp_registry`, builds `MCPClientManager` + initializes tools. Sole caller: `multi_agent/template.py` (subagent materialization path). |
 | `workspace_scoped.py` | Workspace-scoped tool wrappers — resolve relative paths against bound workspace root instead of process CWD (wraps read/write/edit/ls/glob/grep/bash) |
+| `graph_knowledge_capabilities.py` | `KnowledgeToolCapabilities` — frozen Pydantic model derived from `ToolPreset` via `from_preset()`; gates which knowledge actions (read/ls/grep/write/edit) an agent may use |
+| `graph_knowledge_tool.py` | `GraphKnowledgeBaseTool` — multi-action tool (read/write/edit/ls/grep) for per-graph-instance markdown knowledge sharing; pattern-validated against a closed set, auto-maintained changelog |
 
 ## Subdirectories
 

@@ -157,7 +157,7 @@ def test_resolve_pool_data_returns_snapshot_for_subagent() -> None:
     """A subagent pipeline shares the pool's name with the main agent and
     MUST still resolve the pool's PoolData — it needs the pool-level
     ``turn_store`` so its AgentRuntime is constructed
-    and FINALLY_TURN hooks (SubagentAutoSendHook) fire. The per-agent
+    and FINALLY_GRAPH hooks (SubagentAutoSendHook) fire. The per-agent
     isolation is enforced one level up: ``_process_message_locked`` does
     not let the snapshot override a subagent's own context_manager.
     """

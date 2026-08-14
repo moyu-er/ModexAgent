@@ -1,7 +1,7 @@
 # ruff: noqa: ANN401
 """`NodeFactory` ABC + `NodeRegistry` — declarative node construction.
 
-Per ticket 08: a `NodeFactory` creates `Node` instances from a `NodeSpec`'s
+A `NodeFactory` creates `Node` instances from a `NodeSpec`'s
 config. Factories are registered by `node_type` string (e.g. `"function"`,
 `"agent"`, `"delay"`); the registry looks up the factory and validates the
 spec's `config` dict against an optional Pydantic schema declared at
@@ -20,8 +20,8 @@ Architecture:
   concrete factories. This is the seam for future extension (e.g. plugin
   discovery).
 
-Generic Node implementations (`FunctionNode`, `AgentNode`, etc.) are P2
-(ticket 09). They will register their own factories here.
+Generic Node implementations (`FunctionNode`, `AgentNode`, etc.) are P2.
+They will register their own factories here.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ from pydantic import BaseModel
 
 from .node import Node
 from .spec import NodeSpec
+from .utils import generate_id
 
 
 class NodeFactory(ABC):
@@ -97,6 +98,11 @@ class NodeRegistry:
     def __init__(self) -> None:
         # factory + optional config-validation model, keyed by node_type
         self._factories: dict[str, tuple[NodeFactory, type[BaseModel] | None]] = {}
+        from .nodes.end_node import DefaultEndNodeFactory
+        from .nodes.start_node import DefaultStartNodeFactory
+
+        self.register("start", DefaultStartNodeFactory())
+        self.register("end", DefaultEndNodeFactory())
 
     def register(
         self,
@@ -162,6 +168,7 @@ class NodeRegistry:
             config_model.model_validate(spec.config)
         node = factory.create(spec)
         node.name = spec.name
+        node.node_id = generate_id(prefix="node")
         if spec.trigger is not None:
             node.trigger = spec.trigger
         return node

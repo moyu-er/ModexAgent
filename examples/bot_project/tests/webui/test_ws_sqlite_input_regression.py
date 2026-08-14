@@ -56,7 +56,6 @@ async def test_ws_sqlite_send_persists_user_before_enqueue(tmp_path: Path) -> No
         data_dir_name=".modex",
         store_resolver=transcript_resolver,
     )
-    transcript_store.set_agent_pool_map({"main": "main"})
     input_adapter = WebSocketInputAdapter()
     server = WebUIServer(
         input_adapter,
@@ -68,7 +67,6 @@ async def test_ws_sqlite_send_persists_user_before_enqueue(tmp_path: Path) -> No
     server.set_workspace_index(transcript_store)
     server.set_session_store(session_store)
     server.set_session_factory(SessionIdFactory())
-    server.set_agent_pool_map({"main": "main"})
     pool_store = MagicMock()
     pool_store.get.return_value = "main"
     server.set_input_pipeline(
@@ -82,7 +80,6 @@ async def test_ws_sqlite_send_persists_user_before_enqueue(tmp_path: Path) -> No
             default_pool="main",
             available_pools=lambda: {"main"},
             pool_session_store=pool_store,
-            agent_pool_map={"main": "main"},
             agent_resolver=lambda pool: pool,
             transcript_store=transcript_store,
             enqueue_message=input_adapter.put_input_message,
@@ -159,7 +156,6 @@ async def test_ws_sqlite_send_reaches_workspace_dispatcher(tmp_path: Path) -> No
         data_dir_name=".modex",
         store_resolver=transcript_resolver,
     )
-    transcript_store.set_agent_pool_map({"main": "main"})
     websocket_input = WebSocketInputAdapter()
     fan_in = FanInInputAdapter()
     fan_in.add_source(websocket_input)
@@ -196,7 +192,6 @@ async def test_ws_sqlite_send_reaches_workspace_dispatcher(tmp_path: Path) -> No
     server.set_workspace_index(transcript_store)
     server.set_session_store(session_store)
     server.set_session_factory(SessionIdFactory())
-    server.set_agent_pool_map({"main": "main"})
     pool_store = MagicMock()
     pool_store.get.return_value = "main"
     server.set_input_pipeline(
@@ -210,7 +205,6 @@ async def test_ws_sqlite_send_reaches_workspace_dispatcher(tmp_path: Path) -> No
             default_pool="main",
             available_pools=lambda: {"main"},
             pool_session_store=pool_store,
-            agent_pool_map={"main": "main"},
             agent_resolver=lambda pool: pool,
             transcript_store=transcript_store,
             enqueue_message=websocket_input.put_input_message,

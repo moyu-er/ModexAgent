@@ -112,7 +112,7 @@ class E2BSandbox(SandboxAdapter):
         os.environ["E2B_API_KEY"] = self.api_key
         return old_key
 
-    def _restore_api_key_env(self, old_key):
+    def _restore_api_key_env(self, old_key) -> None:
         if old_key is not None:
             os.environ["E2B_API_KEY"] = old_key
         else:
@@ -139,7 +139,7 @@ class E2BSandbox(SandboxAdapter):
 
         artifacts = []
 
-        def list_directory(dir_path: str, prefix: str = ""):
+        def list_directory(dir_path: str, prefix: str = "") -> None:
             """Recursively list files in directory."""
             try:
                 files_result = sandbox.files.list(dir_path)

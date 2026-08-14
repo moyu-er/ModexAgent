@@ -435,7 +435,7 @@ class TestUserGlobalSource:
             pytest.skip("symlink privilege not assumed on Windows CI")
         # The user-side skill is itself a symlink to elsewhere.
         real = tmp_path / "real_skill"
-        (real / "SKILL.md").mkdir(parents=True)
+        real.mkdir(parents=True)
         (real / "SKILL.md").write_text("deep", encoding="utf-8")
         user = tmp_path / "user_skills"
         user.mkdir(parents=True)

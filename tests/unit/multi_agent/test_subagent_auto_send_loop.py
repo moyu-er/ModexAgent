@@ -1,6 +1,7 @@
 """SubagentAutoSendHook incomplete-turn classification and delivery tests."""
 
 from modex_agent.core.agent import AgentContext
+from unittest.mock import MagicMock
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
@@ -13,6 +14,18 @@ from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.message_type import AgentMessageType
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+
+
+def _mock_tree(bus: object) -> SessionTreeManager:
+    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+
+    async def _deliver(sid: str, env: object) -> None:
+        await bus.send(sid, env)  # type: ignore[attr-defined]
+
+    tree.deliver = _deliver
+    return tree
+
 
 
 async def test_max_iterations_sends_exactly_one_failed_agent_result() -> None:
@@ -22,7 +35,7 @@ async def test_max_iterations_sends_exactly_one_failed_agent_result() -> None:
         consumer=InboxConsumer(server=server),
     )
     hook = SubagentAutoSendHook(
-        agent_bus=bus,
+    tree=_mock_tree(bus),
         self_name="worker",
         parent_name="main",
         trace_enabled=False,
@@ -39,7 +52,7 @@ async def test_max_iterations_sends_exactly_one_failed_agent_result() -> None:
         comm_kind=AgentCommKind.SUBAGENT,
     )
 
-    await hook.finally_turn(
+    await hook.finally_graph(
         context,
         AgentResult(content="Partial work", stop_reason=StopReason.MAX_ITERATIONS),
     )

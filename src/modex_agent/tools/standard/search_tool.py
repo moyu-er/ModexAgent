@@ -398,10 +398,7 @@ class SearchFilesTool(Tool):
         context_lines: int,
     ) -> str:
         try:
-            if regex:
-                compiled = re.compile(pattern)
-            else:
-                compiled = re.compile(re.escape(pattern))
+            compiled = re.compile(pattern) if regex else re.compile(re.escape(pattern))
         except re.error as e:
             return f"Error: Invalid regex pattern: {e}"
 

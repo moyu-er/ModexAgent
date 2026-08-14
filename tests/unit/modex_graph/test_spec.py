@@ -6,7 +6,10 @@ import pytest
 from pydantic import ValidationError
 
 from modex_graph import (
+    DefaultGraphState,
     EdgeSpec,
+    FunctionNode,
+    Graph,
     GraphNode,
     GraphSpec,
     NodeSpec,
@@ -163,15 +166,15 @@ class TestGraphSpec:
 
     # ── Structural validation ──────────────────────────────────────────
 
-    def test_validation_empty_nodes_rejected(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            GraphSpec(
-                name="g1",
-                nodes=[],
-                edges=[EdgeSpec(source=GraphNode.START, target="entry")],
-                state_class="counter_state",
-            )
-        assert "at least one node" in str(exc_info.value)
+    def test_empty_nodes_with_direct_start_to_end_is_valid(self) -> None:
+        spec = GraphSpec(
+            name="g1",
+            nodes=[],
+            edges=[EdgeSpec(source=GraphNode.START, target=GraphNode.END)],
+            state_class="counter_state",
+        )
+
+        assert spec.nodes == []
 
     def test_validation_duplicate_node_names_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
@@ -249,7 +252,72 @@ class TestGraphSpec:
             ],
             state_class="counter_state",
             scheduler=SchedulerKind.PARALLEL,
-            default_trigger=NodeTrigger.ON_RECEIVE,
+            default_trigger=NodeTrigger.ON_ALL_PREDS,
         )
         assert len(spec.nodes) == 3
         assert len(spec.edges) == 4
+
+    def test_rejects_on_receive_default_trigger(self) -> None:
+        with pytest.raises(ValidationError, match="ON_RECEIVE is deprecated"):
+            GraphSpec(
+                name="bad",
+                nodes=[NodeSpec(name="n1", node_type="function")],
+                edges=[
+                    EdgeSpec(source=GraphNode.START, target="n1"),
+                    EdgeSpec(source="n1", target=GraphNode.END),
+                ],
+                state_class="counter_state",
+                default_trigger=NodeTrigger.ON_RECEIVE,
+            )
+
+    def test_rejects_on_receive_per_node_trigger(self) -> None:
+        with pytest.raises(ValidationError, match="ON_RECEIVE is deprecated"):
+            GraphSpec(
+                name="bad",
+                nodes=[NodeSpec(name="n1", node_type="function", trigger=NodeTrigger.ON_RECEIVE)],
+                edges=[
+                    EdgeSpec(source=GraphNode.START, target="n1"),
+                    EdgeSpec(source="n1", target=GraphNode.END),
+                ],
+                state_class="counter_state",
+            )
+
+
+class TestImperativeDeprecationWarning:
+    """Graph.compile() (imperative API) emits DeprecationWarning for
+    ON_RECEIVE but does not reject it (unlike GraphSpec)."""
+
+    def test_default_trigger_warns(self) -> None:
+        g: Graph[DefaultGraphState] = Graph()
+        g.add_node("a", FunctionNode(func=lambda ctx, inp: None))
+        g.add_edge(GraphNode.START, "a")
+        g.add_edge("a", GraphNode.END)
+        with pytest.warns(DeprecationWarning, match="ON_RECEIVE is deprecated"):
+            g.compile(default_trigger=NodeTrigger.ON_RECEIVE)
+
+    def test_per_node_trigger_warns(self) -> None:
+        from modex_graph import IntegratedInput, Node
+
+        class OnReceiveNode(Node[DefaultGraphState]):
+            trigger = NodeTrigger.ON_RECEIVE
+
+            async def execute(self, ctx, integrated_input: IntegratedInput) -> None:
+                pass
+
+        g: Graph[DefaultGraphState] = Graph()
+        g.add_node("a", OnReceiveNode())
+        g.add_edge(GraphNode.START, "a")
+        g.add_edge("a", GraphNode.END)
+        with pytest.warns(DeprecationWarning, match="declare trigger=ON_RECEIVE"):
+            g.compile()
+
+    def test_on_all_preds_no_warning(self) -> None:
+        import warnings
+
+        g: Graph[DefaultGraphState] = Graph()
+        g.add_node("a", FunctionNode(func=lambda ctx, inp: None))
+        g.add_edge(GraphNode.START, "a")
+        g.add_edge("a", GraphNode.END)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            g.compile(default_trigger=NodeTrigger.ON_ALL_PREDS)

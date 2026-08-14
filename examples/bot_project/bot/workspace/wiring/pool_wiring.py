@@ -92,12 +92,19 @@ def _wire_pool_to_resources(
     )
     hook = ExperienceReviewHook(
         review_agent=review_agent,
+        memory_system=pool_data.context_manager.memory_system,
         experience_dir=pool_data.experience_dir,
         meta_store=pool_data.experience_meta,
         min_messages=exp_cfg.min_messages,
         exp_cooldown_turns=exp_cfg.exp_cooldown_turns,
     )
     spec = HookSpec(hook=hook, on_error=HookErrorPolicy.LOG)
+    # hook_runner is None for external pools (Pi/OpenCode): they build an
+    # AgentPipeline via ExternalAgentBuilder with hook_runner=None. The
+    # pipeline-is-None guard above does NOT filter them (they have a
+    # pipeline). The else-branch stores the hook in pipeline.hooks — a list
+    # the turn loop never dispatches — silently skipping experience review
+    # for external pools, which lack native ReAct hook dispatch.
     if pipeline.hook_runner is not None:
         pipeline.hook_runner.add(spec)
     else:

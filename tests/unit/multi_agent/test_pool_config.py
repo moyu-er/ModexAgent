@@ -17,7 +17,6 @@ from modex_agent.multi_agent.pool_config import (
 )
 from modex_agent.tools.presets import (
     ContextMode,
-    SystemPromptMode,
     ToolPreset,
     ToolSupplement,
 )
@@ -35,7 +34,6 @@ class TestSubagentSpec:
             tool_supplements=[ToolSupplement.AST_GREP],
             context_mode=ContextMode.FORK,
             mcp=["mcp-server"],
-            system_prompt_mode=SystemPromptMode.APPEND,
             fork_max_messages=50,
         )
         assert spec.agent_name == "worker"
@@ -45,7 +43,6 @@ class TestSubagentSpec:
         assert spec.tool_supplements == [ToolSupplement.AST_GREP]
         assert spec.context_mode == ContextMode.FORK
         assert spec.mcp == ["mcp-server"]
-        assert spec.system_prompt_mode == SystemPromptMode.APPEND
         assert spec.fork_max_messages == 50
 
     def test_subagent_spec_rejects_approval(self) -> None:
@@ -81,7 +78,6 @@ class TestSubagentSpec:
         assert spec.tool_supplements == []
         assert spec.context_mode == ContextMode.FRESH
         assert spec.mcp == []
-        assert spec.system_prompt_mode == SystemPromptMode.REPLACE
         assert spec.fork_max_messages == 80
         assert spec.execution_strategy == ExecutionStrategyKind.REACT
         assert spec.provider_kind is None

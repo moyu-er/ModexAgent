@@ -15,7 +15,7 @@ from modex_agent.multi_agent.message_type import AgentMessageType
 
 
 class TestInboxFlushHook:
-    async def test_before_turn_injects_messages(self) -> None:
+    async def test_start_node_turn_injects_messages(self) -> None:
         server = InMemoryInboxServer()
         consumer = InboxConsumer(server=server)
         hook = InboxFlushHook(consumer=consumer, agent_name="main")
@@ -34,7 +34,7 @@ class TestInboxFlushHook:
             tool_manager=MagicMock(spec=ToolManager),
             session=SessionInfo.from_str("s1"),
         )
-        await hook.before_turn(ctx)
+        await hook.start_node_turn(ctx)
 
         msgs = await history.to_list()
         assert len(msgs) == 1
@@ -44,7 +44,7 @@ class TestInboxFlushHook:
         assert msgs[0]["reminder_kind"] == ReminderKind.AGENT_MESSAGE
         assert msgs[0].get("meta_inbox") is True
 
-    async def test_before_turn_no_session_id(self) -> None:
+    async def test_start_node_turn_no_session_id(self) -> None:
         server = InMemoryInboxServer()
         consumer = InboxConsumer(server=server)
         hook = InboxFlushHook(consumer=consumer, agent_name="main")
@@ -56,10 +56,10 @@ class TestInboxFlushHook:
             tool_manager=MagicMock(spec=ToolManager),
             session=SessionInfo.from_str("s1"),
         )
-        await hook.before_turn(ctx)
+        await hook.start_node_turn(ctx)
         assert await history.to_list() == []
 
-    async def test_before_turn_empty_inbox(self) -> None:
+    async def test_start_node_turn_empty_inbox(self) -> None:
         server = InMemoryInboxServer()
         consumer = InboxConsumer(server=server)
         hook = InboxFlushHook(consumer=consumer, agent_name="main")
@@ -71,7 +71,7 @@ class TestInboxFlushHook:
             tool_manager=MagicMock(spec=ToolManager),
             session=SessionInfo.from_str("s1"),
         )
-        await hook.before_turn(ctx)
+        await hook.start_node_turn(ctx)
         assert await history.to_list() == []
 
     async def test_before_iteration_also_flushes(self) -> None:
@@ -122,7 +122,7 @@ class TestInboxFlushHook:
 
         # First hook instance flushes
         hook1 = InboxFlushHook(consumer=InboxConsumer(server=server), agent_name="main")
-        await hook1.before_turn(ctx)
+        await hook1.start_node_turn(ctx)
 
         # Recreate hook and context (simulating framework behavior)
         history2 = ListMessageHistory([])
@@ -133,7 +133,7 @@ class TestInboxFlushHook:
             session=SessionInfo.from_str("s1"),
         )
         hook2 = InboxFlushHook(consumer=InboxConsumer(server=server), agent_name="main")
-        await hook2.before_turn(ctx2)
+        await hook2.start_node_turn(ctx2)
 
         # Should not inject duplicate
         assert await history2.to_list() == []

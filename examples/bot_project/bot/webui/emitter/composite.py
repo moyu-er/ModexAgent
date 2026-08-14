@@ -19,7 +19,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Generic, TypeVar
+from typing import Any, TypeVar
 
 from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig
 from modex_agent.core.turn_events import TurnEvent
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 _E = TypeVar("_E")
 
 
-class CompositeEmitter(ContentEmitter[_E], Generic[_E]):
+class CompositeEmitter[E](ContentEmitter[E]):
     """Fan-out emitter that delegates all calls to a list of child emitters.
 
     Each method is forwarded to ALL children concurrently via

@@ -13,8 +13,9 @@ class TestBuildMainAgentToolNames:
         assert {"read", "write", "edit", "ls", "grep", "glob"} <= names
         # ast_grep supplement.
         assert {"ast_grep_search", "ast_grep_replace"} <= names
-        # task tool always present (subagent dispatch + peer communication).
+        # communication tools present (task for subagents, send_to_peer for peers).
         assert "task" in names
+        assert "send_to_peer" in names
         # send_to_agent is NOT registered on the main agent.
         assert "send_to_agent" not in names
 

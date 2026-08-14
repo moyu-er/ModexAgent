@@ -22,7 +22,7 @@ with five star-topology adjustments mandated by ADR-0027:
    the target pool.
 3. **HookRunner**: carries :class:`SubagentAutoSendHook` (T7) with
    ``execution_strategy=EXTERNAL``. ``ExternalTurnRunner`` dispatches
-   ``FINALLY_TURN`` so the hook fires on every turn end.
+   ``FINALLY_GRAPH`` so the hook fires on every turn end.
 4. **No ``send_to_agent`` tool**: external subagents have no tool surface;
    they reply via ``modexctl send`` to the parent's inbox. Star topology is
    enforced structurally.
@@ -260,7 +260,7 @@ class BotSubagentExternalBuilder(SubagentExternalBuilder):
         hook_runner.add(
             HookSpec(
                 hook=SubagentAutoSendHook(
-                    agent_bus=deps.agent_bus,
+                    tree=deps.tree,
                     self_name=agent_name,
                     parent_name=parent_name,
                     runtime_dir=runtime_dir or Path("."),
@@ -284,6 +284,7 @@ class BotSubagentExternalBuilder(SubagentExternalBuilder):
             session_registry=deps.session_registry,
             control_channel=None,
             context_manager=None,
+            session_binding_store=deps.tree.binding_store if deps.tree is not None else None,
         )
 
     # ── Helpers ───────────────────────────────────────────────────────────

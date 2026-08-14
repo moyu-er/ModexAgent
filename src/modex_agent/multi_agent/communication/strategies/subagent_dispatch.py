@@ -67,6 +67,10 @@ class SubagentDispatchStrategy(SendStrategy):
         """Subagent sessions are owned by the sender's pool."""
         return True
 
+    def should_propagate_graph_instance_id(self) -> bool:
+        """Subagent dispatch is intra-tree (same graph instance)."""
+        return True
+
     def build_result(
         self, req: SendRequest, session: SessionInfo, invocation_id: str
     ) -> AgentSendResult:

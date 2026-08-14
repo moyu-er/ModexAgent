@@ -22,6 +22,23 @@ class CassetteScope(StrEnum):
     FULL = "full"
 
 
+class PromptCaptureMode(StrEnum):
+    """Prompt capture strategy for trace span attributes."""
+
+    OFF = "off"
+    HASH = "hash"
+    SUMMARY = "summary"
+    FULL = "full"
+
+
+class TraceSpanMode(StrEnum):
+    """Trace span verbosity level."""
+
+    MINIMAL = "minimal"
+    STANDARD = "standard"
+    FULL = "full"
+
+
 class ObservabilityConfig(BaseModel):
     """Observability configuration. None = no logging/tracing."""
 
@@ -73,9 +90,17 @@ class ObservabilityConfig(BaseModel):
         default=100000,
         description="Maximum token budget for training-relevant sessions.",
     )
-    prompt_capture: str = Field(
-        default="summary",
-        description="Prompt capture strategy for trace spans. Currently: 'summary'.",
+    prompt_capture: PromptCaptureMode = Field(
+        default=PromptCaptureMode.SUMMARY,
+        description="Prompt capture strategy for trace span attributes.",
+    )
+    trace_spans: TraceSpanMode = Field(
+        default=TraceSpanMode.STANDARD,
+        description="Trace span verbosity level.",
+    )
+    capture_tools: bool = Field(
+        default=False,
+        description="Capture tool call details (arguments and results) in trace spans.",
     )
     eval_score_injection: bool = Field(
         default=False,

@@ -286,6 +286,7 @@ describe("useWebUIStream hero-send (draft → attached → fullId)", () => {
         "abc123.main",
         fakeFile,
         undefined,
+        "main",
       );
     });
 

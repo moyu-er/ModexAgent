@@ -107,7 +107,7 @@ class TestNullNodeStateStore:
         store = NullNodeStateStore(0)
         inv = store.begin_invocation("node_a")
         assert inv.invocation_id > 0
-        assert inv.node_name == "node_a"
+        assert inv.node_id == "node_a"
         assert inv.version == 0
         assert inv.parent_version is None
 
@@ -403,7 +403,7 @@ class TestQueryMethods:
 
         all_completed = store.query_all({InvocationStatus.COMPLETED})
         assert len(all_completed) == 1
-        assert all_completed[0].node_name == "node_a"
+        assert all_completed[0].node_id == "node_a"
 
     def test_clear(self, kind: str) -> None:
         store = _store_factory(kind)
@@ -441,14 +441,14 @@ class TestSqliteNodeStateStoreSpecifics:
         with pytest.raises(sqlite3.IntegrityError):
             store._conn.execute(
                 "INSERT INTO node_states (node_state_id, graph_instance_id, "
-                "node_name, version, status, state_json, created_at, updated_at) "
+                "node_id, version, status, state_json, created_at, updated_at) "
                 "VALUES (1, ?, 'n', 0, 'pending', '{}', 0, 0)",
                 (_GRAPH_INSTANCE_ID,),
             )
         with pytest.raises(sqlite3.IntegrityError):
             store._conn.execute(
                 "INSERT INTO node_states (node_state_id, graph_instance_id, "
-                "node_name, version, status, state_json, created_at, updated_at) "
+                "node_id, version, status, state_json, created_at, updated_at) "
                 "VALUES (2, ?, 'n', 0, 'superseded', '{}', 0, 0)",
                 (_GRAPH_INSTANCE_ID,),
             )
@@ -464,7 +464,7 @@ class TestSqliteNodeStateStoreSpecifics:
         assert {
             "node_state_id",
             "graph_instance_id",
-            "node_name",
+            "node_id",
             "version",
             "parent_version",
             "status",

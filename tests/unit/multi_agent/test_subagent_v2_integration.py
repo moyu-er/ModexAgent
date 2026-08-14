@@ -9,6 +9,7 @@ Three test cases:
 """
 
 from __future__ import annotations
+from unittest.mock import MagicMock
 
 from pathlib import Path
 
@@ -25,11 +26,24 @@ from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-from modex_agent.trace import OtelSpanTraceStore, TraceCollectorHook
+from modex_agent.trace import OtelSpanTraceStore, RootSpanHook
 from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
+from modex_agent.trace.session_state import TraceSessionState
+
+
+def _mock_tree(bus: object) -> SessionTreeManager:
+    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+
+    async def _deliver(sid: str, env: object) -> None:
+        await bus.send(sid, env)  # type: ignore[attr-defined]
+
+    tree.deliver = _deliver
+    return tree
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -91,9 +105,16 @@ class TestFullLifecycleNotification:
         # --- infrastructure ---
         bus = _make_bus(tmp_path)
         store = OtelSpanTraceStore(base_dir=runtime_dir / "trace")
-        trace_hook = TraceCollectorHook()
+        trace_hook = RootSpanHook(
+            session=TraceSessionState(),
+            store=store,
+            model=None,
+            provider_name=None,
+            request_params=None,
+            score_injector=None,
+        )
         auto_hook = SubagentAutoSendHook(
-            agent_bus=bus,
+        tree=_mock_tree(bus),
             self_name="worker",
             parent_name="main",
             runtime_dir=runtime_dir,
@@ -102,14 +123,14 @@ class TestFullLifecycleNotification:
         ctx = _make_context(session_id=session_id, trace_store=store)
         result = AgentResult(content="done", stop_reason=StopReason.COMPLETED)
 
-        # Step 1: trace_hook.before_turn -> pre-registers trace_id + root span_id
-        await trace_hook.before_turn(ctx)
+        # Step 1: trace_hook.start_node_turn -> pre-registers trace_id + root span_id
+        await trace_hook.start_node_turn(ctx)
 
-        # Step 2: auto_hook.finally_turn -> writes OUTPUT_1.md + sends notification
-        await auto_hook.finally_turn(ctx, result)
+        # Step 2: auto_hook.finally_graph -> writes OUTPUT_1.md + sends notification
+        await auto_hook.finally_graph(ctx, result)
 
-        # Step 3: trace_hook.finally_turn -> writes the root invoke_agent span
-        await trace_hook.finally_turn(ctx, result)
+        # Step 3: trace_hook.finally_graph -> writes the root invoke_agent span
+        await trace_hook.finally_graph(ctx, result)
 
         # --- Verify trace ---
         spans = await store.list_by_session(session_id)
@@ -152,7 +173,7 @@ class TestCrashSendsErrorNotification:
 
         bus = _make_bus(tmp_path)
         auto_hook = SubagentAutoSendHook(
-            agent_bus=bus,
+        tree=_mock_tree(bus),
             self_name="worker",
             parent_name="main",
             runtime_dir=runtime_dir,
@@ -161,7 +182,7 @@ class TestCrashSendsErrorNotification:
         ctx = _make_context()
         result = AgentResult(error="something broke", stop_reason=StopReason.ERROR)
 
-        await auto_hook.finally_turn(ctx, result)
+        await auto_hook.finally_graph(ctx, result)
 
         assert (runtime_dir / "output" / str(ctx.session) / "OUTPUT_1.md").exists()
 
@@ -186,19 +207,26 @@ class TestTraceCollectorRecordsErrorTurnEnd:
     async def test_trace_collector_error_turn_end(self, tmp_path: Path) -> None:
         session_id = "conv123-worker-a1b2"
         store = OtelSpanTraceStore(base_dir=tmp_path / "trace")
-        trace_hook = TraceCollectorHook()
+        trace_hook = RootSpanHook(
+            session=TraceSessionState(),
+            store=store,
+            model=None,
+            provider_name=None,
+            request_params=None,
+            score_injector=None,
+        )
 
         ctx = _make_context(session_id=session_id, trace_store=store)
 
-        # Step 1: before_turn -> TURN_START span
-        await trace_hook.before_turn(ctx)
+        # Step 1: start_node_turn -> TURN_START span
+        await trace_hook.start_node_turn(ctx)
 
-        # Step 2: finally_turn with error -> no new span (TURN_END is a no-op)
-        await trace_hook.finally_turn(
+        # Step 2: finally_graph with error -> no new span (TURN_END is a no-op)
+        await trace_hook.finally_graph(
             ctx,
             AgentResult(error="timeout", stop_reason=StopReason.ERROR),
         )
 
         spans = await store.list_by_session(session_id)
-        assert len(spans) == 2
-        assert all(s.name == SpanName.INVOKE_AGENT.value for s in spans)
+        assert len(spans) == 1
+        assert spans[0].name == SpanName.INVOKE_AGENT.value

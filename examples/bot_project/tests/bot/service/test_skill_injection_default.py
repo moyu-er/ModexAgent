@@ -28,6 +28,7 @@ def _make_deps(project_dir: Path) -> object:
         pool=MagicMock(),
         session_factory=MagicMock(),
         broker=None,
+        tree=MagicMock(),
         project_dir=project_dir,
     )
 
@@ -66,6 +67,7 @@ class TestSubagentAlwaysHasSkillManager:
             pool=MagicMock(),
             session_factory=MagicMock(),
             broker=None,
+            tree=MagicMock(),
             project_dir=None,
         )
         tmpl = AgentTemplate(spec=SubagentSpec(agent_name="helper"))

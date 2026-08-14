@@ -137,7 +137,6 @@ async def test_qq_attachment_ref_flows_through_im_pipeline_to_persisted_record()
 
         media_store = WorkspaceScopedMediaStore(data_dir_name=".modex")
         transcript_store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-        transcript_store.set_agent_pool_map({"main": "main"})
 
         pool_store = MagicMock()
         pool_store.get.return_value = "main"
@@ -148,7 +147,6 @@ async def test_qq_attachment_ref_flows_through_im_pipeline_to_persisted_record()
             default_pool="main",
             available_pools=lambda: {"main"},
             pool_session_store=pool_store,
-            agent_pool_map={"main": "main"},
             agent_resolver=lambda p: p,
             transcript_store=transcript_store,
             enqueue_message=MagicMock(),

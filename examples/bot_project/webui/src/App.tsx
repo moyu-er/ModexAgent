@@ -6,6 +6,11 @@ import { ToastProvider } from "./components/ToastContext";
 import { useWebUIStream } from "./hooks/useWebUIStream";
 import { useSessions } from "./hooks/useSessions";
 import { useBackendReady } from "./hooks/useBackendReady";
+import { useHashRoute } from "./hooks/useHashRoute";
+import { GraphSpecListPage } from "./components/graphs/GraphSpecListPage";
+import { GraphSpecEditor } from "./components/graphs/GraphSpecEditor";
+import { GraphSpecDetail } from "./components/graphs/GraphSpecDetail";
+import { GraphInstanceDetail } from "./components/graphs/GraphInstanceDetail";
 import BootScreen from "./components/BootScreen";
 import { DISPERSE_MS } from "./lib/particles";
 import { buildTree } from "./lib/sessionTree";
@@ -70,6 +75,58 @@ const AppInner: FC = () => {
   // reads/writes use the canonical home dir (matching the no-ws behavior).
   const streamWs = isHome ? "" : workspace;
 
+  const { route, navigate } = useHashRoute();
+
+  // Agent-node click in the graph execution viewer: session_id comes from
+  // NodeStatusInfo, populated by the orchestrator from BotAgentNode._session
+  // (CACHED strategy) or the last executed session. Jump back to chat and
+  // select that session's transcript.
+  const handleJumpToSession = useCallback(
+    (sessionId: string): void => {
+      navigate("");
+      selectSession(sessionId);
+    },
+    [navigate, selectSession],
+  );
+
+  // Sidebar actions that imply "leave the graph view and go back to chat".
+  // Without navigate("") the hash stays on #/graphs/* and App keeps rendering
+  // the graph component, so the click appears to do nothing. Mirrors onSelect
+  // / handleJumpToSession — the single converged graph→chat exit path.
+  const handleNewWithRoute = useCallback(
+    (pool: string): void => {
+      navigate("");
+      handleNew(pool);
+    },
+    [navigate, handleNew],
+  );
+  const handlePoolChangeWithRoute = useCallback(
+    (pool: string): void => {
+      navigate("");
+      handlePoolChange(pool);
+    },
+    [navigate, handlePoolChange],
+  );
+  const handleWorkspaceChangedWithRoute = useCallback(
+    (cwd: string): void => {
+      navigate("");
+      handleWorkspaceChanged(cwd);
+    },
+    [navigate, handleWorkspaceChanged],
+  );
+  const handleGoHomeWithRoute = useCallback(async (): Promise<void> => {
+    navigate("");
+    await handleGoHome();
+  }, [navigate, handleGoHome]);
+
+  // Pool for the active session (or the hero view's active pool). Threads
+  // into useWebUIStream (session-scoped API calls) and resolves the skill
+  // set for /skillName autocomplete.
+  const chatPool = useMemo(() => {
+    if (!selectedId) return activePool;
+    return sessions.find((x) => x.session_id === selectedId)?.pool ?? activePool;
+  }, [sessions, selectedId, activePool]);
+
   const {
     messages,
     isStreaming,
@@ -78,6 +135,7 @@ const AppInner: FC = () => {
     pendingApprovals,
     isApprovingBatch,
     isConnected,
+    wsClient,
     submitApproval,
     connect,
     disconnect,
@@ -90,6 +148,7 @@ const AppInner: FC = () => {
     onSessionActivity,
     streamWs,
     onSessionCreated,
+    chatPool,
   );
 
   // Approve every currently-pending card. Client-side loop — no new endpoint;
@@ -137,13 +196,6 @@ const AppInner: FC = () => {
     if (parts.length >= 2) return parts[1] || "main";
     return activePool || "main";
   }, [sessions, selectedId, activePool, poolAgentMap]);
-
-  // Pool for the active session (or the hero view's active pool). Used to
-  // resolve the skill set for /skillName autocomplete.
-  const chatPool = useMemo(() => {
-    if (!selectedId) return activePool;
-    return sessions.find((x) => x.session_id === selectedId)?.pool ?? activePool;
-  }, [sessions, selectedId, activePool]);
 
   const handleSend = useCallback(
     (
@@ -242,10 +294,11 @@ const AppInner: FC = () => {
 
   const onSelect = useCallback(
     (sessionId: string): void => {
+      navigate("");
       selectSession(sessionId);
       setSidebarMobileOpen(false);
     },
-    [selectSession],
+    [navigate, selectSession],
   );
 
   return (
@@ -280,13 +333,15 @@ const AppInner: FC = () => {
           mobileOpen={sidebarMobileOpen}
           onCloseMobile={() => setSidebarMobileOpen(false)}
           onSelect={onSelect}
-          onNew={handleNew}
+          onNew={handleNewWithRoute}
           onDelete={handleDelete}
-          onWorkspaceChanged={handleWorkspaceChanged}
-          onGoHome={handleGoHome}
-          onPoolChange={handlePoolChange}
+          onWorkspaceChanged={handleWorkspaceChangedWithRoute}
+          onGoHome={handleGoHomeWithRoute}
+          onPoolChange={handlePoolChangeWithRoute}
           revealSessionId={revealSessionId}
           onOpenSettings={() => setSettingsOpen(true)}
+          graphsActive={route.kind !== "chat"}
+          onOpenGraphs={() => navigate("/graphs")}
         />
 
         {/* Resize handle — desktop only */}
@@ -305,6 +360,35 @@ const AppInner: FC = () => {
         </div>
 
         <main className="flex flex-1 flex-col min-w-0">
+          {route.kind === "graphs" ? (
+            <GraphSpecListPage
+              workspaceId={streamWs}
+              onEditSpec={(specId): void => navigate(`/graphs/${specId}`)}
+            />
+          ) : route.kind === "graphSpecDetail" ? (
+            <GraphSpecDetail
+              workspaceId={streamWs}
+              specId={route.specId}
+              onBack={(): void => navigate("/graphs")}
+              onEditYaml={(): void => navigate(`/graphs/${route.specId}/edit`)}
+              onOpenInstance={(instanceId): void => navigate(`/graphs/instances/${instanceId}`)}
+            />
+          ) : route.kind === "graphSpecEdit" ? (
+            <GraphSpecEditor
+              workspaceId={streamWs}
+              specId={route.specId}
+              onBack={(): void => navigate(`/graphs/${route.specId}`)}
+              onSpecIdChanged={(newId): void => navigate(`/graphs/${newId}`)}
+            />
+          ) : route.kind === "graphInstance" ? (
+            <GraphInstanceDetail
+              workspaceId={streamWs}
+              instanceId={route.instanceId}
+              wsClient={wsClient ?? undefined}
+              onBack={(): void => navigate("/graphs")}
+              onJumpToSession={handleJumpToSession}
+            />
+          ) : (
           <ChatView
             messages={messages}
             isStreaming={isStreaming}
@@ -325,6 +409,7 @@ const AppInner: FC = () => {
             pool={chatPool}
             heroFocusNonce={newConvNonce}
           />
+          )}
         </main>
 
         <SettingsModal

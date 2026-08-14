@@ -89,10 +89,7 @@ class InboxProducer(BaseInboxProducer):
             return False
 
         saved = await self._server.receive(session_id, msg)
-        if not saved:
-            return False
-
-        return True
+        return saved
 
 
 # 显式别名保留多态替换能力

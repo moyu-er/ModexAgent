@@ -5,8 +5,8 @@
 module on the template (ADR-0015 D3, Design B). It is the subagent-only
 construction path: normals are registered by business wiring via factory
 defaults, never via materialize. ``comm_kind`` is always ``SUBAGENT``;
-``parent_session`` gates parent-dependent features (APPEND prompt, FORK
-context, SubagentAutoSendHook).
+``parent_session`` gates parent-dependent features (FORK context and
+SubagentAutoSendHook).
 """
 
 from __future__ import annotations
@@ -20,11 +20,7 @@ from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.skills import SkillsConfig
 from modex_agent.multi_agent.pool_config.specs import SubagentSpec
-from modex_agent.tools.presets import (
-    ContextMode,
-    SystemPromptMode,
-    ToolPreset,
-)
+from modex_agent.tools.presets import ContextMode, ToolPreset
 
 if TYPE_CHECKING:
     from modex_agent.core.session_id import SessionInfo
@@ -82,7 +78,7 @@ class AgentTemplate:
         """Build a subagent AgentInstance from this template (ADR-0015 D3, Design B).
 
         subagent-only construction; ``parent_session`` gates parent-dependent
-        features (APPEND prompt, FORK context, SubagentAutoSendHook).
+        features (FORK context and SubagentAutoSendHook).
         Normals are registered by business wiring via factory defaults, never
         via materialize.
 
@@ -153,38 +149,19 @@ class AgentTemplate:
         output_base_dir: Path | None = (runtime_dir / "output") if runtime_dir is not None else None
         pruned_manager = resolver.pruned_manager() if resolver else None
 
-        # ── Per-invocation providers (APPEND parent prompt + FORK context) ──
-        # These move the invocation-specific parts of the system prompt OUT of
-        # the baked string and into per-turn pipeline providers, so a reused
-        # instance (one slot per agent_type in the pool) rebuilds them per
-        # invocation. The parent *value* for each turn arrives via runtime_info
-        # (threaded from the dispatch envelope); the lookup below only resolves
-        # the parent's prompt from the in-memory pool. None when there is no
-        # parent or the mode is off → providers are skipped.
-        parent_prompt_lookup = None
         fork_context_spec = None
-        if parent_session is not None:
-            if self.spec.system_prompt_mode == SystemPromptMode.APPEND:
-                pool_ref = deps.pool
+        if (
+            parent_session is not None
+            and self.spec.context_mode == ContextMode.FORK
+            and deps.context_fork_builder is not None
+        ):
+            from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
 
-                async def _parent_prompt_of(parent_sid: str, _pool=pool_ref) -> str | None:
-                    # In-memory instance lookup only — never a session store.
-                    inst = _pool.get(str(parent_sid).split(".")[-1])
-                    if inst is None or not inst.descriptor.system_prompt_template:
-                        return None
-                    return inst.descriptor.system_prompt_template
-
-                parent_prompt_lookup = _parent_prompt_of
-
-            if self.spec.context_mode == ContextMode.FORK and deps.context_fork_builder is not None:
-                from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
-
-                fork_context_spec = ForkContextSpec(
-                    builder=deps.context_fork_builder,
-                    agent_type=name,
-                    fork_max_messages=self.spec.fork_max_messages,
-                    template_memory=self.memory,
-                )
+            fork_context_spec = ForkContextSpec(
+                builder=deps.context_fork_builder,
+                agent_type=name,
+                fork_max_messages=self.spec.fork_max_messages,
+            )
 
         subagent_ctx = build_session_only_memory(
             cfg=self.memory,
@@ -194,7 +171,6 @@ class AgentTemplate:
             system_prompt=system_prompt,
             pruned_manager=pruned_manager,
             output_base_dir=output_base_dir,
-            parent_prompt_lookup=parent_prompt_lookup,
             fork_context_spec=fork_context_spec,
             roles=list(self.spec.roles),
             store_registry=deps.memory_store_registry,
@@ -229,12 +205,12 @@ class AgentTemplate:
         # agent with ``inbox_strategy != "none"`` + a consumer, so fold-in is
         # wired once for both main and subagent at the factory.
         hooks: list[Hook] = []
-        if parent_session is not None and deps.agent_bus is not None:
+        if parent_session is not None:
             from modex_agent.hook.builtin import SubagentAutoSendHook
 
             hooks.append(
                 SubagentAutoSendHook(
-                    agent_bus=deps.agent_bus,
+                    tree=deps.tree,
                     self_name=name,
                     parent_name=parent_name,
                     runtime_dir=runtime_dir,
@@ -242,7 +218,7 @@ class AgentTemplate:
                 )
             )
         # NativeEnvInjectionHook — populate _modex_env / _current_session_id
-        # at BEFORE_TURN so native subagent subprocess tools receive
+        # at BEFORE_GRAPH so native subagent subprocess tools receive
         # MODEX_* env vars (parity with main-agent wiring in pool_builder.
         # _wire_main_pipeline). The subagent's pool_map carries itself +
         # its parent so ``modexctl send --to <parent>`` routes correctly;
@@ -323,7 +299,7 @@ class AgentTemplate:
         # pipeline.hooks, a plain list the turn loop does NOT dispatch). The
         # turn loop dispatches via pipeline.hook_runner — so add each hook as
         # a HookSpec there. Fall back to pipeline.hooks when no runner exists
-        # (mirrors the factory's own TraceCollectorHook wiring). ADR-0015 D5.
+        # (mirrors the factory's own trace hook wiring). ADR-0015 D5.
         if hooks and instance.pipeline is not None:
             pipeline_hook_runner = instance.pipeline.hook_runner
             if pipeline_hook_runner is not None:
@@ -494,7 +470,7 @@ class AgentTemplate:
         ``SubagentAutoSendHook``). Failures are logged and swallowed — a
         subagent must still materialize without a comm tool.
         """
-        if deps.pool is None or deps.broker is None or deps.agent_bus is None:
+        if deps.pool is None:
             return
         try:
             from modex_agent.multi_agent.address import AgentAddress
@@ -507,9 +483,8 @@ class AgentTemplate:
             store = CommunicationTargetStore(for_subagent=True)
             service = AgentCommunicationService(
                 source=AgentAddress(name=name),
-                broker=deps.broker,
                 registry=deps.pool,
-                agent_bus=deps.agent_bus,
+                tree=deps.tree,
                 pool=deps.pool,
                 pool_name=_pool_name(deps),
                 project_dir=deps.project_dir,
@@ -520,9 +495,6 @@ class AgentTemplate:
                 SendToAgentTool(
                     store=store,
                     source=AgentAddress(name=name),
-                    broker=deps.broker,
-                    registry=deps.pool,
-                    agent_bus=deps.agent_bus,
                     service=service,
                 )
             )

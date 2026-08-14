@@ -1,0 +1,17 @@
+main_agent_name: reviewer
+description: >-
+  Code review agent responsible for inspecting code changes, running
+  verification, and either approving or requesting revisions from the
+  upstream implementation team. Carries full tools for reading code,
+  running tests, and executing verification commands.
+max_steps: 80
+use_terminal: false
+terminal_visibility: false
+tool_preset: full
+tool_supplements:
+- ast_grep
+- todo
+peers:
+- default
+roles:
+- coordinator

@@ -4,10 +4,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.input_pipeline.stages.resolve_workspace import ResolveWorkspaceStage
+
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
 
 
@@ -16,7 +16,6 @@ def _ctx(current_ws_provider=None) -> BotInputContext:
         default_pool="main",
         available_pools=lambda: {"main"},
         pool_session_store=MagicMock(),
-        agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
         transcript_store=MagicMock(),
         enqueue_message=MagicMock(),

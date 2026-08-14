@@ -1,19 +1,18 @@
 """Regression guard: mixed pool history path selection.
 
-Simulates the REAL coder pool configuration:
-  - main agent: orchestrator (react)
-  - subagent: coder (external, opencode)
+Simulates a mixed pool with a native main agent and an OpenCode-backed external
+subagent. The coder pool no longer supplies this scenario because its coder
+subagent is now native.
 
-When orchestrator dispatches a task to coder and then queries coder's history,
-the facade must read from TranscriptStore (external path), not
-MessageStore (native path). Guards against the regression where the facade used
-``main_execution_strategy`` instead of the subagent's ``execution_strategy``.
+When the main agent queries the external subagent's history, the facade must
+read from TranscriptStore (external path), not MessageStore (native path).
+Guards against the regression where the facade used ``main_execution_strategy``
+instead of the subagent's ``execution_strategy``.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -32,6 +31,7 @@ from bot.webui.events import (
     TurnStartEvent,
 )
 from bot.webui.transcript_store import TranscriptStore
+from bot.workspace.handle import PoolWorkspaceResources
 
 from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.constants import ExecutionStrategyKind
@@ -39,9 +39,9 @@ from modex_agent.memory.core.split_stores import MessageStore
 from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
 
 _WORKSPACE = Path("/home/user/project")
-_POOL = "coder"
-_MAIN_AGENT = "orchestrator"
-_SUBAGENT = "coder"
+_POOL = "mixed_history"
+_MAIN_AGENT = "native_main"
+_SUBAGENT = "opencode"
 _INVOCATION_ID = "abc12345"
 _SUBAGENT_SESSION = f"{_INVOCATION_ID}.{_SUBAGENT}"
 
@@ -59,21 +59,18 @@ def _make_transcript_events() -> list[ServerEvent]:
 def _make_facade_mixed_pool(
     *,
     transcript_events: list[ServerEvent] | None = None,
-    native_messages: list[dict[str, Any]] | None = None,
 ) -> tuple[BotControlFacade, MagicMock, MagicMock]:
-    """Build a facade simulating the real coder pool.
+    """Build a synthetic mixed pool that exercises per-agent path selection.
 
-    - main agent: orchestrator (react) — no native messages for the subagent session
-    - subagent: coder (external) — transcript has events
+    - main agent: native_main (react), with no subagent-session messages
+    - subagent: opencode (external), with transcript events
 
     The mock MessageStore returns empty (external subagent has no native memory).
     The mock TranscriptStore returns the sample events.
     """
     # Mock MessageStore — returns empty for the subagent session (external has no native memory)
     mock_message_store = MagicMock(spec=MessageStore)
-    mock_message_store.load_all_messages = AsyncMock(
-        return_value=native_messages if native_messages is not None else []
-    )
+    mock_message_store.load_all_messages = AsyncMock(return_value=[])
 
     # Mock TranscriptStore — has the external subagent's events
     mock_transcript_store = MagicMock(spec=TranscriptStore)
@@ -91,9 +88,9 @@ def _make_facade_mixed_pool(
         description="external coding subagent",
     ))
 
-    # Mock PoolInstance: main=react (orchestrator), subagent=coder(external)
+    # Mock PoolInstance: native main plus OpenCode-backed external subagent.
     mock_pool_instance = MagicMock()
-    mock_pool_instance.main_execution_strategy = ExecutionStrategyKind.REACT  # orchestrator is react
+    mock_pool_instance.main_execution_strategy = ExecutionStrategyKind.REACT
     mock_pool_instance.main_agent_name = _MAIN_AGENT
     mock_pool_instance.target_store = target_store
 
@@ -101,18 +98,22 @@ def _make_facade_mixed_pool(
     mock_resources.target = _WORKSPACE
     mock_resources.pools = {_POOL: mock_pool_instance}
 
-    async def _workspace_resolver(_root: Path) -> Any:  # noqa: ANN401
+    async def _workspace_resolver(_root: Path) -> PoolWorkspaceResources:
         return mock_resources
 
-    async def _message_store_provider(_scope: BotRecordScope, _res: Any) -> MessageStore:  # noqa: ANN401
+    async def _message_store_provider(
+        _scope: BotRecordScope,
+        _res: PoolWorkspaceResources,
+    ) -> MessageStore:
         return mock_message_store
 
-    async def _transcript_store_provider(_res: Any) -> TranscriptStore:  # noqa: ANN401
+    async def _transcript_store_provider(
+        _res: PoolWorkspaceResources,
+    ) -> TranscriptStore:
         return mock_transcript_store
 
     facade = BotControlFacade(
         workspace_resolver=_workspace_resolver,
-        agent_pool_map={_MAIN_AGENT: _POOL, _SUBAGENT: _POOL},
         message_store_provider=_message_store_provider,
         transcript_store_provider=_transcript_store_provider,
         home_root=_WORKSPACE,
@@ -235,18 +236,22 @@ class TestNativeSubagentStillWorks:
         mock_resources.target = _WORKSPACE
         mock_resources.pools = {_POOL: mock_pool_instance}
 
-        async def _workspace_resolver(_root: Path) -> Any:  # noqa: ANN401
+        async def _workspace_resolver(_root: Path) -> PoolWorkspaceResources:
             return mock_resources
 
-        async def _message_store_provider(_scope: BotRecordScope, _res: Any) -> MessageStore:  # noqa: ANN401
+        async def _message_store_provider(
+            _scope: BotRecordScope,
+            _res: PoolWorkspaceResources,
+        ) -> MessageStore:
             return mock_message_store
 
-        async def _transcript_store_provider(_res: Any) -> TranscriptStore:  # noqa: ANN401
+        async def _transcript_store_provider(
+            _res: PoolWorkspaceResources,
+        ) -> TranscriptStore:
             return mock_transcript_store
 
         facade = BotControlFacade(
             workspace_resolver=_workspace_resolver,
-            agent_pool_map={_MAIN_AGENT: _POOL, "explore": _POOL},
             message_store_provider=_message_store_provider,
             transcript_store_provider=_transcript_store_provider,
             home_root=_WORKSPACE,
@@ -304,18 +309,22 @@ class TestExternalMainAgentSelfHistory:
         mock_resources.target = _WORKSPACE
         mock_resources.pools = {"opencode": mock_pool_instance}
 
-        async def _workspace_resolver(_root: Path) -> Any:  # noqa: ANN401
+        async def _workspace_resolver(_root: Path) -> PoolWorkspaceResources:
             return mock_resources
 
-        async def _message_store_provider(_scope: BotRecordScope, _res: Any) -> MessageStore:  # noqa: ANN401
+        async def _message_store_provider(
+            _scope: BotRecordScope,
+            _res: PoolWorkspaceResources,
+        ) -> MessageStore:
             return mock_message_store
 
-        async def _transcript_store_provider(_res: Any) -> TranscriptStore:  # noqa: ANN401
+        async def _transcript_store_provider(
+            _res: PoolWorkspaceResources,
+        ) -> TranscriptStore:
             return mock_transcript_store
 
         facade = BotControlFacade(
             workspace_resolver=_workspace_resolver,
-            agent_pool_map={"opencode": "opencode"},
             message_store_provider=_message_store_provider,
             transcript_store_provider=_transcript_store_provider,
             home_root=_WORKSPACE,
@@ -375,18 +384,22 @@ class TestSubagentCannotReadMainAgentHistory:
         mock_resources.target = _WORKSPACE
         mock_resources.pools = {_POOL: mock_pool_instance}
 
-        async def _workspace_resolver(_root: Path) -> Any:  # noqa: ANN401
+        async def _workspace_resolver(_root: Path) -> PoolWorkspaceResources:
             return mock_resources
 
-        async def _message_store_provider(_scope: BotRecordScope, _res: Any) -> MessageStore:  # noqa: ANN401
+        async def _message_store_provider(
+            _scope: BotRecordScope,
+            _res: PoolWorkspaceResources,
+        ) -> MessageStore:
             return mock_message_store
 
-        async def _transcript_store_provider(_res: Any) -> TranscriptStore:  # noqa: ANN401
+        async def _transcript_store_provider(
+            _res: PoolWorkspaceResources,
+        ) -> TranscriptStore:
             return mock_transcript_store
 
         facade = BotControlFacade(
             workspace_resolver=_workspace_resolver,
-            agent_pool_map={_SUBAGENT: _POOL},
             message_store_provider=_message_store_provider,
             transcript_store_provider=_transcript_store_provider,
             home_root=_WORKSPACE,
@@ -397,7 +410,7 @@ class TestSubagentCannotReadMainAgentHistory:
             caller=AgentSessionRef(
                 workspace=_WORKSPACE,
                 pool=_POOL,
-                session_id="abc12345.orchestrator",
+                session_id=f"abc12345.{_MAIN_AGENT}",
                 agent_name=_SUBAGENT,
             ),
             limit=3,

@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from modex_graph import SqliteDeliverStore, SqliteNodeStateStore
+
 MIGRATION_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -39,6 +41,7 @@ GRAPH_TABLES: frozenset[str] = frozenset(
 )
 
 VALID_STATUSES: tuple[str, ...] = (
+    "pending",
     "running",
     "paused",
     "stopped",
@@ -165,7 +168,7 @@ def test_graph_specs_rejects_invalid_json() -> None:
         conn.close()
 
 
-def test_graph_specs_unique_name_version() -> None:
+def test_graph_specs_same_name_version_allowed_for_immutable_history() -> None:
     conn = _connect()
     try:
         conn.execute(
@@ -173,13 +176,18 @@ def test_graph_specs_unique_name_version() -> None:
             "VALUES (?, ?, ?, ?)",
             (1, "react", "1.0", "{}"),
         )
+        conn.execute(
+            "INSERT INTO graph_specs (spec_id, name, version, spec_json) "
+            "VALUES (?, ?, ?, ?)",
+            (2, "react", "1.0", '{"changed": true}'),
+        )
         conn.commit()
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO graph_specs (spec_id, name, version, spec_json) "
-                "VALUES (?, ?, ?, ?)",
-                (2, "react", "1.0", "{}"),
-            )
+        rows = conn.execute(
+            "SELECT spec_id, spec_json FROM graph_specs "
+            "WHERE name = ? AND version = ? ORDER BY spec_id",
+            ("react", "1.0"),
+        ).fetchall()
+        assert rows == [(1, "{}"), (2, '{"changed": true}')]
     finally:
         conn.close()
 
@@ -206,25 +214,14 @@ def test_graph_specs_same_name_different_version_allowed() -> None:
         conn.close()
 
 
-def test_graph_specs_updated_at_trigger_fires_when_omitted() -> None:
+def test_graph_specs_has_no_trigger_because_rows_are_immutable() -> None:
     conn = _connect()
     try:
-        backdated = 1
-        conn.execute(
-            "INSERT INTO graph_specs (spec_id, name, spec_json, updated_at) "
-            "VALUES (?, ?, ?, ?)",
-            (SPEC_ID, "x", "{}", backdated),
-        )
-        conn.commit()
-        conn.execute(
-            "UPDATE graph_specs SET spec_json = ? WHERE spec_id = ?",
-            ('{"v": 2}', SPEC_ID),
-        )
-        conn.commit()
-        after = conn.execute(
-            "SELECT updated_at FROM graph_specs WHERE spec_id = ?", (SPEC_ID,)
-        ).fetchone()[0]
-        assert after > backdated, "trigger must advance updated_at when omitted from UPDATE"
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?",
+            ("graph_specs",),
+        ).fetchall()
+        assert rows == [], "graph_specs must have no trigger (immutable rows)"
     finally:
         conn.close()
 
@@ -280,7 +277,7 @@ def test_graph_instances_accepts_valid_insert() -> None:
         conn.close()
 
 
-def test_graph_instances_default_status_is_running() -> None:
+def test_graph_instances_default_status_is_pending() -> None:
     conn = _connect()
     try:
         conn.execute(
@@ -296,7 +293,7 @@ def test_graph_instances_default_status_is_running() -> None:
             "SELECT status FROM graph_instances WHERE graph_instance_id = ?",
             (INSTANCE_ID,),
         ).fetchone()[0]
-        assert status == "running"
+        assert status == "pending"
     finally:
         conn.close()
 
@@ -407,16 +404,16 @@ def test_node_states_accepts_valid_insert() -> None:
         _seed_spec_and_instance(conn)
         conn.execute(
             "INSERT INTO node_states "
-            "(node_state_id, graph_instance_id, node_name, version, state_json) "
+            "(node_state_id, graph_instance_id, node_id, version, state_json) "
             "VALUES (?, ?, ?, ?, ?)",
-            (NODE_STATE_ID, INSTANCE_ID, "tool_call", 0, '{"step": 1}'),
+            (NODE_STATE_ID, INSTANCE_ID, "node-tool-call", 0, '{"step": 1}'),
         )
         conn.commit()
         row = conn.execute(
-            "SELECT node_name, version FROM node_states WHERE node_state_id = ?",
+            "SELECT node_id, version FROM node_states WHERE node_state_id = ?",
             (NODE_STATE_ID,),
         ).fetchone()
-        assert row == ("tool_call", 0)
+        assert row == ("node-tool-call", 0)
     finally:
         conn.close()
 
@@ -427,9 +424,9 @@ def test_node_states_default_version_is_zero() -> None:
         _seed_spec_and_instance(conn)
         conn.execute(
             "INSERT INTO node_states "
-            "(node_state_id, graph_instance_id, node_name, state_json) "
+            "(node_state_id, graph_instance_id, node_id, state_json) "
             "VALUES (?, ?, ?, ?)",
-            (NODE_STATE_ID, INSTANCE_ID, "tool_call", "{}"),
+            (NODE_STATE_ID, INSTANCE_ID, "node-tool-call", "{}"),
         )
         conn.commit()
         version = conn.execute(
@@ -448,9 +445,9 @@ def test_node_states_rejects_invalid_json() -> None:
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 "INSERT INTO node_states "
-                "(node_state_id, graph_instance_id, node_name, state_json) "
+                "(node_state_id, graph_instance_id, node_id, state_json) "
                 "VALUES (?, ?, ?, ?)",
-                (NODE_STATE_ID, INSTANCE_ID, "tool_call", "not-json"),
+                (NODE_STATE_ID, INSTANCE_ID, "node-tool-call", "not-json"),
             )
     finally:
         conn.close()
@@ -462,17 +459,17 @@ def test_node_states_unique_instance_node_version() -> None:
         _seed_spec_and_instance(conn)
         conn.execute(
             "INSERT INTO node_states "
-            "(node_state_id, graph_instance_id, node_name, version, state_json) "
+            "(node_state_id, graph_instance_id, node_id, version, state_json) "
             "VALUES (?, ?, ?, ?, ?)",
-            (NODE_STATE_ID, INSTANCE_ID, "tool_call", 0, "{}"),
+            (NODE_STATE_ID, INSTANCE_ID, "node-tool-call", 0, "{}"),
         )
         conn.commit()
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 "INSERT INTO node_states "
-                "(node_state_id, graph_instance_id, node_name, version, state_json) "
+                "(node_state_id, graph_instance_id, node_id, version, state_json) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (NODE_STATE_ID + 1, INSTANCE_ID, "tool_call", 0, "{}"),
+                (NODE_STATE_ID + 1, INSTANCE_ID, "node-tool-call", 0, "{}"),
             )
     finally:
         conn.close()
@@ -485,21 +482,21 @@ def test_node_states_mvcc_keeps_all_versions() -> None:
         for v in range(3):
             conn.execute(
                 "INSERT INTO node_states "
-                "(node_state_id, graph_instance_id, node_name, version, state_json) "
+                "(node_state_id, graph_instance_id, node_id, version, state_json) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (NODE_STATE_ID + v, INSTANCE_ID, "tool_call", v, f'{{"v": {v}}}'),
+                (NODE_STATE_ID + v, INSTANCE_ID, "node-tool-call", v, f'{{"v": {v}}}'),
             )
         conn.commit()
         latest = conn.execute(
             "SELECT version FROM node_states "
-            "WHERE graph_instance_id = ? AND node_name = ? "
+            "WHERE graph_instance_id = ? AND node_id = ? "
             "ORDER BY version DESC LIMIT 1",
-            (INSTANCE_ID, "tool_call"),
+            (INSTANCE_ID, "node-tool-call"),
         ).fetchone()[0]
         count = conn.execute(
             "SELECT COUNT(*) FROM node_states "
-            "WHERE graph_instance_id = ? AND node_name = ?",
-            (INSTANCE_ID, "tool_call"),
+            "WHERE graph_instance_id = ? AND node_id = ?",
+            (INSTANCE_ID, "node-tool-call"),
         ).fetchone()[0]
         assert latest == 2
         assert count == 3
@@ -530,6 +527,37 @@ def test_node_states_has_no_trigger() -> None:
         conn.close()
 
 
+def test_graph_stores_write_id_only_rows_to_workspace_schema() -> None:
+    conn = _connect()
+    try:
+        _seed_spec_and_instance(conn)
+        node_store = SqliteNodeStateStore(conn, INSTANCE_ID)
+        deliver_store = SqliteDeliverStore(conn)
+
+        invocation = node_store.begin_invocation("node-worker")
+        deliver_store.accumulate(
+            graph_instance_id=INSTANCE_ID,
+            node_id="node-worker",
+            source_node_id="node-source",
+            source_invocation_id=invocation.invocation_id,
+            content={"payload": "x"},
+        )
+
+        node_row = conn.execute(
+            "SELECT node_name, node_id FROM node_states WHERE graph_instance_id = ?",
+            (INSTANCE_ID,),
+        ).fetchone()
+        deliver_row = conn.execute(
+            "SELECT node_name, node_id, next_node, next_node_id "
+            "FROM deliver_states WHERE graph_instance_id = ?",
+            (INSTANCE_ID,),
+        ).fetchone()
+        assert node_row == (None, "node-worker")
+        assert deliver_row == (None, "node-worker", None, "node-worker")
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # deliver_states
 # ---------------------------------------------------------------------------
@@ -541,9 +569,9 @@ def test_deliver_states_accepts_valid_insert() -> None:
         _seed_spec_and_instance(conn)
         conn.execute(
             "INSERT INTO deliver_states "
-            "(deliver_id, graph_instance_id, node_name, next_node, content_json) "
+            "(deliver_id, graph_instance_id, node_id, next_node_id, content_json) "
             "VALUES (?, ?, ?, ?, ?)",
-            (DELIVER_ID, INSTANCE_ID, "accumulate", "downstream", '{"payload": "x"}'),
+            (DELIVER_ID, INSTANCE_ID, "node-accumulate", "node-downstream", '{"payload": "x"}'),
         )
         conn.commit()
         row = conn.execute(
@@ -560,9 +588,9 @@ def test_deliver_states_default_status_is_pending() -> None:
         _seed_spec_and_instance(conn)
         conn.execute(
             "INSERT INTO deliver_states "
-            "(deliver_id, graph_instance_id, node_name, next_node, content_json) "
+            "(deliver_id, graph_instance_id, node_id, next_node_id, content_json) "
             "VALUES (?, ?, ?, ?, ?)",
-            (DELIVER_ID, INSTANCE_ID, "n", "m", "{}"),
+            (DELIVER_ID, INSTANCE_ID, "node-n", "node-m", "{}"),
         )
         conn.commit()
         status = conn.execute(
@@ -580,9 +608,9 @@ def test_deliver_states_rejects_invalid_status() -> None:
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 "INSERT INTO deliver_states "
-                "(deliver_id, graph_instance_id, node_name, next_node, "
+                "(deliver_id, graph_instance_id, node_id, next_node_id, "
                 "content_json, status) VALUES (?, ?, ?, ?, ?, ?)",
-                (DELIVER_ID, INSTANCE_ID, "n", "m", "{}", "invalid_status"),
+                (DELIVER_ID, INSTANCE_ID, "node-n", "node-m", "{}", "invalid_status"),
             )
     finally:
         conn.close()
@@ -595,9 +623,9 @@ def test_deliver_states_rejects_invalid_json() -> None:
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 "INSERT INTO deliver_states "
-                "(deliver_id, graph_instance_id, node_name, next_node, content_json) "
+                "(deliver_id, graph_instance_id, node_id, next_node_id, content_json) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (DELIVER_ID, INSTANCE_ID, "n", "m", "not-json"),
+                (DELIVER_ID, INSTANCE_ID, "node-n", "node-m", "not-json"),
             )
     finally:
         conn.close()
@@ -609,9 +637,9 @@ def test_deliver_states_lifecycle_pending_to_consumed() -> None:
         _seed_spec_and_instance(conn)
         conn.execute(
             "INSERT INTO deliver_states "
-            "(deliver_id, graph_instance_id, node_name, next_node, content_json) "
+            "(deliver_id, graph_instance_id, node_id, next_node_id, content_json) "
             "VALUES (?, ?, ?, ?, ?)",
-            (DELIVER_ID, INSTANCE_ID, "n", "m", "{}"),
+            (DELIVER_ID, INSTANCE_ID, "node-n", "node-m", "{}"),
         )
         conn.commit()
         conn.execute(
@@ -633,9 +661,9 @@ def test_deliver_states_updated_at_trigger_fires_when_omitted() -> None:
         _seed_spec_and_instance(conn)
         conn.execute(
             "INSERT INTO deliver_states "
-            "(deliver_id, graph_instance_id, node_name, next_node, content_json, updated_at) "
+            "(deliver_id, graph_instance_id, node_id, next_node_id, content_json, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (DELIVER_ID, INSTANCE_ID, "n", "m", "{}", 1),
+            (DELIVER_ID, INSTANCE_ID, "node-n", "node-m", "{}", 1),
         )
         conn.commit()
         conn.execute(
@@ -675,14 +703,8 @@ def test_graph_indexes_exist() -> None:
         conn.close()
 
 
-# ---------------------------------------------------------------------------
-# Triggers (graph_specs, graph_instances, deliver_states — not node_states)
-# ---------------------------------------------------------------------------
-
-
 def test_graph_triggers_exist() -> None:
     expected_triggers = {
-        "trg_graph_specs_auto_updated_at",
         "trg_graph_instances_auto_updated_at",
         "trg_deliver_states_auto_updated_at",
     }
@@ -695,21 +717,27 @@ def test_graph_triggers_exist() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Snowflake ID PKs — BIGINT, not AUTOINCREMENT
+# Snowflake ID PKs — BIGINT, versioned where required, not AUTOINCREMENT
 # ---------------------------------------------------------------------------
 
 
-def test_graph_primary_keys_are_bigint_no_autoincrement() -> None:
+def test_graph_primary_keys_use_snowflake_ids_without_autoincrement() -> None:
     conn = _connect()
     try:
         for table in GRAPH_TABLES:
             rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-            pk_cols = [r for r in rows if r[5] > 0]
-            assert len(pk_cols) == 1, f"{table} must have exactly one PK column"
-            col_type = pk_cols[0][2].upper()
-            assert col_type == "BIGINT", (
-                f"{table}.{pk_cols[0][1]} must be BIGINT (Snowflake ID), got {col_type}"
-            )
+            pk_cols = sorted((r for r in rows if r[5] > 0), key=lambda row: row[5])
+            if table == "graph_instances":
+                assert [(row[1], row[2].upper()) for row in pk_cols] == [
+                    ("graph_instance_id", "BIGINT"),
+                    ("version", "INTEGER"),
+                ]
+            else:
+                assert len(pk_cols) == 1, f"{table} must have exactly one PK column"
+                col_type = pk_cols[0][2].upper()
+                assert col_type == "BIGINT", (
+                    f"{table}.{pk_cols[0][1]} must be BIGINT (Snowflake ID), got {col_type}"
+                )
             sql_text = conn.execute(
                 "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
                 (table,),
@@ -770,7 +798,6 @@ GRAPH_SCHEMA_OBJECTS: frozenset[str] = GRAPH_TABLES | {
     "idx_node_states_node",
     "idx_deliver_states_node",
     "idx_deliver_states_target",
-    "trg_graph_specs_auto_updated_at",
     "trg_graph_instances_auto_updated_at",
     "trg_deliver_states_auto_updated_at",
 }

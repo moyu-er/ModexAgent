@@ -1,9 +1,9 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-07-18 -->
+<!-- Updated: 2026-08-08 -->
 
 # webui
 
-React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connects to the bot's WebUI backend (aiohttp) via REST API and WebSocket. All color tokens live in `src/index.css` `:root` / `.dark` blocks, mapped through CSS variables — edit colors once, never in the tailwind config. The current design system is "Teal & Ember Console" (see `docs/design/teal-ember-redesign/` and the Design System section below).
+React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connects to the bot's WebUI backend (aiohttp) via REST API and WebSocket. All color tokens live in `src/index.css` `:root` / `.dark` blocks, mapped through CSS variables — edit colors once, never in the tailwind config. The current design system is "Teal & Ember Console" (see the Design System section below). Graph visualization IA redesign spec: `docs/design/graph-visualization-redesign/PRD.md` (project-level).
 
 ## Key Files
 
@@ -23,7 +23,6 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 |-----------|---------|
 | `src/` | Application source (see below) |
 | `dist/` | Built static assets (auto-generated, served by backend at `/webui/`) |
-| `docs/` | Handoff documents and design records |
 
 ## src/ Structure
 
@@ -52,11 +51,34 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 | `components/settings/ConfigForm.tsx` | Generic field renderer for singleton config domains |
 | `components/ui/SectionLabel.tsx` | Shared section eyebrow (Geist Mono 10px uppercase) — used across all settings tabs |
 | `components/ui/KeyValueEditor.tsx` | Postman-style key/value row editor (controlled component) |
+| `components/graphs/GraphSpecListPage.tsx` | Graph spec list — MiniTopology thumbnail + metadata per row |
+| `components/graphs/GraphSpecEditor.tsx` | Split-pane spec editor — CodeMirror YAML + live topology preview + run |
+| `components/graphs/GraphSpecDetail.tsx` | Spec detail view — topology preview + instance list (right panel) + new-instance composer |
+| `components/graphs/GraphInstanceDetail.tsx` | Instance detail view — conversation flow + re-invoke composer + topology drawer |
+| `components/graphs/GraphSpecInstanceRow.tsx` | Shared instance row for spec detail's instance list — #id + status badge + progress + elapsed |
+| `components/graphs/GraphExecutionViewer.tsx` | Full-canvas execution viewer — retained for Phase 2 secondary view (T07) |
+| `components/graphs/shared.tsx` | Shared graph UI — GraphStatusBadge + formatGraphApiError |
+| `components/graphs/topology/TopologyCanvas.tsx` | SVG canvas — viewBox auto-fit, wheel zoom, drag pan, legend overlay |
+| `components/graphs/topology/GraphNode.tsx` | SVG node — glyph + name + sub-label + status dot, dual-channel status coloring |
+| `components/graphs/topology/GraphEdge.tsx` | SVG edge — border-strong stroke + arrowhead + highlight state |
+| `components/graphs/topology/DeliverPulse.tsx` | Deliver pulse animation — brand-bright dot travels along edge path, reduced-motion fallback |
+| `components/graphs/topology/ActiveNodeRing.tsx` | Running-node pulsing ring — outer rect stroke, CSS `graph-ring-pulse` animation |
+| `components/graphs/topology/MiniTopology.tsx` | 80×24px thumbnail — simplified topology, >8 nodes fold to `···` |
+| `components/graphs/topology/layout.ts` | dagre TB layout — spec → node positions + edge paths |
+| `components/graphs/topology/miniLayout.ts` | Simplified layout for MiniTopology (fixed 80×24 coordinate space) |
+| `components/graphs/detail/NodeDetailPanel.tsx` | Sidebar — selected node details (type, pool, status, invocation, open session) |
+| `components/graphs/detail/InstanceSummary.tsx` | Sidebar — instance summary + progress ring + graph-level result |
+| `components/graphs/detail/EventTimeline.tsx` | Sidebar — vertical event timeline with inferred/real events |
+| `components/graphs/yaml/YamlCodeEditor.tsx` | CodeMirror 6 wrapper — lazy import, YAML highlight, lint gutter, Teal & Ember theme |
+| `components/graphs/yaml/parseGraphSpec.ts` | YAML → structured topology model (ParsedGraphTopology), structured parse errors |
 | `hooks/useWebUIStream.ts` | WebSocket hook — manages connection, `request_id`-based optimistic message dedup, streaming events, message history |
 | `hooks/useWebUIStream.reducer.ts` | Pure reducer — session-scoped event filtering, `error` event → system notice, `user_message` echo dedup via `_request_id` metadata |
 | `hooks/useWebUIStream.reducer.test.ts` | Reducer unit tests (session isolation, error handling, request_id matching) |
+| `hooks/useGraphExecution.ts` | Graph execution hook — 2s polling + WS mode, node status diff, deliver pulse triggers, derived event timeline |
+| `hooks/useGraphExecution.diff.ts` | Pure diff logic — `diffNodeStatuses` transition table (§9.3), separated from React lifecycle |
 | `lib/api.ts` | REST API client (fetchSessions, fetchPools, createConversation, etc.) |
 | `lib/ws-client.ts` | WebSocket client with action/attach protocol |
+| `lib/graphsApi.ts` | Graph REST API client — specs CRUD, instance lifecycle, events, deliver, topology |
 | `types/events.ts` | TypeScript event type definitions matching backend events.py |
 
 ## Scripts
@@ -66,14 +88,14 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 | `npm run dev` | Start Vite dev server with backend proxy |
 | `npm run build` | Production build to `dist/` |
 | `npm run preview` | Preview production build |
-| `npm test` | Run Vitest unit tests (currently reducer tests) |
+| `npm test` | Run Vitest unit tests — 927 tests across 93 files |
 
 ## For AI Agents
 
 ### Working In This Directory
 - `npm run dev` starts the dev server with proxy to backend.
 - `npm run build` outputs to `dist/`, which is served by the backend at `/webui/`.
-- `npm test` runs Vitest — 563 tests across 67 files covering hooks, reducers, UI primitives, dropdowns, boot, and all settings views.
+- `npm test` runs Vitest — 927 tests across 93 files covering hooks, reducers, UI primitives, dropdowns, boot, settings views, and all graph visualization components (topology, deliver pulse, diff, YAML editor, execution viewer, spec editor, instance/spec list pages).
 - The frontend has **no direct pool switching** for existing conversations — it's purely a display filter in the sidebar dropdown.
 - Workspace switching is done via `WorkspaceBrowser` → `POST /api/workspace/cd`.
 - `useWebUIStream.ts` is the core hook — it handles WebSocket lifecycle, optimistic messages (`request_id`-based dedup), and streaming state.
@@ -100,17 +122,11 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 
 ## Specs & Issue Tracker
 
-WebUI specs/PRDs live as local markdown under `docs/design/<feature-slug>/` (mirrors the repo-root convention in `docs/agents/issue-tracker.md`):
-
-- One feature per directory: `docs/design/<feature-slug>/`
-- The PRD is `docs/design/<feature-slug>/PRD.md`; accompanying design records (token/component specs) live alongside it (e.g. `DESIGN.md`)
-- Triage state is a `Status:` line near the top of the PRD (label vocabulary: repo-root `docs/agents/triage-labels.md`)
-
-Spec reference: `docs/design/teal-ember-redesign/` — the "Teal & Ember Console" redesign (PRD + DESIGN.md). The redesign is shipped (T01–T07); the directory is now the design-system record, not an active spec.
+WebUI specs/PRDs live at the **project level** under `docs/design/<feature-slug>/` (not under `webui/docs/`). The graph visualization IA redesign spec is at `docs/design/graph-visualization-redesign/PRD.md` + `tickets.md`. ADR-0040 (`docs/adr/0040-*.md`) covers the backend re-invocation + spec immutability decisions.
 
 ## Design System
 
-The WebUI ships the **Teal & Ember Console** design system (redesign landed 2026-07-18, T01–T07). Full normative spec: `docs/design/teal-ember-redesign/DESIGN.md`.
+The WebUI ships the **Teal & Ember Console** design system. The normative spec lived in the now-removed `docs/design/teal-ember-redesign/`; this section is the surviving record.
 
 - **Palette source of truth**: `src/index.css` `:root` / `.dark` blocks — all colors as CSS variables (`--color-*`), mapped through `tailwind.config.js` via `var(--color-*)`. Edit colors once in `index.css`; never in the tailwind config or components. Brand teal `#2DD4BF` (dark) / `#0D9488` (light) — one teal hue across both themes, only lightness shifts; ember `#F59E0B` / `#B45309` secondary accent; warm-paper (light) / neutral warm-graphite (dark, "Warm Graphite") canvas. Dark borders/scrollbars are hue-free white-alpha ("neutral shimmer"). Dark is the default theme; light remains first-class.
 - **Typography**: Inter (display + body) + JetBrains Mono (code, section eyebrows). CJK fallback via Noto Sans SC. Loaded from Google Fonts in `index.html` with `font-display: swap`. (Geist / Geist Mono / Space Grotesk were removed in the typography unification.)

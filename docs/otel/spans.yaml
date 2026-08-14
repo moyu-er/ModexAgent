@@ -36,6 +36,39 @@
 # gen_ai.plan.internal (kind: INTERNAL, recommended)
 #   Agent planning phase. We don't emit this (future: when planning is separate from LLM node).
 
+# ── ModexAgent-Specific Spans (not in upstream OTel spec) ───────────
+
+# agent.start (kind: INTERNAL)
+#   Agent startup span — system prompt + tool definitions snapshot.
+#   Emitted by AgentStartSpanHook at start_node_turn (fresh turn only).
+#   Tier: FULL only.
+#   Parent: invoke_agent root span (parent_span_id = root_span_id).
+#   Attributes:
+#     gen_ai.system_instructions    (opt-in, when prompt_capture != off)
+#     gen_ai.system.prompt_hash     (custom, SHA-256 first 16 chars)
+#     gen_ai.system.prompt_length   (custom, character count)
+#     gen_ai.tool.definitions       (opt-in, when capture_tools = True)
+#     gen_ai.agent.name             (cond. required)
+#     gen_ai.operation.name         (required)
+#   Purpose: captures the system prompt and tool definitions once per turn
+#   for analysis and training data derivation. The system prompt is NOT
+#   per-turn identical (memory/experience injection modifies it at runtime),
+#   so per-turn capture has analysis value. See ADR-0024 IN11/IN18.
+
+# execute_tool_batch (kind: INTERNAL)
+#   Tool batch grouping span — one per tool execution batch.
+#   Emitted by ToolSpanHook at after_tool_execution (start time cached at
+#   before_tool_execution). Tier: STANDARD and FULL.
+#   Parent: invoke_agent root span.
+#   Children: execute_tool spans (one per tool result in the batch).
+#   Attributes:
+#     gen_ai.operation.name   (required, value: execute_tool)
+#     gen_ai.tool.count       (custom, int — number of tools in batch)
+#     gen_ai.tool.names       (custom, string[] — tool names in batch)
+#     gen_ai.agent.name       (cond. required)
+#   Purpose: groups individual execute_tool spans into a batch subtree,
+#   making the ReAct "act" phase visible as a single unit in the trace tree.
+
 # ── Attribute Groups (from spans.yaml) ──────────────────────────────
 
 # attributes.gen_ai.common (internal):

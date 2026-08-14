@@ -35,8 +35,8 @@ from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.inbox_poller import InboxPoller
 from modex_agent.multi_agent.pool_config.specs import SubagentSpec
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.state import AgentState
-
 
 # ── Test helpers ──────────────────────────────────────────────────────────
 
@@ -87,6 +87,14 @@ async def _make_poller_pool(interval: float = 0.02):
         inbox_consumer=consumer,
         session_factory=SessionIdFactory(),
     )
+
+    _tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+
+    async def _tree_deliver(sid: str, env: AgentMessageEnvelope) -> None:
+        await bus.send(sid, env)
+
+    _tree.deliver = _tree_deliver
+    pool.tree = _tree
 
     descriptor = AgentDescriptor(address=AgentAddress(name="main"))
     instance = await pool._agent_factory.create_agent(descriptor, broker=_FakeBroker())
@@ -200,6 +208,53 @@ async def test_poller_no_drop_under_concurrent_sends():
         assert main.pipeline.process_message.await_count >= 1
     finally:
         await poller.stop()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_lifecycle_fires_start_and_end() -> None:
+    pool, _bus, poller = await _make_poller_pool()
+    await poller.stop()
+    lifecycle: list[str] = []
+
+    async def on_dispatch_start(_sid: str) -> None:
+        lifecycle.append("start")
+
+    async def on_dispatch_end(sid: str) -> None:
+        assert sid in poller._inflight
+        lifecycle.append("end")
+
+    tree_manager = MagicMock()
+    tree_manager.on_dispatch_start = AsyncMock(side_effect=on_dispatch_start)
+    tree_manager.on_dispatch_end = AsyncMock(side_effect=on_dispatch_end)
+    poller.attach_tree_manager(tree_manager)
+    poller._inflight["pfx.main"] = MagicMock(done=lambda: False)
+
+    await poller._run_turn("pfx.main", pool._agents["main"])
+
+    assert lifecycle == ["start", "end"]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_end_exception_doesnt_crash_poller() -> None:
+    pool, _bus, poller = await _make_poller_pool()
+    await poller.stop()
+
+    async def fail_dispatch_end(sid: str) -> None:
+        assert sid in poller._inflight
+        raise RuntimeError("tree store unavailable")
+
+    tree_manager = MagicMock()
+    tree_manager.on_dispatch_start = AsyncMock()
+    tree_manager.on_dispatch_end = AsyncMock(side_effect=fail_dispatch_end)
+    poller.attach_tree_manager(tree_manager)
+    poller._inflight["pfx.main"] = MagicMock(done=lambda: False)
+    poller.signal_wakeup = MagicMock()
+
+    await poller._run_turn("pfx.main", pool._agents["main"])
+
+    assert "pfx.main" not in poller._inflight
+    tree_manager.on_dispatch_end.assert_awaited_once_with("pfx.main")
+    poller.signal_wakeup.assert_called_once_with()
 
 
 # ── Lazy materialize on first turn ────────────────────────────────────────

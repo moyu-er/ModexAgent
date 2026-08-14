@@ -165,7 +165,7 @@ class LLMNode(Node[ReActTurnState]):
         tm = agent_ctx.tool_manager
         if tm is not None:
             tools = tm.list_tools()
-            tool_dict = dict()
+            tool_dict = {}
             for tool_name in tools:
                 temp = tm.get_tool(tool_name)
                 if temp is not None:
@@ -175,10 +175,10 @@ class LLMNode(Node[ReActTurnState]):
         # engine-level ``compile(max_iterations=N)`` safety net (layer 1) is
         # larger than this and raises ``GraphRecursionError`` only on runaway
         # loops — the normal max-iterations exit routes through this static
-        # edge to END.
+        # edge to AFTER.
         if state.iteration > agent_ctx.max_iterations:
             await ctx.runtime.emit(GraphReActEvent.MAX_ITERATIONS, None, ctx)
-            self.deliver(state.llm_response, ReActNode.END, ctx)
+            self.deliver(state.llm_response, ReActNode.AFTER, ctx)
             return None
 
         agent_runtime = agent_ctx.runtime
@@ -191,13 +191,6 @@ class LLMNode(Node[ReActTurnState]):
                     ReActEvent.ITERATION_START,
                     {"iteration": state.iteration},
                 )
-
-            # Signal completion of the previous iteration (skip on first iter).
-            # Per ADR-0033 D5 rule 1: iteration hooks are node-controlled
-            # (NOT engine-auto-invoked). Dispatch at the same code points as
-            # before migration — timing is preserved by construction.
-            if state.iteration > 1:
-                await ctx.runtime.dispatch_hook(ReActHookPoint.AFTER_ITERATION, ctx)
 
             await ctx.runtime.dispatch_hook(ReActHookPoint.BEFORE_ITERATION, ctx)
 
@@ -260,13 +253,16 @@ class LLMNode(Node[ReActTurnState]):
         _round_extension = (
             agent_runtime.safety.turn.agent_run_timeout_seconds
             if agent_runtime is not None
-            else 420.0
+            else 600.0
         )
         renew_dispatch_deadline(_round_extension)
 
         response = state.llm_response
+        # AFTER_ITERATION fires at current-iteration-end (not next-iteration-start),
+        # so all three exit paths (ERROR, TOOL, AFTER) get the dispatch (T16).
+        await ctx.runtime.dispatch_hook(ReActHookPoint.AFTER_ITERATION, ctx)
         if response is not None and response.finish_reason == FinishReason.ERROR.value:
-            self.deliver(response, ReActNode.END, ctx)
+            self.deliver(response, ReActNode.AFTER, ctx)
             return None
 
         if response is not None and response.tool_calls:
@@ -278,7 +274,7 @@ class LLMNode(Node[ReActTurnState]):
             {"iteration": state.iteration, "has_tool_calls": False},
             ctx,
         )
-        self.deliver(response, ReActNode.END, ctx)
+        self.deliver(response, ReActNode.AFTER, ctx)
         return None
 
     async def _build_messages(

@@ -74,10 +74,7 @@ def _is_meaningless_summary(summary: str) -> bool:
         "<function_call>",
         "<invoke name=",
     )
-    if any(p in text for p in _tool_xml_patterns):
-        return True
-
-    return False
+    return bool(any(p in text for p in _tool_xml_patterns))
 
 
 def safe_atomic_replace(tmp_path: Path, target_path: Path) -> None:

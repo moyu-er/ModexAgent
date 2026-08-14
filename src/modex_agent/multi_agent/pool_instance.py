@@ -9,15 +9,20 @@ at turn time via ``pool_data[pool_name]``. Only deployment-scoped resources
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.messaging.broker import AddressKind
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.bus import AgentMessageBus
 from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.multi_agent.tools import CommunicationTargetStore
 from modex_agent.tools.terminal.managers import TerminalManagerBase
+
+if TYPE_CHECKING:
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        SessionBindingStore,
+    )
 
 
 @dataclass
@@ -46,8 +51,10 @@ class PoolInstance:
     communication_service: (
         Any  # AgentCommunicationService — resolves paths from workspace at runtime
     )
-    agent_bus: AgentMessageBus  # exposed for cross-pool peer wiring
+    tree_manager: SessionTreeManager  # exposed for cross-pool peer wiring
     target_store: CommunicationTargetStore  # exposed for cross-pool peer wiring
+    session_binding_store: SessionBindingStore | None = None  # tree-level session binding
+    requires_main_agent_tools: bool = True  # ADR-0025: mirror of strategy.requires_main_agent_tools
 
     @property
     def main_address(self) -> AgentAddress:

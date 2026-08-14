@@ -1,7 +1,10 @@
 """Inbox 消息消费端。"""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 
 from .server import InboxMQ
 from .types import InboxMessage
@@ -46,6 +49,13 @@ class InboxConsumer(BaseInboxConsumer):
         self._server = server
         self._cache: OrderedDict[str, bool] = OrderedDict()
         self._cache_size = cache_size
+        self._on_consumed: Callable[[str, InboxMessage], Awaitable[None]] | None = None
+
+    def set_on_consumed(
+        self,
+        callback: Callable[[str, InboxMessage], Awaitable[None]] | None,
+    ) -> None:
+        self._on_consumed = callback
 
     def _cache_key(self, session_id: str, message_id: str) -> str:
         return f"{session_id}:{message_id}"
@@ -73,6 +83,9 @@ class InboxConsumer(BaseInboxConsumer):
             cache_key = self._cache_key(session_id, msg.message_id)
             if not self._touch_cache(cache_key):
                 result.append(msg)
+        if self._on_consumed is not None:
+            for msg in result:
+                await self._on_consumed(session_id, msg)
         return result
 
     async def count(self, session_id: str) -> int:
@@ -83,6 +96,9 @@ class InboxConsumer(BaseInboxConsumer):
         """Non-destructive read of up to ``limit`` pending messages (no dedup)."""
         messages = await self._server.peek(session_id)
         return messages[:limit]
+
+    async def contains_pending(self, session_id: str, message_id: str) -> bool:
+        return await self._server.contains_pending(session_id, message_id)
 
     async def sessions_with_pending(self) -> list[str]:
         """返回当前有 pending 消息（count > 0）的会话 ID 列表。"""

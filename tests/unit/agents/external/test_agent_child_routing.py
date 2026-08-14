@@ -161,6 +161,9 @@ class _MockRegistry(SessionRegistry):
     async def load_all(self) -> None:
         pass
 
+    async def cleanup(self, session_id: str) -> None:
+        pass
+
 
 class _DirectEmissionAdapter(StreamingProviderBackend):
     """Test adapter that directly replays pre-constructed ``Emission`` objects.

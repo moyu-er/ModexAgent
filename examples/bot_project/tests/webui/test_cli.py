@@ -69,39 +69,6 @@ def test_resolve_venv_python_candidates() -> None:
     assert result in valid
 
 
-def test_start_help() -> None:
-    """start --help shows options."""
-    result = runner.invoke(app, ["start", "--help"])
-    assert result.exit_code == 0
-    assert "--port" in result.output
-    assert "--config" in result.output
-    assert "--no-webui" in result.output
-
-
-def test_restart_help() -> None:
-    """restart --help shows options."""
-    result = runner.invoke(app, ["restart", "--help"])
-    assert result.exit_code == 0
-    assert "--port" in result.output
-    assert "--config" in result.output
-    assert "--no-webui" in result.output
-
-
-def test_stop_help() -> None:
-    """stop --help shows the port option."""
-    result = runner.invoke(app, ["stop", "--help"])
-    assert result.exit_code == 0
-    assert "--port" in result.output
-
-
-def test_logs_help() -> None:
-    """logs --help shows options."""
-    result = runner.invoke(app, ["logs", "--help"])
-    assert result.exit_code == 0
-    assert "--lines" in result.output
-    assert "--follow" in result.output
-
-
 def test_launch_subprocess_uses_python_c() -> None:
     """_launch_subprocess uses python -c to run the given script."""
     with patch("modexbot.cli.subprocess.Popen") as mock_popen:

@@ -32,15 +32,53 @@ from ._time import now_ms
 _DELIVER_TABLE = "deliver_states"
 _COL_DELIVER_ID = "deliver_id"
 _COL_GRAPH_INSTANCE_ID = "graph_instance_id"
-_COL_NODE_NAME = "node_name"
-_COL_NEXT_NODE = "next_node"
-_COL_SOURCE_NODE = "source_node"
+_COL_NODE_ID = "node_id"
+_COL_NEXT_NODE_ID = "next_node_id"
+_COL_SOURCE_NODE_ID = "source_node_id"
 _COL_SOURCE_INVOCATION_ID = "source_invocation_id"
 _COL_CONSUMED_BY_INVOCATION_ID = "consumed_by_invocation_id"
 _COL_CONTENT_JSON = "content_json"
 _COL_STATUS = "status"
 _COL_CREATED_AT = "created_at"
 _COL_UPDATED_AT = "updated_at"
+
+
+def _encode_content(content: Any) -> str:
+    """Serialize deliver content for SQLite storage.
+
+    Handles Pydantic ``BaseModel`` instances (like ``GraphPayload``) by
+    wrapping their ``model_dump`` in a typed envelope so reads can
+    reconstruct the original type. Raw JSON-native values (dict, str,
+    list) are stored directly via ``json.dumps``.
+    """
+    if isinstance(content, BaseModel):
+        return json.dumps(
+            {
+                "__pydantic__": True,
+                "class": type(content).__name__,
+                "data": content.model_dump(mode="json"),
+            }
+        )
+    return json.dumps(content, default=str)
+
+
+def _decode_content(raw: str) -> Any:
+    """Deserialize deliver content from SQLite storage.
+
+    Reverses ``_encode_content``: if the parsed JSON is a typed envelope
+    (``__pydantic__`` marker), reconstructs the original ``BaseModel``.
+    Otherwise returns the parsed value as-is.
+    """
+    parsed = json.loads(raw)
+    if isinstance(parsed, dict) and parsed.get("__pydantic__"):
+        cls_name = parsed.get("class", "")
+        data = parsed.get("data", {})
+        if cls_name == "GraphPayload":
+            from ..integration import GraphPayload
+
+            return GraphPayload.model_validate(data)
+        return data
+    return parsed
 
 
 class DeliverRecord(BaseModel):
@@ -50,8 +88,8 @@ class DeliverRecord(BaseModel):
 
     - ``deliver_id: int`` — Snowflake ID (primary key).
     - ``graph_instance_id: int`` — FK -> ``graph_instances``.
-    - ``node_name: str`` — the target node that owns the store.
-    - ``source_node: str`` — the delivering node.
+    - ``node_id: str`` — the target node that owns the store.
+    - ``source_node_id: str`` — the delivering node.
     - ``source_invocation_id: int`` — deliverer's invocation_id.
     - ``consumed_by_invocation_id: int | None`` — consumer's
       invocation_id (None until consumed).
@@ -66,8 +104,8 @@ class DeliverRecord(BaseModel):
 
     deliver_id: int = Field(description="Snowflake ID (primary key).")
     graph_instance_id: int = Field(description="FK -> graph_instances.")
-    node_name: str = Field(description="The target node that owns the store.")
-    source_node: str = Field(description="The delivering node.")
+    node_id: str = Field(description="The target node that owns the store.")
+    source_node_id: str = Field(description="The delivering node.")
     source_invocation_id: int = Field(description="Deliverer's invocation_id.")
     consumed_by_invocation_id: int | None = Field(
         default=None,
@@ -86,10 +124,10 @@ class DeliverStore(ABC):
     """Per-node deliver accumulation + consumption state machine (rule 7: ABC).
 
     The store is owned by a single node (the
-    ``target_node``); delivers are accumulated into it and consumed by that
+    ``node_id``); delivers are accumulated into it and consumed by that
     node's invocations.
 
-    - ``accumulate`` — keyword-only signature with ``source_node`` +
+    - ``accumulate`` — keyword-only signature with ``source_node_id`` +
       ``source_invocation_id``.
     - ``query_consumable`` — query delivers ready for consumption.
     - ``mark_consumed`` — mark delivers as consumed by an invocation.
@@ -116,8 +154,8 @@ class DeliverStore(ABC):
         self,
         *,
         graph_instance_id: int,
-        target_node: str,
-        source_node: str,
+        node_id: str,
+        source_node_id: str,
         source_invocation_id: int,
         content: Any,
     ) -> int:
@@ -125,8 +163,8 @@ class DeliverStore(ABC):
 
         Args:
             graph_instance_id: The graph instance ID (FK -> graph_instances).
-            target_node: The owning node (this store's owner).
-            source_node: The delivering node.
+            node_id: The owning node ID (this store's owner).
+            source_node_id: The delivering node ID.
             source_invocation_id: The deliverer's invocation_id.
             content: The delivered content (JSON-serializable).
 
@@ -136,12 +174,12 @@ class DeliverStore(ABC):
         ...
 
     @abstractmethod
-    def query_consumable(self, graph_instance_id: int, target_node: str) -> list[DeliverRecord]:
-        """Return delivers ready for consumption by ``target_node``.
+    def query_consumable(self, graph_instance_id: int, node_id: str) -> list[DeliverRecord]:
+        """Return delivers ready for consumption by ``node_id``.
 
         Args:
             graph_instance_id: The graph instance ID.
-            target_node: The consuming node's name.
+            node_id: The consuming node's ID.
 
         Returns:
             Consumable ``DeliverRecord``s for this node under this graph
@@ -176,7 +214,7 @@ class NullDeliverStore(DeliverStore):
     in an in-memory queue. `mark_consumed` REMOVES matching records from
     the queue (no CONSUMED state — this is the Null strategy). `promote_consumed`
     is a no-op (no further state transition). `query_consumable` returns
-    all remaining records for `target_node`.
+    all remaining records for ``node_id``.
 
     Used when the consumption state machine is disabled but the queue
     semantics are still needed (e.g. test harnesses, ephemeral runs).
@@ -189,8 +227,8 @@ class NullDeliverStore(DeliverStore):
         self,
         *,
         graph_instance_id: int,
-        target_node: str,
-        source_node: str,
+        node_id: str,
+        source_node_id: str,
         source_invocation_id: int,
         content: Any,
     ) -> int:
@@ -199,8 +237,8 @@ class NullDeliverStore(DeliverStore):
         record = DeliverRecord(
             deliver_id=deliver_id,
             graph_instance_id=graph_instance_id,
-            node_name=target_node,
-            source_node=source_node,
+            node_id=node_id,
+            source_node_id=source_node_id,
             source_invocation_id=source_invocation_id,
             consumed_by_invocation_id=None,
             content=content,
@@ -211,8 +249,8 @@ class NullDeliverStore(DeliverStore):
         self._records.setdefault(graph_instance_id, []).append(record)
         return deliver_id
 
-    def query_consumable(self, graph_instance_id: int, target_node: str) -> list[DeliverRecord]:
-        return [r for r in self._records.get(graph_instance_id, []) if r.node_name == target_node]
+    def query_consumable(self, graph_instance_id: int, node_id: str) -> list[DeliverRecord]:
+        return [r for r in self._records.get(graph_instance_id, []) if r.node_id == node_id]
 
     def mark_consumed(self, deliver_ids: list[int], consumed_by_invocation_id: int) -> None:
         if not deliver_ids:
@@ -248,8 +286,8 @@ class InMemoryDeliverStore(DeliverStore):
         self,
         *,
         graph_instance_id: int,
-        target_node: str,
-        source_node: str,
+        node_id: str,
+        source_node_id: str,
         source_invocation_id: int,
         content: Any,
     ) -> int:
@@ -258,8 +296,8 @@ class InMemoryDeliverStore(DeliverStore):
         record = DeliverRecord(
             deliver_id=deliver_id,
             graph_instance_id=graph_instance_id,
-            node_name=target_node,
-            source_node=source_node,
+            node_id=node_id,
+            source_node_id=source_node_id,
             source_invocation_id=source_invocation_id,
             consumed_by_invocation_id=None,
             content=content,
@@ -270,11 +308,11 @@ class InMemoryDeliverStore(DeliverStore):
         self._records.setdefault(graph_instance_id, []).append(record)
         return deliver_id
 
-    def query_consumable(self, graph_instance_id: int, target_node: str) -> list[DeliverRecord]:
+    def query_consumable(self, graph_instance_id: int, node_id: str) -> list[DeliverRecord]:
         return [
             r
             for r in self._records.get(graph_instance_id, [])
-            if r.node_name == target_node and r.status == DeliverConsumptionStatus.PENDING
+            if r.node_id == node_id and r.status == DeliverConsumptionStatus.PENDING
         ]
 
     def mark_consumed(self, deliver_ids: list[int], consumed_by_invocation_id: int) -> None:
@@ -308,7 +346,7 @@ class SqliteDeliverStore(DeliverStore):
     ``deliver_states`` (idempotent — if the migration already created it,
     this is a no-op; if ``modex_graph`` is used standalone, this creates it).
 
-    The DDL includes ``source_node``,
+    The DDL includes ``source_node_id``,
     ``source_invocation_id``, ``consumed_by_invocation_id`` columns and a
     CHECK constraint allowing all ``DeliverConsumptionStatus`` values.
 
@@ -344,28 +382,34 @@ class SqliteDeliverStore(DeliverStore):
     def _init_schema(self) -> None:
         """Create the ``deliver_states`` table + indexes if they don't exist.
 
-        The DDL includes new columns
-        (``source_node``, ``source_invocation_id``,
+        Detects old-schema tables (missing ``node_id`` column) and rebuilds
+        them from scratch — SQLite ``ALTER TABLE`` cannot change CHECK or
+        NOT NULL constraints, so a full rebuild is the only correct path.
+        Safe because there is no production data to preserve.
+
+        The DDL includes consumption columns
+        (``source_node_id``, ``source_invocation_id``,
         ``consumed_by_invocation_id``) and a CHECK constraint allowing all
         ``DeliverConsumptionStatus`` values. Default status is ``'pending'``.
-
-        For existing tables created by old DDL: new columns
-        are added via ``ALTER TABLE`` (``_migrate_add_columns``). The
-        CHECK constraint on existing tables cannot be altered in SQLite
-        — fresh tables get the new CHECK. The ``json_valid(content_json)``
-        CHECK from the migration is omitted here — JSON1 may not be
-        compiled in on all standalone builds; the migration includes it
-        for workspace DBs where JSON1 is guaranteed (same convention as
-        ``SqliteGraphSpecStore`` and ``SqliteNodeStateStore``).
+        The ``json_valid(content_json)`` CHECK from the migration is omitted
+        here — JSON1 may not be compiled in on all standalone builds; the
+        migration includes it for workspace DBs where JSON1 is guaranteed
+        (same convention as ``SqliteGraphSpecStore`` and
+        ``SqliteNodeStateStore``).
         """
         conn = self._conn
+        existing = {
+            row[1] for row in conn.execute(f"PRAGMA table_info({_DELIVER_TABLE})").fetchall()
+        }
+        if existing and _COL_NODE_ID not in existing:
+            conn.execute(f"DROP TABLE IF EXISTS {_DELIVER_TABLE}")
         conn.execute(
             f"CREATE TABLE IF NOT EXISTS {_DELIVER_TABLE} ("
             f"{_COL_DELIVER_ID} INTEGER PRIMARY KEY, "
             f"{_COL_GRAPH_INSTANCE_ID} INTEGER NOT NULL, "
-            f"{_COL_NODE_NAME} TEXT NOT NULL, "
-            f"{_COL_NEXT_NODE} TEXT NOT NULL, "
-            f"{_COL_SOURCE_NODE} TEXT NOT NULL DEFAULT '', "
+             f"{_COL_NODE_ID} TEXT NOT NULL, "
+             f"{_COL_NEXT_NODE_ID} TEXT NOT NULL, "
+             f"{_COL_SOURCE_NODE_ID} TEXT NOT NULL DEFAULT '', "
             f"{_COL_SOURCE_INVOCATION_ID} INTEGER NOT NULL DEFAULT 0, "
             f"{_COL_CONSUMED_BY_INVOCATION_ID} INTEGER, "
             f"{_COL_CONTENT_JSON} TEXT NOT NULL, "
@@ -380,72 +424,42 @@ class SqliteDeliverStore(DeliverStore):
             f"{_COL_UPDATED_AT} INTEGER NOT NULL"
             f")"
         )
-        self._migrate_add_columns()
         # Indexes matching the migration (idx_deliver_states_node + idx_deliver_states_target).
         conn.execute(
             f"CREATE INDEX IF NOT EXISTS idx_{_DELIVER_TABLE}_node "
-            f"ON {_DELIVER_TABLE} ({_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_NAME}, {_COL_STATUS})"
+            f"ON {_DELIVER_TABLE} ({_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_ID}, {_COL_STATUS})"
         )
         conn.execute(
             f"CREATE INDEX IF NOT EXISTS idx_{_DELIVER_TABLE}_target "
-            f"ON {_DELIVER_TABLE} ({_COL_GRAPH_INSTANCE_ID}, {_COL_NEXT_NODE}, {_COL_STATUS})"
+            f"ON {_DELIVER_TABLE} ({_COL_GRAPH_INSTANCE_ID}, {_COL_NEXT_NODE_ID}, {_COL_STATUS})"
         )
         conn.commit()
-
-    def _migrate_add_columns(self) -> None:
-        """Add consumption columns to existing ``deliver_states`` tables.
-
-        If the table was created by the old DDL, the new
-        columns (``source_node``, ``source_invocation_id``,
-        ``consumed_by_invocation_id``) won't exist. This adds them via
-        ``ALTER TABLE`` with defaults so old rows get backward-compatible
-        values. For fresh tables created with the new DDL, this is a
-        no-op (columns already present).
-        """
-        conn = self._conn
-        existing = {
-            row[1] for row in conn.execute(f"PRAGMA table_info({_DELIVER_TABLE})").fetchall()
-        }
-        if _COL_SOURCE_NODE not in existing:
-            conn.execute(
-                f"ALTER TABLE {_DELIVER_TABLE} "
-                f"ADD COLUMN {_COL_SOURCE_NODE} TEXT NOT NULL DEFAULT ''"
-            )
-        if _COL_SOURCE_INVOCATION_ID not in existing:
-            conn.execute(
-                f"ALTER TABLE {_DELIVER_TABLE} "
-                f"ADD COLUMN {_COL_SOURCE_INVOCATION_ID} INTEGER NOT NULL DEFAULT 0"
-            )
-        if _COL_CONSUMED_BY_INVOCATION_ID not in existing:
-            conn.execute(
-                f"ALTER TABLE {_DELIVER_TABLE} ADD COLUMN {_COL_CONSUMED_BY_INVOCATION_ID} INTEGER"
-            )
 
     def accumulate(
         self,
         *,
         graph_instance_id: int,
-        target_node: str,
-        source_node: str,
+        node_id: str,
+        source_node_id: str,
         source_invocation_id: int,
         content: Any,
     ) -> int:
         deliver_id = default_id_generator().generate()
         ts = now_ms()
-        content_json = json.dumps(content)
+        content_json = _encode_content(content)
         self._conn.execute(
             f"INSERT INTO {_DELIVER_TABLE} "
-            f"({_COL_DELIVER_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_NAME}, "
-            f"{_COL_NEXT_NODE}, {_COL_SOURCE_NODE}, {_COL_SOURCE_INVOCATION_ID}, "
+            f"({_COL_DELIVER_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_ID}, "
+            f"{_COL_NEXT_NODE_ID}, {_COL_SOURCE_NODE_ID}, {_COL_SOURCE_INVOCATION_ID}, "
             f"{_COL_CONSUMED_BY_INVOCATION_ID}, {_COL_CONTENT_JSON}, {_COL_STATUS}, "
             f"{_COL_CREATED_AT}, {_COL_UPDATED_AT}) "
             f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 deliver_id,
                 graph_instance_id,
-                target_node,
-                "",
-                source_node,
+                node_id,
+                node_id,
+                source_node_id,
                 source_invocation_id,
                 None,
                 content_json,
@@ -457,19 +471,19 @@ class SqliteDeliverStore(DeliverStore):
         self._conn.commit()
         return deliver_id
 
-    def query_consumable(self, graph_instance_id: int, target_node: str) -> list[DeliverRecord]:
+    def query_consumable(self, graph_instance_id: int, node_id: str) -> list[DeliverRecord]:
         rows = self._conn.execute(
-            f"SELECT {_COL_DELIVER_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_NAME}, "
-            f"{_COL_SOURCE_NODE}, {_COL_SOURCE_INVOCATION_ID}, "
+            f"SELECT {_COL_DELIVER_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_ID}, "
+            f"{_COL_SOURCE_NODE_ID}, {_COL_SOURCE_INVOCATION_ID}, "
             f"{_COL_CONSUMED_BY_INVOCATION_ID}, {_COL_CONTENT_JSON}, {_COL_STATUS}, "
             f"{_COL_CREATED_AT}, {_COL_UPDATED_AT} "
             f"FROM {_DELIVER_TABLE} "
-            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_ID} = ? "
             f"AND {_COL_STATUS} IN (?, ?) "
             f"ORDER BY {_COL_DELIVER_ID}",
             (
                 graph_instance_id,
-                target_node,
+                node_id,
                 DeliverConsumptionStatus.PENDING.value,
                 DeliverConsumptionStatus.CONSUMED_PENDING.value,
             ),
@@ -517,8 +531,8 @@ class SqliteDeliverStore(DeliverStore):
         (
             deliver_id,
             graph_instance_id,
-            node_name,
-            source_node,
+            node_id,
+            source_node_id,
             source_invocation_id,
             consumed_by_invocation_id,
             content_json,
@@ -529,11 +543,11 @@ class SqliteDeliverStore(DeliverStore):
         return DeliverRecord(
             deliver_id=deliver_id,
             graph_instance_id=graph_instance_id,
-            node_name=node_name,
-            source_node=source_node,
+            node_id=node_id,
+            source_node_id=source_node_id,
             source_invocation_id=source_invocation_id,
             consumed_by_invocation_id=consumed_by_invocation_id,
-            content=json.loads(content_json),
+            content=_decode_content(content_json),
             status=status,
             created_at=created_at,
             updated_at=updated_at,
