@@ -1,8 +1,8 @@
 """Tests for ``McpBackend`` ABC default delegation.
 
-The six query/invocation members (``list_tools``/``list_resources``/``list_prompts``
-/``execute_tool``/``read_resource``/``get_prompt``) are pure delegation: they route
-through ``_client_for`` and return empty/error values when no client is bound.
+The two query/invocation members (``list_tools``/``execute_tool``) are pure
+delegation: they route through ``_client_for`` and return empty/error values
+when no client is bound.
 ``MCPClientManager`` and the future shared-connection facade both inherit them
 unchanged, so these behaviours are pinned at the ABC level.
 """
@@ -36,14 +36,6 @@ class _StubClient(BaseMCPClient):
         self.calls.append(("list_tools", (), {}))
         return [{"name": "t1"}]
 
-    async def list_resources(self) -> list[dict[str, Any]]:  # type: ignore[override]
-        self.calls.append(("list_resources", (), {}))
-        return [{"name": "r1", "uri": "u://r1"}]
-
-    async def list_prompts(self) -> list[dict[str, Any]]:  # type: ignore[override]
-        self.calls.append(("list_prompts", (), {}))
-        return [{"name": "p1"}]
-
     async def call_tool(  # type: ignore[override]
         self,
         tool_name: str,
@@ -52,25 +44,6 @@ class _StubClient(BaseMCPClient):
     ) -> dict[str, Any]:
         self.calls.append(("call_tool", (tool_name, params), {"timeout": timeout}))
         return {"success": True, "result": f"called:{tool_name}"}
-
-    async def read_resource(  # type: ignore[override]
-        self,
-        uri: str,
-        timeout: int = 5,
-    ) -> dict[str, Any]:
-        self.calls.append(("read_resource", (uri,), {"timeout": timeout}))
-        return {"success": True, "result": f"read:{uri}"}
-
-    async def get_prompt(  # type: ignore[override]
-        self,
-        prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        timeout: int = 5,
-    ) -> dict[str, Any]:
-        self.calls.append(
-            ("get_prompt", (prompt_name,), {"arguments": arguments, "timeout": timeout})
-        )
-        return {"success": True, "result": f"prompt:{prompt_name}"}
 
 
 class _FakeBackend(McpBackend):
@@ -97,10 +70,8 @@ async def test_list_members_delegate_to_client() -> None:
     backend = _FakeBackend({"s1": client})
 
     assert await backend.list_tools("s1") == [{"name": "t1"}]
-    assert await backend.list_resources("s1") == [{"name": "r1", "uri": "u://r1"}]
-    assert await backend.list_prompts("s1") == [{"name": "p1"}]
 
-    assert [c[0] for c in client.calls] == ["list_tools", "list_resources", "list_prompts"]
+    assert [c[0] for c in client.calls] == ["list_tools"]
 
 
 @pytest.mark.asyncio
@@ -108,8 +79,6 @@ async def test_list_members_return_empty_when_no_client() -> None:
     backend = _FakeBackend({})
 
     assert await backend.list_tools("absent") == []
-    assert await backend.list_resources("absent") == []
-    assert await backend.list_prompts("absent") == []
 
 
 @pytest.mark.asyncio
@@ -127,45 +96,10 @@ async def test_execute_tool_delegates_and_forwards_timeout() -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_resource_delegates_and_forwards_timeout() -> None:
-    client = _StubClient()
-    backend = _FakeBackend({"s1": client})
-
-    result = await backend.read_resource("s1", "u://x", timeout=7)
-
-    assert result == {"success": True, "result": "read:u://x"}
-    assert client.calls[-1][0] == "read_resource"
-    assert client.calls[-1][1] == ("u://x",)
-    assert client.calls[-1][2] == {"timeout": 7}
-
-
-@pytest.mark.asyncio
-async def test_get_prompt_delegates_and_forwards_arguments_and_timeout() -> None:
-    client = _StubClient()
-    backend = _FakeBackend({"s1": client})
-
-    result = await backend.get_prompt("s1", "intro", arguments={"k": "v"}, timeout=9)
-
-    assert result == {"success": True, "result": "prompt:intro"}
-    name, args, kwargs = client.calls[-1]
-    assert name == "get_prompt"
-    assert args == ("intro",)
-    assert kwargs == {"arguments": {"k": "v"}, "timeout": 9}
-
-
-@pytest.mark.asyncio
 async def test_invocation_members_return_error_dict_when_no_client() -> None:
     backend = _FakeBackend({})
 
     assert await backend.execute_tool("absent", "t", {}) == {
-        "success": False,
-        "error": "MCP server not connected: absent",
-    }
-    assert await backend.read_resource("absent", "u://x") == {
-        "success": False,
-        "error": "MCP server not connected: absent",
-    }
-    assert await backend.get_prompt("absent", "p") == {
         "success": False,
         "error": "MCP server not connected: absent",
     }

@@ -1,13 +1,32 @@
 """MCP tool wrappers.
 
-Wraps MCP tools, resources, and prompts as framework Tool objects.
+Wraps MCP tools as framework Tool objects.
 """
 
+import re
 from typing import Any
 
 from modex_agent.core.tool_manager import Tool, ToolConfig
 from modex_agent.tools.mcp.backend import McpBackend
 from modex_agent.tools.mcp.client import _DEFAULT_TOOL_TIMEOUT
+
+
+def _sanitize_name(value: str) -> str:
+    """Sanitize a name component for use in a tool identifier.
+
+    Replaces any character outside [a-zA-Z0-9_-] with underscore,
+    matching opencode's sanitize() convention.
+    """
+    return re.sub(r"[^a-zA-Z0-9_-]", "_", value)
+
+
+def _mcp_tool_name(server_name: str, tool_name: str) -> str:
+    """Build the LLM-facing tool identifier: {server}_{tool}.
+
+    Both parts are sanitized. The original (unsanitized) tool_name is
+    retained separately on MCPTool for MCP callTool dispatch.
+    """
+    return f"{_sanitize_name(server_name)}_{_sanitize_name(tool_name)}"
 
 
 def _extract_nullable_branch(options: Any) -> tuple[dict, bool] | None:
@@ -79,9 +98,8 @@ class MCPTool(Tool):
         mcp_manager: McpBackend,
         config: ToolConfig | None = None,
         tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
-        use_prefix: bool = True,
     ) -> None:
-        full_name = f"mcp_{server_name}_{tool_name}" if use_prefix else tool_name
+        full_name = _mcp_tool_name(server_name, tool_name)
 
         normalized_params = _normalize_schema_for_openai(parameters)
 
@@ -115,111 +133,5 @@ class MCPTool(Tool):
         if not result.get("success"):
             error = result.get("error", "Unknown error")
             return f"(MCP tool call failed: {error})"
-
-        return str(result.get("result", ""))
-
-
-class MCPResourceTool(Tool):
-    """Wraps an MCP resource URI as a read-only Tool."""
-
-    def __init__(
-        self,
-        server_name: str,
-        resource_name: str,
-        uri: str,
-        description: str,
-        mcp_manager: McpBackend,
-        config: ToolConfig | None = None,
-        resource_timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ) -> None:
-        full_name = f"mcp_{server_name}_resource_{resource_name}"
-
-        effective_config = config if config is not None else ToolConfig()
-
-        super().__init__(
-            name=full_name,
-            description=f"[MCP Resource] {description}\nURI: {uri}",
-            parameters={"type": "object", "properties": {}, "required": []},
-            config=effective_config,
-        )
-
-        self._server_name = server_name
-        self._uri = uri
-        self._mcp_manager = mcp_manager
-        self._resource_timeout = resource_timeout
-
-    async def execute(self, **kwargs: Any) -> str:
-        """Execute the MCP resource read.
-
-        Reconnect-on-disconnect retry lives in the backend; this wrapper only
-        invokes the backend once and formats the result.
-        """
-        result = await self._mcp_manager.read_resource(
-            self._server_name, self._uri, timeout=self._resource_timeout
-        )
-
-        if not result.get("success"):
-            error = result.get("error", "Unknown error")
-            return f"(MCP resource read failed: {error})"
-
-        return str(result.get("result", ""))
-
-
-class MCPPromptTool(Tool):
-    """Wraps an MCP prompt as a read-only Tool."""
-
-    def __init__(
-        self,
-        server_name: str,
-        prompt_name: str,
-        description: str,
-        arguments_def: list[dict[str, Any]],
-        mcp_manager: McpBackend,
-        config: ToolConfig | None = None,
-        prompt_timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ) -> None:
-        full_name = f"mcp_{server_name}_prompt_{prompt_name}"
-
-        properties: dict[str, Any] = {}
-        required: list[str] = []
-        for arg in arguments_def or []:
-            prop: dict[str, Any] = {"type": "string"}
-            if arg.get("description"):
-                prop["description"] = arg["description"]
-            properties[arg["name"]] = prop
-            if arg.get("required"):
-                required.append(arg["name"])
-
-        effective_config = config if config is not None else ToolConfig()
-
-        super().__init__(
-            name=full_name,
-            description=f"[MCP Prompt] {description}\nReturns a filled prompt template that can be used as a workflow guide.",
-            parameters={
-                "type": "object",
-                "properties": properties,
-                "required": required,
-            },
-            config=effective_config,
-        )
-
-        self._server_name = server_name
-        self._prompt_name = prompt_name
-        self._mcp_manager = mcp_manager
-        self._prompt_timeout = prompt_timeout
-
-    async def execute(self, **kwargs: Any) -> str:
-        """Execute the MCP prompt.
-
-        Reconnect-on-disconnect retry lives in the backend; this wrapper only
-        invokes the backend once and formats the result.
-        """
-        result = await self._mcp_manager.get_prompt(
-            self._server_name, self._prompt_name, arguments=kwargs, timeout=self._prompt_timeout
-        )
-
-        if not result.get("success"):
-            error = result.get("error", "Unknown error")
-            return f"(MCP prompt call failed: {error})"
 
         return str(result.get("result", ""))

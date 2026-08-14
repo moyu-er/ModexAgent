@@ -64,8 +64,6 @@ class TestBuildToolsMcpResilience:
 
         mock_load_mcp.assert_not_called()
         assert mcp_manager is None
-        tool_names = tool_manager.list_tools()
-        assert not any(name.startswith("mcp_") for name in tool_names)
 
     @pytest.mark.asyncio
     async def test_mcp_failure_does_not_block_tool_manager(

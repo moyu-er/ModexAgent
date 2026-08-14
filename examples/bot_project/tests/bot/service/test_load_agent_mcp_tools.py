@@ -58,12 +58,6 @@ class _StubClient(BaseMCPClient):
     async def list_tools(self) -> list[dict[str, Any]]:  # type: ignore[override]
         return list(self._tools)
 
-    async def list_resources(self) -> list[dict[str, Any]]:  # type: ignore[override]
-        return []
-
-    async def list_prompts(self) -> list[dict[str, Any]]:  # type: ignore[override]
-        return []
-
 
 def _make_connect_fn(
     tools: list[dict[str, Any]] | None = None,
@@ -111,9 +105,8 @@ class TestLoadAgentMcpToolsRegistryBranch:
                 tmp_path,
                 mcp_registry=reg,
             )
-            # The tool surfaces with the server name in it (default_prefix=True
-            # → "mcp_<server>_<tool>"). Asserting on the server-token substring
-            # rather than the exact prefix keeps this robust to prefix changes.
+            # Tool name = {server}_{tool} (opencode convention).
+            # Asserting on the server-token substring keeps this robust.
             assert len(tools) == 1
             assert "search" in tools[0].name
             assert "s1" in tools[0].name

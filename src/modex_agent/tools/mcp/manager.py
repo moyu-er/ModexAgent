@@ -335,39 +335,6 @@ class MCPClientManager(McpBackend):
                 result = await super().execute_tool(server_name, tool_name, params, timeout=timeout)
         return result
 
-    async def read_resource(
-        self,
-        server_name: str,
-        uri: str,
-        timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ) -> dict[str, Any]:
-        """Read a resource, reconnecting once on a dropped connection."""
-        result = await super().read_resource(server_name, uri, timeout=timeout)
-        if not result.get("success") and "not connected" in str(result.get("error", "")).lower():
-            _logger.warning("[MCP:%s] connection dropped mid-call, reconnecting...", server_name)
-            if await self.reconnect_with_retry(server_name):
-                result = await super().read_resource(server_name, uri, timeout=timeout)
-        return result
-
-    async def get_prompt(
-        self,
-        server_name: str,
-        prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ) -> dict[str, Any]:
-        """Get a prompt, reconnecting once on a dropped connection."""
-        result = await super().get_prompt(
-            server_name, prompt_name, arguments=arguments, timeout=timeout
-        )
-        if not result.get("success") and "not connected" in str(result.get("error", "")).lower():
-            _logger.warning("[MCP:%s] connection dropped mid-call, reconnecting...", server_name)
-            if await self.reconnect_with_retry(server_name):
-                result = await super().get_prompt(
-                    server_name, prompt_name, arguments=arguments, timeout=timeout
-                )
-        return result
-
     async def list_all_tools(self) -> dict[str, list[dict[str, Any]]]:
         """List tools on all servers."""
         result = {}

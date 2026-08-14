@@ -1,9 +1,8 @@
 """Reconnect-on-disconnect now lives in the owning backend, not the Tool wrapper.
 
 ADR-0017 Task 6: the per-call reconnect dance (``not connected`` →
-``reconnect_with_retry`` → retry once) was relocated from ``MCPTool`` /
-``MCPResourceTool`` / ``MCPPromptTool`` into ``MCPClientManager``'s overrides
-of ``execute_tool`` / ``read_resource`` / ``get_prompt``. Consumers therefore
+``reconnect_with_retry`` → retry once) was relocated from ``MCPTool`` into
+``MCPClientManager``'s override of ``execute_tool``. Consumers therefore
 depend only on the ``McpBackend`` surface and stay valid against a backend
 that owns no reconnect (e.g. the future ``SharedMcpBackend`` facade).
 """
@@ -17,7 +16,7 @@ import pytest
 from modex_agent.tools.mcp.backend import McpBackend
 from modex_agent.tools.mcp.client import BaseMCPClient
 from modex_agent.tools.mcp.manager import MCPClientManager
-from modex_agent.tools.mcp.tool import MCPPromptTool, MCPResourceTool, MCPTool
+from modex_agent.tools.mcp.tool import MCPTool
 
 
 class _ScriptedClient(BaseMCPClient):
@@ -31,13 +30,9 @@ class _ScriptedClient(BaseMCPClient):
     def __init__(  # noqa: D401 - test stub
         self,
         tool_results: list[dict[str, Any]] | None = None,
-        resource_results: list[dict[str, Any]] | None = None,
-        prompt_results: list[dict[str, Any]] | None = None,
     ) -> None:
         super().__init__(name="scripted")
         self.tool_results = list(tool_results or [])
-        self.resource_results = list(resource_results or [])
-        self.prompt_results = list(prompt_results or [])
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
 
     async def initialize(self) -> bool:  # type: ignore[override]
@@ -52,25 +47,6 @@ class _ScriptedClient(BaseMCPClient):
         self.calls.append(("call_tool", (tool_name, params), {"timeout": timeout}))
         return self.tool_results.pop(0)
 
-    async def read_resource(  # type: ignore[override]
-        self,
-        uri: str,
-        timeout: int = 5,
-    ) -> dict[str, Any]:
-        self.calls.append(("read_resource", (uri,), {"timeout": timeout}))
-        return self.resource_results.pop(0)
-
-    async def get_prompt(  # type: ignore[override]
-        self,
-        prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        timeout: int = 5,
-    ) -> dict[str, Any]:
-        self.calls.append(
-            ("get_prompt", (prompt_name,), {"arguments": arguments, "timeout": timeout})
-        )
-        return self.prompt_results.pop(0)
-
 
 def _manager_with_client(client: _ScriptedClient) -> MCPClientManager:
     """Build a manager pre-populated with a single connected client (no init)."""
@@ -80,7 +56,7 @@ def _manager_with_client(client: _ScriptedClient) -> MCPClientManager:
 
 
 # ---------------------------------------------------------------------------
-# 1. MCPClientManager.execute_tool / read_resource / get_prompt: reconnect-once
+# 1. MCPClientManager.execute_tool: reconnect-once
 # ---------------------------------------------------------------------------
 
 
@@ -158,46 +134,6 @@ async def test_execute_tool_no_reconnect_when_error_is_unrelated() -> None:
     assert len(client.calls) == 1
 
 
-@pytest.mark.asyncio
-async def test_read_resource_reconnects_and_retries_once() -> None:
-    reconnected_client = _ScriptedClient(resource_results=[{"success": True, "result": "data"}])
-    manager = MCPClientManager()  # no clients bound — dropped connection
-
-    async def fake_reconnect(server_name: str, **_: Any) -> bool:
-        manager.clients["s1"] = reconnected_client
-        return True
-
-    manager.reconnect_with_retry = fake_reconnect  # type: ignore[assignment]
-
-    result = await manager.read_resource("s1", "u://x", timeout=7)
-
-    assert result == {"success": True, "result": "data"}
-    assert len(reconnected_client.calls) == 1
-    _, args, kwargs = reconnected_client.calls[0]
-    assert args == ("u://x",)
-    assert kwargs == {"timeout": 7}
-
-
-@pytest.mark.asyncio
-async def test_get_prompt_reconnects_and_retries_once_with_arguments() -> None:
-    reconnected_client = _ScriptedClient(prompt_results=[{"success": True, "result": "filled"}])
-    manager = MCPClientManager()  # no clients bound — dropped connection
-
-    async def fake_reconnect(server_name: str, **_: Any) -> bool:
-        manager.clients["s1"] = reconnected_client
-        return True
-
-    manager.reconnect_with_retry = fake_reconnect  # type: ignore[assignment]
-
-    result = await manager.get_prompt("s1", "intro", arguments={"k": "v"}, timeout=9)
-
-    assert result == {"success": True, "result": "filled"}
-    assert len(reconnected_client.calls) == 1
-    _, args, kwargs = reconnected_client.calls[0]
-    assert args == ("intro",)
-    assert kwargs == {"arguments": {"k": "v"}, "timeout": 9}
-
-
 # ---------------------------------------------------------------------------
 # 2. Tool wrappers: no reconnect reference; facade-compatible (pure McpBackend)
 # ---------------------------------------------------------------------------
@@ -260,36 +196,6 @@ async def test_mcp_tool_formats_failure_string_byte_for_byte() -> None:
     )
 
     assert await tool.execute() == "(MCP tool call failed: boom)"
-
-
-@pytest.mark.asyncio
-async def test_mcp_resource_tool_formats_against_pure_backend() -> None:
-    client = _ScriptedClient(resource_results=[{"success": False, "error": "denied"}])
-    backend = _PureBackend(client)
-
-    tool = MCPResourceTool(
-        server_name="s1",
-        resource_name="r",
-        uri="u://r",
-        description="a resource",
-        mcp_manager=backend,
-    )
-    assert await tool.execute() == "(MCP resource read failed: denied)"
-
-
-@pytest.mark.asyncio
-async def test_mcp_prompt_tool_formats_against_pure_backend() -> None:
-    client = _ScriptedClient(prompt_results=[{"success": False, "error": "nope"}])
-    backend = _PureBackend(client)
-
-    tool = MCPPromptTool(
-        server_name="s1",
-        prompt_name="intro",
-        description="intro",
-        arguments_def=[],
-        mcp_manager=backend,
-    )
-    assert await tool.execute() == "(MCP prompt call failed: nope)"
 
 
 def test_mcp_backend_abc_has_no_reconnect_with_retry() -> None:

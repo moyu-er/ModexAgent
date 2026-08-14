@@ -530,19 +530,6 @@ class _ReconnectStubClient(BaseMCPClient):
     ) -> dict[str, Any]:
         return dict(self._call_result)
 
-    async def read_resource(  # type: ignore[override]
-        self, uri: str, timeout: int = 30
-    ) -> dict[str, Any]:
-        return dict(self._call_result)
-
-    async def get_prompt(  # type: ignore[override]
-        self,
-        prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        timeout: int = 30,
-    ) -> dict[str, Any]:
-        return dict(self._call_result)
-
     async def list_tools(self) -> list[dict[str, Any]]:  # type: ignore[override]
         return [{"name": f"{self.name}_tool"}]
 
@@ -766,16 +753,6 @@ class _DropRecoveryClient(BaseMCPClient):
 
     async def call_tool(  # type: ignore[override]
         self, tool_name: str, params: dict[str, Any], timeout: int = 30
-    ) -> dict[str, Any]:
-        return dict(self._call_result)
-
-    async def read_resource(  # type: ignore[override]
-        self, uri: str, timeout: int = 30
-    ) -> dict[str, Any]:
-        return dict(self._call_result)
-
-    async def get_prompt(  # type: ignore[override]
-        self, prompt_name: str, arguments: dict[str, Any] | None = None, timeout: int = 30
     ) -> dict[str, Any]:
         return dict(self._call_result)
 
