@@ -108,10 +108,13 @@ async def test_visible_send_keys_and_paste(tools) -> None:
     )
 
     # ── 4. Multi-line paste via cat > file ──────────────────────────────────
+    # The trailing newline is load-bearing: without it the last line stays in
+    # the PTY's canonical line buffer and one Ctrl-D delivers it WITHOUT EOF,
+    # so cat never exits and the follow-up `cat` is guard-rejected.
     await t.execute(action="open", name="paste_test")
     lines = ["paste-one-7c1", "paste-two-7c1", "paste-three-7c1"]
     await run_command(tools, "cat > /tmp/modex_paste_visible_7c1.txt", timeout=15.0)
-    await tools.process.execute(action="paste", text="\n".join(lines))
+    await tools.process.execute(action="paste", text="\n".join(lines) + "\n")
     await tools.process.execute(action="send_keys", hex=["04"])  # Ctrl-D EOF
     await asyncio.sleep(0.5)
     cat_out = await run_command(tools, "cat /tmp/modex_paste_visible_7c1.txt", timeout=15.0)

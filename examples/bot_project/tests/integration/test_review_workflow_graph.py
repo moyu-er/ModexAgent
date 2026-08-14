@@ -11,18 +11,39 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-_BOT_PROJECT = Path(__file__).resolve().parents[2]
-if str(_BOT_PROJECT) not in sys.path:
-    sys.path.insert(0, str(_BOT_PROJECT))
-
-_FIXTURES = Path(__file__).resolve().parent / "fixtures"
-
-from bot.graph.agent_node import BotAgentNode  # noqa: E402
-
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.session_registry import InMemorySessionRegistry
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.multi_agent.bus import LocalAgentMessageBus
+from modex_agent.multi_agent.descriptor import AgentInstance
+from modex_agent.multi_agent.factory import DefaultAgentFactory
+from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+from modex_agent.multi_agent.inbox.producer import InboxProducer
+from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
+from modex_agent.multi_agent.inbox_poller import InboxPoller
+from modex_agent.multi_agent.pool import AgentPool
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+from modex_agent.multi_agent.session_tree.session_binding import (
+    InMemorySessionBindingStore,
+)
+from modex_agent.multi_agent.session_tree.store_node import InMemoryTreeNodeStore
+from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrackStore
+from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
+from modex_agent.pipeline.turn_context_config import (
+    GraphApprovalConfigurator,
+    GraphContextBindingConfigurator,
+    GraphKnowledgeConfigurator,
+    GraphMaxTurnsConfigurator,
+    GraphToolConfigurator,
+    GraphTopologyConfigurator,
+    TurnContextConfigPipeline,
+)
+from modex_agent.workspace.paths import WorkspacePaths
 from modex_graph import (
     DefaultGraphState,
     Graph,
@@ -44,6 +65,14 @@ from modex_graph.persistence import (
 from modex_graph.persistence.persistence_coordinator import (
     GraphPersistenceCoordinator,
 )
+
+_BOT_PROJECT = Path(__file__).resolve().parents[2]
+if str(_BOT_PROJECT) not in sys.path:
+    sys.path.insert(0, str(_BOT_PROJECT))
+
+_FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+from bot.graph.agent_node import BotAgentNode  # noqa: E402
 
 # ── Test helpers ────────────────────────────────────────────────────────
 
@@ -75,7 +104,81 @@ def _make_ctx(
         coordinator=coordinator or _make_coordinator(),
         user_input=GraphPayload(content=user_input),
         scheduler_kind=SchedulerKind.PARALLEL,
+        graph_instance_id=0,
     )
+
+
+class _ReviewPoolRuntime:
+    def __init__(
+        self,
+        broker: InMemoryMessageBroker,
+        factory: DefaultAgentFactory,
+        session_registry: InMemorySessionRegistry,
+    ) -> None:
+        inbox_server = InMemoryInboxServer()
+        producer = InboxProducer(server=inbox_server)
+        consumer = InboxConsumer(server=inbox_server)
+        bus = LocalAgentMessageBus(producer=producer, consumer=consumer)
+
+        self.pool = AgentPool(
+            broker=broker,
+            agent_factory=factory,
+            agent_bus=bus,
+            inbox_consumer=consumer,
+            session_registry=session_registry,
+        )
+        poller = InboxPoller(self.pool, interval=0.05)
+        self.pool.attach_poller(poller)
+        bus.set_poller(poller)
+
+        self.session_binding_store = InMemorySessionBindingStore()
+        self.tree_manager = SessionTreeManager(
+            tree_store=InMemorySessionTreeStore(),
+            node_store=InMemoryTreeNodeStore(),
+            track_store=InMemoryMessageTrackStore(),
+            bus=bus,
+            poller=poller,
+            pool_name="review",
+            workspace_root=str(_BOT_PROJECT),
+            session_registry=session_registry,
+            binding_store=self.session_binding_store,
+        )
+        consumer.set_on_consumed(self.tree_manager.on_consumed)
+        poller.attach_tree_manager(self.tree_manager)
+        self.pool.tree = self.tree_manager
+
+        self.pool_data = None
+        self._broker = broker
+        self._bus = bus
+
+    async def register(self, instances: dict[str, AgentInstance]) -> None:
+        for instance in instances.values():
+            await self.pool.register_resident(instance.descriptor, instance)
+        self.pool.start_poller()
+
+    def bind_graph_context(self, ctx: GraphContext[DefaultGraphState]) -> None:
+        def resolve_graph_context(_: int) -> GraphContext[DefaultGraphState]:
+            return ctx
+
+        for instance in self.pool.iter_instances():
+            assert instance.pipeline is not None
+            builder = instance.pipeline._turn_context_builder
+            assert builder is not None
+            builder.graph_context_resolver = resolve_graph_context
+            builder.session_binding_store = self.session_binding_store
+            builder.config_pipeline = TurnContextConfigPipeline([
+                GraphContextBindingConfigurator(),
+                GraphApprovalConfigurator(),
+                GraphMaxTurnsConfigurator(),
+                GraphToolConfigurator(),
+                GraphTopologyConfigurator(),
+                GraphKnowledgeConfigurator(),
+            ])
+
+    async def close(self) -> None:
+        await self.pool.shutdown_all()
+        await self._bus.close()
+        await self._broker.stop()
 
 
 # ── Stub nodes for topology testing ─────────────────────────────────────
@@ -302,16 +405,13 @@ class TestE2EStepFun:
             TurnTimeoutPolicy,
         )
         from modex_agent.core.scope import MemoryAgentRole
-        from modex_agent.core.session_registry import InMemorySessionRegistry
         from modex_agent.ioc.factories.descriptors import build_session_only_memory
-        from modex_agent.messaging.broker_memory import InMemoryMessageBroker
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.comm_kind import AgentCommKind
         from modex_agent.multi_agent.descriptor import (
             AgentDescriptor,
             AgentLLMConfig,
         )
-        from modex_agent.multi_agent.factory import DefaultAgentFactory
         from modex_agent.providers.litellm_provider import LiteLLMProvider
 
         mc = e2e_model_config
@@ -357,6 +457,7 @@ class TestE2EStepFun:
             )
             descriptor = AgentDescriptor(
                 address=AgentAddress(name=name),
+                role_description=f"{name.capitalize()} agent",
                 llm_config=AgentLLMConfig(
                     model=mc.model,
                     temperature=mc.temperature,
@@ -383,29 +484,22 @@ class TestE2EStepFun:
 
         session_registry = InMemorySessionRegistry()
 
-        class _FakePool:
-            def __init__(self) -> None:
-                self._inst = instances
-                self.session_registry = session_registry
-
-            def get(self, n: str) -> Any:
-                return self._inst.get(n)
-
-        class _FakePI:
-            def __init__(self) -> None:
-                self.pool = _FakePool()
-                self.pool_data = None
+        runtime = _ReviewPoolRuntime(broker, factory, session_registry)
+        await runtime.register(instances)
 
         class _FakeWS:
             def __init__(self) -> None:
-                self.pools = {"review": _FakePI()}
+                self.pools = {"review": runtime}
                 self.pool_data: dict[str, Any] = {}
+                self.ctx = SimpleNamespace(
+                    paths=WorkspacePaths(root=tmp_path / ".modex")
+                )
 
         class _FakeResolver:
             def resolve_workspace(self) -> Any:
                 return _FakeWS()
 
-        resolver = _FakeResolver()
+        resolver: Any = _FakeResolver()
         designer = BotAgentNode(
             "designer", "review", resolver,
             session_strategy=SessionStrategy.PER_INVOCATION,
@@ -441,12 +535,16 @@ class TestE2EStepFun:
             user_input="Write a one-line Python function that reverses a string.",
         )
         ctx.scheduler_kind = SchedulerKind.PARALLEL
+        runtime.bind_graph_context(ctx)
 
-        engine = GraphEngine(compiled)
-        result = await engine.run_async(ctx)
-        assert result is not None
-        assert result.result is not None
-        assert len(result.result) > 0
+        try:
+            engine = GraphEngine(compiled)
+            result = await engine.run_async(ctx)
+            assert result is not None
+            assert result.result is not None
+            assert len(result.result) > 0
+        finally:
+            await runtime.close()
 
 
 # ── Part 7: E2E — reviewer→implementer loop with memory persistence ─────
@@ -570,16 +668,13 @@ class TestE2EReviewLoopWithMemory:
             TurnTimeoutPolicy,
         )
         from modex_agent.core.scope import MemoryAgentRole
-        from modex_agent.core.session_registry import InMemorySessionRegistry
         from modex_agent.ioc.factories.descriptors import build_session_only_memory
-        from modex_agent.messaging.broker_memory import InMemoryMessageBroker
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.comm_kind import AgentCommKind
         from modex_agent.multi_agent.descriptor import (
             AgentDescriptor,
             AgentLLMConfig,
         )
-        from modex_agent.multi_agent.factory import DefaultAgentFactory
         from modex_agent.providers.litellm_provider import LiteLLMProvider
 
         mc = e2e_model_config
@@ -626,6 +721,7 @@ class TestE2EReviewLoopWithMemory:
 
         descriptor = AgentDescriptor(
             address=AgentAddress(name="implementer"),
+            role_description="Implementer agent",
             llm_config=AgentLLMConfig(
                 model=mc.model,
                 temperature=mc.temperature,
@@ -649,39 +745,29 @@ class TestE2EReviewLoopWithMemory:
             hooks=[],
         )
 
-        session_registry = InMemorySessionRegistry()
         register_count = [0]
-        original_register = session_registry.register
 
-        async def _counting_register(session: Any) -> None:
+        async def _counting_register(session: SessionInfo) -> None:
             register_count[0] += 1
-            await original_register(session)
 
-        session_registry.register = _counting_register  # type: ignore[assignment]
+        session_registry = InMemorySessionRegistry(on_register=_counting_register)
 
-        class _FakePool:
-            def __init__(self) -> None:
-                self._inst = {"implementer": instance}
-                self.session_registry = session_registry
-
-            def get(self, name: str) -> Any:
-                return self._inst.get(name)
-
-        class _FakePI:
-            def __init__(self) -> None:
-                self.pool = _FakePool()
-                self.pool_data = None
+        runtime = _ReviewPoolRuntime(broker, factory, session_registry)
+        await runtime.register({"implementer": instance})
 
         class _FakeWS:
             def __init__(self) -> None:
-                self.pools = {"review": _FakePI()}
+                self.pools = {"review": runtime}
                 self.pool_data: dict[str, Any] = {}
+                self.ctx = SimpleNamespace(
+                    paths=WorkspacePaths(root=tmp_path / ".modex")
+                )
 
         class _FakeResolver:
             def resolve_workspace(self) -> Any:
                 return _FakeWS()
 
-        resolver = _FakeResolver()
+        resolver: Any = _FakeResolver()
         implementer = _InstrumentedBotAgentNode(
             "implementer",
             "review",
@@ -711,53 +797,56 @@ class TestE2EReviewLoopWithMemory:
             user_input="Write a Python function that reverses a string.",
         )
         ctx.scheduler_kind = SchedulerKind.PARALLEL
+        runtime.bind_graph_context(ctx)
 
-        engine = GraphEngine(compiled)
-        result = await engine.run_async(ctx)
+        try:
+            engine = GraphEngine(compiled)
+            result = await engine.run_async(ctx)
 
-        # 1. Graph completed
-        assert result is not None
-        assert result.result is not None
-        assert len(result.result) > 0
+            # 1. Graph completed
+            assert result is not None
+            assert result.result is not None
+            assert len(result.result) > 0
 
-        # 2. Implementer ran exactly twice
-        assert len(implementer.session_ids_per_turn) == 2
+            # 2. Implementer ran exactly twice
+            assert len(implementer.session_ids_per_turn) == 2
 
-        # 3. Both turns used the SAME session_id (CACHED)
-        sid_1, sid_2 = implementer.session_ids_per_turn
-        assert sid_1 == sid_2, (
-            f"CACHED strategy failed: first turn sid={sid_1!r}, "
-            f"second turn sid={sid_2!r}"
-        )
+            # 3. Both turns used the SAME session_id (CACHED)
+            sid_1, sid_2 = implementer.session_ids_per_turn
+            assert sid_1 == sid_2, (
+                f"CACHED strategy failed: first turn sid={sid_1!r}, "
+                f"second turn sid={sid_2!r}"
+            )
 
-        # 4. Session registered only once (CACHED → single registration)
-        assert register_count[0] == 1, (
-            f"Expected 1 registration (CACHED), got {register_count[0]}"
-        )
+            # 4. Session registered only once (CACHED → single registration)
+            assert register_count[0] == 1, (
+                f"Expected 1 registration (CACHED), got {register_count[0]}"
+            )
 
-        # 5. Memory persisted: second load has more messages than first
-        impl_loads = [
-            i for i, sid in enumerate(tracking_ctx.load_calls) if sid == sid_1
-        ]
-        assert len(impl_loads) >= 2, (
-            f"Expected ≥2 load() calls for implementer session, "
-            f"got {len(impl_loads)}"
-        )
-        first_load_len = tracking_ctx.history_lengths_on_load[impl_loads[0]]
-        second_load_len = tracking_ctx.history_lengths_on_load[impl_loads[1]]
-        assert second_load_len > first_load_len, (
-            f"Memory did not persist: first load had {first_load_len} messages, "
-            f"second load had {second_load_len} messages (expected growth)"
-        )
+            # 5. Memory persisted: second load has more messages than first
+            impl_loads = [
+                i for i, sid in enumerate(tracking_ctx.load_calls) if sid == sid_1
+            ]
+            assert len(impl_loads) >= 2, (
+                f"Expected ≥2 load() calls for implementer session, "
+                f"got {len(impl_loads)}"
+            )
+            first_load_len = tracking_ctx.history_lengths_on_load[impl_loads[0]]
+            second_load_len = tracking_ctx.history_lengths_on_load[impl_loads[1]]
+            assert second_load_len > first_load_len, (
+                f"Memory did not persist: first load had {first_load_len} messages, "
+                f"second load had {second_load_len} messages (expected growth)"
+            )
 
-        # 6. Reviewer called exactly twice (reject then approve)
-        reviewer_node = compiled.nodes["reviewer"]
-        assert isinstance(reviewer_node, _MockReviewerNode)
-        assert reviewer_node.call_count == 2
+            # 6. Reviewer called exactly twice (reject then approve)
+            reviewer_node = compiled.nodes["reviewer"]
+            assert isinstance(reviewer_node, _MockReviewerNode)
+            assert reviewer_node.call_count == 2
 
-        # 7. Graph result contains APPROVED
-        approved = any(
-            "APPROVED" in (p.content or "")
-            for p in (result.result or [])
-        )
-        assert approved, "Graph result does not contain APPROVED"
+            # 7. Graph result contains APPROVED
+            approved = any(
+                "APPROVED" in (p.content or "") for p in (result.result or [])
+            )
+            assert approved, "Graph result does not contain APPROVED"
+        finally:
+            await runtime.close()
