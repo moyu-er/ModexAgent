@@ -62,7 +62,7 @@ class AgentStartSpanHook(BaseTraceHook, StartNodeTurnHook):
         attributes[GenAiAttr.LANGFUSE_OBSERVATION_TYPE] = LangfuseObservationType.SPAN.value
 
         if type(self._prompt_capture) is not OffPromptCapture:
-            system_prompt = ctx.system_prompt
+            system_prompt = await ctx.get_resolved_system_prompt()
             attributes[GenAiAttr.SYSTEM_INSTRUCTIONS] = system_prompt
             attributes[GenAiAttr.LANGFUSE_OBS_METADATA_SYSTEM_PROMPT] = system_prompt
             attributes[GenAiAttr.SYSTEM_PROMPT_HASH] = hashlib.sha256(

@@ -283,13 +283,9 @@ class LLMNode(Node[ReActTurnState]):
     ) -> list[dict[str, object]]:
         messages: list[dict[str, object]] = []
 
-        # Use pipeline for dynamic system prompt if available
-        if ctx.system_prompt_pipeline is not None:
-            system_content = await ctx.system_prompt_pipeline.get_or_refresh()
-            if system_content:
-                messages.append({"role": "system", "content": system_content})
-        elif ctx.system_prompt:
-            messages.append({"role": "system", "content": ctx.system_prompt})
+        system_content = await ctx.get_resolved_system_prompt()
+        if system_content:
+            messages.append({"role": "system", "content": system_content})
 
         messages.extend(await ctx.to_messages())
 

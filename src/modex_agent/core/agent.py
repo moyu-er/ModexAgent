@@ -134,6 +134,24 @@ class AgentContext:
     ``sanitized_content``.
     """
 
+    async def get_resolved_system_prompt(self) -> str:
+        """Return the system prompt the LLM actually receives.
+
+        Single source of truth for all consumers (LLMNode, ChatSpanHook,
+        AgentStartSpanHook): pipeline first (full 15-provider assembly
+        including GraphWorkflowProvider content), static ``system_prompt``
+        field as fallback when no pipeline or pipeline returns empty.
+
+        Must NOT be replaced by direct ``system_prompt`` field reads —
+        the field holds only the 3-provider static fallback
+        (runtime + base + core_memory), not the full pipeline output.
+        """
+        if self.system_prompt_pipeline is not None:
+            content = await self.system_prompt_pipeline.get_or_refresh()
+            if content:
+                return content
+        return self.system_prompt
+
     @property
     def current_turn_uuid(self) -> str | None:
         """Current turn UUID from runtime state, for control command validation."""

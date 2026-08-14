@@ -60,8 +60,13 @@ async def test_build_messages_falls_back_to_static_prompt():
 
 
 @pytest.mark.asyncio
-async def test_build_messages_skips_empty_pipeline():
-    """When pipeline returns empty string, no system message is added."""
+async def test_build_messages_falls_back_to_static_when_pipeline_empty():
+    """When pipeline returns empty string, falls back to ctx.system_prompt.
+
+    The converged ``get_resolved_system_prompt()`` method tries pipeline
+    first; if it returns empty, it falls back to the static ``system_prompt``
+    field (which holds the 3-provider fallback or ``_DEFAULT_SYSTEM_PROMPT``).
+    """
     pipeline = _FakePipeline("")
     ctx = AgentContext(
         system_prompt="static prompt",
@@ -75,4 +80,5 @@ async def test_build_messages_skips_empty_pipeline():
     messages = await node._build_messages(ctx)
 
     system_msgs = [m for m in messages if m["role"] == "system"]
-    assert len(system_msgs) == 0  # Pipeline returned empty, no system msg
+    assert len(system_msgs) == 1
+    assert system_msgs[0]["content"] == "static prompt"
