@@ -96,9 +96,12 @@ Go to `metadata.resourceAttributes.*`:
 | Span name | `langfuse.observation.type` | Langfuse type |
 |-----------|----------------------------|---------------|
 | `invoke_agent` | `agent` | AGENT |
+| `agent.start` | `span` | SPAN |
 | `chat` | `generation` | GENERATION |
+| `execute_tool_batch` | `span` | SPAN |
 | `execute_tool` | `tool` | TOOL |
-| `iteration` | `span` | SPAN |
+| `iteration.start` | `span` | SPAN |
+| `iteration.end` | `span` | SPAN |
 | `human_review` | `event` | EVENT |
 | `agent.handoff` | `span` | SPAN |
 
@@ -109,11 +112,42 @@ trace name is populated regardless of which span arrives first at Langfuse.
 
 ### Root Span Emission
 
-`invoke_agent` is emitted twice with the same `span_id`:
-1. `before_turn`: start + input (trigger message) + `as_root=true`
-2. `finally_turn`: output (final reply) + end_time + aggregated usage
+`invoke_agent` is emitted once at `finally_graph` by `RootSpanHook`. The
+span is pre-registered at `start_node_turn` (span_id + start_time stored in
+`TraceSessionState`, trigger message captured) but not written until
+`finally_graph`, which emits the complete span with input + output +
+end_time + aggregated usage + `as_root=true` in a single write. This avoids
+the Langfuse v4 immutability issue where double-emission (start at
+`before_turn` + complete at `finally_turn`) produced two separate
+observations instead of one merged span.
 
-Langfuse merges both by `span_id` — first emission's input + second's output.
+### Subagent Trace Linking
+
+When a parent agent dispatches a subagent via `send_to_agent` or `task`,
+the child's trace links to the parent's trace through three shared
+identifiers:
+
+1. **`trace_id`** — the child inherits the parent's `trace_id` via the
+   `input_metadata` envelope. `TurnContextBuilder` propagates it into
+   `TurnCustomKey.TRACE_ID` on the child's turn state. Both parent and
+   child spans share the same trace, so they appear as one trace tree in
+   the Langfuse UI.
+2. **`parent_span_id`** — the parent's `HandoffSpanHook` emits an
+   `agent.handoff` span and stores its `span_id` in
+   `TurnCustomKey.HANDOFF_SPAN_ID`. The child receives this as
+   `parent_span_id` via the envelope. The child's `RootSpanHook` emits
+   its `invoke_agent` root span with `parent_span_id` set to the parent's
+   handoff span ID, linking the child turn as a descendant of the parent's
+   handoff span.
+3. **`langfuse.session.id`** — when `parent_span_id` is set,
+   `RootSpanHook` sets `langfuse.session.id` to
+   `ctx.session.parent_session_id` so both parent and child traces group
+   under the same Langfuse session. This makes the full multi-agent
+   execution visible as one session with nested traces.
+
+The result is a visual parent to child trace tree in the Langfuse UI: the
+parent's `agent.handoff` span contains the child's `invoke_agent` root
+span, which in turn contains the child's chat, tool, and iteration spans.
 
 ### Export Path
 

@@ -700,7 +700,7 @@ the completion of already-designed ADR-0024 work.
 | Gap | ADR claim | Code reality | Fix |
 |-----|-----------|-------------|-----|
 | **G1** | `chat` span covers LLM call | `chat` span written at `after_llm_response` with `end_time=None` — **LLM duration invisible** | New `BeforeLLMHook` ABC; `TraceCollectorHook` implements pre/post pair to capture `start_time` + `end_time` + `api_duration_s` |
-| **G2** | `chat` span records LLM request | Only output recorded; no `gen_ai.request.model`, no input messages — **prompt content invisible** | `BeforeLLMHook` captures `gen_ai.request.model` + input messages via `PromptCaptureStrategy` (IN11). System prompt excluded (too long, per-turn identical); full prompt via Cassette (D5) |
+| **G2** | `chat` span records LLM request | Only output recorded; no `gen_ai.request.model`, no input messages — **prompt content invisible** | `BeforeLLMHook` captures `gen_ai.request.model` + input messages via `PromptCaptureStrategy` (IN11). System prompt stored via `agent.start` span (IN18), not excluded |
 | **G3** | `human.review` span covers approval (D7 ATSC draft) | `SpanName.HUMAN_REVIEW` defined but **never emitted** — `TraceCollectorHook` inherits no approval hook ABC. DPO export path broken (depends on approval = chosen/rejected) | New `AfterApprovalHook` ABC; `TraceCollectorHook` emits `human.review` span with decision + deny_reason |
 | **G5** | D4 "per-iteration checkpoint via AfterIterationHook" | `TraceCollectorHook` does **not** implement `AfterIterationHook`; `CheckpointHook` does but stores snapshot, emits no span — **ReAct iteration boundaries invisible in trace** (flat span list under `invoke_agent`) | `TraceCollectorHook` implements `AfterIterationHook`, emits `iteration.start`/`iteration.end` boundary spans. Solves OTel Issue #94 (the problem D4 claimed to solve) |
 | **G10** | D7 "agent.handoff span" | `send_to_agent` propagates traceparent but **emits no span** — multi-agent trace tree broken (child `invoke_agent` root has no parent link) | Emit `agent.handoff` span at `send_to_agent` dispatch point, linking parent turn to child turn |
@@ -721,24 +721,39 @@ tiers without modifying hook code.
 ```
 src/modex_agent/trace/prompt_capture.py
 ├── PromptCaptureStrategy(ABC)              # extension point
-│   └── capture(messages, model) -> dict    # returns span attribute payload
-└── SummaryPromptCapture                    # sole implementation (default)
-    # last N messages (default 6), each truncated to 2KB text / 1KB tool args
-    # system prompt excluded (records hash + length only)
+│   └── capture(messages, model, *, tools, system_prompt) -> dict
+├── OffPromptCapture                        # model name only, no content
+├── HashPromptCapture                       # system prompt hash + length, no messages
+├── SummaryPromptCapture (default)          # hash + length + last N messages truncated
+│   # last N messages (default 6), each truncated to 2KB text / 1KB tool args
+├── FullPromptCapture                       # full system prompt + tools + all messages
+└── build_prompt_capture(config_value)      # factory: PromptCaptureMode → strategy
 ```
 
-- `ObservabilityConfig.prompt_capture: str = "summary"` — currently accepts
-  only `"summary"`; other values raise `ValueError` with guidance to
-  implement a `PromptCaptureStrategy` subclass.
-- `TraceCollectorHook` holds a `PromptCaptureStrategy` instance; calls
+- `ObservabilityConfig.prompt_capture: PromptCaptureMode = "summary"` —
+  accepts `off` / `hash` / `summary` / `full`, each backed by a
+  `PromptCaptureStrategy` subclass (`OffPromptCapture`,
+  `HashPromptCapture`, `SummaryPromptCapture`, `FullPromptCapture`).
+- `ChatSpanHook` holds a `PromptCaptureStrategy` instance; calls
   `strategy.capture(...)` in `before_llm` to populate `chat` span's
   `gen_ai.request.messages` attribute.
-- **Not pre-implemented**: `MinimalPromptCapture` (model + count only) and
-  `FullPromptCapture` (all messages, cassette-redundant) are deferred — the
-  ABC is the extension point declaration; add subclasses when needed.
-- **System prompt**: never captured in G2 (too long, per-turn identical,
-  low analysis value). System-prompt analysis via Cassette (D5) or
-  `gen_ai.system.prompt_hash` + `gen_ai.system.prompt_length` attributes.
+- **All four strategies implemented**: `OffPromptCapture` (model name only),
+  `HashPromptCapture` (system prompt hash + length, no messages),
+  `SummaryPromptCapture` (default: hash + length + last N messages
+  truncated), `FullPromptCapture` (full system prompt + tools + all
+  messages untruncated).
+- **System prompt**: stored via the `agent.start` span (IN18) emitted at
+  `start_node_turn`. The `prompt_capture` config controls whether the
+  system prompt is captured: `off` omits it entirely; `hash`, `summary`,
+  and `full` all record `gen_ai.system_instructions` (full text),
+  `gen_ai.system.prompt_hash` (SHA-256 first 16 chars), and
+  `gen_ai.system.prompt_length` on the `agent.start` span. The original
+  IN11 assumption that the system prompt is "per-turn identical" was
+  incorrect: memory and experience injection modifies the system prompt
+  at runtime, so per-turn capture has real analysis value. The
+  `hash`/`summary`/`full` distinction applies to the `chat` span's input
+  message capture; the `agent.start` span stores the full system prompt
+  text whenever capture is not `off`.
 
 **Rationale**: User requirement — "implementation must support future
 extension / flexible switching to other tiers." ABC-first per architecture
@@ -904,3 +919,104 @@ are truncated to 16 hex chars (OTel 64-bit; framework uses 32-char UUID hex).
 
 **Reference docs**: `docs/otel/README.md` (attribute audit),
 `docs/langfuse/README.md` (Langfuse OTLP mapping).
+
+### IN18 — Span structure redesign (supersedes IN1 root span emission, IN10 hook table)
+
+**Status**: implemented (2026-08-14). The single `TraceCollectorHook` that
+handled all span emission was decomposed into 7 specialized hook classes,
+assembled by a factory based on a tiered verbosity config. This section
+documents the structural changes; attribute-level details live in
+`docs/otel/README.md` and `docs/otel/spans.yaml`.
+
+**Hook composition**: 7 hook classes replace the single `TraceCollectorHook`.
+Each hook owns one span type and inherits the hook ABC(s) for its lifecycle
+point(s). `build_trace_hooks()` (in `trace/factory.py`) assembles the list
+from `ObservabilityConfig`:
+
+| Hook class | Inherits | Span(s) emitted | Tier |
+|---|---|---|---|
+| `RootSpanHook` | `StartNodeTurnHook`, `FinallyGraphHook` | `invoke_agent` | all |
+| `ChatSpanHook` | `BeforeLLMHook`, `AfterLLMResponseHook` | `chat` | standard, full |
+| `ToolSpanHook` | `BeforeToolExecutionHook`, `AfterToolExecutionHook` | `execute_tool_batch` + `execute_tool` | standard, full |
+| `HandoffSpanHook` | `AfterToolExecutionHook` | `agent.handoff` | standard, full |
+| `ApprovalSpanHook` | `AfterApprovalHook` | `human.review` | standard, full |
+| `AgentStartSpanHook` | `StartNodeTurnHook` | `agent.start` | full only |
+| `IterationSpanHook` | `BeforeIterationHook`, `AfterIterationHook` | `iteration.start` + `iteration.end` | full only |
+
+One `TraceSessionState` is shared across every hook in a single
+`build_trace_hooks` call so child spans can resolve the root span ID seeded
+by `RootSpanHook`. Registration order is execution order (`HookRunner`
+dispatches in registration order); `RootSpanHook` is always first, and
+`ToolSpanHook` precedes `HandoffSpanHook` so the batch span the handoff
+parents to exists by the time the handoff hook reads it. Each hook is wrapped
+in a `HookSpec` with `HookErrorPolicy.LOG` so a failing trace hook logs and
+continues rather than crashing the agent.
+
+**v4 immutability fix** (supersedes IN1): The root `invoke_agent` span is
+no longer emitted twice. `RootSpanHook.start_node_turn` pre-registers the
+span (stores `span_id` + `start_time` in `TraceSessionState.root_span_info`,
+captures the trigger message) without emitting anything.
+`RootSpanHook.finally_graph` emits one complete span with input + output +
+aggregated usage + `end_time` + `stop_reason` + error status, then cleans
+up the session state. This fixes Langfuse v4 immutability: v4 does not
+merge two spans by `span_id` the way v3 did, so the old double-emission
+pattern (start at `before_turn`, complete at `finally_turn`) produced two
+separate observations instead of one merged root span. Single emission is
+the correct approach for both v3 and v4.
+
+**`agent.start` span**: Emitted by `AgentStartSpanHook` at `start_node_turn`,
+fresh turn only (same hook point as `RootSpanHook`, runs after it because
+`RootSpanHook` is registered first). Carries the system prompt and tool
+definitions:
+
+- `gen_ai.system_instructions`: full system prompt text (when
+  `prompt_capture != off`)
+- `gen_ai.system.prompt_hash`: SHA-256 first 16 chars (when
+  `prompt_capture != off`)
+- `gen_ai.system.prompt_length`: character count (when
+  `prompt_capture != off`)
+- `gen_ai.tool.definitions`: full tool definitions (when `capture_tools =
+  True`)
+
+This span is `FULL` tier only because system prompt capture is
+analysis-heavy and not needed for standard observability.
+
+**Subagent trace linking**: When a parent agent calls `send_to_agent` or
+`task`, `HandoffSpanHook` emits an `agent.handoff` span and stores its
+`span_id` in `TurnCustomKey.HANDOFF_SPAN_ID`. The child agent receives
+`trace_id` and `parent_span_id` (the handoff span ID) via the
+`input_metadata` envelope. `TurnContextBuilder.build_runtime_and_context()`
+propagates these into `TurnCustomKey.TRACE_ID` and
+`TurnCustomKey.PARENT_SPAN_ID` on the child's turn state.
+
+The child's `RootSpanHook.start_node_turn` reuses the inherited `trace_id`
+(same trace, not a new one) and creates a fresh `root_span_id`. The child's
+`RootSpanHook.finally_graph` emits its `invoke_agent` root span with
+`parent_span_id` set to the parent's handoff span ID, linking the two turns
+into a single trace tree. When `parent_span_id` is set,
+`langfuse.session.id` is set to `ctx.session.parent_session_id` so both
+parent and child traces group under the same Langfuse session. This creates
+a visual parent to child trace tree in the Langfuse UI.
+
+**Iteration symmetry**: `IterationSpanHook` emits a symmetric pair:
+`iteration.start` at `before_iteration` (marks begin, zero-duration) and
+`iteration.end` at `after_iteration` (carries measured duration). Both are
+parented to the root span. `AFTER_ITERATION` fires at current-iteration-end,
+not next-iteration-start, so `state.iteration` is still the current value
+in `after_iteration`. The old `iteration_number -= 1` hack is removed: no
+decrement is needed because the iteration counter has not yet advanced
+when `after_iteration` fires.
+
+**Tier config**: Two new config fields control span verbosity and prompt
+capture scope:
+
+- `trace_spans: TraceSpanMode` — `minimal` (RootSpanHook only, 1 hook),
+  `standard` (root + chat + tool + handoff + approval, 5 hooks, default),
+  `full` (standard + agent_start + iteration, 7 hooks).
+- `prompt_capture: PromptCaptureMode` — `off` (no prompt content),
+  `hash` (system prompt hash + length only), `summary` (hash + length +
+  last N messages truncated, default), `full` (full system prompt +
+  tools + all messages untruncated). See IN11 for the system prompt
+  capture behavior.
+- `capture_tools: bool` — when `True`, `gen_ai.tool.definitions` is
+  included on the `agent.start` span. Default `False`.

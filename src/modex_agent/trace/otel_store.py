@@ -11,9 +11,8 @@ The ``[observability]`` extra (``opentelemetry-sdk`` +
 export is active.  Without it, the module loads and operates in file-only
 mode.
 
-The hook (:class:`~modex_agent.trace.hooks.TraceCollectorHook`) constructs
-:class:`SpanModel` values directly and calls :meth:`save_span`; this store no
-longer takes :class:`OperationRecord` (removed in T8).
+Trace hooks construct :class:`SpanModel` values directly and call
+:meth:`save_span`; this store no longer takes :class:`OperationRecord`.
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ from modex_agent.trace.semconv import GenAiAttr, SpanKind, SpanStatusCode
 from modex_agent.trace.store import SpanModel, TraceQuery
 
 if TYPE_CHECKING:
-    from opentelemetry.trace import Tracer as OtelTracer  # type: ignore[import-not-found]
+    from opentelemetry.trace import Tracer as OtelTracer
 
 logger = logging.getLogger(__name__)
 
@@ -126,10 +125,7 @@ class OtelSpanTraceStore(TraceQuery):
                     span_to_write,
                 )
             except Exception:
-                logger.warning(
-                    "OtelSpanTraceStore: JSON OTLP export failed",
-                    exc_info=True,
-                )
+                logger.warning("OTLP export failed for span %s (remote unavailable)", span_to_write.name)
 
     async def list_by_session(self, session_id: str) -> list[SpanModel]:
         """Return all spans for *session_id* from ``spans.jsonl``."""
@@ -239,10 +235,8 @@ def build_trace_stores(
 
             logging.getLogger(__name__).warning(
                 "OTLP export disabled (tracer build failed): %s. "
-                "Falling back to file-only trace backend. Bot will continue "
-                "without remote trace export.",
+                "Falling back to file-only trace backend.",
                 exc,
-                exc_info=True,
             )
 
     return OtelSpanTraceStore(
@@ -297,12 +291,12 @@ def _build_otlp_tracer(config: ObservabilityConfig) -> OtelTracer:
     is idempotent — the first call wins; subsequent calls log a warning and
     are no-ops, so multi-pool builds sharing one endpoint are safe.
     """
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # type: ignore[import-not-found]
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
         OTLPSpanExporter,
     )
-    from opentelemetry.sdk.resources import Resource  # type: ignore[import-not-found]
-    from opentelemetry.sdk.trace import TracerProvider  # type: ignore[import-not-found]
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor  # type: ignore[import-not-found]
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
     resource = Resource.create({"service.name": config.otel_service_name})
     provider = TracerProvider(resource=resource)
@@ -367,7 +361,6 @@ def _emit_span_via_json_otlp(
     span: SpanModel,
 ) -> None:
     """Export a span via direct JSON OTLP HTTP POST."""
-    import json
 
     trace_id = span.trace_id.ljust(32, "0")[:32]
     span_id = span.span_id.ljust(16, "0")[:16]
@@ -429,11 +422,7 @@ def _emit_span_via_json_otlp(
         headers={**headers, "Content-Type": "application/json"},
     )
     if response.status_code >= 400:
-        logger.warning(
-            "JSON OTLP export returned %s: %s",
-            response.status_code,
-            response.text[:200],
-        )
+        logger.warning("OTLP endpoint returned HTTP %s", response.status_code)
 
 
 def _to_otlp_value(value: object) -> dict[str, object]:

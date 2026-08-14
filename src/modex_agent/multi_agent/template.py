@@ -299,7 +299,7 @@ class AgentTemplate:
         # pipeline.hooks, a plain list the turn loop does NOT dispatch). The
         # turn loop dispatches via pipeline.hook_runner — so add each hook as
         # a HookSpec there. Fall back to pipeline.hooks when no runner exists
-        # (mirrors the factory's own TraceCollectorHook wiring). ADR-0015 D5.
+        # (mirrors the factory's own trace hook wiring). ADR-0015 D5.
         if hooks and instance.pipeline is not None:
             pipeline_hook_runner = instance.pipeline.hook_runner
             if pipeline_hook_runner is not None:

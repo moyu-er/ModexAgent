@@ -237,10 +237,17 @@ def _extract_agent_name(spans: list[SpanModel]) -> str:
 
 
 def _extract_user_message(spans: list[SpanModel]) -> str:
-    """Extract the user message from ``invoke_agent`` span's ``recent_messages``."""
+    """Extract the user message from the ``invoke_agent`` root span.
+
+    Reads ``langfuse.observation.input`` (set by RootSpanHook) first, then
+    falls back to ``recent_messages`` (legacy minimal/standard tiers).
+    """
     for span in spans:
         if span.name != SpanName.INVOKE_AGENT.value:
             continue
+        raw = span.attributes.get(GenAiAttr.LANGFUSE_OBSERVATION_INPUT.value)
+        if isinstance(raw, str) and raw:
+            return raw
         recent = span.attributes.get("recent_messages")
         # Span attributes cross a serialization boundary — isinstance is the
         # correct extension-boundary guard (rules 6/9).
@@ -255,11 +262,22 @@ def _extract_user_message(spans: list[SpanModel]) -> str:
 
 
 def _extract_system_message(spans: list[SpanModel]) -> str | None:
-    """Extract an optional system message from ``invoke_agent`` span metadata."""
+    """Extract an optional system message from span metadata.
+
+    Reads ``gen_ai.system_instructions`` from the ``agent.start`` span
+    (AgentStartSpanHook) first, then falls back to the ``invoke_agent`` root
+    span (minimal/standard tiers).
+    """
+    for span in spans:
+        if span.name != SpanName.AGENT_START.value:
+            continue
+        system = span.attributes.get(GenAiAttr.SYSTEM_INSTRUCTIONS.value)
+        if isinstance(system, str) and system:
+            return system
     for span in spans:
         if span.name != SpanName.INVOKE_AGENT.value:
             continue
-        system = span.attributes.get("system_prompt")
+        system = span.attributes.get(GenAiAttr.SYSTEM_INSTRUCTIONS.value)
         if isinstance(system, str) and system:
             return system
     return None

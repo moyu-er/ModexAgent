@@ -504,6 +504,66 @@ async def test_build_runtime_and_context_inline_attachments_defaults_empty() -> 
     assert ctx.runtime.state.custom[TurnCustomKey.INLINE_ATTACHMENTS] == []
 
 
+@pytest.mark.asyncio
+async def test_subagent_shares_parent_trace_id() -> None:
+    from modex_agent.runtime.enums import TurnCustomKey
+
+    builder = _make_builder(
+        agent=_agent_mock(),
+        turn_store=InMemoryTurnStateStore(),
+    )
+
+    ctx, _emitter = builder.build_runtime_and_context(
+        SessionInfo.from_str("child.worker"),
+        ContextState(),
+        MagicMock(wrap_governance=MagicMock(return_value=None)),
+        input_metadata={"trace_id": "parent-trace"},
+    )
+
+    assert ctx.runtime is not None
+    assert ctx.runtime.state.custom[TurnCustomKey.TRACE_ID] == "parent-trace"
+
+
+@pytest.mark.asyncio
+async def test_subagent_root_span_parent_is_handoff() -> None:
+    from modex_agent.runtime.enums import TurnCustomKey
+
+    builder = _make_builder(
+        agent=_agent_mock(),
+        turn_store=InMemoryTurnStateStore(),
+    )
+
+    ctx, _emitter = builder.build_runtime_and_context(
+        SessionInfo.from_str("child.worker"),
+        ContextState(),
+        MagicMock(wrap_governance=MagicMock(return_value=None)),
+        input_metadata={"parent_span_id": "handoff-span"},
+    )
+
+    assert ctx.runtime is not None
+    assert ctx.runtime.state.custom[TurnCustomKey.PARENT_SPAN_ID] == "handoff-span"
+
+
+@pytest.mark.asyncio
+async def test_no_parent_trace_when_metadata_absent() -> None:
+    from modex_agent.runtime.enums import TurnCustomKey
+
+    builder = _make_builder(
+        agent=_agent_mock(),
+        turn_store=InMemoryTurnStateStore(),
+    )
+
+    ctx, _emitter = builder.build_runtime_and_context(
+        SessionInfo.from_str("child.worker"),
+        ContextState(),
+        MagicMock(wrap_governance=MagicMock(return_value=None)),
+    )
+
+    assert ctx.runtime is not None
+    assert TurnCustomKey.TRACE_ID not in ctx.runtime.state.custom
+    assert TurnCustomKey.PARENT_SPAN_ID not in ctx.runtime.state.custom
+
+
 # ---------------------------------------------------------------------------
 # build_runtime_and_context — turn_descriptor + config_pipeline wiring
 # ---------------------------------------------------------------------------

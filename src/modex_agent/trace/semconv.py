@@ -38,6 +38,14 @@ class GenAiAttr(StrEnum):
     SYSTEM_INSTRUCTIONS = "gen_ai.system_instructions"  # opt-in
     SYSTEM_PROMPT_HASH = "gen_ai.system.prompt_hash"  # custom
     SYSTEM_PROMPT_LENGTH = "gen_ai.system.prompt_length"  # custom
+    REQUEST_TOOLS = "gen_ai.tool.definitions"  # opt-in — full tool definitions sent in request
+
+    # ── Langfuse-compatible metadata prefixes ────────────────────────
+    # Langfuse v4 drops gen_ai.system_instructions and gen_ai.prompt/completion
+    # during OTLP ingestion. Use langfuse.observation.metadata.* to survive
+    # ingestion and appear as filterable top-level metadata keys in Langfuse.
+    LANGFUSE_OBS_METADATA_SYSTEM_PROMPT = "langfuse.observation.metadata.system_prompt"
+    LANGFUSE_OBS_METADATA_TOOL_DEFINITIONS = "langfuse.observation.metadata.tool_definitions"
 
     # ── Response ──────────────────────────────────────────────────────
     RESPONSE_MODEL = "gen_ai.response.model"
@@ -84,6 +92,7 @@ class GenAiAttr(StrEnum):
     HANDOFF_MESSAGE_TYPE = "gen_ai.handoff.message_type"
     HANDOFF_PARENT_TURN_ID = "gen_ai.handoff.parent_turn_id"
     HANDOFF_CHILD_TURN_ID = "gen_ai.handoff.child_turn_id"
+    HANDOFF_CHILD_TRACE_ID = "gen_ai.handoff.child_trace_id"
 
     # ── Training (custom) ─────────────────────────────────────────────
     TRAINING_RELEVANT = "gen_ai.training.relevant"
@@ -129,6 +138,7 @@ class SpanName(StrEnum):
     ITERATION_END = "iteration.end"
     ITERATION = "iteration"
     AGENT_HANDOFF = "agent.handoff"
+    AGENT_START = "agent.start"
 
 
 class SpanKind(StrEnum):

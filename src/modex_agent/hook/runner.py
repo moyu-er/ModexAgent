@@ -294,11 +294,8 @@ class HookRunner:
                 )
                 self._handle_error(spec, hook_point, timeout, is_timeout=True)
             except Exception:
-                logger.exception(
-                    "Hook %s failed in %s",
-                    hook.name,
-                    hook_point.value,
-                )
+                logger.warning("Hook %s failed in %s", hook.name, hook_point.value)
+                logger.debug("Hook %s.%s exception details", hook.name, hook_point.value, exc_info=True)
                 self._handle_error(spec, hook_point, timeout, is_timeout=False)
 
     def _handle_error(
@@ -342,10 +339,8 @@ class HookRunner:
             try:
                 result = hook.finalize_content(ctx, result)
             except Exception:
-                logger.exception(
-                    "Hook %s.finalize_content failed",
-                    hook.name,
-                )
+                logger.warning("Hook %s.finalize_content failed", hook.name)
+                logger.debug("Hook %s.finalize_content exception details", hook.name, exc_info=True)
                 if spec.on_error == HookErrorPolicy.ABORT:
                     raise
         return result

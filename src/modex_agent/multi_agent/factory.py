@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from modex_agent.control.channel import InMemoryControlChannel
+    from modex_agent.trace.otel_store import OtelSpanTraceStore
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ except ImportError:
 
 from modex_agent.core.skills.filter import AllowListFilter
 from modex_agent.core.skills.manager import SkillManager
-from modex_agent.hook import Hook, HookRunner
+from modex_agent.hook import HookRunner
 from modex_agent.hook.builtin import InboxFlushHook
 from modex_agent.tools.filter import FilteredToolManager
 
@@ -83,7 +84,7 @@ class DefaultAgentFactory(AgentFactory):
         default_interceptor_chain: Any | None = None,
         default_turn_store: Any | None = None,
         control_channel: InMemoryControlChannel | None = None,
-        trace_store: Any | None = None,
+        trace_store: OtelSpanTraceStore | None = None,
         session_registry: SessionRegistry | None = None,
         observability_config: ObservabilityConfig | None = None,
     ) -> None:
@@ -334,9 +335,12 @@ class DefaultAgentFactory(AgentFactory):
         if builder is None:
             raise ValueError(f"Unsupported execution_strategy: {descriptor.execution_strategy}")
         emitter_factory = builder.build_emitter_factory(emitter_output_adapter)
-        hook_runner = HookRunner(
-            self._default_hook_runner.hook_specs if self._default_hook_runner is not None else None
+        default_hook_specs = (
+            self._default_hook_runner.hook_specs
+            if self._default_hook_runner is not None
+            else []
         )
+        hook_runner = HookRunner()
         agent_interceptor_chain = None
         if self._default_interceptor_chain is not None:
             from modex_agent.interceptor.chain import InterceptorChain
@@ -377,17 +381,13 @@ class DefaultAgentFactory(AgentFactory):
         from modex_agent.hook.builtin import LoopDetectionHook
         from modex_agent.hook.builtin.checkpoint import CheckpointHook
         from modex_agent.hook.builtin.training_data import TrainingDataHook
-        from modex_agent.trace import TraceCollectorHook, build_prompt_capture
+        from modex_agent.trace.factory import build_trace_hooks
 
-        obs = self._observability_config
-        checkpoint_per_iteration = obs.checkpoint_per_iteration if obs is not None else True
-        training_relevant = obs.training_relevant if obs is not None else False
-        training_max_iterations = obs.training_max_iterations if obs is not None else 20
-        training_max_tokens = obs.training_max_tokens if obs is not None else 100_000
-
-        prompt_capture_strategy = (
-            build_prompt_capture(obs.prompt_capture) if obs is not None else None
-        )
+        obs = self._observability_config or ObservabilityConfig()
+        checkpoint_per_iteration = obs.checkpoint_per_iteration
+        training_relevant = obs.training_relevant
+        training_max_iterations = obs.training_max_iterations
+        training_max_tokens = obs.training_max_tokens
         model_name = descriptor.llm_config.model if descriptor.llm_config is not None else None
 
         llm_cfg = descriptor.llm_config
@@ -406,8 +406,7 @@ class DefaultAgentFactory(AgentFactory):
         # L2 score injection (Layer 1 eval)
         score_injector = None
         if (
-            obs is not None
-            and obs.eval_score_injection
+            obs.eval_score_injection
             and obs.trace_backend == TraceBackend.OTEL_HTTP
             and obs.otel_endpoint
         ):
@@ -429,16 +428,19 @@ class DefaultAgentFactory(AgentFactory):
                     exc_info=True,
                 )
 
-        live_hooks: list[Any] = [
-            TraceCollectorHook(
-                prompt_capture=prompt_capture_strategy,
-                model=model_name,
-                provider_name=provider_name,
-                request_params=request_params,
-                score_injector=score_injector,
-            ),
-            LoopDetectionHook(),
-        ]
+        trace_hooks = build_trace_hooks(
+            config=obs,
+            model=model_name,
+            provider_name=provider_name,
+            request_params=request_params,
+            score_injector=score_injector,
+            store=self._trace_store,
+        )
+        for spec in trace_hooks:
+            hook_runner.add(spec)
+        hook_runner.extend(default_hook_specs)
+
+        live_hooks: list[Any] = [LoopDetectionHook()]
         if checkpoint_per_iteration:
             live_hooks.append(CheckpointHook())
         if training_relevant:

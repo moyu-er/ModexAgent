@@ -137,9 +137,16 @@ class TurnCustomKey(StrEnum):
     INJECTION_CYCLE_COUNT = "_injection_cycle_count"
     TRACE_ID = "_trace_id"
     # Root invoke_agent span_id for the current turn (G10 multi-agent handoff).
-    # Set by TraceCollectorHook.before_graph; read by AgentCommunicationService
-    # to link the agent.handoff span's parent_span_id to the turn's root span.
+    # Set by RootSpanHook.start_node_turn for child span parentage.
     ROOT_SPAN_ID = "_root_span_id"
+    # Parent span ID for subagent trace linking (G10 multi-agent handoff).
+    # When a subagent's trace should link to a parent span other than the
+    # turn root, the parent's span ID is stored here. Read by
+    # AgentCommunicationService to construct the child trace's parent_span_id.
+    PARENT_SPAN_ID = "parent_span_id"
+    # The parent agent's handoff span ID, stored on the child's turn state
+    # so the child can reference the specific handoff span that spawned it.
+    HANDOFF_SPAN_ID = "handoff_span_id"
     # Resolved image-kind Attachment records for the current turn (ADR-0014 §3 /
     # OpenSpec native-multimodal-inline unit 3). Path-only VOs (path/mime/kind/
     # name/size) — never bytes. Read by the inline renderer (unit 4) to bind

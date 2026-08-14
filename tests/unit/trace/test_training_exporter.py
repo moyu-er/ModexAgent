@@ -32,6 +32,8 @@ from modex_agent.trace.training_exporter import (
     SFTExample,
     TrainingDataExporter,
     _edit_distance_ratio,
+    _extract_system_message,
+    _extract_user_message,
     _jaccard_similarity,
     _levenshtein,
     _ngram_set,
@@ -829,3 +831,61 @@ class TestDataModels:
         )
         with pytest.raises(ValidationError):
             span.trace_id = "t2"  # type: ignore[misc]
+
+
+# ── Tests: _extract_system_message / _extract_user_message ────────────
+
+
+class TestExtractors:
+    def test_training_exporter_reads_system_prompt(self) -> None:
+        spans = [
+            _make_span(
+                name="agent.start",
+                start_time=999.0,
+                attributes={
+                    GenAiAttr.SYSTEM_INSTRUCTIONS.value: "You are a helpful assistant.",
+                },
+            ),
+            _make_span(
+                name="invoke_agent",
+                start_time=1000.0,
+            ),
+        ]
+        result = _extract_system_message(spans)
+        assert result == "You are a helpful assistant."
+
+    def test_training_exporter_reads_system_prompt_fallback_root(self) -> None:
+        spans = [
+            _make_span(
+                name="invoke_agent",
+                start_time=1000.0,
+                attributes={
+                    GenAiAttr.SYSTEM_INSTRUCTIONS.value: "Fallback prompt.",
+                },
+            ),
+        ]
+        result = _extract_system_message(spans)
+        assert result == "Fallback prompt."
+
+    def test_training_exporter_reads_user_message(self) -> None:
+        spans = [
+            _make_span(
+                name="invoke_agent",
+                start_time=1000.0,
+                attributes={
+                    GenAiAttr.LANGFUSE_OBSERVATION_INPUT.value: "Hello, agent!",
+                },
+            ),
+        ]
+        result = _extract_user_message(spans)
+        assert result == "Hello, agent!"
+
+    def test_training_exporter_returns_empty_when_no_agent_start(self) -> None:
+        spans = [
+            _make_span(
+                name="chat",
+                start_time=1001.0,
+            ),
+        ]
+        assert _extract_system_message(spans) is None
+        assert _extract_user_message(spans) == ""

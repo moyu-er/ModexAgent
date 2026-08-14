@@ -641,8 +641,7 @@ class CassetteFlushHook(FinallyGraphHook):
     The recorder accumulates entries in memory as the wrapping provider /
     tool executor intercepts calls during the turn; without this hook the
     cassette is never flushed in the production path. Fires at
-    ``HookPoint.FINALLY_GRAPH`` so the trace_id (set per turn by
-    ``TraceCollectorHook`` in ``TurnCustomKey.TRACE_ID``) is available and
+    ``HookPoint.FINALLY_GRAPH`` so the per-turn trace_id is available and
     every LLM/tool call of the turn has already been recorded.
 
     A flush failure is non-fatal: the hook logs a warning and returns so a
@@ -666,8 +665,4 @@ class CassetteFlushHook(FinallyGraphHook):
         try:
             self._recorder.save(str(trace_id))
         except Exception:
-            logger.warning(
-                "CassetteFlushHook failed to save cassette for trace %s",
-                trace_id,
-                exc_info=True,
-            )
+            logger.warning("CassetteFlushHook failed to save cassette for trace %s", trace_id)

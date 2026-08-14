@@ -309,6 +309,7 @@ async def create_pool(
         observability_config=app_config.observability if app_config is not None else None,
         session_registry=session_registry,
         session_binding_store=session_binding_store,
+        trace_store=pool_data.trace_store if pool_data is not None else None,
     )
     session_factory = SessionIdFactory()
 

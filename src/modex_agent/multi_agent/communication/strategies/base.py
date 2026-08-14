@@ -12,6 +12,7 @@ from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.runtime.enums import TurnCustomKey
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -77,11 +78,17 @@ class SendStrategy(ABC):
         if self.should_register_session() and self._deps.session_registry is not None:
             await self._deps.session_registry.register(session)
         envelope = self.build_envelope(req, session, invocation_id)
-        if (
-            self.should_propagate_graph_instance_id()
-            and req.context.graph_instance_id is not None
-        ):
+        if self.should_propagate_graph_instance_id() and req.context.graph_instance_id is not None:
             envelope.metadata["graph_instance_id"] = req.context.graph_instance_id
+        if self.should_propagate_graph_instance_id():
+            runtime = req.context.runtime
+            if runtime is not None:
+                trace_id = runtime.state.custom.get(TurnCustomKey.TRACE_ID)
+                if trace_id is not None:
+                    envelope.metadata["trace_id"] = str(trace_id)
+                handoff_span_id = runtime.state.custom.get(TurnCustomKey.HANDOFF_SPAN_ID)
+                if handoff_span_id is not None:
+                    envelope.metadata["parent_span_id"] = str(handoff_span_id)
         deliver_err = await self.deliver(envelope, req.target)
         if deliver_err is not None:
             return AgentSendResult.with_error(
@@ -173,7 +180,9 @@ class SendStrategy(ABC):
 
     # --- shared helpers ---------------------------------------------------
 
-    def _envelope_payload(self, content: str, message_type: str, req: SendRequest) -> dict[str, Any]:
+    def _envelope_payload(
+        self, content: str, message_type: str, req: SendRequest
+    ) -> dict[str, Any]:
         """Build the envelope payload dict, including workspace when bound."""
         payload: dict[str, Any] = {"content": content, "message_type": message_type}
         if req.context.workspace is not None:
