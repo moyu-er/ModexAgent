@@ -332,7 +332,7 @@ No auto-deletion. Instance knowledge persists until manual cleanup or workspace 
 
 ### §10 — Hook wiring in system provider assembly
 
-In `examples/bot_project/bot/workspace/wiring/resources.py`, alongside `DeliverRetryHook` registration:
+In `examples/bot_project/bot/workspace/wiring/resources.py`, the `shared_hooks` list carries graph-level hooks shared across all pools in a workspace. `DeliverRetryHook` was previously here but moved to per-pool registration in `pipeline_wiring.py` (it now needs `tree_manager` for the tree-aware subtree-active check). The knowledge hooks remain shared:
 
 ```python
 # Knowledge hooks — shared across all graph instances in this workspace
@@ -340,13 +340,13 @@ shared_hooks.extend([
     KnowledgeSummaryHook(),           # StartNodeTurnHook — inject findings summary
     KnowledgeCounterResetHook(),      # BeforeTurnHook — reset per-turn counters
     # KnowledgeRetryHook reads per-node config from state.custom (set by
-    # BotAgentNode.execute), so it is a shared hook like DeliverRetryHook —
+    # BotAgentNode.execute), so it is a shared hook —
     # no per-node registration needed.
     KnowledgeRetryHook(),
 ])
 ```
 
-`KnowledgeRetryHook` reads `require_write` / `require_read` from `state.custom` (set by `BotAgentNode.execute` before the turn starts from `NodeSpec.config.knowledge`). If both are `false` (default), the hook is a no-op. This follows the `DeliverRetryHook` pattern — shared hook, per-node behavior driven by `state.custom`.
+`KnowledgeRetryHook` reads `require_write` / `require_read` from `state.custom` (set by `BotAgentNode.execute` before the turn starts from `NodeSpec.config.knowledge`). If both are `false` (default), the hook is a no-op. This follows the shared-hook pattern — per-node behavior driven by `state.custom`, no per-node registration.
 
 ## Considered Options
 

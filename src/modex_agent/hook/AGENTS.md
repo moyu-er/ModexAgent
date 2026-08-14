@@ -147,19 +147,21 @@ Graph-level hooks (`BeforeGraphHook` / `AfterGraphHook` / `FinallyGraphHook`) fi
 
 #### Hook Coordination
 
-Hooks at the same HookPoint fire in **registration order** (the order they appear in `shared_hooks` / `pool_wiring`). AfterTurnHook continuation sources act **independently** — each checks its own trigger condition, injects its own reminder, and sets flags without consulting other hooks. There is no OR/AND coordination between hooks.
+Hooks at the same HookPoint fire sorted by `HookSpec.priority` (stable sort — same-priority hooks keep registration order). `TodoContinuationHook` is registered with `priority=-1000` via `register_tree_aware_hooks` (`src/modex_agent/hook/wiring.py`) so it runs first among AfterTurnHook sources. AfterTurnHook continuation sources act **independently** — each checks its own trigger condition, injects its own reminder, and sets flags without consulting other hooks. There is no OR/AND coordination between hooks.
 
 ```
 shared_hooks = [
     CurrentTimeInjectionHook(),   # ② START_NODE_TURN — injects time first
-    TodoContinuationHook(),       # ④ AFTER_TURN — first: primary driver, sets REQUEST + RENEW, reminder includes active todo list
-    DeliverRetryHook(),           # ④ AFTER_TURN — independent, sets REQUEST (no RENEW), reminder always injected
     KnowledgeHook(),              # ④ AFTER_TURN — independent, sets REQUEST (no RENEW), reminder always injected
     *_collect_run_hooks(...),
 ]
+# Per-pool — register_tree_aware_hooks(hook_runner, tree_manager):
+#   Called by _wire_main_pipeline (main agent) AND AgentTemplate.materialize (subagent)
+TodoContinuationHook(tree=tree_manager)    # ④ AFTER_TURN — priority=-1000, primary driver
+DeliverRetryHook(tree=tree_manager)        # ④ AFTER_TURN — independent, sets REQUEST (no RENEW)
 ```
 
-`TodoContinuationHook` is registered first because it is the only hook that sets `CONTINUATION_RENEW_MAX_TURNS` (watchdog renewal), and its reminder (including the active todo list) should land before other hooks' reminders so the agent sees the todo list first.
+`TodoContinuationHook` gets `priority=-1000` because it is the only hook that sets `CONTINUATION_RENEW_MAX_TURNS` (watchdog renewal), and its reminder (including the active todo list) should land before other hooks' reminders so the agent sees the todo list first. Both hooks are registered via `register_tree_aware_hooks` — the single convergence function called from both `_wire_main_pipeline` (main agent) and `AgentTemplate.materialize` (subagent). They need `tree_manager` for the tree-aware subtree-active check; `tree_manager` is a per-pool resource created in `factory.create_pool`, not available at workspace-level `shared_hooks` build time. For subagents, the tree-aware check is safe: a subagent's subtree is empty (star topology), so `get_active_subtree_nodes` returns only the subagent itself (len=1), and the hook fires normally. `DeliverRetryHook` is a no-op for subagents (no `deliver` tool — the tool check gates it).
 
 The gate in `AfterTurnNode` consumes two one-shot flags:
 - `CONTINUATION_REQUEST` — any hook wants another turn attempt.
