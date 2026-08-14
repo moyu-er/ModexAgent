@@ -66,6 +66,11 @@ class TreeNodeStore(ABC):
         """Return every session id belonging to ``tree_id``."""
         ...
 
+    @abstractmethod
+    async def get_tree_node_records(self, tree_id: str) -> list[TreeNodeRecord]:
+        """Return every node record belonging to ``tree_id``."""
+        ...
+
 
 class InMemoryTreeNodeStore(TreeNodeStore):
     """Process-local tree-node store with atomic async operations."""
@@ -116,6 +121,13 @@ class InMemoryTreeNodeStore(TreeNodeStore):
                 record.session_id
                 for record in self._records.values()
                 if record.tree_id == tree_id
+            )
+
+    async def get_tree_node_records(self, tree_id: str) -> list[TreeNodeRecord]:
+        async with self._lock:
+            return sorted(
+                (record for record in self._records.values() if record.tree_id == tree_id),
+                key=lambda record: record.session_id,
             )
 
 
@@ -194,6 +206,20 @@ class LocalFileTreeNodeStore(TreeNodeStore):
         async with self._lock:
             return await asyncio.to_thread(collect)
 
+    async def get_tree_node_records(self, tree_id: str) -> list[TreeNodeRecord]:
+        def collect() -> list[TreeNodeRecord]:
+            records = [
+                TreeNodeRecord.model_validate_json(path.read_text(encoding="utf-8"))
+                for path in self._root.glob("*.json")
+            ]
+            return sorted(
+                (record for record in records if record.tree_id == tree_id),
+                key=lambda record: record.session_id,
+            )
+
+        async with self._lock:
+            return await asyncio.to_thread(collect)
+
 
 class SqliteTreeNodeStore(TreeNodeStore):
     """SQLite tree-node store scoped through ``RecordScope.canonical()``."""
@@ -250,6 +276,14 @@ class SqliteTreeNodeStore(TreeNodeStore):
             (self._owner_scope_key, tree_id),
         )
         return [row["session_id"] for row in rows]
+
+    async def get_tree_node_records(self, tree_id: str) -> list[TreeNodeRecord]:
+        rows = await self._connection.query_all(
+            f"SELECT {_NODE_COLUMNS} FROM tree_nodes "
+            "WHERE owner_scope_key = ? AND tree_id = ? ORDER BY session_id",
+            (self._owner_scope_key, tree_id),
+        )
+        return [_record_from_row(row) for row in rows]
 
     async def _insert(
         self,
