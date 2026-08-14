@@ -11,13 +11,15 @@ import { useT } from "../../../i18n";
 import { SectionLabel } from "../../ui/SectionLabel";
 import type { GraphTimelineEvent } from "../../../hooks/useGraphExecution.diff";
 
-/** kind → dot fill class (§5.2 status color system). */
+/** kind → dot fill class(§6.2 Rev 4 状态色系 — graph-status token,
+ * 与画布节点圆点/图例同色;dark 主题下 --color-success === --color-brand,
+ * 不能用 fill-success,否则 node_started 与 node_completed 撞色)。 */
 const KIND_DOT_CLS: Readonly<Record<string, string>> = {
-  node_started: "fill-brand",
-  node_completed: "fill-success",
-  node_crashed: "fill-danger",
-  graph_completed: "fill-success",
-  graph_crashed: "fill-danger",
+  node_started: "fill-graph-status-running",
+  node_completed: "fill-graph-status-completed",
+  node_crashed: "fill-graph-status-crashed",
+  graph_completed: "fill-graph-status-completed",
+  graph_crashed: "fill-graph-status-crashed",
 };
 
 function dotCls(kind: string): string {
