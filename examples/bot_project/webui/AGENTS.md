@@ -57,13 +57,13 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 | `components/graphs/GraphInstanceDetail.tsx` | Instance detail view — conversation flow + re-invoke composer + Run Graph modal (live topology, controls, event timeline, deliver) |
 | `components/graphs/GraphSpecInstanceRow.tsx` | Instance row for spec detail's instance list — #id + colored status badge + progress/elapsed + relative time + status-colored MiniTopology (session-row hover) |
 | `components/graphs/shared.tsx` | Shared graph UI — GraphStatusBadge + buildNodeStatusMap + formatGraphApiError |
-| `components/graphs/topology/TopologyCanvas.tsx` | SVG canvas — viewBox auto-fit, wheel zoom, drag pan, legend overlay |
-| `components/graphs/topology/GraphNode.tsx` | SVG node — glyph + name + sub-label + status dot, dual-channel status coloring |
-| `components/graphs/topology/GraphEdge.tsx` | SVG edge — border-strong stroke + arrowhead + highlight state |
+| `components/graphs/topology/TopologyCanvas.tsx` | SVG canvas — single-transform zoom/pan, fit-to-screen, contained 6-dot legend chip |
+| `components/graphs/topology/GraphNode.tsx` | SVG node — lucide type icon + name + sub-label + status dot; dot-only status coloring (§6 Rev 4, node body never changes with status) |
+| `components/graphs/topology/GraphEdge.tsx` | SVG edge — rounded-orthogonal path (Q-curve corners) + arrowhead + active highlight |
 | `components/graphs/topology/DeliverPulse.tsx` | Deliver pulse animation — brand-bright dot travels along edge path, reduced-motion fallback |
 | `components/graphs/topology/ActiveNodeRing.tsx` | Running-node pulsing ring — outer rect stroke, CSS `graph-ring-pulse` animation |
 | `components/graphs/topology/MiniTopology.tsx` | 80×24px thumbnail — simplified topology, >8 nodes fold to `···` |
-| `components/graphs/topology/layout.ts` | dagre TB layout — spec → node positions + edge paths |
+| `components/graphs/topology/layout.ts` | dagre TB layout — spec → node positions + edge paths; nodesep 56 / ranksep 76; START/END 76×30 pill, functional 140×44 |
 | `components/graphs/topology/miniLayout.ts` | Simplified layout for MiniTopology (fixed 80×24 coordinate space) |
 | `components/graphs/detail/NodeDetailPanel.tsx` | Sidebar — selected node details (type, pool, status, invocation, open session) |
 | `components/graphs/detail/InstanceSummary.tsx` | Sidebar — instance summary + progress ring + graph-level result |

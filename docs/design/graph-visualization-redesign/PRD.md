@@ -4,6 +4,18 @@ Status: ready-for-implementation
 Labels: graph, visualization, frontend, ia-redesign
 Blocking: 无
 
+> **Rev 4(2026-08-15,状态视觉简化定稿)**:Rev 3 落地后评审修订 §6 —
+> **状态回归单通道 dot-only**:节点本体 fill/描边恒定,不随状态变化;状态只由
+> 节点内 10px 实心圆点颜色表达,六态六色(canceled 从 mute-45% 改为独立紫,
+> 与 pending 灰彻底拉开);图例收进带底色/描边的容器 chip,六态全部用真实
+> 状态色圆点(移除 crashed 的 ✕ 特例)。视觉层级翻转:边退到节点之下
+> (border-strong 70% 混合 + 圆角折线),节点描边升为 border-strong + drop-shadow;
+> START/END 从实心 brand 矩形降为 76×30 幽灵药丸;dagre 间距放宽
+> (nodesep 56 / ranksep 76 / edgesep 24);节点类型 glyph 换 lucide SVG 图标。
+> 双通道节点着色(§6.3 Rev 2)与伴随 token(--color-graph-node-fill-completed/
+> -crashed、--color-graph-dot-*)废弃删除。running 呼吸环与 crash flash 保留
+> (节点本体之外的动效提示,不改节点颜色)。
+
 > **Rev 3(2026-08-14,原型评审后定稿)**:原型 `#/prototype/graph/A–D`(dev-only)评审结论 =
 > **Variant A 的图体验入选,但页面布局回归会话优先**。据此:
 > - §4 实例详情主区为**会话流**,运行图默认不显示;header 的 Topology 按钮点击后以**居中弹窗
@@ -358,27 +370,32 @@ Rev 3 决定:`GraphExecutionViewer` 的完整体验 — 控制状态机(Pause/Re
 | completed | `--color-graph-status-completed` | 独立绿 `#34D399` | `#059669` |
 | crashed / failed | `--color-graph-status-crashed` | danger `#F87171` | `#DC2626` |
 | suspended / paused | `--color-graph-status-suspended` | warning `#FBBF24` | `#B45309` |
-| canceled / stopped | `--color-graph-status-canceled` | mute 45% | mute 45% |
+| canceled / stopped | `--color-graph-status-canceled` | 独立紫 `#A78BFA` | `#6D5AD0` |
 
-completed 的独立绿与 running 的 teal 拉开约 40° 色相,两个"进行中/已完成"的高频相邻状态
-不再撞色。
+completed 的独立绿与 running 的 teal 拉开约 40° 色相;Rev 4 起 canceled 用独立紫,
+与 pending 灰(以及其余四色)全部两两可辨 — 六态六色,圆点即状态。
 
-### 6.3 节点与图例
+### 6.3 节点与图例(Rev 4 dot-only)
 
-**节点整节点双通道着色**(不再只靠 8px 状态点):
+**节点本体恒定,状态只在圆点上**(Rev 4 推翻 Rev 2 的整节点双通道着色 —
+状态反复改写节点底色/描边导致视觉噪声,且 tint 通道在低对比度下实际失效):
 
-| 状态 | dot | 节点本体 |
+| 状态 | 圆点(10px 实心) | 节点本体 |
 |------|-----|---------|
-| pending | 实心 mute | 默认 fill + hairline 描边 |
-| running | 空心 brand 描边点 | brand 描边 + 呼吸环(ActiveNodeRing)+ fill 不变 |
-| completed | 实心绿 | 绿描边 + 绿 tint 底色(`color-mix(status 18%)`,沿用现有双通道模式) |
-| crashed | 实心红 | 红描边 + 红 tint 底色 |
-| suspended | 实心琥珀 | 琥珀虚线描边(保留现有 dashed 通道) |
-| canceled | 实心 45% mute | 默认 fill + hairline 描边 + **名称删除线** |
+| 全部六态 | 对应 `--color-graph-status-*` | 恒定:canvas-elevated fill + border-strong 描边 + drop-shadow |
 
-**图例彩色 chip 化**:每个状态一项 = 8px 实心圆点(真实状态色)+ 文字标签(`text-body`,
-不再整行 `text-faint`);crashed 用 `✕` 字形与 completed 区分;补充 suspended/canceled 两项
-(当前图例只有 4 项,与实际 6 态不符)。
+辅助动效(不改节点本体颜色):running = 外扩呼吸环(ActiveNodeRing);
+crashed = 220ms crash flash(瞬态)。suspended 虚线描边、canceled 名称删除线、
+completed/crashed tint 底色均随双通道一起废弃。
+
+**节点与背景的区分度**(Rev 4):层级翻转 — 边弱化(border-strong 70% 混合),
+节点描边升为 border-strong + 软阴影;节点在点阵画布上清晰浮起。
+START/END 降为 76×30 幽灵药丸(brand 7% tint fill + brand 40% 描边 + brand 文字),
+终端节点视觉降权,功能节点才是主角。
+
+**图例容器化**:右上角图例收进带底色的容器 chip(`--color-graph-legend-bg`,
+88% canvas-elevated + backdrop-blur + hairline 描边),六态每项 = 8px 真实状态色
+圆点 + `text-body` 标签,窄屏可换行;crashed 不再用 ✕ 字形(六色已两两可辨)。
 
 ### 6.4 GraphStatusBadge 升级
 
