@@ -53,11 +53,10 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 | `components/ui/KeyValueEditor.tsx` | Postman-style key/value row editor (controlled component) |
 | `components/graphs/GraphSpecListPage.tsx` | Graph spec list — MiniTopology thumbnail + metadata per row |
 | `components/graphs/GraphSpecEditor.tsx` | Split-pane spec editor — CodeMirror YAML + live topology preview + run |
-| `components/graphs/GraphSpecDetail.tsx` | Spec detail view — topology preview + instance list (right panel) + new-instance composer |
-| `components/graphs/GraphInstanceDetail.tsx` | Instance detail view — conversation flow + re-invoke composer + topology drawer |
-| `components/graphs/GraphSpecInstanceRow.tsx` | Shared instance row for spec detail's instance list — #id + status badge + progress + elapsed |
-| `components/graphs/GraphExecutionViewer.tsx` | Full-canvas execution viewer — retained for Phase 2 secondary view (T07) |
-| `components/graphs/shared.tsx` | Shared graph UI — GraphStatusBadge + formatGraphApiError |
+| `components/graphs/GraphSpecDetail.tsx` | Spec detail view — topology preview + instance list + FAB new-instance modal |
+| `components/graphs/GraphInstanceDetail.tsx` | Instance detail view — conversation flow + re-invoke composer + Run Graph modal (live topology, controls, event timeline, deliver) |
+| `components/graphs/GraphSpecInstanceRow.tsx` | Instance row for spec detail's instance list — #id + colored status badge + progress/elapsed + relative time + status-colored MiniTopology (session-row hover) |
+| `components/graphs/shared.tsx` | Shared graph UI — GraphStatusBadge + buildNodeStatusMap + formatGraphApiError |
 | `components/graphs/topology/TopologyCanvas.tsx` | SVG canvas — viewBox auto-fit, wheel zoom, drag pan, legend overlay |
 | `components/graphs/topology/GraphNode.tsx` | SVG node — glyph + name + sub-label + status dot, dual-channel status coloring |
 | `components/graphs/topology/GraphEdge.tsx` | SVG edge — border-strong stroke + arrowhead + highlight state |
@@ -88,14 +87,14 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 | `npm run dev` | Start Vite dev server with backend proxy |
 | `npm run build` | Production build to `dist/` |
 | `npm run preview` | Preview production build |
-| `npm test` | Run Vitest unit tests — 927 tests across 93 files |
+| `npm test` | Run Vitest unit tests — 1018 tests across 96 files |
 
 ## For AI Agents
 
 ### Working In This Directory
 - `npm run dev` starts the dev server with proxy to backend.
 - `npm run build` outputs to `dist/`, which is served by the backend at `/webui/`.
-- `npm test` runs Vitest — 927 tests across 93 files covering hooks, reducers, UI primitives, dropdowns, boot, settings views, and all graph visualization components (topology, deliver pulse, diff, YAML editor, execution viewer, spec editor, instance/spec list pages).
+- `npm test` runs Vitest — 1018 tests across 96 files covering hooks, reducers, UI primitives, dropdowns, boot, settings views, and all graph visualization components (topology, deliver pulse, diff, YAML editor, run-graph/new-instance modals, spec editor, instance/spec list pages).
 - The frontend has **no direct pool switching** for existing conversations — it's purely a display filter in the sidebar dropdown.
 - Workspace switching is done via `WorkspaceBrowser` → `POST /api/workspace/cd`.
 - `useWebUIStream.ts` is the core hook — it handles WebSocket lifecycle, optimistic messages (`request_id`-based dedup), and streaming state.
