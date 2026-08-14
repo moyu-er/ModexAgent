@@ -69,6 +69,14 @@ class GraphTurnArtifacts(BaseModel):
     node_description: str
     knowledge_config: Any
     knowledge_dir: Path | None = None
+    # Whether the current node has at least one AgentNode downstream.
+    # Computed by BotAgentNode._build_graph_artifacts from graph topology.
+    # Read by GraphWorkflowProvider to conditionally render Producer/Relay patterns.
+    downstream_has_agent: bool = False
+    # Whether the current node has __end__ as a direct downstream target.
+    # Computed by BotAgentNode._build_graph_artifacts from graph topology.
+    # Read by GraphWorkflowProvider to conditionally render the Final Reply pattern.
+    downstream_has_end: bool = False
 
 
 class TurnContextDescriptor(BaseModel):
@@ -221,6 +229,12 @@ class GraphTopologyConfigurator(TurnContextConfigurator):
         )
         ctx.runtime.state.custom[TurnCustomKey.GRAPH_NODE_DESCRIPTION] = (
             desc.graph_artifacts.node_description
+        )
+        ctx.runtime.state.custom[TurnCustomKey.GRAPH_DOWNSTREAM_HAS_AGENT] = (
+            desc.graph_artifacts.downstream_has_agent
+        )
+        ctx.runtime.state.custom[TurnCustomKey.GRAPH_DOWNSTREAM_HAS_END] = (
+            desc.graph_artifacts.downstream_has_end
         )
 
 

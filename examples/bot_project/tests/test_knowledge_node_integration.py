@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from bot.graph.agent_node import BotAgentNode
 from bot.graph.agent_node_factory import BotAgentNodeConfig, BotAgentNodeFactory
 
+from modex_agent.agents.agent_node import AgentNode
 from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.session_registry import InMemorySessionRegistry
@@ -19,6 +21,7 @@ from modex_agent.pipeline.turn_context_config import (
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.tools.graph_knowledge_tool import GraphKnowledgeBaseTool
 from modex_agent.workspace.paths import WorkspacePaths
+from modex_graph.constants import GraphNode
 from modex_graph.context import GraphContext
 from modex_graph.integration import GraphPayload
 from modex_graph.spec import NodeSpec
@@ -206,6 +209,63 @@ def test_build_graph_artifacts_omits_knowledge_dir_without_graph_instance(tmp_pa
     node._graph_ref = graph
 
     assert node._build_graph_artifacts(_graph_context(None)).knowledge_dir is None
+
+
+def test_build_graph_artifacts_classifies_downstream_targets(tmp_path: Path) -> None:
+    """Downstream flags classify direct edges: AgentNode vs __end__ vs other node types.
+
+    These flags drive GraphWorkflowProvider's conditional deliver-pattern
+    rendering (Producer/Relay vs Final Reply), so a classification regression
+    changes which prompt pattern the agent receives without failing the
+    provider tests (which preset the flags manually).
+    """
+    def _node(name: str, downstream: list[str]) -> BotAgentNode:
+        resolver = _workspace_resolver(tmp_path, builder=MagicMock())
+        node = BotAgentNode(name, "default", resolver)
+        node.name = name
+        graph = MagicMock()
+        graph.nodes = {
+            # END is matched by name before any node lookup — the entry value
+            # is never consulted.
+            GraphNode.END: object(),
+            "reviewer": MagicMock(spec=AgentNode),
+            "transform": object(),
+        }
+        graph.edges_from.return_value = [
+            SimpleNamespace(target=t) for t in downstream
+        ]
+        node._graph_ref = graph
+        return node
+
+    # AgentNode + END downstream — both flags set.
+    artifacts = _node("planner", ["reviewer", GraphNode.END])._build_graph_artifacts(
+        _graph_context(42)
+    )
+    assert artifacts.downstream_has_agent is True
+    assert artifacts.downstream_has_end is True
+
+    # END-only downstream — Final Reply pattern applies, Producer/Relay do not.
+    artifacts = _node("tail", [GraphNode.END])._build_graph_artifacts(
+        _graph_context(42)
+    )
+    assert artifacts.downstream_has_agent is False
+    assert artifacts.downstream_has_end is True
+
+    # Non-agent node downstream only — no deliver pattern applies.
+    artifacts = _node("gate", ["transform"])._build_graph_artifacts(
+        _graph_context(42)
+    )
+    assert artifacts.downstream_has_agent is False
+    assert artifacts.downstream_has_end is False
+
+    # No graph reference (deliver tool pre-built) — flags stay False.
+    resolver = _workspace_resolver(tmp_path, builder=MagicMock())
+    orphan = BotAgentNode("orphan", "default", resolver)
+    orphan.name = "orphan"
+    orphan._deliver_tool = MagicMock(spec=Tool)
+    artifacts = orphan._build_graph_artifacts(_graph_context(42))
+    assert artifacts.downstream_has_agent is False
+    assert artifacts.downstream_has_end is False
 
 
 def test_node_artifacts_configure_knowledge_tool_and_hook_state(tmp_path: Path) -> None:

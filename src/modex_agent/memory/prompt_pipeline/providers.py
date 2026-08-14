@@ -787,85 +787,120 @@ class GraphWorkflowProvider(SystemPromptProvider):
 
     async def _fetch_version(self) -> str:
         ctx = _get_agent_context()
-        if not _is_graph_node_execution(ctx):
+        custom = _graph_node_custom_state(ctx)
+        if custom is None:
             return "no-graph"
-        return "graph"
+        has_agent = custom.get(TurnCustomKey.GRAPH_DOWNSTREAM_HAS_AGENT, False)
+        has_end = custom.get(TurnCustomKey.GRAPH_DOWNSTREAM_HAS_END, False)
+        return f"graph:{int(has_agent)}{int(has_end)}"
 
     async def _fetch_content(self) -> str:
         ctx = _get_agent_context()
-        if not _is_graph_node_execution(ctx):
+        custom = _graph_node_custom_state(ctx)
+        if custom is None:
             return ""
-        assert ctx is not None  # narrowed by _is_graph_node_execution
-        from modex_agent.runtime.enums import TurnCustomKey
+        parts: list[str] = ["## Graph Node Context\n",
+                            "### Workflow Guidance\n\n",
+                            "You are a node in a graph workflow. Your regular text output "
+                            "is NOT delivered to anyone — it stays in your local context "
+                            "only. The ONLY way to route your work to downstream nodes is "
+                            "the `deliver` tool.\n\n"
+                            "You MUST call `deliver` before finishing. Check the `deliver` "
+                            "tool description for available targets and their roles.\n\n"]
 
-        parts: list[str] = ["## Graph Node Context\n"]
+        has_agent = custom.get(TurnCustomKey.GRAPH_DOWNSTREAM_HAS_AGENT, False)
+        has_end = custom.get(TurnCustomKey.GRAPH_DOWNSTREAM_HAS_END, False)
 
-        parts.append("### Workflow Guidance\n\n")
-        parts.append(
-            "You are a node in a graph workflow. Your regular text output "
-            "is NOT delivered to anyone — it stays in your local context "
-            "only. The ONLY way to route your work to downstream nodes is "
-            "the `deliver` tool.\n\n"
-            "You MUST call `deliver` before finishing. Check the `deliver` "
-            "tool description for available targets and their roles.\n\n"
-            "**Deliver Content Guidelines**\n\n"
-            "Your deliver `content` is the ONLY information downstream nodes "
-            "receive from you. They cannot see your reasoning, tool calls, "
-            "or intermediate steps. Write it as a handoff to the next "
-            "agent — enough context to continue, not a full transcript.\n\n"
-            "**Pattern 1 — Producer** (you produce new work):\n"
-            "- Task: What you were asked to do (one or two sentences).\n"
-            "- Result: What you produced or found. Reference files by "
-            "path instead of pasting full content. Include key decisions "
-            "and their rationale.\n"
-            "- Status: Done / partial / blocked. If partial, state "
-            "what remains. If blocked, state the obstacle.\n\n"
-            "**Pattern 2 — Relay** (you selectively pass upstream content "
-            "downstream):\n"
-            "Use this when your role is to filter and summarize upstream "
-            "content for downstream nodes, not to produce new content. Do "
-            "NOT forward upstream content verbatim — select and transform it.\n"
-            "- Source: Which upstream node(s) this content is derived from.\n"
-            "- Selection: What you included and why it's relevant to the "
-            "downstream node.\n"
-            "- Summary: The filtered/summarized content, written for the "
-            "downstream node's needs.\n"
-            "- Omitted: What you excluded (briefly — so downstream knows "
-            "what's missing).\n\n"
-            "If you deliver multiple times, later delivers can be short "
-            "fragments — but your final deliver should be self-contained "
-            "enough for the downstream node to act on without re-reading "
-            "your inputs.\n"
-        )
-
-        if ctx.runtime is not None and ctx.runtime.state is not None:
-            topology = ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT)
-            if topology:
-                parts.append("### Topology\n\n")
-                parts.append(topology)
-                parts.append("\n")
-            desc = ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_NODE_DESCRIPTION)
-            if desc:
-                parts.append("\n### Your Role\n\n")
-                parts.append(desc)
-            knowledge_dir = ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_KNOWLEDGE_DIR)
-            if knowledge_dir:
-                parts.append("\n### Knowledge Base\n\n")
+        if has_agent or has_end:
+            parts.append("**Deliver Content Guidelines**\n\n")
+            parts.append(
+                "Your deliver `content` is the ONLY information downstream nodes "
+                "receive from you. They cannot see your reasoning, tool calls, "
+                "or intermediate steps. Tailor your content to the chosen target "
+                "based on its description in the `deliver` tool — different targets "
+                "expect different formats.\n\n"
+            )
+            pattern_num = 1
+            if has_agent:
                 parts.append(
-                    "A shared knowledge base is available via the `knowledge_base` "
-                    "tool. It lets you record findings, decisions, and questions that "
-                    "other nodes can read, even if they are not directly downstream "
-                    "from you.\n\n"
-                    "Use it to:\n"
-                    "- Record important discoveries in `findings` (append by convention).\n"
-                    "- Log key decisions in `decisions` (append by convention).\n"
-                    "- Track unresolved questions in `open_questions`.\n"
-                    "- Use `grep` to check if a topic has already been recorded before "
-                    "writing a duplicate entry.\n"
-                    "- The `changelog` is auto-maintained - do not write to it directly.\n\n"
-                    "A summary of recent findings and open questions is injected at the "
-                    "start of each turn. Use the tool for full content or searches.\n"
+                    f"**Pattern {pattern_num} — Producer** (you produce new work):\n"
+                    "- Task: What you were asked to do (one or two sentences).\n"
+                    "- Result: What you produced or found. Reference files by "
+                    "path instead of pasting full content. Include key decisions "
+                    "and their rationale.\n"
+                    "- Status: Done / partial / blocked. If partial, state "
+                    "what remains. If blocked, state the obstacle.\n\n"
                 )
+                pattern_num += 1
+                parts.append(
+                    f"**Pattern {pattern_num} — Relay** (you selectively pass upstream content "
+                    "downstream):\n"
+                    "Use this when your role is to filter and summarize upstream "
+                    "content for downstream nodes, not to produce new content. Do "
+                    "NOT forward upstream content verbatim — select and transform it.\n"
+                    "- Source: Which upstream node(s) this content is derived from.\n"
+                    "- Selection: What you included and why it's relevant to the "
+                    "downstream node.\n"
+                    "- Summary: The filtered/summarized content, written for the "
+                    "downstream node's needs.\n"
+                    "- Omitted: What you excluded (briefly — so downstream knows "
+                    "what's missing).\n\n"
+                )
+                pattern_num += 1
+            if has_end:
+                parts.append(
+                    f"**Pattern {pattern_num} — Final Reply** (deliver to `__end__`):\n"
+                    "Use this pattern when delivering to `__end__`. Your content becomes "
+                    "the user's final reply — the user sees this directly, not another agent.\n"
+                    "- Origin Request: Your conversation context contains an `[Origin Request]` "
+                    "section — this is the user's input for this graph run, in the order it "
+                    "was received. Your deliver to `__end__` should directly respond to it, "
+                    "in a form that matches the user's input (answer a question, fulfill an "
+                    "instruction, report a result).\n"
+                    "- Result: A complete, self-contained, user-facing answer. Write it as "
+                    "polished content the user reads directly — NOT a handoff to another "
+                    "agent, NOT a status report with Task/Status/Done fields.\n"
+                    "- Form: Natural language with markdown formatting (headers, lists, code "
+                    "blocks) as appropriate for readability.\n"
+                    "- Exclude: Internal reasoning, tool call traces, debugging notes, "
+                    "intermediate status fields. The user does not need to see your "
+                    "working process.\n\n"
+                )
+                pattern_num += 1
+            parts.append(
+                "If you deliver multiple times, later delivers can be short "
+                "fragments — but your final deliver should be self-contained "
+                "enough for the downstream node to act on without re-reading "
+                "your inputs.\n"
+            )
+
+        topology = custom.get(TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT)
+        if topology:
+            parts.append("### Topology\n\n")
+            parts.append(topology)
+            parts.append("\n")
+        desc = custom.get(TurnCustomKey.GRAPH_NODE_DESCRIPTION)
+        if desc:
+            parts.append("\n### Your Role\n\n")
+            parts.append(desc)
+        knowledge_dir = custom.get(TurnCustomKey.GRAPH_KNOWLEDGE_DIR)
+        if knowledge_dir:
+            parts.append("\n### Knowledge Base\n\n")
+            parts.append(
+                "A shared knowledge base is available via the `knowledge_base` "
+                "tool. It lets you record findings, decisions, and questions that "
+                "other nodes can read, even if they are not directly downstream "
+                "from you.\n\n"
+                "Use it to:\n"
+                "- Record important discoveries in `findings` (append by convention).\n"
+                "- Log key decisions in `decisions` (append by convention).\n"
+                "- Track unresolved questions in `open_questions`.\n"
+                "- Use `grep` to check if a topic has already been recorded before "
+                "writing a duplicate entry.\n"
+                "- The `changelog` is auto-maintained - do not write to it directly.\n\n"
+                "A summary of recent findings and open questions is injected at the "
+                "start of each turn. Use the tool for full content or searches.\n"
+            )
 
         return "".join(parts)
 
@@ -874,8 +909,8 @@ def _get_agent_context() -> AgentContext | None:
     return current_agent_context.get(None)
 
 
-def _is_graph_node_execution(ctx: AgentContext | None) -> bool:
-    """True when this turn is a graph node main agent execution.
+def _graph_node_custom_state(ctx: AgentContext | None) -> dict[str, Any] | None:
+    """Custom turn-state mapping for a graph node main-agent execution.
 
     Graph mode is the upper layer: it requires both ``graph_context`` (the
     graph runtime is active) and the ``GRAPH_TOPOLOGY_CONTEXT`` state key
@@ -883,12 +918,27 @@ def _is_graph_node_execution(ctx: AgentContext | None) -> bool:
     ``is_node_execution and agent_kind == NORMAL``). Subagents — even in
     graph mode — never have the topology key, so they are excluded.
 
-    This keeps graph workflow content (deliver guidance, topology, knowledge
+    Returns ``ctx.runtime.state.custom`` — the mapping that carries every
+    graph turn key (topology, node description, downstream flags, knowledge
+    dir) — or ``None`` when this turn is not a graph node main agent
+    execution. A non-None return also implies ``ctx.runtime.state`` is
+    non-None, so callers get narrowed access without re-checking.
+    """
+    if ctx is None or ctx.graph_context is None:
+        return None
+    if ctx.runtime is None or ctx.runtime.state is None:
+        return None
+    if ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT) is None:
+        return None
+    return ctx.runtime.state.custom
+
+
+def _is_graph_node_execution(ctx: AgentContext | None) -> bool:
+    """True when this turn is a graph node main agent execution.
+
+    Delegates to ``_graph_node_custom_state`` — the single gate seam. This
+    keeps graph workflow content (deliver guidance, topology, knowledge
     base instructions) strictly on graph node main agents, while subagents
     remain atomic agents regardless of whether they run inside a graph.
     """
-    if ctx is None or ctx.graph_context is None:
-        return False
-    if ctx.runtime is None or ctx.runtime.state is None:
-        return False
-    return ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT) is not None
+    return _graph_node_custom_state(ctx) is not None

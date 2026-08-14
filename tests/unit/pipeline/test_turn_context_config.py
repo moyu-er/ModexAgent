@@ -110,6 +110,8 @@ def make_artifacts(
     knowledge_dir: Path | None = None,
     topology_section: str = "### Topology\n- node-a",
     node_description: str = "researcher node",
+    downstream_has_agent: bool = False,
+    downstream_has_end: bool = False,
 ) -> GraphTurnArtifacts:
     return GraphTurnArtifacts(
         deliver_tool=deliver_tool or _StubTool(name="deliver"),
@@ -117,6 +119,8 @@ def make_artifacts(
         node_description=node_description,
         knowledge_config=knowledge_config,
         knowledge_dir=knowledge_dir,
+        downstream_has_agent=downstream_has_agent,
+        downstream_has_end=downstream_has_end,
     )
 
 
@@ -476,6 +480,21 @@ def test_topology_publishes_topology_and_node_description() -> None:
         ctx.runtime.state.custom[TurnCustomKey.GRAPH_NODE_DESCRIPTION]
         == "researcher node"
     )
+
+
+def test_topology_publishes_downstream_type_flags() -> None:
+    # Given
+    configurator = GraphTopologyConfigurator()
+    artifacts = make_artifacts(downstream_has_agent=True, downstream_has_end=True)
+    desc = make_graph_descriptor(artifacts=artifacts)
+    ctx = make_runtime_context()
+
+    # When
+    configurator.configure(ctx, desc)
+
+    # Then
+    assert ctx.runtime.state.custom[TurnCustomKey.GRAPH_DOWNSTREAM_HAS_AGENT] is True
+    assert ctx.runtime.state.custom[TurnCustomKey.GRAPH_DOWNSTREAM_HAS_END] is True
 
 
 def test_topology_skips_when_runtime_none() -> None:

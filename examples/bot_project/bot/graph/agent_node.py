@@ -167,6 +167,18 @@ class BotAgentNode(AgentNode):
         topology_section = self._build_topology_section()
         node_description = self.resolve_description()
 
+        # Compute downstream target types for topology-aware prompt rendering.
+        downstream_has_end = False
+        downstream_has_agent = False
+        if self._graph_ref is not None:
+            for edge in self._graph_ref.edges_from(self.name):
+                if edge.target == GraphNode.END:
+                    downstream_has_end = True
+                elif edge.target in self._graph_ref.nodes and isinstance(
+                    self._graph_ref.nodes[edge.target], AgentNode
+                ):
+                    downstream_has_agent = True
+
         knowledge_dir: Path | None = None
         if self._knowledge_config.enabled and ctx.graph_instance_id is not None:
             workspace = self._workspace_resolver.resolve_workspace()
@@ -181,6 +193,8 @@ class BotAgentNode(AgentNode):
             node_description=node_description,
             knowledge_config=self._knowledge_config,
             knowledge_dir=knowledge_dir,
+            downstream_has_agent=downstream_has_agent,
+            downstream_has_end=downstream_has_end,
         )
 
     async def _build_graph_input_envelope(

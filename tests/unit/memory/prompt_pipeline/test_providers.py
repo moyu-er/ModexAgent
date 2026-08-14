@@ -636,6 +636,7 @@ async def test_graph_workflow_provider_emits_deliver_routing_guidance() -> None:
 
     state = ReActTurnState(identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("test.planner"), turn_id="t1"))
     state.custom[TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT] = ""
+    state.custom[TurnCustomKey.GRAPH_DOWNSTREAM_HAS_AGENT] = True
     ctx = AgentContext(
         system_prompt="",
         history=MagicMock(spec=MessageHistory),
@@ -657,6 +658,7 @@ async def test_graph_workflow_provider_emits_deliver_routing_guidance() -> None:
         assert "### Your Role\n" not in result
         assert "MUST call `deliver`" in result
         assert "auto-delivered to ALL downstream nodes" not in result
+        assert "Final Reply" not in result
     finally:
         current_agent_context.reset(token)
 
@@ -797,5 +799,178 @@ async def test_graph_workflow_provider_empty_when_no_graph_context() -> None:
         provider = GraphWorkflowProvider()
         result = await provider._fetch_content()
         assert result == ""
+    finally:
+        current_agent_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_graph_workflow_provider_end_only_emits_final_reply_pattern() -> None:
+    """When downstream has END only (no AgentNode), emit Final Reply pattern (numbered 1), not Producer/Relay."""
+    from modex_agent.agents.react.state import ReActTurnState
+    from modex_agent.core.agent import AgentContext, current_agent_context
+    from modex_agent.core.history import MessageHistory
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.runtime.models import TurnIdentity
+    from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+    from modex_graph.context import GraphContext
+
+    state = ReActTurnState(identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("test.end"), turn_id="t1"))
+    state.custom[TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT] = ""
+    state.custom[TurnCustomKey.GRAPH_DOWNSTREAM_HAS_END] = True
+    ctx = AgentContext(
+        system_prompt="",
+        history=MagicMock(spec=MessageHistory),
+        tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("test.end"),
+        graph_context=MagicMock(spec=GraphContext),
+        runtime=AgentRuntime(services=AgentRuntimeServices(), state=state),
+    )
+    token = current_agent_context.set(ctx)
+    try:
+        provider = GraphWorkflowProvider()
+        result = await provider._fetch_content()
+        assert "**Deliver Content Guidelines**" in result
+        assert "Final Reply" in result
+        assert "Producer" not in result
+        assert "Relay" not in result
+        assert "**Pattern 1 — Final Reply**" in result
+    finally:
+        current_agent_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_graph_workflow_provider_both_downstream_emits_all_patterns() -> None:
+    """When downstream has both AgentNode and END, emit all 3 patterns numbered 1, 2, 3."""
+    from modex_agent.agents.react.state import ReActTurnState
+    from modex_agent.core.agent import AgentContext, current_agent_context
+    from modex_agent.core.history import MessageHistory
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.runtime.models import TurnIdentity
+    from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+    from modex_graph.context import GraphContext
+
+    state = ReActTurnState(identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("test.both"), turn_id="t1"))
+    state.custom[TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT] = ""
+    state.custom[TurnCustomKey.GRAPH_DOWNSTREAM_HAS_AGENT] = True
+    state.custom[TurnCustomKey.GRAPH_DOWNSTREAM_HAS_END] = True
+    ctx = AgentContext(
+        system_prompt="",
+        history=MagicMock(spec=MessageHistory),
+        tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("test.both"),
+        graph_context=MagicMock(spec=GraphContext),
+        runtime=AgentRuntime(services=AgentRuntimeServices(), state=state),
+    )
+    token = current_agent_context.set(ctx)
+    try:
+        provider = GraphWorkflowProvider()
+        result = await provider._fetch_content()
+        assert "Producer" in result
+        assert "Relay" in result
+        assert "Final Reply" in result
+        assert "**Pattern 1 — Producer**" in result
+        assert "**Pattern 2 — Relay**" in result
+        assert "**Pattern 3 — Final Reply**" in result
+    finally:
+        current_agent_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_graph_workflow_provider_no_downstream_omits_deliver_guidelines() -> None:
+    """When no downstream targets (both flags False), omit Deliver Content Guidelines entirely."""
+    from modex_agent.agents.react.state import ReActTurnState
+    from modex_agent.core.agent import AgentContext, current_agent_context
+    from modex_agent.core.history import MessageHistory
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.runtime.models import TurnIdentity
+    from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+    from modex_graph.context import GraphContext
+
+    state = ReActTurnState(identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("test.none"), turn_id="t1"))
+    state.custom[TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT] = ""
+    ctx = AgentContext(
+        system_prompt="",
+        history=MagicMock(spec=MessageHistory),
+        tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("test.none"),
+        graph_context=MagicMock(spec=GraphContext),
+        runtime=AgentRuntime(services=AgentRuntimeServices(), state=state),
+    )
+    token = current_agent_context.set(ctx)
+    try:
+        provider = GraphWorkflowProvider()
+        result = await provider._fetch_content()
+        assert "**Deliver Content Guidelines**" not in result
+        assert "Producer" not in result
+        assert "Final Reply" not in result
+        assert "MUST call `deliver`" in result
+    finally:
+        current_agent_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_graph_workflow_provider_version_encodes_downstream_types() -> None:
+    """Version encodes downstream types: graph:11, graph:10, graph:01, graph:00."""
+    from modex_agent.agents.react.state import ReActTurnState
+    from modex_agent.core.agent import AgentContext, current_agent_context
+    from modex_agent.core.history import MessageHistory
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
+    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.runtime.models import TurnIdentity
+    from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+    from modex_graph.context import GraphContext
+
+    def _make_ctx(has_agent: bool, has_end: bool) -> AgentContext:
+        state = ReActTurnState(identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("test.v"), turn_id="t1"))
+        state.custom[TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT] = ""
+        state.custom[TurnCustomKey.GRAPH_DOWNSTREAM_HAS_AGENT] = has_agent
+        state.custom[TurnCustomKey.GRAPH_DOWNSTREAM_HAS_END] = has_end
+        return AgentContext(
+            system_prompt="",
+            history=MagicMock(spec=MessageHistory),
+            tool_manager=InMemoryToolManager(),
+            session=SessionInfo.from_str("test.v"),
+            graph_context=MagicMock(spec=GraphContext),
+            runtime=AgentRuntime(services=AgentRuntimeServices(), state=state),
+        )
+
+    provider = GraphWorkflowProvider()
+    # graph:11
+    ctx = _make_ctx(True, True)
+    token = current_agent_context.set(ctx)
+    try:
+        assert await provider._fetch_version() == "graph:11"
+    finally:
+        current_agent_context.reset(token)
+    # graph:10
+    ctx = _make_ctx(True, False)
+    token = current_agent_context.set(ctx)
+    try:
+        assert await provider._fetch_version() == "graph:10"
+    finally:
+        current_agent_context.reset(token)
+    # graph:01
+    ctx = _make_ctx(False, True)
+    token = current_agent_context.set(ctx)
+    try:
+        assert await provider._fetch_version() == "graph:01"
+    finally:
+        current_agent_context.reset(token)
+    # graph:00
+    ctx = _make_ctx(False, False)
+    token = current_agent_context.set(ctx)
+    try:
+        assert await provider._fetch_version() == "graph:00"
     finally:
         current_agent_context.reset(token)

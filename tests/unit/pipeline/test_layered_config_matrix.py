@@ -312,17 +312,19 @@ class TestGraphAwareComponentsSubagentExclusion:
         """GraphWorkflowProvider returns 'graph' for main agent in graph mode."""
         from modex_agent.core.agent import current_agent_context
 
+        state = _full_graph_state()
+        state.custom[TurnCustomKey.GRAPH_DOWNSTREAM_HAS_AGENT] = True
         ctx = _ctx(
             graph_context=_graph_ctx(),
             graph_instance_id=42,
-            state=_full_graph_state(),
+            state=state,
         )
         token = current_agent_context.set(ctx)
         try:
             provider = GraphWorkflowProvider()
             version = await provider._fetch_version()
             content = await provider._fetch_content()
-            assert version == "graph"
+            assert version == "graph:10"
             assert "## Graph Node Context" in content
             assert "### Topology" in content
         finally:

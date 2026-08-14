@@ -200,3 +200,13 @@ class TurnCustomKey(StrEnum):
     # before execute_turn; read by GraphWorkflowProvider._fetch_content.
     # Empty string when graph_ref is None (test/no-scheduler path).
     GRAPH_TOPOLOGY_CONTEXT = "_graph_topology_context"
+    # Whether the current graph node has at least one AgentNode as a direct
+    # downstream target. Set by GraphTopologyConfigurator from
+    # GraphTurnArtifacts; read by GraphWorkflowProvider to conditionally
+    # render Producer/Relay deliver patterns.
+    GRAPH_DOWNSTREAM_HAS_AGENT = "_graph_downstream_has_agent"
+    # Whether the current graph node has __end__ as a direct downstream
+    # target. Set by GraphTopologyConfigurator from GraphTurnArtifacts;
+    # read by GraphWorkflowProvider to conditionally render the Final
+    # Reply deliver pattern.
+    GRAPH_DOWNSTREAM_HAS_END = "_graph_downstream_has_end"
