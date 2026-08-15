@@ -1,3 +1,4 @@
+# ruff: noqa: ANN401
 """Unit + integration tests for the designer→implementer→reviewer graph workflow.
 
 Part 1 (unit): Topology validation — graph compiles under ParallelScheduler,
@@ -65,6 +66,7 @@ from modex_graph.persistence import (
 from modex_graph.persistence.persistence_coordinator import (
     GraphPersistenceCoordinator,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 _BOT_PROJECT = Path(__file__).resolve().parents[2]
 if str(_BOT_PROJECT) not in sys.path:
@@ -334,7 +336,7 @@ class TestApprovePath:
         coord = _make_coordinator(compiled)
         ctx = _make_ctx(coord)
         engine = GraphEngine(compiled)
-        result = await engine.run_async(ctx)
+        result = await engine.run_async(ctx, mode=BootstrapMode.FRESH)
         assert result is not None
         assert result.result is not None
         assert len(result.result) > 0
@@ -353,7 +355,7 @@ class TestRejectApproveLoop:
         coord = _make_coordinator(compiled)
         ctx = _make_ctx(coord)
         engine = GraphEngine(compiled)
-        result = await engine.run_async(ctx)
+        result = await engine.run_async(ctx, mode=BootstrapMode.FRESH)
         assert result is not None
         assert reviewer.call_count == 2
         assert result.result is not None
@@ -539,7 +541,7 @@ class TestE2EStepFun:
 
         try:
             engine = GraphEngine(compiled)
-            result = await engine.run_async(ctx)
+            result = await engine.run_async(ctx, mode=BootstrapMode.FRESH)
             assert result is not None
             assert result.result is not None
             assert len(result.result) > 0
@@ -801,7 +803,7 @@ class TestE2EReviewLoopWithMemory:
 
         try:
             engine = GraphEngine(compiled)
-            result = await engine.run_async(ctx)
+            result = await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
             # 1. Graph completed
             assert result is not None

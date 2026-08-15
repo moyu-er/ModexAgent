@@ -38,6 +38,7 @@ from modex_graph import (
     NullGraphInstanceStore,
     NullNodeStateStore,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 _EXAMPLES_DIR = Path(__file__).parent.parent.parent.parent.parent / "examples"
 if str(_EXAMPLES_DIR) not in sys.path:
@@ -50,23 +51,31 @@ build_retry_graph = _retry.build_retry_graph
 
 class _AutoRegCoord(GraphPersistenceCoordinator):
     def collect_consumable_delivers(
-        self, node_name: str, invocation_id: int
+        self, node_id: str, invocation_id: int
     ) -> list[Any]:
-        if self.get_deliver_store(node_name) is None:
-            self.register_node(node_name)
-        return super().collect_consumable_delivers(node_name, invocation_id)
+        if self.get_deliver_store(node_id) is None:
+            self.register_node(node_id)
+        return super().collect_consumable_delivers(node_id, invocation_id)
 
     def route_deliver(
         self,
-        target_node: str,
+        target_node_id: str,
         content: Any,
-        source_node: str,
+        source_node_id: str,
         source_invocation_id: int,
         source_node_name: str | None = None,
+        stage: bool = False,
     ) -> int | None:
-        if target_node != GraphNode.END and self.get_deliver_store(target_node) is None:
-            self.register_node(target_node)
-        return super().route_deliver(target_node, content, source_node, source_invocation_id, source_node_name)
+        if self.get_deliver_store(target_node_id) is None:
+            self.register_node(target_node_id)
+        return super().route_deliver(
+            target_node_id,
+            content,
+            source_node_id,
+            source_invocation_id,
+            source_node_name,
+            stage,
+        )
 
 
 def _make_coordinator() -> _AutoRegCoord:
@@ -217,7 +226,7 @@ class TestRetryNode:
         body = FlakyBody(fail_count=0)
         compiled = self._build_graph(body, max_retries=3).compile()
         ctx = _make_retry_ctx()
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.attempts == 1
         assert result.exit_path == "success"
 
@@ -225,7 +234,7 @@ class TestRetryNode:
         body = FlakyBody(fail_count=2)
         compiled = self._build_graph(body, max_retries=5).compile()
         ctx = _make_retry_ctx()
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.attempts == 3
         assert result.exit_path == "success"
 
@@ -233,7 +242,7 @@ class TestRetryNode:
         body = FlakyBody(fail_count=100)
         compiled = self._build_graph(body, max_retries=2).compile()
         ctx = _make_retry_ctx()
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.attempts == 3
         assert result.exit_path == "failed"
 
@@ -249,7 +258,7 @@ class TestBuildRetryGraph:
             is_failure=_is_topology_failure,
         )
         ctx = _make_topology_ctx()
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.attempts == 1
 
     async def test_exits_correctly_on_failure_after_exhausting_retries(self) -> None:
@@ -260,7 +269,7 @@ class TestBuildRetryGraph:
             is_failure=_is_topology_failure,
         )
         ctx = _make_topology_ctx()
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.attempts == 3
 
     async def test_does_not_raise_recursion_error_with_appropriate_max_iterations(
@@ -273,5 +282,5 @@ class TestBuildRetryGraph:
             is_failure=_is_topology_failure,
         )
         ctx = _make_topology_ctx()
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.attempts == 10

@@ -32,12 +32,12 @@ from modex_graph import (
     GraphPersistenceCoordinator,
     GraphRuntime,
     IntegratedInput,
-    IntegratedPayload,
     Node,
     NullDeliverStoreFactory,
     NullGraphInstanceStore,
     NullNodeStateStore,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 _EXAMPLES_DIR = Path(__file__).parent.parent.parent.parent.parent / "examples"
 if str(_EXAMPLES_DIR) not in sys.path:
@@ -51,23 +51,31 @@ build_map_reduce_graph = _map_reduce.build_map_reduce_graph
 
 class _AutoRegCoord(GraphPersistenceCoordinator):
     def collect_consumable_delivers(
-        self, node_name: str, invocation_id: int
+        self, node_id: str, invocation_id: int
     ) -> list[Any]:
-        if self.get_deliver_store(node_name) is None:
-            self.register_node(node_name)
-        return super().collect_consumable_delivers(node_name, invocation_id)
+        if self.get_deliver_store(node_id) is None:
+            self.register_node(node_id)
+        return super().collect_consumable_delivers(node_id, invocation_id)
 
     def route_deliver(
         self,
-        target_node: str,
+        target_node_id: str,
         content: Any,
-        source_node: str,
+        source_node_id: str,
         source_invocation_id: int,
         source_node_name: str | None = None,
+        stage: bool = False,
     ) -> int | None:
-        if target_node != GraphNode.END and self.get_deliver_store(target_node) is None:
-            self.register_node(target_node)
-        return super().route_deliver(target_node, content, source_node, source_invocation_id, source_node_name)
+        if self.get_deliver_store(target_node_id) is None:
+            self.register_node(target_node_id)
+        return super().route_deliver(
+            target_node_id,
+            content,
+            source_node_id,
+            source_invocation_id,
+            source_node_name,
+            stage,
+        )
 
 
 def _make_coordinator() -> _AutoRegCoord:
@@ -112,6 +120,17 @@ def _make_ctx(state: SqState | None = None) -> GraphContext[SqState]:
     )
 
 
+def _target_contents(ctx: GraphContext[SqState], target: str) -> list[Any]:
+    store = ctx.coordinator.get_deliver_store(target)
+    assert store is not None
+    return [record.content for record in store.query_consumable(0, target)]
+
+
+def _result_value(state: SqState) -> int:
+    assert state.result is not None
+    return int(state.result[0].content)
+
+
 def _items(state: SqState) -> list[int]:
     return state.items
 
@@ -138,9 +157,7 @@ class TestMapNode:
         )
         ctx = _make_ctx(SqState(items=[1, 2, 3, 4, 5]))
         await map_node.run(ctx)
-        result = map_node._submit_result
-        assert "worker" in result
-        assert len(result["worker"]) == 5
+        assert _target_contents(ctx, "worker") == [1, 2, 3, 4, 5]
 
     async def test_empty_items_still_delivers(self) -> None:
         """items_fn returns [] -> delivers single None to worker (ensures worker fires)."""
@@ -150,10 +167,7 @@ class TestMapNode:
         )
         ctx = _make_ctx(SqState(items=[]))
         await map_node.run(ctx)
-        result = map_node._submit_result
-        assert "worker" in result
-        assert len(result["worker"]) == 1
-        assert result["worker"][0] is None
+        assert _target_contents(ctx, "worker") == [None]
 
 
 class TestWorkerAccumulation:
@@ -161,8 +175,8 @@ class TestWorkerAccumulation:
         """Worker squares [3, 1, 2] -> reduce sums = 9 + 1 + 4 = 14."""
         compiled = _build_graph().compile()
         ctx = _make_ctx(SqState(items=[3, 1, 2]))
-        result = await GraphEngine(compiled).run_async(ctx)
-        assert int(result.result[0].content) == 14
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
+        assert _result_value(result) == 14
 
 
 class TestReduceNode:
@@ -171,31 +185,30 @@ class TestReduceNode:
     async def test_reads_payloads_applies_reducer_delivers_to_end(self) -> None:
         """Isolated: feed IntegratedInput, call execute, check pending delivers."""
         reduce_node = ReduceNode(reducer=sum)
-        integrated_input = IntegratedInput(payloads=[
-            IntegratedPayload(source_node="worker", content=1),
-            IntegratedPayload(source_node="worker", content=4),
-            IntegratedPayload(source_node="worker", content=9),
-        ])
         ctx = _make_ctx()
-        await reduce_node.execute(ctx, integrated_input)
-        assert len(reduce_node._pending_delivers) == 1
-        content, target = reduce_node._pending_delivers[0]
-        assert content == 14
-        assert target == GraphNode.END
+        reduce_node.name = "reduce"
+        reduce_node.node_id = "reduce"
+        ctx.coordinator.register_node(reduce_node.node_id)
+        for content in (1, 4, 9):
+            ctx.coordinator.route_deliver(reduce_node.node_id, content, "worker", 0)
+
+        await reduce_node.run(ctx)
+
+        assert _target_contents(ctx, GraphNode.END) == [14]
 
     async def test_complete_graph_writes_expected_total_with_sum(self) -> None:
         """Complete graph: reduce sums [1, 4, 9, 16] = 30."""
         compiled = _build_graph().compile()
         ctx = _make_ctx(SqState(items=[1, 2, 3, 4]))
-        result = await GraphEngine(compiled).run_async(ctx)
-        assert int(result.result[0].content) == 30
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
+        assert _result_value(result) == 30
 
     async def test_complete_graph_writes_expected_total_with_max(self) -> None:
         """reducer=max -> max([1, 25, 4]) = 25."""
         compiled = _build_graph(reducer=max).compile()
         ctx = _make_ctx(SqState(items=[1, 5, 2]))
-        result = await GraphEngine(compiled).run_async(ctx)
-        assert int(result.result[0].content) == 25
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
+        assert _result_value(result) == 25
 
 
 class TestCompleteMapReduceGraph:
@@ -205,19 +218,19 @@ class TestCompleteMapReduceGraph:
         """map [1,2,3] -> square each -> sum the squares = 14."""
         compiled = _build_graph().compile()
         ctx = _make_ctx(SqState(items=[1, 2, 3]))
-        result = await GraphEngine(compiled).run_async(ctx)
-        assert int(result.result[0].content) == 14
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
+        assert _result_value(result) == 14
 
     async def test_empty_items_produces_zero_total(self) -> None:
         """Empty input -> worker delivers 0 -> reduce sums = 0."""
         compiled = _build_graph().compile()
         ctx = _make_ctx(SqState(items=[]))
-        result = await GraphEngine(compiled).run_async(ctx)
-        assert int(result.result[0].content) == 0
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
+        assert _result_value(result) == 0
 
     async def test_single_item(self) -> None:
         """Single item -> one worker -> square -> sum = item**2."""
         compiled = _build_graph().compile()
         ctx = _make_ctx(SqState(items=[7]))
-        result = await GraphEngine(compiled).run_async(ctx)
-        assert int(result.result[0].content) == 49
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
+        assert _result_value(result) == 49
