@@ -803,12 +803,11 @@ class GraphWorkflowProvider(SystemPromptProvider):
             return ""
         parts: list[str] = ["## Graph Node Context\n",
                             "### Workflow Guidance\n\n",
-                            "You are a node in a graph workflow. Your regular text output "
-                            "is NOT delivered to anyone — it stays in your local context "
-                            "only. The ONLY way to route your work to downstream nodes is "
-                            "the `deliver` tool.\n\n"
-                            "You MUST call `deliver` before finishing. Check the `deliver` "
-                            "tool description for available targets and their roles.\n\n"]
+                            "You are a node in a graph workflow. Your regular text "
+                            "output is NOT delivered to anyone — only the `deliver` "
+                            "tool routes your work to downstream nodes.\n\n"
+                            "You MUST call `deliver` before finishing. Check the "
+                            "`deliver` tool for available targets and their roles.\n\n"]
 
         has_agent = custom.get(TurnCustomKey.GRAPH_DOWNSTREAM_HAS_AGENT, False)
         has_end = custom.get(TurnCustomKey.GRAPH_DOWNSTREAM_HAS_END, False)
@@ -816,64 +815,57 @@ class GraphWorkflowProvider(SystemPromptProvider):
         if has_agent or has_end:
             parts.append("**Deliver Content Guidelines**\n\n")
             parts.append(
-                "Your deliver `content` is the ONLY information downstream nodes "
-                "receive from you. They cannot see your reasoning, tool calls, "
-                "or intermediate steps. Tailor your content to the chosen target "
-                "based on its description in the `deliver` tool — different targets "
-                "expect different formats.\n\n"
+                "Downstream sees ONLY your deliver content — never your "
+                "reasoning, tool calls, or intermediate steps. Match the "
+                "format to the chosen target's description in the `deliver` "
+                "tool.\n\n"
             )
             pattern_num = 1
             if has_agent:
                 parts.append(
                     f"**Pattern {pattern_num} — Producer** (you produce new work):\n"
-                    "- Task: What you were asked to do (one or two sentences).\n"
-                    "- Result: What you produced or found. Reference files by "
-                    "path instead of pasting full content. Include key decisions "
-                    "and their rationale.\n"
-                    "- Status: Done / partial / blocked. If partial, state "
-                    "what remains. If blocked, state the obstacle.\n\n"
+                    "- Task: what you were asked to do (one or two sentences).\n"
+                    "- Result: what you produced or found — reference files by "
+                    "path, include key decisions and their rationale.\n"
+                    "- Status: done / partial / blocked; if not done, state "
+                    "what remains or the obstacle.\n\n"
                 )
                 pattern_num += 1
                 parts.append(
-                    f"**Pattern {pattern_num} — Relay** (you selectively pass upstream content "
-                    "downstream):\n"
-                    "Use this when your role is to filter and summarize upstream "
-                    "content for downstream nodes, not to produce new content. Do "
-                    "NOT forward upstream content verbatim — select and transform it.\n"
-                    "- Source: Which upstream node(s) this content is derived from.\n"
-                    "- Selection: What you included and why it's relevant to the "
-                    "downstream node.\n"
-                    "- Summary: The filtered/summarized content, written for the "
-                    "downstream node's needs.\n"
-                    "- Omitted: What you excluded (briefly — so downstream knows "
-                    "what's missing).\n\n"
+                    f"**Pattern {pattern_num} — Relay** (you pass upstream content downstream):\n"
+                    "Use when your role is to filter and summarize upstream "
+                    "content, not produce new work. Never forward verbatim — "
+                    "select and transform. State which upstream nodes the "
+                    "content came from, what you included and why, the "
+                    "summarized content itself, and briefly what you omitted.\n\n"
                 )
                 pattern_num += 1
             if has_end:
                 parts.append(
                     f"**Pattern {pattern_num} — Final Reply** (deliver to `__end__`):\n"
-                    "Use this pattern when delivering to `__end__`. Your content becomes "
-                    "the user's final reply — the user sees this directly, not another agent.\n"
-                    "- Origin Request: Your conversation context contains an `[Origin Request]` "
-                    "section — this is the user's input for this graph run, in the order it "
-                    "was received. Your deliver to `__end__` should directly respond to it, "
-                    "in a form that matches the user's input (answer a question, fulfill an "
-                    "instruction, report a result).\n"
-                    "- Result: A complete, self-contained, user-facing answer. Write it as "
-                    "polished content the user reads directly — NOT a handoff to another "
-                    "agent, NOT a status report with Task/Status/Done fields.\n"
-                    "- Form: Natural language with markdown formatting (headers, lists, code "
-                    "blocks) as appropriate for readability.\n"
-                    "- Exclude: Internal reasoning, tool call traces, debugging notes, "
-                    "intermediate status fields. The user does not need to see your "
-                    "working process.\n\n"
+                    "Your content becomes the user's final reply — the user "
+                    "reads it directly, not another agent.\n"
+                    "- Respond to the `[Origin Request]` in your conversation "
+                    "context (the user's input for this graph run), in a form "
+                    "that matches it (answer, instruction, result).\n"
+                    "- Write polished natural language (markdown as "
+                    "appropriate) — never a Task/Status/Done handoff report.\n"
+                    "- Scope by Topology: if other nodes also deliver to "
+                    "`__end__`, write only your node's part, as one "
+                    "self-contained section of the whole reply; if you are "
+                    "the only one, write the complete answer.\n"
+                    "- Exclude internal reasoning, tool call traces, and "
+                    "debugging notes.\n"
+                    "- Persona: the user sees this workflow as ONE assistant. "
+                    "Never mention nodes, edges, or internal handoffs. If "
+                    "asked who you are or what you can do, answer for the "
+                    "whole workflow (Topology below plus your role) — never "
+                    "as 'node X', and never send the user to 'another node'.\n\n"
                 )
                 pattern_num += 1
             parts.append(
                 "If you deliver multiple times, later delivers can be short "
-                "fragments — but your final deliver should be self-contained "
-                "enough for the downstream node to act on without re-reading "
-                "your inputs.\n"
+                "fragments — but the final deliver must be self-contained.\n"
             )
 
         topology = custom.get(TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT)
@@ -890,18 +882,10 @@ class GraphWorkflowProvider(SystemPromptProvider):
             parts.append("\n### Knowledge Base\n\n")
             parts.append(
                 "A shared knowledge base is available via the `knowledge_base` "
-                "tool. It lets you record findings, decisions, and questions that "
-                "other nodes can read, even if they are not directly downstream "
-                "from you.\n\n"
-                "Use it to:\n"
-                "- Record important discoveries in `findings` (append by convention).\n"
-                "- Log key decisions in `decisions` (append by convention).\n"
-                "- Track unresolved questions in `open_questions`.\n"
-                "- Use `grep` to check if a topic has already been recorded before "
-                "writing a duplicate entry.\n"
-                "- The `changelog` is auto-maintained - do not write to it directly.\n\n"
-                "A summary of recent findings and open questions is injected at the "
-                "start of each turn. Use the tool for full content or searches.\n"
+                "tool: record `findings`, `decisions`, and `open_questions` "
+                "where any node can read them (`changelog` is auto-maintained "
+                "— do not write to it). A summary is injected at each turn "
+                "start; use the tool for full content or `grep` searches.\n"
             )
 
         return "".join(parts)

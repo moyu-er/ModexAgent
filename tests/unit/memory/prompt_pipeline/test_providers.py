@@ -660,6 +660,7 @@ async def test_graph_workflow_provider_emits_deliver_routing_guidance() -> None:
         assert "MUST call `deliver`" in result
         assert "auto-delivered to ALL downstream nodes" not in result
         assert "Final Reply" not in result
+        assert "ONE assistant" not in result
     finally:
         current_agent_context.reset(token)
 
@@ -838,6 +839,10 @@ async def test_graph_workflow_provider_end_only_emits_final_reply_pattern() -> N
         assert "Producer" not in result
         assert "Relay" not in result
         assert "**Pattern 1 — Final Reply**" in result
+        assert "ONE assistant" in result
+        assert "never as 'node X'" in result
+        assert "self-contained section of the whole reply" in result
+        assert "write the complete answer" in result
     finally:
         current_agent_context.reset(token)
 
@@ -878,6 +883,7 @@ async def test_graph_workflow_provider_both_downstream_emits_all_patterns() -> N
         assert "**Pattern 1 — Producer**" in result
         assert "**Pattern 2 — Relay**" in result
         assert "**Pattern 3 — Final Reply**" in result
+        assert "ONE assistant" in result
     finally:
         current_agent_context.reset(token)
 
