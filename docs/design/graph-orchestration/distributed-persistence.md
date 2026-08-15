@@ -2,9 +2,11 @@
 
 Status: **current**（设计权威）。本文档描述 `modex_graph` 分布式持久化层的当前实现状态。目标读者是需要理解、维护或扩展该系统的开发者。
 
+**2026-08-15 refinement（phase 07+09）：** `node_states` schema 瘦身为纯生命周期+版本链事实：`NodeInvocationRecord` 与所有 `NodeStateStore` 实现不再携带 `state_json` / `suspended` 列；`suspend_invocation` 方法退役（`GraphInterrupt` 改走 `cancel_invocation` + 上抛，恢复是全新 re-invocation 重消费 consumable delivers，不读快照）。`rebuild_main_state` 删除——state 不从 store 恢复，由调用方初始化 `ctx.state`，崩溃恢复从 invocation 状态 + 四态 deliver 准入路径派生。`DeliverStore` 消费状态机统一为四态（`STAGED → PENDING → CONSUMED_PENDING → CONSUMED_COMPLETED`，stateful 实现一致）。`GraphMetadata` 增 `attrs` 扩展位（phase 09 ownership seam）。`bootstrap` 改为显式 `*, mode: BootstrapMode`（FRESH 零扫描 / RECOVERY 完整推导）。下文相关段落已同步；保留的历史描述标注 "(历史)"。
+
 配套文档：`external-control.md`（外部控制面与恢复语义权威，2026-08-05）。状态机语义精化、恢复入口集推导、at-least-once 契约、持久化档位降级矩阵以该文档为准。所有配套 ticket（34~39）已落地实现。
 
-Date: 2026-08-05（2026-08-06 更新：ticket 34~39 全部落地，移除计划变更标注）
+Date: 2026-08-05（2026-08-15 更新：phase 07+09 退役 state_json/suspended/suspend_invocation，四态 deliver，bootstrap 显式 mode，attrs 扩展位）
 
 ## 1. 概述
 
@@ -15,25 +17,20 @@ Date: 2026-08-05（2026-08-06 更新：ticket 34~39 全部落地，移除计划�
 | 层 | Store | 内容 | 拥有者 |
 |----|-------|------|--------|
 | Graph 实例 | `GraphInstanceStore` | `GraphMetadata`(5 字段: identity + status) | `GraphOrchestrator` / recovery / control 共享同一个实例 |
-| Node 调用 | `NodeStateStore` | 调用版本链 + lifecycle 状态 + full state snapshot | `GraphPersistenceCoordinator`(per graph instance 一个) |
+| Node 调用 | `NodeStateStore` | 调用版本链 + lifecycle 状态（无 state_json/suspended） | `GraphPersistenceCoordinator`(per graph instance 一个) |
 | Deliver | `DeliverStore` | per-node 投递与消费状态机 | `GraphPersistenceCoordinator.register_node` 注册(per node 一个) |
 
 每层各有 `Null` / `InMemory` / `Sqlite` 三种实现。`Null` 用于 ReActAgent per-turn 路径(无持久化),`InMemory` 用于测试与单进程临时图,`Sqlite` 用于需要 crash recovery 的生产图。三档的恢复能力降级矩阵与 fail-safe 契约见 `external-control.md` §9。
 
-### 1.2 共享 state 加 full snapshot
+### 1.2 共享 state（per-run 工作区，不持久化）
 
 图状态是单个 `GraphState(BaseModel)` 实例,所有 node 共享同一个 `ctx.state` 引用。Node 在 `execute` 里直接 imperative mutate(`ctx.state.x = y`)。没有 reducer channel,没有 declarative `state_update` delta。
 
-持久化时存 full snapshot:
-
-- `GraphState.checkpoint()` 返回 `model_dump(mode="json")`,得到 JSON 兼容 dict。
-- `GraphState.from_checkpoint(data)`(classmethod)等价于 `cls.model_validate(data)`。
-
-`complete_invocation` 把当前 `ctx.state.checkpoint()` 整体写入 `node_states.state_json`。`suspend_invocation` 同样存 full snapshot(`ctx.state.checkpoint()` 的结果)。恢复时 `model_validate(rebuilt_main_state)` 重建 state 对象,不 replay delta。
+**State 不从 store 恢复**（phase 07）。调用方初始化 `ctx.state`；`node_states` 只存生命周期+版本链事实（无 `state_json`）。崩溃恢复从 invocation 状态 + 四态 deliver 准入路径派生,不重建 business-state snapshot。`GraphState.checkpoint()` / `from_checkpoint()` 仍存在（Pydantic `model_dump` / `model_validate`），供 ReAct turn-state 序列化等场景使用,但 graph 层不再用它持久化 node 状态。
 
 ### 1.3 GraphSpec 加 state_class
 
-`GraphSpec` 携带 `state_class: str`(registry name),`GraphSpecCompiler` 通过 `Mapping[str, type[GraphState]]` registry 解析为具体 `GraphState` 子类。编译产物 `CompiledGraph` 持有 resolved `state_class`。这是 state 反序列化的唯一入口: recovery 时 scheduler 用 `type(ctx.state).model_validate(rebuilt_main_state)` 重建 state。
+`GraphSpec` 携带 `state_class: str`(registry name),`GraphSpecCompiler` 通过 `Mapping[str, type[GraphState]]` registry 解析为具体 `GraphState` 子类。编译产物 `CompiledGraph` 持有 resolved `state_class`。调用方用它初始化 `ctx.state`（state 不从 store 恢复——phase 07）。
 
 ## 2. 架构
 
@@ -63,8 +60,8 @@ Date: 2026-08-05（2026-08-06 更新：ticket 34~39 全部落地，移除计划�
 │    注册与路由: register_node / get_deliver_store / route_deliver    │
 │    消费:       collect_consumable_delivers / mark_delivers_consumed │
 │                / promote_delivers                                  │
-│    恢复与查询: load_for_recovery / rebuild_main_state              │
-│                / get_graph_state                                   │
+│    恢复与查询: get_graph_state                                     │
+│                (load_for_recovery/rebuild_main_state 已移除——phase 07+08)│
 │    资源清理:   close (no-op,store 不关连接)                         │
 │  没有 lifecycle 方法(lifecycle 在 NodeStateStore 上)               │
 └───────────┬─────────────────────────────────────────────────────────┘
@@ -72,8 +69,8 @@ Date: 2026-08-05（2026-08-06 更新：ticket 34~39 全部落地，移除计划�
             ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │              Scheduler (LinearScheduler | ParallelScheduler)       │
-│  - load_for_recovery() → RecoveryContext                           │
-│  - 重建 state: model_validate(rebuilt_main_state)                  │
+│  - bootstrap(ctx, graph, mode=FRESH|RECOVERY) → seed 节点名        │
+│  - 调用方初始化 ctx.state（不从 store 恢复）                        │
 │  - 调度循环: before_node → Node.run → after_node                  │
 └───────────┬─────────────────────────────────────────────────────────┘
             │ Node.run(ctx, graph=compiled)
@@ -83,9 +80,10 @@ Date: 2026-08-05（2026-08-06 更新：ticket 34~39 全部落地，移除计划�
 │  1. begin_invocation (NodeStateStore)                              │
 │  2. collect_consumable_delivers + integrate                        │
 │  3. await execute(ctx, integrated_input)  # async void             │
-│  4. submit: ctx.dispatch(target, state_update={deliver payload})   │
-│  5. complete_invocation(state=ctx.state.checkpoint())              │
-│  except GraphInterrupt: suspend_invocation(snapshot)               │
+│  4. complete_invocation(invocation)  # 无 state 参数               │
+│  5. promote_staged_by_source + dispatch(target, state_update={})   │
+│  6. promote_delivers                                               │
+│  except GraphInterrupt: cancel_invocation + re-raise               │
 │  except GraphBubbleUp:  cancel_invocation                          │
 │  except Exception:      crash_invocation                           │
 │  finally:               finalize_invocation                        │
@@ -96,7 +94,7 @@ Date: 2026-08-05（2026-08-06 更新：ticket 34~39 全部落地，移除计划�
 
 ## 3. GraphInstanceStore
 
-### 3.1 GraphMetadata(5 字段)
+### 3.1 GraphMetadata
 
 ```python
 class GraphMetadata(BaseModel):
@@ -104,12 +102,17 @@ class GraphMetadata(BaseModel):
 
     graph_instance_id: int        # Snowflake ID,持久化唯一 key
     spec_id: int                  # FK → graph_specs.spec_id
+    version: int = 0              # 版本链（begin_invocation 递增）
     parent_instance_id: int | None  # 嵌套子图时父实例 ID,顶层为 None
     parent_node: str | None       # 父图中创建此实例的 node 名,顶层为 None
     status: GraphInstanceStatus   # running / paused / stopped / crashed / completed / failed
+    node_id_map: dict[str, str] = {}        # v0 冻结的 {name: node_id},跨版本复制
+    attrs: dict[str, int | str | None] = Field(default_factory=dict)  # phase 09 扩展位（ownership/audit seam）
+    created_at: int = 0
+    updated_at: int = 0
 ```
 
-`frozen=True, extra="forbid"`。Scheduler bookkeeping 字段(`instance_seq` / `iteration_count` / `activated_sources` / `pending_dispatches`)不在这里。这四个全是运行时视图,recovery 时从 `node_states` 与 `deliver_states` 派生,不持久化。
+`frozen=True, extra="forbid"`。`attrs` 是 typed exception（跟随 `node_id_map` 先例），供业务层写 per-instance 元数据（如 `executor_process_id`）而不改 schema。Scheduler bookkeeping 字段（`instance_seq` / `iteration_count` / `activated_sources` / `pending_dispatches`）不在这里。这四个全是运行时视图,recovery 时从 `node_states` 与 `deliver_states` 派生,不持久化。
 
 ### 3.2 单一 status 写入路径
 
@@ -182,7 +185,7 @@ class InvocationStatus(StrEnum):
     CRASHED = "crashed"        # 终态,异常
 ```
 
-没有 `PENDING`。Records 在 `begin_invocation` 时直接 INSERT 为 `RUNNING`。没有 `SUPERSEDED`。Suspend 的 invocation 保持 `RUNNING` 加 `suspended=True`(独立字段,不是独立 status)。
+没有 `PENDING`。Records 在 `begin_invocation` 时直接 INSERT 为 `RUNNING`。没有 `SUPERSEDED`。**没有 `suspended` 字段**（phase 07 退役）——`GraphInterrupt` 走 `cancel_invocation`（终态 `CANCELED`）+ 上抛，恢复是全新 re-invocation 重消费 consumable delivers，不保留挂起态。`RUNNING` 的语义仅为"执行中"。
 
 ### 4.3 Lifecycle 方法
 
@@ -192,11 +195,9 @@ class NodeStateStore(ABC):
 
     # Lifecycle
     @abstractmethod
-    def begin_invocation(self, node_name: str) -> InvocationContext: ...
+    def begin_invocation(self, node_id: str) -> InvocationContext: ...
     @abstractmethod
-    def complete_invocation(self, invocation: InvocationContext, state: dict[str, Any]) -> None: ...
-    @abstractmethod
-    def suspend_invocation(self, invocation: InvocationContext, snapshot: dict[str, Any]) -> None: ...
+    def complete_invocation(self, invocation: InvocationContext) -> None: ...
     @abstractmethod
     def crash_invocation(self, invocation: InvocationContext) -> None: ...
     @abstractmethod
@@ -206,13 +207,13 @@ class NodeStateStore(ABC):
 
     # Query
     @abstractmethod
-    def load_latest(self, node_name: str) -> NodeInvocationRecord | None: ...
+    def load_latest(self, node_id: str) -> NodeInvocationRecord | None: ...
     @abstractmethod
-    def load_latest_completed(self, node_name: str) -> NodeInvocationRecord | None: ...
+    def load_latest_completed(self, node_id: str) -> NodeInvocationRecord | None: ...
     @abstractmethod
-    def load_by_invocation_id(self, node_name: str, invocation_id: int) -> NodeInvocationRecord | None: ...
+    def load_by_invocation_id(self, node_id: str, invocation_id: int) -> NodeInvocationRecord | None: ...
     @abstractmethod
-    def query_versions(self, node_name: str, status_filter: set[InvocationStatus] | None = None) -> list[NodeInvocationRecord]: ...
+    def query_versions(self, node_id: str, status_filter: set[InvocationStatus] | None = None) -> list[NodeInvocationRecord]: ...
     @abstractmethod
     def list_nodes(self) -> list[str]: ...
     @abstractmethod
@@ -221,15 +222,17 @@ class NodeStateStore(ABC):
     def clear(self) -> None: ...
 ```
 
+**没有 `suspend_invocation`**（phase 07 退役）。`complete_invocation(invocation)` 不带 state 参数——`node_states` 只存生命周期+版本链事实，不存 `state_json`。`GraphInterrupt` 走 `cancel_invocation`（终态 `CANCELED`）+ 上抛。
+
 ### 4.4 begin_invocation 行为
 
-1. Orphan 清理: 如果存在 prior 非 suspended 的 RUNNING record,标记为 CRASHED。
+1. Orphan 清理: 如果存在 prior RUNNING record,标记为 CRASHED。
 2. `version = max(所有已有版本号) + 1`(不是 `load_latest_completed + 1`,避免 CRASHED 或 RUNNING 版本号相同导致 UNIQUE 冲突)。
 3. `parent_version` 从 `load_latest_completed` 取,无则 None。
-4. INSERT 新 record,status = RUNNING,suspended = False,invocation_id = Snowflake ID。
-5. 返回 `InvocationContext`(invocation_id + node_name + version + parent_version)。
+4. INSERT 新 record,status = RUNNING,invocation_id = Snowflake ID。（没有 `suspended` 列——phase 07 退役。）
+5. 返回 `InvocationContext`(invocation_id + node_id + version + parent_version)。
 
-Suspended 的 RUNNING record 不动。它是有效的 rebuild 源,新 invocation 会建立新的 version,不覆盖它。
+（历史：旧实现保留 suspended RUNNING record 作为 rebuild 源。phase 07 后无 suspended 态——`GraphInterrupt` 走 `cancel_invocation`，recovery 是全新 re-invocation。）
 
 ### 4.5 CAS(compare-and-swap)
 
@@ -237,13 +240,12 @@ Suspended 的 RUNNING record 不动。它是有效的 rebuild 源,新 invocation
 
 | 方法 | CAS 语义 | 失败行为 |
 |------|----------|----------|
-| `complete_invocation` | STRICT: `WHERE status='running' AND suspended=0` | `rowcount == 0` 抛 `InvocationStateError` |
-| `suspend_invocation` | STRICT: 同上 | 抛 `InvocationStateError` |
+| `complete_invocation` | STRICT: `WHERE status='running'` | `rowcount == 0` 抛 `InvocationStateError` |
 | `cancel_invocation` | STRICT: 同上 | 抛 `InvocationStateError` |
 | `crash_invocation` | TOLERANT: 已终态则 no-op | 不抛 |
-| `finalize_invocation` | TOLERANT: suspended RUNNING 与终态不动,orphan RUNNING 转 CRASHED | 不抛 |
+| `finalize_invocation` | TOLERANT: 终态不动,orphan RUNNING 转 CRASHED | 不抛 |
 
-`InvocationStateError` 在 `modex_graph/exceptions.py`,ordinary `Exception`,与 `RoutingError` 同级。表示 lost race 或 duplicate transition attempt。
+**没有 `suspend_invocation`**（phase 07 退役）。CAS 条件不再带 `suspended=0`（列已删除）。`InvocationStateError` 在 `modex_graph/exceptions.py`,ordinary `Exception`,与 `RoutingError` 同级。表示 lost race 或 duplicate transition attempt。
 
 ### 4.6 三种实现
 
@@ -257,24 +259,22 @@ Suspended 的 RUNNING record 不动。它是有效的 rebuild 源,新 invocation
 CREATE TABLE IF NOT EXISTS node_states (
     node_state_id       BIGINT  PRIMARY KEY,
     graph_instance_id   BIGINT  NOT NULL,
-    node_name           TEXT    NOT NULL,
+    node_id             TEXT    NOT NULL,
     version             INTEGER NOT NULL DEFAULT 0,
     parent_version      INTEGER,
     status              TEXT    NOT NULL DEFAULT 'running'
                         CHECK (status IN ('running', 'completed',
                                           'canceled', 'crashed')),
     invocation_id       BIGINT  NOT NULL DEFAULT 0,
-    state_json          TEXT    NOT NULL CHECK (json_valid(state_json)),
-    suspended           INTEGER NOT NULL DEFAULT 0,
     created_at          INTEGER NOT NULL,
     updated_at          INTEGER NOT NULL,
-    UNIQUE (graph_instance_id, node_name, version)
+    UNIQUE (graph_instance_id, node_id, version)
 );
 ```
 
-CHECK 约束只允许 4 个 status 值。索引: `idx_node_states_latest`(graph_instance_id, node_name, version DESC)、`idx_node_states_node`、`idx_node_states_status`、`idx_node_states_cross`(graph_instance_id, node_name, invocation_id)、`idx_node_states_global`(graph_instance_id, invocation_id DESC)。
+CHECK 约束只允许 4 个 status 值。索引: `idx_node_states_latest`(graph_instance_id, node_id, version DESC)、`idx_node_states_node`、`idx_node_states_status`、`idx_node_states_cross`(graph_instance_id, node_id, invocation_id)、`idx_node_states_global`(graph_instance_id, invocation_id DESC)。
 
-`state_json` 存 full state snapshot(`GraphState.checkpoint()` 的结果)。不是 delta,不是 per-field channel value。
+**没有 `state_json` / `suspended` 列**（phase 07 退役）。行只存生命周期+版本链事实。`SqliteNodeStateStore._init_schema` 检测到含 `state_json` / `suspended` 列的旧表时重建（保有效行、删旧列、重建索引）。State 不从 store 恢复——调用方初始化 `ctx.state`，恢复从 invocation 状态 + 四态 deliver 准入路径派生。
 
 ### 4.8 NodeInvocationRecord(值对象)
 
@@ -284,17 +284,15 @@ class NodeInvocationRecord(BaseModel):
 
     invocation_id: int
     graph_instance_id: int
-    node_name: str
+    node_id: str
     version: int
     parent_version: int | None
     status: InvocationStatus
-    state_json: dict[str, Any]       # full state snapshot
-    suspended: bool = False
     created_at: int
     updated_at: int
 ```
 
-`updated_at` 是最后 transition 时间。`rebuild_main_state` 用它排序。
+**没有 `state_json` / `suspended` 字段**（phase 07 退役）。`updated_at` 是最后 transition 时间。
 
 ## 5. DeliverStore
 
@@ -326,13 +324,15 @@ class DeliverStore(ABC):
 - `mark_consumed` 直接移除记录。
 - `promote_consumed` no-op。
 
-**InMemoryDeliverStore(二态)**:
+**InMemoryDeliverStore(四态,与 SQLite 一致)**:
 ```
-PENDING → CONSUMED
+STAGED → PENDING → CONSUMED_PENDING → CONSUMED_COMPLETED
 ```
-- `accumulate` 创建 PENDING。
-- `mark_consumed` 设 `status = CONSUMED`,记 `consumed_by_invocation_id`。
-- `promote_consumed` 删除该 invocation 消费的记录(已完成,不需要了)。
+- `accumulate` 创建 PENDING（默认 status）。
+- `promote_staged_by_source` 把匹配源的 STAGED 记录转 PENDING。
+- `mark_consumed` 设 `status = CONSUMED_PENDING`,记 `consumed_by_invocation_id`（frozen model — 经 `model_copy` 替换）。
+- `promote_consumed` 把匹配的 CONSUMED_PENDING 转 CONSUMED_COMPLETED（不删除）。
+- `query_consumable` 返回 PENDING + CONSUMED_PENDING。
 
 **SqliteDeliverStore(三态)**:
 ```
@@ -419,8 +419,6 @@ class GraphPersistenceCoordinator:
     def promote_delivers(self, node_name, invocation_id) -> None: ...
 
     # 恢复与查询
-    def rebuild_main_state(self) -> dict[str, Any]: ...
-    def load_for_recovery(self) -> RecoveryContext: ...
     def get_graph_state(self, node_status_filter=None) -> GraphStateSnapshot: ...
 
     def close(self) -> None: ...  # no-op
@@ -440,35 +438,21 @@ class GraphPersistenceCoordinator:
 
 `GraphControlService` 的外部 deliver 也走这条路: `route_deliver(target_node=node_name, content=content, source_node="__external__", source_invocation_id=0)`。
 
-### 6.4 rebuild_main_state
+### 6.4 rebuild_main_state — 已移除（phase 07）
 
-`rebuild_main_state()` 返回重建后的 main_state dict。
+`rebuild_main_state()` 已删除。`node_states` 不再存 `state_json`，state 不从 store 恢复。调用方初始化 `ctx.state`；崩溃恢复从 invocation 状态 + 四态 deliver 准入路径派生，不重建 business-state snapshot。`bootstrap(mode=RECOVERY)` 的空 seed fallback 返回 `[entry_node]`，调度器从入口重跑（fresh state）。
 
-算法:
+（历史算法：对每个 node 取 newest COMPLETED 或 suspended RUNNING 的 `state_json` snapshot，跨 node 按 `invocation_id` Snowflake 时间序 `dict.update` 合并。phase 07 退役 `state_json`/`suspended` 后此路径消失。）
 
-1. 对每个有 state snapshot 的 node,查 `{COMPLETED, RUNNING}` 版本。
-2. 过滤到 `COMPLETED` 或 `suspended=True RUNNING`(两者都是 full state snapshot)。
-3. 取该 node 的 single newest record: `max(valid, key=lambda r: (r.updated_at, r.invocation_id))`。SQL 等价 `ORDER BY updated_at DESC, invocation_id DESC LIMIT 1`。
-4. 跨 node 按 `invocation_id`(全局 Snowflake 时间序)排序,逐个 `dict.update(record.state_json)` 合并。
+### 6.5 load_for_recovery — 已移除（phase 07+08）
 
-没有 SUPERSEDED 两阶段 apply。每个 node 只贡献一条最新 snapshot。Snowflake 时间序保证跨 node 因果序。
+`load_for_recovery()` 与 `RecoveryContext` 已删除。恢复推导收敛进 `bootstrap(ctx, graph, *, mode=BootstrapMode.RECOVERY)`（`scheduler/bootstrap.py`），直接用 `coordinator.node_state_store` 与各 node 的 deliver_store 派生 seed，不经过 coordinator 的恢复方法。
 
-### 6.5 load_for_recovery
+bootstrap RECOVERY 做两项自动修复（在 seed 推导之前）：
+- **auto-promote STAGED**：把 `COMPLETED` 源节点的 STAGED delivers 转 PENDING（修复 crash 在 `complete_invocation` 与 `promote_staged_by_source` 之间）。
+- **auto-promote CONSUMED_PENDING**：把消费方 invocation 已 `COMPLETED` 的 CONSUMED_PENDING delivers 转 CONSUMED_COMPLETED（修复 crash 在 `mark_consumed` 与 `promote_delivers` 之间）。
 
-`load_for_recovery()` 返回 `RecoveryContext`:
-
-```python
-class RecoveryContext(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    metadata: GraphMetadata
-    node_states: dict[str, NodeInvocationRecord | None]   # 各 node 最新 invocation
-    rebuilt_main_state: dict[str, Any]                     # 重建后的 main_state
-```
-
-内部做一项自动修复: `_auto_promote_completed_invocations`。扫描所有 node 的 deliver_store 的 CONSUMED_PENDING 记录,如果其 `consumed_by_invocation_id` 对应的 invocation 已 COMPLETED(通过 `load_by_invocation_id` 检查),则 `promote_consumed`。修复 crash 在 save COMPLETED 与 `promote_delivers` 之间的状态不一致。
-
-Scheduler 在 `run_async` 顶部调此方法,直接用 `rebuilt_main_state`,无需额外调 rebuild。
+两项前置使提升后的 PENDING 行对 seed 扫描可见。bootstrap 不恢复 `ctx.state`（调用方初始化），不创建 instance，只返回 seed 节点名列表。
 
 ### 6.6 close 是 no-op
 
@@ -512,21 +496,24 @@ ReActAgent per-turn 路径不走 `GraphOrchestrator`,用 `create_null_coordinato
 
 ## 8. Node.run() 统一流程
 
-`Node.run(ctx, *, graph)` 是 node 生命周期的唯一入口。它统一处理状态转移、持久化、版本链、deliver 收集与 submit。Node 子类只实现 `async execute(ctx, integrated_input) -> None`(async void,无返回值)。
+`Node.run(ctx, *, graph)` 是 node 生命周期的唯一入口。它统一处理状态转移、持久化、版本链、deliver 收集与 dispatch。Node 子类只实现 `async execute(ctx, integrated_input) -> None`(async void,无返回值)。
 
-完整流程:
+完整流程（phase 07+ 后）:
 
-1. **resume 检查**(begin 之前,只读): `node_state_store.load_latest(self.name)`。如果最新 invocation 是 suspended,这次是 resume from suspend,用 state snapshot 作为 integrated input base,并追加消费 suspend 后新到的 PENDING delivers(跳过 CONSUMED_PENDING,那些是 suspend 前已消费的)。
-2. **begin_invocation**: `ctx.node_state_store.begin_invocation(self.name)` 创建新 invocation。设置 `ctx.current_invocation`。
-3. **try 块**: integrate + execute + submit + complete。
-   - **integrate**: resume 时用 `prev.state_json` 作 base,追加新 PENDING delivers 的 payload,一起 `input_integrator.integrate`。正常时调 `coordinator.collect_consumable_delivers`,若有 delivers 则 `mark_delivers_consumed`,再用 `input_integrator.integrate` 整合为 `IntegratedInput`。
+1. **begin_invocation**: `ctx.node_state_store.begin_invocation(self.node_id)` 创建新 invocation（version = max+1，orphan RUNNING → CRASHED）。设置 execution context 的 invocation。
+2. **try 块**: integrate → execute → complete → promote_staged → dispatch → promote_delivers。
+   - **integrate**: `coordinator.collect_consumable_delivers(self.node_id, invocation.invocation_id)`（返回 PENDING + CONSUMED_PENDING）→ 若有则 `mark_delivers_consumed` → `input_integrator.integrate(payloads)` 整合为 `IntegratedInput`。
    - **execute**: 调 `await self.execute(ctx, integrated)`。async void,无 NodeResult。
-   - **submit**: `self.submit(ctx)` 调 `_submit`,按 `next_node` 分组,每组调 `ctx.dispatch(target, state_update={"delivered": payload, ...})`。deliver payload,不是 state delta。
-   - **complete**: `node_state_store.complete_invocation(invocation, ctx.state.checkpoint())`。保存 COMPLETED + full snapshot。
-4. **except GraphInterrupt**: `snapshot = ctx.state.checkpoint()`,调 `node_state_store.suspend_invocation(invocation, snapshot)`,re-raise。
-5. **except GraphBubbleUp**: `node_state_store.cancel_invocation(invocation)`,re-raise。
-6. **except Exception**: `node_state_store.crash_invocation(invocation)`,re-raise。
-7. **finally**: `node_state_store.finalize_invocation(invocation)`。安全网。
+   - **complete**: `node_state_store.complete_invocation(invocation)`（STRICT CAS，无 state 参数——`node_states` 不存 `state_json`）。
+   - **promote_staged_by_source**: `coordinator.promote_staged_by_source(gid, self.node_id)` 把本节点 STAGED 输出转 PENDING，返回受影响 target 节点 ID 集。
+   - **dispatch**: 对每个受影响 target 调 `ctx.dispatch(target, state_update={})`——纯唤醒信号，内容已在 deliver store（不经 dispatch payload）。
+   - **promote_delivers**: `coordinator.promote_delivers(self.node_id, invocation.invocation_id)` 把本节点消费的 CONSUMED_PENDING 输入转 CONSUMED_COMPLETED。
+3. **except GraphInterrupt**: `node_state_store.cancel_invocation(invocation)`（终态 CANCELED，无 snapshot）,re-raise。
+4. **except GraphBubbleUp**: `node_state_store.cancel_invocation(invocation)`,re-raise。
+5. **except Exception**: `node_state_store.crash_invocation(invocation)`,re-raise（并 `emit_output(NODE_CRASHED)`）。
+6. **finally**: `node_state_store.finalize_invocation(invocation)`。安全网（orphan RUNNING → CRASHED）。
+
+**没有 `suspend_invocation` / `state_json` snapshot**（phase 07 退役）。`GraphInterrupt` cancel + 上抛，恢复是全新 re-invocation 重消费 consumable delivers。`after_node(ctx, node_name)` 由 scheduler 在 `Node.run` 返回后调用（两参数，不传 result）。
 
 `after_node(ctx, node_name)` 由 scheduler 在 `Node.run` 返回后调用。两参数,不传 result(因为 `execute` 是 async void,无 NodeResult):
 
@@ -553,43 +540,37 @@ Node B 的 `run()` 在 integrate 阶段从自己的 deliver_store 消费:
 3. 用 `input_integrator.integrate` 整合为 `IntegratedInput`。
 4. 传给 `execute(ctx, integrated)`。
 
-Resume from suspend 时跳过此流程,直接用前一 invocation 的 state snapshot 作为 integrated input,避免 double-effect。
+（历史：旧 suspend/resume 实现跳过此流程,直接用前一 invocation 的 state snapshot 作为 integrated input,避免 double-effect。phase 07 退役 suspend 后此分支消失——`GraphInterrupt` 走 `cancel_invocation`，恢复是全新 re-invocation，integrate 正常消费 consumable delivers。）
 
 ### 9.3 时序不变量(契约)
 
-`Node.run()` 先 `submit()`(`route_deliver` 落目标节点 deliver_store)后 `complete_invocation()`,中间无 await。因此:**上游 COMPLETED ⟹ 其 deliver 必然已持久化**(或条件分支下被有意跳过,D10 silent skip)。这是恢复入口集推导"deliver 记录 ⟺ 上游已提交"推断成立的根基(见 `external-control.md` §7),不得调换顺序。mid-submit 进程被杀的窗口(部分目标收到 deliver)由"源节点重派 + at-least-once"兜底。
+`Node.run()` 在 `execute()` 期间通过 `deliver()` → `route_deliver(stage=True)` 把内容以 `STAGED` 落目标节点 deliver_store（在 `complete_invocation` 之前）。`complete_invocation` 标记 COMPLETED 后,`promote_staged_by_source` 把 STAGED 转 PENDING,再 `dispatch` 发唤醒。中间无 await。因此:**上游 COMPLETED ⟹ 其 deliver 必然已持久化**（STAGED 态,或条件分支下被有意跳过）。这是恢复入口集推导"deliver 记录 ⟺ 上游已提交"推断成立的根基(见 `external-control.md` §7),不得调换顺序。mid-execute 进程被杀的窗口(STAGED 已落但源未 COMPLETED)由"源节点重派 + at-least-once"兜底——重试完成时新旧 STAGED 行一并提升(W1: 输出 at-least-once by design)。
+
+### 9.4 崩溃窗口处置结论(D6/D7/D8,见 12 票矩阵)
+
+- **D6(stop 协作)= 接受+文档化**:外部 `stop` 触发 `GraphDrained` 协作排空后,节点体在当前 `execute` 完成后才退出(不中断进行中的 LLM/tool 调用);已终态实例的 CAS(`complete_invocation`/`cancel_invocation`)静默幂等(TOLERANT 语义)。这是设计内行为,不修。
+- **D7(complete↔IORecord)= 接受+文档化**:`complete_invocation` 与 `promote_staged`/`dispatch` 之间的崩溃窗口,实例状态(lifecycle)是权威,IORecord/`state_json` 的 null 被结果路径容忍(phase 07 后 `node_states` 不存 `state_json`,此窗口进一步收窄——`complete_invocation` 只写 lifecycle 事实,内容已在 STAGED deliver store)。不修。
+- **D8(Linear 不支持外部投递准入)= 接受+文档化**:`LinearScheduler` 是 ReAct 内部流调度器,无多源 admission 路径;外部投递(`deliver_to_node`)属 Parallel/bot 图场景。见 `src/modex_graph/AGENTS.md`(D8 disposition)。不修。
 
 ## 10. 恢复流程
 
-### 10.1 ParallelScheduler 恢复
+### 10.1 恢复入口：bootstrap(mode=RECOVERY)
 
-`ParallelScheduler._restore_from_recovery(ctx, recovery)` 在 `run_async` 顶部调 `load_for_recovery()` 后执行:
+两个 scheduler 在 `run_async` 顶部都调 `bootstrap(ctx, graph, mode=BootstrapMode.RECOVERY)`（phase 08 收敛——旧 `_restore_from_recovery` / `_redispatch_from_recovery` / `_rebuild_pending_from_delivers` 已合并进 `bootstrap` + `_recheck_pending`）。
 
-1. **重建 state**: `ctx.state = type(ctx.state).model_validate(recovery.rebuilt_main_state)`(若有 prior state)。
-2. **派生 iteration_count**: `self._iteration_count = len(ctx.coordinator.node_state_store.query_all({InvocationStatus.COMPLETED}))`。从 COMPLETED invocation 数量派生,不读持久化的 bookkeeping 字段。
-3. **重置 instance_seq**: `self._instance_seq = 0`(纯内存临时量)。
-4. **清空运行时结构**: `_activated_sources` / `_pending_dispatches` / `_on_receive_queue` / `_instances` / `_active` / `_ready` 全部重置。
-5. **`_redispatch_from_recovery(recovery)`**: 基于 node status 重新 dispatch。没有 "COMPLETED + delivers" 快捷路径。CRASHED 的 node 重新 dispatch,suspended 的 RUNNING 走 resume 路径。
-6. **`_rebuild_pending_from_delivers(ctx, recovery)`**: 扫描所有 node 的 deliver_store 的 PENDING delivers(无条件扫描,不限于 COMPLETED node)。对每个 target node 解析 trigger mode:
-   - `ON_ALL_PREDS`: deliver 进入 pending dispatch queue。`_recheck_pending` 在 group complete + reachability clear 时 fire。
-   - `ON_RECEIVE`: 如果 target 无 in-flight instance,创建新 instance 处理 delivers。如果 target in-flight(被 re-dispatch),running instance 会通过 `collect_consumable_delivers` 消费这些 delivers。
-7. **`_recheck_pending()`**: fire 任何 ready 的 ON_ALL_PREDS node。
-8. **Fresh start**: 如果没有 instance 被 recover 且没有任何 prior invocation,创建 entry instance。
+bootstrap RECOVERY 流程:
+
+1. **auto-promote DOUBLE（seed 推导之前）**：STAGED（COMPLETED 源）→ PENDING；CONSUMED_PENDING（COMPLETED 消费方）→ CONSUMED_COMPLETED。两项前置使提升后的 PENDING 行对 seed 扫描可见。END 纳入提升与扫描（不再跳过）。START 跳过（empty-seed fallback 覆盖）。
+2. **seed 推导**：CRASHED / orphan RUNNING invocations + 有 PENDING delivers 的节点，拓扑序（BFS from `entry_node`，END 纳入）。
+3. **空 seed fallback**：全 COMPLETED 图、无 PENDING delivers → 返回 `[entry_node]`（re-invoke 从入口重跑，fresh state）。
+
+bootstrap **不恢复 `ctx.state`**（调用方初始化），不创建 instance，只返回 seed 列表。
 
 ### 10.2 LinearScheduler 恢复
 
-当前实现是 4 行:
+`LinearScheduler.run_async` 调 `bootstrap(mode=RECOVERY)` 取 seeds，取 `seeds[0]`（或空 seed fallback 的 `entry_node`）开始顺序循环。不调 `load_for_recovery`，不恢复 state。Resume routing 是 graph author 的 concern：entry node 读 `state.resume_target` 路由到目标 node；未设置则从 entry_node 正常开始。
 
-```python
-recovery = ctx.coordinator.load_for_recovery()
-has_prior_state = any(v is not None for v in recovery.node_states.values())
-if has_prior_state and recovery.rebuilt_main_state:
-    ctx.state = type(ctx.state).model_validate(recovery.rebuilt_main_state)
-```
-
-之后从 `self.graph.entry_node` 开始顺序循环。Resume routing 是 graph author 的 concern: entry node 读 `state.resume_target` 路由到目标 node。如果 `state.resume_target` 未设置,从 entry_node 正常开始。
-
-崩溃恢复与 ParallelScheduler 共享同一套**恢复入口集推导**(ticket 36 已落地,见 `external-control.md` §7):版本链顶端非终态(CRASHED/孤儿 RUNNING/suspended RUNNING)重派 ∪ PENDING deliver 凭证扫描(无来源过滤、无入度推断),取拓扑序最早候选起步,之后走正常 deliver 路由。`resume_target` 机制保留,但回归本职:只管 HITL 挂起恢复,崩溃恢复不再依赖它。
+崩溃恢复与 ParallelScheduler 共享同一套**恢复入口集推导**（ticket 36，见 `external-control.md` §7）：版本链顶端非终态（CRASHED/孤儿 RUNNING）重派 ∪ PENDING deliver 凭证扫描（无来源过滤、无入度推断），取拓扑序最早候选起步，之后走正常 deliver 路由。`resume_target` 机制保留，但回归本职：只管 HITL 挂起恢复，崩溃恢复不再依赖它。
 
 ### 10.3 GraphRecoveryService
 
@@ -696,11 +677,11 @@ Check + increment 是同步代码段,在 `before_node` 的第一个 await 之前
 | 调度 | 顺序:`current` 指针,一个 node 接一个 | 并发:READY set + asyncio.create_task |
 | 路由 | `_handle_linear_dispatch` 记录 target,取第一个 | `_handle_dispatch` 按 trigger mode 处理 |
 | trigger mode | 不适用(顺序) | `ON_ALL_PREDS`(默认) / `ON_RECEIVE` |
-| 恢复 | `_recovery_start_node`:版本链非终态 ∪ PENDING deliver → 拓扑序最早候选(ticket 36) | `_restore_from_recovery`: redispatch + rebuild pending + recheck |
+| 恢复 | `bootstrap(mode=RECOVERY)` → seeds[0]（版本链非终态 ∪ PENDING deliver → 拓扑序最早候选,ticket 36） | `bootstrap(mode=RECOVERY)` → 创建 re-execute instance + `_recheck_pending` 扫描 PENDING deliver |
 | 外部控制 | 循环顶部 `ctx.control.check()`(ticket 34) | launch 前 `check()`,命中取消在途 task + 抛 `GraphDrained`(ticket 34) |
 | max_iterations | 在循环顶部 check | 在 `_execute_instance` 顶部 check + increment(同步) |
 
-两个 scheduler 都调 `load_for_recovery()`,都从 entry_node 开始(LinearScheduler 直接循环,ParallelScheduler 创建 entry instance)。
+两个 scheduler 都调 `bootstrap(mode=FRESH|RECOVERY)`,都从 entry_node 开始(LinearScheduler 直接循环,ParallelScheduler 创建 entry instance)。
 
 ### 13.5 upstream_payloads 是 vestigial 字段
 
@@ -717,7 +698,7 @@ Workspace DB 的 migration 序列:
 净结果:
 
 - `graph_instances`: 5 个基本列(graph_instance_id, spec_id, parent_instance_id, parent_node, status)加 created_at / updated_at。无 bookkeeping_json。
-- `node_states`: lifecycle 切片(version, parent_version, status, invocation_id, state_json, suspended, created_at, updated_at)。CHECK(running/completed/canceled/crashed)。
+- `node_states`: lifecycle 切片(version, parent_version, status, invocation_id, created_at, updated_at)。CHECK(running/completed/canceled/crashed)。（001 初始含 `state_json`/`suspended` 列；phase 07 `SqliteNodeStateStore._init_schema` 检测旧表并重建为纯 lifecycle 列。）
 - `deliver_states`: per-node 消费状态机。CHECK 允许 4 个 `DeliverConsumptionStatus` + 2 个旧 `DeliverStatus` 值(向后兼容)。
 
 `SqliteNodeStateStore._init_schema` 和 `SqliteDeliverStore._init_schema` 用 `CREATE TABLE IF NOT EXISTS` 创建表(与 001 DDL 一致)。`modex_graph` standalone 使用时直接创建;`modex_agent` workspace 使用时由 `MigrationRunner` 跑 001。
@@ -731,14 +712,17 @@ Workspace DB 的 migration 序列:
 - **Generation-based conflict detection**: `WriteConflictDetector` ABC、`GenerationWriteTracker`、`InvalidUpdateError`。没有 multi-write 检测。
 - **NodeResult / DispatchEvent / Command / Task**: `execute` 是 async void,无返回值。路由通过 `deliver` / `submit` + `ctx.dispatch(target, state_update={deliver payload})`。
 - **Declarative deltas**: `state_update` 不再是 state delta。`complete_invocation` 存 full snapshot(`ctx.state.checkpoint()`),不存 delta。
-- **PENDING / SUPERSEDED statuses**: `InvocationStatus` 只有 RUNNING / COMPLETED / CANCELED / CRASHED。Records begin as RUNNING。Suspend 用 `suspended=True` 字段,不是独立 status。
+- **PENDING / SUPERSEDED statuses**: `InvocationStatus` 只有 RUNNING / COMPLETED / CANCELED / CRASHED。Records begin as RUNNING。（`suspended=True` 字段已随 phase 07 退役——`GraphInterrupt` 走 `cancel_invocation`，无挂起态。）
 - **GraphMetadataStore**: 删除。身份与 status 持久化收敛到 `GraphInstanceStore`。
 - **NodeState ABC**: 删除。Lifecycle + 版本链 + CAS 收敛到 `NodeStateStore`。没有旧 in-memory dict API(read / write / snapshot / restore / has)。
 - **Bookkeeping 持久化**: `instance_seq` / `iteration_count` / `activated_sources` / `pending_dispatches` 不持久化。Recovery 时从 `node_states` 和 `deliver_states` 派生。`GraphMetadata` 修剪到 5 字段。
-- **CheckpointStore ABC + CheckpointData**: 删除。没有单独的 scheduler checkpoint。State snapshot 在 `node_states.state_json`,scheduler 运行时结构是 in-memory。
+- **CheckpointStore ABC + CheckpointData**: 删除。没有单独的 scheduler checkpoint。（历史：State snapshot 曾在 `node_states.state_json`；phase 07 退役后 scheduler 运行时结构是 in-memory，state 不从 store 恢复。）
 - **DispatchStore**: 删除。Dispatch 通过 `deliver_store.accumulate` 记录,没有单独的 dispatch event 持久化。
-- **SUPERSEDED 两阶段 rebuild**: `rebuild_main_state` 不再先 apply COMPLETED 再 apply SUPERSEDED。每个 node 只贡献一条最新 snapshot(COMPLETED 或 suspended RUNNING)。
+- **SUPERSEDED 两阶段 rebuild**: （历史）`rebuild_main_state` 曾先 apply COMPLETED 再 apply SUPERSEDED，后简化为单条最新 snapshot。phase 07+08 退役 `rebuild_main_state` 后此概念整体消失——恢复收敛进 `bootstrap`。
 - **`promote_delivers` 跨 invocation 升级**: 当前 `promote_delivers` 仍升级该 node 的所有 CONSUMED_PENDING delivers(不限 invocation_id),修复 resume 场景。但这是消费状态机的内部逻辑,不是 SUPERSEDED rebuild。
+- **`state_json` / `suspended` 列（phase 07 退役）**: `node_states` 表与 `NodeInvocationRecord` 不再携带 `state_json`（full state snapshot）或 `suspended`。行只存生命周期+版本链事实。State 不从 store 恢复——调用方初始化 `ctx.state`，恢复从 invocation 状态 + 四态 deliver 准入路径派生。`SqliteNodeStateStore._init_schema` 检测旧表并重建。
+- **`suspend_invocation`（phase 07 退役）**: `NodeStateStore` 不再有 `suspend_invocation`。`GraphInterrupt` 走 `cancel_invocation`（终态 `CANCELED`）+ 上抛；恢复是全新 re-invocation 重消费 consumable delivers，不读挂起快照。
+- **`rebuild_main_state` / `load_for_recovery` / `RecoveryContext`（phase 07+08 退役）**: coordinator 不再有这些恢复方法。恢复推导收敛进 `bootstrap(ctx, graph, *, mode=BootstrapMode.RECOVERY)`，直接用 `node_state_store` 与 deliver_store 派生 seed。
 
 ## 16. 接口定义汇总
 
@@ -766,8 +750,8 @@ Workspace DB 的 migration 序列:
 - `GraphMetadata`: 5 字段(graph_instance_id, spec_id, parent_instance_id, parent_node, status)
 - `InvocationContext`: `begin_invocation` 的返回值(invocation_id, node_name, version, parent_version)
 - `NodeInvocationRecord`: 一条持久化调用记录
-- `RecoveryContext`: `load_for_recovery` 的返回值(metadata, node_states, rebuilt_main_state)
 - `GraphStateSnapshot`: `get_graph_state` 的返回值(metadata, nodes)
+- (`RecoveryContext`: 已移除——phase 07+08。恢复推导收敛进 `bootstrap`。)
 
 ### 16.4 Store ABC 与实现
 
