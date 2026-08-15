@@ -193,6 +193,13 @@ class TurnCustomKey(StrEnum):
     # KnowledgeHook to decide whether continuation is needed.
     GRAPH_KNOWLEDGE_REQUIRE_READ = "_graph_knowledge_require_read"
     GRAPH_KNOWLEDGE_REQUIRE_WRITE = "_graph_knowledge_require_write"
+    # Whether the KB had readable content (findings.md or open_questions.md
+    # existing and non-empty) at turn start. Set by KnowledgeHook.before_turn
+    # after injecting the summary; read by KnowledgeHook.after_turn to decide
+    # whether require_read is enforceable — when the KB has no prior
+    # contributions, require_read is exempted (the agent cannot read what no
+    # node has written).
+    GRAPH_KNOWLEDGE_HAS_READABLE = "_graph_knowledge_has_readable"
     GRAPH_NODE_DESCRIPTION = "_graph_node_description"
     # Serialized graph topology (markdown) for the ### Topology subsection
     # of ## Graph Node Context in the system prompt. Set by BotAgentNode.execute

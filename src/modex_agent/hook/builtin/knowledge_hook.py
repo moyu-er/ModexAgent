@@ -29,7 +29,10 @@ class KnowledgeHook(BeforeTurnHook, AfterTurnHook):
 
     after_turn (each turn attempt):
       3. If per-node config requires read/write but the counter is zero,
-         set CONTINUATION_REQUEST and inject a reminder.
+         set CONTINUATION_REQUEST and inject a reminder. require_read is
+         exempted when the KB had no readable content at turn start
+         (GRAPH_KNOWLEDGE_HAS_READABLE is False) — the agent cannot read
+         what no node has written.
 
     Graph mode is the upper layer — only graph node main agents
     (``is_node_execution``) receive knowledge lifecycle. Subagents are
@@ -77,29 +80,107 @@ class KnowledgeHook(BeforeTurnHook, AfterTurnHook):
         if knowledge_dir is None:
             return
 
-        findings = self._read_tail(knowledge_dir / "findings.md", _FINDINGS_TAIL_CHARS)
-        open_questions = self._read_tail(
-            knowledge_dir / "open_questions.md", _OPEN_QUESTIONS_TAIL_CHARS
-        )
-
-        if not findings and not open_questions:
-            return
-
+        # Always inject a <knowledge_base> system-reminder so the agent knows
+        # the current state of the shared knowledge base — even when no node
+        # has written anything yet. Each pattern section reflects its actual
+        # state (not created / empty / has content) and guides the agent to
+        # the right `knowledge_base` tool action.
         parts: list[str] = ["<knowledge_base>"]
-        if findings:
-            parts.append("Recent findings from other nodes:")
-            parts.append(findings)
-        if open_questions:
-            if findings:
-                parts.append("")
-            parts.append("Open questions:")
-            parts.append(open_questions)
+        parts.extend(
+            self._render_pattern_section(
+                knowledge_dir / "findings.md",
+                _FINDINGS_TAIL_CHARS,
+                label="Findings",
+                pattern="findings",
+                create_guidance=(
+                    "record discoveries, analysis results, or key facts "
+                    "from your work"
+                ),
+            )
+        )
+        parts.extend(
+            self._render_pattern_section(
+                knowledge_dir / "open_questions.md",
+                _OPEN_QUESTIONS_TAIL_CHARS,
+                label="Open questions",
+                pattern="open_questions",
+                create_guidance="raise questions for downstream nodes to address",
+            )
+        )
         parts.append("</knowledge_base>")
 
         reminder = wrap_system_reminder("\n".join(parts))
         await ctx.history.append(
             {"role": str(MessageRole.SYSTEM_REMINDER), "content": reminder}
         )
+
+        findings_path = knowledge_dir / "findings.md"
+        open_questions_path = knowledge_dir / "open_questions.md"
+        state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_HAS_READABLE] = (
+            _has_non_empty_content(findings_path)
+            or _has_non_empty_content(open_questions_path)
+        )
+
+    @staticmethod
+    def _render_pattern_section(
+        path: Path,
+        max_chars: int,
+        *,
+        label: str,
+        pattern: str,
+        create_guidance: str,
+    ) -> list[str]:
+        """Render one pattern's state section for the knowledge_base reminder.
+
+        Three states are distinguished so the agent receives precise guidance:
+
+        - File does not exist (or is unreadable): "not yet created" → guide
+          the agent to use ``write`` to create it.
+        - File exists but content is empty/whitespace: "exists but is empty"
+          → guide the agent to use ``write`` to populate it.
+        - File has content: show the tail (truncated if longer than
+          ``max_chars``) → guide the agent to use ``read`` for full content.
+
+        Returns a list of lines (no trailing newline) ending with a blank
+        separator line so multiple sections compose cleanly.
+        """
+        if not path.exists():
+            return [
+                f"{label}: not yet created for this graph instance.",
+                f"  → Use `knowledge_base` action='write' pattern='{pattern}' to {create_guidance}.",
+                "",
+            ]
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return [
+                f"{label}: not yet created for this graph instance.",
+                f"  → Use `knowledge_base` action='write' pattern='{pattern}' to {create_guidance}.",
+                "",
+            ]
+        if not content.strip():
+            return [
+                f"{label}: file exists but is empty.",
+                f"  → Use `knowledge_base` action='write' pattern='{pattern}' to {create_guidance}.",
+                "",
+            ]
+        if len(content) <= max_chars:
+            return [
+                f"{label} (current content):",
+                content,
+                f"  → Use `knowledge_base` action='read' pattern='{pattern}' for full content.",
+                "",
+            ]
+        tail = content[-max_chars:]
+        nl = tail.find("\n")
+        if nl != -1:
+            tail = tail[nl + 1 :]
+        return [
+            f"{label} (current content, tail shown):",
+            f"[truncated — use `knowledge_base` action='read' pattern='{pattern}' for full content]",
+            tail,
+            "",
+        ]
 
     # -- AfterTurnHook: retry enforcement --------------------------------
 
@@ -124,7 +205,9 @@ class KnowledgeHook(BeforeTurnHook, AfterTurnHook):
 
         missing: list[str] = []
         if require_read and read_count == 0:
-            missing.append("read")
+            has_readable = state.custom.get(TurnCustomKey.GRAPH_KNOWLEDGE_HAS_READABLE, False)
+            if has_readable:
+                missing.append("read")
         if require_write and write_count == 0:
             missing.append("write")
 
@@ -161,22 +244,6 @@ class KnowledgeHook(BeforeTurnHook, AfterTurnHook):
             return None
         return Path(str(dir_str))
 
-    @staticmethod
-    def _read_tail(path: Path, max_chars: int) -> str:
-        if not path.exists():
-            return ""
-        try:
-            content = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return ""
-        if len(content) <= max_chars:
-            return content
-        tail = content[-max_chars:]
-        nl = tail.find("\n")
-        if nl != -1:
-            tail = tail[nl + 1 :]
-        return f"[truncated - use knowledge_base action='read' for full content]\n{tail}"
-
 
 def _has_knowledge_config(ctx: AgentContext) -> bool:
     """True when this turn has graph knowledge config (graph node main agent only).
@@ -195,6 +262,16 @@ def _has_knowledge_config(ctx: AgentContext) -> bool:
     if state is None:
         return False
     return state.custom.get(TurnCustomKey.GRAPH_KNOWLEDGE_DIR) is not None
+
+
+def _has_non_empty_content(path: Path) -> bool:
+    """True when ``path`` exists and has non-whitespace content."""
+    if not path.exists():
+        return False
+    try:
+        return bool(path.read_text(encoding="utf-8").strip())
+    except (OSError, UnicodeDecodeError):
+        return False
 
 
 __all__ = ["KnowledgeHook"]

@@ -61,10 +61,13 @@ async def test_read_existing_file_returns_content(tmp_path: Path) -> None:
     assert "read_status: complete" in result
 
 
-async def test_read_missing_file_returns_ls_hint(tmp_path: Path) -> None:
+async def test_read_missing_file_guides_to_write(tmp_path: Path) -> None:
     result = await _tool(tmp_path).execute(action="read", pattern="findings")
 
-    assert result == "File not found: findings. Use action='ls' to see available files."
+    assert "has not been created yet" in result
+    assert "no node has recorded findings" in result
+    assert "action='write'" in result
+    assert "pattern='findings'" in result
 
 
 async def test_read_coerces_offset_and_limit_for_pagination(tmp_path: Path) -> None:
@@ -91,15 +94,28 @@ async def test_write_create_adds_file_and_attributed_changelog(tmp_path: Path) -
     assert "--- findings" in changelog
 
 
-async def test_write_create_rejects_existing_file(tmp_path: Path) -> None:
-    (tmp_path / "findings.md").write_text("existing", encoding="utf-8")
+async def test_write_create_rejects_existing_file_with_content(tmp_path: Path) -> None:
+    (tmp_path / "findings.md").write_text("existing content", encoding="utf-8")
 
     result = await _tool(tmp_path).execute(
         action="write", pattern="findings", content="replacement"
     )
 
-    assert result.startswith("Error:")
-    assert "already exists" in result
+    assert "already has content" in result
+    assert "action='read'" in result
+    assert "action='edit'" in result
+    assert (tmp_path / "findings.md").read_text(encoding="utf-8") == "existing content"
+
+
+async def test_write_create_allows_overwriting_empty_file(tmp_path: Path) -> None:
+    (tmp_path / "findings.md").write_text("   \n\n  ", encoding="utf-8")
+
+    result = await _tool(tmp_path).execute(
+        action="write", pattern="findings", content="real content"
+    )
+
+    assert result.startswith("Wrote findings.md.")
+    assert (tmp_path / "findings.md").read_text(encoding="utf-8") == "real content"
 
 
 async def test_write_overwrite_preserves_file_style_and_records_diff(tmp_path: Path) -> None:
@@ -151,7 +167,7 @@ async def test_edit_replaces_first_fuzzy_match_and_records_diff(tmp_path: Path) 
 
 @pytest.mark.parametrize(
     ("create_file", "expected"),
-    [(True, "old_string not found in file"), (False, "File not found: findings")],
+    [(True, "old_string not found in file"), (False, "has not been created yet")],
 )
 async def test_edit_reports_missing_file_or_text(
     tmp_path: Path,
