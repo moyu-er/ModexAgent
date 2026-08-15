@@ -127,7 +127,6 @@ class TurnCustomKey(StrEnum):
     CONSECUTIVE_ERRORS = "consecutive_errors"
     DYNAMIC_TOOL_ACTIVE = "_dynamic_tool_active"
     DYNAMIC_TOOL_DENIED = "_dynamic_tool_denied"
-    PRE_APPROVED_TOOL_IDS = "_pre_approved_tool_ids"
     APPROVAL_YOLO = "approval_yolo"
     POLICY_DENIED_TOOLS = "_policy_denied_tools"
     TOOL_USAGE = "usage"

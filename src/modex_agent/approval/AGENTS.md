@@ -20,7 +20,7 @@ Tiered tool approval policies and command parsing. Approval persistence is NOT o
 ```
 User input -> parse_input_command() -> ParsedInputCommand(approval_action=ALLOW|DENY) | None
 Pipeline: ApprovalRenderer.detect() -> apply_decision() -> TurnSnapshot saved
-ToolNode: _resume_suspended_batch() -> PRE_APPROVED_TOOL_IDS -> _execute_batch()
+ToolNode: _resume_suspended_batch() -> reads approval decisions -> _execute_batch()
   ALLOWED tools execute; DENIED/PREEMPTED return errors with deny_reason
 ```
 

@@ -112,7 +112,6 @@ class ReActTurnState(GraphState, TurnStateBase):
         default=0,
         description="Current turn attempt number (1=first, 2=first continuation, etc.)",
     )
-    llm_response: LLMResponse | None = None
     tool_batches: list[ToolBatchState] = Field(default_factory=list)
     approval: ApprovalTransaction | None = None
     # NEW (ADR-0033 D9.3): explicit result field replaces

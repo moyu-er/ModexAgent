@@ -6,9 +6,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from modex_agent.agents.react.nodes.llm import LLMNode
+from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.memory.history import ListMessageHistory
+from modex_graph import create_null_coordinator
 
 
 class _FakePipeline:
@@ -33,7 +35,11 @@ async def test_build_messages_uses_pipeline_when_available():
     ctx.system_prompt_pipeline = pipeline  # type: ignore[assignment]
 
     node = LLMNode.__new__(LLMNode)
-    messages = await node._build_messages(ctx)
+    messages = await node._build_messages(
+        ctx,
+        ReactGraphRuntime(),
+        create_null_coordinator(),
+    )
 
     system_msgs = [m for m in messages if m["role"] == "system"]
     assert len(system_msgs) == 1
@@ -52,7 +58,11 @@ async def test_build_messages_falls_back_to_static_prompt():
     ctx.system_prompt_pipeline = None
 
     node = LLMNode.__new__(LLMNode)
-    messages = await node._build_messages(ctx)
+    messages = await node._build_messages(
+        ctx,
+        ReactGraphRuntime(),
+        create_null_coordinator(),
+    )
 
     system_msgs = [m for m in messages if m["role"] == "system"]
     assert len(system_msgs) == 1
@@ -77,7 +87,11 @@ async def test_build_messages_falls_back_to_static_when_pipeline_empty():
     ctx.system_prompt_pipeline = pipeline  # type: ignore[assignment]
 
     node = LLMNode.__new__(LLMNode)
-    messages = await node._build_messages(ctx)
+    messages = await node._build_messages(
+        ctx,
+        ReactGraphRuntime(),
+        create_null_coordinator(),
+    )
 
     system_msgs = [m for m in messages if m["role"] == "system"]
     assert len(system_msgs) == 1

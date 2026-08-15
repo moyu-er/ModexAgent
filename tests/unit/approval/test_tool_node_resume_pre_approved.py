@@ -1,26 +1,27 @@
-"""Tests verifying ToolNode resume path sets PRE_APPROVED_TOOL_IDS."""
-
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 from modex_agent.agents.react.agent import ReActAgent
-from modex_agent.agents.react.constants import ReActNode
-from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_graph.exceptions import GraphInterrupt
+from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager, Tool
 from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.enums import AgentKind, ApprovalDenyPolicy, MessageDeltaSource, SnapshotReason, ToolBatchStatus, ToolCallStatus, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import ApprovalRequestState, ApprovalTransaction, StateQueryScope, ToolArguments, ToolBatchState, ToolCallState, TurnIdentity
+from modex_agent.runtime.enums import (
+    AgentKind,
+    ApprovalDenyPolicy,
+    SnapshotReason,
+    ToolBatchStatus,
+    TurnPhase,
+)
+from modex_agent.runtime.models import StateQueryScope, TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
+from modex_graph.exceptions import GraphInterrupt
 
 
 class _AlwaysDangerousClassifier:
@@ -113,10 +114,7 @@ def _make_ctx(store, executed, default_deny_policy=ApprovalDenyPolicy.TOOL_RESUL
 
 
 @pytest.mark.asyncio
-async def test_resume_sets_pre_approved_tool_ids_for_allowed_tools():
-    """When resuming after approval, ToolNode must set PRE_APPROVED_TOOL_IDS
-    so that downstream tool wrappers do not re-request approval."""
-
+async def test_resume_executes_allowed_tools():
     store = InMemoryTurnStateStore()
     executed = []
     agent = ReActAgent(_Provider())
@@ -147,10 +145,6 @@ async def test_resume_sets_pre_approved_tool_ids_for_allowed_tools():
 
     assert result.content == "done"
     assert executed == ["a", "b"]
-
-    pre_approved = resume_ctx.runtime.state.custom.get(TurnCustomKey.PRE_APPROVED_TOOL_IDS, set())
-    assert "c1" in pre_approved
-    assert "c2" in pre_approved
 
 
 @pytest.mark.asyncio

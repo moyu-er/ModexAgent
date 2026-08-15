@@ -44,6 +44,41 @@ AFTER → BEFORE
 END   → GraphNode.END
 ```
 
+## Data Flow (Deliver-ization)
+
+The six ReAct nodes do not hand off data through shared `ctx.state`
+fields. `ReActTurnState.llm_response` — formerly the sole inter-node
+hand-off between `LLMNode` and `ToolNode`/`AfterTurnNode` — was deleted
+(tasks 22+23). Data flows through three distinct channels:
+
+- **`agent_ctx.history`** — the sole persistent context across nodes.
+  `ToolNode` reads the last assistant message (and its `tool_calls`)
+  from `await agent_ctx.history.to_list()` (async API — sync access
+  raises in pool mode). `LLMNode` appends assistant messages here.
+  History survives across the turn; nodes append, later nodes read.
+- **`deliver()`** — a routing signal only (default content `None`).
+  `LLMNode` delivers `None` to TOOL/AFTER; `AfterTurnNode` delivers
+  `None` to BEFORE/END; receivers read `ctx.state` / history, not the
+  payload. The one exception: LLM infrastructure errors arrive as a
+  `{"error": text}` deliver payload to AFTER, which sets
+  `state.phase = FAILED` and uses the error text.
+- **`ctx.state`** — the per-turn lifecycle workspace only.
+  `state.message_delta` holds the final assistant `ChatMessage`
+  (content read by `AfterTurnNode`); `state.phase` marks the node's own
+  lifecycle; `state.result` holds the assembled `AgentResult`. These
+  are turn-local, not inter-node data channels.
+
+`LLMNode` uses a `nonlocal response` closure variable (declared in
+`execute()` scope) instead of `state.llm_response` to carry the LLM
+output out of the `actual_iteration()` closure — no state read-back
+needed. `reasoning_content` is an undeclared extra on `ChatMessage`
+(`extra="allow"`), accessed via `getattr(last_assistant,
+"reasoning_content", None)`.
+
+This resolves the "ReAct shared-state communication" debt recorded in
+ADR-0034 D7. Hook timing is unchanged — deliver-ization rewired data
+flow, not dispatch points (see `tests/unit/agents/react/test_hook_timing.py`).
+
 ## Runtime Modes
 
 - **clean**: plain ReAct graph, no hooks/interceptors/approval/control/state-store.

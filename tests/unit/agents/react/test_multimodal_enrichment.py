@@ -30,6 +30,7 @@ from modex_agent.core.scope import MemoryContext
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_graph import create_null_coordinator
 
 # Minimal valid 1x1 PNG (transparent) — real magic bytes so the renderer
 # produces a real ``image_url`` block rather than a ``<missing>`` note.
@@ -66,11 +67,7 @@ def _make_runtime(capabilities: ModelCapabilities | None) -> AgentRuntime:
     )
     services = AgentRuntimeServices()
     services.model_info = ModelInfo(model_name="test", capabilities=capabilities) if capabilities else None
-    runtime = AgentRuntime(services=services, state=state)
-    # Ticket 04: nodes route AOP through ``runtime.graph_runtime``. Tests that
-    # bypass ``ReActAgent.run()`` must set it themselves.
-    runtime.graph_runtime = ReactGraphRuntime()
-    return runtime
+    return AgentRuntime(services=services, state=state)
 
 
 def _scoped_history(tmp_path: Path) -> ScopedMessageHistory:
@@ -111,7 +108,11 @@ class TestEnrichmentDivergence:
         )
 
         node = LLMNode.__new__(LLMNode)
-        messages = await node._build_messages(ctx)
+        messages = await node._build_messages(
+            ctx,
+            ReactGraphRuntime(),
+            create_null_coordinator(),
+        )
 
         # The enriched current-turn message has the image_url tail.
         user_msgs = [m for m in messages if m["role"] == "user"]
@@ -197,7 +198,11 @@ class TestEnrichmentDivergence:
             runtime=runtime_t1,
         )
         node = LLMNode.__new__(LLMNode)
-        msgs_t1 = await node._build_messages(ctx_t1)
+        msgs_t1 = await node._build_messages(
+            ctx_t1,
+            ReactGraphRuntime(),
+            create_null_coordinator(),
+        )
         # Sanity: turn 1 did inline.
         t1_user = [m for m in msgs_t1 if m["role"] == "user"][-1]
         assert isinstance(t1_user["content"], list)
@@ -215,7 +220,11 @@ class TestEnrichmentDivergence:
             identity=runtime_t2.state.identity,
             runtime=runtime_t2,
         )
-        msgs_t2 = await node._build_messages(ctx_t2)
+        msgs_t2 = await node._build_messages(
+            ctx_t2,
+            ReactGraphRuntime(),
+            create_null_coordinator(),
+        )
 
         user_msgs_t2 = [m for m in msgs_t2 if m["role"] == "user"]
         # The OLD user message ("look at this cat") must remain a plain string —
@@ -256,7 +265,11 @@ class TestEnrichmentDivergence:
             runtime=runtime,
         )
         node = LLMNode.__new__(LLMNode)
-        messages = await node._build_messages(ctx)
+        messages = await node._build_messages(
+            ctx,
+            ReactGraphRuntime(),
+            create_null_coordinator(),
+        )
 
         user_msgs = [m for m in messages if m["role"] == "user"]
         # The single (last) user message is the one that received the tail.
@@ -359,9 +372,7 @@ class TestEnrichmentGuard:
                 seen.extend(messages)
                 return messages
 
-        # Ticket 04: governance routes through ``ReactGraphRuntime`` — set it
-        # on ``graph_runtime`` (not ``runtime.services``) so the node sees it.
-        runtime.graph_runtime = ReactGraphRuntime(governance=_RecordingGovernance())  # type: ignore[arg-type]
+        graph_runtime = ReactGraphRuntime(governance=_RecordingGovernance())  # type: ignore[arg-type]
 
         ctx = AgentContext(
             system_prompt="sys",
@@ -372,7 +383,11 @@ class TestEnrichmentGuard:
             runtime=runtime,
         )
         node = LLMNode.__new__(LLMNode)
-        out = await node._build_messages(ctx)
+        out = await node._build_messages(
+            ctx,
+            graph_runtime,
+            create_null_coordinator(),
+        )
 
         # Governance observed the text form only.
         gov_user = [m for m in seen if m["role"] == "user"][-1]

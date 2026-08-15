@@ -67,7 +67,7 @@ class EndNode(Node[ReActTurnState]):
         state.mark_completed()
 
         await ctx.runtime.dispatch_hook(ReActHookPoint.END_NODE_TURN, ctx)
-        self.deliver(result, GraphNode.END, ctx)
+        self.deliver(None, GraphNode.END, ctx)
         return None
 
 

@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from modex_agent.agents.react.nodes.llm import enrich_inline_media
-from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
@@ -44,9 +43,7 @@ def _make_runtime(capabilities: ModelCapabilities | None) -> AgentRuntime:
     )
     services = AgentRuntimeServices()
     services.model_info = ModelInfo(model_name="test", capabilities=capabilities) if capabilities else None
-    runtime = AgentRuntime(services=services, state=state)
-    runtime.graph_runtime = ReactGraphRuntime()
-    return runtime
+    return AgentRuntime(services=services, state=state)
 
 
 def _make_ctx(runtime: AgentRuntime) -> AgentContext:

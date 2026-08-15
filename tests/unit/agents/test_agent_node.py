@@ -27,7 +27,11 @@ from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.graph_deliver import GraphDeliverTool
 from modex_agent.tools.graph_tool_preset import GraphToolPreset
-from modex_graph.constants import FrameworkPayloadSource, GraphNode
+from modex_graph.constants import (
+    DeliverConsumptionStatus,
+    FrameworkPayloadSource,
+    GraphNode,
+)
 from modex_graph.context import GraphContext
 from modex_graph.graph import Graph
 from modex_graph.integration import GraphPayload, IntegratedInput, IntegratedPayload
@@ -589,8 +593,8 @@ class TestBotAgentNodeTopologySection:
         assert "[Upstream Status]" not in result
 
 
-class TestAgentNodeIntegrateUpstreamIdempotency:
-    """AgentNode._integrate_upstream must always filter CONSUMED_PENDING.
+class TestAgentNodeInputIntegration:
+    """AgentNode's integrator must always filter CONSUMED_PENDING.
 
     Agent session memory persists upstream input across invocations.
     On crash recovery, CONSUMED_PENDING delivers (consumed by the crashed
@@ -599,9 +603,6 @@ class TestAgentNodeIntegrateUpstreamIdempotency:
     """
 
     def test_consumed_pending_filtered_on_non_resume(self) -> None:
-        from modex_graph.constants import DeliverConsumptionStatus
-        from modex_graph.integration import IntegratedPayload
-
         node = BotAgentNode("worker", "default", MagicMock())
         node.name = "worker"
         node.node_id = "node-worker"
@@ -612,12 +613,14 @@ class TestAgentNodeIntegrateUpstreamIdempotency:
         pending_record.deliver_id = 101
         pending_record.source_node_id = "src-id"
         pending_record.content = "new deliver"
+        pending_record.consumed_by_invocation_id = None
 
         consumed_pending_record = MagicMock()
         consumed_pending_record.status = DeliverConsumptionStatus.CONSUMED_PENDING
         consumed_pending_record.deliver_id = 100
         consumed_pending_record.source_node_id = "src-id"
         consumed_pending_record.content = "old deliver"
+        consumed_pending_record.consumed_by_invocation_id = 41
 
         mock_coordinator.collect_consumable_delivers.return_value = [
             consumed_pending_record,
@@ -627,18 +630,15 @@ class TestAgentNodeIntegrateUpstreamIdempotency:
         result = node._integrate_upstream(
             mock_coordinator,
             MagicMock(invocation_id=42),
-            resume_snapshot=None,
         )
 
         mock_coordinator.mark_delivers_consumed.assert_called_once_with(
-            "node-worker", [101], 42
+            "node-worker", [100, 101], 42
         )
         assert len(result.payloads) == 1
         assert result.payloads[0].content == "new deliver"
 
     def test_empty_when_all_consumed_pending(self) -> None:
-        from modex_graph.constants import DeliverConsumptionStatus
-
         node = BotAgentNode("worker", "default", MagicMock())
         node.name = "worker"
         node.node_id = "node-worker"
@@ -649,38 +649,19 @@ class TestAgentNodeIntegrateUpstreamIdempotency:
         consumed_record.deliver_id = 100
         consumed_record.source_node_id = "src-id"
         consumed_record.content = "already injected"
+        consumed_record.consumed_by_invocation_id = 41
 
         mock_coordinator.collect_consumable_delivers.return_value = [consumed_record]
 
         result = node._integrate_upstream(
             mock_coordinator,
             MagicMock(invocation_id=42),
-            resume_snapshot=None,
         )
 
-        mock_coordinator.mark_delivers_consumed.assert_not_called()
+        mock_coordinator.mark_delivers_consumed.assert_called_once_with(
+            "node-worker", [100], 42
+        )
         assert len(result.payloads) == 0
-
-    def test_resume_snapshot_still_prepended(self) -> None:
-        from modex_graph.constants import DeliverConsumptionStatus, FrameworkPayloadSource
-
-        node = BotAgentNode("worker", "default", MagicMock())
-        node.name = "worker"
-        node.node_id = "node-worker"
-
-        mock_coordinator = MagicMock()
-        mock_coordinator.collect_consumable_delivers.return_value = []
-
-        snapshot = {"state": "resumed"}
-        result = node._integrate_upstream(
-            mock_coordinator,
-            MagicMock(invocation_id=42),
-            resume_snapshot=snapshot,
-        )
-
-        assert len(result.payloads) == 1
-        assert result.payloads[0].source_node == FrameworkPayloadSource.RESUME
-        assert result.payloads[0].content == snapshot
 
 
 class TestBotAgentNodeBuildGraphArtifacts:
@@ -725,6 +706,7 @@ class TestBotAgentNodeBuildGraphArtifacts:
         artifacts = node._build_graph_artifacts(ctx)
 
         assert artifacts.knowledge_dir == tmp_path / "knowledge"
+        assert artifacts.knowledge_dir is not None
         assert artifacts.knowledge_dir.exists()
 
 
@@ -867,10 +849,11 @@ class TestStartNodeDeliversUserInput:
         from modex_graph.state.default_state import DefaultGraphState
 
         state = DefaultGraphState()
+        coordinator = MagicMock()
         ctx = GraphContext(
             state=state,
             runtime=MagicMock(),
-            coordinator=MagicMock(),
+            coordinator=coordinator,
             user_input=GraphPayload(content="re-invoke new input"),
             graph_instance_id=99,
         )
@@ -880,9 +863,8 @@ class TestStartNodeDeliversUserInput:
 
         await start.run(ctx, graph=MagicMock())
 
-        delivers = start._collect_delivers(ctx)
-        assert len(delivers) == 1
-        content, target = delivers[0]
+        coordinator.route_deliver.assert_called_once()
+        content = coordinator.route_deliver.call_args.kwargs["content"]
         assert content is not None
         # GraphPayload is frozen Pydantic — content.content holds the text.
         assert content.content == "re-invoke new input"
@@ -896,10 +878,11 @@ class TestStartNodeDeliversUserInput:
         from modex_graph.state.default_state import DefaultGraphState
 
         state = DefaultGraphState()
+        coordinator = MagicMock()
         ctx = GraphContext(
             state=state,
             runtime=MagicMock(),
-            coordinator=MagicMock(),
+            coordinator=coordinator,
             user_input=None,
             graph_instance_id=99,
         )
@@ -909,10 +892,8 @@ class TestStartNodeDeliversUserInput:
 
         await start.run(ctx, graph=MagicMock())
 
-        delivers = start._collect_delivers(ctx)
-        assert len(delivers) == 1
-        content, _ = delivers[0]
-        assert content is None
+        coordinator.route_deliver.assert_called_once()
+        assert coordinator.route_deliver.call_args.kwargs["content"] is None
 
 
 class TestBotAgentNodeEnsureDeliverTool:
@@ -1017,10 +998,11 @@ class TestBotAgentNodeExecute:
         ctx.user_input = GraphPayload(content="task")
         ctx.graph_instance_id = 42
         ctx.user_data = {}
+        ctx.coordinator = MagicMock()
 
         await node.execute(ctx, IntegratedInput(payloads=[]))
 
-        assert not node._pending_delivers
+        ctx.coordinator.route_deliver.assert_not_called()
 
     async def test_execute_stores_artifacts_in_user_data(self) -> None:
         node, mock_tree, _ = self._build_execute_setup()

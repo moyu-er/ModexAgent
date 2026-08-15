@@ -18,9 +18,9 @@ from modex_agent.agents.react.tool_dedup import StreakDecision, ToolCallDeduplic
 from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.message import TextPart
+from modex_agent.core.message import ChatMessage, TextPart
 from modex_agent.core.tool_manager import ToolResult
-from modex_agent.core.types import ToolCall
+from modex_agent.core.types import MessageRole, ToolCall
 from modex_agent.runtime.enums import (
     ApprovalDenyPolicy,
     ApprovalSubjectType,
@@ -68,14 +68,24 @@ class ToolNode(Node[ReActTurnState]):
         if state.phase == TurnPhase.SUSPENDED:
             await self._resume_suspended_batch(ctx)
             return None
-        if state.llm_response is None:
+
+        agent_ctx = get_agent_ctx(ctx)
+
+        # Deliver-ized: LLMNode appends the assistant message to history;
+        # ToolNode reads tool_calls from the last assistant message here.
+        history_messages = await agent_ctx.history.to_list()
+        last_assistant: ChatMessage | None = None
+        for msg in reversed(history_messages):
+            if msg.role == MessageRole.ASSISTANT:
+                last_assistant = msg
+                break
+
+        if last_assistant is None or not last_assistant.tool_calls:
             state.phase = TurnPhase.FAILED
             self.deliver(None, ReActNode.AFTER, ctx)
             return None
 
-        response = state.llm_response
-        tool_calls: list[ToolCall] = response.tool_calls
-        state.llm_response = None
+        tool_calls: list[ToolCall] = last_assistant.tool_calls
         state.current_node = ReActNode.TOOL
 
         # Canonicalize call_id once, up front: providers may omit it, and
@@ -87,8 +97,6 @@ class ToolNode(Node[ReActTurnState]):
             tc if tc.call_id else tc.model_copy(update={"call_id": uuid4().hex})
             for tc in tool_calls
         ]
-
-        agent_ctx = get_agent_ctx(ctx)
         max_tools = (
             agent_ctx.runtime.state.custom.get(TurnCustomKey.MAX_TOOLS_PER_TURN)
             if agent_ctx.runtime
@@ -225,18 +233,6 @@ class ToolNode(Node[ReActTurnState]):
             ]
         )
         self._apply_decisions_to_batch(batch, decisions)
-
-        pre_approved_ids = {
-            call.call_id
-            for call in batch.calls
-            if state.approval.decisions.get(call.call_id) == ApprovalDecision.ALLOWED
-        }
-        if pre_approved_ids:
-            agent_ctx = get_agent_ctx(ctx)
-            if agent_ctx.runtime is not None:
-                agent_ctx.runtime.state.custom[TurnCustomKey.PRE_APPROVED_TOOL_IDS] = (
-                    pre_approved_ids
-                )
 
         state.phase = TurnPhase.RUNNING
         state.current_node = ReActNode.TOOL
@@ -406,7 +402,7 @@ class ToolNode(Node[ReActTurnState]):
                 self.deliver(None, ReActNode.AFTER, ctx)
                 return None
 
-        self.deliver(tool_results, ReActNode.LLM, ctx)
+        self.deliver(None, ReActNode.LLM, ctx)
         return None
 
     async def _execute_single(

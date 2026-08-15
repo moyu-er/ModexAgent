@@ -112,7 +112,7 @@ def test_target_is_frozen_and_forbids_extra_fields() -> None:
         GraphDeliverTarget(
             name="researcher",
             description="Research agent",
-            unexpected=True,
+            unexpected=True,  # type: ignore[call-arg]
         )
 
     with pytest.raises(ValidationError):
@@ -132,7 +132,7 @@ def test_deliver_result_is_frozen_and_forbids_extra_fields() -> None:
             ok=True,
             target="researcher",
             message="Delivered to 'researcher'.",
-            unexpected=True,
+            unexpected=True,  # type: ignore[call-arg]
         )
     with pytest.raises(ValidationError):
         result.ok = False
@@ -227,6 +227,7 @@ def test_dynamic_schema_binds_target_enum_to_downstream_names() -> None:
 
 async def test_execute_delivers_payload_to_target_name() -> None:
     compiled, current = _compiled_graph()
+    current.deliver = MagicMock()  # type: ignore[method-assign]
     graph_context = MagicMock(spec=GraphContext)
     tool = GraphDeliverTool(current, GraphDeliverTargetStore(compiled, "planner"))
     token = current_agent_context.set(_agent_context(graph_context))
@@ -237,13 +238,14 @@ async def test_execute_delivers_payload_to_target_name() -> None:
         current_agent_context.reset(token)
 
     assert result == "Delivered to 'researcher'."
-    assert current._pending_delivers == [
-        (GraphPayload(content="find evidence"), "researcher"),
-    ]
+    current.deliver.assert_called_once_with(
+        GraphPayload(content="find evidence"), "researcher", graph_context
+    )
 
 
 async def test_execute_without_target_returns_error() -> None:
     compiled, current = _compiled_graph()
+    current.deliver = MagicMock()  # type: ignore[method-assign]
     graph_context = MagicMock(spec=GraphContext)
     tool = GraphDeliverTool(current, GraphDeliverTargetStore(compiled, "planner"))
     token = current_agent_context.set(_agent_context(graph_context))
@@ -256,11 +258,12 @@ async def test_execute_without_target_returns_error() -> None:
     assert result.startswith("Error: target is required")
     assert "researcher" in result
     assert "formatter" in result
-    assert current._pending_delivers is None or current._pending_delivers == []
+    current.deliver.assert_not_called()
 
 
 async def test_execute_rejects_unknown_target() -> None:
     compiled, current = _compiled_graph()
+    current.deliver = MagicMock()  # type: ignore[method-assign]
     graph_context = MagicMock(spec=GraphContext)
     tool = GraphDeliverTool(current, GraphDeliverTargetStore(compiled, "planner"))
     token = current_agent_context.set(_agent_context(graph_context))
@@ -274,11 +277,12 @@ async def test_execute_rejects_unknown_target() -> None:
         "Error: 'invented' is not a valid downstream node. "
         "Available: researcher, formatter, __end__."
     )
-    assert current._pending_delivers is None
+    current.deliver.assert_not_called()
 
 
 async def test_execute_rejects_missing_graph_context() -> None:
     compiled, current = _compiled_graph()
+    current.deliver = MagicMock()  # type: ignore[method-assign]
     tool = GraphDeliverTool(current, GraphDeliverTargetStore(compiled, "planner"))
     token = current_agent_context.set(_agent_context(None))
 
@@ -288,11 +292,12 @@ async def test_execute_rejects_missing_graph_context() -> None:
         current_agent_context.reset(token)
 
     assert result == "Error: deliver tool called outside graph context."
-    assert current._pending_delivers is None
+    current.deliver.assert_not_called()
 
 
 async def test_execute_increments_deliver_count_on_success() -> None:
     compiled, current = _compiled_graph()
+    current.deliver = MagicMock()  # type: ignore[method-assign]
     graph_context = MagicMock(spec=GraphContext)
     tool = GraphDeliverTool(current, GraphDeliverTargetStore(compiled, "planner"))
     runtime = _make_runtime()
@@ -309,6 +314,7 @@ async def test_execute_increments_deliver_count_on_success() -> None:
 
 async def test_execute_increments_deliver_count_across_two_delivers() -> None:
     compiled, current = _compiled_graph()
+    current.deliver = MagicMock()  # type: ignore[method-assign]
     graph_context = MagicMock(spec=GraphContext)
     tool = GraphDeliverTool(current, GraphDeliverTargetStore(compiled, "planner"))
     runtime = _make_runtime()

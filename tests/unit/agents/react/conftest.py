@@ -29,7 +29,6 @@ from modex_graph import (
     NullGraphInstanceStore,
     NullNodeStateStore,
 )
-from modex_graph.constants import GraphNode
 
 type StateFactory = Callable[[], ReActTurnState]
 type CoordinatorFactory = Callable[[], GraphPersistenceCoordinator]
@@ -53,8 +52,9 @@ class _AutoRegCoord(GraphPersistenceCoordinator):
         source_node_id: str,
         source_invocation_id: int,
         source_node_name: str | None = None,
+        stage: bool = False,
     ) -> int | None:
-        if target_node_id != GraphNode.END and self.get_deliver_store(target_node_id) is None:
+        if self.get_deliver_store(target_node_id) is None:
             self.register_node(target_node_id)
         return super().route_deliver(
             target_node_id,
@@ -62,6 +62,7 @@ class _AutoRegCoord(GraphPersistenceCoordinator):
             source_node_id,
             source_invocation_id,
             source_node_name,
+            stage,
         )
 
 
@@ -104,12 +105,10 @@ def make_coordinator(
 @pytest.fixture
 def make_runtime(make_state: StateFactory) -> RuntimeFactory:
     def factory() -> AgentRuntime:
-        runtime = AgentRuntime(
+        return AgentRuntime(
             services=AgentRuntimeServices(),
             state=make_state(),
         )
-        runtime.graph_runtime = ReactGraphRuntime()
-        return runtime
 
     return factory
 

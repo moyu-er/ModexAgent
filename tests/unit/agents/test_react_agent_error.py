@@ -11,7 +11,6 @@ import pytest
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.constants import FinishReason, StopReason
-from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.types import LLMResponse, ToolCall
@@ -225,9 +224,9 @@ class TestReActAgentToolTimeout:
         assert result is not None
 
 
-class TestReActAgentHookTimeout:
+class TestReActAgentHookDispatch:
     @pytest.mark.asyncio
-    async def test_hook_timeout_is_logged_not_raised(self):
+    async def test_slow_hook_does_not_abort_turn(self):
         provider = MagicMock()
         provider.chat = AsyncMock(return_value=LLMResponse(
             content="ok", finish_reason=FinishReason.STOP.value,
@@ -236,7 +235,7 @@ class TestReActAgentHookTimeout:
         class SlowHook:
             async def before_turn(self, context):
                 await asyncio.sleep(0.5)
-        agent = ReActAgent(provider=provider, hook_timeout=0.01)
+        agent = ReActAgent(provider=provider)
         emitter = _FakeEmitter()
         ctx = _make_ctx()
         from modex_agent.hook import HookRunner

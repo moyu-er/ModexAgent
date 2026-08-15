@@ -3,12 +3,10 @@
 Verifies the formalized NullCoordinator factory and its behavior:
 
 - Factory returns a ``GraphPersistenceCoordinator`` wired with Null stores.
-- Lifecycle methods (begin/complete/cancel/crash/suspend/finalize) are on
+- Lifecycle methods (begin/complete/cancel/crash/finalize) are on
   ``coord.node_state_store`` — NullNodeStateStore discards all saves.
-- ``rebuild_main_state`` returns empty dict (no persisted snapshots).
 - Deliver-only routing through ``NullDeliverStore`` in-memory queue.
-- Suspend/resume: ``suspend_invocation`` is a no-op; the coordinator holds no
-  state across suspend/resume — AgentContext is the orthogonal turn-state layer.
+- Deliver queue survives across invocation boundaries (begin/complete cycles).
 """
 
 from __future__ import annotations
@@ -66,7 +64,7 @@ class TestNullLifecycleNoOp:
         coord = create_null_coordinator()
         store = coord.node_state_store
         inv = store.begin_invocation("llm")
-        store.complete_invocation(inv, {"result": "done"})
+        store.complete_invocation(inv)
         assert store.load_latest("llm") is None
 
     def test_cancel_invocation_is_noop(self) -> None:
@@ -81,13 +79,6 @@ class TestNullLifecycleNoOp:
         store = coord.node_state_store
         inv = store.begin_invocation("llm")
         store.crash_invocation(inv)
-        assert store.load_latest("llm") is None
-
-    def test_suspend_invocation_is_noop(self) -> None:
-        coord = create_null_coordinator()
-        store = coord.node_state_store
-        inv = store.begin_invocation("llm")
-        store.suspend_invocation(inv, {"resume_target": "tool"})
         assert store.load_latest("llm") is None
 
     def test_finalize_invocation_is_noop(self) -> None:
@@ -106,20 +97,6 @@ class TestNullLifecycleNoOp:
 
 
 class TestNullRecovery:
-    def test_rebuild_main_state_returns_empty_state(self) -> None:
-        coord = create_null_coordinator()
-        coord.register_node("llm")
-        coord.register_node("tool")
-        assert coord.rebuild_main_state() == {}
-
-    def test_rebuild_main_state_after_complete_still_empty(self) -> None:
-        coord = create_null_coordinator()
-        coord.register_node("llm")
-        store = coord.node_state_store
-        inv = store.begin_invocation("llm")
-        store.complete_invocation(inv, {"result": "done"})
-        assert coord.rebuild_main_state() == {}
-
     def test_get_graph_state_returns_empty_node_lists(self) -> None:
         coord = create_null_coordinator()
         coord.register_node("llm")
@@ -226,30 +203,8 @@ class TestNullDeliverOnlyRouting:
         assert len(coord.collect_consumable_delivers(GraphNode.END, 0)) == 1
 
 
-class TestNullSuspendResume:
-    def test_suspend_does_not_persist_state(self) -> None:
-        coord = create_null_coordinator()
-        store = coord.node_state_store
-        coord.register_node("tool")
-        inv = store.begin_invocation("tool")
-        store.suspend_invocation(inv, {"resume_target": "tool", "batch_id": "abc"})
-        assert store.load_latest("tool") is None
-
-    def test_resume_starts_fresh(self) -> None:
-        coord = create_null_coordinator()
-        store = coord.node_state_store
-        coord.register_node("tool")
-
-        inv1 = store.begin_invocation("tool")
-        store.suspend_invocation(inv1, {"resume_target": "tool"})
-
-        inv2 = store.begin_invocation("tool")
-        assert inv2.invocation_id > 0
-        assert inv2.version == 0
-        assert inv2.parent_version is None
-        assert inv2.invocation_id != inv1.invocation_id
-
-    def test_deliver_queue_survives_suspend_resume(self) -> None:
+class TestNullDeliverSurvivesInvocations:
+    def test_deliver_queue_survives_invocation_boundary(self) -> None:
         coord = create_null_coordinator()
         store = coord.node_state_store
         coord.register_node("tool")
@@ -258,13 +213,13 @@ class TestNullSuspendResume:
         assert d1 is not None
 
         inv = store.begin_invocation("tool")
-        store.suspend_invocation(inv, {"resume_target": "tool"})
+        store.complete_invocation(inv)
 
         records = coord.collect_consumable_delivers("tool", 200)
         assert len(records) == 1
         assert records[0].deliver_id == d1
 
-    def test_full_suspend_resume_with_deliver_consumption(self) -> None:
+    def test_full_deliver_consumption_across_invocations(self) -> None:
         coord = create_null_coordinator()
         store = coord.node_state_store
         coord.register_node("tool")
@@ -273,13 +228,13 @@ class TestNullSuspendResume:
         assert d1 is not None
 
         inv1 = store.begin_invocation("tool")
-        store.suspend_invocation(inv1, {"resume_target": "tool"})
+        store.complete_invocation(inv1)
 
         inv2 = store.begin_invocation("tool")
         records = coord.collect_consumable_delivers("tool", inv2.invocation_id)
         assert len(records) == 1
 
         coord.mark_delivers_consumed("tool", [d1], inv2.invocation_id)
-        store.complete_invocation(inv2, {"result": "done"})
+        store.complete_invocation(inv2)
 
         assert len(coord.collect_consumable_delivers("tool", 0)) == 0

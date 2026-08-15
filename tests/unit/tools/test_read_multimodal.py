@@ -188,7 +188,6 @@ async def test_image_chain_tool_to_cache_to_enrichment(tmp_path: Path) -> None:
     """End-to-end: ReadFileTool → ToolManager.execute → content_blocks →
     TOOL_MEDIA_CACHE → enrich_inline_media → image in user message."""
     from modex_agent.agents.react.nodes.llm import enrich_inline_media
-    from modex_agent.agents.react.runtime import ReactGraphRuntime
     from modex_agent.agents.react.state import ReActTurnState
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.history import ListMessageHistory
@@ -240,7 +239,6 @@ async def test_image_chain_tool_to_cache_to_enrichment(tmp_path: Path) -> None:
     services = AgentRuntimeServices()
     services.model_info = capable
     runtime = AgentRuntime(services=services, state=state)
-    runtime.graph_runtime = ReactGraphRuntime()
 
     history = ListMessageHistory()
     await history.append(ChatMessage(role=MessageRole.USER, content="What is in this image?"))
