@@ -6,8 +6,7 @@ Covers:
 - Node construction (prompt + next_node).
 - First entry: `execute()` raises `GraphInterrupt` with the prompt payload.
 - `_execute` propagates `GraphInterrupt` (never swallowed).
-- Resume path: setting `_resumed = True` before `_execute` causes the node
-  to deliver a "human_input_resumed" signal instead of interrupting.
+- Pending-input path: the last payload's content is delivered downstream.
 - `HumanInputNodeFactory`: creates from config.
 - Factory rejects bad config (non-string prompt, non-string next_node).
 - Factory `config_schema()` returns a Pydantic model.
@@ -15,6 +14,8 @@ Covers:
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 import pytest
 from helpers import make_ctx  # type: ignore[import-not-found]
@@ -33,6 +34,22 @@ from modex_graph import (
 )
 from modex_graph.nodes import HumanInputNodeConfig
 
+
+def _delivered(ctx: Any, target: str) -> list[Any]:
+    store = ctx.coordinator.get_deliver_store(target)
+    if store is None:
+        return []
+    return [record.content for record in store.query_consumable(0, target)]
+
+
+def _queue_input(ctx: Any, node: HumanInputNode, content: Any) -> None:
+    ctx.coordinator.route_deliver(
+        target_node_id=node.node_id,
+        content=content,
+        source_node_id="human",
+        source_invocation_id=1,
+    )
+
 # ── HumanInputNode construction ───────────────────────────────────────────
 
 
@@ -42,7 +59,6 @@ class TestHumanInputNodeConstruction:
         assert isinstance(node, Node)
         assert node._prompt == "Enter your name:"
         assert node._next_node == "target"
-        assert node._resumed is False
 
     def test_next_node_defaults_to_none(self) -> None:
         node = HumanInputNode("prompt")
@@ -79,74 +95,45 @@ class TestHumanInputNodeInterrupt:
         with pytest.raises(GraphInterrupt):
             await node.execute(ctx, IntegratedInput())
 
-    async def test_first_entry_sets_resumed_flag(self) -> None:
-        node = HumanInputNode("Approve?", next_node="target")
-        node.name = "human_input"
-        ctx = make_ctx()
-        with pytest.raises(GraphInterrupt):
-            await node.run(ctx)
-        assert node._resumed is True
-
     async def test_interrupt_does_not_deliver(self) -> None:
         node = HumanInputNode("Approve?", next_node="target")
         node.name = "human_input"
         ctx = make_ctx()
         with pytest.raises(GraphInterrupt):
             await node.run(ctx)
-        assert node._submit_result == {}
+        assert _delivered(ctx, "target") == []
 
 
-# ── Resume path: deliver ──────────────────────────────────────────────────
+# ── Pending input: deliver ────────────────────────────────────────────────
 
 
-class TestHumanInputNodeResume:
-    async def test_resume_delivers_signal(self) -> None:
+class TestHumanInputNodePendingInput:
+    async def test_delivers_last_payload_content(self) -> None:
         node = HumanInputNode("Approve?", next_node="downstream")
         node.name = "human_input"
-        node._resumed = True
         ctx = make_ctx()
+        _queue_input(ctx, node, "first answer")
+        _queue_input(ctx, node, {"approved": True})
         await node.run(ctx)
-        assert "downstream" in node._submit_result
-        delivered = node._submit_result["downstream"]
-        assert len(delivered) == 1
-        assert delivered[0]["human_input"] == "resumed"
-        assert delivered[0]["prompt"] == "Approve?"
+        assert _delivered(ctx, "downstream") == [{"approved": True}]
 
-    async def test_resume_resets_resumed_flag(self) -> None:
+    async def test_pending_input_returns_none(self) -> None:
         node = HumanInputNode("Approve?", next_node="target")
         node.name = "human_input"
-        node._resumed = True
         ctx = make_ctx()
-        await node.run(ctx)
-        assert node._resumed is False
-
-    async def test_resume_returns_none(self) -> None:
-        node = HumanInputNode("Approve?", next_node="target")
-        node.name = "human_input"
-        node._resumed = True
-        ctx = make_ctx()
+        _queue_input(ctx, node, "approved")
         result = await node.run(ctx)
         assert result is None
 
-    async def test_resume_then_re_interrupt(self) -> None:
-        node = HumanInputNode("Approve?", next_node="target")
-        node.name = "human_input"
-        node._resumed = True
-        ctx = make_ctx()
-        await node.run(ctx)
-        assert node._resumed is False
-        with pytest.raises(GraphInterrupt):
-            await node.run(ctx)
-
-    async def test_resume_deliver_to_end(self) -> None:
+    async def test_delivers_payload_to_end(self) -> None:
         from modex_graph import GraphNode
 
         node = HumanInputNode("Approve?", next_node=GraphNode.END)
         node.name = "human_input"
-        node._resumed = True
         ctx = make_ctx()
+        _queue_input(ctx, node, "approved")
         await node.run(ctx)
-        assert GraphNode.END in node._submit_result
+        assert _delivered(ctx, GraphNode.END) == ["approved"]
 
 
 # ── HumanInputNodeFactory ─────────────────────────────────────────────────
@@ -277,7 +264,7 @@ class TestHumanInputNodeRegistryIntegration:
         assert isinstance(payload, dict)
         assert payload["node"] == "input_node"
 
-    async def test_registry_create_resume_then_deliver(self) -> None:
+    async def test_registry_create_with_input_then_deliver(self) -> None:
         registry = NodeRegistry()
         registry.register("human_input", HumanInputNodeFactory())
         node = registry.create(
@@ -288,8 +275,7 @@ class TestHumanInputNodeRegistryIntegration:
             )
         )
         assert isinstance(node, HumanInputNode)
-        node._resumed = True
         ctx = make_ctx()
+        _queue_input(ctx, node, "approved")
         await node.run(ctx)
-        assert "out" in node._submit_result
-        assert node._submit_result["out"][0]["prompt"] == "Approve?"
+        assert _delivered(ctx, "out") == ["approved"]

@@ -10,8 +10,8 @@ Covers:
   version chain, orphan cleanup, finalize safety net, query methods.
 - `SqliteNodeStateStore`: same lifecycle + CAS via UPDATE ... WHERE,
   schema creation, file-based persistence, timestamps, close.
-- `InvocationStateError` raised on CAS failure (complete/suspend/cancel
-  on already-terminal or suspended record).
+- `InvocationStateError` raised on CAS failure (complete/cancel
+  on already-terminal record).
 - `InvocationStatus` enum has no PENDING / SUPERSEDED.
 """
 
@@ -114,8 +114,7 @@ class TestNullNodeStateStore:
     def test_lifecycle_methods_are_noop(self) -> None:
         store = NullNodeStateStore(0)
         inv = store.begin_invocation("node_a")
-        store.complete_invocation(inv, {"result": "done"})
-        store.suspend_invocation(inv, {"snapshot": True})
+        store.complete_invocation(inv)
         store.crash_invocation(inv)
         store.cancel_invocation(inv)
         store.finalize_invocation(inv)
@@ -148,30 +147,16 @@ class TestLifecycleTransitions:
         latest = store.load_latest("worker")
         assert latest is not None
         assert latest.status == InvocationStatus.RUNNING
-        assert latest.suspended is False
         assert latest.invocation_id == inv.invocation_id
 
     def test_complete_transitions_to_completed(self, kind: str) -> None:
         store = _store_factory(kind)
         inv = store.begin_invocation("worker")
-        store.complete_invocation(inv, {"result": "done"})
+        store.complete_invocation(inv)
 
         latest = store.load_latest("worker")
         assert latest is not None
         assert latest.status == InvocationStatus.COMPLETED
-        assert latest.state_json == {"result": "done"}
-
-    def test_suspend_sets_suspended_true(self, kind: str) -> None:
-        store = _store_factory(kind)
-        inv = store.begin_invocation("worker")
-        snapshot = {"resume_target": "tool"}
-        store.suspend_invocation(inv, snapshot)
-
-        latest = store.load_latest("worker")
-        assert latest is not None
-        assert latest.status == InvocationStatus.RUNNING
-        assert latest.suspended is True
-        assert latest.state_json == snapshot
 
     def test_cancel_transitions_to_canceled(self, kind: str) -> None:
         store = _store_factory(kind)
@@ -194,23 +179,12 @@ class TestLifecycleTransitions:
     def test_crash_is_tolerant_on_terminal(self, kind: str) -> None:
         store = _store_factory(kind)
         inv = store.begin_invocation("worker")
-        store.complete_invocation(inv, {"result": "done"})
+        store.complete_invocation(inv)
         store.crash_invocation(inv)
 
         latest = store.load_latest("worker")
         assert latest is not None
         assert latest.status == InvocationStatus.COMPLETED
-
-    def test_finalize_skips_suspended_running(self, kind: str) -> None:
-        store = _store_factory(kind)
-        inv = store.begin_invocation("worker")
-        store.suspend_invocation(inv, {"snapshot": True})
-        store.finalize_invocation(inv)
-
-        latest = store.load_latest("worker")
-        assert latest is not None
-        assert latest.status == InvocationStatus.RUNNING
-        assert latest.suspended is True
 
     def test_finalize_orphan_running_to_crashed(self, kind: str) -> None:
         store = _store_factory(kind)
@@ -224,7 +198,7 @@ class TestLifecycleTransitions:
     def test_finalize_skips_terminal(self, kind: str) -> None:
         store = _store_factory(kind)
         inv = store.begin_invocation("worker")
-        store.complete_invocation(inv, {"result": "done"})
+        store.complete_invocation(inv)
         store.finalize_invocation(inv)
 
         latest = store.load_latest("worker")
@@ -232,7 +206,7 @@ class TestLifecycleTransitions:
         assert latest.status == InvocationStatus.COMPLETED
 
 
-# ── CAS strictness (complete / suspend / cancel raise on lost race) ──
+# ── CAS strictness (complete / cancel raise on lost race) ──
 
 
 @pytest.mark.parametrize("kind", PERSISTED_KINDS)
@@ -240,28 +214,14 @@ class TestCASStrictness:
     def test_complete_on_completed_raises(self, kind: str) -> None:
         store = _store_factory(kind)
         inv = store.begin_invocation("worker")
-        store.complete_invocation(inv, {"result": "done"})
+        store.complete_invocation(inv)
         with pytest.raises(InvocationStateError, match="CAS failed"):
-            store.complete_invocation(inv, {"result": "again"})
-
-    def test_complete_on_suspended_raises(self, kind: str) -> None:
-        store = _store_factory(kind)
-        inv = store.begin_invocation("worker")
-        store.suspend_invocation(inv, {"snapshot": True})
-        with pytest.raises(InvocationStateError, match="CAS failed"):
-            store.complete_invocation(inv, {"result": "done"})
-
-    def test_suspend_on_completed_raises(self, kind: str) -> None:
-        store = _store_factory(kind)
-        inv = store.begin_invocation("worker")
-        store.complete_invocation(inv, {"result": "done"})
-        with pytest.raises(InvocationStateError, match="CAS failed"):
-            store.suspend_invocation(inv, {"snapshot": True})
+            store.complete_invocation(inv)
 
     def test_cancel_on_completed_raises(self, kind: str) -> None:
         store = _store_factory(kind)
         inv = store.begin_invocation("worker")
-        store.complete_invocation(inv, {"result": "done"})
+        store.complete_invocation(inv)
         with pytest.raises(InvocationStateError, match="CAS failed"):
             store.cancel_invocation(inv)
 
@@ -270,7 +230,7 @@ class TestCASStrictness:
         inv = store.begin_invocation("worker")
         store.cancel_invocation(inv)
         with pytest.raises(InvocationStateError, match="CAS failed"):
-            store.complete_invocation(inv, {})
+            store.complete_invocation(inv)
 
 
 # ── Version chain + orphan cleanup ────────────────────────────────────
@@ -281,12 +241,12 @@ class TestVersionChain:
     def test_version_increments(self, kind: str) -> None:
         store = _store_factory(kind)
         inv0 = store.begin_invocation("worker")
-        store.complete_invocation(inv0, {"v": 0})
+        store.complete_invocation(inv0)
 
         inv1 = store.begin_invocation("worker")
         assert inv1.version == 1
         assert inv1.parent_version == 0
-        store.complete_invocation(inv1, {"v": 1})
+        store.complete_invocation(inv1)
 
         inv2 = store.begin_invocation("worker")
         assert inv2.version == 2
@@ -295,7 +255,7 @@ class TestVersionChain:
     def test_parent_version_from_latest_completed(self, kind: str) -> None:
         store = _store_factory(kind)
         inv0 = store.begin_invocation("worker")
-        store.complete_invocation(inv0, {"v": 0})
+        store.complete_invocation(inv0)
 
         inv1 = store.begin_invocation("worker")
         store.crash_invocation(inv1)
@@ -313,20 +273,6 @@ class TestVersionChain:
         assert len(versions) == 1
         assert versions[0].invocation_id == inv0.invocation_id
 
-    def test_suspended_running_left_in_place_on_begin(self, kind: str) -> None:
-        store = _store_factory(kind)
-        inv0 = store.begin_invocation("worker")
-        store.suspend_invocation(inv0, {"resume_target": "tool"})
-
-        inv1 = store.begin_invocation("worker")
-        assert inv1.version == 1
-
-        running = store.query_versions("worker", {InvocationStatus.RUNNING})
-        suspended_records = [r for r in running if r.suspended]
-        assert len(suspended_records) == 1
-        assert suspended_records[0].invocation_id == inv0.invocation_id
-        assert suspended_records[0].state_json == {"resume_target": "tool"}
-
 
 # ── Query methods ─────────────────────────────────────────────────────
 
@@ -336,7 +282,7 @@ class TestQueryMethods:
     def test_load_latest_completed(self, kind: str) -> None:
         store = _store_factory(kind)
         inv0 = store.begin_invocation("worker")
-        store.complete_invocation(inv0, {"v": 0})
+        store.complete_invocation(inv0)
 
         inv1 = store.begin_invocation("worker")
         store.crash_invocation(inv1)
@@ -352,7 +298,7 @@ class TestQueryMethods:
     def test_load_by_invocation_id(self, kind: str) -> None:
         store = _store_factory(kind)
         inv0 = store.begin_invocation("worker")
-        store.complete_invocation(inv0, {"v": 0})
+        store.complete_invocation(inv0)
         inv1 = store.begin_invocation("worker")
         store.crash_invocation(inv1)
 
@@ -370,7 +316,7 @@ class TestQueryMethods:
     def test_query_versions_with_filter(self, kind: str) -> None:
         store = _store_factory(kind)
         inv0 = store.begin_invocation("worker")
-        store.complete_invocation(inv0, {"v": 0})
+        store.complete_invocation(inv0)
         inv1 = store.begin_invocation("worker")
         store.crash_invocation(inv1)
 
@@ -380,9 +326,9 @@ class TestQueryMethods:
 
     def test_query_versions_ordered_desc(self, kind: str) -> None:
         store = _store_factory(kind)
-        for i in range(3):
+        for _i in range(3):
             inv = store.begin_invocation("worker")
-            store.complete_invocation(inv, {"v": i})
+            store.complete_invocation(inv)
 
         versions = store.query_versions("worker")
         assert [v.version for v in versions] == [2, 1, 0]
@@ -397,7 +343,7 @@ class TestQueryMethods:
     def test_query_all(self, kind: str) -> None:
         store = _store_factory(kind)
         inv_a = store.begin_invocation("node_a")
-        store.complete_invocation(inv_a, {"a": 1})
+        store.complete_invocation(inv_a)
         inv_b = store.begin_invocation("node_b")
         store.crash_invocation(inv_b)
 
@@ -424,7 +370,7 @@ class TestSqliteNodeStateStoreSpecifics:
             conn1 = sqlite3.connect(db_path)
             store1 = SqliteNodeStateStore(conn1, _GRAPH_INSTANCE_ID)
             inv = store1.begin_invocation("worker")
-            store1.complete_invocation(inv, {"data": 42})
+            store1.complete_invocation(inv)
             conn1.close()
 
             conn2 = sqlite3.connect(db_path)
@@ -432,7 +378,6 @@ class TestSqliteNodeStateStoreSpecifics:
             latest = store2.load_latest("worker")
             assert latest is not None
             assert latest.status == InvocationStatus.COMPLETED
-            assert latest.state_json == {"data": 42}
             conn2.close()
 
     def test_check_constraint_no_pending_or_superseded(self) -> None:
@@ -441,15 +386,15 @@ class TestSqliteNodeStateStoreSpecifics:
         with pytest.raises(sqlite3.IntegrityError):
             store._conn.execute(
                 "INSERT INTO node_states (node_state_id, graph_instance_id, "
-                "node_id, version, status, state_json, created_at, updated_at) "
-                "VALUES (1, ?, 'n', 0, 'pending', '{}', 0, 0)",
+                "node_id, version, status, invocation_id, created_at, updated_at) "
+                "VALUES (1, ?, 'n', 0, 'pending', 0, 0, 0)",
                 (_GRAPH_INSTANCE_ID,),
             )
         with pytest.raises(sqlite3.IntegrityError):
             store._conn.execute(
                 "INSERT INTO node_states (node_state_id, graph_instance_id, "
-                "node_id, version, status, state_json, created_at, updated_at) "
-                "VALUES (2, ?, 'n', 0, 'superseded', '{}', 0, 0)",
+                "node_id, version, status, invocation_id, created_at, updated_at) "
+                "VALUES (2, ?, 'n', 0, 'superseded', 0, 0, 0)",
                 (_GRAPH_INSTANCE_ID,),
             )
         conn.close()
@@ -469,8 +414,6 @@ class TestSqliteNodeStateStoreSpecifics:
             "parent_version",
             "status",
             "invocation_id",
-            "state_json",
-            "suspended",
             "created_at",
             "updated_at",
         } <= columns

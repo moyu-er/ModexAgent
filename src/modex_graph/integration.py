@@ -30,6 +30,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .constants import DeliverConsumptionStatus
+
 
 class GraphPayload(BaseModel):
     """Static-graph payload shared by graph input and output nodes."""
@@ -52,6 +54,13 @@ class IntegratedPayload(BaseModel):
     - `source_node: str` — the upstream node that submitted this payload.
     - `content: Any` — the delivered content (JSON-serializable).
     - `metadata: dict[str, Any]` — optional metadata (default empty).
+    - `status: DeliverConsumptionStatus` — consumption status of the source
+      deliver row. Business nodes use this to filter CONSUMED_PENDING rows on
+      crash retry (ADR-0038 D5). STAGED rows are invisible to
+      ``query_consumable`` so never appear here.
+    - `consumed_by_invocation_id: int | None` — which invocation claimed
+      this row (``None`` for fresh PENDING input). Business nodes distinguish
+      "my own prior crashed attempt" from fresh input.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -61,6 +70,14 @@ class IntegratedPayload(BaseModel):
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Optional metadata.",
+    )
+    status: DeliverConsumptionStatus = Field(
+        default=DeliverConsumptionStatus.PENDING,
+        description="Consumption status of the source deliver row.",
+    )
+    consumed_by_invocation_id: int | None = Field(
+        default=None,
+        description="Which invocation claimed this row (None for fresh PENDING input).",
     )
 
 

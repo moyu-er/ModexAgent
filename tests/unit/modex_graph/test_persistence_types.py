@@ -34,7 +34,6 @@ def _node_record() -> NodeInvocationRecord:
         version=0,
         parent_version=None,
         status=InvocationStatus.RUNNING,
-        state_json={"input": "value"},
         created_at=1_000,
         updated_at=1_001,
     )
@@ -65,17 +64,16 @@ def test_distributed_persistence_enums_have_the_specified_values() -> None:
         InvocationStatus.CRASHED,
     ]
     assert list(DeliverConsumptionStatus) == [
+        DeliverConsumptionStatus.STAGED,
         DeliverConsumptionStatus.PENDING,
-        DeliverConsumptionStatus.CONSUMED,
         DeliverConsumptionStatus.CONSUMED_PENDING,
         DeliverConsumptionStatus.CONSUMED_COMPLETED,
     ]
 
 
-def test_node_invocation_record_is_frozen_and_defaults_to_not_suspended() -> None:
+def test_node_invocation_record_is_frozen() -> None:
     record = _node_record()
 
-    assert record.suspended is False
     with pytest.raises(ValidationError):
         record.node_id = "other"
     with pytest.raises(ValidationError):
@@ -115,6 +113,7 @@ def test_persistence_interfaces_are_abstract_with_the_specified_methods() -> Non
         "load",
         "load_by_status",
         "load_by_parent",
+        "update_attrs",
         "update_status",
         "delete",
         "begin_invocation",
@@ -150,7 +149,7 @@ def test_null_node_state_store_is_concrete_no_op() -> None:
     assert len(NullNodeStateStore.__abstractmethods__) == 0
     inv = store.begin_invocation("worker")
     assert inv.invocation_id > 0
-    store.complete_invocation(inv, {})
+    store.complete_invocation(inv)
     assert store.load_latest("worker") is None
     assert store.query_versions("worker") == []
 
@@ -159,7 +158,7 @@ def test_in_memory_node_state_store_is_concrete() -> None:
     store = InMemoryNodeStateStore(202)
     assert len(InMemoryNodeStateStore.__abstractmethods__) == 0
     inv = store.begin_invocation("worker")
-    store.complete_invocation(inv, {"value": 1})
+    store.complete_invocation(inv)
     assert store.load_latest("worker") is not None
     assert store.load_latest_completed("worker") is not None
     assert len(store.query_versions("worker")) == 1
@@ -177,6 +176,7 @@ def test_deliver_store_abc_has_active_consumption_api() -> None:
         "accumulate",
         "query_consumable",
         "mark_consumed",
+        "promote_staged_by_source",
         "promote_consumed",
     }
     assert set(DeliverStore.__abstractmethods__) == expected

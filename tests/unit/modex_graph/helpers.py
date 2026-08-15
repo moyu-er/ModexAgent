@@ -11,7 +11,6 @@ from modex_graph import (
     GraphInstance,
     GraphInstanceStatus,
     GraphMetadata,
-    GraphNode,
     GraphPersistenceCoordinator,
     GraphRuntime,
     GraphState,
@@ -46,11 +45,17 @@ class _AutoRegisterCoordinator(GraphPersistenceCoordinator):
         source_node_id: str,
         source_invocation_id: int,
         source_node_name: str | None = None,
-    ) -> int | None:
-        if target_node_id != GraphNode.END and self.get_deliver_store(target_node_id) is None:
+        stage: bool = False,
+    ) -> int:
+        if self.get_deliver_store(target_node_id) is None:
             self.register_node(target_node_id)
         return super().route_deliver(
-            target_node_id, content, source_node_id, source_invocation_id, source_node_name
+            target_node_id,
+            content,
+            source_node_id,
+            source_invocation_id,
+            source_node_name,
+            stage,
         )
 
 
@@ -181,7 +186,7 @@ def make_ctx(
         runtime=make_runtime(),
         coordinator=coord,
     )
-    ctx.set_dispatch_handler(lambda _src, _tgt, _update: None)
+    ctx.set_dispatch_handler(lambda _src, _tgt: None)
     return ctx
 
 

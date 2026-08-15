@@ -22,8 +22,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from helpers import CounterState, make_coordinator, make_runtime
-
 from modex_graph import (
     Graph,
     GraphContext,
@@ -36,6 +34,8 @@ from modex_graph import (
     ParallelScheduler,
     SchedulerKind,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
+from tests.unit.modex_graph.helpers import CounterState, make_coordinator, make_runtime
 
 
 def make_parallel_ctx(state: CounterState | None = None) -> GraphContext[CounterState]:
@@ -120,8 +120,8 @@ class TestNodeTriggerEnum:
         assert len(NodeTrigger) == 2
 
     def test_values(self) -> None:
-        assert NodeTrigger.ON_ALL_PREDS == "on_all_preds"
-        assert NodeTrigger.ON_RECEIVE == "on_receive"
+        assert NodeTrigger.ON_ALL_PREDS.value == "on_all_preds"
+        assert NodeTrigger.ON_RECEIVE.value == "on_receive"
 
     def test_members_are_str(self) -> None:
         for member in NodeTrigger:
@@ -189,7 +189,7 @@ class TestOnAllPreds:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -203,7 +203,7 @@ class TestOnAllPreds:
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
         ctx = make_parallel_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 1111
 
     async def test_d_not_fired_when_one_source_dispatches_to_end(self) -> None:
@@ -225,7 +225,7 @@ class TestOnAllPreds:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -259,7 +259,7 @@ class TestConditionalBranchSkip:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -302,7 +302,7 @@ class TestOnReceive:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -321,7 +321,7 @@ class TestOnReceive:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -361,7 +361,7 @@ class TestLongChain:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -377,7 +377,7 @@ class TestLongChain:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -427,7 +427,7 @@ class TestNodeTriggerOverridesDefault:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -467,7 +467,7 @@ class TestNodeTriggerOverridesDefault:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -510,7 +510,7 @@ class TestSelfLoop:
         )
 
         ctx = make_parallel_ctx(CounterState(count=0))
-        await GraphEngine(compiled).run_async(ctx)
+        await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert ctx.state.count == 5
 
@@ -539,7 +539,7 @@ class TestSelfLoop:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -574,7 +574,7 @@ class TestSelfLoop:
         )
 
         ctx = make_parallel_ctx(CounterState(count=0))
-        await GraphEngine(compiled).run_async(ctx)
+        await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert ctx.state.count == 4
 
@@ -714,7 +714,7 @@ class TestDiamondJoin:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -753,7 +753,7 @@ class TestOnAllPredsMultipleGroups:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -825,7 +825,7 @@ class TestOnReceiveSerialGate:
         a_iid = scheduler._create_instance("a")
         scheduler._instances[a_iid].status = NodeInstanceStatus.RUNNING
 
-        scheduler._handle_dispatch(a_iid, "b", {"delivered": "data"})
+        scheduler._handle_dispatch(a_iid, "b")
 
         assert "b" in scheduler._on_receive_queue
         assert len(scheduler._on_receive_queue["b"]) == 1
@@ -838,7 +838,7 @@ class TestOnReceiveSerialGate:
         a_iid = scheduler._create_instance("a")
         scheduler._instances[a_iid].status = NodeInstanceStatus.RUNNING
 
-        scheduler._handle_dispatch(a_iid, "b", {"delivered": "data"})
+        scheduler._handle_dispatch(a_iid, "b")
 
         assert "b" not in scheduler._on_receive_queue
         b_instances = [i for i in scheduler._instances.values() if i.node_name == "b"]
@@ -853,9 +853,9 @@ class TestOnReceiveSerialGate:
         a_iid = scheduler._create_instance("a")
         scheduler._instances[a_iid].status = NodeInstanceStatus.RUNNING
 
-        scheduler._handle_dispatch(a_iid, "b", {"delivered": "first"})
-        scheduler._handle_dispatch(a_iid, "b", {"delivered": "second"})
-        scheduler._handle_dispatch(a_iid, "b", {"delivered": "third"})
+        scheduler._handle_dispatch(a_iid, "b")
+        scheduler._handle_dispatch(a_iid, "b")
+        scheduler._handle_dispatch(a_iid, "b")
 
         assert len(scheduler._on_receive_queue["b"]) == 3
 
@@ -901,7 +901,7 @@ class TestOnReceiveSerialGate:
         a_iid = scheduler._create_instance("a")
         scheduler._instances[a_iid].status = NodeInstanceStatus.RUNNING
 
-        scheduler._handle_dispatch(a_iid, "b", {"delivered": "data"})
+        scheduler._handle_dispatch(a_iid, "b")
 
         assert "b" not in scheduler._on_receive_queue
         assert "b" in scheduler._pending_dispatches
@@ -932,7 +932,7 @@ class TestOnReceiveSerialExecutionIntegration:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)

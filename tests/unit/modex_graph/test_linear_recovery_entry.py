@@ -23,6 +23,7 @@ from modex_graph import (
     Node,
     SchedulerKind,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 
 class RecordingNode(Node[CounterState]):
@@ -71,12 +72,11 @@ class FailCompleteOnceNodeStateStore(InMemoryNodeStateStore):
     def complete_invocation(
         self,
         invocation: InvocationContext,
-        state: dict[str, Any],
     ) -> None:
         if invocation.node_id == self._node_id and not self._failed:
             self._failed = True
             raise RuntimeError(f"complete failed for {invocation.node_id}")
-        super().complete_invocation(invocation, state)
+        super().complete_invocation(invocation)
 
 
 class RingNode(Node[CounterState]):
@@ -171,10 +171,14 @@ async def test_recovery_starts_after_completed_linear_prefix() -> None:
 
     with pytest.raises(RuntimeError, match="failed after b"):
         await LinearScheduler(compiled).run_async(
-            make_linear_context(coordinator, runtime=FailAfterNodeRuntime("b"))
+            make_linear_context(coordinator, runtime=FailAfterNodeRuntime("b")),
+            mode=BootstrapMode.FRESH
         )
 
-    await LinearScheduler(compiled).run_async(make_linear_context(coordinator))
+    await LinearScheduler(compiled).run_async(
+        make_linear_context(coordinator),
+        mode=BootstrapMode.RECOVERY
+    )
 
     assert executions == ["a", "b", "c"]
 
@@ -196,11 +200,15 @@ async def test_pending_deliver_recovers_target_with_no_invocation() -> None:
 
     with pytest.raises(RuntimeError, match="failed after a"):
         await LinearScheduler(compiled).run_async(
-            make_linear_context(coordinator, runtime=FailAfterNodeRuntime("a"))
+            make_linear_context(coordinator, runtime=FailAfterNodeRuntime("a")),
+            mode=BootstrapMode.FRESH
         )
 
     assert coordinator.node_state_store.load_latest(compiled.nodes["b"].node_id) is None
-    await LinearScheduler(compiled).run_async(make_linear_context(coordinator))
+    await LinearScheduler(compiled).run_async(
+        make_linear_context(coordinator),
+        mode=BootstrapMode.RECOVERY
+    )
 
     assert executions == ["a", "b"]
     assert target.inputs == [["ready"]]
@@ -221,13 +229,16 @@ async def test_pending_deliver_is_witness_for_disconnected_target() -> None:
     )
     coordinator.route_deliver(compiled.nodes["b"].node_id, "external", "external", 0)
 
-    await LinearScheduler(compiled).run_async(make_linear_context(coordinator))
+    await LinearScheduler(compiled).run_async(
+        make_linear_context(coordinator),
+        mode=BootstrapMode.RECOVERY
+    )
 
     assert executions == ["b"]
     assert target.inputs == [["external"]]
 
 
-async def test_submit_persists_deliver_before_completion_failure() -> None:
+async def test_deliver_stays_staged_before_completion_failure() -> None:
     graph_instance_id = 3603
     executions: list[str] = []
     graph: Graph[CounterState] = Graph()
@@ -245,8 +256,18 @@ async def test_submit_persists_deliver_before_completion_failure() -> None:
     )
 
     with pytest.raises(RuntimeError, match="complete failed for node_"):
-        await LinearScheduler(compiled).run_async(make_linear_context(coordinator))
+        await LinearScheduler(compiled).run_async(
+            make_linear_context(coordinator),
+            mode=BootstrapMode.FRESH
+        )
 
+    pending = coordinator.collect_consumable_delivers(compiled.nodes["b"].node_id, 0)
+    assert pending == []
+
+    affected = coordinator.promote_staged_by_source(
+        graph_instance_id, compiled.nodes["a"].node_id
+    )
+    assert affected == {compiled.nodes["b"].node_id}
     pending = coordinator.collect_consumable_delivers(compiled.nodes["b"].node_id, 0)
     assert [record.content for record in pending] == ["persisted"]
     assert all(record.status == DeliverConsumptionStatus.PENDING for record in pending)
@@ -273,9 +294,15 @@ async def test_recovery_delivers_old_and_retried_payload_at_least_once() -> None
     )
 
     with pytest.raises(RuntimeError, match="complete failed for node_"):
-        await LinearScheduler(compiled).run_async(make_linear_context(coordinator))
+        await LinearScheduler(compiled).run_async(
+            make_linear_context(coordinator),
+            mode=BootstrapMode.FRESH
+        )
 
-    await LinearScheduler(compiled).run_async(make_linear_context(coordinator))
+    await LinearScheduler(compiled).run_async(
+        make_linear_context(coordinator),
+        mode=BootstrapMode.RECOVERY
+    )
 
     assert executions == ["a", "a", "b"]
     assert target.inputs == [["from-a", "from-a"]]
@@ -299,14 +326,17 @@ async def test_ring_recovery_uses_latest_non_terminal_version_head() -> None:
     )
 
     with pytest.raises(RuntimeError, match="b crashed"):
-        await LinearScheduler(compiled).run_async(make_linear_context(coordinator))
+        await LinearScheduler(compiled).run_async(
+            make_linear_context(coordinator),
+            mode=BootstrapMode.FRESH
+        )
 
     recovery_runtime = TrackingRuntime()
     recovered = make_linear_context(coordinator, runtime=recovery_runtime)
-    await LinearScheduler(compiled).run_async(recovered)
+    await LinearScheduler(compiled).run_async(recovered, mode=BootstrapMode.RECOVERY)
 
-    assert recovery_runtime.before_calls == ["b", "a", GraphNode.END]
-    assert executions == ["a", "b", "a", "b", "b", "a"]
+    assert recovery_runtime.before_calls == ["b", "a", "b", "a", "b", GraphNode.END]
+    assert executions == ["a", "b", "a", "b", "b", "a", "b", "a", "b"]
     assert recovered.state.count == 5
 
 
@@ -320,6 +350,9 @@ async def test_null_coordinator_still_starts_from_entry() -> None:
     graph.add_edge("b", GraphNode.END)
     compiled = graph.compile()
 
-    await LinearScheduler(compiled).run_async(make_linear_context(make_coordinator(("a", "b"))))
+    await LinearScheduler(compiled).run_async(
+        make_linear_context(make_coordinator(("a", "b"))),
+        mode=BootstrapMode.FRESH
+    )
 
     assert executions == ["a", "b"]

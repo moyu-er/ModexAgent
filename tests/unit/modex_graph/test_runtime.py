@@ -6,6 +6,7 @@ from helpers import CounterState, make_ctx
 
 from modex_graph import GraphContext, GraphRuntime, Node
 from modex_graph.integration import IntegratedInput
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 
 class TestGraphRuntimeNoOp:
@@ -149,5 +150,5 @@ class TestGraphRuntimeNoOp:
         g.add_edge("a", GraphNode.END)
         compiled = g.compile()
         ctx = make_ctx(CounterState())
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 5

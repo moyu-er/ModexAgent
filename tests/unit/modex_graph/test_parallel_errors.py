@@ -85,6 +85,7 @@ from modex_graph import (
     Node,
     SchedulerKind,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 # ── Shared test state ──────────────────────────────────────────────────────
 
@@ -271,7 +272,7 @@ class TestRuntimeErrorCancelsConcurrent:
 
         ctx = make_parallel_ctx(ErrorState())
         with pytest.raises(RuntimeError, match="boom"):
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         # The slow node started (gather scheduled it) but was cancelled
         # before completing — asyncio.gather cancels not-yet-completed
@@ -290,7 +291,7 @@ class TestRuntimeErrorCancelsConcurrent:
 
         ctx = make_parallel_ctx(ErrorState())
         with pytest.raises(ValueError, match="bad value"):
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert slow.started
         assert not slow.completed
@@ -306,7 +307,7 @@ class TestRuntimeErrorCancelsConcurrent:
 
         ctx = make_parallel_ctx(ErrorState(count=42))
         with pytest.raises(RuntimeError):
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert ctx.state.count == 42
 
@@ -328,7 +329,7 @@ class TestGraphInterruptCancelsConcurrent:
 
         ctx = make_parallel_ctx(ErrorState())
         with pytest.raises(GraphInterrupt) as exc_info:
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert exc_info.value.value == "approval_needed"
         assert slow.started, "slow node should have started before cancellation"
@@ -345,7 +346,7 @@ class TestGraphInterruptCancelsConcurrent:
 
         ctx = make_parallel_ctx(ErrorState())
         with pytest.raises(GraphBubbleUp):
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
 
 class TestSharedStateMutation:
@@ -357,7 +358,7 @@ class TestSharedStateMutation:
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
         ctx = make_parallel_ctx(ErrorState())
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 10
         assert result.name == "from_c"
 
@@ -377,7 +378,7 @@ class TestConcurrentHooksSafe:
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
         ctx, runtime = make_tracking_ctx(ErrorState())
-        await GraphEngine(compiled).run_async(ctx)
+        await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert len(runtime.before_calls) == 5
         assert len(runtime.after_calls) == 5
@@ -404,7 +405,7 @@ class TestConcurrentHooksSafe:
 
         ctx, runtime = make_tracking_ctx(ErrorState())
         # Should complete without raising.
-        await GraphEngine(compiled).run_async(ctx)
+        await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert len(runtime.before_calls) == 5
         assert len(runtime.after_calls) == 5
@@ -431,7 +432,7 @@ class TestConcurrentEmitSafe:
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
         ctx, runtime = make_tracking_ctx(ErrorState())
-        await GraphEngine(compiled).run_async(ctx)
+        await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         # Each node emitted 3 events → 6 total. The emit tasks are
         # fire-and-forget; they may not all have completed by the time
@@ -468,7 +469,7 @@ class TestConcurrentEmitSafe:
 
         ctx, runtime = make_tracking_ctx(ErrorState())
         # Should complete quickly — emit is non-blocking.
-        await GraphEngine(compiled).run_async(ctx)
+        await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         await asyncio.sleep(0)
 
         # 50 emit calls from b, none from c.
@@ -566,4 +567,4 @@ class TestReactGraphRuntimeAudit:
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         # Should complete without raising — no-op hooks are safe.
-        await GraphEngine(compiled).run_async(ctx)
+        await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)

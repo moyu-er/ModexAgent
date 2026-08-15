@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ..constants import (
     DeliverConsumptionStatus,
@@ -22,9 +22,9 @@ from ..constants import (
 )
 from ..exceptions import GraphRecursionError, RoutingError
 from ..execution_context import NodeExecution, reset_execution, set_execution
-from ._dispatch_utils import route_deliver_from_dispatch, validate_dispatch_target
+from ._dispatch_utils import record_end_reachability, validate_dispatch_target
 from .base import Scheduler
-from .bootstrap import bootstrap
+from .bootstrap import BootstrapMode, bootstrap
 from .instance import NodeInstance
 
 if TYPE_CHECKING:
@@ -52,10 +52,11 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
 
     **Other features:**
 
-    - `ctx.dispatch(target, state_update)` routing: validates target against
-      the source node's outgoing edges and creates/queues the target instance.
-      Dispatches happen inside `Node._submit` (called by `run()`).
-    - `GraphNode.END` dispatch: terminal signal, does NOT create an instance.
+    - `ctx.dispatch(target)` routing: validates target against the source
+      node's outgoing edges and creates/queues the target instance. Dispatches
+      happen after `Node.run()` promotes the source's staged outputs.
+    - `GraphNode.END` dispatch records terminal reachability, then follows
+      normal trigger admission and executes the registered END node.
     - `max_iterations`: global per-instance-execution counter; raises
       `GraphRecursionError` on overflow.
     - Trigger modes: `ON_ALL_PREDS` (gated by reachability BFS) and
@@ -83,10 +84,10 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         # to this target. A source is "activated" on first dispatch; it stays
         # activated for the rest of the run (used by ON_ALL_PREDS grouping).
         self._activated_sources: dict[str, set[str]] = {}
-        # Per-target pending dispatch queues: target -> source -> [payloads].
-        # ON_ALL_PREDS consumes one payload per source when firing a group.
+        # Per-target pending wakeups: target -> source -> [presence markers].
+        # ON_ALL_PREDS consumes all queued wakeups when firing a group.
         # ON_RECEIVE does not use this (instances are created immediately).
-        self._pending_dispatches: dict[str, dict[str, list[dict[str, Any] | None]]] = {}
+        self._pending_dispatches: dict[str, dict[str, list[bool]]] = {}
         # Per-node FIFO of queued ON_RECEIVE targets waiting for the node's
         # current in-flight instance to complete. In-memory only.
         self._on_receive_queue: dict[str, deque[str]] = {}
@@ -96,7 +97,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
 
     # ── Scheduler ABC implementation ───────────────────────────────────
 
-    async def run_async(self, ctx: GraphContext[S]) -> S:
+    async def run_async(self, ctx: GraphContext[S], *, mode: BootstrapMode) -> S:
         """Run the graph under the continuous multi-instance model.
 
         Wires `ctx.dispatch` to this scheduler's `_handle_dispatch`, creates
@@ -136,7 +137,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
 
         # Unified bootstrap: query store -> produce seed node names.
         # Restores ctx.state and auto-promotes CONSUMED_PENDING delivers.
-        seeds = bootstrap(ctx, self.graph)
+        seeds = bootstrap(ctx, self.graph, mode=mode)
 
         # Mark re-execute seeds (CRASHED/RUNNING) and entry_node as READY.
         # entry_node is always READY when present in seeds (bootstrap puts
@@ -304,19 +305,17 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         self,
         source_instance: str,
         target: str,
-        payload: dict[str, Any] | None,
     ) -> None:
-        """Process a `ctx.dispatch(target, state_update)` call.
+        """Process a `ctx.dispatch(target)` wakeup.
 
         Called synchronously from `GraphContext.dispatch` under
         `SchedulerKind.PARALLEL`. Takes effect immediately:
 
         1. Validate `target` is in the source node's outgoing edges
            (raises `RoutingError` if not).
-        2. If `target == GraphNode.END`: terminal signal, do NOT create an
-           instance.
-        3. Otherwise: resolve the target's trigger mode and apply
-           trigger-mode logic:
+        2. Record END reachability when `target == GraphNode.END`.
+        3. Resolve the target's trigger mode and apply trigger-mode logic,
+           including normal admission and execution for END:
 
            - `ON_RECEIVE` (ADR-0034 D4): if the target node has no
              in-flight instance, create a new instance and mark it READY
@@ -341,13 +340,8 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
 
         validate_dispatch_target(self.graph, source_node_name, target)
 
-        # Route deliver to target node's deliver_store via coordinator.
         assert self._ctx is not None
-        deliver_id = route_deliver_from_dispatch(
-            self._ctx, self.graph, source_node_name, target, payload
-        )
-        if deliver_id is not None:
-            self._scheduled_deliver_ids.add(deliver_id)
+        record_end_reachability(self._ctx, target)
 
         trigger = self._resolve_trigger(target)
 
@@ -364,9 +358,9 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
                 self._fire_on_receive(target)
         else:
             self._activated_sources.setdefault(target, set()).add(source_node_name)
-            self._pending_dispatches.setdefault(target, {}).setdefault(source_node_name, []).append(
-                payload
-            )
+            self._pending_dispatches.setdefault(target, {}).setdefault(
+                source_node_name, []
+            ).append(True)
 
     # ── Trigger mode helpers ────────────────────────────────────
 
@@ -462,7 +456,9 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         if self._ctx is not None:
             coordinator = self._ctx.coordinator
             for node_name, node in self.graph.nodes.items():
-                if node_name in (GraphNode.START, GraphNode.END):
+                # START has no deliver store. END is kept: PENDING delivers
+                # to END are a valid BFS source for fan-in closure.
+                if node_name == GraphNode.START:
                     continue
                 if node_name == target:
                     continue
@@ -477,8 +473,8 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
 
         visited: set[str] = set()
         queue: list[str] = []
-        for node in start_nodes:
-            for edge in self.graph.edges_from(node):
+        for node_name in start_nodes:
+            for edge in self.graph.edges_from(node_name):
                 if edge.target not in visited:
                     queue.append(edge.target)
 
@@ -509,8 +505,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         invariant as ON_RECEIVE: the same Node object never executes
         concurrently. Without this check, a second ON_ALL_PREDS group
         could fire while the first instance is still RUNNING, racing
-        `_pending_delivers` / `_submit_result` / `_graph_ref` /
-        `node_scratch[self.node_id]`. When the gate blocks, pending
+        `_graph_ref` and `node_scratch[self.node_id]`. When the gate blocks, pending
         dispatches stay queued and are retried via `_recheck_pending`
         after the in-flight instance completes.
         """
@@ -544,7 +539,9 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
 
         node_names_by_id = {node.node_id: name for name, node in self.graph.nodes.items()}
         for node_name, node in self.graph.nodes.items():
-            if node_name in (GraphNode.START, GraphNode.END):
+            # START has no deliver store. END must be admitted here so PENDING
+            # delivers re-fire after a promote-to-dispatch crash gap.
+            if node_name == GraphNode.START:
                 continue
             delivers = coordinator.collect_consumable_delivers(node.node_id, 0)
             pending = [
@@ -555,6 +552,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
             ]
             if not pending:
                 continue
+            record_end_reachability(self._ctx, node_name)
             trigger = self._resolve_trigger(node_name)
             if trigger == NodeTrigger.ON_RECEIVE:
                 if not self._is_node_running(node_name):
@@ -566,14 +564,10 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
                     source_node_name = node_names_by_id.get(
                         deliver.source_node_id, deliver.source_node_id
                     )
-                    payload: dict[str, Any] | None = {
-                        "delivered": deliver.content,
-                        "_source_node": deliver.source_node_id,
-                    }
                     self._activated_sources.setdefault(node_name, set()).add(source_node_name)
                     self._pending_dispatches.setdefault(node_name, {}).setdefault(
                         source_node_name, []
-                    ).append(payload)
+                    ).append(True)
                     self._scheduled_deliver_ids.add(deliver.deliver_id)
 
         for tgt in list(self._pending_dispatches.keys()):

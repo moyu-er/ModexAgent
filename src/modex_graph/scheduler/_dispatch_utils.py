@@ -1,12 +1,11 @@
-"""Shared dispatch-handler helpers — converged topology validation + deliver routing.
+"""Shared dispatch-handler helpers — topology validation + END reachability.
 
 Both ``LinearScheduler._handle_linear_dispatch`` and
 ``ParallelScheduler._handle_dispatch`` perform the same two steps after
 resolving the source node name:
 
 1. **Topology validation** — target must be a declared downstream edge.
-2. **Deliver routing** — extract content / source metadata from the
-   ``state_update`` dict and call ``coordinator.route_deliver``.
+2. **END reachability** — an END wakeup marks the graph as complete.
 
 These helpers eliminate the duplicated inline logic (rule 15: converge).
 The caller is responsible for resolving ``source_node_name`` from its own
@@ -16,7 +15,7 @@ via ``_instances[instance_id].node_name``).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ..constants import GraphNode
 from ..exceptions import RoutingError
@@ -47,35 +46,22 @@ def validate_dispatch_target[S: "GraphState"](
         )
 
 
-def route_deliver_from_dispatch[S: "GraphState"](
+def record_end_reachability[S: "GraphState"](
     ctx: GraphContext[S],
-    graph: CompiledGraph[S],
-    source_node_name: str,
     target: str,
-    state_update: dict[str, Any] | None,
-) -> int | None:
-    """Route a deliver to the target node's deliver_store via the coordinator.
+) -> None:
+    """Record END reachability for a pure-wakeup dispatch.
 
-    Extracts ``delivered`` content from ``state_update``, then calls
-    ``coordinator.route_deliver``. The ``source_node_id`` is always derived
-    from the corrected ``source_node_name`` (not from the payload's
-    ``_source_node`` field). Under ``ParallelScheduler``, the source
-    instance is resolved from the invocation-local ContextVar
-    (``execution_context``), which is task-local and never clobbered.
-    The ``_source_inv_id`` from the payload is retained as metadata
-    (best-effort; may be stale under concurrent execution).
-
-    Returns the ``deliver_id`` from ``route_deliver`` (or ``None``).
+    In the STAGED deliver model, content is persisted in the target's
+    deliver store during ``execute()`` via ``deliver()`` →
+    ``route_deliver(stage=True)``, then promoted STAGED→PENDING by
+    ``promote_staged_by_source`` after the source invocation completes.
+    The subsequent ``ctx.dispatch(target)`` is a pure
+    scheduling wakeup — no content to route here. This function only
+    records END reachability; the deliver is already in the store.
     """
     if target == GraphNode.END:
         ctx.reached_end = True
-    content = state_update.get("delivered") if state_update else None
-    source_node_id = graph.nodes[source_node_name].node_id
-    source_inv_id = state_update.get("_source_inv_id", 0) if state_update else 0
-    target_node_id = graph.nodes[target].node_id
-    return ctx.coordinator.route_deliver(
-        target_node_id, content, source_node_id, source_inv_id, source_node_name
-    )
 
 
-__all__ = ["validate_dispatch_target", "route_deliver_from_dispatch"]
+__all__ = ["record_end_reachability", "validate_dispatch_target"]

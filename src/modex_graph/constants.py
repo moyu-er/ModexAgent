@@ -146,8 +146,9 @@ class InvocationStatus(StrEnum):
 
     Records begin directly as ``RUNNING`` (no ``PENDING`` intermediate).
     Terminal states: ``COMPLETED``, ``CANCELED``, ``CRASHED`` — no
-    transition FROM terminal. Suspended invocations stay ``RUNNING``
-    with ``suspended=True`` (a distinct flag, not a separate status).
+    transition FROM terminal. Suspension no longer exists at node level:
+    ``GraphInterrupt`` calls ``cancel_invocation``. Instance-level ``PAUSED``
+    is a separate graph-instance store concept.
     """
 
     RUNNING = "running"
@@ -159,8 +160,8 @@ class InvocationStatus(StrEnum):
 class DeliverConsumptionStatus(StrEnum):
     """Consumption status for delivers across persistence implementations."""
 
+    STAGED = "staged"
     PENDING = "pending"
-    CONSUMED = "consumed"
     CONSUMED_PENDING = "consumed_pending"
     CONSUMED_COMPLETED = "consumed_completed"
 

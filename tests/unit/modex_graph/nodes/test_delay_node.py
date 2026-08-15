@@ -16,6 +16,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 from helpers import make_ctx  # type: ignore[import-not-found]
@@ -32,6 +33,13 @@ from modex_graph import (
     NodeTrigger,
 )
 from modex_graph.nodes import DelayNodeConfig
+
+
+def _delivered(ctx: Any, target: str) -> list[Any]:
+    store = ctx.coordinator.get_deliver_store(target)
+    if store is None:
+        return []
+    return [record.content for record in store.query_consumable(0, target)]
 
 # ── DelayNode construction ────────────────────────────────────────────────
 
@@ -65,15 +73,14 @@ class TestDelayNodeExecute:
         node.name = "delay_node"
         ctx = make_ctx()
         await node.run(ctx)
-        assert node._submit_result == {"downstream": [{"delayed_seconds": 0.0}]}
+        assert _delivered(ctx, "downstream") == [{"delayed_seconds": 0.0}]
 
     async def test_positive_delay_delivers_after_sleep(self) -> None:
         node = DelayNode(0.01, next_node="tick")
         node.name = "delay_node"
         ctx = make_ctx()
         await node.run(ctx)
-        assert "tick" in node._submit_result
-        assert node._submit_result["tick"] == [{"delayed_seconds": 0.01}]
+        assert _delivered(ctx, "tick") == [{"delayed_seconds": 0.01}]
 
     async def test_execute_returns_none(self) -> None:
         node = DelayNode(0.0, next_node="target")
@@ -87,7 +94,7 @@ class TestDelayNodeExecute:
         node.name = "delay_node"
         ctx = make_ctx()
         await node.run(ctx)
-        assert GraphNode.END in node._submit_result
+        assert _delivered(ctx, GraphNode.END) == [{"delayed_seconds": 0.0}]
 
     async def test_delay_actually_sleeps(self) -> None:
         node = DelayNode(0.05, next_node="tick")
@@ -234,4 +241,4 @@ class TestDelayNodeRegistryIntegration:
         )
         ctx = make_ctx()
         await node.run(ctx)
-        assert node._submit_result == {"out": [{"delayed_seconds": 0.0}]}
+        assert _delivered(ctx, "out") == [{"delayed_seconds": 0.0}]

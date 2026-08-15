@@ -18,10 +18,12 @@ _COL_PARENT_INSTANCE_ID = "parent_instance_id"
 _COL_PARENT_NODE = "parent_node"
 _COL_STATUS = "status"
 _COL_NODE_ID_MAP_JSON = "node_id_map_json"
+_COL_ATTRS_JSON = "attrs_json"
 _COL_CREATED_AT = "created_at"
 _COL_UPDATED_AT = "updated_at"
 
 _NODE_ID_MAP_ADAPTER = TypeAdapter(dict[str, str])
+_ATTRS_ADAPTER = TypeAdapter(dict[str, int | str | None])
 
 _ALLOWED_STATUSES = frozenset(
     {"pending", "running", "paused", "stopped", "crashed", "completed", "failed"}
@@ -30,7 +32,8 @@ _ALLOWED_STATUSES = frozenset(
 _SELECT_COLS = (
     f"{_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, {_COL_VERSION}, "
     f"{_COL_PARENT_INSTANCE_ID}, {_COL_PARENT_NODE}, {_COL_STATUS}, "
-    f"{_COL_NODE_ID_MAP_JSON}, {_COL_CREATED_AT}, {_COL_UPDATED_AT}"
+    f"{_COL_NODE_ID_MAP_JSON}, {_COL_ATTRS_JSON}, "
+    f"{_COL_CREATED_AT}, {_COL_UPDATED_AT}"
 )
 
 
@@ -65,6 +68,17 @@ class GraphInstanceStore(ABC):
         ...
 
     @abstractmethod
+    def update_attrs(
+        self, graph_instance_id: int, attrs: dict[str, int | str | None]
+    ) -> None:
+        """Merge supplied keys into the latest version's attrs.
+
+        Prior versions are frozen as an audit trail. ``begin_invocation``
+        copies the latest attrs into the new version before further updates.
+        """
+        ...
+
+    @abstractmethod
     def delete(self, graph_instance_id: int) -> None:
         ...
 
@@ -90,6 +104,8 @@ class GraphInstanceStore(ABC):
 
 
 class NullGraphInstanceStore(GraphInstanceStore):
+    """No-op graph instance store with no persistence or recovery support."""
+
     def save(self, metadata: GraphMetadata) -> None:
         pass
 
@@ -103,6 +119,12 @@ class NullGraphInstanceStore(GraphInstanceStore):
         return []
 
     def update_status(self, graph_instance_id: int, status: GraphInstanceStatus) -> None:
+        pass
+
+    def update_attrs(
+        self, graph_instance_id: int, attrs: dict[str, int | str | None]
+    ) -> None:
+        """Ignore attrs because this store persists no instance metadata."""
         pass
 
     def delete(self, graph_instance_id: int) -> None:
@@ -155,6 +177,16 @@ class InMemoryGraphInstanceStore(GraphInstanceStore):
             return
         versions[-1] = versions[-1].model_copy(update={"status": status})
 
+    def update_attrs(
+        self, graph_instance_id: int, attrs: dict[str, int | str | None]
+    ) -> None:
+        versions = self._instances.get(graph_instance_id)
+        if not versions:
+            return
+        merged_attrs = dict(versions[-1].attrs)
+        merged_attrs.update(attrs)
+        versions[-1] = versions[-1].model_copy(update={"attrs": merged_attrs})
+
     def delete(self, graph_instance_id: int) -> None:
         self._instances.pop(graph_instance_id, None)
 
@@ -175,6 +207,7 @@ class InMemoryGraphInstanceStore(GraphInstanceStore):
                 parent_node=latest.parent_node,
                 status=GraphInstanceStatus.RUNNING,
                 node_id_map=latest.node_id_map,
+                attrs=dict(latest.attrs),
                 created_at=now_ms(),
                 updated_at=now_ms(),
             )
@@ -219,6 +252,7 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
         }
         if existing and (_COL_VERSION not in existing or _COL_NODE_ID_MAP_JSON not in existing):
             conn.execute(f"DROP TABLE IF EXISTS {_INSTANCE_TABLE}")
+            existing = set()
         statuses = ", ".join(f"'{s}'" for s in sorted(_ALLOWED_STATUSES))
         conn.execute(
             f"CREATE TABLE IF NOT EXISTS {_INSTANCE_TABLE} ("
@@ -231,11 +265,16 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
             f"CHECK ({_COL_STATUS} IN ({statuses})), "
             f"{_COL_NODE_ID_MAP_JSON} TEXT NOT NULL DEFAULT '{{}}' "
             f"CHECK (json_valid({_COL_NODE_ID_MAP_JSON})), "
+            f"{_COL_ATTRS_JSON} TEXT, "
             f"{_COL_CREATED_AT} INTEGER NOT NULL, "
             f"{_COL_UPDATED_AT} INTEGER NOT NULL, "
             f"PRIMARY KEY ({_COL_GRAPH_INSTANCE_ID}, {_COL_VERSION})"
             f")"
         )
+        if existing and _COL_ATTRS_JSON not in existing:
+            conn.execute(
+                f"ALTER TABLE {_INSTANCE_TABLE} ADD COLUMN {_COL_ATTRS_JSON} TEXT"
+            )
         conn.execute(
             f"CREATE INDEX IF NOT EXISTS idx_{_INSTANCE_TABLE}_spec "
             f"ON {_INSTANCE_TABLE} ({_COL_SPEC_ID})"
@@ -258,9 +297,9 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
             f"INSERT INTO {_INSTANCE_TABLE} "
             f"({_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, {_COL_VERSION}, "
             f"{_COL_PARENT_INSTANCE_ID}, {_COL_PARENT_NODE}, "
-            f"{_COL_STATUS}, {_COL_NODE_ID_MAP_JSON}, "
+            f"{_COL_STATUS}, {_COL_NODE_ID_MAP_JSON}, {_COL_ATTRS_JSON}, "
             f"{_COL_CREATED_AT}, {_COL_UPDATED_AT}) "
-            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 metadata.graph_instance_id,
                 metadata.spec_id,
@@ -269,6 +308,7 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
                 metadata.parent_node,
                 metadata.status.value,
                 _NODE_ID_MAP_ADAPTER.dump_json(metadata.node_id_map).decode("utf-8"),
+                _ATTRS_ADAPTER.dump_json(metadata.attrs).decode("utf-8"),
                 ts,
                 ts,
             ),
@@ -322,6 +362,37 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
         )
         self._conn.commit()
 
+    def update_attrs(
+        self, graph_instance_id: int, attrs: dict[str, int | str | None]
+    ) -> None:
+        row = self._conn.execute(
+            f"SELECT {_COL_ATTRS_JSON} FROM {_INSTANCE_TABLE} "
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? "
+            f"AND {_COL_VERSION} = ("
+            f"  SELECT MAX({_COL_VERSION}) FROM {_INSTANCE_TABLE}"
+            f"  WHERE {_COL_GRAPH_INSTANCE_ID} = ?)",
+            (graph_instance_id, graph_instance_id),
+        ).fetchone()
+        if row is None:
+            return
+        merged_attrs = (
+            _ATTRS_ADAPTER.validate_json(row[0]) if row[0] is not None else {}
+        )
+        merged_attrs.update(attrs)
+        self._conn.execute(
+            f"UPDATE {_INSTANCE_TABLE} SET {_COL_ATTRS_JSON} = ? "
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? "
+            f"AND {_COL_VERSION} = ("
+            f"  SELECT MAX({_COL_VERSION}) FROM {_INSTANCE_TABLE}"
+            f"  WHERE {_COL_GRAPH_INSTANCE_ID} = ?)",
+            (
+                _ATTRS_ADAPTER.dump_json(merged_attrs).decode("utf-8"),
+                graph_instance_id,
+                graph_instance_id,
+            ),
+        )
+        self._conn.commit()
+
     def delete(self, graph_instance_id: int) -> None:
         self._conn.execute(
             f"DELETE FROM {_INSTANCE_TABLE} WHERE {_COL_GRAPH_INSTANCE_ID} = ?",
@@ -345,9 +416,9 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
             f"INSERT INTO {_INSTANCE_TABLE} "
             f"({_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, {_COL_VERSION}, "
             f"{_COL_PARENT_INSTANCE_ID}, {_COL_PARENT_NODE}, "
-            f"{_COL_STATUS}, {_COL_NODE_ID_MAP_JSON}, "
+            f"{_COL_STATUS}, {_COL_NODE_ID_MAP_JSON}, {_COL_ATTRS_JSON}, "
             f"{_COL_CREATED_AT}, {_COL_UPDATED_AT}) "
-            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 graph_instance_id,
                 latest.spec_id,
@@ -356,6 +427,7 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
                 latest.parent_node,
                 GraphInstanceStatus.RUNNING.value,
                 _NODE_ID_MAP_ADAPTER.dump_json(latest.node_id_map).decode("utf-8"),
+                _ATTRS_ADAPTER.dump_json(latest.attrs).decode("utf-8"),
                 ts,
                 ts,
             ),
@@ -400,7 +472,7 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
         (
             graph_instance_id, spec_id, version,
             parent_instance_id, parent_node, status,
-            node_id_map_json, created_at, updated_at,
+            node_id_map_json, attrs_json, created_at, updated_at,
         ) = row
         return GraphMetadata(
             graph_instance_id=graph_instance_id,
@@ -410,6 +482,11 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
             parent_node=parent_node,
             status=GraphInstanceStatus(status),
             node_id_map=_NODE_ID_MAP_ADAPTER.validate_json(node_id_map_json),
+            attrs=(
+                _ATTRS_ADAPTER.validate_json(attrs_json)
+                if attrs_json is not None
+                else {}
+            ),
             created_at=created_at,
             updated_at=updated_at,
         )

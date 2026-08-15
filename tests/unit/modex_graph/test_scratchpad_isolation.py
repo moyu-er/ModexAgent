@@ -40,6 +40,7 @@ from modex_graph import (
     NodeTrigger,
     SchedulerKind,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 # -- State -----------------------------------------------------------------
 
@@ -113,7 +114,7 @@ class TestScratchpadIsolation:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert result.node_scratch["A"] == "value_a"
         assert result.node_scratch["B"] == "value_b"
@@ -129,7 +130,7 @@ class TestScratchpadIsolation:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         checkpoint = result.checkpoint()
         assert "node_scratch" in checkpoint
@@ -201,7 +202,7 @@ class TestFanOutScratch:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert result.node_scratch["worker"] == "z"
 
@@ -248,7 +249,7 @@ class TestNoCrossNodeWrite:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         # A's own key -- written correctly
         assert result.node_scratch["A"] == "own_value"

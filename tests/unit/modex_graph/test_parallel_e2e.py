@@ -44,6 +44,7 @@ from modex_graph import (
     NodeTrigger,
     SchedulerKind,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 # ── Shared state types ────────────────────────────────────────────────────
 
@@ -145,7 +146,7 @@ class TestParallelMapReduce:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert result.total == 30
         assert sorted(result.results) == [1, 4, 9, 16]
@@ -161,7 +162,7 @@ class TestParallelMapReduce:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert result.total == 49
         assert result.results == [49]
@@ -177,7 +178,7 @@ class TestParallelMapReduce:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert result.total == 0
         assert result.results == []
@@ -276,7 +277,7 @@ class TestConditionalBranchJoin:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert result.high_result == 100
         assert result.low_result == 0
@@ -293,7 +294,7 @@ class TestConditionalBranchJoin:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert result.high_result == 0
         assert result.low_result == 1
@@ -310,7 +311,7 @@ class TestConditionalBranchJoin:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert result.high_result == 100
         assert result.low_result == 1
@@ -389,7 +390,7 @@ class TestOnReceiveEventAggregation:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert result.count == 3
         assert len(result.processed) == 3
@@ -415,7 +416,7 @@ class TestOnReceiveEventAggregation:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert result.count == 1
         assert result.processed == ["processed:only"]
@@ -516,7 +517,7 @@ class TestMixedTriggerModes:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert result.value == 11
         assert result.stage == "joined"
@@ -603,7 +604,7 @@ class TestAsyncParallelPipeline:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert result.final == 27
         assert sorted(result.results) == [11, 16]
@@ -631,7 +632,7 @@ class TestAsyncParallelPipeline:
         import time
 
         start = time.monotonic()
-        await GraphEngine(compiled).run_async(ctx)
+        await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         elapsed = time.monotonic() - start
 
         # Two workers each sleep 10ms + collect sleeps 10ms.

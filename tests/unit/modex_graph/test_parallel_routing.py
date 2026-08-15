@@ -24,6 +24,7 @@ from modex_graph import (
     ParallelScheduler,
     SchedulerKind,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 
 def make_parallel_ctx(state: CounterState | None = None) -> GraphContext[CounterState]:
@@ -136,7 +137,7 @@ class TestDeliverFanOut:
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
         ctx = make_parallel_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 111
 
     async def test_deliver_fan_out_creates_two_instances(self) -> None:
@@ -153,7 +154,7 @@ class TestDeliverFanOut:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -187,7 +188,7 @@ class TestFanOutFanIn:
         )
 
         ctx = make_parallel_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 2111
 
     async def test_fanout_fanin_d_executes_twice(self) -> None:
@@ -209,7 +210,7 @@ class TestFanOutFanIn:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -232,6 +233,6 @@ class TestFanOutFanIn:
         g.add_edge("e", GraphNode.END)
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
-        result = await GraphEngine(compiled).run_async(make_parallel_ctx(CounterState()))
+        result = await GraphEngine(compiled).run_async(make_parallel_ctx(CounterState()), mode=BootstrapMode.FRESH)
 
         assert result.count == 11111

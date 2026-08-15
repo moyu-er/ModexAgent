@@ -34,8 +34,8 @@ class NodeExecution:
       ``ctx.dispatch()`` for source identification. Replaces the old
       shared ``ctx._current_instance``.
     - ``invocation``: the ``InvocationContext`` returned by
-       ``begin_invocation``, used by ``Node._submit()`` and
-       ``ctx.scratch``.
+       ``begin_invocation``, used by ``Node._deliver()`` for execute-time
+       deliver staging and by ``ctx.scratch``.
     """
 
     __slots__ = ("instance_id", "invocation")

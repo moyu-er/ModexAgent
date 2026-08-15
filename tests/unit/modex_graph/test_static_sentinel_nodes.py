@@ -19,6 +19,7 @@ from modex_graph import (
     SchedulerKind,
     create_null_coordinator,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 
 class _TrackingRuntime(GraphRuntime):
@@ -88,7 +89,8 @@ class TestExecutableSentinels:
                 runtime=runtime,
                 coordinator=coordinator,
                 user_input=user_input,
-            )
+            ),
+            mode=BootstrapMode.FRESH
         )
 
         assert runtime.executed == [GraphNode.START, GraphNode.END]

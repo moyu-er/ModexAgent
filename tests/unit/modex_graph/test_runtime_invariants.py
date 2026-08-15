@@ -32,6 +32,7 @@ from modex_graph import (
     Node,
     SchedulerKind,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 from tests.unit.modex_graph.helpers import make_coordinator, register_graph_nodes
 
 
@@ -108,7 +109,7 @@ class TestUnrelatedStraggler:
         compiled = g.compile(max_iterations=20, scheduler=SchedulerKind.PARALLEL)
         ctx = make_parallel_ctx(CounterState(), compiled)
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         done_a = ctx.state.messages.index("done:a")
         done_b = next(i for i, m in enumerate(ctx.state.messages) if m.startswith("exec:b:"))
@@ -142,7 +143,7 @@ class TestSameSourceMultipleDelivers:
         compiled = g.compile(max_iterations=10, scheduler=SchedulerKind.PARALLEL)
         ctx = make_parallel_ctx(CounterState(), compiled)
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert "collected:3" in ctx.state.messages
 
@@ -184,7 +185,7 @@ class TestParallelMapReduceE2E:
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert len(ctx.state.result) == 1
         assert int(ctx.state.result[0].content) == 14
@@ -235,7 +236,7 @@ class TestInvocationIdentityConcurrency:
         )
 
         engine = GraphEngine(compiled)
-        run_task = asyncio.create_task(engine.run_async(ctx))
+        run_task = asyncio.create_task(engine.run_async(ctx, mode=BootstrapMode.FRESH))
         await asyncio.sleep(0.05)
         event.set()
         await run_task
@@ -309,7 +310,7 @@ class TestOnAllPredsSerialGateOverlap:
         )
 
         engine = GraphEngine(compiled)
-        run_task = asyncio.create_task(engine.run_async(ctx))
+        run_task = asyncio.create_task(engine.run_async(ctx, mode=BootstrapMode.FRESH))
         await asyncio.wait_for(first_started.wait(), timeout=2.0)
         messages_during_first = list(ctx.state.messages)
         first_release.set()
@@ -357,7 +358,7 @@ class TestScratchOwnership:
         compiled = g.compile(max_iterations=10, scheduler=SchedulerKind.PARALLEL)
         ctx = make_parallel_ctx(CounterState(), compiled)
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         a_id = compiled.nodes["a"].node_id
         b_id = compiled.nodes["b"].node_id

@@ -23,6 +23,7 @@ from modex_graph import (
     ParallelScheduler,
     SchedulerKind,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 
 def _persistent_coordinator(*node_names: str) -> GraphPersistenceCoordinator:
@@ -154,7 +155,7 @@ class TestLinearSchedulerControl:
         )
 
         with pytest.raises(GraphDrained, match="test"):
-            await LinearScheduler(compiled).run_async(ctx)
+            await LinearScheduler(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert ctx.state.count == 1
         a_record = coordinator.node_state_store.load_latest(node_ids["a"])
@@ -189,7 +190,7 @@ class TestParallelSchedulerControl:
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         scheduler = ParallelScheduler(compiled)
-        run_task = asyncio.create_task(scheduler.run_async(ctx))
+        run_task = asyncio.create_task(scheduler.run_async(ctx, mode=BootstrapMode.FRESH))
         await asyncio.wait_for(started.wait(), timeout=1)
 
         queued_id = scheduler._create_instance("queued")
@@ -232,7 +233,7 @@ class TestParallelSchedulerControl:
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         scheduler = ParallelScheduler(compiled)
-        run_task = asyncio.create_task(scheduler.run_async(ctx))
+        run_task = asyncio.create_task(scheduler.run_async(ctx, mode=BootstrapMode.FRESH))
         await asyncio.wait_for(started.wait(), timeout=1)
 
         coordinator.route_deliver(node_ids["target"], "external payload", "external", 1)

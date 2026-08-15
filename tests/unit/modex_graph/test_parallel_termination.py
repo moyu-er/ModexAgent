@@ -34,6 +34,7 @@ from modex_graph import (
     RoutingError,
     SchedulerKind,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 
 def make_parallel_ctx(state: CounterState | None = None) -> GraphContext[CounterState]:
@@ -107,7 +108,7 @@ class TestEndSentinel:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -131,7 +132,7 @@ class TestEndSentinel:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -167,7 +168,7 @@ class TestEndOnAllPreds:
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
         ctx = make_parallel_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert result is ctx.state
         assert ctx.state.count == 111
@@ -187,7 +188,7 @@ class TestEndOnAllPreds:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -232,7 +233,7 @@ class TestEndOnAllPreds:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -263,7 +264,7 @@ class TestTerminationConditions:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -296,7 +297,7 @@ class TestTerminationConditions:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -335,7 +336,7 @@ class TestTerminationConditions:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)

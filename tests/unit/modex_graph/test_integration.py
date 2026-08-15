@@ -22,6 +22,7 @@ from pydantic import ValidationError
 
 from modex_graph import (
     DefaultInputIntegrator,
+    DeliverConsumptionStatus,
     InputIntegrator,
     IntegratedInput,
     IntegratedPayload,
@@ -76,6 +77,64 @@ class TestIntegratedPayload:
     def test_content_required(self) -> None:
         with pytest.raises(ValidationError):
             IntegratedPayload.model_validate({"source_node": "a"})
+
+    def test_status_defaults_to_pending(self) -> None:
+        p = IntegratedPayload(source_node="a", content="data")
+        assert p.status is DeliverConsumptionStatus.PENDING
+
+    def test_consumed_by_invocation_id_defaults_to_none(self) -> None:
+        p = IntegratedPayload(source_node="a", content="data")
+        assert p.consumed_by_invocation_id is None
+
+    def test_status_can_be_consumed_pending(self) -> None:
+        p = IntegratedPayload(
+            source_node="a",
+            content="data",
+            status=DeliverConsumptionStatus.CONSUMED_PENDING,
+        )
+        assert p.status is DeliverConsumptionStatus.CONSUMED_PENDING
+
+    def test_consumed_by_invocation_id_can_be_set(self) -> None:
+        p = IntegratedPayload(
+            source_node="a",
+            content="data",
+            status=DeliverConsumptionStatus.CONSUMED_PENDING,
+            consumed_by_invocation_id=42,
+        )
+        assert p.consumed_by_invocation_id == 42
+
+    def test_status_frozen_cannot_set(self) -> None:
+        p = IntegratedPayload(source_node="a", content="data")
+        with pytest.raises(ValidationError):
+            p.status = DeliverConsumptionStatus.CONSUMED_PENDING  # type: ignore[misc]
+
+    def test_round_trip_preserves_new_fields(self) -> None:
+        p = IntegratedPayload(
+            source_node="a",
+            content={"k": "v"},
+            status=DeliverConsumptionStatus.CONSUMED_PENDING,
+            consumed_by_invocation_id=7,
+        )
+        dumped = p.model_dump()
+        assert dumped["status"] == DeliverConsumptionStatus.CONSUMED_PENDING
+        assert dumped["consumed_by_invocation_id"] == 7
+        restored = IntegratedPayload.model_validate(dumped)
+        assert restored.status is DeliverConsumptionStatus.CONSUMED_PENDING
+        assert restored.consumed_by_invocation_id == 7
+        assert restored == p
+
+    def test_round_trip_json_preserves_new_fields(self) -> None:
+        p = IntegratedPayload(
+            source_node="a",
+            content="data",
+            status=DeliverConsumptionStatus.CONSUMED_PENDING,
+            consumed_by_invocation_id=99,
+        )
+        json_str = p.model_dump_json()
+        restored = IntegratedPayload.model_validate_json(json_str)
+        assert restored.status is DeliverConsumptionStatus.CONSUMED_PENDING
+        assert restored.consumed_by_invocation_id == 99
+        assert restored == p
 
 
 # ── IntegratedInput ───────────────────────────────────────────────────────

@@ -404,9 +404,9 @@ def test_node_states_accepts_valid_insert() -> None:
         _seed_spec_and_instance(conn)
         conn.execute(
             "INSERT INTO node_states "
-            "(node_state_id, graph_instance_id, node_id, version, state_json) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (NODE_STATE_ID, INSTANCE_ID, "node-tool-call", 0, '{"step": 1}'),
+            "(node_state_id, graph_instance_id, node_id, version) "
+            "VALUES (?, ?, ?, ?)",
+            (NODE_STATE_ID, INSTANCE_ID, "node-tool-call", 0),
         )
         conn.commit()
         row = conn.execute(
@@ -424,9 +424,9 @@ def test_node_states_default_version_is_zero() -> None:
         _seed_spec_and_instance(conn)
         conn.execute(
             "INSERT INTO node_states "
-            "(node_state_id, graph_instance_id, node_id, state_json) "
-            "VALUES (?, ?, ?, ?)",
-            (NODE_STATE_ID, INSTANCE_ID, "node-tool-call", "{}"),
+            "(node_state_id, graph_instance_id, node_id) "
+            "VALUES (?, ?, ?)",
+            (NODE_STATE_ID, INSTANCE_ID, "node-tool-call"),
         )
         conn.commit()
         version = conn.execute(
@@ -438,19 +438,8 @@ def test_node_states_default_version_is_zero() -> None:
         conn.close()
 
 
-def test_node_states_rejects_invalid_json() -> None:
-    conn = _connect()
-    try:
-        _seed_spec_and_instance(conn)
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "INSERT INTO node_states "
-                "(node_state_id, graph_instance_id, node_id, state_json) "
-                "VALUES (?, ?, ?, ?)",
-                (NODE_STATE_ID, INSTANCE_ID, "node-tool-call", "not-json"),
-            )
-    finally:
-        conn.close()
+# state_json json-valid rejection retired with the column (phase 07 —
+# node_states carries lifecycle + version facts only).
 
 
 def test_node_states_unique_instance_node_version() -> None:
@@ -459,17 +448,17 @@ def test_node_states_unique_instance_node_version() -> None:
         _seed_spec_and_instance(conn)
         conn.execute(
             "INSERT INTO node_states "
-            "(node_state_id, graph_instance_id, node_id, version, state_json) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (NODE_STATE_ID, INSTANCE_ID, "node-tool-call", 0, "{}"),
+            "(node_state_id, graph_instance_id, node_id, version) "
+            "VALUES (?, ?, ?, ?)",
+            (NODE_STATE_ID, INSTANCE_ID, "node-tool-call", 0),
         )
         conn.commit()
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 "INSERT INTO node_states "
-                "(node_state_id, graph_instance_id, node_id, version, state_json) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (NODE_STATE_ID + 1, INSTANCE_ID, "node-tool-call", 0, "{}"),
+                "(node_state_id, graph_instance_id, node_id, version) "
+                "VALUES (?, ?, ?, ?)",
+                (NODE_STATE_ID + 1, INSTANCE_ID, "node-tool-call", 0),
             )
     finally:
         conn.close()
@@ -482,9 +471,9 @@ def test_node_states_mvcc_keeps_all_versions() -> None:
         for v in range(3):
             conn.execute(
                 "INSERT INTO node_states "
-                "(node_state_id, graph_instance_id, node_id, version, state_json) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (NODE_STATE_ID + v, INSTANCE_ID, "node-tool-call", v, f'{{"v": {v}}}'),
+                "(node_state_id, graph_instance_id, node_id, version) "
+                "VALUES (?, ?, ?, ?)",
+                (NODE_STATE_ID + v, INSTANCE_ID, "node-tool-call", v),
             )
         conn.commit()
         latest = conn.execute(
@@ -543,17 +532,25 @@ def test_graph_stores_write_id_only_rows_to_workspace_schema() -> None:
             content={"payload": "x"},
         )
 
+        # 001_initial.sql creates the id-only shape directly (converged with
+        # the store DDL) — no legacy name columns, no store-owned rebuild.
+        node_cols = set(_table_columns(conn, "node_states"))
+        deliver_cols = set(_table_columns(conn, "deliver_states"))
+        assert "node_name" not in node_cols
+        assert "node_name" not in deliver_cols
+        assert "next_node" not in deliver_cols
+
         node_row = conn.execute(
-            "SELECT node_name, node_id FROM node_states WHERE graph_instance_id = ?",
+            "SELECT node_id FROM node_states WHERE graph_instance_id = ?",
             (INSTANCE_ID,),
         ).fetchone()
         deliver_row = conn.execute(
-            "SELECT node_name, node_id, next_node, next_node_id "
-            "FROM deliver_states WHERE graph_instance_id = ?",
+            "SELECT node_id, next_node_id FROM deliver_states "
+            "WHERE graph_instance_id = ?",
             (INSTANCE_ID,),
         ).fetchone()
-        assert node_row == (None, "node-worker")
-        assert deliver_row == (None, "node-worker", None, "node-worker")
+        assert node_row == ("node-worker",)
+        assert deliver_row == ("node-worker", "node-worker")
     finally:
         conn.close()
 
@@ -631,7 +628,7 @@ def test_deliver_states_rejects_invalid_json() -> None:
         conn.close()
 
 
-def test_deliver_states_lifecycle_pending_to_consumed() -> None:
+def test_deliver_states_lifecycle_pending_to_consumed_pending() -> None:
     conn = _connect()
     try:
         _seed_spec_and_instance(conn)
@@ -644,37 +641,28 @@ def test_deliver_states_lifecycle_pending_to_consumed() -> None:
         conn.commit()
         conn.execute(
             "UPDATE deliver_states SET status = ? WHERE deliver_id = ?",
-            ("consumed", DELIVER_ID),
+            ("consumed_pending", DELIVER_ID),
         )
         conn.commit()
         status = conn.execute(
             "SELECT status FROM deliver_states WHERE deliver_id = ?", (DELIVER_ID,)
         ).fetchone()[0]
-        assert status == "consumed"
+        assert status == "consumed_pending"
     finally:
         conn.close()
 
 
-def test_deliver_states_updated_at_trigger_fires_when_omitted() -> None:
+def test_deliver_states_has_no_trigger() -> None:
+    # The updated_at auto-trigger was retired with the store-owned rebuild:
+    # SqliteDeliverStore sets updated_at explicitly on every UPDATE, and the
+    # rebuild path drops migration-created triggers. Migration matches store.
     conn = _connect()
     try:
-        _seed_spec_and_instance(conn)
-        conn.execute(
-            "INSERT INTO deliver_states "
-            "(deliver_id, graph_instance_id, node_id, next_node_id, content_json, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (DELIVER_ID, INSTANCE_ID, "node-n", "node-m", "{}", 1),
-        )
-        conn.commit()
-        conn.execute(
-            "UPDATE deliver_states SET status = ? WHERE deliver_id = ?",
-            ("consumed", DELIVER_ID),
-        )
-        conn.commit()
-        after = conn.execute(
-            "SELECT updated_at FROM deliver_states WHERE deliver_id = ?", (DELIVER_ID,)
-        ).fetchone()[0]
-        assert after > 1
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?",
+            ("deliver_states",),
+        ).fetchall()
+        assert rows == [], f"deliver_states must have no trigger: {rows}"
     finally:
         conn.close()
 
@@ -685,6 +673,7 @@ def test_deliver_states_updated_at_trigger_fires_when_omitted() -> None:
 
 
 def test_graph_indexes_exist() -> None:
+    # Index set matches the Sqlite*Store authority exactly (three per table).
     expected_indexes = {
         "idx_graph_specs_name",
         "idx_graph_instances_spec",
@@ -692,22 +681,28 @@ def test_graph_indexes_exist() -> None:
         "idx_graph_instances_active",
         "idx_node_states_latest",
         "idx_node_states_node",
+        "idx_node_states_status",
         "idx_deliver_states_node",
         "idx_deliver_states_target",
+        "idx_deliver_states_staged_source",
+    }
+    retired_indexes = {
+        "idx_node_states_cross",
+        "idx_node_states_global",
+        "idx_deliver_states_source",
     }
     conn = _connect()
     try:
         missing = [i for i in expected_indexes if not _index_exists(conn, i)]
         assert not missing, f"missing graph indexes: {missing}"
+        stale = [i for i in retired_indexes if _index_exists(conn, i)]
+        assert not stale, f"retired graph indexes still present: {stale}"
     finally:
         conn.close()
 
 
 def test_graph_triggers_exist() -> None:
-    expected_triggers = {
-        "trg_graph_instances_auto_updated_at",
-        "trg_deliver_states_auto_updated_at",
-    }
+    expected_triggers = {"trg_graph_instances_auto_updated_at"}
     conn = _connect()
     try:
         missing = [t for t in expected_triggers if not _trigger_exists(conn, t)]
@@ -796,10 +791,11 @@ GRAPH_SCHEMA_OBJECTS: frozenset[str] = GRAPH_TABLES | {
     "idx_graph_instances_active",
     "idx_node_states_latest",
     "idx_node_states_node",
+    "idx_node_states_status",
     "idx_deliver_states_node",
     "idx_deliver_states_target",
+    "idx_deliver_states_staged_source",
     "trg_graph_instances_auto_updated_at",
-    "trg_deliver_states_auto_updated_at",
 }
 
 

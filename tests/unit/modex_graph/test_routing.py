@@ -12,6 +12,7 @@ from modex_graph import (
     IntegratedInput,
     Node,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 
 class _RecordNameNode(Node[CounterState]):
@@ -49,5 +50,5 @@ class TestDefaultEdgeFallback:
         g.add_edge("next", GraphNode.END)
         compiled = g.compile()
         ctx = make_ctx(CounterState())
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.messages == ["start", "next"]

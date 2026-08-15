@@ -12,6 +12,8 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from .bootstrap import BootstrapMode
+
 if TYPE_CHECKING:
     from ..context import GraphContext
     from ..state import GraphState
@@ -38,7 +40,7 @@ class Scheduler[S: "GraphState"](ABC):
     """
 
     @abstractmethod
-    async def run_async(self, ctx: GraphContext[S]) -> S:
+    async def run_async(self, ctx: GraphContext[S], *, mode: BootstrapMode) -> S:
         """Run the graph asynchronously. Returns the final state (`ctx.state`).
 
         The terminal node writes its result to a state field; the caller
@@ -46,7 +48,7 @@ class Scheduler[S: "GraphState"](ABC):
         """
         ...
 
-    def run(self, ctx: GraphContext[S]) -> S:
+    def run(self, ctx: GraphContext[S], *, mode: BootstrapMode) -> S:
         """Run the graph synchronously. Returns the final state (`ctx.state`).
 
         Wraps `run_async` in `asyncio.run` (or a thread-pool fallback when a
@@ -64,12 +66,12 @@ class Scheduler[S: "GraphState"](ABC):
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(self.run_async(ctx))
+            return asyncio.run(self.run_async(ctx, mode=mode))
         # There's a running loop — run in a separate thread.
         import concurrent.futures
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(asyncio.run, self.run_async(ctx))
+            future = pool.submit(asyncio.run, self.run_async(ctx, mode=mode))
             return future.result()
 
 

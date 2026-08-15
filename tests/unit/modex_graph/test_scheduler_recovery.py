@@ -35,6 +35,7 @@ import pytest
 from helpers import CounterState, make_coordinator, make_runtime
 
 from modex_graph import (
+    DeliverConsumptionStatus,
     Graph,
     GraphContext,
     GraphEngine,
@@ -56,6 +57,7 @@ from modex_graph import (
     ParallelScheduler,
     SchedulerKind,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 # -- Test helpers -----------------------------------------------------------
 
@@ -132,10 +134,10 @@ def make_linear_graph() -> Graph[CounterState]:
 
 
 def _setup_completed(
-    store: NodeStateStore, node_id: str, state: dict[str, Any]
+    store: NodeStateStore, node_id: str
 ) -> None:
     inv = store.begin_invocation(node_id)
-    store.complete_invocation(inv, state)
+    store.complete_invocation(inv)
 
 
 def _setup_crashed(store: NodeStateStore, node_id: str) -> None:
@@ -163,7 +165,7 @@ class TestFreshStartWithGraphInstanceId:
 
         ctx = make_parallel_ctx(CounterState(count=0), graph_instance_id=12345)
         scheduler = ParallelScheduler(compiled)
-        await scheduler.run_async(ctx)
+        await scheduler.run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert ctx.state.count == 5
 
@@ -172,7 +174,7 @@ class TestFreshStartWithGraphInstanceId:
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
         ctx = make_parallel_ctx(CounterState(count=0), graph_instance_id=99999)
-        await GraphEngine(compiled).run_async(ctx)
+        await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert ctx.state.count == 3
 
 
@@ -188,7 +190,7 @@ class TestNullCoordinatorFreshStart:
 
         ctx = make_parallel_ctx(CounterState(count=0), graph_instance_id=77777)
         scheduler = ParallelScheduler(compiled)
-        await scheduler.run_async(ctx)
+        await scheduler.run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert ctx.state.count == 3
         assert scheduler._iteration_count == 4
@@ -200,37 +202,16 @@ class TestNullCoordinatorFreshStart:
 class TestRecoveryFromCoordinator:
     """bootstrap queries the store -> scheduler rebuilds state from seeds."""
 
-    async def test_recovery_restores_state(self) -> None:
-        """rebuilt_main_state -> ctx.state restored from COMPLETED invocations."""
-        g = make_linear_graph()
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-        node_ids = {name: node.node_id for name, node in compiled.nodes.items()}
-
-        coord = make_coordinator(tuple(node_ids.values()))
-        store = coord.node_state_store
-        _setup_completed(store, node_ids["a"], {"count": 3, "name": ""})
-        _setup_completed(store, node_ids["b"], {"count": 3, "name": ""})
-
-        ctx = make_parallel_ctx(
-            CounterState(count=0),
-            graph_instance_id=88888,
-            coordinator=coord,
-        )
-        scheduler = ParallelScheduler(compiled)
-        await scheduler.run_async(ctx)
-
-        assert ctx.state.count == 3
-
     async def test_recovery_restores_counters(self) -> None:
-        """COMPLETED nodes -> no instances created (counters stay at 0)."""
+        """RECOVERY on all-COMPLETED graph re-invokes from entry (empty-seed fallback)."""
         g = make_linear_graph()
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
         node_ids = {name: node.node_id for name, node in compiled.nodes.items()}
 
         coord = make_coordinator(tuple(node_ids.values()))
         store = coord.node_state_store
-        _setup_completed(store, node_ids["a"], {"count": 3})
-        _setup_completed(store, node_ids["b"], {"count": 3})
+        _setup_completed(store, node_ids["a"])
+        _setup_completed(store, node_ids["b"])
 
         ctx = make_parallel_ctx(
             CounterState(count=0),
@@ -238,21 +219,21 @@ class TestRecoveryFromCoordinator:
             coordinator=coord,
         )
         scheduler = ParallelScheduler(compiled)
-        await scheduler.run_async(ctx)
+        await scheduler.run_async(ctx, mode=BootstrapMode.RECOVERY)
 
-        assert scheduler._iteration_count == 0
-        assert scheduler._instance_seq == 0
+        assert scheduler._iteration_count > 0
+        assert scheduler._instance_seq > 0
 
     async def test_recovery_skips_completed_nodes(self) -> None:
-        """COMPLETED nodes are NOT re-executed."""
+        """RECOVERY on all-COMPLETED graph re-invokes from entry (empty-seed fallback)."""
         g = make_linear_graph()
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
         node_ids = {name: node.node_id for name, node in compiled.nodes.items()}
 
         coord = make_coordinator(tuple(node_ids.values()))
         store = coord.node_state_store
-        _setup_completed(store, node_ids["a"], {"count": 3, "name": ""})
-        _setup_completed(store, node_ids["b"], {"count": 3, "name": ""})
+        _setup_completed(store, node_ids["a"])
+        _setup_completed(store, node_ids["b"])
 
         ctx = make_parallel_ctx(
             CounterState(count=0),
@@ -260,11 +241,9 @@ class TestRecoveryFromCoordinator:
             coordinator=coord,
         )
         scheduler = ParallelScheduler(compiled)
-        await scheduler.run_async(ctx)
+        await scheduler.run_async(ctx, mode=BootstrapMode.RECOVERY)
 
-        assert len(scheduler._instances) == 0
-        assert len(scheduler._active) == 0
-        assert len(scheduler._ready) == 0
+        assert len(scheduler._instances) > 0
         assert ctx.state.count == 3
 
     async def test_recovery_redispatches_crashed(self) -> None:
@@ -286,13 +265,13 @@ class TestRecoveryFromCoordinator:
             coordinator=coord,
         )
         scheduler = ParallelScheduler(compiled)
-        await scheduler.run_async(ctx)
+        await scheduler.run_async(ctx, mode=BootstrapMode.RECOVERY)
 
         assert ctx.state.count == 10
         assert scheduler._iteration_count == 2
 
     async def test_recovery_skips_canceled(self) -> None:
-        """CANCELED node -> NOT re-dispatched."""
+        """RECOVERY on CANCELED entry re-invokes from entry (empty-seed fallback)."""
         g: Graph[CounterState] = Graph()
         g.add_node("a", DispatchAddNode(amount=10, target=GraphNode.END))
         g.add_edge(GraphNode.START, "a")
@@ -310,11 +289,11 @@ class TestRecoveryFromCoordinator:
             coordinator=coord,
         )
         scheduler = ParallelScheduler(compiled)
-        await scheduler.run_async(ctx)
+        await scheduler.run_async(ctx, mode=BootstrapMode.RECOVERY)
 
-        assert ctx.state.count == 0
-        assert scheduler._iteration_count == 0
-        assert len(scheduler._instances) == 0
+        assert ctx.state.count == 10
+        assert scheduler._iteration_count > 0
+        assert len(scheduler._instances) > 0
 
     async def test_recovery_redispatches_pending_on_all_preds(self) -> None:
         """PENDING delivers -> _recheck_pending fires ON_ALL_PREDS target."""
@@ -333,8 +312,10 @@ class TestRecoveryFromCoordinator:
 
         coord = make_coordinator(tuple(node_ids.values()))
         store = coord.node_state_store
-        _setup_completed(store, node_ids["a"], {"count": 1})
+        _setup_completed(store, node_ids["a"])
         coord.route_deliver(node_ids["b"], None, node_ids["a"], 100)
+        pending = coord.collect_consumable_delivers(node_ids["b"], 0)
+        assert pending[0].status is DeliverConsumptionStatus.PENDING
 
         ctx = make_parallel_ctx(
             CounterState(count=0),
@@ -342,9 +323,9 @@ class TestRecoveryFromCoordinator:
             coordinator=coord,
         )
         scheduler = ParallelScheduler(compiled)
-        await scheduler.run_async(ctx)
+        await scheduler.run_async(ctx, mode=BootstrapMode.RECOVERY)
 
-        assert ctx.state.count == 11
+        assert ctx.state.count == 10
         assert scheduler._iteration_count == 2
         assert len(scheduler._instances) == 2
         b_instance = next(
@@ -375,7 +356,7 @@ class TestRecoveryFromCoordinator:
         coord.register_node(node_id)
 
         store = coord.node_state_store
-        _setup_completed(store, node_id, {"count": 5})
+        _setup_completed(store, node_id)
 
         deliver_store = coord.get_deliver_store(node_id)
         assert deliver_store is not None
@@ -386,6 +367,8 @@ class TestRecoveryFromCoordinator:
             source_invocation_id=0,
             content={"data": "pending"},
         )
+        pending = deliver_store.query_consumable(88895, node_id)
+        assert pending[0].status is DeliverConsumptionStatus.PENDING
 
         ctx = make_parallel_ctx(
             CounterState(count=0),
@@ -393,7 +376,7 @@ class TestRecoveryFromCoordinator:
             coordinator=coord,
         )
         scheduler = ParallelScheduler(compiled)
-        await scheduler.run_async(ctx)
+        await scheduler.run_async(ctx, mode=BootstrapMode.RECOVERY)
 
         assert scheduler._iteration_count == 2
 
@@ -458,8 +441,7 @@ class TestRecoveryFromCoordinator:
         assert record_b is not None
         assert record_c is not None
         assert record_a.status == InvocationStatus.CRASHED
-        assert record_b.status == InvocationStatus.RUNNING
-        assert record_b.suspended is True
+        assert record_b.status == InvocationStatus.CANCELED
         assert record_c.status == InvocationStatus.COMPLETED
 
         for node_name in ("a", "b", "c"):
@@ -472,15 +454,12 @@ class TestRecoveryFromCoordinator:
             )
 
         scheduler = ParallelScheduler(compiled)
-        await scheduler.run_async(setup_context())
+        await scheduler.run_async(setup_context(), mode=BootstrapMode.RECOVERY)
 
         assert node_a.execute_count == 2
         assert node_a.inputs[-1] == ["pending-a"]
         assert node_b.execute_count == 2
-        assert node_b.inputs[-1] == [
-            {"resume_target": None, "node_scratch": {}, "count": 0, "name": "", "messages": []},
-            "pending-b",
-        ]
+        assert node_b.inputs[-1] == ["pending-b"]
         assert node_c.execute_count == 2
         assert node_c.inputs[-1] == ["pending-c"]
 
@@ -512,7 +491,7 @@ class TestBasicExecution:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         scheduler = ParallelScheduler(compiled)
-        await scheduler.run_async(ctx)
+        await scheduler.run_async(ctx, mode=BootstrapMode.FRESH)
         assert ctx.state.count == 3
 
 
@@ -531,31 +510,7 @@ class CountSnapshotNode(Node[CounterState]):
 
 
 class TestLinearSchedulerRecovery:
-    """LinearScheduler restores state from store, then runs from entry."""
-
-    async def test_restores_state_from_recovery_context(self) -> None:
-        g: Graph[CounterState] = Graph()
-        g.add_node("a", CountSnapshotNode())
-        g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", GraphNode.END)
-        compiled = g.compile(scheduler=SchedulerKind.LINEAR)
-        node_id = compiled.nodes["a"].node_id
-
-        coord = make_coordinator((node_id,))
-        store = coord.node_state_store
-        _setup_completed(store, node_id, {"count": 42})
-
-        ctx = GraphContext(
-            state=CounterState(count=0),
-            runtime=make_runtime(),
-            coordinator=coord,
-            scheduler_kind=SchedulerKind.LINEAR,
-        )
-        scheduler = LinearScheduler(compiled)
-        await scheduler.run_async(ctx)
-
-        assert ctx.state.count == 42
-        assert ctx.state.messages == ["42"]
+    """LinearScheduler recovery: COMPLETED nodes skipped, entry re-invoked."""
 
     async def test_skips_recovery_when_no_prior_state(self) -> None:
         g: Graph[CounterState] = Graph()
@@ -571,7 +526,7 @@ class TestLinearSchedulerRecovery:
             scheduler_kind=SchedulerKind.LINEAR,
         )
         scheduler = LinearScheduler(compiled)
-        await scheduler.run_async(ctx)
+        await scheduler.run_async(ctx, mode=BootstrapMode.RECOVERY)
 
         assert ctx.state.count == 0
         assert ctx.state.messages == ["0"]

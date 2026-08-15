@@ -412,6 +412,9 @@ CREATE INDEX IF NOT EXISTS idx_graph_specs_name ON graph_specs (name);
 --     persistence unique key). parent_instance_id enables recursive subgraph
 --     nesting (null for top-level). parent_node is the node name in the parent
 --     graph that spawned this instance.
+--     attrs_json is the phase-09 ownership/audit seam (executor_process_id
+--     etc.); merged into the LATEST version only — prior versions stay frozen
+--     as audit trail. Column shape matches SqliteGraphInstanceStore DDL.
 --     spec_id references graph_specs.spec_id (FK enforced at app layer; SQLite
 --     FK enforcement is off by default).
 -- ---------------------------------------------------------------------------
@@ -424,6 +427,7 @@ CREATE TABLE IF NOT EXISTS graph_instances (
     status              TEXT    NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending', 'running', 'paused', 'stopped', 'crashed', 'completed', 'failed')),
     node_id_map_json    TEXT    NOT NULL DEFAULT '{}' CHECK (json_valid(node_id_map_json)),
+    attrs_json          TEXT,
     created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
     updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
     PRIMARY KEY (graph_instance_id, version)
@@ -456,16 +460,17 @@ END;
 --     lifecycle (running → completed/canceled/crashed); no pending or
 --     superseded states. `invocation_id` links the version to its producing
 --     invocation; `parent_version` chains versions to their predecessor.
---     `suspended` marks a RUNNING invocation paused for HITL resume.
+--     Lifecycle + version facts only — no state_json, no suspended flag
+--     (phase 07 retirement; crash recovery derives from status + delivers).
 --     graph_instance_id references graph_instances.graph_instance_id (app-layer FK).
 --     No auto-update trigger — each version row is write-once on INSERT,
 --     then updated via CAS on lifecycle transitions; `updated_at` reflects
 --     the last transition.
+--     Column shape matches SqliteNodeStateStore DDL (id-only routing).
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS node_states (
     node_state_id       BIGINT  PRIMARY KEY,
     graph_instance_id   BIGINT  NOT NULL,
-    node_name           TEXT,
     node_id             TEXT    NOT NULL,
     version             INTEGER NOT NULL DEFAULT 0,
     parent_version      INTEGER,
@@ -473,8 +478,6 @@ CREATE TABLE IF NOT EXISTS node_states (
                         CHECK (status IN ('running', 'completed',
                                           'canceled', 'crashed')),
     invocation_id       BIGINT  NOT NULL DEFAULT 0,
-    state_json          TEXT    NOT NULL CHECK (json_valid(state_json)),
-    suspended           INTEGER NOT NULL DEFAULT 0,
     created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
     updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
     UNIQUE (graph_instance_id, node_id, version)
@@ -489,35 +492,28 @@ CREATE INDEX IF NOT EXISTS idx_node_states_node
 CREATE INDEX IF NOT EXISTS idx_node_states_status
     ON node_states (graph_instance_id, node_id, status);
 
-CREATE INDEX IF NOT EXISTS idx_node_states_cross
-    ON node_states (graph_instance_id, node_id, invocation_id);
-
-CREATE INDEX IF NOT EXISTS idx_node_states_global
-    ON node_states (graph_instance_id, invocation_id DESC);
-
 -- ---------------------------------------------------------------------------
 -- 19. deliver_states — accumulated deliver payloads with consumption state machine.
 --     node_id is the accumulating node; next_node_id is the target downstream.
 --     `source_node_id` / `source_invocation_id` record the delivering node;
 --     `consumed_by_invocation_id` records the consumer (NULL until consumed).
---     `status` transitions: PENDING → CONSUMED_PENDING → CONSUMED_COMPLETED
---     (three-state machine). Default is 'pending'.
+--     `status` transitions: STAGED → PENDING → CONSUMED_PENDING →
+--     CONSUMED_COMPLETED (four-state machine; only PENDING and
+--     CONSUMED_PENDING are consumable). Default is 'pending'.
 --     graph_instance_id references graph_instances.graph_instance_id (app-layer FK).
+--     Column shape matches SqliteDeliverStore DDL (id-only routing).
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS deliver_states (
     deliver_id          BIGINT  PRIMARY KEY,
     graph_instance_id   BIGINT  NOT NULL,
-    node_name           TEXT,
     node_id             TEXT    NOT NULL,
-    next_node           TEXT,
     next_node_id        TEXT    NOT NULL,
-    source_node         TEXT    NOT NULL DEFAULT '',
     source_node_id      TEXT    NOT NULL DEFAULT '',
     source_invocation_id INTEGER NOT NULL DEFAULT 0,
     consumed_by_invocation_id INTEGER,
     content_json        TEXT    NOT NULL CHECK (json_valid(content_json)),
     status              TEXT    NOT NULL DEFAULT 'pending'
-                        CHECK (status IN ('pending', 'consumed',
+                        CHECK (status IN ('staged', 'pending',
                                           'consumed_pending', 'consumed_completed')),
     created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
     updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
@@ -529,17 +525,10 @@ CREATE INDEX IF NOT EXISTS idx_deliver_states_node
 CREATE INDEX IF NOT EXISTS idx_deliver_states_target
     ON deliver_states (graph_instance_id, next_node_id, status);
 
-CREATE INDEX IF NOT EXISTS idx_deliver_states_source
-    ON deliver_states (graph_instance_id, source_node_id, source_invocation_id);
-
-CREATE TRIGGER IF NOT EXISTS trg_deliver_states_auto_updated_at
-AFTER UPDATE ON deliver_states
-FOR EACH ROW
-WHEN NEW.updated_at IS OLD.updated_at
-BEGIN
-    UPDATE deliver_states SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
-    WHERE rowid = NEW.rowid;
-END;
+-- Matches SqliteDeliverStore: partial index serving promote_staged_by_source.
+CREATE INDEX IF NOT EXISTS idx_deliver_states_staged_source
+    ON deliver_states (graph_instance_id, source_node_id, status)
+    WHERE status = 'staged';
 
 -- ---------------------------------------------------------------------------
 -- 20. session_trees — root anchor for a session execution tree.

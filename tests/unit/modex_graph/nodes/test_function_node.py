@@ -34,6 +34,13 @@ from modex_graph import (
 )
 from modex_graph.nodes import FunctionNodeConfig
 
+
+def _delivered(ctx: GraphContext[Any], target: str) -> list[Any]:
+    store = ctx.coordinator.get_deliver_store(target)
+    if store is None:
+        return []
+    return [record.content for record in store.query_consumable(0, target)]
+
 # ── Test functions ────────────────────────────────────────────────────────
 
 
@@ -81,21 +88,21 @@ class TestFunctionNodeExecute:
         node.name = "sync_fn"
         ctx = make_ctx(CounterState(count=0))
         await node.run(ctx)
-        assert node._submit_result == {"downstream": [42]}
+        assert _delivered(ctx, "downstream") == [42]
 
     async def test_async_function_delivers_result(self) -> None:
         node = FunctionNode(_async_greet, next_node="greet_target")
         node.name = "async_fn"
         ctx = make_ctx()
         await node.run(ctx)
-        assert node._submit_result == {"greet_target": ["hello"]}
+        assert _delivered(ctx, "greet_target") == ["hello"]
 
     async def test_function_reads_state(self) -> None:
         node = FunctionNode(_read_state, next_node="state_target")
         node.name = "read_state"
         ctx = make_ctx(CounterState(count=7))
         await node.run(ctx)
-        assert node._submit_result == {"state_target": [7]}
+        assert _delivered(ctx, "state_target") == [7]
 
     async def test_execute_returns_none(self) -> None:
         node = FunctionNode(_sync_double, next_node="target")
@@ -111,7 +118,7 @@ class TestFunctionNodeExecute:
         node.name = "fn_end"
         ctx = make_ctx()
         await node.run(ctx)
-        assert GraphNode.END in node._submit_result
+        assert _delivered(ctx, GraphNode.END) == [42]
 
 
 # ── FunctionNodeFactory ───────────────────────────────────────────────────
@@ -282,4 +289,4 @@ class TestFunctionNodeRegistryIntegration:
         )
         ctx = make_ctx()
         await node.run(ctx)
-        assert node._submit_result == {"out": [42]}
+        assert _delivered(ctx, "out") == [42]

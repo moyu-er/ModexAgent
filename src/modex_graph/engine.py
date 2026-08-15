@@ -11,7 +11,7 @@ execution logic. All existing graphs behave identically.
 
 Under `SchedulerKind.PARALLEL`, `GraphEngine` delegates to
 `ParallelScheduler` — the multi-instance execution model where nodes must
-call `ctx.dispatch(target, state_update)` to route.
+call `ctx.dispatch(target)` to route.
 
 The original execution logic (run_async / run) now lives in
 `src/modex_graph/scheduler/linear.py` (`LinearScheduler`).
@@ -39,6 +39,7 @@ from typing_extensions import TypeVar
 
 from .constants import SchedulerKind
 from .scheduler import LinearScheduler, ParallelScheduler, Scheduler
+from .scheduler.bootstrap import BootstrapMode
 
 if TYPE_CHECKING:
     from .compiled_graph import CompiledGraph
@@ -84,7 +85,7 @@ class GraphEngine[S: "GraphState"]:
             f"Supported: {SchedulerKind.LINEAR!r}, {SchedulerKind.PARALLEL!r}."
         )
 
-    async def run_async(self, ctx: GraphContext[S]) -> S:
+    async def run_async(self, ctx: GraphContext[S], *, mode: BootstrapMode) -> S:
         """Run the graph from `entry_node` until `GraphNode.END`.
 
         Delegates to the selected `Scheduler`. Returns `ctx.state` (the
@@ -94,15 +95,15 @@ class GraphEngine[S: "GraphState"]:
         `GraphBubbleUp` exceptions propagate to the caller. The engine does
         NOT catch them.
         """
-        return await self._scheduler.run_async(ctx)
+        return await self._scheduler.run_async(ctx, mode=mode)
 
-    def run(self, ctx: GraphContext[S]) -> S:
+    def run(self, ctx: GraphContext[S], *, mode: BootstrapMode) -> S:
         """Sync entry. Delegates to the selected `Scheduler`.
 
         For standalone scripts / CLI / REPL usage. Event-loop-bound agent
         runtimes (ReAct) use `run_async` directly.
         """
-        return self._scheduler.run(ctx)
+        return self._scheduler.run(ctx, mode=mode)
 
 
 __all__ = ["GraphEngine"]
