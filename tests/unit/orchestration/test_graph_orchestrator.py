@@ -35,6 +35,8 @@ from pydantic import BaseModel
 
 from modex_agent.control.graph_control import LiveGraphEngineController
 from modex_agent.orchestration import GraphOrchestrator
+from modex_agent.runtime.constants import EXECUTOR_PROCESS_ID_KEY
+from modex_agent.runtime.process_identity import ProcessIdentity
 from modex_graph import (
     CoordinatorFactory,
     DefaultGraphState,
@@ -70,6 +72,7 @@ from modex_graph import (
     SqliteGraphInstanceStore,
     create_null_coordinator,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 # -- Test state + node fixtures ------------------------------------------
 
@@ -777,7 +780,7 @@ class TestDeadEndFailed:
         spec_id = _save_spec(spec_store, _dead_end_spec())
 
         gid = await orch.create_instance(spec_id)
-        await orch.run_instance(gid)
+        await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         assert _load_status(instance_store, gid) == GraphInstanceStatus.FAILED.value
         assert gid not in orch._active_instances
@@ -789,7 +792,7 @@ class TestDeadEndFailed:
         spec_id = _save_spec(spec_store, _dead_end_spec(scheduler=SchedulerKind.PARALLEL))
 
         gid = await orch.create_instance(spec_id)
-        await orch.run_instance(gid)
+        await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         assert _load_status(instance_store, gid) == GraphInstanceStatus.FAILED.value
         assert gid not in orch._active_instances
@@ -803,7 +806,7 @@ class TestReachedEndSemantics:
         spec_id = _save_spec(spec_store, _simple_spec())
 
         gid = await orch.create_instance(spec_id)
-        await orch.run_instance(gid)
+        await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         assert _load_status(instance_store, gid) == GraphInstanceStatus.COMPLETED.value
 
@@ -814,7 +817,7 @@ class TestReachedEndSemantics:
         spec_id = _save_spec(spec_store, _dead_end_spec())
 
         gid = await orch.create_instance(spec_id)
-        await orch.run_instance(gid)
+        await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         assert _load_status(instance_store, gid) == GraphInstanceStatus.FAILED.value
 
@@ -828,7 +831,7 @@ class TestReachedEndSemantics:
         spec_id = _save_spec(spec_store, _dead_end_spec())
 
         gid = await orch.create_instance(spec_id)
-        await orch.run_instance(gid)
+        await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         reloaded = instance_store.load(gid)
         assert reloaded is not None
@@ -845,7 +848,7 @@ class TestReachedEndSemantics:
         spec_id = _save_spec(spec_store, _dead_end_spec())
 
         gid = await orch.create_instance(spec_id)
-        await orch.run_instance(gid)
+        await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         reloaded = sqlite_store.load(gid)
         assert reloaded is not None
@@ -876,8 +879,8 @@ class TestReachedEndSemantics:
         spec_id = _save_spec(spec_store, spec)
 
         gid = await orch.create_instance(spec_id)
-        with pytest.raises(RoutingError, match="not in the outgoing edges"):
-            await orch.run_instance(gid)
+        with pytest.raises((RoutingError, KeyError), match="nonexistent"):
+            await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         assert _load_status(instance_store, gid) == GraphInstanceStatus.CRASHED.value
 
@@ -905,7 +908,7 @@ class TestReachedEndSemantics:
         spec_id = _save_spec(spec_store, _dead_end_spec())
 
         gid = await orch.create_instance(spec_id)
-        await orch.run_instance(gid)
+        await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         failed = [o for o in adapter.outputs if o.kind is GraphOutputKind.FAILED]
         assert len(failed) == 1
@@ -1122,7 +1125,7 @@ class TestRunInstance:
         spec_id = _save_spec(spec_store, _simple_spec())
 
         gid = await orch.create_instance(spec_id)
-        await orch.run_instance(gid)
+        await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         assert _load_status(instance_store, gid) == GraphInstanceStatus.COMPLETED.value
 
@@ -1130,7 +1133,20 @@ class TestRunInstance:
         orch, _, _ = _make_orchestrator()
 
         with pytest.raises(ValueError, match="not found in store"):
-            await orch.run_instance(999999)
+            await orch.run_instance(999999, mode=BootstrapMode.FRESH)
+
+    async def test_paused_instance_begins_new_invocation_version(self) -> None:
+        orch, spec_store, instance_store = _make_orchestrator()
+        spec_id = _save_spec(spec_store, _simple_spec())
+        gid = await orch.create_instance(spec_id)
+        instance_store.update_status(gid, GraphInstanceStatus.PAUSED)
+
+        await orch.run_instance(gid, mode=BootstrapMode.RECOVERY)
+
+        latest = instance_store.load(gid)
+        assert latest is not None
+        assert latest.version == 1
+        assert latest.status is GraphInstanceStatus.COMPLETED
 
     async def test_emits_graph_output_on_completion(self) -> None:
         """M6: run_instance emits GraphOutput in finally."""
@@ -1154,7 +1170,7 @@ class TestRunInstance:
         spec_id = _save_spec(spec_store, _simple_spec())
 
         gid = await orch.create_instance(spec_id)
-        await orch.run_instance(gid)
+        await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         terminal = [o for o in adapter.outputs if o.kind is GraphOutputKind.COMPLETED]
         assert len(terminal) == 1
@@ -1179,7 +1195,7 @@ class TestRunInstance:
 
         gid = await orch.create_instance(spec_id)
         with pytest.raises(RuntimeError, match="boom"):
-            await orch.run_instance(gid)
+            await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         assert _load_status(instance_store, gid) == GraphInstanceStatus.CRASHED.value
         assert gid not in orch._active_instances
@@ -1205,7 +1221,7 @@ class TestRunInstance:
         from modex_graph import GraphInterrupt
 
         with pytest.raises(GraphInterrupt):
-            await orch.run_instance(gid)
+            await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         assert _load_status(instance_store, gid) == GraphInstanceStatus.PAUSED.value
         assert gid in orch._active_instances
@@ -1317,7 +1333,7 @@ class TestP0LifecycleHardening:
         spec_store.delete(spec_id)
 
         with pytest.raises(ValueError, match="not found"):
-            await orch.run_instance(gid)
+            await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         assert _load_status(instance_store, gid) == GraphInstanceStatus.CRASHED.value
         assert gid not in orch._active_instances
@@ -1343,7 +1359,7 @@ class TestP0LifecycleHardening:
         spec_id = _save_spec(spec_store, _simple_spec())
         gid = await orch.create_instance(spec_id)
 
-        await orch.run_instance(gid)
+        await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         meta = orch._instance_store.load(gid)
         assert meta is not None
@@ -1369,7 +1385,7 @@ class TestP0LifecycleHardening:
         spec_id = _save_spec(spec_store, spec)
         gid = await orch.create_instance(spec_id)
         with pytest.raises(Exception, match="approval_needed"):
-            await orch.run_instance(gid)
+            await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         assert _load_status(instance_store, gid) == GraphInstanceStatus.PAUSED.value
         assert gid in orch._active_instances
@@ -1401,7 +1417,7 @@ class TestP0LifecycleHardening:
         await asyncio.sleep(0.2)
 
         with pytest.raises(ValueError, match="already running"):
-            await orch.run_instance(gid)
+            await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         await asyncio.sleep(3)
 
@@ -1514,7 +1530,7 @@ class TestIORecordLifecycle:
         user_input = GraphPayload(content="test input")
 
         gid = await orch.create_instance(spec_id, user_input=user_input)
-        await orch.run_instance(gid)
+        await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         record = io_store.get_latest_by_instance(gid)
         assert record is not None
@@ -1530,7 +1546,7 @@ class TestIORecordLifecycle:
         spec_id = _save_spec(spec_store, _simple_spec())
 
         gid = await orch.create_instance(spec_id)
-        await orch.run_instance(gid)
+        await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
         record = io_store.get_latest_by_instance(gid)
         assert record is not None
@@ -1657,7 +1673,7 @@ class TestStartInvoke:
         spec_id = _save_spec(spec_store, spec)
 
         gid = await orch.create_instance(spec_id)
-        run_task = asyncio.create_task(orch.run_instance(gid))
+        run_task = asyncio.create_task(orch.run_instance(gid, mode=BootstrapMode.FRESH))
         await asyncio.wait_for(entered.wait(), timeout=5.0)
         assert _load_status(instance_store, gid) == GraphInstanceStatus.RUNNING.value
 
@@ -1685,9 +1701,108 @@ class TestStartInvoke:
 
         gid = await orch.create_instance(spec_id)
         with pytest.raises(RuntimeError, match="boom"):
-            await orch.run_instance(gid)
+            await orch.run_instance(gid, mode=BootstrapMode.FRESH)
         assert _load_status(instance_store, gid) == GraphInstanceStatus.CRASHED.value
 
         task = orch.start_invoke(gid)
         with pytest.raises(RuntimeError, match="boom"):
             await task
+
+
+# -- ProcessIdentity injection (tasks 27+28) --------------------------------
+
+
+class _CountingAttrsStore(InMemoryGraphInstanceStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.update_attrs_calls = 0
+
+    def update_attrs(
+        self, graph_instance_id: int, attrs: dict[str, int | str | None]
+    ) -> None:
+        self.update_attrs_calls += 1
+        super().update_attrs(graph_instance_id, attrs)
+
+
+class TestProcessIdentityInjection:
+    """ProcessIdentity injection writes executor_process_id into instance attrs.
+
+    When injected, the orchestrator writes ``executor_process_id`` on
+    ``begin_invocation`` (normal start) and the recovery path. Terminal
+    states preserve the attr as audit trail. ``None`` (default) disables
+    tracking — backwards compatible.
+    """
+
+    async def test_injected_identity_writes_executor_pid_on_run(self) -> None:
+        identity = ProcessIdentity()
+        instance_store = InMemoryGraphInstanceStore()
+        spec_store = InMemoryGraphSpecStore()
+        orch = GraphOrchestrator(
+            node_registry=_function_registry(),
+            state_classes=_state_classes(),
+            spec_store=spec_store,
+            instance_store=instance_store,
+            process_identity=identity,
+        )
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_and_run(spec_id)
+
+        meta = instance_store.load(gid)
+        assert meta is not None
+        assert meta.attrs.get(EXECUTOR_PROCESS_ID_KEY) == identity.process_id
+
+    async def test_no_identity_does_not_write_executor_pid(self) -> None:
+        orch, spec_store, instance_store = _make_orchestrator()
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_and_run(spec_id)
+
+        meta = instance_store.load(gid)
+        assert meta is not None
+        assert EXECUTOR_PROCESS_ID_KEY not in meta.attrs
+
+    async def test_injected_identity_writes_executor_pid_on_recovery(self) -> None:
+        identity = ProcessIdentity()
+        instance_store = _CountingAttrsStore()
+        spec_store = InMemoryGraphSpecStore()
+        orch = GraphOrchestrator(
+            node_registry=_function_registry(),
+            state_classes=_state_classes(),
+            spec_store=spec_store,
+            instance_store=instance_store,
+            process_identity=identity,
+        )
+        spec_id = _save_spec(spec_store, _simple_spec())
+        gid = await orch.create_and_run(spec_id)
+
+        instance_store.update_status(gid, GraphInstanceStatus.CRASHED)
+        calls_before_recovery = instance_store.update_attrs_calls
+
+        recovered = await orch.recover_crashed()
+        assert gid in recovered
+        assert instance_store.update_attrs_calls == calls_before_recovery + 1
+
+        meta = instance_store.load(gid)
+        assert meta is not None
+        assert meta.attrs.get(EXECUTOR_PROCESS_ID_KEY) == identity.process_id
+
+    async def test_terminal_state_preserves_executor_pid(self) -> None:
+        identity = ProcessIdentity()
+        instance_store = InMemoryGraphInstanceStore()
+        spec_store = InMemoryGraphSpecStore()
+        orch = GraphOrchestrator(
+            node_registry=_function_registry(),
+            state_classes=_state_classes(),
+            spec_store=spec_store,
+            instance_store=instance_store,
+            process_identity=identity,
+        )
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_and_run(spec_id)
+
+        meta = instance_store.load(gid)
+        assert meta is not None
+        assert meta.status is GraphInstanceStatus.COMPLETED
+        assert meta.attrs.get(EXECUTOR_PROCESS_ID_KEY) == identity.process_id

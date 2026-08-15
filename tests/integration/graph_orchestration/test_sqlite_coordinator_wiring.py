@@ -113,7 +113,10 @@ async def test_sqlite_restart_recovers_from_crashed_node(tmp_path: Path) -> None
         nonlocal replayed_prepare
         replayed_prepare = True
 
+    recovered_work_initial_steps: list[list[str]] = []
+
     def recovered_work(ctx: GraphContext[Any]) -> None:
+        recovered_work_initial_steps.append(list(ctx.state.steps))
         ctx.state.steps.append("work")
 
     recovered_connection = sqlite3.connect(db_path)
@@ -144,6 +147,8 @@ async def test_sqlite_restart_recovers_from_crashed_node(tmp_path: Path) -> None
             InvocationStatus.COMPLETED,
             InvocationStatus.CRASHED,
         ]
-        assert work_versions[0].state_json["steps"] == ["prepare", "work"]
+        assert recovered_work_initial_steps == [[]]
+        assert [record.version for record in work_versions] == [1, 0]
+        assert work_versions[0].parent_version is None
     finally:
         recovered_connection.close()

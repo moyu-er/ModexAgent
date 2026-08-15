@@ -22,7 +22,7 @@ The shared per-instance flow is:
 5. Call `orchestrator._run_existing_instance(instance)` directly — the
    orchestrator handles eviction, spec compile, node_id restore, node
    registration, registry insertion, and `run_instance`. The scheduler's
-   `run_async` calls `bootstrap(ctx, graph)` to derive seed nodes from
+   `run_async` calls `bootstrap(ctx, graph, mode=BootstrapMode.RECOVERY)` to derive seed nodes from
    persisted state.
 
 `GraphRecoveryService` holds a direct reference to the
@@ -32,7 +32,7 @@ seam. The orchestrator's `_run_existing_instance` performs the 7-step
 re-registration before the scheduler takes over normal scheduling.
 
 Recovery state loading happens INSIDE the scheduler's `run_async` (called
-by `run_instance`) — the scheduler calls `bootstrap(ctx, graph)` at the
+by `run_instance`) — the scheduler calls `bootstrap(ctx, graph, mode=BootstrapMode.RECOVERY)` at the
 top of `run_async`, which queries the persistence store and derives seed
 nodes (non-terminal invocations + nodes with PENDING delivers). The
 scheduler rebuilds its in-memory state from these seeds.
@@ -79,7 +79,7 @@ class GraphRecoveryService:
     The orchestrator's `_run_existing_instance` handles eviction, node
     registration, registry insertion, and `run_instance`. Recovery state
     loading is delegated to the scheduler's `run_async` inside
-    `run_instance`, which calls `bootstrap(ctx, graph)`.
+    `run_instance`, which calls `bootstrap(ctx, graph, mode=BootstrapMode.RECOVERY)`.
     """
 
     def __init__(
@@ -180,7 +180,7 @@ class GraphRecoveryService:
            orchestrator handles eviction, spec compile, node_id
            restore, node registration, registry insertion, and
            `run_instance`. The scheduler loads recovery state via
-           `bootstrap(ctx, graph)` and re-dispatches.
+           `bootstrap(ctx, graph, mode=BootstrapMode.RECOVERY)` and re-dispatches.
 
         Per-instance failures are isolated: if one instance raises, the
         remaining are still attempted. Failed instances are left in

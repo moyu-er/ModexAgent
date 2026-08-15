@@ -22,6 +22,7 @@ from modex_graph import (
     NodeSpec,
     create_null_coordinator,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 
 class _BlockingNode(Node[DefaultGraphState]):
@@ -93,7 +94,9 @@ async def test_get_graph_context_returns_context_during_run() -> None:
     graph_instance_id = await orchestrator.create_instance(spec_store.save(_blocking_spec()))
 
     async with anyio.create_task_group() as task_group:
-        task_group.start_soon(orchestrator.run_instance, graph_instance_id)
+        task_group.start_soon(
+            lambda: orchestrator.run_instance(graph_instance_id, mode=BootstrapMode.FRESH)
+        )
         await entered.wait()
 
         context = orchestrator.get_graph_context(graph_instance_id)
@@ -112,7 +115,7 @@ async def test_get_graph_context_returns_none_after_finalize() -> None:
     orchestrator, spec_store = _make_orchestrator(registry)
     graph_instance_id = await orchestrator.create_instance(spec_store.save(_blocking_spec()))
 
-    await orchestrator.run_instance(graph_instance_id)
+    await orchestrator.run_instance(graph_instance_id, mode=BootstrapMode.FRESH)
 
     assert orchestrator.get_graph_context(graph_instance_id) is None
 

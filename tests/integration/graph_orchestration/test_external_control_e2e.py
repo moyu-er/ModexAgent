@@ -187,7 +187,7 @@ class _CaptureNode(Node[RecoveryState]):
         self.deliver(self._label, GraphNode.END, ctx)
 
 
-class _FailAfterSubmitNode(_EmitNode):
+class _FailAfterDeliverNode(_EmitNode):
     def __init__(
         self,
         label: str,
@@ -198,11 +198,15 @@ class _FailAfterSubmitNode(_EmitNode):
         super().__init__(label, (target,), executions, payload="from-a")
         self._fail_once = fail_once
 
-    def submit(self, ctx: GraphContext[RecoveryState]) -> None:
-        super().submit(ctx)
+    async def execute(
+        self,
+        ctx: GraphContext[RecoveryState],
+        integrated_input: IntegratedInput,
+    ) -> None:
+        await super().execute(ctx, integrated_input)
         if self._fail_once[0]:
             self._fail_once[0] = False
-            raise RuntimeError("source crashed after submit")
+            raise RuntimeError("source crashed after deliver")
 
 
 class _RingNode(Node[RecoveryState]):
@@ -298,7 +302,7 @@ async def test_pause_cancel_resume_parallel_sqlite(tmp_path: Path) -> None:
                 _node("seed"),
                 _node("branch_a"),
                 _node("branch_b"),
-                _node("queued", trigger=NodeTrigger.ON_RECEIVE),
+                _node("queued", trigger=NodeTrigger.ON_ALL_PREDS),
             ],
             edges=[
                 EdgeSpec(source=GraphNode.START, target="seed"),
@@ -439,7 +443,7 @@ async def test_process_crash_recovers_without_replaying_completed_prefix(
     execution.cancel()
     with pytest.raises(asyncio.CancelledError):
         await execution
-    assert _status(first_instance_store, graph_instance_id) == GraphInstanceStatus.RUNNING
+    assert _status(first_instance_store, graph_instance_id) == GraphInstanceStatus.CRASHED
     first_connection.close()
 
     recovered_executions: list[str] = []
@@ -472,7 +476,7 @@ async def test_process_crash_recovers_without_replaying_completed_prefix(
     recovered_connection.close()
 
 
-async def test_deliver_overlap_is_at_least_once_without_source_dedup(
+async def test_crashed_source_keeps_output_staged_until_retry(
     tmp_path: Path,
 ) -> None:
     connection = sqlite3.connect(tmp_path / "overlap.db")
@@ -482,7 +486,7 @@ async def test_deliver_overlap_is_at_least_once_without_source_dedup(
     orchestrator, instance_store, spec_store = _sqlite_orchestrator(
         connection,
         {
-            "a": lambda: _FailAfterSubmitNode("a", "b", executions, fail_once),
+            "a": lambda: _FailAfterDeliverNode("a", "b", executions, fail_once),
             "b": lambda: _CaptureNode("b", executions, target_inputs),
         },
     )
@@ -499,7 +503,7 @@ async def test_deliver_overlap_is_at_least_once_without_source_dedup(
         )
     )
 
-    with pytest.raises(RuntimeError, match="source crashed after submit"):
+    with pytest.raises(RuntimeError, match="source crashed after deliver"):
         await orchestrator.create_and_run(spec_id)
     graph_instance_id = _single_instance_id(instance_store, GraphInstanceStatus.CRASHED)
     metadata = instance_store.load(graph_instance_id)
@@ -509,9 +513,7 @@ async def test_deliver_overlap_is_at_least_once_without_source_dedup(
     coordinator.register_node(node_b_id)
     deliver_store = coordinator.get_deliver_store(node_b_id)
     assert deliver_store is not None
-    assert [
-        record.content for record in deliver_store.query_consumable(graph_instance_id, node_b_id)
-    ] == ["from-a"]
+    assert deliver_store.query_consumable(graph_instance_id, node_b_id) == []
 
     assert await orchestrator.recover_crashed() == [graph_instance_id]
 
@@ -570,7 +572,7 @@ async def test_ring_recovery_uses_latest_version_chain_head(tmp_path: Path) -> N
     execution.cancel()
     with pytest.raises(asyncio.CancelledError):
         await execution
-    assert _status(first_instance_store, graph_instance_id) == GraphInstanceStatus.RUNNING
+    assert _status(first_instance_store, graph_instance_id) == GraphInstanceStatus.CRASHED
     first_connection.close()
 
     recovered_connection = sqlite3.connect(db_path)
@@ -580,29 +582,31 @@ async def test_ring_recovery_uses_latest_version_chain_head(tmp_path: Path) -> N
     assert await recovered_orchestrator.recover_crashed() == [graph_instance_id]
 
     assert _status(recovered_instance_store, graph_instance_id) == GraphInstanceStatus.COMPLETED
-    assert executions == ["a", "b", "a", "b", "b", "a"]
+    assert executions == ["a", "b", "a", "b", "b", "a", "b", "a", "b"]
     coordinator = SqliteCoordinatorFactory(recovered_connection).create(
         graph_instance_id, recovered_instance_store
     )
     metadata = recovered_instance_store.load(graph_instance_id)
     assert metadata is not None
-    assert [
-        record.status
-        for record in coordinator.node_state_store.query_versions(metadata.node_id_map["a"])
-    ] == [
+    a_versions = coordinator.node_state_store.query_versions(metadata.node_id_map["a"])
+    b_versions = coordinator.node_state_store.query_versions(metadata.node_id_map["b"])
+    assert [record.status for record in a_versions] == [
+        InvocationStatus.COMPLETED,
         InvocationStatus.COMPLETED,
         InvocationStatus.COMPLETED,
         InvocationStatus.COMPLETED,
     ]
-    assert [
-        record.status
-        for record in coordinator.node_state_store.query_versions(metadata.node_id_map["b"])
-    ] == [
+    assert [record.version for record in a_versions] == [3, 2, 1, 0]
+    assert [record.status for record in b_versions] == [
+        InvocationStatus.COMPLETED,
+        InvocationStatus.COMPLETED,
         InvocationStatus.COMPLETED,
         InvocationStatus.CRASHED,
         InvocationStatus.COMPLETED,
     ]
-    assert coordinator.rebuild_main_state()["count"] == 5
+    assert [record.version for record in b_versions] == [4, 3, 2, 1, 0]
+    # Persisted snapshot reconstruction was retired; recovery windows are covered by
+    # tests/unit/modex_graph/test_crash_window_matrix.py.
     recovered_connection.close()
 
 
@@ -641,10 +645,11 @@ async def test_null_persistence_fails_safe_and_fresh_start_runs() -> None:
     coordinator = coordinator_factory.create(graph_instance_id, instance_store)
     coordinator.register_node("entry")
     assert coordinator.node_state_store.load_latest("entry") is None
-    assert coordinator.rebuild_main_state() == {}
+    # Persisted snapshot reconstruction was retired; its absence is covered by
+    # tests/unit/modex_graph/test_crash_window_matrix.py.
 
 
-async def test_in_memory_recovery_has_expected_two_state_degradation() -> None:
+async def test_in_memory_recovery_replays_consumed_pending_at_least_once() -> None:
     executions: list[str] = []
     worker_inputs: list[list[object]] = []
     crash_once = [True]
@@ -695,14 +700,14 @@ async def test_in_memory_recovery_has_expected_two_state_degradation() -> None:
         recovery_coord.get_deliver_store(node_ids["worker"]),
     )
     records = worker_store._records[graph_instance_id]  # noqa: SLF001
-    assert [record.status for record in records] == [DeliverConsumptionStatus.CONSUMED]
-    assert worker_store.query_consumable(graph_instance_id, node_ids["worker"]) == []
+    assert [record.status for record in records] == [DeliverConsumptionStatus.CONSUMED_PENDING]
+    assert worker_store.query_consumable(graph_instance_id, node_ids["worker"]) == records
 
     assert await orchestrator.recover_crashed() == [graph_instance_id]
 
     assert _status(instance_store, graph_instance_id) == GraphInstanceStatus.COMPLETED
     assert executions == ["source", "worker", "worker"]
-    assert worker_inputs == [["payload"], []]
+    assert worker_inputs == [["payload"], ["payload"]]
     assert all(record.status != DeliverConsumptionStatus.CONSUMED_PENDING for record in records)
     coordinator = coordinator_factory.create(graph_instance_id, instance_store)
     assert [

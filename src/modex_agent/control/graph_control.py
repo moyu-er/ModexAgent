@@ -273,6 +273,7 @@ class GraphControlService:
             content=content,
             source_node_id="__external__",
             source_invocation_id=0,
+            stage=False,
         )
         engine = self._engines.get(gid)
         if engine is not None:

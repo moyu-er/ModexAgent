@@ -12,6 +12,9 @@ Runtime state governance — typed state models, enums, persistence, codecs, and
 | File | Description |
 |------|-------------|
 | `services.py` | `AgentRuntimeServices` — process-scope services container (hooks, interceptors, control, approval, governance, stores); `AgentRuntime` — composes services + per-turn state |
+| `process_identity.py` | `ProcessIdentity` — lazily generates and logs the process-level snowflake used for graph instance ownership |
+| `process_registry.py` | `ProcessRegistry` ABC + `SingletonProcessRegistry` zero-infrastructure liveness implementation; replace the implementation for multi-instance discovery |
+| `constants.py` | `EXECUTOR_PROCESS_ID_KEY` — typed `GraphMetadata.attrs` key for executor ownership |
 | `store.py` | `TurnStateStore` ABC; `NoOpTurnStateStore` / `InMemoryTurnStateStore` / `JsonFileTurnStateStore` implementations; `ActiveTurnConflictError`. Also `TodoStore` ABC + `JsonFileTodoStore` + `TodoItem` (per-session task-list store, a separate concern from turn snapshots — injected into the todo tools, not part of turn-state governance) |
 | `dispatch.py` | `DispatchDeadline` — renewable monotonic-clock deadline with a **sliding forward ceiling**. The pool watchdog is the sole LLM termination mechanism (provider-level timeouts default to `None`). Streaming chunk callbacks renew +3s per chunk; each LLM iteration renews by `agent_run_timeout`. The sliding ceiling (`max_ahead_seconds`, default 1200s) caps how far a single `renew()` can reach ahead, but slides forward with each renewal — so continuous activity keeps the turn alive indefinitely. `current_dispatch_deadline` ContextVar + `renew_dispatch_deadline()` helper |
 | `models.py` | Core data models — `TurnIdentity`, `ToolArguments`, `ApprovalRequest`, `ApprovalTransaction`, `ToolCallRecord`, `ToolBatchState`, `TurnStateBase`, `TurnSnapshot`, `TurnSummary`, `StateQueryScope`, `MessageDelta` |
