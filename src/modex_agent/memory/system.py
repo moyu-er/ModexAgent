@@ -360,11 +360,7 @@ class MemorySystemContextManager(ContextManager):
         assistant_result: AgentResult,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        ctx = self._build_context(session_id, metadata=metadata)
-        input_metadata = metadata.get("input_metadata") if metadata else None
-        if user_message:
-            prefixed_message = self._apply_runtime_context_prefix(user_message, input_metadata)
-            await self.memory_system.add_messages(ctx, [prefixed_message])
+        pass  # All messages written in real-time through ScopedMessageHistory
 
     async def flush(self, session_id: str) -> None:
         pass  # All messages written in real-time through ScopedMessageHistory

@@ -10,7 +10,6 @@ def test_memory_system_abc_excludes_prompt_assembly() -> None:
         "initialize",
         "close",
         "create_message_history",
-        "add_messages",
         "get_history",
         "search",
         "clear",

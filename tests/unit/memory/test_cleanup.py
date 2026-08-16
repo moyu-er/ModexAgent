@@ -14,7 +14,7 @@ from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.archive_models import ArchiveDocuments, ArchiveGenerationResult
 from modex_agent.memory.cleanup import (
     CleanupResult,
-    _check_trigger,
+    check_cleanup_trigger,
     _compute_boundary,
     cleanup_session,
 )
@@ -145,31 +145,31 @@ def _make_layer_set(
 
 
 class TestCheckTriggerTokenOnly:
-    """_check_trigger fires only on token pressure, never on message count."""
+    """check_cleanup_trigger fires only on token pressure, never on message count."""
 
     def test_no_trigger_under_threshold(self) -> None:
         msgs = [{"role": "user", "content": "x", "token_count": 10}]  # 10 tokens
         # trigger line = max_context_tokens * max_token_ratio = 100 * 0.8 = 80
-        assert _check_trigger(msgs, _FixedEstimator(10), max_context_tokens=100, max_token_ratio=0.8) is None
+        assert check_cleanup_trigger(msgs, _FixedEstimator(10), max_context_tokens=100, max_token_ratio=0.8) is None
 
     def test_trigger_over_threshold(self) -> None:
         msgs = [{"role": "user", "content": "x", "token_count": 10}] * 9  # 90 tokens
-        reason = _check_trigger(msgs, _FixedEstimator(10), max_context_tokens=100, max_token_ratio=0.8)
+        reason = check_cleanup_trigger(msgs, _FixedEstimator(10), max_context_tokens=100, max_token_ratio=0.8)
         assert reason == CompressionReason.TOKEN_PRESSURE
 
     def test_missing_token_count_recomputes(self) -> None:
         msgs = [{"role": "user", "content": "x"}] * 9  # no token_count -> 10 each via estimator
-        reason = _check_trigger(msgs, _FixedEstimator(10), max_context_tokens=100, max_token_ratio=0.8)
+        reason = check_cleanup_trigger(msgs, _FixedEstimator(10), max_context_tokens=100, max_token_ratio=0.8)
         assert reason == CompressionReason.TOKEN_PRESSURE
 
     def test_system_tokens_excluded_from_trigger(self) -> None:
         """ADR-0009: system-role tokens do NOT count toward session pressure."""
         # A giant system message alone must NOT trigger.
         sys_only = [{"role": "system", "content": "huge system prompt", "token_count": 100000}]
-        assert _check_trigger(sys_only, _FixedEstimator(10), max_context_tokens=100, max_token_ratio=0.8) is None
+        assert check_cleanup_trigger(sys_only, _FixedEstimator(10), max_context_tokens=100, max_token_ratio=0.8) is None
         # The same token burden as a user message DOES trigger.
         user_only = [{"role": "user", "content": "x", "token_count": 100000}]
-        assert _check_trigger(user_only, _FixedEstimator(10), max_context_tokens=100, max_token_ratio=0.8) == CompressionReason.TOKEN_PRESSURE
+        assert check_cleanup_trigger(user_only, _FixedEstimator(10), max_context_tokens=100, max_token_ratio=0.8) == CompressionReason.TOKEN_PRESSURE
 
     def test_trigger_accounts_for_output_tokens(self) -> None:
         """max_output_tokens reserves space for the model response before applying ratio.
@@ -184,15 +184,15 @@ class TestCheckTriggerTokenOnly:
         est = _FixedEstimator(10)
 
         # Default (no reservation): 160000 < 170000 -> no trigger
-        assert _check_trigger(
+        assert check_cleanup_trigger(
             msgs, est, max_context_tokens=200000, max_token_ratio=0.85
         ) is None
         # Explicit zero: identical to default (backward compatible)
-        assert _check_trigger(
+        assert check_cleanup_trigger(
             msgs, est, max_context_tokens=200000, max_token_ratio=0.85, max_output_tokens=0
         ) is None
         # Reserve 20K for output: 160000 > 153000 -> trigger
-        assert _check_trigger(
+        assert check_cleanup_trigger(
             msgs, est, max_context_tokens=200000, max_token_ratio=0.85, max_output_tokens=20000
         ) == CompressionReason.TOKEN_PRESSURE
 
@@ -204,7 +204,7 @@ class TestCheckTriggerTokenOnly:
         """
         msgs = [{"role": "user", "content": "x", "token_count": 1}]
         est = _FixedEstimator(10)
-        assert _check_trigger(
+        assert check_cleanup_trigger(
             msgs, est, max_context_tokens=200000, max_token_ratio=0.85, max_output_tokens=300000
         ) == CompressionReason.TOKEN_PRESSURE
     """Boundary keeps a tail whose token sum stays within the keep target."""

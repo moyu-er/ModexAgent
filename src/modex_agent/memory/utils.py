@@ -183,15 +183,3 @@ def normalize_memory_summary(summary: str | None) -> str | None:
     if _is_meaningless_summary(normalized):
         return None
     return normalized
-
-
-def estimate_text_tokens(text: str) -> int:
-    """Estimate token count for a plain text string.
-
-    - ASCII characters: 1 token / 4 chars
-    - Non-ASCII (CJK, etc.): 1 token / char (conservative)
-    """
-    ascii_chars = sum(1 for c in text if ord(c) < 128)
-    non_ascii_chars = len(text) - ascii_chars
-    return ascii_chars // 4 + non_ascii_chars
-

@@ -349,11 +349,12 @@ class TestNoRecursiveCleanup:
 
 
 class TestCacheVisibility:
-    """``ScopedMessageHistory.to_list()`` sees the persisted reminder.
+    """``ScopedMessageHistory.to_list()`` sees the persisted reminder after cache refresh.
 
-    After the enclosing ``history.append()`` returns (cache invalidated),
-    the next ``to_list()`` reads fresh from the session manager and sees
-    the reminder that the hook persisted directly via Path A.
+    After the enclosing ``history.append()`` returns (cache incrementally updated),
+    the hook persists via Path A. When compact triggers, ``_refresh_cache`` reads
+    fresh from the session manager and sees the reminder. This test simulates the
+    compact path by calling ``_refresh_cache()`` manually after the hook fires.
     """
 
     async def test_history_to_list_contains_reminder(
@@ -374,6 +375,7 @@ class TestCacheVisibility:
             cleanup_result=_finished(pruned=2),
         )
         await hook.on_cleanup_finished(hook_ctx)
+        await history._refresh_cache()  # Simulate compact-triggered cache refresh
 
         msgs = await history.to_list()
         reminders = _reminder_messages(msgs)

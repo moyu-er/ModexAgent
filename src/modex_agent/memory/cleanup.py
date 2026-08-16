@@ -124,7 +124,7 @@ async def _prepare_cleanup_phase(
     total_count = len(all_messages)
     tokens_before = _estimate_content_tokens(all_messages, estimator)
 
-    trigger_reason = _check_trigger(
+    trigger_reason = check_cleanup_trigger(
         all_messages, estimator, max_context_tokens, max_token_ratio, max_output_tokens
     )
     if trigger_reason is None:
@@ -705,7 +705,7 @@ def _sum_tokens(messages: Sequence[_MessageLike], estimator: TokenEstimator) -> 
     return sum(_resolve_message_tokens(m, estimator) for m in messages)
 
 
-def _check_trigger(
+def check_cleanup_trigger(
     messages: Sequence[_MessageLike],
     estimator: TokenEstimator,
     max_context_tokens: int | None,
