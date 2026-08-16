@@ -4,7 +4,7 @@
 
 // ─── Tool presets / context modes / skill source (closed literal sets) ───────
 
-export type ToolPreset = "full" | "read_write" | "read_only" | "minimal" | "none";
+export type ToolPreset = "full" | "read_write" | "read_only" | "none";
 export type ContextMode = "fresh" | "fork";
 export type SkillSource = "global" | "local";
 export type SkillOrigin = "repo" | "user";

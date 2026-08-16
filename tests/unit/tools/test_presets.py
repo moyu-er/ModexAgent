@@ -13,7 +13,6 @@ class TestToolPreset:
         assert ToolPreset.FULL == "full"
         assert ToolPreset.READ_WRITE == "read_write"
         assert ToolPreset.READ_ONLY == "read_only"
-        assert ToolPreset.MINIMAL == "minimal"
 
 
 class TestGetPresetTools:
@@ -50,15 +49,6 @@ class TestGetPresetTools:
         names = [t.name for t in tools]
         assert "bash" in names
 
-    def test_minimal_preset_no_edit_no_bash(self) -> None:
-        """MINIMAL preset has no Edit, no FindFiles, no bash."""
-        tools = get_preset_tools(ToolPreset.MINIMAL)
-        names = [t.name for t in tools]
-        assert "read" in names
-        assert "write" in names
-        assert "edit" not in names
-        assert "glob" not in names
-
     def test_bash_injected_for_full_preset(self) -> None:
         """FULL preset includes bash when factory provided."""
         from modex_agent.tools.terminal.subprocess_tool import SubprocessTool
@@ -69,17 +59,6 @@ class TestGetPresetTools:
         tools = get_preset_tools(ToolPreset.FULL, subprocess_tool_factory=make_bash)
         names = [t.name for t in tools]
         assert "bash" in names
-
-    def test_bash_not_injected_for_minimal(self) -> None:
-        """MINIMAL preset excludes bash even when factory provided."""
-        from modex_agent.tools.terminal.subprocess_tool import SubprocessTool
-
-        tools = get_preset_tools(
-            ToolPreset.MINIMAL,
-            subprocess_tool_factory=lambda: SubprocessTool(timeout=60),
-        )
-        names = [t.name for t in tools]
-        assert "bash" not in names
 
     def test_none_preset_returns_empty(self) -> None:
         """NONE preset returns zero standard tools."""

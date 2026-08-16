@@ -177,7 +177,7 @@ providers:
         """
 max_steps: 5
 use_terminal: false
-tool_preset: minimal
+tool_preset: read_only
 """,
         encoding="utf-8",
     )

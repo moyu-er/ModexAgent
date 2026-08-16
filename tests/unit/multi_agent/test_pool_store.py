@@ -108,7 +108,7 @@ class TestExternalPoolSaveOmitsNativeFields:
                 max_steps=50,
                 use_terminal=True,
                 terminal_visibility=True,
-                tool_preset=ToolPreset.MINIMAL,
+                tool_preset=ToolPreset.READ_WRITE,
                 tool_supplements=[ToolSupplement.AST_GREP],
                 mcp=["some-server"],
                 execution_strategy=ExecutionStrategyKind.EXTERNAL,

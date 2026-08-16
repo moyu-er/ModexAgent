@@ -106,7 +106,7 @@ const normalizeTree = (tree: PoolTree): PoolTree => {
   };
 };
 
-const PRESETS: ToolPreset[] = ["full", "read_write", "read_only", "minimal", "none"];
+const PRESETS: ToolPreset[] = ["full", "read_write", "read_only", "none"];
 const CONTEXT_MODES: ContextMode[] = ["fresh", "fork"];
 const CONTEXT_MODE_HINT_KEY: Record<ContextMode, MessageKey> = {
   fresh: "settings.pools.contextModeFresh",

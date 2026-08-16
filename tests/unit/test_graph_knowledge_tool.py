@@ -261,7 +261,6 @@ async def test_grep_reports_no_match_or_invalid_regex(
     [
         (ToolPreset.FULL, ["read", "ls", "grep", "write", "edit"]),
         (ToolPreset.READ_ONLY, ["read", "ls", "grep"]),
-        (ToolPreset.MINIMAL, ["read", "ls", "grep", "write"]),
     ],
 )
 def test_dynamic_schema_filters_actions(

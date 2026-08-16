@@ -130,7 +130,7 @@ def _write_pool(
     data: dict[str, Any] = {
         "max_steps": 5,
         "use_terminal": False,
-        "tool_preset": "minimal",
+        "tool_preset": "read_only",
         "main_agent_name": name,
     }
     if peers:

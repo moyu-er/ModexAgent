@@ -44,9 +44,8 @@ class KnowledgeToolCapabilities(BaseModel):
             ToolPreset.FULL,
             ToolPreset.READ_WRITE,
             ToolPreset.READ_ONLY,
-            ToolPreset.MINIMAL,
         )
-        has_write = preset in (ToolPreset.FULL, ToolPreset.READ_WRITE, ToolPreset.MINIMAL)
+        has_write = preset in (ToolPreset.FULL, ToolPreset.READ_WRITE)
         has_edit = preset in (ToolPreset.FULL, ToolPreset.READ_WRITE)
         return cls(has_read=has_read, has_write=has_write, has_edit=has_edit)
 

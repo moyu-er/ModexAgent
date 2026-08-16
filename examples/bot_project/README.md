@@ -541,7 +541,7 @@ A subagent's tool set is summarized by a **preset** (what it's allowed to do):
 | `full` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅* |
 | `read_write` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | `read_only` | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | — |
-| `minimal` | ✅ | ✅ | — | ✅ | ✅ | — | — | — |
+| `read_only` | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | — |
 
 `*` Terminal tools require `use_terminal: true`. Subagents always use `SubprocessTool` for bash (stateless).
 
@@ -552,7 +552,7 @@ A subagent template at `config/pools/<pool>/templates/my-agent.yml`:
 ```yaml
 name: "my-agent"
 max_steps: 60
-tool_preset: read_write        # read_only / read_write / full / minimal
+tool_preset: read_write        # read_only / read_write / full
 extra_tools: []                # optional extra tool names on top of the preset
 system_prompt: |
   You are a specialized agent for …
