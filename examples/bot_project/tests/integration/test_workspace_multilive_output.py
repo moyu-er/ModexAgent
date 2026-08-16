@@ -47,13 +47,20 @@ NUM_EXTRA_WORKSPACES = 3
 
 
 def _last_user_content(messages: list[Any]) -> str:
-    """Best-effort extract the last user message content from a chat history."""
+    """Best-effort extract the last real user message content from a chat history.
+
+    Skips ``<system-reminder>`` injected by RuntimeProvider so the echo reflects
+    the user's actual input, not framework-injected metadata.
+    """
     last = ""
     for m in messages:
         role = m.get("role") if isinstance(m, dict) else getattr(m, "role", None)
         content = m.get("content") if isinstance(m, dict) else getattr(m, "content", None)
         if role == "user" and content:
-            last = str(content)
+            text = str(content)
+            if text.startswith("<system-reminder>"):
+                continue
+            last = text
     return last
 
 
