@@ -1,14 +1,15 @@
 """S5: resolve pool + agent for the conversation, fill envelope metadata.
 
-Also persists an explicit UI pool choice into PoolSessionStore so PoolRouter
-routes the conversation to the right pool. This makes S5 the single owner of
-pool resolution + persistence (the WebUI entry no longer resolves inline).
+Persists only an explicit UI pool choice into PoolSessionStore so inferred
+tree ownership cannot rewrite prefix routing. This makes S5 the single owner
+of pool resolution + explicit-choice persistence.
 """
 
 from __future__ import annotations
 
-import asyncio
 from enum import StrEnum
+
+from anyio.to_thread import run_sync
 
 from bot.input_pipeline.context import BotInputContext
 from modex_agent.core.session_id import SessionInfo, encode_snowflake, session_id_prefix_of
@@ -34,6 +35,7 @@ class RoutingMeta(StrEnum):
     MODEL_PROVIDER = "model_provider"
     MODEL_MODEL = "model_model"
     RESOLVED_MODEL = "resolved_model"
+    TREE_RESOLVED_POOL = "tree_resolved_pool"
 
 
 def conversation_session_prefix(envelope: UserInputEnvelope, ctx: BotInputContext) -> str:
@@ -67,13 +69,15 @@ def resolve_session_routing(
     prevents the WebUI from double-encoding the prefix.
 
     Returns ``pool=None`` when no routable pool exists (no explicit pool, no
-    stored mapping, and no default pool). The caller (``ResolvePoolStage``)
-    terminates with ``pool_unavailable`` in that case.
+    tree attribution, no stored mapping, and no default pool). The caller
+    (``ResolvePoolStage``) terminates with ``pool_unavailable`` in that case.
     """
     session_prefix = conversation_session_prefix(envelope, ctx)
-    pool = envelope.explicit_pool or ctx.pool_session_store.get(
-        session_prefix, ctx.default_pool
+    pool = envelope.explicit_pool or envelope.metadata.get(
+        RoutingMeta.TREE_RESOLVED_POOL
     )
+    if pool is None:
+        pool = ctx.pool_session_store.get(session_prefix, ctx.default_pool)
     if pool is None:
         # No routable pool — caller terminates. Agent/session are moot.
         return None, "", ""
@@ -108,12 +112,9 @@ class ResolvePoolStage(InputStage):
                     "message": f"Pool '{pool}' is not available. It may have been removed. Please select a different pool."
                 },
             )
-        # Always persist the resolved pool mapping so PoolRouter routes
-        # correctly, whether the pool was explicitly chosen (WebUI dropdown) or
-        # resolved from fallback. Without this, a session created in a non-main
-        # pool silently defaults to "main" on every subsequent turn.
-        session_prefix = conversation_session_prefix(envelope, ctx)
-        await asyncio.to_thread(ctx.pool_session_store.set, session_prefix, pool)
+        if envelope.explicit_pool:
+            session_prefix = conversation_session_prefix(envelope, ctx)
+            await run_sync(ctx.pool_session_store.set, session_prefix, pool)
         envelope.metadata[RoutingMeta.RESOLVED_POOL] = pool
         envelope.metadata[RoutingMeta.RESOLVED_AGENT] = agent
         envelope.metadata[RoutingMeta.FULL_SESSION_ID] = full_sid

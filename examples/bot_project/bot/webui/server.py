@@ -44,6 +44,7 @@ from bot.workspace.request_resolver import WorkspaceResolution, resolve_ws_reque
 from modex_agent.core.session_id import (
     SessionIdFactory,
     SessionInfo,
+    session_id_prefix_of,
 )
 from modex_agent.core.session_store import SessionStore
 from modex_agent.workspace.paths import WorkspacePaths
@@ -53,6 +54,7 @@ if TYPE_CHECKING:
     from aiohttp import ClientSession
 
     from bot.service.session_gc import SessionGarbageCollector
+    from bot.service.session_pool_index import SessionPoolIndex
     from bot.workspace.handle import PoolWorkspaceResources
 
 logger = logging.getLogger(__name__)
@@ -150,7 +152,6 @@ class WebUIServer:
         # returns the PoolWorkspaceResources for that workspace. When
         # ``None``, graph REST handlers return 503.
         self._graph_workspace_resolver: Callable[[str], PoolWorkspaceResources | None] | None = None
-
         # Lazy-shared aiohttp ClientSession for outbound provider model-list
         # fetches. Lifecycle owned by :mod:`bot.webui.routes.models`.
         self._http_session: ClientSession | None = None
@@ -296,6 +297,32 @@ class WebUIServer:
         if client_pool:
             return client_pool
         resolved = self._resolve_pool_by_prefix(session_prefix)
+        return resolved if resolved else _DEFAULT_AGENT_NAME
+
+    def _session_pool_index_of_ws(self, ws_raw: str) -> SessionPoolIndex | None:
+        if self._graph_workspace_resolver is not None:
+            resources = self._graph_workspace_resolver(ws_raw)
+            if resources is not None:
+                return resources.session_pool_index
+        return None
+
+    async def _resolve_session_pool(
+        self, session_id: str, ws_raw: str
+    ) -> str | None:
+        index = self._session_pool_index_of_ws(ws_raw)
+        if index is not None:
+            pool = await index.pool_of(session_id)
+            if pool is not None:
+                return pool
+        # Prefix routing is only a fallback answer for legacy sessions without tree nodes.
+        return self._resolve_pool_by_prefix(session_id_prefix_of(session_id))
+
+    async def _resolve_session_pool_for_request(
+        self, client_pool: str | None, session_id: str, ws_raw: str
+    ) -> str:
+        if client_pool:
+            return client_pool
+        resolved = await self._resolve_session_pool(session_id, ws_raw)
         return resolved if resolved else _DEFAULT_AGENT_NAME
 
     # ------------------------------------------------------------------
@@ -543,19 +570,3 @@ class WebUIServer:
     # ------------------------------------------------------------------
     # WebSocket (delegates -- handlers extracted to bot.webui.routes.websocket)
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _queue_belongs_to_connection(
-        attached_sessions: list[str],
-        session_id: str,
-    ) -> bool:
-        """Thin delegate -- implementation in :func:`bot.webui.routes.websocket.streaming._queue_belongs_to_connection`.
-
-        Kept so ``tests/webui/test_ws_partitioning_convergence.py`` (which calls
-        ``WebUIServer._queue_belongs_to_connection`` as a static method)
-        continues to work. Prefix matching only — the ancestor walk requires
-        the live adapter (``WebSocketInputAdapter.ancestors``).
-        """
-        from bot.webui.routes.websocket.streaming import _queue_belongs_to_connection
-
-        return _queue_belongs_to_connection(attached_sessions, session_id)

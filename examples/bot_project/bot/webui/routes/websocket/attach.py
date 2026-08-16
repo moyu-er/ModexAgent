@@ -117,8 +117,9 @@ async def handle_attach(
     # ── New conversation path: frontend sends uuid_prefix + pool ──
     uuid_prefix_raw = str(data.get("uuid_prefix", ""))
     pool_from_client = str(data.get("pool", ""))
+    is_new_session_attach = bool(uuid_prefix_raw and pool_from_client)
 
-    if uuid_prefix_raw and pool_from_client:
+    if is_new_session_attach:
         agent_name = (
             server._agent_resolver(pool_from_client)
             if server._agent_resolver is not None
@@ -192,13 +193,21 @@ async def handle_attach(
     # use it directly as the pool name without going through agent_pool_map
     # (which may not yet be populated in every edge case).
     pool_name = server._resolve_pool_for_request(pool_from_client or None, uuid_prefix)
-    if server._pool_switch_callback is not None:
-        await asyncio.to_thread(server._pool_switch_callback, session_prefix, pool_name)
-    # Failsafe: if the callback is not wired (edge case during early
-    # startup or test setups), write directly through the input context's
-    # pool_session_store so the PoolRouter can still read the mapping.
-    elif server._input_ctx is not None and server._input_ctx.pool_session_store is not None:
-        server._input_ctx.pool_session_store.set(session_prefix, pool_name)
+    routed_pool = server._resolve_pool_for_request(None, session_prefix)
+    routed_main_agent = (
+        server._agent_resolver(routed_pool)
+        if server._agent_resolver is not None
+        else routed_pool
+    )
+    is_routed_main_session = session_id == f"{session_prefix}.{routed_main_agent}"
+    if is_new_session_attach or is_routed_main_session:
+        if server._pool_switch_callback is not None:
+            await asyncio.to_thread(server._pool_switch_callback, session_prefix, pool_name)
+        # Failsafe: if the callback is not wired (edge case during early
+        # startup or test setups), write directly through the input context's
+        # pool_session_store so the PoolRouter can still read the mapping.
+        elif server._input_ctx is not None and server._input_ctx.pool_session_store is not None:
+            server._input_ctx.pool_session_store.set(session_prefix, pool_name)
 
     # Proactively register ALL pool agent sessions so deltas from any
     # pool's agent are forwarded to this WebSocket client.

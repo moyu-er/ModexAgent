@@ -126,9 +126,9 @@ async def derive_sessions_from_transcripts(
     and no ``.modex/session_index/``.  This fallback lets the frontend
     list and attach to those sessions without a separate migration step.
 
-    Pool is resolved via ``_pool_resolver`` (PoolSessionStore — the
-    authoritative session_prefix→pool mapping).  No agent_name
-    reverse-engineering.
+    Pool attribution is intentionally deferred to :func:`_resolve_pool`, so a
+    transcript backed by a session-tree node is not discarded merely because
+    its legacy prefix route is absent.
     """
     target_dir = sessions_dir if sessions_dir is not None else server._home_sessions_dir
     derived: list[SessionInfo] = []
@@ -138,10 +138,6 @@ async def derive_sessions_from_transcripts(
             # No separator → not a usable display id.
             continue
         agent_name = agent_of(session_id)
-        # Resolve pool via the authoritative PoolSessionStore lookup.
-        pool = server._resolve_pool_by_prefix(session_prefix)
-        if pool is None:
-            continue
         parent_session_id: str | None = None
         # Subagent transcript (3 segments): parent is the main-agent
         # session with the same conversation prefix, if one exists.
@@ -172,20 +168,19 @@ async def derive_sessions_from_transcripts(
 async def _resolve_pool(
     server: WebUIServer,
     session: SessionInfo,
-    store: SessionStore | None,
+    ws_raw: str,
     pool_cache: dict[str, str | None],
 ) -> str | None:
-    """Resolve the pool a session belongs to via PoolSessionStore.
+    """Resolve session ownership from its workspace tree, then legacy routing.
 
-    Pool is looked up by session_prefix (conversation id) — the
-    authoritative persisted mapping written by S5 ResolvePoolStage.
-    No agent_name reverse-engineering.
+    Unknown session ids explicitly fall through to prefix routing and remain
+    ``None`` when that legacy answer is also absent.
     """
-    prefix = session.session_id_prefix
-    if prefix in pool_cache:
-        return pool_cache[prefix]
-    pool = server._resolve_pool_by_prefix(prefix)
-    pool_cache[prefix] = pool
+    session_id = session.session_id
+    if session_id in pool_cache:
+        return pool_cache[session_id]
+    pool = await server._resolve_session_pool(session_id, ws_raw)
+    pool_cache[session_id] = pool
     return pool
 
 

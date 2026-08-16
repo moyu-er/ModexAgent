@@ -84,7 +84,7 @@ class TestResolvePoolStageSqlite:
         assert sqlite_pool_store.get_pool(encode_snowflake("u1")) == "coding"
 
     @pytest.mark.asyncio
-    async def test_no_explicit_pool_reads_default_from_sqlite(
+    async def test_no_explicit_pool_reads_default_without_persisting_to_sqlite(
         self, sqlite_pool_store: SqlitePoolRoutingStore
     ) -> None:
         ctx = _ctx(sqlite_pool_store)
@@ -93,8 +93,7 @@ class TestResolvePoolStageSqlite:
         assert isinstance(result, Continue)
         # No prior route → falls back to default_pool="main".
         assert env.metadata["resolved_pool"] == "main"
-        # .set() must have persisted the default so PoolRouter can read it.
-        assert sqlite_pool_store.get_pool(encode_snowflake("u1")) == "main"
+        assert sqlite_pool_store.get_pool(encode_snowflake("u1")) is None
 
 
 class TestEnvironmentControlStageSqlite:
