@@ -40,7 +40,10 @@ from modex_agent.core.session_store import SessionStore
 from modex_agent.hook import Hook, HookRunner
 from modex_agent.hook.notification import AgentNotificationService
 from modex_agent.ioc.factories.session_tree import build_session_tree_stores
-from modex_agent.memory.cleanup_hooks import TodoReorientationHook
+from modex_agent.memory.cleanup_hooks import (
+    CleanupMetricsHook,
+    TodoReorientationHook,
+)
 from modex_agent.messaging.broker_bridge import BrokerBridgeService, OutputRoute
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
@@ -490,6 +493,9 @@ async def create_pool(
             memory_system.add_cleanup_hook(
                 TodoReorientationHook(todo_store, has_archive=has_archive)
             )
+            metrics_dir = data_dir / "metrics"
+            metrics_dir.mkdir(parents=True, exist_ok=True)
+            memory_system.add_cleanup_hook(CleanupMetricsHook(metrics_dir=metrics_dir))
 
     main_service, main_store = _build_communication(
         pool,

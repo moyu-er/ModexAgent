@@ -1020,3 +1020,24 @@ capture scope:
   capture behavior.
 - `capture_tools: bool` — when `True`, `gen_ai.tool.definitions` is
   included on the `agent.start` span. Default `False`.
+
+### IN19 — Score injection wiring, Langfuse rc.3 surface, Layer-2 eval v2
+
+**Decision** (2026-08-15): three completions extending D5/D6/IN11 into the
+eval capability:
+
+1. **Score injection live at `RootSpanHook`** — the injector dead-end was
+   wired in `finally_graph` (after root-span persistence, before
+   `TraceSessionState.clear_trace`); injection is subtree-scoped from the
+   current root (stops at nested `invoke_agent` roots) and attaches with
+   `observation_id=root_span_id`; failures are warning-only.
+2. **Langfuse v4.0.0-rc.3 API surface** — `/api/public/v2/observations` is
+   the only live query surface (`/api/public/traces`, `/api/public/v2/traces`,
+   `/api/public/v2/scores` all 404), so curation derives agent-turn summaries
+   from root `AGENT` observations; scores post via `/api/public/ingestion`.
+3. **Layer-2 eval v2** — bot-side harness (`examples/bot_project/bot/eval/`):
+   frozen multi-turn task schema (typed toolsets, per-case deny lists,
+   discriminated world assertions), clean/production harness modes, and a
+   cassette golden gate with four replay gates (replay checks
+   `CassetteReplayEngine.misses` because `ReActAgent.run` converts provider
+   lookup errors into an error stop, not an exception).

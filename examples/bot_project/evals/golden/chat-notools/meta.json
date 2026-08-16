@@ -1,0 +1,10 @@
+{
+  "model": "openai/glm-5.2",
+  "temperature": 0.7,
+  "tool_names": [],
+  "tool_schema_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "prompt_sha256": "c3a5bf8498ace8837381076bce468a4bf0893d1e4f94a74a062f93d44e50d678",
+  "platform": "win32",
+  "recorded_at": "2026-08-15T05:21:39.479622+00:00",
+  "baseline": true
+}

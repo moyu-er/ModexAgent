@@ -25,11 +25,17 @@ import asyncio
 import base64
 import os
 from collections import defaultdict
-from typing import Annotated
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Annotated, Any, Literal
+from unittest.mock import patch
 
 import httpx
 import typer
 from langfuse import Langfuse
+from langfuse.api.commons.errors.not_found_error import NotFoundError
 
 from bot.eval.dataset_curator import DatasetCurator
 from bot.eval.evaluators import (
@@ -37,7 +43,12 @@ from bot.eval.evaluators import (
     completion_evaluator,
     response_length_evaluator,
 )
-from bot.eval.experiment_runner import EvalRunner
+from bot.eval.experiment_runner import EvalRunner as _BaseEvalRunner
+from bot.eval.task_spec import EvalItemSpec, EvalToolset
+from modex_agent.core.constants import ReasoningEffort
+from modex_agent.core.provider import LLMProvider
+from modex_agent.providers import LiteLLMProvider
+from modex_agent.trace.cassette import CassetteRecorder, CassetteReplayEngine
 
 app = typer.Typer(
     name="bot-eval",
@@ -49,6 +60,51 @@ app = typer.Typer(
 
 _DEFAULT_LANGFUSE_HOST = "http://localhost:3000"
 _SCORES_TIMEOUT = httpx.Timeout(10.0)
+
+
+class EvalRunner(_BaseEvalRunner):
+    """Apply an optional CLI toolset override before running v2 items."""
+
+    def __init__(
+        self,
+        *,
+        provider: LLMProvider,
+        system_prompt: str,
+        max_iterations: int = 10,
+        langfuse_client: Langfuse | None = None,
+        mode: Literal["clean", "production"] = "clean",
+        cassette: CassetteReplayEngine | None = None,
+        recorder: CassetteRecorder | None = None,
+        archive_root: Path | None = None,
+        toolset: EvalToolset | None = None,
+    ) -> None:
+        super().__init__(
+            provider=provider,
+            system_prompt=system_prompt,
+            max_iterations=max_iterations,
+            langfuse_client=langfuse_client,
+            mode=mode,
+            cassette=cassette,
+            recorder=recorder,
+            archive_root=archive_root,
+        )
+        self._toolset = toolset
+
+    async def task(
+        self,
+        *,
+        item: object,  # noqa: ANN401  # noqa: OBJECT_OK - Langfuse callback boundary
+        **kwargs: object,  # noqa: ANN401  # noqa: OBJECT_OK - Langfuse callback boundary
+    ) -> dict[str, Any]:
+        spec = EvalItemSpec.from_item_input(getattr(item, "input", None))
+        if spec is None or self._toolset is None:
+            return await super().task(item=item, **kwargs)
+        overridden = spec.model_copy(update={"toolset": self._toolset})
+        overridden_item = SimpleNamespace(
+            id=getattr(item, "id", spec.id),
+            input=overridden.model_dump(mode="json"),
+        )
+        return await super().task(item=overridden_item, **kwargs)
 
 
 # --- Langfuse credentials ----------------------------------------------------
@@ -144,6 +200,14 @@ def run(
         int,
         typer.Option("--max-concurrency", help="Max concurrent item executions."),
     ] = 5,
+    toolset: Annotated[
+        EvalToolset | None,
+        typer.Option("--toolset", help="Override each v2 item's toolset."),
+    ] = None,
+    mode: Annotated[
+        Literal["clean", "production"],
+        typer.Option("--mode", help="Agent harness mode."),
+    ] = "clean",
 ) -> None:
     """Run an experiment against a Langfuse dataset.
 
@@ -167,6 +231,9 @@ def run(
         system_prompt=system_prompt,
         max_iterations=max_iterations,
         langfuse_client=langfuse_client,
+        mode=mode,
+        archive_root=Path("evals/runs"),
+        toolset=toolset,
     )
     result = runner.run(
         dataset_name=dataset,
@@ -193,7 +260,17 @@ def compare(
     lf = Langfuse(host=host, public_key=public_key, secret_key=secret_key)
     headers = _basic_auth_header(public_key, secret_key)
 
-    paginated = lf.get_dataset_runs(dataset_name=dataset, limit=100)
+    try:
+        paginated = lf.get_dataset_runs(dataset_name=dataset, limit=100)
+    except NotFoundError as exc:
+        _echo_dataset_runs_unavailable(dataset, status=f"HTTP {exc.status_code}")
+        return
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 404:
+            raise
+        _echo_dataset_runs_unavailable(dataset, status=f"HTTP {exc.response.status_code}")
+        return
+
     runs = paginated.data
     if not runs:
         typer.echo(f"No experiment runs found for dataset '{dataset}'.")
@@ -212,6 +289,23 @@ def compare(
             dataset_run_id=run.id,
         )
         typer.echo(f"{run.name:<30} {created:<20} {scores}")
+
+
+def _echo_dataset_runs_unavailable(dataset: str, *, status: str) -> None:
+    """Report dataset-runs unavailability and list local run archives instead."""
+    archive_root = Path("evals/runs") / dataset
+    typer.echo(
+        f"Dataset runs unavailable on this Langfuse deployment ({status}) "
+        f"— local run archives: {archive_root}/"
+    )
+    if not archive_root.is_dir():
+        typer.echo("No local run archives found.")
+        return
+    for experiment_dir in sorted(archive_root.iterdir()):
+        if not experiment_dir.is_dir():
+            continue
+        run_count = len(list(experiment_dir.glob("*.json")))
+        typer.echo(f"  {experiment_dir.name}: {run_count} run(s)")
 
 
 def _fetch_run_scores(
@@ -451,6 +545,228 @@ def _post_json(
         raise typer.Exit(code=1)
 
     return payload
+
+
+@app.command(name="metrics", help="Report local capability metrics from workspace data.")
+def metrics(
+    workspace: Annotated[
+        Path,
+        typer.Option("--workspace", help="Workspace root containing .modex data."),
+    ] = Path("."),
+    days: Annotated[int, typer.Option("--days", help="Number of recent days to include.")] = 7,
+) -> None:
+    """Render an offline markdown report from local cleanup and trace data."""
+    from bot.eval.metrics import aggregate
+
+    typer.echo(aggregate(workspace, days))
+
+
+_GOLDEN_SYSTEM_PROMPT = (
+    "You are a careful evaluation assistant. Follow the user's instructions exactly."
+)
+
+
+@contextmanager
+def _stable_golden_message_serialization() -> Iterator[None]:
+    from modex_agent.core.message import ChatMessage
+
+    original_to_dict = ChatMessage.to_dict
+
+    def stable_to_dict(message: ChatMessage) -> dict[str, Any]:
+        serialized = original_to_dict(message)
+        serialized.pop("created_at", None)
+        return serialized
+
+    with patch.object(ChatMessage, "to_dict", stable_to_dict):
+        yield
+
+
+def _golden_provider_from_env() -> LiteLLMProvider:
+    api_key = os.environ.get("TEST_LLM_API_KEY")
+    base_url = os.environ.get("TEST_LLM_BASE_URL")
+    model = os.environ.get("TEST_LLM_MODEL")
+    if not api_key or not base_url or not model:
+        typer.echo(
+            "ERROR: TEST_LLM_API_KEY, TEST_LLM_BASE_URL, and TEST_LLM_MODEL "
+            "environment variables are required.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    return LiteLLMProvider(
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        temperature=float(os.environ.get("TEST_LLM_TEMPERATURE", "0.7")),
+        max_output_tokens=int(os.environ.get("TEST_LLM_MAX_OUTPUT_TOKENS", "2000")),
+        reasoning_effort=ReasoningEffort(
+            os.environ.get("TEST_LLM_REASONING_EFFORT", ReasoningEffort.NONE.value)
+        ),
+    )
+
+
+async def _record_golden_case(case_dir: Path) -> None:
+    import hashlib
+    import json
+    import shutil
+    import sys
+    import tempfile
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from bot.eval import experiment_runner as experiment_runner_module
+    from bot.eval.agent_harness import (
+        build_runtime_services,
+        build_tool_manager,
+        static_system_prompt,
+    )
+    from bot.eval.replay import GoldenMeta
+    from bot.eval.task_output import EvalTaskOutput
+    from bot.eval.task_spec import EvalItemSpec
+    from modex_agent.core.constants import StopReason
+    from modex_agent.runtime.services import AgentRuntimeServices
+    from modex_agent.trace.cassette import (
+        CassetteCategory,
+        CassetteManifest,
+        CassetteRecorder,
+    )
+
+    spec = EvalItemSpec.model_validate_json((case_dir / "item.json").read_text(encoding="utf-8"))
+    provider = _golden_provider_from_env()
+    model = provider.get_default_model()
+
+    with tempfile.TemporaryDirectory(prefix=f"modex-record-{case_dir.name}-") as raw_dir:
+        recording_root = Path(raw_dir)
+        recorder = CassetteRecorder(recording_root)
+        original_build_runtime_services = experiment_runner_module.build_runtime_services
+
+        def recording_runtime_services(
+            trace_dir: Path,
+            recorder: CassetteRecorder | None = None,
+        ) -> AgentRuntimeServices:
+            _ = recorder
+            return build_runtime_services(trace_dir=trace_dir, recorder=active_recorder)
+
+        active_recorder = recorder
+        experiment_runner_module.build_runtime_services = recording_runtime_services
+        try:
+            with _stable_golden_message_serialization():
+                runner = EvalRunner(
+                    provider=provider,
+                    system_prompt=_GOLDEN_SYSTEM_PROMPT,
+                    mode="production",
+                    recorder=recorder,
+                )
+                raw_output = await runner.task(
+                    item=SimpleNamespace(id=spec.id, input=spec.model_dump(mode="json"))
+                )
+        finally:
+            experiment_runner_module.build_runtime_services = original_build_runtime_services
+
+        output = EvalTaskOutput.model_validate(raw_output)
+        clean_turns = len(output.turn_records) == len(spec.turns) and all(
+            turn.error is None and turn.stop_reason is StopReason.COMPLETED
+            for turn in output.turn_records
+        )
+        world_ok = len(output.world_results) == len(spec.world_assertions) and all(
+            result.passed for result in output.world_results
+        )
+        if not clean_turns or not world_ok or output.stop_mismatches:
+            typer.echo(output.model_dump_json(indent=2), err=True)
+            raise typer.Exit(code=1)
+
+        cassette_dirs = sorted(
+            path
+            for path in recording_root.iterdir()
+            if path.is_dir() and (path / "index.json").is_file()
+        )
+        if not cassette_dirs:
+            typer.echo("ERROR: recording produced no cassette trace directories.", err=True)
+            raise typer.Exit(code=1)
+
+        first_request = None
+        for cassette_dir in cassette_dirs:
+            manifest = CassetteManifest.model_validate_json(
+                (cassette_dir / "index.json").read_text(encoding="utf-8")
+            )
+            first_request = next(
+                (
+                    entry.data["request"]
+                    for entry in manifest.entries
+                    if entry.category is CassetteCategory.LLM_CALL
+                ),
+                None,
+            )
+            if first_request is not None:
+                break
+        if first_request is None:
+            typer.echo("ERROR: recording produced no LLM request.", err=True)
+            raise typer.Exit(code=1)
+
+        tool_manager = build_tool_manager(case_dir, spec.toolset, spec.deny_tools)
+        schemas = sorted(
+            tool_manager.get_tool_descriptions(),
+            key=lambda item: str(item["function"]["name"]),
+        )
+        canonical_schemas = json.dumps(
+            schemas,
+            sort_keys=True,
+            ensure_ascii=False,
+            default=str,
+        )
+        system_prompt = static_system_prompt(_GOLDEN_SYSTEM_PROMPT)
+        meta = GoldenMeta(
+            model=str(first_request.get("model") or model),
+            temperature=float(first_request["temperature"]),
+            tool_names=sorted(tool_manager.list_tools()),
+            tool_schema_sha256=hashlib.sha256(canonical_schemas.encode("utf-8")).hexdigest(),
+            prompt_sha256=hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
+            platform=sys.platform,
+            recorded_at=datetime.now(UTC).isoformat(),
+            baseline=case_dir.name == "chat-notools",
+        )
+
+        target_root = case_dir / "cassette"
+        if target_root.exists():
+            shutil.rmtree(target_root)
+        target_root.mkdir(parents=True)
+        for cassette_dir in cassette_dirs:
+            shutil.copytree(cassette_dir, target_root / cassette_dir.name)
+        (case_dir / "meta.json").write_text(
+            meta.model_dump_json(indent=2, exclude_defaults=True),
+            encoding="utf-8",
+        )
+        typer.echo(meta.model_dump_json(indent=2, exclude_defaults=True))
+        typer.echo(output.model_dump_json(indent=2))
+
+
+@app.command(name="record-golden", help="Record one golden case with the configured real LLM.")
+def record_golden(
+    case: Annotated[Path, typer.Option("--case", help="Golden case directory.")],
+) -> None:
+    asyncio.run(_record_golden_case(case.resolve()))
+
+
+@app.command(name="replay-golden", help="Replay one golden case without provider credentials.")
+def replay_golden(
+    case: Annotated[Path, typer.Option("--case", help="Golden case directory.")],
+) -> None:
+    from bot.eval.replay import GoldenCase, GoldenMeta, GoldenReplayConfig, GoldenReplayRunner
+
+    case_dir = case.resolve()
+    meta = GoldenMeta.model_validate_json((case_dir / "meta.json").read_text(encoding="utf-8"))
+    runner = GoldenReplayRunner(
+        GoldenReplayConfig(
+            model=meta.model,
+            temperature=meta.temperature,
+            system_prompt=_GOLDEN_SYSTEM_PROMPT,
+        )
+    )
+    with _stable_golden_message_serialization():
+        result = asyncio.run(runner.run_case(GoldenCase(name=case_dir.name, dir=case_dir)))
+    typer.echo(result.model_dump_json(indent=2))
+    if not result.passed:
+        raise typer.Exit(code=1)
 
 
 def main() -> None:

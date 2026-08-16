@@ -1,9 +1,7 @@
-"""Post-cleanup todo reorientation hook.
+"""Post-cleanup observer hooks.
 
-After session memory cleanup prunes messages, persists a single
-``<system-reminder>`` USER message via ``SessionMemoryManager.add_messages``
-so the agent can re-orient on its next iteration. Replaces the former
-heuristic history-diff detection with an event-driven persisted reminder.
+Provides cleanup metrics recording and todo reorientation after session
+memory cleanup finishes.
 
 Persistence path: ``SessionMemoryManager.add_messages`` (Path A — no
 ``MemoryAppendRecorder``, no ``_run_cleanup`` re-entry, no ``write_id``).
@@ -15,6 +13,10 @@ out to ``MemoryProvider`` instances.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
+from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.message_utils import wrap_system_reminder
@@ -23,6 +25,60 @@ from modex_agent.memory.hooks import CleanupFinishedHook, MemoryHookContext
 from modex_agent.runtime.store import TodoItem, TodoStore
 
 logger = logging.getLogger(__name__)
+
+
+class CleanupMetricRecord(BaseModel):
+    """Serializable observation of one triggered memory cleanup."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    ts: str
+    session_id: str
+    reason: str
+    messages_kept: int
+    messages_pruned: int
+    compact_generated: bool
+    prune_ratio: float
+    tokens_before: int = 0
+    tokens_after: int = 0
+    tokens_saved: int = 0
+
+
+class CleanupMetricsHook(CleanupFinishedHook):
+    """Append one JSONL metric record for each triggered cleanup."""
+
+    def __init__(self, metrics_dir: Path) -> None:
+        self._metrics_dir = metrics_dir
+
+    async def on_cleanup_finished(self, ctx: MemoryHookContext) -> None:
+        try:
+            result = ctx.cleanup_result
+            if result is None or not result.triggered:
+                return
+            memory_context = ctx.memory_context
+            if memory_context is None or memory_context.session_id is None:
+                return
+
+            total_messages = result.messages_kept + result.messages_pruned
+            prune_ratio = result.messages_pruned / total_messages if total_messages > 0 else 0.0
+            record = CleanupMetricRecord(
+                ts=datetime.now(UTC).isoformat(),
+                session_id=memory_context.session_id,
+                reason=result.reason.value if result.reason is not None else "",
+                messages_kept=result.messages_kept,
+                messages_pruned=result.messages_pruned,
+                compact_generated=result.compact_generated,
+                prune_ratio=prune_ratio,
+                tokens_before=result.tokens_before,
+                tokens_after=result.tokens_after,
+                tokens_saved=result.tokens_before - result.tokens_after,
+            )
+            self._metrics_dir.mkdir(parents=True, exist_ok=True)
+            metrics_path = self._metrics_dir / "cleanup.jsonl"
+            with metrics_path.open("a", encoding="utf-8") as metrics_file:
+                metrics_file.write(f"{record.model_dump_json()}\n")
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to write cleanup metric", exc_info=True)
 
 
 def _build_todo_section(active_todos: list[TodoItem]) -> str:

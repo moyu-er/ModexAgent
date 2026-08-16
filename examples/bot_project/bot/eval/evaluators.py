@@ -6,6 +6,12 @@ and ``metadata`` from the experiment runner. Run-level evaluators receive
 
 Returns :class:`langfuse.Evaluation` objects which Langfuse attaches as scores
 to the corresponding trace or dataset run.
+
+The verify-the-world evaluators (:func:`world_state_evaluator`,
+:func:`tool_success_evaluator`) read the typed-model dumps the eval runner
+emits in the output dict (``world_results`` / ``tool_stats`` keys), not
+agent prose — success is measured against the observable environment, never
+against the agent's claims about it.
 """
 
 from __future__ import annotations
@@ -16,6 +22,8 @@ __all__ = [
     "accuracy_evaluator",
     "completion_evaluator",
     "response_length_evaluator",
+    "world_state_evaluator",
+    "tool_success_evaluator",
     "avg_accuracy",
 ]
 
@@ -111,6 +119,101 @@ def response_length_evaluator(
         name="response_length",
         value=len(output_text),
         comment=f"Response has {len(output_text)} characters",
+    )
+
+
+def world_state_evaluator(
+    *,
+    input: object,
+    output: object,
+    expected_output: object = None,
+    metadata: dict[str, object] | None = None,
+    **kwargs: object,
+) -> Evaluation:
+    """Check every world assertion the eval runner recorded.
+
+    Reads ``world_results`` from the output dict — the typed-model dump
+    produced by the runner, not agent prose. Each entry is
+    ``{"assertion": str, "passed": bool, "detail": str}``. True only when
+    every assertion passed; the comment names the failed assertions.
+    """
+    if not isinstance(output, dict):
+        return Evaluation(
+            name="world_state",
+            value=False,
+            data_type="BOOLEAN",
+            comment="Output is not a dict — no world results",
+        )
+
+    results = output.get("world_results")
+    if not isinstance(results, list):
+        return Evaluation(
+            name="world_state",
+            value=False,
+            data_type="BOOLEAN",
+            comment="No world results in output",
+        )
+
+    failed_labels = [
+        str(record["assertion"])
+        for record in results
+        if isinstance(record, dict) and not record["passed"]
+    ]
+    if failed_labels:
+        return Evaluation(
+            name="world_state",
+            value=False,
+            data_type="BOOLEAN",
+            comment="Failed: " + "; ".join(failed_labels),
+        )
+
+    return Evaluation(
+        name="world_state",
+        value=True,
+        data_type="BOOLEAN",
+        comment=f"All {len(results)} world assertions passed",
+    )
+
+
+def tool_success_evaluator(
+    *,
+    input: object,
+    output: object,
+    expected_output: object = None,
+    metadata: dict[str, object] | None = None,
+    **kwargs: object,
+) -> Evaluation:
+    """Score the share of tool calls that succeeded.
+
+    Reads ``tool_stats`` from the output dict — the typed-model dump
+    produced by the runner, not agent prose. ``total == 0`` scores 1.0
+    (nothing failed); a missing stats dump scores 0.0 so silent
+    instrumentation loss stays visible instead of reading as success.
+    """
+    stats = output.get("tool_stats") if isinstance(output, dict) else None
+    if not isinstance(stats, dict):
+        return Evaluation(
+            name="tool_success",
+            value=0.0,
+            data_type="NUMERIC",
+            comment="No tool stats in output",
+        )
+
+    total = stats.get("total", 0)
+    if total == 0:
+        return Evaluation(
+            name="tool_success",
+            value=1.0,
+            data_type="NUMERIC",
+            comment="No tool calls",
+        )
+
+    success_rate = float(stats["success_rate"])
+    return Evaluation(
+        name="tool_success",
+        value=success_rate,
+        data_type="NUMERIC",
+        comment=f"{stats.get('errors', 0)} of {total} tool calls errored",
     )
 
 

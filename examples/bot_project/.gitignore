@@ -105,3 +105,6 @@ packaging/staging/
 packaging/logo.ico
 packaging/ModexBot-Setup-*.exe
 
+# eval run archives (local evidence only)
+evals/runs/
+

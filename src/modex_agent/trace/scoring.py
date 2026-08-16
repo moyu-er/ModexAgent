@@ -7,6 +7,7 @@ Extracted from training_exporter.py to share between:
 
 from __future__ import annotations
 
+from collections import deque
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -106,6 +107,31 @@ def extract_final_response(spans: list[SpanModel]) -> str:
 
 
 # ── Scoring ────────────────────────────────────────────────────────────
+
+
+def compute_root_subtrees(spans: list[SpanModel]) -> dict[str, list[SpanModel]]:
+    """Map each agent root span to the spans owned by that agent turn."""
+    children: dict[str | None, list[SpanModel]] = {}
+    for span in spans:
+        children.setdefault(span.parent_span_id, []).append(span)
+
+    subtrees: dict[str, list[SpanModel]] = {}
+    for root in spans:
+        if root.name != SpanName.INVOKE_AGENT.value:
+            continue
+        collected = {root.span_id}
+        pending = deque([root.span_id])
+        while pending:
+            parent_id = pending.popleft()
+            for child in children.get(parent_id, []):
+                if child.span_id in collected:
+                    continue
+                if child.name == SpanName.INVOKE_AGENT.value:
+                    continue
+                collected.add(child.span_id)
+                pending.append(child.span_id)
+        subtrees[root.span_id] = [span for span in spans if span.span_id in collected]
+    return subtrees
 
 
 def compute_score(spans: list[SpanModel]) -> TrajectoryScore:

@@ -19,6 +19,12 @@ approval suspend/resume, and integration points for hooks, interceptors, and con
 | `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy`, and `ReActRuntimeStateCodec`. |
 | `builder.py` | `ReActAgentBuilder` -- `build_agent()` + `build_emitter_factory()` from `AgentDescriptor`. |
 | `approval.py` | *(removed — migrated to `modex_agent.approval.runtime`)* |
+| `llm_client.py` | `ReactLlmClient` — the ReAct LLM caller; `call()` picks the control-draining stream (when an LLM_STREAM-scope interceptor chain is present), plain stream, or non-streaming path, and preserves the `INTERRUPTED_PARTIAL` contract on mid-stream interrupt. |
+| `error_recovery.py` | Provider error recovery for `ReactLlmClient` — on context-length / payload-too-large errors applies emergency compaction (drop middle messages, keep system + recent tail) and retries with the trimmed list. |
+| `message_builder.py` | Pure helpers constructing `ChatMessage` structs (tool results, assistant content) — no sanitization logic; callers own thinking-chain cleanup. |
+| `injection_drainer.py` | `InjectionDrainer` — consumes the per-turn injection queue into history (extracted from `ReActAgent._drain_injections`). |
+| `tool_executor.py` | `ToolExecutor` — runs a tool call through the interceptor chain with the mandatory `ToolTimeoutInterceptor` composed innermost (per-invocation deadline on every ReAct path). |
+| `tool_dedup.py` | `ToolCallDeduplicator` — progressive dedup for `ToolNode`: same-step result reuse + cross-step streak detection with escalating `<system-reminder>`s; skips at `_STREAK_SKIP=8`, force-cancels the turn at `_STREAK_STOP=12`. Fresh instance per turn. |
 | `constants.py` | `ReActNode`, `ReActHookPoint` (11 values: iteration-level + turn-attempt `BEFORE_TURN`/`AFTER_TURN` + node-level `START_NODE_TURN`/`END_NODE_TURN`), `ReActScope`, `ReActEvent`, `InterruptReason` (B1) StrEnums. |
 | `nodes/start.py` | `StartNode` -- routes to BEFORE (fresh) or TOOL (resume from approval). Dispatches `START_NODE_TURN` hook on fresh-turn path only (not on resume). |
 | `nodes/before_turn.py` | `BeforeTurnNode` -- increments `turn_attempt`, resets `iteration = 0`, dispatches `BEFORE_TURN` hook, routes to LLM. |

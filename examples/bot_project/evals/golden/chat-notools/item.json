@@ -1,0 +1,13 @@
+{
+  "id": "chat-notools",
+  "turns": [
+    {
+      "user": "What is 7 multiplied by 8? Reply with only the number.",
+      "expected_stop": "completed"
+    }
+  ],
+  "toolset": "none",
+  "deny_tools": [
+    "bash"
+  ]
+}

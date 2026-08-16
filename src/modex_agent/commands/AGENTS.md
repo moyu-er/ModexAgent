@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-22 -->
+<!-- Updated: 2026-08-15 -->
 
 # commands
 
@@ -39,7 +39,7 @@ Plain input (no leading `/`, or `/` not at start) is passed through to the agent
 | `/approve` | `ApprovalCommandHandler` | `APPROVAL_RESPONSE` (if pending approval, else `NORMAL_QUEUE`) | `APPROVAL_DECISION` | Approves pending tool call(s) via result field. |
 | `/deny` | `ApprovalCommandHandler` | `APPROVAL_RESPONSE` | `APPROVAL_DECISION` | Denies pending tool call(s) via result field. |
 | `/continue` | `ContinueCommandHandler` | `NORMAL_QUEUE` | `CONTINUE_AGENT` | Continues agent without appending user message. |
-| `/stop` | `ControlCommandHandler` | `BYPASS_QUEUE` | `CONTROL_COMMAND` | Build a `ControlCommand(CANCEL_TURN)` and return it as a result field; the pipeline pre-lock path cancels the running task directly. Notice: "Agent turn stopped." |
+| `/stop` | `ControlCommandHandler` | `BYPASS_QUEUE` | `CONTROL_COMMAND` | Build a `ControlCommand(CANCEL_TURN)` and return it as a result field; `InputAdapter._try_intercept_control` sends it into `InMemoryControlChannel`, where the drain path raises `AgentCancelled` → `AgentResult(stop_reason=CANCELLED)`. Notice: "⏹ Agent turn stopped." |
 
 `/cd`, `/exit`, `/pwd` are listed in `BuiltinCommand` but are **not** handled by
 the `SlashCommandProcessor` — they are intercepted earlier in the IM input
@@ -82,8 +82,12 @@ Called before acquiring the session lock. Returns a `CommandDispatchPolicy`:
 - `APPROVAL_RESPONSE` -- approval-related command (used for routing awareness).
 - `DROP_IF_BUSY` -- drop if agent is currently running.
 - `BYPASS_QUEUE` -- handled immediately, before the session lock and the busy
-  check. **Actively used** by `ControlCommandHandler` (`/stop`); the pipeline
-  (`pipeline.py` pre-lock branch) returns early after cancelling the running task.
+  check. **Actively used** by `ControlCommandHandler` (`/stop`): the live
+  consumer is `InputAdapter._try_intercept_control` (called from the bot
+  input-pipeline stages), which sends the `CANCEL_TURN` command into
+  `InMemoryControlChannel`. The pipeline's pre-lock branch (`pipeline.py`)
+  only logs and returns early -- the adapter-level interception already
+  handled it.
 
 The `ApprovalCommandHandler.dispatch_policy` checks `context.pending_approval`:
 - If pending approval exists → `APPROVAL_RESPONSE`
@@ -96,7 +100,7 @@ Called inside the session lock. Returns a `CommandHandlingResult` with `CommandA
 - `CONTINUE_AGENT` -- run agent without appending user message.
 - `TRANSFORM_TO_USER_INPUT` -- replace message with transformed content, then run agent.
 - `APPROVAL_DECISION` -- apply approval decision to pending snapshot.
-- `CONTROL_COMMAND` -- carry a `ControlCommand` on the result; the pipeline acts on it (currently: task cancellation in pre-lock).
+- `CONTROL_COMMAND` -- carry a `ControlCommand` on the result; `InputAdapter._try_intercept_control` sends it into the control channel (see "Note on `/stop`" below).
 - `NOTICE` -- send notice to user, do not run agent.
 
 ## Handler Protocol
@@ -123,10 +127,16 @@ When a pending approval exists, `/continue` returns a `NOTICE` ("A pending appro
 
 ## Note on `/stop` and the Control Channel
 
-`ControlCommandHandler` constructs a `ControlCommand(type=CANCEL_TURN)` but does
-**not** send it into `InMemoryControlChannel`; it returns it as the result's
-`control_command` field. The actual cancellation is `existing_task.cancel()` in
-the pipeline. The control channel is currently not used for cancellation — see
-`modex_agent/control/AGENTS.md`.
+`ControlCommandHandler` constructs a `ControlCommand(type=CANCEL_TURN)` and
+returns it as the result's `control_command` field. The live consumer is
+`InputAdapter._try_intercept_control` (`pipeline/adapters.py`): after dedup /
+activity checks it attaches the running turn's UUID, sends the command into
+`InMemoryControlChannel`, and acks the user. From there
+`drain_control_channel()` (safe points in `LLMNode`/`ToolNode` plus
+`ControlDrainInterceptor` / `LlmCancelInterceptor`) raises `AgentCancelled`,
+caught in `ReActAgent.run` → `AgentResult(stop_reason=CANCELLED)`. The
+separate busy-input INTERRUPT path (`BusyInputMode.INTERRUPT`) cancels via
+`asyncio.Task.cancel()` directly and does not use the channel.
+`modex_agent/control/AGENTS.md` is authoritative for this flow.
 
 <!-- MANUAL: -->

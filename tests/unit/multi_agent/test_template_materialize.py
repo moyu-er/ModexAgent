@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,15 +11,14 @@ import pytest
 from modex_agent.core.constants import ReasoningEffort
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.memory.cleanup_hooks import CleanupMetricsHook, TodoReorientationHook
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.pool_config.specs import SubagentSpec
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
-from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
-
-from pathlib import Path
 
 
 def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
@@ -107,7 +107,7 @@ async def test_materialize_subagent_inherits_llm_model_info() -> None:
     so runtime_services.model_info is None and tools (e.g. ReadFileTool image
     path) degrade to text-only even when the LLM supports IMAGE.
     """
-    from modex_agent.core.capabilities import ModelCapabilities, ModelInfo, Modality
+    from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
 
     vision_info = ModelInfo(
         model_name="test-vision",
@@ -194,6 +194,23 @@ async def test_materialize_subagent_wires_hooks_to_hook_runner():
     await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
     # SubagentAutoSendHook must be added to hook_runner (not just pipeline.hooks)
     assert fake_instance.pipeline.hook_runner.add.call_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_materialize_subagent_registers_cleanup_metrics_after_reorientation(
+    tmp_path: Path,
+) -> None:
+    deps, factory = _make_deps()
+    deps = dataclasses.replace(deps, project_dir=tmp_path)
+    template = AgentTemplate(spec=SubagentSpec(agent_name="scout"))
+
+    await template.materialize(parent_session=None, invocation_id=None, deps=deps)
+
+    context_manager = factory.create_agent.call_args.kwargs["context_manager"]
+    cleanup_hooks = context_manager.memory_system._hook_runner._hooks
+    assert isinstance(cleanup_hooks[-2], TodoReorientationHook)
+    assert isinstance(cleanup_hooks[-1], CleanupMetricsHook)
+    assert cleanup_hooks[-1]._metrics_dir == tmp_path / ".modex" / "metrics"
 
 
 # ---------------------------------------------------------------------------

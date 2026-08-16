@@ -269,6 +269,8 @@ class TestNoTrigger:
         )
 
         assert result.triggered is False
+        assert result.tokens_before == 30
+        assert result.tokens_after == 30
 
 
 class TestCleanupHookTriggered:
@@ -468,6 +470,7 @@ class TestCleanupHookTruthTable:
             )
             assert result.triggered is False
             assert result.messages_pruned == 0
+            assert result.tokens_before == result.tokens_after
             assert len(hook.triggered_calls) == 0
             assert len(hook.finished_calls) == 0
             return
@@ -491,6 +494,8 @@ class TestCleanupHookTruthTable:
             assert result.triggered is True
             assert result.messages_pruned == 21
             assert result.messages_kept == 0
+            assert result.tokens_before > 0
+            assert result.tokens_after == 0
             assert len(hook.triggered_calls) == 0
             assert len(hook.finished_calls) == 1
             assert hook.finished_calls[0].cleanup_result is result
@@ -514,6 +519,7 @@ class TestCleanupHookTruthTable:
             )
             assert result.triggered is True
             assert result.messages_pruned == 0
+            assert result.tokens_before == result.tokens_after
             assert len(hook.triggered_calls) == 0
             assert len(hook.finished_calls) == 1
             assert hook.finished_calls[0].cleanup_result is result
@@ -537,6 +543,7 @@ class TestCleanupHookTruthTable:
             )
             assert result.triggered is True
             assert result.messages_pruned == 0
+            assert result.tokens_before == result.tokens_after
             assert len(hook.triggered_calls) == 1
             assert len(hook.finished_calls) == 1
             assert hook.finished_calls[0].cleanup_result is result
@@ -558,6 +565,7 @@ class TestCleanupHookTruthTable:
             )
             assert result.triggered is True
             assert result.messages_pruned > 0
+            assert result.tokens_before > result.tokens_after
             assert len(hook.triggered_calls) == 1
             assert len(hook.finished_calls) == 1
             assert hook.finished_calls[0].cleanup_result is result
@@ -1072,12 +1080,16 @@ class TestCleanupResultType:
             triggered=True,
             messages_kept=5,
             messages_pruned=10,
+            tokens_before=120,
+            tokens_after=40,
             archive_skipped=False,
             reason=CompressionReason.MESSAGE_COUNT,
         )
         assert result.triggered is True
         assert result.messages_kept == 5
         assert result.messages_pruned == 10
+        assert result.tokens_before == 120
+        assert result.tokens_after == 40
         assert result.archive_skipped is False
         assert result.reason == CompressionReason.MESSAGE_COUNT
 
@@ -1086,6 +1098,8 @@ class TestCleanupResultType:
         assert result.triggered is False
         assert result.messages_kept == 0
         assert result.messages_pruned == 0
+        assert result.tokens_before == 0
+        assert result.tokens_after == 0
 
 
 # ---------------------------------------------------------------------------

@@ -85,19 +85,36 @@ class DatasetCurator:
         limit: int = 50,
         session_id: str | None = None,
     ) -> list[TraceSummary]:
-        """Fetch recent traces from Langfuse, return summaries for curation.
+        """Fetch recent root agent observations as trace summaries for curation.
 
-        ``has_error`` is derived from the trace-level ``level`` field (Langfuse
-        v4 propagates the worst observation level to the trace), avoiding an
-        N+1 observation query per trace.
+        Langfuse v4 exposes observations but no trace-list endpoint. Root agent
+        observations represent agent turns; nested agent observations share the
+        parent's trace ID and are excluded.
         """
+        filters = [
+            {
+                "type": "string",
+                "column": "type",
+                "operator": "=",
+                "value": "AGENT",
+            }
+        ]
+        if session_id is not None:
+            filters.append(
+                {
+                    "type": "string",
+                    "column": "sessionId",
+                    "operator": "=",
+                    "value": session_id,
+                }
+            )
         params: dict[str, Any] = {
+            "fields": "core,basic,io",
             "limit": limit,
             "orderBy": "timestamp_desc",
+            "filter": json.dumps(filters),
         }
-        if session_id is not None:
-            params["sessionId"] = session_id
-        url = f"{self._host}/api/public/traces"
+        url = f"{self._host}/api/public/v2/observations"
         try:
             async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT) as client:
                 response = await client.get(url, params=params, headers=self._headers)
@@ -107,7 +124,7 @@ class DatasetCurator:
 
         if response.status_code != 200:
             logger.warning(
-                "DatasetCurator: GET /api/public/traces returned HTTP %s: %s",
+                "DatasetCurator: GET /api/public/v2/observations returned HTTP %s: %s",
                 response.status_code,
                 response.text[:200],
             )
@@ -117,31 +134,35 @@ class DatasetCurator:
             body = response.json()
         except Exception:
             logger.warning(
-                "DatasetCurator: traces response was not JSON: %s",
+                "DatasetCurator: observations response was not JSON: %s",
                 response.text[:200],
             )
             return []
 
         data = body.get("data") if isinstance(body, dict) else None
         if not isinstance(data, list):
-            logger.warning("DatasetCurator: traces response 'data' was not a list")
+            logger.warning("DatasetCurator: observations response 'data' was not a list")
             return []
 
         summaries: list[TraceSummary] = []
-        for trace in data:
-            if not isinstance(trace, dict):
+        seen_trace_ids: set[str] = set()
+        for observation in data:
+            if not isinstance(observation, dict):
                 continue
-            trace_id = trace.get("id")
-            if not isinstance(trace_id, str):
+            if observation.get("parentObservationId") is not None:
                 continue
+            trace_id = observation.get("traceId")
+            if not isinstance(trace_id, str) or trace_id in seen_trace_ids:
+                continue
+            seen_trace_ids.add(trace_id)
             summaries.append(
                 TraceSummary(
                     trace_id=trace_id,
-                    session_id=trace.get("sessionId") or "",
-                    name=trace.get("name") or "",
-                    observation_count=int(trace.get("observationCount") or 0),
-                    has_error=trace.get("level") == "ERROR",
-                    latency_ms=float(trace.get("latency") or 0.0),
+                    session_id=observation.get("sessionId") or "",
+                    name=observation.get("name") or "invoke_agent",
+                    observation_count=0,
+                    has_error=observation.get("level") == "ERROR",
+                    latency_ms=float(observation.get("latency") or 0.0),
                 )
             )
         return summaries
@@ -322,8 +343,7 @@ def _find_root_observation(
 ) -> dict[str, Any] | None:
     """Find the root observation (``parentObservationId`` is None).
 
-    Prefer ``type=AGENT`` / ``name=invoke_agent`` when present, then any
-    ``type=AGENT`` observation, then the first root.
+    Prefer the first ``type=AGENT`` observation, then the first root.
     """
     roots = [
         obs
@@ -332,9 +352,6 @@ def _find_root_observation(
     ]
     if not roots:
         return None
-    for obs in roots:
-        if obs.get("type") == "AGENT" and obs.get("name") == "invoke_agent":
-            return obs
     for obs in roots:
         if obs.get("type") == "AGENT":
             return obs

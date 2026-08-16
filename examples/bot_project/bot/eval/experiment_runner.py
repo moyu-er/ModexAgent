@@ -1,3 +1,4 @@
+# noqa: C901  # noqa: SIZE_OK - W1-b requires one Langfuse orchestration boundary.
 """Experiment runner — run ReActAgent against Langfuse datasets.
 
 Wraps ``ReActAgent(provider, mode='clean')`` as a Langfuse experiment task
@@ -25,15 +26,39 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio  # noqa: TID251  # noqa: ANYIO_OK - required asyncio.to_thread contract
 import logging
-from typing import TYPE_CHECKING, Any
+import shutil
+import subprocess
+import tempfile
+from datetime import UTC, datetime
+from pathlib import Path, PureWindowsPath
+from typing import TYPE_CHECKING, Any, Literal, assert_never
 
 from langfuse import Langfuse
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 if TYPE_CHECKING:
     from langfuse.experiment import ExperimentResult
 
+from bot.eval.agent_harness import (
+    _WorkspaceTokenNormalizer,
+    build_runtime_services,
+    build_tool_manager,
+    static_system_prompt,
+    wrap_provider,
+)
+from bot.eval.task_output import EvalTaskOutput, ToolStats, TurnRecord, WorldResult
+from bot.eval.task_spec import (
+    CommandExitAssertion,
+    EvalItemSpec,
+    FileAbsentAssertion,
+    FileContainsAssertion,
+    FileExistsAssertion,
+    WorldAssertion,
+)
 from modex_agent.agents.react.agent import ReActAgent, ReActEvent
+from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult, ContentEmitter
@@ -43,8 +68,132 @@ from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import MessageRole
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.runtime.enums import AgentKind, TurnPhase
+from modex_agent.runtime.models import TurnIdentity
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.trace.cassette import CassetteRecorder, CassetteReplayEngine
+from modex_agent.trace.scoring import compute_score
+from modex_agent.trace.semconv import SpanName
+from modex_agent.trace.store import JsonlSpanQuery
 
 logger = logging.getLogger(__name__)
+
+
+class _ArchiveItem(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    item_id: str
+    output: dict[str, Any]
+
+
+class _RunArchive(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    dataset: str
+    experiment: str
+    ts: str
+    items: list[_ArchiveItem]
+
+
+class UnsafeWorkspacePathError(ValueError):
+    pass
+
+
+def _workspace_path(workspace: Path, raw_path: str) -> Path:
+    candidate = Path(raw_path)
+    if (
+        candidate.is_absolute()
+        or PureWindowsPath(raw_path).is_absolute()
+        or ".." in candidate.parts
+    ):
+        raise UnsafeWorkspacePathError(f"Unsafe eval workspace path: {raw_path}")
+    resolved = (workspace / candidate).resolve()
+    if not resolved.is_relative_to(workspace.resolve()):
+        raise UnsafeWorkspacePathError(f"Unsafe eval workspace path: {raw_path}")
+    return resolved
+
+
+async def _evaluate_world_assertion(
+    assertion: WorldAssertion,
+    workspace: Path,
+) -> WorldResult:
+    match assertion:
+        case FileExistsAssertion(path=raw_path):
+            exists = _workspace_path(workspace, raw_path).exists()
+            return WorldResult(
+                assertion=f"file_exists:{raw_path}",
+                passed=exists,
+                detail="path exists" if exists else "path does not exist",
+            )
+        case FileAbsentAssertion(path=raw_path):
+            absent = not _workspace_path(workspace, raw_path).exists()
+            return WorldResult(
+                assertion=f"file_absent:{raw_path}",
+                passed=absent,
+                detail="path is absent" if absent else "path still exists",
+            )
+        case FileContainsAssertion(path=raw_path, content=expected):
+            path = _workspace_path(workspace, raw_path)
+            contains = path.is_file() and expected in path.read_text(encoding="utf-8")
+            return WorldResult(
+                assertion=f"file_contains:{raw_path}",
+                passed=contains,
+                detail="content found" if contains else "content not found",
+            )
+        case CommandExitAssertion(command=command, expected_exit=expected_exit):
+            label = f"command_exit:{' '.join(command)}"
+            try:
+                completed = await asyncio.to_thread(
+                    subprocess.run,
+                    command,
+                    cwd=workspace,
+                    timeout=60,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                return WorldResult(assertion=label, passed=False, detail=str(exc))
+            return WorldResult(
+                assertion=label,
+                passed=completed.returncode == expected_exit,
+                detail=f"exit code {completed.returncode} (expected {expected_exit})",
+            )
+        case unreachable:
+            assert_never(unreachable)
+
+
+async def _message_tool_stats(history: ListMessageHistory) -> ToolStats:
+    messages = await history.to_list()
+    tool_messages = [message for message in messages if message.role is MessageRole.TOOL]
+    errors = sum(
+        1
+        for message in tool_messages
+        if isinstance(message.content, str) and "Error:" in message.content
+    )
+    total = len(tool_messages)
+    success_rate = (total - errors) / total if total else 1.0
+    return ToolStats(
+        total=total,
+        errors=errors,
+        success_rate=success_rate,
+        source="messages",
+    )
+
+
+async def _span_tool_stats(trace_dir: Path, session: SessionInfo) -> ToolStats:
+    spans = await JsonlSpanQuery(trace_dir).list_by_session(str(session))
+    score = compute_score(spans)
+    total = sum(1 for span in spans if span.name == SpanName.EXECUTE_TOOL.value)
+    errors = total - round(total * score.tool_success_rate)
+    return ToolStats(
+        total=total,
+        errors=errors,
+        success_rate=score.tool_success_rate,
+        reasoning_depth=float(score.reasoning_depth),
+        trajectory_compactness=score.trajectory_compactness,
+        source="spans",
+    )
 
 
 class _NoopEmitter(ContentEmitter[ReActEvent]):
@@ -80,6 +229,10 @@ class EvalRunner:
         system_prompt: str,
         max_iterations: int = 10,
         langfuse_client: Langfuse | None = None,
+        mode: Literal["clean", "production"] = "clean",
+        cassette: CassetteReplayEngine | None = None,
+        recorder: CassetteRecorder | None = None,
+        archive_root: Path | None = None,
     ) -> None:
         """Store config and build the clean-mode ReActAgent.
 
@@ -92,25 +245,42 @@ class EvalRunner:
                 (``LANGFUSE_HOST`` etc.) at ``run`` time.
         """
         self._agent = ReActAgent(provider, mode="clean")
+        self._provider = provider
         self._system_prompt = system_prompt
         self._max_iterations = max_iterations
         self._lf = langfuse_client
+        self._mode: Literal["clean", "production"] = mode
+        self._cassette = cassette
+        self._recorder = recorder
+        self._archive_root = archive_root
 
-    async def task(self, *, item: object, **kwargs: object) -> dict[str, Any]:
-        """Langfuse experiment task function (async).
+    async def task(
+        self,
+        *,
+        item: object,  # noqa: ANN401  # noqa: OBJECT_OK - Langfuse callback boundary
+        **kwargs: object,  # noqa: ANN401  # noqa: OBJECT_OK - Langfuse callback boundary
+    ) -> dict[str, Any]:
+        """Run a legacy single-turn or validated v2 eval item."""
+        _ = kwargs
+        raw_input = getattr(item, "input", None)
+        try:
+            spec = EvalItemSpec.from_item_input(raw_input)
+        except ValidationError as exc:
+            logger.warning("EvalRunner: v2 item failed", exc_info=True)
+            return self._error_output(str(exc))
+        if spec is None:
+            return await self._legacy_task(item=item)
+        try:
+            return await self._v2_task(spec)
+        except Exception as exc:  # noqa: BLE001  # noqa: BROAD_EXCEPT_OK
+            logger.warning("EvalRunner: v2 item failed", exc_info=True)
+            return self._error_output(str(exc))
 
-        Builds a fresh ``AgentContext`` per item, runs the agent, and returns
-        structured output for Langfuse scoring. Failures are caught and
-        returned as structured errors rather than raised -- this keeps the
-        Langfuse trace intact for inspection.
-
-        Args:
-            item: A Langfuse ``DatasetItem`` with ``.id`` and ``.input``.
-            **kwargs: Additional keyword args passed through by Langfuse.
-
-        Returns:
-            Dict with ``output``, ``stop_reason``, and ``error`` keys.
-        """
+    async def _legacy_task(
+        self,
+        *,
+        item: object,  # noqa: ANN401  # noqa: OBJECT_OK - legacy Langfuse boundary
+    ) -> dict[str, Any]:
         raw_input = getattr(item, "input", None)
         if isinstance(raw_input, dict):
             query = str(raw_input.get("query") or "")
@@ -132,7 +302,7 @@ class EvalRunner:
         emitter = _NoopEmitter()
         try:
             result = await self._agent.run(ctx, emitter)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  # noqa: BROAD_EXCEPT_OK
             logger.warning(
                 "EvalRunner: agent run failed for item %s",
                 item_id,
@@ -140,14 +310,124 @@ class EvalRunner:
             )
             return {
                 "output": "",
-                "stop_reason": str(StopReason.ERROR),
+                "stop_reason": StopReason.ERROR.value,
                 "error": str(exc),
             }
         return {
             "output": result.content or "",
-            "stop_reason": str(result.stop_reason),
+            "stop_reason": result.stop_reason.value,
             "error": result.error,
         }
+
+    async def _v2_task(self, spec: EvalItemSpec) -> dict[str, Any]:
+        workspace = Path(tempfile.mkdtemp(prefix=f"modex-eval-{spec.id}-"))
+        trace_dir = Path(tempfile.mkdtemp(prefix=f"modex-eval-trace-{spec.id}-"))
+        try:
+            for raw_path, content in spec.world_setup.items():
+                path = _workspace_path(workspace, raw_path)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+
+            history = ListMessageHistory()
+            session = SessionInfo.from_str(f"eval.{spec.id}.react")
+            tool_manager = _WorkspaceTokenNormalizer(
+                build_tool_manager(workspace, spec.toolset, spec.deny_tools),
+                workspace,
+            )
+            provider = self._provider
+            cassette = self._cassette if self._cassette is not None else self._recorder
+            if cassette is not None:
+                provider = wrap_provider(provider, cassette)
+
+            match self._mode:
+                case "clean":
+                    services = AgentRuntimeServices()
+                    agent = ReActAgent(provider, mode="clean")
+                case "production":
+                    services = build_runtime_services(trace_dir=trace_dir, recorder=None)
+                    agent = ReActAgent(provider, mode="full")
+                case unreachable:
+                    assert_never(unreachable)
+
+            turn_records: list[TurnRecord] = []
+            stop_mismatches: list[str] = []
+            emitter = _NoopEmitter()
+            for turn_number, turn in enumerate(spec.turns, start=1):
+                identity = TurnIdentity(
+                    agent_id="react",
+                    session=session,
+                    turn_id=f"turn-{turn_number}",
+                )
+                state = ReActTurnState(
+                    identity=identity,
+                    agent_kind=AgentKind.REACT,
+                    phase=TurnPhase.CREATED,
+                )
+                context = AgentContext(
+                    system_prompt=static_system_prompt(self._system_prompt),
+                    history=history,
+                    tool_manager=tool_manager,
+                    session=session,
+                    max_iterations=self._max_iterations,
+                    runtime=AgentRuntime(services=services, state=state),
+                    identity=identity,
+                    workspace=workspace,
+                )
+                await history.append(ChatMessage(role=MessageRole.USER, content=turn.user))
+                result = await agent.run(context, emitter)
+                stop_reason = result.stop_reason
+                turn_records.append(
+                    TurnRecord(
+                        stop_reason=stop_reason,
+                        error=result.error,
+                        content=result.content or "",
+                    )
+                )
+                if turn.expected_stop is not None and turn.expected_stop != stop_reason.value:
+                    stop_mismatches.append(
+                        f"turn {turn_number}: expected {turn.expected_stop}, got {stop_reason.value}"
+                    )
+
+            world_results = [
+                await _evaluate_world_assertion(assertion, workspace)
+                for assertion in spec.world_assertions
+            ]
+            match self._mode:
+                case "clean":
+                    tool_stats = await _message_tool_stats(history)
+                case "production":
+                    tool_stats = await _span_tool_stats(trace_dir, session)
+                case unreachable:
+                    assert_never(unreachable)
+            final_turn = turn_records[-1]
+            return EvalTaskOutput(
+                output=final_turn.content,
+                stop_reason=final_turn.stop_reason,
+                error=final_turn.error,
+                world_results=world_results,
+                tool_stats=tool_stats,
+                turns_executed=len(turn_records),
+                stop_mismatches=stop_mismatches,
+                turn_records=turn_records,
+            ).to_output_dict()
+        finally:
+            shutil.rmtree(workspace, ignore_errors=True)
+            shutil.rmtree(trace_dir, ignore_errors=True)
+
+    def _error_output(self, error: str) -> dict[str, Any]:
+        source: Literal["spans", "messages"] = (
+            "spans" if self._mode == "production" else "messages"
+        )
+        return EvalTaskOutput(
+            output="",
+            stop_reason=StopReason.ERROR,
+            error=error,
+            world_results=[],
+            tool_stats=ToolStats(total=0, errors=0, success_rate=1.0, source=source),
+            turns_executed=0,
+            stop_mismatches=[],
+            turn_records=[],
+        ).to_output_dict()
 
     def run(
         self,
@@ -177,15 +457,43 @@ class EvalRunner:
             The Langfuse experiment result object -- call ``.format()`` for
             a human-readable summary.
         """
+        item_outputs: list[_ArchiveItem] = []
+
+        async def tee_task(
+            *,
+            item: object,  # noqa: ANN401  # noqa: OBJECT_OK - Langfuse callback boundary
+            **kwargs: object,  # noqa: ANN401  # noqa: OBJECT_OK - Langfuse callback boundary
+        ) -> dict[str, Any]:
+            output = await self.task(item=item, **kwargs)
+            item_outputs.append(
+                _ArchiveItem(
+                    item_id=str(getattr(item, "id", "unknown")),
+                    output=output,
+                )
+            )
+            return output
+
         lf = self._lf or Langfuse()
         dataset = lf.get_dataset(dataset_name)
         result = dataset.run_experiment(
             name=experiment_name,
             description=description,
-            task=self.task,
+            task=tee_task,
             evaluators=evaluators or [],
             max_concurrency=max_concurrency,
         )
+        if self._archive_root is not None:
+            now = datetime.now(UTC)
+            archive_dir = self._archive_root / dataset_name / experiment_name
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            archive = _RunArchive(
+                dataset=dataset_name,
+                experiment=experiment_name,
+                ts=now.isoformat().replace("+00:00", "Z"),
+                items=item_outputs,
+            )
+            archive_path = archive_dir / now.strftime("%Y%m%dT%H%M%S.%fZ.json")
+            archive_path.write_text(archive.model_dump_json(indent=2), encoding="utf-8")
         return result
 
 

@@ -479,6 +479,7 @@ class CassetteReplayEngine:
     def __init__(self, cassette_path: Path) -> None:
         # cassette_path = <base_dir>/<trace_id>/
         self._cassette_path = Path(cassette_path)
+        self.misses = 0
         self._manifest: CassetteManifest | None = None
         self._llm_responses: dict[str, dict[str, Any]] = {}
         self._tool_results: dict[str, dict[str, Any]] = {}
@@ -524,6 +525,7 @@ class CassetteReplayEngine:
     def _lookup_llm(self, key: str) -> LLMResponse:
         data = self._llm_responses.get(key)
         if data is None:
+            self.misses += 1
             raise KeyError(
                 f"Cassette miss (LLM_CALL): no recorded entry for key {key}"
             )
@@ -532,6 +534,7 @@ class CassetteReplayEngine:
     def _lookup_tool(self, key: str) -> ToolResult:
         data = self._tool_results.get(key)
         if data is None:
+            self.misses += 1
             raise KeyError(
                 f"Cassette miss (TOOL_CALL): no recorded entry for key {key}"
             )
