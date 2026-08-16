@@ -12,7 +12,7 @@ export type Route =
   | { kind: "graphSpecEdit"; specId: string }
   | { kind: "graphInstance"; instanceId: string };
 
-function parseHash(hash: string): Route {
+export function parseHash(hash: string): Route {
   const segments = hash
     .replace(/^#/, "")
     .split("/")

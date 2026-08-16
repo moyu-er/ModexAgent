@@ -253,6 +253,18 @@ export async function changeWorkspace(
   return resp.json() as Promise<ChangeWorkspaceResult>;
 }
 
+/**
+ * cd + coerce the backend cwd to a plain string (the backend may serialize
+ * it as a path-like object). Throws Error(notice) when the cd is rejected.
+ */
+export async function cdWorkspace(path: string): Promise<string> {
+  const result = await changeWorkspace(path);
+  if (!result.success) {
+    throw new Error(result.notice || "workspace cd failed");
+  }
+  return typeof result.cwd === "string" ? result.cwd : String(result.cwd);
+}
+
 export interface PickWorkspaceResult {
   path: string | null;
   success: boolean;

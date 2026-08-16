@@ -1,46 +1,57 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  changeWorkspace,
   deleteConversation,
-  fetchPools,
   fetchSessions,
-  fetchWorkspace,
   type PoolInfo,
 } from "../lib/api";
 import { storageGet, storageSet } from "../lib/storage";
-import { setTimezone } from "../lib/timezone";
 import type { ConversationInfo } from "../types/events";
 
-const ACTIVE_POOL_STORAGE_KEY = "modexbot_active_pool";
-const WS_STORAGE_KEY = "modexbot_workspace";
+/**
+ * Per-workspace-pod session state (workspace-tabs architecture).
+ *
+ * Each workspace tab mounts one pod with one ``useSessions`` instance whose
+ * ``ws`` scope is constant for the pod's lifetime ("" = home partition).
+ * The old global workspace-switching machinery (handleWorkspaceChanged,
+ * handleGoHome, recents, epoch-guarded cross-workspace races) is gone —
+ * switching workspaces is now a tab switch handled entirely above this hook.
+ *
+ * Behavioral invariants preserved from the original global implementation:
+ *  - ``fetchEpochRef``: a monotonic counter captured per fetch; its ``.then``
+ *    discards any response whose epoch no longer matches (stale pool-switch
+ *    overwrite guard — pools still switch within a pod).
+ *  - ``draftIdsRef``: empty drafts are reused across "New Conversation" clicks
+ *    and survive pool switches; cleared on first send.
+ */
 
-function loadWorkspace(home: string): string {
-  // Match the original `if (s) return s` semantics: an empty stored value
-  // also falls back to home.
-  return storageGet(sessionStorage, WS_STORAGE_KEY, home) || home;
+function poolStorageKey(ws: string): string {
+  return `modexbot_active_pool:${ws || "__home__"}`;
 }
 
-function saveWorkspace(ws: string): void {
-  storageSet(sessionStorage, WS_STORAGE_KEY, ws);
+function loadActivePool(ws: string): string {
+  // Fall back to the legacy global key so the upgrade preserves the user's
+  // last pool choice for the first pod that opens.
+  return (
+    storageGet(localStorage, poolStorageKey(ws), "") ||
+    storageGet(localStorage, "modexbot_active_pool", "main")
+  );
 }
 
-function loadActivePool(): string {
-  return storageGet(localStorage, ACTIVE_POOL_STORAGE_KEY, "main");
+function saveActivePool(ws: string, pool: string): void {
+  storageSet(localStorage, poolStorageKey(ws), pool);
 }
 
-function saveActivePool(pool: string): void {
-  storageSet(localStorage, ACTIVE_POOL_STORAGE_KEY, pool);
+export interface UseSessionsOptions {
+  /** API workspace scope for this pod — "" means the home partition. */
+  ws: string;
+  /** Global pool list (fetched once at the app level and passed down). */
+  pools: PoolInfo[];
 }
 
 export interface UseSessionsResult {
   sessions: ConversationInfo[];
   selectedId: string | null;
-  pools: PoolInfo[];
   activePool: string;
-  workspace: string;
-  home: string;
-  isHome: boolean;
-  recentWorkspaces: { path: string }[];
   isLoadingSessions: boolean;
   revealSessionId: string | null;
   /** Resolve the pool for a client-side pending (uuid-prefix) session. */
@@ -61,8 +72,6 @@ export interface UseSessionsResult {
    *  emits conversation_created only for subagents, not main-agent sessions). */
   createDraftForSend: (pool: string) => string;
   handleDelete: (sessionId: string) => void;
-  handleWorkspaceChanged: (cwd: string) => void;
-  handleGoHome: () => Promise<void>;
   handlePoolChange: (pool: string) => void;
   /** Clear draft tracking + bump updated_at once the user sends a message. */
   onSent: (sessionId: string | null) => void;
@@ -71,41 +80,21 @@ export interface UseSessionsResult {
   newConvNonce: number;
 }
 
-/**
- * Owns the conversation / workspace / pool state and the client-side draft +
- * race-guard machinery that used to live inline in ``App``.
- *
- * Behavioral invariants preserved verbatim from the original App:
- *  - ``fetchEpochRef``: a monotonic counter captured per fetch; its ``.then``
- *    discards any response whose epoch no longer matches (stale workspace/pool
- *    overwrite guard).
- *  - ``draftIdsRef``: empty drafts are reused across "New Conversation" clicks
- *    and survive pool switches; cleared on first send.
- *  - Home is its own workspace partition — callers pass ``workspace`` only when
- *    ``!isHome`` so home reads/writes use the canonical home dir.
- */
-export function useSessions(): UseSessionsResult {
+export function useSessions({ ws, pools }: UseSessionsOptions): UseSessionsResult {
   const [sessions, setSessions] = useState<ConversationInfo[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [pools, setPools] = useState<PoolInfo[]>([]);
-  const [activePool, setActivePool] = useState<string>(() => loadActivePool());
-  const [home, setHome] = useState<string>("");
-  const [workspace, setWorkspace] = useState<string>("");
-  const [isHome, setIsHome] = useState<boolean>(true);
-  const [recentWorkspaces, setRecentWorkspaces] = useState<{ path: string }[]>([]);
+  const [activePool, setActivePool] = useState<string>(() => loadActivePool(ws));
   const [isLoadingSessions, setIsLoadingSessions] = useState<boolean>(false);
-  const [workspaceVersion, setWorkspaceVersion] = useState<number>(0);
   // Monotonic counter bumped on every "New Conversation" click. ChatView
   // watches it to replay the hero composer focus + acknowledgment pulse even
   // when selectedId was already null (a bare setSelectedId(null) is a React
   // no-op in that case, so without the nonce the click would feel dead).
   const [newConvNonce, setNewConvNonce] = useState<number>(0);
-  // Monotonic counter incremented on every workspace/pool switch. Each
-  // fetchSessions call captures the current value; its .then() compares it
-  // to the latest — if they differ, the response is stale (the user has
-  // since switched to another workspace/pool) and is discarded. Without this
-  // guard, a slow fetch from the OLD workspace can resolve after the NEW
-  // workspace's fetch and overwrite the sidebar with stale sessions.
+  // Monotonic counter incremented on every pool switch. Each fetchSessions
+  // call captures the current value; its .then() compares it to the latest —
+  // if they differ, the response is stale (the user has since switched pools)
+  // and is discarded. Without this guard, a slow fetch from the OLD pool can
+  // resolve after the NEW pool's fetch and overwrite the sidebar.
   const fetchEpochRef = useRef<number>(0);
 
   // uuidPrefix → pool, for client-side empty session generation.
@@ -213,21 +202,16 @@ export function useSessions(): UseSessionsResult {
     [],
   );
 
-  // Persist activePool changes.
+  // Persist activePool changes (per-workspace key).
   useEffect(() => {
-    saveActivePool(activePool);
-  }, [activePool]);
+    saveActivePool(ws, activePool);
+  }, [ws, activePool]);
 
-  // Load sessions once the workspace is known, and re-fetch when workspace
-  // or active pool changes.  Waiting for `home` prevents the mount-time race
-  // where we fetched home's sessions before sessionStorage/workspace info was
-  // available, which displayed the wrong workspace's conversations.
+  // Load sessions on mount and re-fetch on pool change. The ws scope is
+  // constant for this pod's lifetime, so no workspace race handling remains.
   useEffect(() => {
-    if (!home) {
-      return;
-    }
     const epoch = fetchEpochRef.current;
-    fetchSessions(workspace || undefined, activePool)
+    fetchSessions(ws || undefined, activePool)
       .then((loaded) => {
         if (fetchEpochRef.current !== epoch) return;
         setSessions((prev) => {
@@ -243,58 +227,22 @@ export function useSessions(): UseSessionsResult {
       .catch((err) => {
         console.error("Failed to load sessions:", err);
       });
-  }, [home, workspace, activePool]);
+  }, [ws, activePool]);
 
-  // Load available pools on mount
+  // Validate the restored/persisted pool against the global pool list.
   useEffect(() => {
-    fetchPools()
-      .then((loaded) => {
-        setPools(loaded);
-        if (loaded.length > 0 && !loaded.some((p) => p.name === activePool)) {
-          const first = loaded[0];
-          if (first) {
-            setActivePool(first.name);
-          }
-        }
-      })
-      .catch((err) => {
-        console.error("Failed to load pools:", err);
-      });
-  }, []);
-
-  // Fetch workspace info on mount (home, recent, timezone, initial ws)
-  useEffect(() => {
-    fetchWorkspace()
-      .then((info) => {
-        setHome(info.home);
-        setRecentWorkspaces(info.recent);
-        const initial = loadWorkspace(info.home);
-        setWorkspace(initial);
-        setIsHome(initial === info.home);
-        if (info.timezone) {
-          setTimezone(info.timezone);
-        }
-      })
-      .catch((err) => {
-        console.error("Failed to load workspace info:", err);
-      });
-  }, []);
-
-  // Refresh recentWorkspaces after a workspace switch (not on every conv change)
-  useEffect(() => {
-    if (workspaceVersion === 0) return;
-    fetchWorkspace()
-      .then((info) => {
-        setRecentWorkspaces(info.recent);
-      })
-      .catch((err) => {
-        console.error("Failed to refresh recent workspaces:", err);
-      });
-  }, [workspaceVersion]);
+    if (pools.length > 0 && !pools.some((p) => p.name === activePool)) {
+      const first = pools[0];
+      if (first) {
+        setActivePool(first.name);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pools]);
 
   const refreshSessions = useCallback((): void => {
     const epoch = fetchEpochRef.current;
-    fetchSessions(workspace || undefined, activePool)
+    fetchSessions(ws || undefined, activePool)
       .then((loaded) => {
         if (fetchEpochRef.current !== epoch) return;
         setSessions((prev) => {
@@ -310,7 +258,7 @@ export function useSessions(): UseSessionsResult {
       .catch((err) => {
         console.error("Failed to refresh sessions:", err);
       });
-  }, [workspace, activePool]);
+  }, [ws, activePool]);
 
   useEffect(() => {
     refreshSessionsRef.current = refreshSessions;
@@ -381,7 +329,7 @@ export function useSessions(): UseSessionsResult {
       }
       const pool =
         sessions.find((s) => s.session_id === sessionId)?.pool ?? activePool;
-      deleteConversation(sessionId, isHome ? undefined : (workspace || undefined), pool)
+      deleteConversation(sessionId, ws || undefined, pool)
         .then(() => {
           setSessions((prev) =>
             prev.filter((s) => s.session_id !== sessionId),
@@ -394,59 +342,8 @@ export function useSessions(): UseSessionsResult {
           console.error("Failed to delete conversation:", err);
         });
     },
-    [selectedId, workspace, isHome, sessions, activePool],
+    [selectedId, ws, sessions, activePool],
   );
-
-  const handleWorkspaceChanged = useCallback(
-    (cwd: string): void => {
-      const cwdStr = typeof cwd === "string" ? cwd : String(cwd);
-      // Cancel any pending debounced refreshSessions from a stale workspace
-      // — without this, a 600ms-debounced fetch from the OLD workspace could
-      // resolve AFTER this fetch and overwrite the sidebar with stale sessions.
-      if (treeRefreshTimerRef.current) {
-        clearTimeout(treeRefreshTimerRef.current);
-        treeRefreshTimerRef.current = null;
-      }
-      fetchEpochRef.current += 1;
-      const epoch = fetchEpochRef.current;
-      setWorkspace(cwdStr);
-      setIsHome(cwdStr === home);
-      saveWorkspace(cwdStr);
-      setSelectedId(null);
-      pendingRef.current.clear();
-      draftIdsRef.current.clear();
-      setWorkspaceVersion((v) => v + 1);
-      setSessions([]);
-      setIsLoadingSessions(true);
-      fetchSessions(cwdStr, activePool)
-        .then((loaded) => {
-          if (fetchEpochRef.current !== epoch) return;
-          setSessions(loaded);
-        })
-        .catch((err) => {
-          console.error("Failed to load sessions after workspace change:", err);
-        })
-        .finally(() => {
-          if (fetchEpochRef.current === epoch) {
-            setIsLoadingSessions(false);
-          }
-        });
-    },
-    [activePool, home],
-  );
-
-  const handleGoHome = useCallback(async (): Promise<void> => {
-    try {
-      const result = await changeWorkspace("");
-      if (result.success) {
-        handleWorkspaceChanged(result.cwd);
-      } else {
-        alert(result.notice || "Failed to return home");
-      }
-    } catch {
-      alert("Network error");
-    }
-  }, [handleWorkspaceChanged]);
 
   const handlePoolChange = useCallback(
     (pool: string): void => {
@@ -462,7 +359,7 @@ export function useSessions(): UseSessionsResult {
       draftIdsRef.current.clear();
       setSessions([]);
       setIsLoadingSessions(true);
-      fetchSessions(workspace || undefined, pool)
+      fetchSessions(ws || undefined, pool)
         .then((loaded) => {
           if (fetchEpochRef.current !== epoch) return;
           setSessions(loaded);
@@ -476,7 +373,7 @@ export function useSessions(): UseSessionsResult {
           }
         });
     },
-    [workspace],
+    [ws],
   );
 
   const onSent = useCallback((sessionId: string | null): void => {
@@ -498,12 +395,7 @@ export function useSessions(): UseSessionsResult {
   return {
     sessions,
     selectedId,
-    pools,
     activePool,
-    workspace,
-    home,
-    isHome,
-    recentWorkspaces,
     isLoadingSessions,
     revealSessionId,
     getPoolForUuid,
@@ -514,8 +406,6 @@ export function useSessions(): UseSessionsResult {
     handleNew,
     createDraftForSend,
     handleDelete,
-    handleWorkspaceChanged,
-    handleGoHome,
     handlePoolChange,
     onSent,
     newConvNonce,
