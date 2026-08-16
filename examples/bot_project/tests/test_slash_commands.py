@@ -14,7 +14,7 @@ def test_bot_service_can_build_main_command_processor() -> None:
         config_dir=Path("examples/bot_project/config"),
         input_adapter=object(),  # type: ignore[arg-type]
         output_adapter=object(),  # type: ignore[arg-type]
-        emitter_factory=lambda session_id: None,
+        emitter_factory=lambda _session_id, *, pool: None,
         app_config=None,
     )
     # _build_main_command_processor wires the per-conversation cd/exit/pwd

@@ -316,17 +316,13 @@ class ConversationCreatedEvent(ServerEvent):
 
 @dataclass(frozen=True)
 class SessionMeta:
-    """Business routing context for a session, resolved at send time.
-
-    ``pool`` is the authoritative pool the session's agent belongs to (from
-    the configured agent→pool map — deterministic, not inferred).
+    """Parent routing context for a session, resolved at send time.
 
     ``parent_session_id`` is the session that dispatched this one, sourced from
     the dispatch-layer runtime parent registry.  ``None`` for main-agent
     sessions or while the registry is not yet populated.
     """
 
-    pool: str = ""
     parent_session_id: str | None = None
 
 

@@ -29,6 +29,7 @@ from bot.config.webui_config import build_control_origin
 from bot.scope import BotRecordScope
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
+from bot.service.session_pool_index import SessionPoolIndex
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.constants import ExecutionStrategyKind
@@ -154,9 +155,11 @@ async def create_pool(
     pool_data: PoolDataSnapshot | None = None,
     workspace_handle: WorkspaceHandle | None = None,
     workspace_resolver: WorkspaceResolverCell | None = None,
-    emitter_factory: Callable[[str], ContentEmitter[Any]] | None = None,
+    # Business factory: (session_id, pool); pool-bound below for the framework.
+    emitter_factory: Callable[[str, str], ContentEmitter[Any]] | None = None,
     output_adapter_factory: Callable[[], OutputAdapter] | None = None,
-    on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
+    # Business callback: (child_id, parent_id, pool); pool-bound below.
+    on_subagent_created: Callable[[str, str, str], Awaitable[None]] | None = None,
     session_registry: SessionRegistry | None = None,
     session_store: SessionStore | None = None,
     transcript_store: TranscriptStore | None = None,
@@ -167,6 +170,9 @@ async def create_pool(
     app_config: Any | None = None,
     kb_provider: KbProvider | None = None,
     strategy_registry: ExecutionStrategyRegistry | None = None,
+    # Per-workspace session→pool attribution index; the tree/node stores built
+    # below register into it.
+    session_pool_index: SessionPoolIndex | None = None,
 ) -> PoolInstance:
     """Build one PoolInstance's DEPLOYMENT resources from PoolSpec + deps.
 
@@ -205,6 +211,22 @@ async def create_pool(
     strategy = registry.resolve(strategy_name)
     strategy.validate_pool_spec(pool_spec)
 
+    _pool_bound_emitter: Callable[[str], ContentEmitter[Any]] | None = None
+    if emitter_factory is not None:
+
+        def pool_bound_emitter(session_id: str) -> ContentEmitter[Any]:
+            return emitter_factory(session_id, pool_name)
+
+        _pool_bound_emitter = pool_bound_emitter
+
+    _pool_bound_on_created: Callable[[str, str], Awaitable[None]] | None = None
+    if on_subagent_created is not None:
+
+        async def pool_bound_on_created(child_id: str, parent_id: str) -> None:
+            await on_subagent_created(child_id, parent_id, pool_name)
+
+        _pool_bound_on_created = pool_bound_on_created
+
     ctx = _build_assembly_context(
         pool_name=pool_name,
         pool_spec=pool_spec,
@@ -218,7 +240,7 @@ async def create_pool(
         retention=retention,
         workspace_handle=workspace_handle,
         workspace_resolver=workspace_resolver,
-        emitter_factory=emitter_factory,
+        emitter_factory=_pool_bound_emitter,
         app_config=app_config,
         persistence=persistence,
         mcp_registry=mcp_registry,
@@ -238,9 +260,9 @@ async def create_pool(
     )
 
     if pool_data is not None:
-        await ensure_long_term_defaults(
-            project_dir, assembly_deps.memory, pool_data.context_manager.memory_system
-        )
+        memory_system = pool_data.context_manager.memory_system
+        if memory_system is not None:
+            await ensure_long_term_defaults(project_dir, assembly_deps.memory, memory_system)
 
     provider_available = True
     external_deps: dict[str, Any] | None = None
@@ -286,12 +308,13 @@ async def create_pool(
 
     session_binding_store = InMemorySessionBindingStore()
 
-    # Wrap before _build_agent_factory AND AgentMaterializeDeps so both the
-    # main-agent _create_with_emitter path and the external-subagent
-    # BotSubagentExternalBuilder path receive the same wrapped factory.
-    if emitter_factory is not None and workspace_resolver is not None:
-        emitter_factory = _WorkspaceEmitterFactory(
-            emitter_factory,
+    # Pool binding must precede this workspace wrapper. Both the main-agent
+    # _create_with_emitter path and the external-subagent materialization path
+    # then receive the same pool-bound, workspace-aware factory.
+    _workspace_emitter_factory = _pool_bound_emitter
+    if _pool_bound_emitter is not None and workspace_resolver is not None:
+        _workspace_emitter_factory = _WorkspaceEmitterFactory(
+            _pool_bound_emitter,
             lambda: _cell_sessions_dir(workspace_resolver),
         )
 
@@ -307,7 +330,7 @@ async def create_pool(
         control_channel,
         workspace_resolver,
         pool_name,
-        emitter_factory,
+        _workspace_emitter_factory,
         external_deps=external_deps,
         observability_config=app_config.observability if app_config is not None else None,
         session_registry=session_registry,
@@ -391,6 +414,10 @@ async def create_pool(
         data_dir / "session_tree" / pool_name,
         BotRecordScope(pool=pool_name),
     )
+    # SessionTreeManager keeps its stores private; these local handles are the
+    # only seam where the attribution index can capture them.
+    if session_pool_index is not None:
+        session_pool_index.register(pool_name, tree_store, node_store)
     tree_manager = SessionTreeManager(
         tree_store=tree_store,
         node_store=node_store,
@@ -427,14 +454,14 @@ async def create_pool(
         output_adapter_factory=output_adapter_factory,
         root_provider=root_provider,
         session_registry=session_registry,
-        on_subagent_created=on_subagent_created,
+        on_subagent_created=_pool_bound_on_created,
         context_fork_builder=context_fork_builder,
         workspace_path_resolver=path_resolver,
         mcp_registry=mcp_registry,
         todo_store=todo_store,
         trace_enabled=_resolve_trace_enabled(app_config),
         subagent_external_builder=subagent_external_builder,
-        emitter_factory=emitter_factory,
+        emitter_factory=_workspace_emitter_factory,
         control_origin=control_origin,
         memory_store_registry=subagent_store_registry,
     )

@@ -53,7 +53,7 @@ def _truncate_tool_args(args: dict[str, object]) -> dict[str, object]:
 
 
 def _empty_session_meta() -> SessionMeta:
-    """Default resolver: no business routing context known."""
+    """Default resolver: no parent session known."""
     return SessionMeta()
 
 
@@ -107,11 +107,11 @@ async def _flush_active_segment(self: WebBotEmitter) -> None:
 
 async def _send_event(self: WebBotEmitter, event: ServerEvent) -> None:
     """Wrap *event* in a structured DeltaEnvelope and enqueue it."""
-    meta = self._session_meta_resolver()
+    parent_meta = self._session_meta_resolver()
     envelope = DeltaEnvelope.from_event(
         event,
         metadata=self._metadata(),
-        pool=meta.pool,
-        parent_session_id=meta.parent_session_id,
+        pool=self._pool or "",
+        parent_session_id=parent_meta.parent_session_id,
     )
     await self._output.send_envelope(envelope)

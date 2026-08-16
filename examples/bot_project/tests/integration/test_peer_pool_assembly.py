@@ -155,7 +155,10 @@ async def _build_and_initialize_service(
     input_adapter = WebSocketInputAdapter()
     output_adapter = _RecordingOutputAdapter()
 
-    def emitter_factory(session_id: str) -> StreamingAwareEmitter:
+    def emitter_factory(
+        session_id: str, pool: str
+    ) -> StreamingAwareEmitter:
+        assert pool
         return StreamingAwareEmitter(output_adapter, session_id)
 
     service = BotService(

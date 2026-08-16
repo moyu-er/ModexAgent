@@ -61,7 +61,7 @@ def build_telegram(
     tuple[
         TelegramInputAdapter,
         TelegramOutputAdapter,
-        Callable[[str], StreamingAwareEmitter[ReActEvent]],
+        Callable[[str, str], StreamingAwareEmitter[ReActEvent]],
     ]
     | None
 ):
@@ -172,13 +172,16 @@ def build_telegram(
 
     out = TelegramOutputAdapter(bot=application.bot)
 
-    def emitter_factory(session_id: str) -> StreamingAwareEmitter[ReActEvent]:
+    def emitter_factory(
+        session_id: str, pool: str
+    ) -> StreamingAwareEmitter[ReActEvent]:
         """Create a channel-filtered Telegram emitter for *session_id*.
 
         Mirrors the QQ register's ``_ChannelFilteredQQEmitter``: the emitter
         silently drops all output when the conversation did not originate on
         Telegram (no cross-talk to WebUI/QQ users).
         """
+        _ = pool
 
         class _ChannelFilteredTelegramEmitter(StreamingAwareEmitter[ReActEvent]):
             """Telegram emitter that only sends for Telegram-originated convs."""

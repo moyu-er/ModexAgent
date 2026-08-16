@@ -46,7 +46,8 @@ class QQBotService(BotService):
         qq_output_adapter = QQOutputAdapter(input_adapter)
         output_adapter = qq_output_adapter
 
-        def emitter_factory(session_id: str) -> QQBotEmitter:
+        def emitter_factory(session_id: str, pool: str) -> QQBotEmitter:
+            _ = pool
             return QQBotEmitter(
                 output_adapter=qq_output_adapter,
                 session_id=session_id,

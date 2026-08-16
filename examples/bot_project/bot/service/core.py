@@ -89,12 +89,12 @@ class BotService(AgentBuilderMixin):
         config_dir: Path,
         input_adapter: InputAdapter,
         output_adapter: OutputAdapter,
-        emitter_factory: Callable[[str], ContentEmitter],
+        emitter_factory: Callable[[str, str], ContentEmitter[Any]],
         *,
         app_config: AppConfig | None = None,
         # ── Injection points for pool creation ──
         output_adapter_factory: Callable[[], OutputAdapter] | None = None,
-        on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
+        on_subagent_created: Callable[[str, str, str], Awaitable[None]] | None = None,
         session_registry: SessionRegistry | None = None,
         session_store: SessionStore | None = None,
     ) -> None:

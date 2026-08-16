@@ -20,16 +20,16 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
 from modex_agent.adapters.platform import StreamingMode
+from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import OutputMessage
-from modex_agent.pipeline.adapters import OutputAdapter
+from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
-if TYPE_CHECKING:
-    from modex_agent.core.emitter import ContentEmitter
-    from modex_agent.pipeline.adapters import InputAdapter
+EmitterFactory = Callable[[str, str], ContentEmitter[Any]]
+AdapterBuildResult = tuple[InputAdapter, OutputAdapter, EmitterFactory] | None
 
 
 # ── Channel tracking (session_id → channel_name) ────────────────────
@@ -77,15 +77,12 @@ class AdapterSpec:
     Attributes:
         name: Unique channel name (e.g. ``"qq"``, ``"websocket"``).
         enabled: Hardcoded toggle — set to ``False`` to skip this adapter.
-        build: Factory: ``(AdapterBuildContext) → (InputAdapter, OutputAdapter, ContentEmitter)``.
+        build: Factory returning adapters and their emitter factory.
     """
 
     name: str
     enabled: bool
-    build: Callable[
-        [AdapterBuildContext],
-        tuple[InputAdapter, OutputAdapter, ContentEmitter],
-    ]
+    build: Callable[[AdapterBuildContext], AdapterBuildResult]
 
 
 # ── Registry ────────────────────────────────────────────────────────────
@@ -107,10 +104,7 @@ def register(name: str, *, enabled: bool = True):
     """
 
     def _decorator(
-        fn: Callable[
-            [AdapterBuildContext],
-            tuple[InputAdapter, OutputAdapter, ContentEmitter],
-        ],
+        fn: Callable[[AdapterBuildContext], AdapterBuildResult],
     ):
         ADAPTERS.append(AdapterSpec(name=name, enabled=enabled, build=fn))
         return fn

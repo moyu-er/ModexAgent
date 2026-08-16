@@ -211,7 +211,10 @@ async def test_every_materialized_workspace_delivers_output(
     input_adapter = WebSocketInputAdapter()
     output_adapter = _RecordingOutputAdapter()
 
-    def emitter_factory(session_id: str) -> StreamingAwareEmitter:
+    def emitter_factory(
+        session_id: str, pool: str
+    ) -> StreamingAwareEmitter:
+        assert pool == "main"
         return StreamingAwareEmitter(output_adapter, session_id)
 
     service = BotService(

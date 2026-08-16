@@ -20,6 +20,7 @@ from bot.service._runtime_builders import (
 )
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.pool.communication import register_communication_tools
+from bot.service.session_pool_index import SessionPoolIndex
 from bot.workspace.background import BackgroundTaskRunner
 from bot.workspace.handle import (
     PoolWorkspaceResources,
@@ -197,6 +198,10 @@ async def _assemble_resources(
         from bot.kb.builder import build_default_kb_provider
 
         kb_provider = await build_default_kb_provider(persistence.connection)
+    # Per-workspace session→pool attribution index: each pool registers its
+    # session-tree stores into it at create_pool time; it is released with
+    # the resources bundle on eviction.
+    session_pool_index = SessionPoolIndex()
     resources = PoolWorkspaceResources(
         target=ctx.target,
         ctx=ctx,
@@ -212,6 +217,7 @@ async def _assemble_resources(
         transcript_store=service._transcript_store,
         workspace_transcript_store=workspace_transcript_store,
         kb_provider=kb_provider,
+        session_pool_index=session_pool_index,
     )
     state.resources = resources
     # 3. Per-workspace interceptor chain, rooted at THIS workspace's overflow dir.
@@ -292,6 +298,7 @@ async def _assemble_resources(
             app_config=app_config,
             kb_provider=resources.kb_provider,
             strategy_registry=service._strategy_registry,
+            session_pool_index=session_pool_index,
         )
 
     # Phase 2: cross-pool peer wiring + communication tool registration. Must

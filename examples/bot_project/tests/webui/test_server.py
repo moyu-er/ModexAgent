@@ -1192,10 +1192,8 @@ async def test_subagent_streaming_delta_arrives_at_ws_client() -> None:
             output_adapter,
             child_sid,
             config=EmitterConfig(),
-            session_meta_resolver=lambda: SessionMeta(
-                pool="coding", parent_session_id=parent_sid
-            )
-)
+            session_meta_resolver=lambda: SessionMeta(parent_session_id=parent_sid),
+        )
 
         # Emit a delta — this should enqueue into the delta queue
         await emitter.emit_delta("subagent streaming test")
@@ -1815,7 +1813,8 @@ async def test_ws_attach_starts_forward_deltas_for_main_session() -> None:
         from bot.webui.events import SessionMeta
         emitter = WebBotEmitter(
             output, "web:main-sess.main", config=EmitterConfig(),
-            session_meta_resolver=lambda: SessionMeta(pool="main", parent_session_id=None),
+            pool="main",
+            session_meta_resolver=lambda: SessionMeta(parent_session_id=None),
         )
         await emitter.emit_delta("streaming test for main session")
 

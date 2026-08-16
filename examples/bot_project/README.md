@@ -590,7 +590,8 @@ def build_discord(ctx: AdapterBuildContext):
     discord_input = DiscordInputAdapter(...)
     discord_output = DiscordOutputAdapter(discord_input)
 
-    def emitter_factory(session_id: str):
+    def emitter_factory(session_id: str, pool: str):
+        _ = pool
         return DiscordEmitter(
             output_adapter=discord_output,
             session_id=session_id,
