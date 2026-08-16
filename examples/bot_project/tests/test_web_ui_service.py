@@ -201,7 +201,7 @@ async def test_production_style_resolver_does_not_crash_emitter() -> None:
     await emitter.emit_delta("hello world")
 
     # The envelope must have reached the delta queue.
-    q = input_adapter._delta_queues.get("conv.coder")
+    q = input_adapter.get_delta_queue("conv.coder", None)
     assert q is not None
     envelope = q.get_nowait()
     assert envelope.event_type == "model_content_delta"

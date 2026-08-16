@@ -203,8 +203,6 @@ class WebUIService(BotService):
         )
         self._session_store = session_store
         self._session_registry = InMemorySessionRegistry(store=session_store)
-        # Sync cache for parent lookups at emit time (hot path).
-        self._parent_ids: dict[str, str] = {}
 
         # ── 3. Build adapters from registry ────────────────────────────
         # Auto-import all register_*.py modules so @register decorators fire.
@@ -292,17 +290,16 @@ class WebUIService(BotService):
         def output_adapter_factory() -> Any:
             return ws_output
 
-        # on_subagent_created: pre-registers the delta queue so subagent
-        # streaming output reaches the browser. The actual SessionInfo record
+        # on_subagent_created: dispatch-time pre-registration on the WS input
+        # adapter — the anonymous delta buffer (early subagent output) plus
+        # the genealogy link, one atomic seam. The actual SessionInfo record
         # is written by the per-workspace registry inside
-        # AgentCommunicationService._create_dynamic_subagent; we do NOT write it
-        # again here to avoid leaking it into the home workspace.
+        # AgentCommunicationService._create_dynamic_subagent; we do NOT write
+        # it again here to avoid leaking it into the home workspace.
 
         async def _on_subagent_created(child_id: str, parent_id: str) -> None:
-            self._parent_ids[child_id] = parent_id
             ws_input = get_ws_input()
-            ws_input.ensure_queue(child_id)
-            ws_input.register_parent(child_id, parent_id)
+            ws_input.register_subagent(child_id, parent_id)
             from bot.adapters.register_websocket import get_ws_output
             from bot.webui.events import DeltaEnvelope, WebUIEventType
             from modex_agent.core.session_id import agent_of, session_id_prefix_of
@@ -587,19 +584,20 @@ class WebUIService(BotService):
         # Inject the per-session business routing resolver (pool,
         # parent_session_id) so emitters attach real context to every envelope.
         # pool comes from the authoritative agent→pool map; parent_session_id
-        # is resolved from the relation store (persisted or derived fallback).
+        # comes from the WS input adapter's dispatch-time genealogy map (the
+        # single in-memory child→parent registry, written by
+        # register_subagent and read here for envelope metadata).
         from bot.adapters.register_websocket import set_session_meta_resolver
         from bot.webui.events import SessionMeta
 
-        # ── Inject resolver with real parent_session_id ──────────────
-        parent_ids = self._parent_ids
-
         def _resolve_session_meta(session_id: str) -> SessionMeta:
+            from bot.adapters.register_websocket import get_ws_input
             from modex_agent.core.session_id import session_id_prefix_of
 
             prefix = session_id_prefix_of(session_id)
             pool = self._resolve_pool_for_session(prefix)
-            parent = parent_ids.get(session_id)
+            ws_input = get_ws_input()
+            parent = ws_input.get_parent(session_id) if ws_input is not None else None
             return SessionMeta(pool=pool, parent_session_id=parent)
 
         set_session_meta_resolver(_resolve_session_meta)

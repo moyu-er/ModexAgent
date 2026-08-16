@@ -76,7 +76,7 @@ async def test_external_reasoning_streams_delta_and_persists_event() -> None:
         emitter, input_adapter, store, sid = _make_emitter(tmp)
         await emitter.emit_turn_event(TurnReasoningEvent(text="reasoning chunk"))
 
-        q = input_adapter._delta_queues.get(sid)
+        q = input_adapter.get_delta_queue(sid, None)
         assert q is not None
         env = q.get_nowait()
         assert env.event_type == WebUIEventType.MODEL_REASONING_DELTA.value
@@ -182,7 +182,7 @@ async def test_external_tool_start_end_streamed_and_persisted_with_shared_call_i
             )
         )
 
-        q = input_adapter._delta_queues.get(sid)
+        q = input_adapter.get_delta_queue(sid, None)
         assert q is not None
         first = q.get_nowait()
         second = q.get_nowait()

@@ -548,17 +548,14 @@ class WebUIServer:
     def _queue_belongs_to_connection(
         attached_sessions: list[str],
         session_id: str,
-        parent_map: dict[str, str] | None = None,
     ) -> bool:
         """Thin delegate -- implementation in :func:`bot.webui.routes.websocket.streaming._queue_belongs_to_connection`.
 
         Kept so ``tests/webui/test_ws_partitioning_convergence.py`` (which calls
         ``WebUIServer._queue_belongs_to_connection`` as a static method)
-        continues to work. ``parent_map`` defaults to empty for backward
-        compatibility with tests that don't exercise subagent nesting.
+        continues to work. Prefix matching only — the ancestor walk requires
+        the live adapter (``WebSocketInputAdapter.ancestors``).
         """
         from bot.webui.routes.websocket.streaming import _queue_belongs_to_connection
 
-        return _queue_belongs_to_connection(
-            attached_sessions, session_id, parent_map or {}
-        )
+        return _queue_belongs_to_connection(attached_sessions, session_id)

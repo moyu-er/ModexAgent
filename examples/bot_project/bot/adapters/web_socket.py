@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 from bot.webui.events import DeltaEnvelope, WebUIEventType
@@ -28,6 +28,11 @@ _ATTACHMENT_DOWNLOAD_PATH: str = "/api/sessions/{session_id}/attachments/{attach
 # persisted); when a client lags or disconnects we drop new deltas rather than
 # grow memory unbounded. Turn-level complete events do not travel this queue.
 DELTA_QUEUE_MAXSIZE: int = 1024
+
+# Connection key of the anonymous pre-attach buffer created by ensure_queue().
+# id() of a real WebSocketResponse is never 0, so this never collides with a
+# real connection key.
+_ANONYMOUS_CONN_KEY: int = 0
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +96,21 @@ class WebSocketInputAdapter(InputAdapter):
         super().__init__()
         self._session_factory = session_factory or SessionIdFactory()
         self._message_queue: asyncio.Queue[InputMessage] = asyncio.Queue()
-        self._connections: dict[str, object] = {}
-        self._delta_queues: dict[str, asyncio.Queue[DeltaEnvelope]] = {}
+        # Multicast model: each session maps to one delta queue PER attached
+        # connection (keyed by id(ws)), plus optionally one anonymous
+        # pre-attach buffer under _ANONYMOUS_CONN_KEY. send_envelope fans out
+        # to every queue of the session, so duplicate tabs on the same
+        # conversation each receive the full stream. The registered ws objects
+        # stay alive via their forward_deltas tasks / the WS handler frame,
+        # so an id(ws) key can never be recycled while its queue exists.
+        self._delta_queues: dict[str, dict[int, asyncio.Queue[DeltaEnvelope]]] = {}
+        # Dispatch-time session genealogy (child -> parent), written once per
+        # subagent dispatch via register_subagent and NEVER removed: late
+        # envelopes for a session whose observers all detached must still
+        # carry correct parent metadata (SessionTree / transcript genealogy).
+        # Growth is bounded by the dispatch count (one short entry each) —
+        # the memory that actually matters, the delta queues, is reclaimed
+        # via unregister_connection / drop_anonymous_queue.
         self._parent_map: dict[str, str] = {}
 
     @property
@@ -118,33 +136,117 @@ class WebSocketInputAdapter(InputAdapter):
             msg = await self._message_queue.get()
             yield msg
 
-    def register_connection(self, session_id: str, ws: object) -> None:
-        """Register a WebSocket connection for a session and create its delta queue."""
-        self._connections[session_id] = ws
-        self._delta_queues[session_id] = asyncio.Queue(maxsize=DELTA_QUEUE_MAXSIZE)
+    def register_connection(self, session_id: str, ws: object) -> asyncio.Queue[DeltaEnvelope]:
+        """Register a connection for a session and return THIS connection's queue.
 
-    def unregister_connection(self, session_id: str) -> None:
-        """Remove a WebSocket connection and its delta queue."""
-        self._connections.pop(session_id, None)
-        self._delta_queues.pop(session_id, None)
-        self._parent_map.pop(session_id, None)
+        Multicast: every attached connection owns one queue per session. An
+        anonymous pre-attach buffer (ensure_queue) is adopted by the first
+        connection to register the session, so early subagent deltas survive
+        until attach. Re-registering the same connection is idempotent.
+        """
+        key = id(ws)
+        queues = self._delta_queues.setdefault(session_id, {})
+        existing = queues.get(key)
+        if existing is not None:
+            return existing
+        pending = queues.pop(_ANONYMOUS_CONN_KEY, None)
+        q = pending if pending is not None else asyncio.Queue(maxsize=DELTA_QUEUE_MAXSIZE)
+        queues[key] = q
+        return q
 
-    def register_parent(self, child_session_id: str, parent_session_id: str) -> None:
-        """Record the parent-child relationship for a dynamically-created subagent session."""
+    def unregister_connection(self, session_id: str, ws: object) -> None:
+        """Remove THIS connection's queue for a session.
+
+        The session entry is dropped only once the last connection detaches,
+        so a surviving duplicate tab keeps receiving the stream. The
+        genealogy map is intentionally untouched (append-only).
+        """
+        queues = self._delta_queues.get(session_id)
+        if queues is None:
+            return
+        queues.pop(id(ws), None)
+        if not queues:
+            del self._delta_queues[session_id]
+
+    def register_subagent(self, child_session_id: str, parent_session_id: str) -> None:
+        """Dispatch-time pre-registration of a dynamically-created subagent.
+
+        One atomic seam for the two halves that must never diverge: the
+        pre-attach delta buffer (so early subagent output is not dropped
+        before a connection claims it) and the genealogy link (so watchers
+        and reclamation can walk the conversation tree). A buffered queue
+        without its parent link could never be claimed NOR reclaimed.
+        """
+        self.ensure_queue(child_session_id)
         self._parent_map[child_session_id] = parent_session_id
 
-    def get_delta_queue(self, session_id: str) -> asyncio.Queue[DeltaEnvelope] | None:
-        """Return the delta queue for a session, or None if not registered."""
-        return self._delta_queues.get(session_id)
+    def get_parent(self, session_id: str) -> str | None:
+        """Dispatch-time parent of *session_id*, or None for root sessions."""
+        return self._parent_map.get(session_id)
 
-    def ensure_queue(self, session_id: str, ws: object | None = None) -> asyncio.Queue[DeltaEnvelope]:
-        """Get or create a delta queue for *session_id*, reusing *ws* if provided."""
-        if session_id not in self._delta_queues:
-            self._connections[session_id] = ws
-            self._delta_queues[session_id] = asyncio.Queue(maxsize=DELTA_QUEUE_MAXSIZE)
-        elif ws is not None and self._connections.get(session_id) is None:
-            self._connections[session_id] = ws
-        return self._delta_queues[session_id]
+    def ancestors(self, session_id: str) -> Iterator[str]:
+        """Parent chain of *session_id*, nearest first.
+
+        Guards against corrupted (cyclic) links so every consumer — queue
+        ownership checks, anonymous-buffer reclamation — can iterate safely.
+        """
+        seen: set[str] = set()
+        current = self._parent_map.get(session_id)
+        while current is not None and current not in seen:
+            yield current
+            seen.add(current)
+            current = self._parent_map.get(current)
+
+    def get_delta_queue(self, session_id: str, ws: object) -> asyncio.Queue[DeltaEnvelope] | None:
+        """Return THIS connection's delta queue for a session, or None."""
+        queues = self._delta_queues.get(session_id)
+        if queues is None:
+            return None
+        return queues.get(id(ws))
+
+    def get_delta_queues(self, session_id: str) -> list[asyncio.Queue[DeltaEnvelope]]:
+        """All live queues for a session — the send_envelope fan-out set."""
+        queues = self._delta_queues.get(session_id)
+        return list(queues.values()) if queues else []
+
+    def ensure_queue(self, session_id: str) -> asyncio.Queue[DeltaEnvelope]:
+        """Get or create the anonymous pre-attach buffer for *session_id*.
+
+        Subagent sessions are pre-registered at dispatch time so deltas
+        emitted before any connection claims the session are buffered; the
+        first connection to register adopts the buffer. When connections
+        already own queues for the session, returns one of them (they
+        already receive deltas via fan-out).
+        """
+        queues = self._delta_queues.get(session_id)
+        if queues:
+            return next(iter(queues.values()))
+        q: asyncio.Queue[DeltaEnvelope] = asyncio.Queue(maxsize=DELTA_QUEUE_MAXSIZE)
+        self._delta_queues[session_id] = {_ANONYMOUS_CONN_KEY: q}
+        return q
+
+    def drop_anonymous_queue(self, session_id: str) -> None:
+        """Drop the session's pre-attach buffer when no live observer can claim it.
+
+        Anonymous buffers bridge dispatch -> attach within a live turn. The
+        buffer is reclaimed only when NO ancestor in the parent chain has a
+        real connection: an attached browser's watcher claims the session
+        within one poll interval, so dropping under it would lose fast
+        (<1s) subagent turns — conversation_created and all deltas. Only
+        buffers whose conversation tree nobody is watching (e.g. IM-driven
+        turns) are dropped, keeping registry entries bounded. The genealogy
+        link itself is retained (append-only); a subagent that dies without
+        ever emitting turn_end still leaves its buffer — rare (emit_complete
+        runs in a finally) and bounded per entry.
+        """
+        queues = self._delta_queues.get(session_id)
+        if queues is None or set(queues) != {_ANONYMOUS_CONN_KEY}:
+            return
+        for ancestor in self.ancestors(session_id):
+            ancestor_queues = self._delta_queues.get(ancestor)
+            if ancestor_queues and set(ancestor_queues) != {_ANONYMOUS_CONN_KEY}:
+                return
+        del self._delta_queues[session_id]
 
     def enqueue_user_message(self, session_id: str, content: str) -> None:
         """Enqueue a user message to be consumed by receive()."""
@@ -219,27 +321,29 @@ class WebSocketOutputAdapter(OutputAdapter):
         await self.send_delta(content, session_id)
 
     async def send_envelope(self, envelope: DeltaEnvelope) -> None:
-        """Enqueue a structured :class:`DeltaEnvelope` for *envelope.session_id*.
+        """Fan out a structured :class:`DeltaEnvelope` to every connection
+        attached to *envelope.session_id*.
 
         Drops the envelope silently when no delta queue is registered (e.g. for
         cleaned-up sessions).  Subagent queues are pre-registered at dispatch
         time via the ``on_subagent_created`` callback.
 
-        When the queue is full (client lagging/disconnected) the delta is
-        dropped and logged — deltas are transient UI refresh, never persisted,
-        so dropping protects memory without losing any durable state.
+        When a queue is full (client lagging/disconnected) the delta is
+        dropped for that connection only and logged — deltas are transient UI
+        refresh, never persisted, so dropping protects memory without losing
+        any durable state.
         """
-        q = self._input.get_delta_queue(envelope.session_id)
-        if q is None:
-            return
-        try:
-            q.put_nowait(envelope)
-        except asyncio.QueueFull:
-            logger.warning(
-                "delta queue full for session %s; dropping delta (event_type=%s)",
-                envelope.session_id,
-                envelope.event_type,
-            )
+        for q in self._input.get_delta_queues(envelope.session_id):
+            try:
+                q.put_nowait(envelope)
+            except asyncio.QueueFull:
+                logger.warning(
+                    "delta queue full for session %s; dropping delta (event_type=%s)",
+                    envelope.session_id,
+                    envelope.event_type,
+                )
+        if envelope.event_type == WebUIEventType.TURN_END.value:
+            self._input.drop_anonymous_queue(envelope.session_id)
 
     async def send_delta(
         self, delta: str, session_id: str, metadata: dict[str, Any] | None = None

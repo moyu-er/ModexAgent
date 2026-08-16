@@ -26,7 +26,7 @@ async def test_emit_content_delta() -> None:
     emitter = WebBotEmitter(output_adapter, "web:abc.main", config=EmitterConfig())
     input_adapter.register_connection("web:abc.main", None)
     await emitter.emit_delta("hello")
-    q = input_adapter._delta_queues.get("web:abc.main")
+    q = input_adapter.get_delta_queue("web:abc.main", None)
     assert q is not None
     envelope = q.get_nowait()
     assert envelope.event_type == WebUIEventType.MODEL_CONTENT_DELTA.value
@@ -44,7 +44,7 @@ async def test_emit_complete_sends_turn_end() -> None:
     emitter = WebBotEmitter(output_adapter, "web:abc.main", config=EmitterConfig())
     input_adapter.register_connection("web:abc.main", None)
     await emitter.emit_complete(AgentResult(content="done"))
-    q = input_adapter._delta_queues.get("web:abc.main")
+    q = input_adapter.get_delta_queue("web:abc.main", None)
     assert q is not None
     envelope = q.get_nowait()
     assert envelope.event_type == WebUIEventType.TURN_END.value
@@ -71,7 +71,7 @@ async def test_streaming_does_not_save_deltas() -> None:
         assert all(e.event != WebUIEventType.MODEL_CONTENT_DELTA.value for e in events)
         assert all(e.event != WebUIEventType.ASSISTANT_TEXT.value for e in events)
 
-        q = input_adapter._delta_queues.get("conv1.main")
+        q = input_adapter.get_delta_queue("conv1.main", None)
         assert q is not None
         assert q.qsize() == 2
 
@@ -100,7 +100,7 @@ async def test_subagent_emitter_preserves_full_session_id() -> None:
         await emitter.emit_complete(AgentResult(content="review done"))
 
         # WebSocket delta events carry the FULL session id + correct agent.
-        q = input_adapter._delta_queues.get(full_sid)
+        q = input_adapter.get_delta_queue(full_sid, None)
         assert q is not None
         envelope = q.get_nowait()
         assert envelope.event_type == WebUIEventType.TURN_END.value
@@ -205,7 +205,7 @@ async def test_tool_call_events_stream_matching_call_id() -> None:
     result = ToolResult.from_text("read_file", "content")
     await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
     await emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
-    q = input_adapter._delta_queues.get("conv1.main")
+    q = input_adapter.get_delta_queue("conv1.main", None)
     assert q is not None
     start_env = q.get_nowait()
     end_env = q.get_nowait()

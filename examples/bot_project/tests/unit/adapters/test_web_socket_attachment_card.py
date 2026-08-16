@@ -44,7 +44,7 @@ async def test_image_attachment_emits_card_with_image_kind_and_download_url() ->
         "sess1",
     )
 
-    q = input_adapter.get_delta_queue("sess1")
+    q = input_adapter.get_delta_queue("sess1", None)
     assert q is not None
     envelope = q.get_nowait()
     assert envelope.event_type == WebUIEventType.ATTACHMENT_CARD.value
@@ -72,7 +72,7 @@ async def test_non_image_attachment_emits_file_kind() -> None:
         "sess1",
     )
 
-    q = input_adapter.get_delta_queue("sess1")
+    q = input_adapter.get_delta_queue("sess1", None)
     assert q is not None
     envelope = q.get_nowait()
     assert envelope.event_type == WebUIEventType.ATTACHMENT_CARD.value
@@ -94,7 +94,7 @@ async def test_other_kind_also_file_card() -> None:
     await output_adapter.send(
         OutputMessage(content="", attachment_records=[record]), "sess1"
     )
-    q = input_adapter.get_delta_queue("sess1")
+    q = input_adapter.get_delta_queue("sess1", None)
     assert q is not None
     envelope = q.get_nowait()
     assert envelope.payload["kind"] == "file"
@@ -114,7 +114,7 @@ async def test_accompanying_text_sent_before_card() -> None:
         OutputMessage(content="here is the chart", attachment_records=[record]),
         "sess1",
     )
-    q = input_adapter.get_delta_queue("sess1")
+    q = input_adapter.get_delta_queue("sess1", None)
     assert q is not None
     first = q.get_nowait()
     assert first.event_type == "content"
@@ -135,7 +135,7 @@ async def test_multiple_records_emit_one_card_each() -> None:
     await output_adapter.send(
         OutputMessage(content="", attachment_records=[r1, r2]), "sess1"
     )
-    q = input_adapter.get_delta_queue("sess1")
+    q = input_adapter.get_delta_queue("sess1", None)
     assert q is not None
     e1 = q.get_nowait()
     e2 = q.get_nowait()
@@ -152,7 +152,7 @@ async def test_no_records_falls_back_to_content_delta() -> None:
     input_adapter.register_connection("sess1", None)
 
     await output_adapter.send(OutputMessage(content="plain text"), "sess1")
-    q = input_adapter.get_delta_queue("sess1")
+    q = input_adapter.get_delta_queue("sess1", None)
     assert q is not None
     envelope = q.get_nowait()
     assert envelope.event_type == "content"
