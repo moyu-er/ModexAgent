@@ -171,14 +171,11 @@ except ImportError:
 # 尝试导入 Literal
 try:
     from typing import Literal
-    from typing import get_args as get_literal_args
 
     HAS_LITERAL = True
 except ImportError:
     try:
         from typing import Literal
-        from typing import get_args as get_literal_args
-
         HAS_LITERAL = True
     except ImportError:
         HAS_LITERAL = False
@@ -298,12 +295,12 @@ def _sanitize_default_value(default: Any) -> Any:
             if hasattr(default, "default_factory") and default.default_factory is not None:
                 try:
                     return default.default_factory()
-                except:
+                except Exception:
                     return None
             return None
 
     # 检查基本类型
-    if default is None or isinstance(default, (str, int, float, bool, list, dict)):
+    if default is None or isinstance(default, str | int | float | bool | list | dict):
         return default
 
     # 尝试 JSON 序列化
@@ -389,7 +386,7 @@ def _parse_docstring_params(doc: str) -> dict[str, str]:
         Returns:
             参数名到描述的映射
     """
-    param_docs = {}
+    param_docs: dict[str, str] = {}
     if not doc:
         return param_docs
 

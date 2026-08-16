@@ -161,10 +161,9 @@ def resolve_shell(shell: str | None = None) -> str | None:
         return None
 
     # Reject relative paths with separators
-    if os.sep in shell or (os.altsep and os.altsep in shell):
+    if (os.sep in shell or (os.altsep and os.altsep in shell)) and not os.path.isabs(shell):
         # Allow if it's an absolute path
-        if not os.path.isabs(shell):
-            return None
+        return None
 
     # Extract basename for whitelist check
     basename = os.path.basename(shell)

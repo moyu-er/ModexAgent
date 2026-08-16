@@ -60,7 +60,7 @@ def classify_openai_error(exc: Exception) -> LLMErrorInfo:
         if isinstance(exc, RateLimitError):
             return classify_rate_limit(exc, message)
 
-        if isinstance(exc, (AuthenticationError, PermissionDeniedError)):
+        if isinstance(exc, AuthenticationError | PermissionDeniedError):
             return LLMErrorInfo(
                 kind=LLMErrorKind.AUTH,
                 message=message,

@@ -4,12 +4,15 @@ import json
 from collections.abc import Callable
 from unittest.mock import MagicMock
 
+import bot.eval.dataset_curator as dataset_curator_module
 import httpx
 import pytest
+from bot.eval.dataset_curator import (
+    DatasetCurator,
+    TraceSummary,
+    _find_root_observation,
+)
 from langfuse import Langfuse
-
-import bot.eval.dataset_curator as dataset_curator_module
-from bot.eval.dataset_curator import DatasetCurator, TraceSummary, _find_root_observation
 
 
 def _observation(

@@ -104,7 +104,7 @@ class ToolNode(Node[ReActTurnState]):
         )
         if (
             max_tools is not None
-            and isinstance(max_tools, (int, float))
+            and isinstance(max_tools, int | float)
             and len(tool_calls) > max_tools
         ):
             await ctx.runtime.emit(

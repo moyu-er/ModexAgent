@@ -112,7 +112,7 @@ class ChatMessage(BaseModel):
         tz = get_user_timezone()
         if isinstance(v, datetime):
             return v
-        if isinstance(v, (int, float)):
+        if isinstance(v, int | float):
             if v >= 1e12:
                 v = v / 1000.0
             return datetime.fromtimestamp(v, tz=tz)
@@ -219,7 +219,7 @@ class ChatMessage(BaseModel):
         """递归序列化单个值。"""
         if value is None:
             return None
-        if isinstance(value, (str, int, float, bool)):
+        if isinstance(value, str | int | float | bool):
             return value
         if isinstance(value, list):
             return [ChatMessage._serialize_value(v) for v in value]

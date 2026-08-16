@@ -513,9 +513,11 @@ class WebUIService(BotService):
 
         def _resolve_ws_resources(ws_root: Path) -> PoolWorkspaceResources | None:
             resolved = Path(ws_root).resolve()
-            if self._home_resources is not None:
-                if Path(self._home_resources.target).resolve() == resolved:
-                    return self._home_resources
+            if (
+                self._home_resources is not None
+                and Path(self._home_resources.target).resolve() == resolved
+            ):
+                return self._home_resources
             if self.workspace_stack is not None:
                 for resources in self.workspace_stack.registry.iter_materialized_resources():
                     if Path(resources.target).resolve() == resolved:

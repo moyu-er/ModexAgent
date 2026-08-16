@@ -288,7 +288,7 @@ def _paginate_file(
     # ── 第一遍：统计总行数 ──────────────────────────────────
     total_lines = 0
     with file_path.open("r", encoding="utf-8") as f:
-        for line in f:
+        for _line in f:
             total_lines += 1
 
     # ── 空文件 ──────────────────────────────────────────────

@@ -384,7 +384,7 @@ class DeltaEnvelope:
         session_id = str(data.pop("session_id", ""))
         agent_name = str(data.pop("agent_name", ""))
         ts_raw = data.pop("timestamp", None)
-        timestamp = int(ts_raw) if isinstance(ts_raw, (int, float)) else int(time.time() * 1000)
+        timestamp = int(ts_raw) if isinstance(ts_raw, int | float) else int(time.time() * 1000)
         return cls(
             session_id=session_id,
             agent_name=agent_name,

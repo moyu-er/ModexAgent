@@ -37,7 +37,7 @@ def coerce_tags(raw: object) -> list[str]:
     builder raises ``TypeError`` and silently drops *all* experiences from
     the system prompt.
     """
-    if not isinstance(raw, (list, tuple)):
+    if not isinstance(raw, list | tuple):
         return []
     return [str(tag) for tag in raw if tag is not None]
 

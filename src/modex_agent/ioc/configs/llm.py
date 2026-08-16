@@ -44,7 +44,7 @@ class LLMConfig(BaseModel):
             return ModelCapabilities()
         if isinstance(value, ModelCapabilities):
             return value
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, list | tuple):
             modalities = frozenset(Modality(item) for item in value)
             return ModelCapabilities(modalities=modalities)
         raise ValueError(

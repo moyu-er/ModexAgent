@@ -15,6 +15,7 @@ this path.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import shutil
 import sys
@@ -137,16 +138,12 @@ class WinptyHiddenBackend(WinptyBackend):
 
     async def terminate(self) -> None:
         if self._proc is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._proc.terminate(force=False)  # type: ignore[attr-defined]
-            except Exception:
-                pass
             self._proc = None
 
     async def kill(self) -> None:
         if self._proc is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._proc.terminate(force=True)  # type: ignore[attr-defined]
-            except Exception:
-                pass
             self._proc = None

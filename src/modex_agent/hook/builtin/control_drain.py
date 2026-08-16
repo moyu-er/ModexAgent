@@ -80,15 +80,18 @@ async def drain_control_channel(
         cmd_type_name = cmd.type.value if hasattr(cmd.type, "value") else str(cmd.type)
 
         # Stale command: turn_uuid mismatch
-        if turn_uuid is not None and cmd_turn_uuid is not None:
-            if cmd_turn_uuid != turn_uuid:
-                logger.debug(
-                    "Control: discarding stale %s cmd_uuid=%s current_uuid=%s",
-                    cmd_type_name,
-                    cmd_turn_uuid,
-                    turn_uuid,
-                )
-                continue
+        if (
+            turn_uuid is not None
+            and cmd_turn_uuid is not None
+            and cmd_turn_uuid != turn_uuid
+        ):
+            logger.debug(
+                "Control: discarding stale %s cmd_uuid=%s current_uuid=%s",
+                cmd_type_name,
+                cmd_turn_uuid,
+                turn_uuid,
+            )
+            continue
 
         # Execute matching command
         if cmd.type == ControlCommandType.CANCEL_TURN:

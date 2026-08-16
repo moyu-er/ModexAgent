@@ -17,8 +17,10 @@ class _FakeFactory:
 @pytest.mark.asyncio
 async def test_open_workspace_registers_but_does_not_persist_session_map(tmp_path: Path) -> None:
     """open_workspace validates and registers a workspace without any session map."""
-    home = tmp_path / "home"; home.mkdir()
-    target = tmp_path / "wsB"; target.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    target = tmp_path / "wsB"
+    target.mkdir()
     reg = WorkspaceRegistry(home=home, data_dir_name=".modex", factory=_FakeFactory(),
                             store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"))
     controller = WorkspaceController(registry=reg, data_dir_name=".modex", enabled=True)

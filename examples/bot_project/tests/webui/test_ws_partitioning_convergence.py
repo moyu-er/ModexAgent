@@ -171,11 +171,12 @@ async def test_transcript_append_silent_when_ws_root_bound(
 ) -> None:
     store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
     sid = "convZ.main"
-    with caplog.at_level(logging.WARNING, logger="bot.service.workspace_store"):
-        with bind_workspace_root(tmp_path):
-            await store.append(
-                sid, UserMessageEvent(session_id=sid, agent_name="main", content="x")
-            )
+    with caplog.at_level(
+        logging.WARNING, logger="bot.service.workspace_store"
+    ), bind_workspace_root(tmp_path):
+        await store.append(
+            sid, UserMessageEvent(session_id=sid, agent_name="main", content="x")
+        )
     assert not any("[ws-partition]" in r.message for r in caplog.records), (
         "bound append must NOT warn"
     )

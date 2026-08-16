@@ -52,11 +52,13 @@ def attach_default_pipeline(
     # directory the server's home_sessions_dir points at.
     current_ws_provider: Callable[[], Path]
     if workspace_root is not None:
-        current_ws_provider = (lambda root=workspace_root: root)
+        def current_ws_provider(root=workspace_root):
+            return root
     else:
         from pathlib import Path as _Path
 
-        current_ws_provider = (lambda: _Path.cwd())
+        def current_ws_provider():
+            return _Path.cwd()
     ctx = BotInputContext(
         default_pool="main",
         available_pools=available_pools or (lambda: {"main", "coding"}),

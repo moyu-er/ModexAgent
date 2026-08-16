@@ -232,7 +232,7 @@ class TestAgentsCommand:
         result = runner.invoke(app, ["agents"])
         assert result.exit_code == 0
         lines = result.stdout.splitlines()
-        agent_lines = [l for l in lines if l.startswith("  analyst") or l.startswith("  reviewer")]
+        agent_lines = [line for line in lines if line.startswith("  analyst") or line.startswith("  reviewer")]
         assert len(agent_lines) == 2
         assert "analyst" in agent_lines[0]
         assert "Reviews code" in agent_lines[0]
@@ -249,7 +249,7 @@ class TestAgentsCommand:
         app = build_app()
         result = runner.invoke(app, ["agents"])
         assert result.exit_code == 0
-        agent_lines = [l for l in result.stdout.splitlines() if l.startswith("  zeta") or l.startswith("  alpha") or l.startswith("  mike")]
+        agent_lines = [line for line in result.stdout.splitlines() if line.startswith("  zeta") or line.startswith("  alpha") or line.startswith("  mike")]
         assert "zeta" in agent_lines[0]
         assert "alpha" in agent_lines[1]
         assert "mike" in agent_lines[2]
@@ -310,7 +310,7 @@ class TestAgentsCommand:
         app = build_app()
         result = runner.invoke(app, ["agents"])
         assert result.exit_code == 0
-        agent_lines = [l for l in result.stdout.splitlines() if l.startswith("  a ") or l.startswith("  longer ")]
+        agent_lines = [line for line in result.stdout.splitlines() if line.startswith("  a ") or line.startswith("  longer ")]
         assert agent_lines[0] == "  a       first (normal)"
         assert agent_lines[1] == "  longer  second (normal)"
 

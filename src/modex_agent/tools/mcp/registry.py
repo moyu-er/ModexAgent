@@ -807,9 +807,12 @@ class SharedMcpBackend(McpBackend):
     ) -> dict[str, Any]:
         """Execute a tool, reconnecting once on a dropped shared connection."""
         result = await super().execute_tool(server_name, tool_name, params, timeout=timeout)
-        if not self._released and self._looks_dropped(result):
-            if await self._request_reconnect(server_name):
-                result = await super().execute_tool(
-                    server_name, tool_name, params, timeout=timeout
-                )
+        if (
+            not self._released
+            and self._looks_dropped(result)
+            and await self._request_reconnect(server_name)
+        ):
+            result = await super().execute_tool(
+                server_name, tool_name, params, timeout=timeout
+            )
         return result

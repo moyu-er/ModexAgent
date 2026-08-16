@@ -161,7 +161,7 @@ class MCPClientManager(McpBackend):
             # (preventing the cross-task GC teardown) and skip the server for
             # every non-fatal cause. Propagate only true interpreter signals.
             await self._safe_aclose(server_stack)
-            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+            if isinstance(e, KeyboardInterrupt | SystemExit):
                 raise
 
             hint = ""

@@ -1,4 +1,6 @@
 # tests/service/test_session_gc.py
+import contextlib
+
 from bot.service.session_gc import (
     SessionCleanerOperations,
     SessionGcConfig,
@@ -22,10 +24,9 @@ def test_config_overrides_from_raw_dict() -> None:
 
 def test_config_is_frozen_and_strict() -> None:
     import pydantic
-    try:
+
+    with contextlib.suppress(pydantic.ValidationError):
         SessionGcConfig(scan_interval_seconds=-1)  # type: ignore[arg-type]
-    except pydantic.ValidationError:
-        pass
     # frozen: assignment must raise
     cfg = SessionGcConfig()
     try:
