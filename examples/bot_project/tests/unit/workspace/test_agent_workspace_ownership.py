@@ -329,10 +329,9 @@ async def test_build_pool_data_uses_workspace_sqlite_for_session_memory(
             pool_data.decision_coordinator._codec_registry
             is pool_data.turn_store._codec_registry
         )
-        await memory_system.add_messages(
-            MemoryContext(session_id="session-1", agent_id="main"),
-            [{"role": "user", "content": "persisted in SQLite"}],
-        )
+        mem_ctx = MemoryContext(session_id="session-1", agent_id="main")
+        history = memory_system.create_message_history(mem_ctx)
+        await history.append({"role": "user", "content": "persisted in SQLite"})
 
         row_count = await persistence.connection.query_value(
             "SELECT COUNT(*) FROM memory_session_messages",
