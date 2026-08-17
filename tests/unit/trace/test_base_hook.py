@@ -98,3 +98,63 @@ def test_build_base_attrs_has_required_fields() -> None:
 def test_enabled_false_when_store_none() -> None:
     hook = BaseTraceHook(session=TraceSessionState(), store=None)
     assert hook._enabled is False
+
+
+def test_build_base_attrs_sets_langfuse_environment(tmp_path: Path) -> None:
+    """When environment is set, _build_base_attrs includes langfuse.environment."""
+    session = TraceSessionState()
+    store = _make_store(tmp_path)
+    hook = BaseTraceHook(session=session, store=store, environment="staging")
+    ctx = _make_ctx()
+    attrs = hook._build_base_attrs(ctx, "chat")
+    assert attrs[GenAiAttr.LANGFUSE_ENVIRONMENT] == "staging"
+
+
+def test_build_base_attrs_sets_langfuse_version(tmp_path: Path) -> None:
+    """When version is set, _build_base_attrs includes langfuse.version."""
+    session = TraceSessionState()
+    store = _make_store(tmp_path)
+    hook = BaseTraceHook(session=session, store=store, version="2.1.0")
+    ctx = _make_ctx()
+    attrs = hook._build_base_attrs(ctx, "chat")
+    assert attrs[GenAiAttr.LANGFUSE_VERSION] == "2.1.0"
+
+
+def test_build_base_attrs_sets_langfuse_tags(tmp_path: Path) -> None:
+    """When tags is non-empty, _build_base_attrs includes langfuse.trace.tags."""
+    session = TraceSessionState()
+    store = _make_store(tmp_path)
+    hook = BaseTraceHook(session=session, store=store, tags=["eval", "math-qa"])
+    ctx = _make_ctx()
+    attrs = hook._build_base_attrs(ctx, "chat")
+    assert attrs[GenAiAttr.LANGFUSE_TRACE_TAGS] == ["eval", "math-qa"]
+
+
+def test_build_base_attrs_omits_environment_when_default(tmp_path: Path) -> None:
+    """When environment is 'default', _build_base_attrs omits langfuse.environment."""
+    session = TraceSessionState()
+    store = _make_store(tmp_path)
+    hook = BaseTraceHook(session=session, store=store)
+    ctx = _make_ctx()
+    attrs = hook._build_base_attrs(ctx, "chat")
+    assert GenAiAttr.LANGFUSE_ENVIRONMENT not in attrs
+
+
+def test_build_base_attrs_omits_version_when_none(tmp_path: Path) -> None:
+    """When version is None, _build_base_attrs omits langfuse.version."""
+    session = TraceSessionState()
+    store = _make_store(tmp_path)
+    hook = BaseTraceHook(session=session, store=store)
+    ctx = _make_ctx()
+    attrs = hook._build_base_attrs(ctx, "chat")
+    assert GenAiAttr.LANGFUSE_VERSION not in attrs
+
+
+def test_build_base_attrs_omits_tags_when_empty(tmp_path: Path) -> None:
+    """When tags is empty, _build_base_attrs omits langfuse.trace.tags."""
+    session = TraceSessionState()
+    store = _make_store(tmp_path)
+    hook = BaseTraceHook(session=session, store=store)
+    ctx = _make_ctx()
+    attrs = hook._build_base_attrs(ctx, "chat")
+    assert GenAiAttr.LANGFUSE_TRACE_TAGS not in attrs

@@ -105,6 +105,9 @@ class GenAiAttr(StrEnum):
     LANGFUSE_TRACE_NAME = "langfuse.trace.name"
     LANGFUSE_TRACE_INPUT = "langfuse.trace.input"
     LANGFUSE_TRACE_OUTPUT = "langfuse.trace.output"
+    LANGFUSE_TRACE_TAGS = "langfuse.trace.tags"
+    LANGFUSE_ENVIRONMENT = "langfuse.environment"
+    LANGFUSE_VERSION = "langfuse.version"
 
     # ── Langfuse observation-level mapping ────────────────────────────
     # Langfuse maps these to the observation's input/output/model/type fields.

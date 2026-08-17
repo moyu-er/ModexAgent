@@ -113,3 +113,24 @@ class ObservabilityConfig(BaseModel):
             "Requires trace_backend=otel_http and a reachable Langfuse instance."
         ),
     )
+    environment: str = Field(
+        default="default",
+        description=(
+            "Langfuse environment for trace segmentation (dev/staging/production). "
+            "Mapped to langfuse.environment on every span."
+        ),
+    )
+    version: str | None = Field(
+        default=None,
+        description=(
+            "Application or prompt version for A/B testing and trace grouping. "
+            "Mapped to langfuse.version on every span when set."
+        ),
+    )
+    tags: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Custom trace tags for filtering in Langfuse. "
+            "Mapped to langfuse.trace.tags on every span when non-empty."
+        ),
+    )

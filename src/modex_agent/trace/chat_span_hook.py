@@ -37,6 +37,9 @@ class ChatSpanHook(BaseTraceHook, BeforeLLMHook, AfterLLMResponseHook):
         request_params: dict[str, object] | None,
         score_injector: L2ScoreInjector | None,
         prompt_capture: PromptCaptureStrategy,
+        environment: str = "default",
+        version: str | None = None,
+        tags: list[str] | None = None,
     ) -> None:
         super().__init__(
             session=session,
@@ -45,6 +48,9 @@ class ChatSpanHook(BaseTraceHook, BeforeLLMHook, AfterLLMResponseHook):
             provider_name=provider_name,
             request_params=request_params,
             score_injector=score_injector,
+            environment=environment,
+            version=version,
+            tags=tags,
         )
         self._prompt_capture = prompt_capture
 
@@ -123,6 +129,8 @@ class ChatSpanHook(BaseTraceHook, BeforeLLMHook, AfterLLMResponseHook):
         if self._model is not None:
             attributes.setdefault(GenAiAttr.REQUEST_MODEL, self._model)
             attributes[GenAiAttr.RESPONSE_MODEL] = self._model
+        if response.response_id is not None:
+            attributes[GenAiAttr.RESPONSE_ID] = response.response_id
         if self._request_params is not None:
             request_parameter_attributes = (
                 ("temperature", GenAiAttr.REQUEST_TEMPERATURE),

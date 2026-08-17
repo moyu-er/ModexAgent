@@ -93,6 +93,9 @@ def _eval_observability() -> tuple[ObservabilityConfig, L2ScoreInjector | None]:
         otel_headers=otel_headers,
         prompt_capture=PromptCaptureMode.FULL,
         trace_spans=TraceSpanMode.FULL,
+        environment=os.environ.get("LANGFUSE_ENVIRONMENT", "default"),
+        version=os.environ.get("LANGFUSE_VERSION"),
+        tags=os.environ.get("LANGFUSE_TAGS", "").split(",") if os.environ.get("LANGFUSE_TAGS") else [],
     )
 
     return config, _build_score_injector(langfuse_host, basic_auth, trace_backend)

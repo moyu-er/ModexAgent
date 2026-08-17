@@ -275,6 +275,7 @@ class LLMResponse(BaseModel):
     finish_reason: FinishReason = FinishReason.STOP
     usage: dict[str, int] = Field(default_factory=dict)
     completion_start_time: str | None = None
+    response_id: str | None = None
     error: str | None = None
     error_info: LLMErrorInfo | None = None
 

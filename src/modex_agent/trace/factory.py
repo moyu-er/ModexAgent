@@ -49,6 +49,9 @@ class _BaseHookArgs(TypedDict):
     provider_name: str | None
     request_params: dict[str, object] | None
     score_injector: L2ScoreInjector | None
+    environment: str
+    version: str | None
+    tags: list[str]
 
 
 def build_trace_hooks(
@@ -93,6 +96,9 @@ def build_trace_hooks(
         "provider_name": provider_name,
         "request_params": request_params,
         "score_injector": score_injector,
+        "environment": config.environment,
+        "version": config.version,
+        "tags": config.tags,
     }
 
     # ``Hook`` is the widest common type: every concrete trace hook inherits

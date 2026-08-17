@@ -104,6 +104,33 @@ See `ObservabilityConfig` in `ioc/configs/observability.py`:
 `cassette_enabled`, `cassette_scope`, `training_relevant`,
 `training_max_iterations`, `training_max_tokens`.
 
+### Division of Labor: Local `spans.jsonl` vs Langfuse
+
+The dual path (ADR-0024 D6/D7) is intentional, not redundancy:
+
+- **Local `spans.jsonl` (D6 self-read path)** — the substrate for
+  training-data derivation (`TrainingDataExporter`), offline `metrics`
+  reports, and future harness runtime decisions (IN13). Version-stable
+  (`SpanModel` schema is ours), zero-network, append-only — the write never
+  fails when the backend is down.
+- **Langfuse / OTLP (D7 external path)** — human-facing analysis: trace
+  browsing, dashboards, scores, datasets, experiments.
+
+Training-data quality must NOT depend on Langfuse version churn (v4
+events_only disabled v3 endpoints), worker availability, or ClickHouse
+consistency delay — which is why the exporter reads the local JSONL, never
+the Langfuse API.
+
+**Future work (self-read path, not yet implemented)**:
+
+1. `export-training` CLI command (in `bot.eval.cli`) — auto-discover
+   session IDs under `.modex/runtime_state/*/trace/` and invoke
+   `TrainingDataExporter.export_sft/export_dpo` (exporter exists, is a
+   programmatic API only — the local data currently has no turnkey
+   consumer).
+2. Retention policy for `spans.jsonl` — currently unbounded growth.
+3. Optional scheduled export (weekly SFT/DPO dump).
+
 ## Dependencies
 
 ### Internal

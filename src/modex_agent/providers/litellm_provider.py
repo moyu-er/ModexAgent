@@ -471,6 +471,7 @@ class LiteLLMProvider(StreamingLLMProvider):
             finish_reason=FinishReason(finish_reason) if finish_reason else FinishReason.STOP,
             usage=usage,
             completion_start_time=completion_start_time,
+            response_id=getattr(response, "id", None),
         )
 
 

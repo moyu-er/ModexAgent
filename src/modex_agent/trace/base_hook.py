@@ -49,6 +49,9 @@ class BaseTraceHook:
         provider_name: str | None = None,
         request_params: dict[str, object] | None = None,
         score_injector: L2ScoreInjector | None = None,
+        environment: str = "default",
+        version: str | None = None,
+        tags: list[str] | None = None,
     ) -> None:
         self._session = session
         self._store = store
@@ -56,6 +59,9 @@ class BaseTraceHook:
         self._provider_name = provider_name
         self._request_params = request_params
         self._score_injector = score_injector
+        self._environment = environment
+        self._version = version
+        self._tags = tags or []
 
     @property
     def _enabled(self) -> bool:
@@ -132,6 +138,12 @@ class BaseTraceHook:
         inv = self._invocation_id(ctx)
         if inv is not None:
             attrs[GenAiAttr.INVOCATION_ID] = inv
+        if self._environment != "default":
+            attrs[GenAiAttr.LANGFUSE_ENVIRONMENT] = self._environment
+        if self._version is not None:
+            attrs[GenAiAttr.LANGFUSE_VERSION] = self._version
+        if self._tags:
+            attrs[GenAiAttr.LANGFUSE_TRACE_TAGS] = self._tags
         return attrs
 
     async def _last_user_input(self, ctx: AgentContext) -> str | None:

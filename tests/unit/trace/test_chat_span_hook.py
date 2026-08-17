@@ -195,6 +195,42 @@ async def test_chat_span_without_prompt_capture(tmp_path: Path) -> None:
     assert attributes[GenAiAttr.GEN_AI_COMPLETION] == "Acknowledged"
 
 
+async def test_chat_span_captures_response_id(tmp_path: Path) -> None:
+    """When LLMResponse carries response_id, chat span sets gen_ai.response.id."""
+    session = TraceSessionState()
+    hook, store = _make_hook(tmp_path, session)
+    context = _make_context()
+    request = [ChatMessage(role=MessageRole.USER, content="Hello")]
+
+    await hook.before_llm(context, request)
+    await hook.after_llm_response(
+        context,
+        LLMResponse(content="Hi", response_id="chatcmpl-abc123"),
+    )
+
+    spans = await store.list_by_session("session.worker")
+    attributes = spans[0].attributes
+    assert attributes[GenAiAttr.RESPONSE_ID] == "chatcmpl-abc123"
+
+
+async def test_chat_span_omits_response_id_when_absent(tmp_path: Path) -> None:
+    """When LLMResponse has no response_id, chat span does not set gen_ai.response.id."""
+    session = TraceSessionState()
+    hook, store = _make_hook(tmp_path, session)
+    context = _make_context()
+    request = [ChatMessage(role=MessageRole.USER, content="Hello")]
+
+    await hook.before_llm(context, request)
+    await hook.after_llm_response(
+        context,
+        LLMResponse(content="Hi"),
+    )
+
+    spans = await store.list_by_session("session.worker")
+    attributes = spans[0].attributes
+    assert GenAiAttr.RESPONSE_ID not in attributes
+
+
 async def test_chat_span_not_emitted_when_no_trace_id(tmp_path: Path) -> None:
     session = TraceSessionState()
     hook, store = _make_hook(tmp_path, session)

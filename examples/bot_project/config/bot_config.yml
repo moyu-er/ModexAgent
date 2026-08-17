@@ -70,6 +70,12 @@ observability:
   # Layer 1 eval: inject L2 heuristic scores to Langfuse on each turn finish.
   # Requires trace_backend=otel_http + reachable Langfuse. Default: false.
   eval_score_injection: true
+  # Langfuse trace segmentation (optional, env-driven).
+  # environment: dev / staging / production — filters traces by deployment context.
+  # version: application or prompt version — for A/B testing and trace grouping.
+  # tags: comma-separated custom tags (e.g. "eval,math-qa").
+  environment: "${LANGFUSE_ENVIRONMENT:-default}"
+  version: "${LANGFUSE_VERSION:-}"
   #
   # Langfuse integration (self-hosted v4, OTLP-native):
   # 1. Deploy Langfuse via Docker Compose (see docs/langfuse-deployment.md).

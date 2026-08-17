@@ -24,6 +24,7 @@ Opt-in evaluation harness — runs as a **separate process** (CLI), never import
 - **Provider-only cassette wrap**: tools execute real in both record and replay (verify-the-world); `_WorkspaceTokenNormalizer` makes tool results path-stable across temp dirs
 - **Four replay gates**: fingerprint + zero cassette misses (engine counter) + per-turn error-None+COMPLETED + non-vacuous oracle; `baseline: true` in meta.json marks cases whose oracle IS the gates+determinism
 - **READ_ONLY preset includes shell** (`tools/presets.py`) — not a write-ablation; true ablation uses `toolset=NONE` or `deny_tools`
+- **Planned**: `export-training` CLI (SFT/DPO export via `TrainingDataExporter` + session auto-discovery) and `spans.jsonl` retention policy — see `docs/langfuse/langfuse-deployment.md` §6 for the local-vs-Langfuse division of labor
 
 ## Langfuse
 

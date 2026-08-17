@@ -100,6 +100,11 @@ LANGFUSE_BASIC_AUTH=<base64-of-your-pk-colon-sk>
 # Langfuse SDK (eval CLI: run / compare / curate / setup-judge)
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
+
+# Trace segmentation (optional — all default to unset/default)
+# LANGFUSE_ENVIRONMENT=production   # dev / staging / production — filter traces by deployment
+# LANGFUSE_VERSION=1.2.0            # app or prompt version — for A/B testing and trace grouping
+# LANGFUSE_TAGS=eval,math-qa        # comma-separated custom trace tags
 ```
 
 `LANGFUSE_BASIC_AUTH` and `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` carry
@@ -312,7 +317,22 @@ flywheel decision log.
 
 `TrainingDataExporter` (`src/modex_agent/trace/training_exporter.py`)
 derives SFT and DPO training datasets from traced trajectories. It is a
-**programmatic API** — no CLI command yet.
+**programmatic API** today — no CLI command yet, and it reads **local
+`spans.jsonl` only**, never the Langfuse API.
+
+**Why local-first**: training-data quality must not depend on Langfuse
+version churn (v4 events_only disabled v3 query endpoints), worker
+availability, or the ClickHouse consistency delay (§9). The local JSONL
+copy is the stable, version-independent substrate; Langfuse is the
+analysis / dataset / experiment surface. Neither path makes the other
+redundant (ADR-0024 D6/D7).
+
+**Planned (not yet implemented)**:
+
+- `export-training` CLI command (`bot.eval.cli`) — auto-discover session
+  IDs under `.modex/runtime_state/*/trace/` and invoke the exporter.
+- Retention policy for `spans.jsonl` (currently unbounded growth).
+- Optional scheduled export for continuous SFT/DPO accumulation.
 
 ### SFT Export
 

@@ -43,6 +43,9 @@ class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook):
         provider_name: str | None = None,
         request_params: dict[str, object] | None = None,
         score_injector: L2ScoreInjector | None = None,
+        environment: str = "default",
+        version: str | None = None,
+        tags: list[str] | None = None,
     ) -> None:
         super().__init__(
             session=session,
@@ -51,6 +54,9 @@ class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook):
             provider_name=provider_name,
             request_params=request_params,
             score_injector=score_injector,
+            environment=environment,
+            version=version,
+            tags=tags,
         )
 
     async def start_node_turn(self, ctx: AgentContext) -> None:
