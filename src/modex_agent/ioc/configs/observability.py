@@ -105,8 +105,11 @@ class ObservabilityConfig(BaseModel):
     eval_score_injection: bool = Field(
         default=False,
         description=(
-            "Inject L2 heuristic scores (tool_success_rate, reasoning_depth, "
-            "trajectory_compactness, overall) to Langfuse on each turn finish. "
+            "Inject trajectory metrics (tool_success_rate, tool_call_count, "
+            "error_tool_count, iteration_count, llm_call_count, "
+            "total_input_tokens, total_output_tokens, total_reasoning_tokens, "
+            "api_latency_avg_s, cache_hit_rate, response_token_ratio, "
+            "has_reasoning) to Langfuse on each turn finish. "
             "Requires trace_backend=otel_http and a reachable Langfuse instance."
         ),
     )

@@ -388,6 +388,7 @@ are the converged seams; no platform preconditions on any OS.
 | `tests/` | Test suites including `input_pipeline/` (see `tests/AGENTS.md`) |
 | `plugins/` | Bot plugins (see `plugins/AGENTS.md`) |
 | `experiences/` | Self-learned EXPERIENCE.md storage — runtime-populated by `ExperienceReviewAgent` (not committed; created on first use) |
+| `docs/` | Langfuse observability + eval + training-data usage guide (`langfuse-deployment.md`) — trace, eval, golden cassette, SFT/DPO export |
 | `packaging/` | Windows installer build — Inno Setup + Tauri + python-build-standalone (see `packaging/README.md`) |
 | `subworkspace/` | Workspace isolation/runtime target — runtime-populated (`.modex/` state only; not committed) |
 
@@ -401,6 +402,16 @@ cd examples/bot_project/webui && npm test -- --run
 Backend tests cover WebUI endpoints, streaming isolation, pool routing, input pipeline stages, transcript store, graph scheduling (node-level events, WS subscription protocol, topology endpoint), and graph REST routes. Frontend tests cover the `useWebUIStream` reducer, `request_id`-based message dedup, graph topology components (deliver pulse, active ring, diff logic, YAML editor, execution viewer, spec/instance list pages), and i18n/token coverage.
 
 <!-- MANUAL -->
+
+## Observability, Eval & Training Data
+
+When tracing agent trajectories, running eval experiments, replaying golden
+cassettes, or exporting SFT/DPO training data, read
+`docs/langfuse-deployment.md` — the single usage guide covering Langfuse v4
+deployment, `.env` configuration, the 12 trajectory metrics, eval CLI
+commands, golden cassette 4-gate replay, `TrainingDataExporter` API, and
+troubleshooting. Architecture details live in `bot/eval/AGENTS.md` and
+`src/modex_agent/trace/AGENTS.md`.
 
 <!-- BEGIN MODEX-RUNTIME (auto-managed; do not edit) -->
 ## ModexAgent runtime

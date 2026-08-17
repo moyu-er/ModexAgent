@@ -148,16 +148,8 @@ The eval harness has three layers, each independently configurable:
 ### Layer 1: L2 Score Injection (production, in-process)
 
 When `eval_score_injection: true` is set in `bot_config.yml`, the
-`TraceCollectorHook` computes three heuristic scores after each turn and
-injects them to Langfuse as NUMERIC scores on the root `invoke_agent`
-observation:
-
-| Score | Formula |
-|-------|---------|
-| `tool_success_rate` | non-error `execute_tool` spans / total tool spans |
-| `reasoning_depth` | sum of `reasoning_tokens` across `chat` spans |
-| `trajectory_compactness` | final response length / total tokens |
-| `overall` | 0.5 × tool_success_rate + 0.3 × normalized_reasoning + 0.2 × compactness |
+`RootSpanHook` injects NUMERIC scores to Langfuse on the root
+`invoke_agent` observation after each turn. 12 NUMERIC scores are injected per COMPLETED turn: tool_success_rate, tool_call_count, error_tool_count, iteration_count, llm_call_count, total_input_tokens, total_output_tokens, total_reasoning_tokens, api_latency_avg_s, cache_hit_rate, response_token_ratio, has_reasoning.
 
 These appear automatically in Langfuse score analytics and dashboards.
 
