@@ -153,12 +153,14 @@ def build_retry_graph[S: GraphState](
 
     Example::
 
+        from modex_graph.scheduler.bootstrap import BootstrapMode
+
         compiled = build_retry_graph(
             body_node=MyBodyNode(),
             max_retries=3,
             is_failure=lambda s: s.exit_path == "fail",
         )
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
     """
 
     g: Graph[S] = Graph()

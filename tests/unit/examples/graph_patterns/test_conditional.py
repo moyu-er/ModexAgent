@@ -36,6 +36,7 @@ from modex_graph import (
     NullGraphInstanceStore,
     NullNodeStateStore,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 _EXAMPLES_DIR = Path(__file__).parent.parent.parent.parent.parent / "examples"
 if str(_EXAMPLES_DIR) not in sys.path:
@@ -49,23 +50,31 @@ build_conditional_graph = _conditional.build_conditional_graph
 
 class _AutoRegCoord(GraphPersistenceCoordinator):
     def collect_consumable_delivers(
-        self, node_name: str, invocation_id: int
+        self, node_id: str, invocation_id: int
     ) -> list[Any]:
-        if self.get_deliver_store(node_name) is None:
-            self.register_node(node_name)
-        return super().collect_consumable_delivers(node_name, invocation_id)
+        if self.get_deliver_store(node_id) is None:
+            self.register_node(node_id)
+        return super().collect_consumable_delivers(node_id, invocation_id)
 
     def route_deliver(
         self,
-        target_node: str,
+        target_node_id: str,
         content: Any,
-        source_node: str,
+        source_node_id: str,
         source_invocation_id: int,
         source_node_name: str | None = None,
+        stage: bool = False,
     ) -> int | None:
-        if target_node != GraphNode.END and self.get_deliver_store(target_node) is None:
-            self.register_node(target_node)
-        return super().route_deliver(target_node, content, source_node, source_invocation_id, source_node_name)
+        if self.get_deliver_store(target_node_id) is None:
+            self.register_node(target_node_id)
+        return super().route_deliver(
+            target_node_id,
+            content,
+            source_node_id,
+            source_invocation_id,
+            source_node_name,
+            stage,
+        )
 
 
 def _make_coordinator() -> _AutoRegCoord:
@@ -131,7 +140,7 @@ class TestConditionalNode:
     async def test_routes_to_high_branch_when_predicate_returns_high(self) -> None:
         compiled = self._build_graph().compile()
         ctx = make_ctx(BranchState(count=10))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert result.count == 20  # 10 (start) + 10 (high branch)
         assert result.last_branch == "high"
@@ -139,7 +148,7 @@ class TestConditionalNode:
     async def test_routes_to_low_branch_when_predicate_returns_low(self) -> None:
         compiled = self._build_graph().compile()
         ctx = make_ctx(BranchState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert result.count == 1  # 0 (start) + 1 (low branch)
         assert result.last_branch == "low"
@@ -182,19 +191,19 @@ class TestSwitchNode:
 
         # count=0: "a" (< 5) matches first.
         ctx_a = make_ctx(BranchState(count=0))
-        result_a = await GraphEngine(compiled).run_async(ctx_a)
+        result_a = await GraphEngine(compiled).run_async(ctx_a, mode=BootstrapMode.FRESH)
         assert result_a.last_branch == "a"
         assert result_a.count == 1  # 0 + 1
 
         # count=7: "a" (< 5) fails, "b" (< 10) matches.
         ctx_b = make_ctx(BranchState(count=7))
-        result_b = await GraphEngine(compiled).run_async(ctx_b)
+        result_b = await GraphEngine(compiled).run_async(ctx_b, mode=BootstrapMode.FRESH)
         assert result_b.last_branch == "b"
         assert result_b.count == 9  # 7 + 2
 
         # count=15: "a" and "b" fail, "c" (< 20) matches.
         ctx_c = make_ctx(BranchState(count=15))
-        result_c = await GraphEngine(compiled).run_async(ctx_c)
+        result_c = await GraphEngine(compiled).run_async(ctx_c, mode=BootstrapMode.FRESH)
         assert result_c.last_branch == "c"
         assert result_c.count == 18  # 15 + 3
 
@@ -203,7 +212,7 @@ class TestSwitchNode:
 
         # count=100: no case matches -> default "d".
         ctx = make_ctx(BranchState(count=100))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert result.last_branch == "d"
         assert result.count == 104  # 100 + 4
@@ -223,7 +232,7 @@ class TestConditionalGraphBuilder:
     async def test_high_branch_merges_into_downstream(self) -> None:
         compiled = self._build_graph().compile()
         ctx = make_ctx(BranchState(count=10))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         # 10 (start) -> high adds 100 -> merge adds 1000 = 1110
         assert result.count == 1110
@@ -232,7 +241,7 @@ class TestConditionalGraphBuilder:
     async def test_low_branch_merges_into_downstream(self) -> None:
         compiled = self._build_graph().compile()
         ctx = make_ctx(BranchState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         # 0 (start) -> low adds 1 -> merge adds 1000 = 1001
         assert result.count == 1001

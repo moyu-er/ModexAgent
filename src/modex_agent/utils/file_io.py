@@ -46,15 +46,16 @@ def read_json_robust(path: Path) -> dict[str, Any] | None:
         return None
 
     for encoding in _encodings():
-        with contextlib.suppress(UnicodeDecodeError, json.JSONDecodeError):
-            with path.open(encoding=encoding) as fh:
-                text = fh.read().strip()
-                if not text:
-                    return {}
-                result = json.loads(text)
-                if encoding != "utf-8":
-                    _rewrite_as_utf8(path, result, encoding)
-                return result
+        with contextlib.suppress(UnicodeDecodeError, json.JSONDecodeError), path.open(
+            encoding=encoding
+        ) as fh:
+            text = fh.read().strip()
+            if not text:
+                return {}
+            result = json.loads(text)
+            if encoding != "utf-8":
+                _rewrite_as_utf8(path, result, encoding)
+            return result
 
     # Unrecoverable
     _backup(path, "JSON")

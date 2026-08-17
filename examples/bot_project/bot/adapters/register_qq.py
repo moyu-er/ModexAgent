@@ -51,8 +51,9 @@ def build_qq(ctx: AdapterBuildContext):
     _raw_output = qq_output_raw
     _stripped_output = qq_output
 
-    def emitter_factory(session_id: str):
+    def emitter_factory(session_id: str, pool: str):
         """Create a channel-filtered QQ emitter for *session_id*."""
+        _ = pool
 
         class _ChannelFilteredQQEmitter(QQBotEmitter):
             """QQ emitter that only sends for QQ-originated conversations.

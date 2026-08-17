@@ -3,8 +3,7 @@
 
 Covers:
 
-- begin → integrate → execute → complete/cancel/suspend/crash → finally
-- Resume: previous suspended invocation → skip re-consume
+- begin → integrate → execute → complete/cancel/crash → finally
 """
 
 from __future__ import annotations
@@ -15,9 +14,12 @@ import pytest
 from helpers import CounterState, make_coordinator, make_runtime
 
 from modex_graph import (
+    DeliverConsumptionStatus,
+    Graph,
     GraphContext,
     GraphDrained,
     GraphInterrupt,
+    GraphNode,
     GraphPersistenceCoordinator,
     InMemoryDeliverStoreFactory,
     InMemoryGraphInstanceStore,
@@ -25,6 +27,7 @@ from modex_graph import (
     IntegratedInput,
     InvocationStatus,
     Node,
+    RoutingError,
 )
 
 
@@ -47,12 +50,14 @@ def _make_ctx(
     coordinator: GraphPersistenceCoordinator | None = None,
 ) -> GraphContext[CounterState]:
     coord = coordinator if coordinator is not None else make_coordinator()
+    if coord.get_deliver_store("target") is None:
+        coord.register_node("target")
     ctx = GraphContext(
         state=CounterState(),
         runtime=make_runtime(),
         coordinator=coord,
     )
-    ctx.set_dispatch_handler(lambda _src, _tgt, _update: None)
+    ctx.set_dispatch_handler(lambda _src, _tgt: None)
     return ctx
 
 
@@ -109,6 +114,18 @@ class _RecordingNode(Node[CounterState]):
         return None
 
 
+class _LifecycleOrderNode(Node[CounterState]):
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
+        self._events.append("execute")
+        self.deliver("payload", "target", ctx)
+        self._events.append("deliver")
+
+
 class TestLifecycleComplete:
     async def test_normal_execution_completes_invocation(self) -> None:
         node_id = "node_persistence_identity"
@@ -123,8 +140,6 @@ class TestLifecycleComplete:
         latest = coord.node_state_store.load_latest(node_id)
         assert latest is not None
         assert latest.status == InvocationStatus.COMPLETED
-        assert latest.state_json == ctx.state.model_dump(mode="json")
-        assert latest.state_json["count"] == 1
         assert coord.node_state_store.load_latest(node.name) is None
         assert latest.node_id == node_id
 
@@ -141,36 +156,90 @@ class TestLifecycleComplete:
         assert latest.node_id == "n"
         assert latest.status == InvocationStatus.COMPLETED
 
+    async def test_complete_promotes_staged_before_dispatch_and_input_promotion(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        events: list[str] = []
+        coord = _make_inspectable_coordinator(("source", "target"))
+        node = _LifecycleOrderNode(events)
+        _set_identity(node, "source")
+        ctx = _make_ctx(coord)
+        store = coord.node_state_store
+        complete_invocation = store.complete_invocation
+        promote_staged = coord.promote_staged_by_source
+        promote_delivers = coord.promote_delivers
 
-class TestLifecycleSuspend:
-    async def test_graph_interrupt_suspends_invocation(self) -> None:
-        coord = _make_inspectable_coordinator(("suspend_node",))
+        def record_complete(*args: Any, **kwargs: Any) -> None:
+            events.append("complete")
+            complete_invocation(*args, **kwargs)
+
+        def record_promote_staged(graph_instance_id: int, source_node_id: str) -> set[str]:
+            events.append("promote_staged")
+            return promote_staged(graph_instance_id, source_node_id)
+
+        def record_promote_delivers(node_id: str, invocation_id: int) -> None:
+            events.append("promote_delivers")
+            promote_delivers(node_id, invocation_id)
+
+        monkeypatch.setattr(store, "complete_invocation", record_complete)
+        monkeypatch.setattr(coord, "promote_staged_by_source", record_promote_staged)
+        monkeypatch.setattr(coord, "promote_delivers", record_promote_delivers)
+        ctx.set_dispatch_handler(lambda _src, _target: events.append("dispatch"))
+
+        await node.run(ctx)
+
+        assert events == [
+            "execute",
+            "deliver",
+            "complete",
+            "promote_staged",
+            "dispatch",
+            "promote_delivers",
+        ]
+        target_store = coord.get_deliver_store("target")
+        assert target_store is not None
+        records = target_store.query_consumable(0, "target")
+        assert [record.content for record in records] == ["payload"]
+
+    async def test_unknown_promoted_target_id_raises_routing_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        node = _DeliverNode()
+        target = _DeliverNode()
+        graph: Graph[CounterState] = Graph()
+        graph.add_node("source", node)
+        graph.add_node("target", target)
+        graph.add_edge(GraphNode.START, "source")
+        graph.add_edge("source", "target")
+        graph.add_edge("target", GraphNode.END)
+        compiled = graph.compile()
+        coord = _make_inspectable_coordinator(
+            (compiled.nodes["source"].node_id, compiled.nodes["target"].node_id)
+        )
+        ctx = _make_ctx(coord)
+        monkeypatch.setattr(
+            coord,
+            "promote_staged_by_source",
+            lambda _graph_instance_id, _source_node_id: {"missing-target-id"},
+        )
+
+        with pytest.raises(RoutingError, match="missing-target-id"):
+            await node.run(ctx, graph=compiled)
+
+
+class TestLifecycleInterrupt:
+    async def test_graph_interrupt_cancels_invocation(self) -> None:
+        coord = _make_inspectable_coordinator(("interrupt_node",))
         node = _InterruptNode()
-        _set_identity(node, "suspend_node")
+        _set_identity(node, "interrupt_node")
         ctx = _make_ctx(coord)
 
         with pytest.raises(GraphInterrupt):
             await node.run(ctx)
 
-        latest = coord.node_state_store.load_latest("suspend_node")
+        latest = coord.node_state_store.load_latest("interrupt_node")
         assert latest is not None
-        assert latest.status == InvocationStatus.RUNNING
-        assert latest.suspended is True
-        assert latest.state_json != {}
-
-    async def test_graph_interrupt_checkpoints_state(self) -> None:
-        coord = _make_inspectable_coordinator(("sn",))
-        node = _InterruptNode()
-        _set_identity(node, "sn")
-        ctx = _make_ctx(coord)
-        ctx.state.count = 42
-
-        with pytest.raises(GraphInterrupt):
-            await node.run(ctx)
-
-        latest = coord.node_state_store.load_latest("sn")
-        assert latest is not None
-        assert "count" in latest.state_json
+        assert latest.status == InvocationStatus.CANCELED
 
 
 class TestLifecycleCancel:
@@ -250,43 +319,6 @@ class TestLifecycleFinalize:
 
 
 class TestI16Resume:
-    async def test_resume_skips_re_consume(self) -> None:
-        coord = _make_inspectable_coordinator(("resume_node",))
-        store = coord.node_state_store
-
-        inv1 = store.begin_invocation("resume_node")
-        store.suspend_invocation(inv1, {"resume_target": "target"})
-
-        deliver_store = coord.get_deliver_store("resume_node")
-        assert deliver_store is not None
-        deliver_store.accumulate(
-            graph_instance_id=0,
-            node_id="resume_node",
-            source_node_id="upstream",
-            source_invocation_id=100,
-            content="upstream_data",
-        )
-
-        node = _RecordingNode()
-        _set_identity(node, "resume_node")
-        ctx = _make_ctx(coord)
-
-        await node.run(ctx)
-
-        consumable = coord.collect_consumable_delivers("resume_node", inv1.invocation_id)
-        assert len(consumable) == 0
-
-        assert len(node.seen_payloads) == 1
-        assert len(node.seen_payloads[0]) == 2
-        assert node.seen_payloads[0][0].source_node == "__resume__"
-        assert node.seen_payloads[0][0].content == {"resume_target": "target"}
-        assert node.seen_payloads[0][1].source_node == "upstream"
-        assert node.seen_payloads[0][1].content == "upstream_data"
-
-        latest = store.load_latest("resume_node")
-        assert latest is not None
-        assert latest.status == InvocationStatus.COMPLETED
-
     async def test_non_resume_consumes_delivers(self) -> None:
         node_id = "node_consumer_identity"
         coord = _make_inspectable_coordinator((node_id,))
@@ -314,3 +346,5 @@ class TestI16Resume:
         assert len(node.seen_payloads[0]) == 1
         assert node.seen_payloads[0][0].source_node == "producer"
         assert node.seen_payloads[0][0].content == "data_payload"
+        assert node.seen_payloads[0][0].status == DeliverConsumptionStatus.PENDING.value
+        assert node.seen_payloads[0][0].consumed_by_invocation_id is None

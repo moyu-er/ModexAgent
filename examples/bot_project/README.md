@@ -541,7 +541,7 @@ A subagent's tool set is summarized by a **preset** (what it's allowed to do):
 | `full` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅* |
 | `read_write` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | `read_only` | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | — |
-| `minimal` | ✅ | ✅ | — | ✅ | ✅ | — | — | — |
+| `read_only` | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | — |
 
 `*` Terminal tools require `use_terminal: true`. Subagents always use `SubprocessTool` for bash (stateless).
 
@@ -552,7 +552,7 @@ A subagent template at `config/pools/<pool>/templates/my-agent.yml`:
 ```yaml
 name: "my-agent"
 max_steps: 60
-tool_preset: read_write        # read_only / read_write / full / minimal
+tool_preset: read_write        # read_only / read_write / full
 extra_tools: []                # optional extra tool names on top of the preset
 system_prompt: |
   You are a specialized agent for …
@@ -590,7 +590,8 @@ def build_discord(ctx: AdapterBuildContext):
     discord_input = DiscordInputAdapter(...)
     discord_output = DiscordOutputAdapter(discord_input)
 
-    def emitter_factory(session_id: str):
+    def emitter_factory(session_id: str, pool: str):
+        _ = pool
         return DiscordEmitter(
             output_adapter=discord_output,
             session_id=session_id,

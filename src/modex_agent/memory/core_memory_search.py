@@ -9,7 +9,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from modex_agent.memory.core.models import CoreMemoryContents
-from modex_agent.memory.utils import estimate_text_tokens
+from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 from modex_agent.utils.helpers import strip_think
 
 __all__ = [
@@ -53,6 +53,9 @@ class FullDumpCoreMemoryStrategy(CoreMemorySearchStrategy):
     All content is stripped of think tags.
     """
 
+    def __init__(self, token_estimator: TokenEstimator | None = None) -> None:
+        self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
+
     async def retrieve(
         self,
         core_memory: CoreMemoryContents,
@@ -67,18 +70,22 @@ class FullDumpCoreMemoryStrategy(CoreMemorySearchStrategy):
         custom = {k: self._clean(v) for k, v in core_memory.custom.items()}
 
         # SOUL + USER are always included
-        base_tokens = estimate_text_tokens(soul) + estimate_text_tokens(user)
+        base_tokens = self._token_estimator.estimate_text(
+            soul
+        ) + self._token_estimator.estimate_text(user)
         remaining = max(0, max_tokens - base_tokens)
 
         # Custom files take from remaining budget (proportional)
-        custom_tokens = sum(estimate_text_tokens(v) for v in custom.values())
+        custom_tokens = sum(self._token_estimator.estimate_text(v) for v in custom.values())
         memory_budget = remaining
 
         if custom_tokens > 0:
             # Split remaining budget between custom and memory
             custom_budget = min(custom_tokens, remaining // 2)
             custom = self._truncate_dict(custom, custom_budget)
-            memory_budget = remaining - sum(estimate_text_tokens(v) for v in custom.values())
+            memory_budget = remaining - sum(
+                self._token_estimator.estimate_text(v) for v in custom.values()
+            )
 
         # MEMORY.md gets whatever is left
         memory = self._truncate_text(memory, memory_budget)
@@ -91,12 +98,11 @@ class FullDumpCoreMemoryStrategy(CoreMemorySearchStrategy):
         result = strip_think(text)
         return result or ""
 
-    @staticmethod
-    def _truncate_text(text: str, max_tokens: int) -> str:
+    def _truncate_text(self, text: str, max_tokens: int) -> str:
         """Truncate text to fit within token budget, respecting paragraph boundaries."""
         if not text:
             return ""
-        if estimate_text_tokens(text) <= max_tokens:
+        if self._token_estimator.estimate_text(text) <= max_tokens:
             return text
 
         # Rough char-to-token ratio (1 token ≈ 1.5 chars for mixed content)
@@ -113,16 +119,16 @@ class FullDumpCoreMemoryStrategy(CoreMemorySearchStrategy):
 
     def _truncate_dict(self, files: dict[str, str], max_tokens: int) -> dict[str, str]:
         """Truncate a dict of file contents to fit within token budget."""
-        total = sum(estimate_text_tokens(v) for v in files.values())
+        total = sum(self._token_estimator.estimate_text(v) for v in files.values())
         if total <= max_tokens:
             return files
 
         result: dict[str, str] = {}
         remaining = max_tokens
         for key, value in files.items():
-            budget = min(remaining, estimate_text_tokens(value))
+            budget = min(remaining, self._token_estimator.estimate_text(value))
             result[key] = self._truncate_text(value, budget)
-            remaining -= estimate_text_tokens(result[key])
+            remaining -= self._token_estimator.estimate_text(result[key])
             if remaining <= 0:
                 break
         return result

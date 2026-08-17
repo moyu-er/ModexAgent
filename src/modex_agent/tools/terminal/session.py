@@ -475,14 +475,19 @@ class TerminalSession:
     async def submit_command(self, command: str) -> None:
         """Submit a command to the PTY with the shell-appropriate line ending.
 
-        Discards pending output to avoid mixing with the command response.
+        Discards pending output to avoid mixing with the command response,
+        then seals the previous command's block in the sliding buffer
+        (``mark_command_boundary``). The buffer is NOT cleared: the prompt
+        line preceding this command is the anchor ``extract_last_command_output``
+        (and thus the agent-facing ``terminal current`` payload) uses to
+        return the last command's output.
         Shell cleanup (clear_input_line) is no longer needed here — the
         caller (CommandTool.execute) already guards against busy/dead
         states and the shell is expected to be at a clean prompt.
         """
         self._command_started_at = time.monotonic()
         await self._discard_pending_output()
-        self._backend.clear_buffer()
+        self._backend.mark_command_boundary()
         ending = self.shell_info.family.command_ending()
         await self._backend.write(command + ending)
 

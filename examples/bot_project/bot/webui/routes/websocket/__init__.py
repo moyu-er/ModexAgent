@@ -66,7 +66,7 @@ async def _handle_websocket(
     except Exception:
         logger.exception("WebSocket handler error")
     finally:
-        await state.cleanup(server._input)
+        await state.cleanup(server._input, ws)
 
     return ws
 

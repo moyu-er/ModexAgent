@@ -142,7 +142,7 @@ def test_build_returns_triple_when_enabled(monkeypatch: pytest.MonkeyPatch) -> N
     # lifecycle hooks were captured but NOT awaited during build
     assert fake_app.initialize_calls == 0
     # emitter factory yields a constructible emitter
-    emitter = em_factory("4242.main")
+    emitter = em_factory("4242.main", pool="main")
     assert emitter is not None
 
 

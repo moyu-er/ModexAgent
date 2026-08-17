@@ -16,7 +16,7 @@ from modex_agent.memory.core_memory_search import (
     FullDumpCoreMemoryStrategy,
 )
 from modex_agent.memory.layers.config import CoreMemoryConfig, StorageFactory
-from modex_agent.memory.utils import estimate_text_tokens
+from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +35,14 @@ class ScopedCoreMemoryManager(CoreMemoryManager):
         search_strategy: CoreMemorySearchStrategy | None = None,
         consolidation_fn: Callable[[str, str], Awaitable[str]] | None = None,
         consolidation_threshold_tokens: int = 2000,
+        token_estimator: TokenEstimator | None = None,
     ) -> None:
         self._storage_factory = storage_factory
         self._config = config or CoreMemoryConfig()
         self._search_strategy = search_strategy or FullDumpCoreMemoryStrategy()
         self._consolidation_fn = consolidation_fn
         self._consolidation_threshold = consolidation_threshold_tokens
+        self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
 
     def get_scope(self) -> Scope:
         return self._config.scope
@@ -199,7 +201,7 @@ class ScopedCoreMemoryManager(CoreMemoryManager):
         """Check file size and consolidate if over threshold."""
         if self._consolidation_fn is None:
             return
-        tokens = estimate_text_tokens(content)
+        tokens = self._token_estimator.estimate_text(content)
         if tokens <= self._consolidation_threshold:
             return
         logger.info(
@@ -228,14 +230,18 @@ class ScopedCoreMemoryManager(CoreMemoryManager):
                     {
                         "file": file_name,
                         "mode": "consolidation",
-                        "reason": f"auto-consolidated ({estimate_text_tokens(content)} -> {estimate_text_tokens(consolidated)} tokens)",
+                        "reason": (
+                            "auto-consolidated "
+                            f"({self._token_estimator.estimate_text(content)} -> "
+                            f"{self._token_estimator.estimate_text(consolidated)} tokens)"
+                        ),
                     }
                 )
             logger.info(
                 "Consolidated %s: %d -> %d tokens",
                 file_name,
-                estimate_text_tokens(content),
-                estimate_text_tokens(consolidated),
+                self._token_estimator.estimate_text(content),
+                self._token_estimator.estimate_text(consolidated),
             )
             return consolidated
         except Exception:

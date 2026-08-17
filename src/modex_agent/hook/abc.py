@@ -71,6 +71,7 @@ class HookSpec:
 
     hook: Hook
     on_error: HookErrorPolicy = HookErrorPolicy.LOG
+    priority: int = 0
 
 
 class Hook(ABC):  # noqa: B024

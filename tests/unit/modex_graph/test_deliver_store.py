@@ -23,6 +23,7 @@ from modex_graph import (
     DeliverRecord,
     DeliverStore,
     InMemoryDeliverStore,
+    NullDeliverStore,
     SqliteDeliverStore,
 )
 
@@ -35,6 +36,8 @@ _SOURCE_INVOCATION_ID = 0
 
 
 def _store_factory(kind: str) -> Callable[[], DeliverStore]:
+    if kind == "null":
+        return lambda: NullDeliverStore()
     if kind == "memory":
         return lambda: InMemoryDeliverStore()
     if kind == "sqlite":
@@ -48,6 +51,7 @@ def _accumulate(
     graph_instance_id: int = _GRAPH_INSTANCE_ID,
     node_id: str = "node-a-001",
     content: Any = "data",
+    status: DeliverConsumptionStatus = DeliverConsumptionStatus.PENDING,
 ) -> int:
     """Wrap accumulate with default source values."""
     return store.accumulate(
@@ -56,10 +60,12 @@ def _accumulate(
         source_node_id=_SOURCE_NODE_ID,
         source_invocation_id=_SOURCE_INVOCATION_ID,
         content=content,
+        status=status,
     )
 
 
 STORE_KINDS = ["memory", "sqlite"]
+ALL_STORE_KINDS = ["null", *STORE_KINDS]
 
 
 # ── DeliverConsumptionStatus enum (used by DeliverRecord) ─────
@@ -69,8 +75,8 @@ class TestDeliverConsumptionStatus:
     def test_pending_value(self) -> None:
         assert DeliverConsumptionStatus.PENDING.value == "pending"
 
-    def test_consumed_value(self) -> None:
-        assert DeliverConsumptionStatus.CONSUMED.value == "consumed"
+    def test_staged_value(self) -> None:
+        assert DeliverConsumptionStatus.STAGED.value == "staged"
 
     def test_is_str_enum(self) -> None:
         from enum import StrEnum
@@ -212,11 +218,12 @@ class TestDeliverStoreABC:
         with pytest.raises(TypeError):
             DeliverStore()  # type: ignore[abstract]
 
-    def test_four_abstract_methods(self) -> None:
+    def test_five_abstract_methods(self) -> None:
         expected = {
             "accumulate",
             "query_consumable",
             "mark_consumed",
+            "promote_staged_by_source",
             "promote_consumed",
         }
         assert set(DeliverStore.__abstractmethods__) == expected
@@ -259,12 +266,18 @@ class TestDeliverStoreConsumption:
         deliver_id = _accumulate(store, node_id="node-a-001", content="data")
         store.mark_consumed([deliver_id], 1)
 
-        records = (
-            cast(InMemoryDeliverStore, store)._records[_GRAPH_INSTANCE_ID]
-            if kind == "memory"
-            else store.query_consumable(_GRAPH_INSTANCE_ID, "node-a-001")
-        )
+        records = store.query_consumable(_GRAPH_INSTANCE_ID, "node-a-001")
+        assert records[0].status == DeliverConsumptionStatus.CONSUMED_PENDING
         assert records[0].consumed_by_invocation_id == 1
+
+    def test_consumed_pending_remains_consumable_for_retry(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        deliver_id = _accumulate(store, node_id="node-a-001", content="data")
+        store.mark_consumed([deliver_id], 1)
+
+        records = store.query_consumable(_GRAPH_INSTANCE_ID, "node-a-001")
+
+        assert [record.deliver_id for record in records] == [deliver_id]
 
     def test_promote_consumed_finishes_strategy_transition(self, kind: str) -> None:
         store = _store_factory(kind)()
@@ -272,13 +285,153 @@ class TestDeliverStoreConsumption:
         store.mark_consumed([deliver_id], 1)
         store.promote_consumed(1)
 
-        if kind == "memory":
-            assert cast(InMemoryDeliverStore, store)._records[_GRAPH_INSTANCE_ID] == []
-        else:
+        if kind == "sqlite":
             row = cast(SqliteDeliverStore, store)._conn.execute(
                 "SELECT status FROM deliver_states WHERE deliver_id = ?", (deliver_id,)
             ).fetchone()
             assert row == (DeliverConsumptionStatus.CONSUMED_COMPLETED.value,)
+        else:
+            records = cast(InMemoryDeliverStore, store)._records[_GRAPH_INSTANCE_ID]
+            assert [record.status for record in records] == [
+                DeliverConsumptionStatus.CONSUMED_COMPLETED
+            ]
+        assert store.query_consumable(_GRAPH_INSTANCE_ID, "node-a-001") == []
+
+    def test_promote_staged_by_source_makes_matching_rows_visible(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        _accumulate(
+            store,
+            node_id="node-a-001",
+            content="first",
+            status=DeliverConsumptionStatus.STAGED,
+        )
+        _accumulate(
+            store,
+            node_id="node-b-002",
+            content="second",
+            status=DeliverConsumptionStatus.STAGED,
+        )
+        store.accumulate(
+            graph_instance_id=_GRAPH_INSTANCE_ID,
+            node_id="node-c-003",
+            source_node_id="node-other-source",
+            source_invocation_id=1,
+            content="other",
+            status=DeliverConsumptionStatus.STAGED,
+        )
+
+        assert store.query_consumable(_GRAPH_INSTANCE_ID, "node-a-001") == []
+        assert store.query_consumable(_GRAPH_INSTANCE_ID, "node-b-002") == []
+
+        affected = store.promote_staged_by_source(_GRAPH_INSTANCE_ID, _SOURCE_NODE_ID)
+
+        assert affected == {"node-a-001", "node-b-002"}
+        assert [
+            record.content
+            for node_id in ("node-a-001", "node-b-002")
+            for record in store.query_consumable(_GRAPH_INSTANCE_ID, node_id)
+        ] == ["first", "second"]
+        assert store.query_consumable(_GRAPH_INSTANCE_ID, "node-c-003") == []
+
+
+class TestNullDeliverStoreContract:
+    """NullDeliverStore stateless contract — no state machine, no persistence.
+
+    Null keeps delete-on-consume semantics, but STAGED visibility follows the
+    same source-completion gate as the stateful stores.
+    """
+
+    def test_accumulate_makes_entry_immediately_visible(self) -> None:
+        store = NullDeliverStore()
+        _accumulate(store, node_id="node-a-001", content="data")
+        records = store.query_consumable(_GRAPH_INSTANCE_ID, "node-a-001")
+        assert len(records) == 1
+        assert records[0].status == DeliverConsumptionStatus.PENDING
+
+    def test_mark_consumed_deletes_record_not_status_change(self) -> None:
+        store = NullDeliverStore()
+        id_a = _accumulate(store, node_id="node-a-001", content="a")
+        id_b = _accumulate(store, node_id="node-a-001", content="b")
+        store.mark_consumed([id_a], 1)
+        remaining = store.query_consumable(_GRAPH_INSTANCE_ID, "node-a-001")
+        assert [r.deliver_id for r in remaining] == [id_b]
+        assert remaining[0].status == DeliverConsumptionStatus.PENDING
+
+    def test_promote_staged_by_source_returns_affected_target(self) -> None:
+        store = NullDeliverStore()
+        _accumulate(
+            store,
+            node_id="node-a-001",
+            content="data",
+            status=DeliverConsumptionStatus.STAGED,
+        )
+        affected = store.promote_staged_by_source(_GRAPH_INSTANCE_ID, _SOURCE_NODE_ID)
+        assert affected == {"node-a-001"}
+
+    def test_promote_consumed_is_no_op(self) -> None:
+        store = NullDeliverStore()
+        id_a = _accumulate(store, node_id="node-a-001", content="a")
+        _accumulate(store, node_id="node-a-001", content="b")
+        store.mark_consumed([id_a], 1)
+        store.promote_consumed(1)
+        remaining = store.query_consumable(_GRAPH_INSTANCE_ID, "node-a-001")
+        assert [r.content for r in remaining] == ["b"]
+        assert all(r.status == DeliverConsumptionStatus.PENDING for r in remaining)
+
+    def test_query_consumable_returns_all_remaining(self) -> None:
+        store = NullDeliverStore()
+        _accumulate(store, node_id="node-a-001", content="first")
+        second_id = _accumulate(store, node_id="node-a-001", content="second")
+        _accumulate(store, node_id="node-a-001", content="third")
+        store.mark_consumed([second_id], 1)
+        remaining = store.query_consumable(_GRAPH_INSTANCE_ID, "node-a-001")
+        assert [r.content for r in remaining] == ["first", "third"]
+
+    def test_query_consumable_hides_staged(self) -> None:
+        store = NullDeliverStore()
+        _accumulate(
+            store,
+            node_id="node-a-001",
+            content="data",
+            status=DeliverConsumptionStatus.STAGED,
+        )
+        assert store.query_consumable(_GRAPH_INSTANCE_ID, "node-a-001") == []
+
+    def test_staged_promotion_makes_entry_visible(self) -> None:
+        store = NullDeliverStore()
+        deliver_id = _accumulate(
+            store,
+            node_id="node-a-001",
+            content="data",
+            status=DeliverConsumptionStatus.STAGED,
+        )
+
+        affected = store.promote_staged_by_source(_GRAPH_INSTANCE_ID, _SOURCE_NODE_ID)
+
+        assert affected == {"node-a-001"}
+        records = store.query_consumable(_GRAPH_INSTANCE_ID, "node-a-001")
+        assert [record.status for record in records] == [DeliverConsumptionStatus.PENDING]
+        store.mark_consumed([deliver_id], 1)
+        assert store.query_consumable(_GRAPH_INSTANCE_ID, "node-a-001") == []
+
+
+@pytest.mark.parametrize("kind", ALL_STORE_KINDS)
+def test_accumulate_staged_is_hidden_until_source_promotion(kind: str) -> None:
+    store = _store_factory(kind)()
+    _accumulate(
+        store,
+        node_id="node-a-001",
+        content="staged",
+        status=DeliverConsumptionStatus.STAGED,
+    )
+
+    assert store.query_consumable(_GRAPH_INSTANCE_ID, "node-a-001") == []
+    assert store.promote_staged_by_source(
+        _GRAPH_INSTANCE_ID, _SOURCE_NODE_ID
+    ) == {"node-a-001"}
+    records = store.query_consumable(_GRAPH_INSTANCE_ID, "node-a-001")
+    assert [record.content for record in records] == ["staged"]
+    assert records[0].status == DeliverConsumptionStatus.PENDING
 
 
 # ── Parametrized accumulate/query/mark/clear tests ────────────────────────
@@ -463,6 +616,13 @@ class TestSqliteDeliverStoreSpecifics:
         index_names = {r[0] for r in indexes}
         assert "idx_deliver_states_node" in index_names
         assert "idx_deliver_states_target" in index_names
+        assert "idx_deliver_states_staged_source" in index_names
+        staged_index_sql = store._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name = ?",
+            ("idx_deliver_states_staged_source",),
+        ).fetchone()
+        assert staged_index_sql is not None
+        assert "WHERE status = 'staged'" in staged_index_sql[0]
         conn.close()
 
     def test_file_based_persistence(self) -> None:
@@ -523,8 +683,8 @@ class TestSqliteDeliverStoreSpecifics:
         conn = sqlite3.connect(":memory:")
         store = SqliteDeliverStore(conn)
         for status_val in (
+            DeliverConsumptionStatus.STAGED.value,
             DeliverConsumptionStatus.PENDING.value,
-            DeliverConsumptionStatus.CONSUMED.value,
             DeliverConsumptionStatus.CONSUMED_PENDING.value,
             DeliverConsumptionStatus.CONSUMED_COMPLETED.value,
         ):
@@ -589,6 +749,42 @@ class TestSqliteDeliverStoreSpecifics:
         assert "node_id" in columns
         assert "next_node_id" in columns
         assert "source_node_id" in columns
+        conn.close()
+
+    def test_old_consumed_check_constraint_is_rebuilt_without_losing_valid_rows(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE deliver_states ("
+            "deliver_id INTEGER PRIMARY KEY, "
+            "graph_instance_id INTEGER NOT NULL, "
+            "node_id TEXT NOT NULL, "
+            "next_node_id TEXT NOT NULL, "
+            "source_node_id TEXT NOT NULL DEFAULT '', "
+            "source_invocation_id INTEGER NOT NULL DEFAULT 0, "
+            "consumed_by_invocation_id INTEGER, "
+            "content_json TEXT NOT NULL, "
+            "status TEXT NOT NULL DEFAULT 'pending' "
+            "CHECK (status IN ('pending', 'consumed', 'consumed_pending', 'consumed_completed')), "
+            "created_at INTEGER NOT NULL, "
+            "updated_at INTEGER NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO deliver_states VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (1, _GRAPH_INSTANCE_ID, "node-a-001", "node-a-001", _SOURCE_NODE_ID, 1, None, '"x"', "pending", 1, 1),
+        )
+
+        store = SqliteDeliverStore(conn)
+
+        assert [record.deliver_id for record in store.query_consumable(_GRAPH_INSTANCE_ID, "node-a-001")] == [1]
+        conn.execute(
+            "INSERT INTO deliver_states VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (2, _GRAPH_INSTANCE_ID, "node-b-002", "node-b-002", _SOURCE_NODE_ID, 1, None, '"y"', "staged", 1, 1),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO deliver_states VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (3, _GRAPH_INSTANCE_ID, "node-c-003", "node-c-003", _SOURCE_NODE_ID, 1, None, '"z"', "consumed", 1, 1),
+            )
         conn.close()
 
 

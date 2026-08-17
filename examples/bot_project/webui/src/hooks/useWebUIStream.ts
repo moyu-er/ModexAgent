@@ -28,6 +28,12 @@ export interface UseWebUIStreamResult {
   isApprovingBatch: boolean;
   /** Live WebSocket connection state — drives the statusline signal dot. */
   isConnected: boolean;
+  /** Conversations currently streaming in this hook's attached tree
+   *  (selected + buffered non-selected). Drives the workspace-tab run dot. */
+  streamingCount: number;
+  /** Total pending approvals across this hook's attached tree. Drives the
+   *  workspace-tab approval dot. */
+  pendingApprovalCount: number;
   /** The live WebSocketClient instance (null before connect / after disconnect).
    *  Passed to graph components so they can subscribe to graph_event messages
    *  on the same connection (G11). */
@@ -365,23 +371,6 @@ export function useWebUIStream(
     };
   }, [disconnect]);
 
-  // Clear per-session buffers when the workspace changes. Without this,
-  // buffered events from the OLD workspace's sessions persist and can leak
-  // into the new workspace's chat view when a session with the same id is
-  // selected. Also clear the streaming-sessions tracker so stale turn_end
-  // events from the old workspace don't confuse the activity notifier.
-  useEffect(() => {
-    setState((prev) => ({
-      messages: prev.messages,
-      isStreaming: prev.isStreaming,
-      sessionMessages: {},
-      sessionStreaming: {},
-      todos: {},
-      pendingApprovals: {},
-    }));
-    streamingSessionsRef.current.clear();
-  }, [currentWs]);
-
   // Attach + load history when sessionId changes
   useEffect(() => {
     if (!sessionId) {
@@ -633,6 +622,11 @@ export function useWebUIStream(
     pendingApprovals: sessionId ? state.pendingApprovals[sessionId] ?? [] : [],
     isApprovingBatch: Object.keys(submittingApprovals).length > 0,
     isConnected,
+    streamingCount: Object.values(state.sessionStreaming).filter(Boolean).length,
+    pendingApprovalCount: Object.values(state.pendingApprovals).reduce(
+      (n, list) => n + list.length,
+      0,
+    ),
     wsClient,
     connect,
     disconnect,

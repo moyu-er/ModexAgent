@@ -19,14 +19,14 @@ import {
   type MiniNodePoint,
 } from "./miniLayout";
 
-/** 功能节点状态 → 填充色(§5.2 状态色系,缩略图无底色/边框通道)。 */
+/** 功能节点状态 → 填充色(§6.2 状态色系,缩略图无底色/边框通道)。 */
 const MINI_STATUS_FILL: Readonly<Record<GraphNodeVisualStatus, string>> = {
-  pending: "fill-graph-mini-node",
-  running: "fill-brand",
-  completed: "fill-success",
-  crashed: "fill-danger",
-  canceled: "fill-mute",
-  suspended: "fill-warning",
+  pending: "fill-graph-status-pending",
+  running: "fill-graph-status-running",
+  completed: "fill-graph-status-completed",
+  crashed: "fill-graph-status-crashed",
+  canceled: "fill-graph-status-canceled",
+  suspended: "fill-graph-status-suspended",
 };
 
 export interface MiniTopologyProps {

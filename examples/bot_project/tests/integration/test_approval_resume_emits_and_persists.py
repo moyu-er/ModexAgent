@@ -28,6 +28,7 @@ test in the chain (联调) takes over.
 """
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -80,7 +81,6 @@ def _make_react_pipeline(
     from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
     from modex_agent.pipeline.turn_runner import ReActTurnRunner
     from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-    _UNSET = object()
     if sanitizer is None:
         from modex_agent.utils.sanitizer import ContentSanitizer
         sanitizer = ContentSanitizer.sanitize
@@ -274,11 +274,13 @@ def _build_pipeline_with_webui_emitter(
     ws_output = WebSocketOutputAdapter(ws_input)
     transcript_store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
 
-    def emitter_factory(session_id: str) -> WebBotEmitter:
+    def emitter_factory(session_id: str, pool: str) -> WebBotEmitter:
+        assert pool == ""
         return WebBotEmitter(
             output_adapter=ws_output,
             session_id=session_id,
             config=EmitterConfig(),
+            pool=pool,
             transcript_store=transcript_store,
             sessions_dir_provider=lambda: sessions_dir,
         )
@@ -292,7 +294,7 @@ def _build_pipeline_with_webui_emitter(
         sanitizer=None,
         turn_store=turn_store,
         runtime_services=runtime_services,
-        emitter_factory=emitter_factory,
+        emitter_factory=partial(emitter_factory, pool=""),
         user_interface=IMUserInterface(output_adapter=recording_output),
     )
     return pipeline, provider, turn_store, recorded, transcript_store
@@ -638,11 +640,13 @@ async def test_deny_all_on_batch_seals_all_pending_requests(tmp_path: Path) -> N
     ws_output = WebSocketOutputAdapter(ws_input)
     transcript_store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
 
-    def emitter_factory(session_id: str) -> WebBotEmitter:
+    def emitter_factory(session_id: str, pool: str) -> WebBotEmitter:
+        assert pool == ""
         return WebBotEmitter(
             output_adapter=ws_output,
             session_id=session_id,
             config=EmitterConfig(),
+            pool=pool,
             transcript_store=transcript_store,
             sessions_dir_provider=lambda: sessions_dir,
         )
@@ -656,7 +660,7 @@ async def test_deny_all_on_batch_seals_all_pending_requests(tmp_path: Path) -> N
         sanitizer=None,
         turn_store=turn_store,
         runtime_services=runtime_services,
-        emitter_factory=emitter_factory,
+        emitter_factory=partial(emitter_factory, pool=""),
         user_interface=IMUserInterface(output_adapter=recording_output),
     )
 

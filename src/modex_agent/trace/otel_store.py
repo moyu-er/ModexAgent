@@ -339,10 +339,10 @@ def _sanitize_attrs_for_otel(attrs: dict[str, object]) -> dict[str, object]:
     for key, value in attrs.items():
         if value is None:
             continue
-        if isinstance(value, (bool, str, bytes, int, float)):
+        if isinstance(value, bool | str | bytes | int | float):
             sanitized[key] = value
-        elif isinstance(value, (list, tuple)):
-            if all(isinstance(v, (bool, str, bytes, int, float)) for v in value):
+        elif isinstance(value, list | tuple):
+            if all(isinstance(v, bool | str | bytes | int | float) for v in value):
                 sanitized[key] = list(value)
             else:
                 sanitized[key] = json.dumps(value, ensure_ascii=False, default=str)
@@ -438,7 +438,7 @@ def _to_otlp_value(value: object) -> dict[str, object]:
     if isinstance(value, bytes):
         import base64
         return {"bytesValue": base64.b64encode(value).decode("ascii")}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return {
             "arrayValue": {
                 "values": [_to_otlp_value(v) for v in value],

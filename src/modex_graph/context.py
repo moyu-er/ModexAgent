@@ -19,9 +19,9 @@ Provides:
 - `emit(event_type, data)` — convenience for `ctx.runtime.emit(..., ctx)`.
 - `interrupt(value)` — raises `GraphInterrupt(value)` (suspend-without-
   re-execution semantics).
-- `dispatch(target, state_update)` — routes to a downstream node. Under
+- `dispatch(target)` — wakes a downstream node. Under
   `ParallelScheduler`, validates and queues the target according to its
-  trigger mode. Under `LinearScheduler`, records the target + payload for
+  trigger mode. Under `LinearScheduler`, records the target for
   the scheduler to pick up as the next node. Both schedulers register a
   dispatch handler before executing nodes.
 
@@ -48,20 +48,19 @@ if TYPE_CHECKING:
 
 S = TypeVar("S", bound="GraphState")
 
-# Dispatch handler signature: (source_instance, target, state_update) -> None.
+# Dispatch handler signature: (source_instance, target) -> None.
 # Provided by BOTH `ParallelScheduler` and `LinearScheduler` via
-# `set_dispatch_handler`. Under PARALLEL, the handler routes the deliver and
-# queues a new `NodeInstance` according to its trigger mode. Under LINEAR, the
-# handler records the target + payload for the scheduler to pick up as the next
-# node. Both schedulers validate that `target` is in the source node's outgoing
+# `set_dispatch_handler`. Under PARALLEL, the handler queues a new `NodeInstance`
+# according to its trigger mode. Under LINEAR, the handler records the target for
+# the scheduler to pick up as the next node. Both schedulers validate that
+# `target` is in the source node's outgoing
 # edges (topology enforcement via `_dispatch_utils.validate_dispatch_target`).
-type DispatchHandler = Callable[[str, str, "dict[str, Any] | None"], None]
+type DispatchHandler = Callable[[str, str], None]
 
 
 def _noop_dispatch_handler(
     source_instance: str,
     target: str,
-    state_update: dict[str, Any] | None,
 ) -> None:
     """Default no-op dispatch handler.
 
@@ -163,18 +162,21 @@ class GraphContext[S: "GraphState"]:
         """
         raise GraphInterrupt(value=value)
 
-    def dispatch(self, target: str, state_update: dict[str, Any] | None = None) -> None:
-        """Route to a downstream node via the registered dispatch handler.
+    def dispatch(self, target: str) -> None:
+        """Wake a downstream node via the registered dispatch handler.
 
         Works under BOTH `LINEAR` and `PARALLEL` schedulers. Both
         schedulers register a dispatch handler before executing nodes:
 
         - Under `ParallelScheduler`: the handler validates `target` against
-          the current node's outgoing edges, routes the deliver through the
-          coordinator, and queues the target according to its trigger mode.
-        - Under `LinearScheduler`: the handler records the target + payload
-          for the scheduler to pick up as the next node (LINEAR is
+          the current node's outgoing edges and queues the target according
+          to its trigger mode.
+        - Under `LinearScheduler`: the handler records the target for the
+          scheduler to pick up as the next node (LINEAR is
           sequential — one target at a time).
+
+        Dispatch carries no data. Node output is staged in the target's
+        deliver store and promoted before this scheduling wakeup.
 
         Dispatch takes effect immediately — the handler runs synchronously
         inside this call.
@@ -182,11 +184,6 @@ class GraphContext[S: "GraphState"]:
         Args:
             target: The target node name, or `GraphNode.END` for the
                 terminal signal.
-            state_update: Optional payload carried by the dispatch. Under
-                both schedulers, `{"delivered": content}` is the conventional
-                shape — the downstream node receives it as an
-                `IntegratedPayload` via the coordinator's deliver consumption
-                in `node.run()`.
 
         Raises:
             RuntimeError: If no dispatch handler is registered (programmer
@@ -201,17 +198,17 @@ class GraphContext[S: "GraphState"]:
                 "The scheduler must set the handler before executing nodes."
             )
         source_instance = self._current_instance or ""
-        self._dispatch_handler(source_instance, target, state_update)
+        self._dispatch_handler(source_instance, target)
 
     def set_dispatch_handler(self, handler: DispatchHandler | None) -> None:
         """Register the dispatch handler. Called by both schedulers.
 
         The handler is a callback with signature
-        `(source_instance: str, target: str, state_update: dict | None) -> None`.
-        Under `ParallelScheduler`, it validates the target, routes the deliver,
-        and queues the target according to its trigger mode. Under
-        `LinearScheduler`, it records the target + payload for the scheduler to
-        pick up as the next node. Passing `None` clears the handler.
+        `(source_instance: str, target: str) -> None`. Under
+        `ParallelScheduler`, it validates and queues the target according to
+        its trigger mode. Under `LinearScheduler`, it records the target for
+        the scheduler to pick up as the next node. Passing `None` clears the
+        handler.
         """
         self._dispatch_handler = handler
 
@@ -232,8 +229,8 @@ class GraphContext[S: "GraphState"]:
         """The node state store (lifecycle + version chain + CAS authority).
 
         Convenience accessor for ``self.coordinator.node_state_store``.
-        ``Node.run()`` calls lifecycle methods (begin / complete / suspend /
-        crash / cancel / finalize) through this property.
+        ``Node.run()`` calls lifecycle methods (begin / complete / crash /
+        cancel / finalize) through this property.
         """
         return self.coordinator.node_state_store
 
@@ -262,9 +259,10 @@ class GraphContext[S: "GraphState"]:
                 "(no active invocation). Use inside execute()/deliver()."
             )
         scratch = self.state.node_scratch
+        node_scratch: dict[str, Any] = scratch.get(inv.node_id, {})
         if inv.node_id not in scratch:
-            scratch[inv.node_id] = {}
-        return scratch[inv.node_id]
+            scratch[inv.node_id] = node_scratch
+        return node_scratch
 
 
 __all__ = ["GraphContext", "S", "DispatchHandler"]

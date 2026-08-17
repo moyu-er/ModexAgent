@@ -41,13 +41,6 @@ class MemorySystem(ABC):
     ) -> MessageHistory: ...
 
     @abstractmethod
-    async def add_messages(
-        self,
-        context: MemoryContext,
-        messages: Sequence[ChatMessage | dict[str, Any]],
-    ) -> None: ...
-
-    @abstractmethod
     async def get_history(
         self,
         context: MemoryContext,
@@ -151,13 +144,6 @@ class ContextManagedMemorySystem(
         context: MemoryContext,
         initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
     ) -> MessageHistory: ...
-
-    @abstractmethod
-    async def add_messages(
-        self,
-        context: MemoryContext,
-        messages: Sequence[ChatMessage | dict[str, Any]],
-    ) -> None: ...
 
     @abstractmethod
     async def get_history(

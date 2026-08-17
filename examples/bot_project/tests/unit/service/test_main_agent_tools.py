@@ -37,10 +37,9 @@ class TestBuildMainAgentToolNames:
         for preset in ("full", "read_write", "read_only"):
             names = build_main_agent_tool_names(preset, [], use_terminal=False)
             assert "bash" in names, f"preset={preset}"
-        # MINIMAL/NONE get no bash.
-        for preset in ("minimal", "none"):
-            names = build_main_agent_tool_names(preset, [], use_terminal=False)
-            assert "bash" not in names, f"preset={preset}"
+        # NONE gets no bash.
+        names = build_main_agent_tool_names("none", [], use_terminal=False)
+        assert "bash" not in names
 
     def test_read_only_preset_excludes_write_edit(self) -> None:
         names = build_main_agent_tool_names("read_only", [], use_terminal=False)

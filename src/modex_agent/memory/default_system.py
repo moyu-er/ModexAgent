@@ -41,8 +41,24 @@ logger = logging.getLogger(__name__)
 class ScopedMessageHistory(MessageHistory):
     """MessageHistory backed by a registry-scoped SessionMemoryManager.
 
-    Runs ``cleanup_session()`` after every ``append`` / ``extend`` so that
-    session pruning and optional archival happen on the ReAct-turn hot path.
+    Template method pattern: write-through persistence + read cache.
+    - append/extend: persist → trigger check(cache) → cache maintain
+    - to_list: cache hit / store read
+    - clear/replace_all: store write → invalidate cache
+
+    Protected hooks (subclasses may override for DIY):
+    - _run_cleanup_if_triggered: trigger check + cleanup dispatch
+    - _is_trigger_condition_met: pure in-memory trigger check
+    - _refresh_cache: full store read + cache populate
+    - _append_to_cache: in-memory append (no IO)
+    - _invalidate_cache: drop cache
+
+    Invariants:
+    - Every append/extend persists to store BEFORE cache update.
+    - Cache is only populated via _refresh_cache (full read) or
+      _append_to_cache (incremental, post-write).
+    - After compact/cleanup, _refresh_cache is the ONLY refresh path.
+    - Trigger check uses cached data (zero IO when not triggered).
     """
 
     def __init__(
@@ -78,10 +94,16 @@ class ScopedMessageHistory(MessageHistory):
         )
         self._cache_lock = asyncio.Lock()
 
-    async def _run_cleanup(self) -> None:
+    async def _run_cleanup_if_triggered(self) -> bool:
+        """Check trigger using cached messages (zero IO); run cleanup if triggered.
+
+        Returns True if compact happened (caller must _refresh_cache).
+        """
+        if not self._is_trigger_condition_met():
+            return False
         from modex_agent.memory.cleanup import cleanup_session
 
-        await cleanup_session(
+        result = await cleanup_session(
             session=self._manager,
             archive=self._archive_manager,
             context=self._context,
@@ -93,6 +115,48 @@ class ScopedMessageHistory(MessageHistory):
             token_estimator=self._token_estimator,
             **self._cleanup_config,
         )
+        return result.triggered
+
+    def _is_trigger_condition_met(self) -> bool:
+        """Pure in-memory trigger check. Zero IO. Uses cached messages."""
+        if self._cache is None or not self._cache:
+            return True  # Conservative: cache unavailable → let cleanup_session decide
+        from modex_agent.memory.cleanup import check_cleanup_trigger
+
+        reason = check_cleanup_trigger(
+            self._cache,
+            self._token_estimator,
+            self._cleanup_config.get("max_context_tokens"),
+            self._cleanup_config.get("max_token_ratio", 0.85),
+            self._cleanup_config.get("max_output_tokens", 0),
+        )
+        return reason is not None
+
+    async def _refresh_cache(self) -> list[ChatMessage]:
+        """Full read from store + populate cache. The ONLY cache-fill path after compact."""
+        async with self._cache_lock:
+            if self._cache is not None:
+                return list(self._cache)
+        recent = await self._manager.get_recent_messages(self._context)
+        async with self._cache_lock:
+            self._cache = list(recent)
+        return list(recent)
+
+    def _append_to_cache(self, messages: Sequence[ChatMessage | dict[str, Any]]) -> None:
+        """Incremental cache update after a successful write. No IO.
+
+        Synchronous — safe in asyncio single-thread model (no await points).
+        Only called when no compact happened, so cache stays consistent.
+        """
+        if self._cache is None:
+            return  # Cache not populated yet; to_list() will read from store
+        for msg in messages:
+            self._cache.append(ChatMessage.coerce(msg))
+
+    async def _invalidate_cache(self) -> None:
+        """Drop cache. Used by clear/replace_all (full set replacement)."""
+        async with self._cache_lock:
+            self._cache = None
 
     def _stamp_token_count(
         self, messages: Sequence[ChatMessage | dict[str, Any]]
@@ -113,9 +177,11 @@ class ScopedMessageHistory(MessageHistory):
         await self._manager.add_messages(self._context, [stamped])
         if self._recorder is not None:
             await self._recorder.record([stamped], self._context)
-        await self._run_cleanup()
-        async with self._cache_lock:
-            self._cache = None
+        compacted = await self._run_cleanup_if_triggered()
+        if compacted:
+            await self._refresh_cache()
+        else:
+            self._append_to_cache([stamped])
 
     async def extend(self, messages: Sequence[ChatMessage | dict[str, Any]]) -> None:
         if not messages:
@@ -124,31 +190,28 @@ class ScopedMessageHistory(MessageHistory):
         await self._manager.add_messages(self._context, stamped)
         if self._recorder is not None:
             await self._recorder.record(stamped, self._context)
-        await self._run_cleanup()
-        async with self._cache_lock:
-            self._cache = None
+        compacted = await self._run_cleanup_if_triggered()
+        if compacted:
+            await self._refresh_cache()
+        else:
+            self._append_to_cache(stamped)
 
     async def to_list(self) -> list[ChatMessage]:
         async with self._cache_lock:
             if self._cache is not None:
                 return list(self._cache)
-        recent = await self._manager.get_recent_messages(self._context)
-        async with self._cache_lock:
-            self._cache = list(recent)
-        return list(recent)
+        return await self._refresh_cache()
 
     async def clear(self) -> None:
         await self._manager.clear(self._context)
-        async with self._cache_lock:
-            self._cache = None
+        await self._invalidate_cache()
 
     async def replace_all(
         self, messages: Sequence[ChatMessage | dict[str, Any]], *, skip_transform: bool = False
     ) -> None:
         _ = skip_transform
         await self._manager.replace_messages(self._context, list(messages))
-        async with self._cache_lock:
-            self._cache = None
+        await self._invalidate_cache()
 
     def __len__(self) -> int:
         raise RuntimeError("Use 'await history.to_list()' for async access.")
@@ -241,17 +304,6 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
             token_estimator=self._token_estimator,
             compactor=self._compactor,
         )
-
-    async def add_messages(
-        self,
-        context: MemoryContext,
-        messages: Sequence[ChatMessage | dict[str, Any]],
-    ) -> None:
-        if not messages:
-            return
-        await self._layers.session.add_messages(context, messages)
-        await self._recorder.record(list(messages), context)
-        # No lifecycle callback — cleanup happens in ScopedMessageHistory
 
     async def get_history(
         self,

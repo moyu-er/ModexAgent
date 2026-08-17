@@ -134,7 +134,7 @@ ToolNode._classify_all() → TieredToolApprovalClassifier
   → PENDING: _suspend_for_approval() → TurnSnapshot → GraphInterrupt
   → Pipeline: ApprovalRenderer.detect() → apply_decision()
   → StartNode detects SUSPENDED → routes to TOOL → _resume_suspended_batch()
-  → PRE_APPROVED_TOOL_IDS set on ALLOWED tools, denied tools return error
+  → reads approval decisions → ALLOWED tools execute, denied tools return error
 ```
 
 ### Common Patterns

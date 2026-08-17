@@ -198,13 +198,16 @@ class WebUIService(BotService):
 
         session_store: WorkspacePoolSessionStore = WorkspacePoolSessionStore(
             home_session_index,
-            pool_resolver=lambda session: self._resolve_pool_for_session(session.session_id_prefix),
+            # Partition placement (session-index physical layout). Unrouted
+            # prefix (fresh boot) lands in the 'main' index partition — the
+            # former silent fallback, now explicit at this call site.
+            pool_resolver=lambda session: (
+                self._routing_pool_for_prefix(session.session_id_prefix) or _DEFAULT_AGENT_NAME
+            ),
             data_dir_name=_data_dir_name,
         )
         self._session_store = session_store
         self._session_registry = InMemorySessionRegistry(store=session_store)
-        # Sync cache for parent lookups at emit time (hot path).
-        self._parent_ids: dict[str, str] = {}
 
         # ── 3. Build adapters from registry ────────────────────────────
         # Auto-import all register_*.py modules so @register decorators fire.
@@ -224,8 +227,10 @@ class WebUIService(BotService):
         self._channel_inputs: list[InputAdapter] = []
         self._channel_outputs: list[OutputAdapter] = []
         self._channel_outputs_by_name: dict[str, OutputAdapter] = {}
-        self._emitter_factories: list[Any] = []
-        """Per-channel emitter factories: ``Callable[[str], ContentEmitter]``."""
+        self._emitter_factories: list[
+            Callable[[str, str], ContentEmitter[ReActEvent]]
+        ] = []
+        """Per-channel factories with the ``(session_id, pool)`` contract."""
 
         for spec in channels.ADAPTERS:
             if not spec.enabled:
@@ -270,9 +275,9 @@ class WebUIService(BotService):
         self._merged_input = merged_input
 
         # ── 5. Unified emitter factory (CompositeEmitter fan-out) ─────
-        def emitter_factory(session_id: str) -> CompositeEmitter[ReActEvent]:
+        def emitter_factory(session_id: str, pool: str) -> CompositeEmitter[ReActEvent]:
             emitters: list[ContentEmitter[ReActEvent]] = [
-                ef(session_id) for ef in self._emitter_factories
+                ef(session_id, pool) for ef in self._emitter_factories
             ]
             return CompositeEmitter(emitters=emitters)
 
@@ -292,25 +297,22 @@ class WebUIService(BotService):
         def output_adapter_factory() -> Any:
             return ws_output
 
-        # on_subagent_created: pre-registers the delta queue so subagent
-        # streaming output reaches the browser. The actual SessionInfo record
+        # on_subagent_created: dispatch-time pre-registration on the WS input
+        # adapter — the anonymous delta buffer (early subagent output) plus
+        # the genealogy link, one atomic seam. The actual SessionInfo record
         # is written by the per-workspace registry inside
-        # AgentCommunicationService._create_dynamic_subagent; we do NOT write it
-        # again here to avoid leaking it into the home workspace.
+        # AgentCommunicationService._create_dynamic_subagent; we do NOT write
+        # it again here to avoid leaking it into the home workspace.
 
-        async def _on_subagent_created(child_id: str, parent_id: str) -> None:
-            self._parent_ids[child_id] = parent_id
+        async def _on_subagent_created(child_id: str, parent_id: str, pool: str) -> None:
             ws_input = get_ws_input()
-            ws_input.ensure_queue(child_id)
-            ws_input.register_parent(child_id, parent_id)
+            ws_input.register_subagent(child_id, parent_id)
             from bot.adapters.register_websocket import get_ws_output
             from bot.webui.events import DeltaEnvelope, WebUIEventType
-            from modex_agent.core.session_id import agent_of, session_id_prefix_of
+            from modex_agent.core.session_id import agent_of
 
             ws_output = get_ws_output()
             child_agent = agent_of(child_id, default="unknown")
-            parent_prefix = session_id_prefix_of(parent_id) if parent_id else session_id_prefix_of(child_id)
-            pool = self._resolve_pool_for_session(parent_prefix)
             await ws_output.send_envelope(
                 DeltaEnvelope(
                     session_id=child_id,
@@ -423,7 +425,9 @@ class WebUIService(BotService):
         workspace metadata directory even when the default ``.modex`` name is
         overridden in config.
         """
-        return RecentWorkspaces(self._project_dir / self._app_config.paths.data_dir_name)
+        app_config = self._app_config
+        assert app_config is not None
+        return RecentWorkspaces(self._project_dir / app_config.paths.data_dir_name)
 
     def _workspace_roots_provider(self) -> list[Path]:
         """Home + every known non-home workspace (authoritative full set)."""
@@ -450,7 +454,11 @@ class WebUIService(BotService):
                 workspace_stack=None,
                 index_dir=index_dir,
                 data_dir_name=self._data_dir_name,
-                pool_resolver=lambda session: self._resolve_pool_for_session(session.session_id_prefix),
+                # Same partition semantics as the boot-time index store:
+                # unrouted prefixes land in the 'main' partition, explicit.
+                pool_resolver=lambda session: (
+                    self._routing_pool_for_prefix(session.session_id_prefix) or _DEFAULT_AGENT_NAME
+                ),
             )
         return await session_store_for_index(
             app_config=app_config,
@@ -458,18 +466,19 @@ class WebUIService(BotService):
             index_dir=index_dir,
         )
 
-    def _resolve_pool_for_session(self, session_prefix: str) -> str:
-        """Resolve pool for a session_prefix via the authoritative PoolSessionStore.
+    def _routing_pool_for_prefix(self, session_prefix: str) -> str | None:
+        """Look up the persisted routing entry (session_prefix → pool), or None.
 
-        Single convergence point for all service-internal pool resolution.
-        Returns _DEFAULT_AGENT_NAME when the store has no entry (e.g. fresh
-        boot, session not yet routed).
+        Infrastructure partition semantics ONLY: the result feeds the
+        session-index physical layout, GC placement, and turn-store
+        placement. It is NOT a pool-ownership source — display, envelopes,
+        and transcripts must take pool from their first-class request /
+        emitter argument instead. No silent default: every caller decides
+        its own explicit fallback for an unrouted prefix.
         """
-        if self._pool_session_store is not None:
-            pool = self._pool_session_store.get(session_prefix, "")
-            if pool:
-                return pool
-        return _DEFAULT_AGENT_NAME
+        if self._pool_session_store is None:
+            return None
+        return self._pool_session_store.get(session_prefix, "") or None
 
     def _is_pool_busy_provider(self, pool_name: str) -> tuple[bool, list[str]]:
         """Check if a pool has agents with active turns (``AgentState.WORKING``)."""
@@ -513,9 +522,11 @@ class WebUIService(BotService):
 
         def _resolve_ws_resources(ws_root: Path) -> PoolWorkspaceResources | None:
             resolved = Path(ws_root).resolve()
-            if self._home_resources is not None:
-                if Path(self._home_resources.target).resolve() == resolved:
-                    return self._home_resources
+            if (
+                self._home_resources is not None
+                and Path(self._home_resources.target).resolve() == resolved
+            ):
+                return self._home_resources
             if self.workspace_stack is not None:
                 for resources in self.workspace_stack.registry.iter_materialized_resources():
                     if Path(resources.target).resolve() == resolved:
@@ -529,7 +540,9 @@ class WebUIService(BotService):
             if resources is None:
                 return None
             prefix = SessionInfo.from_str(session_id).session_id_prefix
-            pool = self._resolve_pool_for_session(prefix)
+            # Turn-store placement. Unrouted prefix (fresh boot): keep the
+            # former default-pool placement, now explicit.
+            pool = self._routing_pool_for_prefix(prefix) or _DEFAULT_AGENT_NAME
             pool_data = resources.pool_data.get(pool)
             return pool_data.turn_store if pool_data is not None else None
 
@@ -550,7 +563,11 @@ class WebUIService(BotService):
             ),
             transcript_store=self._transcript_store,
             session_store_resolver=self._session_store_for_index,
-            session_pool_resolver=lambda session: self._resolve_pool_for_session(session.session_id_prefix),
+            # GC cleanup-path placement. Unrouted prefixes target the 'main'
+            # partition — the former silent fallback, explicit.
+            session_pool_resolver=lambda session: (
+                self._routing_pool_for_prefix(session.session_id_prefix) or _DEFAULT_AGENT_NAME
+            ),
             liveness_provider=liveness_provider,
         )
         self._server.set_session_gc(self._session_gc)
@@ -582,25 +599,12 @@ class WebUIService(BotService):
         else:
             logger.warning("pool_router is None — pool routing disabled")
 
-        # Inject the per-session business routing resolver (pool,
-        # parent_session_id) so emitters attach real context to every envelope.
-        # pool comes from the authoritative agent→pool map; parent_session_id
-        # is resolved from the relation store (persisted or derived fallback).
-        from bot.adapters.register_websocket import set_session_meta_resolver
-        from bot.webui.events import SessionMeta
-
-        # ── Inject resolver with real parent_session_id ──────────────
-        parent_ids = self._parent_ids
-
-        def _resolve_session_meta(session_id: str) -> SessionMeta:
-            from modex_agent.core.session_id import session_id_prefix_of
-
-            prefix = session_id_prefix_of(session_id)
-            pool = self._resolve_pool_for_session(prefix)
-            parent = parent_ids.get(session_id)
-            return SessionMeta(pool=pool, parent_session_id=parent)
-
-        set_session_meta_resolver(_resolve_session_meta)
+        # Parent lineage for emitters is resolved at emit time against the WS
+        # input adapter's dispatch-time genealogy map (the single in-memory
+        # child→parent registry, written by register_subagent) — see
+        # register_websocket._parent_meta_for. Pool ownership is fixed on each
+        # emitter by its factory's pool argument; no service-level resolver
+        # injection remains.
 
         self._server.set_session_store_factory(self._session_store_for_index)
 
@@ -853,11 +857,13 @@ class WebUIService(BotService):
                 inp.name,
             )
             pool_store = self.pool_router._session_store
+        transcript_store = self._transcript_store
+        assert transcript_store is not None
         return BotInputContext(
             default_pool=self._default_pool_name,
             pool_session_store=pool_store,
             agent_resolver=agent_resolver,
-            transcript_store=self._transcript_store,
+            transcript_store=transcript_store,
             enqueue_message=inp.put_input_message,
             command_adapter=inp,
             session_factory=self._session_factory,

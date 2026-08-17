@@ -7,7 +7,6 @@ from the deliver/submit design. Each module pairs a `Node` subclass with a match
 Modules:
 
 - `function_node` — `FunctionNode` wraps a sync/async function.
-- `graph_as_node` — `GraphAsNode` wraps a `CompiledGraph` (ADR-0033 D8).
 - `delay_node` — `DelayNode` for async delay / rate-limiting.
 - `human_input_node` — `HumanInputNode` suspends via `GraphInterrupt`.
 
@@ -24,7 +23,6 @@ from __future__ import annotations
 from .delay_node import DelayNode, DelayNodeConfig, DelayNodeFactory
 from .end_node import DefaultEndNodeFactory, EndNode
 from .function_node import FunctionNode, FunctionNodeConfig, FunctionNodeFactory
-from .graph_as_node import GraphAsNode, GraphAsNodeConfig, GraphAsNodeFactory
 from .human_input_node import HumanInputNode, HumanInputNodeConfig, HumanInputNodeFactory
 from .start_node import DefaultStartNodeFactory, StartNode
 
@@ -38,9 +36,6 @@ __all__ = [
     "FunctionNode",
     "FunctionNodeConfig",
     "FunctionNodeFactory",
-    "GraphAsNode",
-    "GraphAsNodeConfig",
-    "GraphAsNodeFactory",
     "HumanInputNode",
     "HumanInputNodeConfig",
     "HumanInputNodeFactory",

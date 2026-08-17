@@ -1,20 +1,23 @@
-"""Unified bootstrap: query store -> produce seed node names.
+"""Bootstrap: query store -> produce seed node names.
 
-Convergence principle: graph normal scheduling, pause recovery, and crash
-recovery all rely on the same ``node/deliver`` mechanism. ``bootstrap`` is the
-single entry point that both schedulers call at the top of ``run_async``. It
-restores state from the store and derives seed node names that need execution.
+The caller passes an explicit ``mode``:
 
-- Fresh start (no prior invocations): returns ``[graph.entry_node]``.
-- Recovery (prior invocations exist): returns nodes needing re-execution
-  (CRASHED / orphan RUNNING / suspended RUNNING) plus nodes with PENDING
-  delivers, ordered topologically (BFS from entry_node).
+- ``BootstrapMode.FRESH`` — new run or re-invoke. Zero scanning; returns
+  ``[graph.entry_node]`` immediately. No auto-promote, no seed derivation.
+- ``BootstrapMode.RECOVERY`` — crash/pause recovery. Full derivation:
+  auto-promote STAGED + CONSUMED_PENDING delivers for COMPLETED nodes BEFORE
+  seed derivation, then derive seeds from CRASHED/orphan RUNNING invocations
+  and PENDING delivers, ordered topologically (BFS from ``entry_node``).
 
-Side effects:
-- Restores ``ctx.state`` from the single newest full snapshot (via
-  ``coordinator.rebuild_main_state``).
+Side effects (RECOVERY only):
+
+- Auto-promotes STAGED delivers whose source node is COMPLETED (crash
+  between ``complete_invocation`` and ``promote_staged_by_source``),
+  before seed derivation so promoted PENDING rows are visible to the
+  pending-deliver seed scan.
 - Auto-promotes CONSUMED_PENDING delivers whose consuming invocation is
-  COMPLETED (crash between ``mark_consumed`` and ``promote_delivers``).
+  COMPLETED (crash between ``mark_consumed`` and ``promote_delivers``),
+  also before seed derivation.
 
 ``bootstrap`` does NOT create instances or mark anything READY. The scheduler
 receives the seed list and decides how to use it (LinearScheduler takes
@@ -25,108 +28,141 @@ fresh-start seeds, while PENDING-deliver seeds are discovered by
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from enum import StrEnum
+from typing import TYPE_CHECKING
 
-from ..constants import DeliverConsumptionStatus, GraphInstanceStatus, GraphNode, InvocationStatus
+from ..constants import DeliverConsumptionStatus, GraphNode, InvocationStatus
 
 if TYPE_CHECKING:
     from typing_extensions import TypeVar
 
     from ..compiled_graph import CompiledGraph
     from ..context import GraphContext
+    from ..persistence.deliver_store import DeliverRecord
+    from ..persistence.graph_metadata import NodeInvocationRecord
     from ..state import GraphState
 
     S = TypeVar("S", bound="GraphState")
 
 
-def bootstrap[S: "GraphState"](ctx: GraphContext[S], graph: CompiledGraph[S]) -> list[str]:
-    """Unified startup: query store -> produce seed node names.
+class BootstrapMode(StrEnum):
+    """Explicit bootstrap mode — the caller MUST pass one (no default).
 
-    Returns seed node names that need execution, ordered topologically
-    (BFS from ``graph.entry_node``). Fresh start returns ``[entry_node]``.
+    - ``FRESH`` — ``start_run`` first run, ``start_invoke`` re-invoke.
+      Zero scanning; returns ``[entry_node]``.
+    - ``RECOVERY`` — ``recover_crashed``, orphan pickup, ``resume`` from
+      PAUSED. Full derivation from persisted invocation + deliver state.
     """
+
+    FRESH = "fresh"
+    RECOVERY = "recovery"
+
+
+def bootstrap[S: "GraphState"](
+    ctx: GraphContext[S],
+    graph: CompiledGraph[S],
+    *,
+    mode: BootstrapMode,
+) -> list[str]:
+    """Query store -> produce seed node names.
+
+    Args:
+        ctx: The graph context (coordinator + state).
+        graph: The compiled graph.
+        mode: ``FRESH`` (zero scanning, return ``[entry_node]``) or
+            ``RECOVERY`` (full derivation from persisted state).
+
+    Returns:
+        Seed node names ordered topologically (BFS from ``entry_node``).
+        ``FRESH`` and empty-seed ``RECOVERY`` both return ``[entry_node]``.
+    """
+    if mode is BootstrapMode.FRESH:
+        return [graph.entry_node]
+
+    # ── RECOVERY mode: full derivation ───────────────────────────────
+
     coordinator = ctx.coordinator
     node_state_store = coordinator.node_state_store
 
-    # 1. Restore state from the single newest full snapshot.
-    rebuilt = coordinator.rebuild_main_state()
-    if rebuilt:
-        ctx.state = type(ctx.state).model_validate(rebuilt)
+    # 1. Auto-promote DOUBLE — both BEFORE seed derivation so promoted
+    #    PENDING rows are visible to the pending-deliver seed scan.
+    #    START is skipped (empty-seed fallback covers it: if START has
+    #    PENDING delivers from external input, the seed scan catches it;
+    #    if not, empty seeds -> [entry_node] which IS START).
+    #    END is included — END completes and can have leftover STAGED rows
+    #    or CONSUMED_PENDING delivers that need promotion.
 
-    # 2. Derive seeds from per-node latest invocation status.
-    seeds: list[str] = []
+    # 1a. Find COMPLETED invocations + promote their STAGED delivers.
     completed_invocations: set[int] = set()
-
+    invocation_records: dict[str, NodeInvocationRecord | None] = {}
     for name, node in graph.nodes.items():
-        if name in (GraphNode.START, GraphNode.END):
+        if name == GraphNode.START:
             continue
         record = node_state_store.load_latest(node.node_id)
-        if record is None:
-            continue
-        if record.status == InvocationStatus.COMPLETED:
+        invocation_records[name] = record
+        if record is not None and record.status == InvocationStatus.COMPLETED:
             completed_invocations.add(record.invocation_id)
-            continue
-        if record.status == InvocationStatus.CANCELED:
-            continue
-        # CRASHED / orphan RUNNING / suspended RUNNING -> needs re-execution.
-        seeds.append(name)
+            coordinator.promote_staged_by_source(
+                coordinator.graph_instance_id, node.node_id
+            )
 
-    # 3. Add nodes with PENDING delivers to seeds + cache consumable delivers
-    #    for the auto-promote step (single scan per node instead of two).
-    node_delivers_cache: dict[str, list[Any]] = {}
+    # 1b. Collect consumable delivers AFTER staged promotion (so the cache
+    #     sees newly-promoted PENDING rows). Reuse this cache for both the
+    #     CONSUMED_PENDING auto-promote and the PENDING-deliver seed scan
+    #     (single scan per node instead of two).
+    #     Auto-promote CONSUMED_PENDING delivers whose consuming invocation
+    #     is COMPLETED (crash between mark_consumed and promote_delivers).
+    node_delivers_cache: dict[str, list[DeliverRecord]] = {}
     for name, node in graph.nodes.items():
-        if name in (GraphNode.START, GraphNode.END):
-            continue
-        if name in seeds:
+        if name == GraphNode.START:
             continue
         delivers = coordinator.collect_consumable_delivers(node.node_id, 0)
         node_delivers_cache[name] = delivers
-        if any(d.status == DeliverConsumptionStatus.PENDING for d in delivers):
-            seeds.append(name)
-
-    # 4. Auto-promote CONSUMED_PENDING delivers for COMPLETED invocations
-    #    (crash between mark_consumed and promote_delivers).
-#    Reuses the delivers cache from the PENDING-scan step for nodes not in seeds;
-#    scans the remaining seed nodes (skipped in the PENDING-scan step) fresh.
-    if completed_invocations:
-        for name, node in graph.nodes.items():
-            if name in (GraphNode.START, GraphNode.END):
-                continue
-            cached = node_delivers_cache.get(name)
-            delivers = cached if cached is not None else coordinator.collect_consumable_delivers(node.node_id, 0)
+        if completed_invocations:
             for d in delivers:
                 if (
                     d.status == DeliverConsumptionStatus.CONSUMED_PENDING
                     and d.consumed_by_invocation_id is not None
                     and d.consumed_by_invocation_id in completed_invocations
                 ):
-                    coordinator.promote_delivers(node.node_id, d.consumed_by_invocation_id)
+                    coordinator.promote_delivers(
+                        node.node_id, d.consumed_by_invocation_id
+                    )
 
-    # 5. No seeds (no CRASHED/RUNNING nodes, no PENDING delivers).
-    #    Distinguish re-invocation from recovery:
-    #    - Instance status RUNNING (begin_invocation just set it) → re-invocation
-    #      → [entry_node]. Per ADR-0040: the `has_any_invocation` gate is removed
-    #      for this path — prior COMPLETED node records do NOT block re-execution.
-    #    - Instance status terminal (COMPLETED/FAILED/CRASHED) → recovery
-    #      → [] (graph is done, nothing to execute).
-    #    - Instance store returns None (Null store / no persistence) → fall back
-    #      to the has_any_invocation check: fresh start (no prior node records)
-    #      → [entry_node]; prior COMPLETED records → [] (recovery on Null store).
+    # 2. Seed derivation.
+    #    (a) CRASHED / orphan RUNNING invocations -> needs re-execution.
+    #    (b) Nodes with PENDING delivers -> seed (reuse delivers cache).
+    seeds: list[str] = []
+
+    for name in graph.nodes:
+        if name == GraphNode.START:
+            continue
+        record = invocation_records.get(name)
+        if record is None:
+            continue
+        if record.status == InvocationStatus.COMPLETED:
+            continue
+        if record.status == InvocationStatus.CANCELED:
+            continue
+        # CRASHED / orphan RUNNING -> needs re-execution.
+        seeds.append(name)
+
+    for name in graph.nodes:
+        if name == GraphNode.START or name in seeds:
+            continue
+        delivers = node_delivers_cache[name]
+        if any(d.status == DeliverConsumptionStatus.PENDING for d in delivers):
+            seeds.append(name)
+
+    # 3. Empty seeds -> [entry_node]. Recovery on a near-complete graph
+    #    re-invokes from entry; the scheduler's normal flow skips
+    #    already-COMPLETED nodes.
     if not seeds:
-        instance_metadata = coordinator.instance_store.load(ctx.graph_instance_id)
-        if instance_metadata is not None:
-            if instance_metadata.status == GraphInstanceStatus.RUNNING:
-                return [graph.entry_node]
-            return []
-        has_any_invocation = any(
-            node_state_store.load_latest(node.node_id) is not None
-            for name, node in graph.nodes.items()
-            if name not in (GraphNode.START, GraphNode.END)
-        )
-        return [] if has_any_invocation else [graph.entry_node]
+        return [graph.entry_node]
 
-    # 6. Order seeds topologically (BFS from entry_node) so the LinearScheduler
-    #    can use seeds[0] as the earliest recovery point.
+    # 4. BFS ordering from entry_node (includes END as a valid BFS node
+    #    for fan-in closure) so LinearScheduler can use seeds[0] as the
+    #    earliest recovery point.
     seed_set = set(seeds)
     ordered: list[str] = []
     visited: set[str] = set()
@@ -139,7 +175,7 @@ def bootstrap[S: "GraphState"](ctx: GraphContext[S], graph: CompiledGraph[S]) ->
         if name in seed_set:
             ordered.append(name)
         for edge in graph.edges_from(name):
-            if edge.target not in visited and edge.target != GraphNode.END:
+            if edge.target not in visited:
                 queue.append(edge.target)
 
     # Append any seeds not reached by BFS (disconnected nodes).
@@ -151,4 +187,4 @@ def bootstrap[S: "GraphState"](ctx: GraphContext[S], graph: CompiledGraph[S]) ->
     return ordered
 
 
-__all__ = ["bootstrap"]
+__all__ = ["BootstrapMode", "bootstrap"]

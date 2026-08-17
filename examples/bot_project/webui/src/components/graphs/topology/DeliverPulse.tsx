@@ -7,7 +7,7 @@
  *   filter: drop-shadow(0 0 4px var(--color-graph-deliver-glow))
  * - 尾迹: 跟随圆点的 24px 路径段(--color-graph-deliver-trail,brand 40%),
  *   用 stroke-dasharray + stroke-dashoffset 动画
- * - 动画: 600ms(--dur-deliver),ease-out,rAF 驱动圆点沿 edgePathD(points) 移动
+ * - 动画: 600ms(--dur-deliver),ease-out,rAF 驱动圆点沿 roundedPathD(points) 移动
  * - 并发: 每个 DeliverPulse 实例独立,多条边同时 deliver 时并行不阻塞
  * - 生命周期: 挂载即播放,600ms 后调用 onComplete(外部移除该脉冲)
  * - 降级(prefers-reduced-motion: reduce): 不显示移动脉冲,
@@ -17,7 +17,7 @@
  * 抽成纯函数,可脱离 DOM 单测。
  */
 import { useEffect, useRef, type FC } from "react";
-import { edgePathD } from "./GraphEdge";
+import { roundedPathD } from "./GraphEdge";
 import type { LayoutPoint } from "./layout";
 
 // ── 常量(§4.3 / §8.1) ──────────────────────────────────────────
@@ -144,7 +144,7 @@ export const DeliverPulse: FC<DeliverPulseProps> = ({ points, onComplete }) => {
   const dotRef = useRef<SVGCircleElement | null>(null);
   const trailRef = useRef<SVGPathElement | null>(null);
   const totalLen = pathLength(points);
-  const d = edgePathD(points);
+  const d = roundedPathD(points);
   const reduced = prefersReducedMotion();
 
   // onComplete 用 ref 持有,避免回调变更重启动画。

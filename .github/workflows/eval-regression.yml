@@ -1,0 +1,130 @@
+name: Eval Regression
+
+# Golden-cassette regression for the examples/bot_project eval harness.
+# replay: keyless golden replay on PRs touching eval surfaces, plus weekly and manual runs.
+# record: real-LLM golden refresh PREVIEW on schedule/dispatch only - never blocks PRs,
+# and refreshing the COMMITTED goldens stays a manual, human-reviewed step.
+
+on:
+  pull_request:
+    branches: [main, develop*]
+    paths:
+      - examples/bot_project/bot/eval/**
+      - examples/bot_project/evals/golden/**
+      - examples/bot_project/tests_ext/**
+      - src/modex_agent/trace/**
+      - src/modex_agent/memory/**
+  schedule:
+    # Weekly: Mondays 03:00 UTC
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eval-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  replay:
+    name: Golden Replay (keyless)
+    runs-on: ubuntu-latest
+    # Runs on every trigger of this workflow (PR + schedule + dispatch); listed
+    # explicitly so the gating stays grep-able next to the record job's gate.
+    if: github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 15
+    env:
+      UV_PYTHON: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - run: uv python install 3.12
+      - run: uv venv --python 3.12
+      - run: uv pip install -e ".[dev,llm,ast,terminal]"
+      - run: uv pip install -e "examples/bot_project[eval]"
+      # hatch_build.py force_include ships a full STATIC site-packages/bot copy
+      # inside every editable wheel; it shadows the source tree on repo-root
+      # invocations and breaks the replay suite (T2 repair finding 3,
+      # .omo/notepads/eval-harness-capability/issues.md). Keep the editable
+      # install + dist-info, delete the static copy. Durable fix (hatch_build.py)
+      # is tracked out of plan scope.
+      - name: Remove static bot copy shadowing the editable install
+        run: rm -rf .venv/lib/python*/site-packages/bot
+      - name: Replay golden suite (task 13 canonical command, keyless)
+        run: uv run python -m pytest examples/bot_project/tests_ext/regression -q
+      # Anti empty-suite false green: if discovery breaks and pytest collects
+      # nothing (or import errors deselect the suite), fail loudly. Threshold 5
+      # is pinned to the current suite: 4 golden replays + 1 double-run identity.
+      - name: Collect guard (fail if fewer than 5 tests discovered)
+        run: |
+          COLLECTED=$(uv run python -m pytest examples/bot_project/tests_ext --collect-only -q | tee /tmp/eval_collected.txt | grep -c '::' || true)
+          cat /tmp/eval_collected.txt
+          echo "Collected $COLLECTED test ids in examples/bot_project/tests_ext"
+          if [ "$COLLECTED" -lt 5 ]; then
+            echo "::error::Expected at least 5 collected tests in examples/bot_project/tests_ext, got $COLLECTED - suite discovery is broken (anti empty-suite false green guard)."
+            exit 1
+          fi
+
+  record:
+    name: Golden Record Preview (real LLM)
+    runs-on: ubuntu-latest
+    # Schedule + dispatch only. Must NEVER run on pull_request: the job holds
+    # real-LLM secrets and must not execute untrusted PR code, nor block PRs.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 30
+    env:
+      UV_PYTHON: "3.12"
+      TEST_LLM_PROVIDER_KEY: ${{ secrets.TEST_LLM_PROVIDER_KEY }}
+      TEST_LLM_PROVIDER_NAME: ${{ secrets.TEST_LLM_PROVIDER_NAME }}
+      TEST_LLM_BASE_URL: ${{ secrets.TEST_LLM_BASE_URL }}
+      TEST_LLM_API_KEY: ${{ secrets.TEST_LLM_API_KEY }}
+      TEST_LLM_MODEL: ${{ secrets.TEST_LLM_MODEL }}
+      TEST_LLM_REASONING_EFFORT: ${{ secrets.TEST_LLM_REASONING_EFFORT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - run: uv python install 3.12
+      - run: uv venv --python 3.12
+      - run: uv pip install -e ".[dev,llm,ast,terminal]"
+      - run: uv pip install -e "examples/bot_project[eval]"
+      # Same hatch_build.py static-copy shadow as the replay job (issues.md finding 3).
+      - name: Remove static bot copy shadowing the editable install
+        run: rm -rf .venv/lib/python*/site-packages/bot
+      # Anti self-skip green: a missing key must FAIL this job, not silently skip it.
+      - name: Secret preflight (TEST_LLM_API_KEY required)
+        run: |
+          if [ -z "${TEST_LLM_API_KEY:-}" ]; then
+            echo "::error::TEST_LLM_API_KEY is not configured - golden recording cannot run. Configure the TEST_LLM_* repository secrets used by integration-tests.yml."
+            exit 1
+          fi
+      # cwd=examples/bot_project so --case evals/golden/<name> resolves against the
+      # bot project; ../../.venv is the repo-root uv venv (running uv here would
+      # target the bot project's own pyproject and provision a different env).
+      - name: Record golden cases (real provider)
+        working-directory: examples/bot_project
+        run: |
+          for case in chat-notools file-pipeline file-multi-turn readonly-qa; do
+            echo "Recording evals/golden/$case"
+            ../../.venv/bin/python -m bot.eval.cli record-golden --case "evals/golden/$case"
+          done
+      - name: Upload recorded cassettes and meta for human review
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-recordings
+          path: |
+            examples/bot_project/evals/golden/*/cassette/
+            examples/bot_project/evals/golden/*/meta.json
+          if-no-files-found: error
+      - name: Step summary (refresh policy)
+        if: always()
+        run: |
+          {
+            echo "## Golden record preview"
+            echo "Fresh cassettes and meta.json for all 4 golden cases are attached as the \`golden-recordings\` artifact (schedule/dispatch run only)."
+            echo "Refreshing the COMMITTED goldens under \`examples/bot_project/evals/golden/\` stays a manual, human-reviewed step - this job only produces the preview artifact."
+          } >> "$GITHUB_STEP_SUMMARY"

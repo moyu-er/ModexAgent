@@ -61,10 +61,12 @@ class _GenericNode(Node[Any]):
         return None
 
 
-def _compiled_graph() -> tuple[Any, _AgentNode]:
+def _compiled_graph(
+    researcher: _AgentNode | None = None,
+) -> tuple[Any, _AgentNode]:
     graph: Graph[Any] = Graph("deliver-test")
     current = _AgentNode("planner", "Planning agent")
-    researcher = _AgentNode("researcher", "Research agent")
+    researcher = researcher or _AgentNode("researcher", "Research agent")
     graph.add_node("planner", current)
     graph.add_node("researcher", researcher)
     graph.add_node("formatter", _GenericNode())
@@ -110,7 +112,7 @@ def test_target_is_frozen_and_forbids_extra_fields() -> None:
         GraphDeliverTarget(
             name="researcher",
             description="Research agent",
-            unexpected=True,
+            unexpected=True,  # type: ignore[call-arg]
         )
 
     with pytest.raises(ValidationError):
@@ -130,7 +132,7 @@ def test_deliver_result_is_frozen_and_forbids_extra_fields() -> None:
             ok=True,
             target="researcher",
             message="Delivered to 'researcher'.",
-            unexpected=True,
+            unexpected=True,  # type: ignore[call-arg]
         )
     with pytest.raises(ValidationError):
         result.ok = False
@@ -158,27 +160,33 @@ def test_store_lists_downstream_targets_including_end() -> None:
             name=GraphNode.END,
             description=(
                 "Terminal node. Collects all upstream deliveries in "
-                "delivery order and concatenates them into the graph's "
-                "final reply (a list of content blocks).\n\n"
-                "How it processes your input:\n"
-                "- Your deliver content becomes one block in the final reply list.\n"
-                "- All upstream nodes that deliver to __end__ contribute one block each.\n"
-                "- The complete reply = [block_1, block_2, ...] in delivery order.\n\n"
-                "What you should deliver:\n"
-                "- A self-contained, user-facing segment of the final reply.\n"
-                "- Write it as polished content — the user sees this directly.\n"
-                "- Do not include internal reasoning or tool call traces.\n\n"
-                "If multiple nodes deliver to __end__: each contribution is a "
-                "separate block. Coordinate your scope via the topology. Delivery "
-                "order (not topology order) determines block order in the final "
-                "reply.\n\n"
-                "Deliver here ONLY when your task is fully complete. Do not "
-                "deliver to __end__ and another target in the same turn."
+                "delivery order and concatenates them into the "
+                "graph's final reply — your content becomes one "
+                "block the user reads directly. See the 'Final "
+                "Reply' pattern in your system guidance for how "
+                "to write it.\n\n"
+                "If multiple nodes deliver to __end__, each "
+                "contributes one block; delivery order (not "
+                "topology order) sets block order. Deliver here "
+                "only when your task is fully complete, never "
+                "together with another target in the same turn."
             ),
         ),
     ]
     assert store.get("researcher") == targets[0]
     assert store.get(GraphNode.END) == targets[2]
+
+
+def test_store_degrades_description_sentinel_to_graph_node_label() -> None:
+    compiled, _ = _compiled_graph(
+        _AgentNode("planner", AgentNode.DESCRIPTION_NOT_FOUND)
+    )
+    store = GraphDeliverTargetStore(compiled, "planner")
+
+    target = store.get("researcher")
+
+    assert target is not None
+    assert target.description == "Graph node 'researcher'"
 
 
 def test_store_resolves_target_node_id() -> None:
@@ -219,6 +227,7 @@ def test_dynamic_schema_binds_target_enum_to_downstream_names() -> None:
 
 async def test_execute_delivers_payload_to_target_name() -> None:
     compiled, current = _compiled_graph()
+    current.deliver = MagicMock()  # type: ignore[method-assign]
     graph_context = MagicMock(spec=GraphContext)
     tool = GraphDeliverTool(current, GraphDeliverTargetStore(compiled, "planner"))
     token = current_agent_context.set(_agent_context(graph_context))
@@ -229,13 +238,14 @@ async def test_execute_delivers_payload_to_target_name() -> None:
         current_agent_context.reset(token)
 
     assert result == "Delivered to 'researcher'."
-    assert current._pending_delivers == [
-        (GraphPayload(content="find evidence"), "researcher"),
-    ]
+    current.deliver.assert_called_once_with(
+        GraphPayload(content="find evidence"), "researcher", graph_context
+    )
 
 
 async def test_execute_without_target_returns_error() -> None:
     compiled, current = _compiled_graph()
+    current.deliver = MagicMock()  # type: ignore[method-assign]
     graph_context = MagicMock(spec=GraphContext)
     tool = GraphDeliverTool(current, GraphDeliverTargetStore(compiled, "planner"))
     token = current_agent_context.set(_agent_context(graph_context))
@@ -248,11 +258,12 @@ async def test_execute_without_target_returns_error() -> None:
     assert result.startswith("Error: target is required")
     assert "researcher" in result
     assert "formatter" in result
-    assert current._pending_delivers is None or current._pending_delivers == []
+    current.deliver.assert_not_called()
 
 
 async def test_execute_rejects_unknown_target() -> None:
     compiled, current = _compiled_graph()
+    current.deliver = MagicMock()  # type: ignore[method-assign]
     graph_context = MagicMock(spec=GraphContext)
     tool = GraphDeliverTool(current, GraphDeliverTargetStore(compiled, "planner"))
     token = current_agent_context.set(_agent_context(graph_context))
@@ -266,11 +277,12 @@ async def test_execute_rejects_unknown_target() -> None:
         "Error: 'invented' is not a valid downstream node. "
         "Available: researcher, formatter, __end__."
     )
-    assert current._pending_delivers is None
+    current.deliver.assert_not_called()
 
 
 async def test_execute_rejects_missing_graph_context() -> None:
     compiled, current = _compiled_graph()
+    current.deliver = MagicMock()  # type: ignore[method-assign]
     tool = GraphDeliverTool(current, GraphDeliverTargetStore(compiled, "planner"))
     token = current_agent_context.set(_agent_context(None))
 
@@ -280,11 +292,12 @@ async def test_execute_rejects_missing_graph_context() -> None:
         current_agent_context.reset(token)
 
     assert result == "Error: deliver tool called outside graph context."
-    assert current._pending_delivers is None
+    current.deliver.assert_not_called()
 
 
 async def test_execute_increments_deliver_count_on_success() -> None:
     compiled, current = _compiled_graph()
+    current.deliver = MagicMock()  # type: ignore[method-assign]
     graph_context = MagicMock(spec=GraphContext)
     tool = GraphDeliverTool(current, GraphDeliverTargetStore(compiled, "planner"))
     runtime = _make_runtime()
@@ -301,6 +314,7 @@ async def test_execute_increments_deliver_count_on_success() -> None:
 
 async def test_execute_increments_deliver_count_across_two_delivers() -> None:
     compiled, current = _compiled_graph()
+    current.deliver = MagicMock()  # type: ignore[method-assign]
     graph_context = MagicMock(spec=GraphContext)
     tool = GraphDeliverTool(current, GraphDeliverTargetStore(compiled, "planner"))
     runtime = _make_runtime()

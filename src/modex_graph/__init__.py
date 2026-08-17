@@ -17,7 +17,7 @@ Public surface (ADR-0033 acceptance criteria):
 - **Scheduler:** `Scheduler` (ABC), `LinearScheduler`, `ParallelScheduler`,
   `SchedulerKind`, `NodeInstanceStatus`, `NodeInstance`, `NodeTrigger`.
 - **Lifecycle + interrupt:** `GraphInstanceStatus`,
-  `InterruptPolicy` (ABC), `CrashPolicy` (default).
+  `InterruptPolicy` (ABC).
 - **Exceptions:** `GraphBubbleUp`, `GraphInterrupt`, `GraphDrained`,
   `ParentCommand`, `RoutingError`, `GraphRecursionError`.
 
@@ -56,7 +56,7 @@ from .integration import (
     IntegratedInput,
     IntegratedPayload,
 )
-from .interrupt_policy import CrashPolicy, InterruptPolicy
+from .interrupt_policy import InterruptPolicy
 from .node import Node
 from .node_factory import NodeFactory, NodeRegistry
 from .nodes import (
@@ -67,8 +67,6 @@ from .nodes import (
     EndNode,
     FunctionNode,
     FunctionNodeFactory,
-    GraphAsNode,
-    GraphAsNodeFactory,
     HumanInputNode,
     HumanInputNodeFactory,
     StartNode,
@@ -174,7 +172,6 @@ __all__ = [
     "InvocationStatus",
     "DeliverConsumptionStatus",
     "InterruptPolicy",
-    "CrashPolicy",
     # Exceptions
     "GraphBubbleUp",
     "GraphInterrupt",
@@ -223,8 +220,6 @@ __all__ = [
     # Generic Node types + factories
     "FunctionNode",
     "FunctionNodeFactory",
-    "GraphAsNode",
-    "GraphAsNodeFactory",
     "DelayNode",
     "DelayNodeFactory",
     "DefaultEndNodeFactory",

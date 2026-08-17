@@ -16,11 +16,22 @@ nodes:
     config:
       agent: reviewer
       pool: review
+      description: >-
+        Review gate of this graph. Inspect the coder node's delivered
+        change summary, read the actual diff, and run verification.
+        If the change is acceptable, deliver the final user-facing
+        answer to __end__. If revisions are required, deliver concrete
+        review findings back to the coder node.
   - name: coder
     node_type: agent
     config:
       agent: orchestrator
       pool: coder
+      description: >-
+        Implementation node of this graph. Receive the Origin Request
+        (or the reviewer node's revision feedback), implement or fix
+        the code, then deliver a change summary (what changed, where,
+        why) to the reviewer node.
 edges:
   - source: __start__
     target: coder

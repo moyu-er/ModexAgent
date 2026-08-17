@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import fnmatch
 import logging
 import mimetypes
@@ -327,10 +328,8 @@ class E2BSandbox(SandboxAdapter):
             sandbox = self._active_sandbox
 
             # Create artifacts directory
-            try:
+            with contextlib.suppress(Exception):  # Directory may already exist
                 await asyncio.to_thread(sandbox.files.make_dir, self.ARTIFACTS_DIR)
-            except Exception:
-                pass  # Directory may already exist
 
             result = await asyncio.to_thread(sandbox.run_code, code, language="python")
 
@@ -401,10 +400,8 @@ class E2BSandbox(SandboxAdapter):
             sandbox = self._active_sandbox
 
             # Create artifacts directory
-            try:
+            with contextlib.suppress(Exception):  # Directory may already exist
                 await asyncio.to_thread(sandbox.files.make_dir, self.ARTIFACTS_DIR)
-            except Exception:
-                pass  # Directory may already exist
 
             result = await asyncio.to_thread(sandbox.commands.run, command)
 
@@ -483,7 +480,7 @@ class E2BSandbox(SandboxAdapter):
         """
         cfg = config or self.config
         max_size = cfg.artifact_max_size
-        result = {}
+        result: dict[str, bytes] = {}
 
         # Check if sandbox is alive for lazy loading
         if not self._is_sandbox_alive():
@@ -493,11 +490,13 @@ class E2BSandbox(SandboxAdapter):
         # Lazy load from remote sandbox
         sandbox = self._active_sandbox
         for artifact in self._artifacts_metadata:
-            if any(fnmatch.fnmatch(artifact.path, pattern) for pattern in patterns):
-                if artifact.size <= max_size:
-                    content = self._get_artifact_content_from_e2b(sandbox, artifact.path, max_size)
-                    if content is not None:
-                        result[artifact.path] = content
+            if (
+                any(fnmatch.fnmatch(artifact.path, pattern) for pattern in patterns)
+                and artifact.size <= max_size
+            ):
+                content = self._get_artifact_content_from_e2b(sandbox, artifact.path, max_size)
+                if content is not None:
+                    result[artifact.path] = content
 
         return result
 
@@ -549,17 +548,19 @@ class E2BSandbox(SandboxAdapter):
         sandbox = self._active_sandbox
 
         for artifact in self._artifacts_metadata:
-            if any(fnmatch.fnmatch(artifact.path, pattern) for pattern in patterns):
-                if artifact.size <= max_size:
-                    content = self._get_artifact_content_from_e2b(sandbox, artifact.path, max_size)
-                    if content is not None:
-                        # Handle subdirectories in artifact path
-                        local_path = Path(local_dir) / artifact.path
-                        local_path.parent.mkdir(parents=True, exist_ok=True)
+            if (
+                any(fnmatch.fnmatch(artifact.path, pattern) for pattern in patterns)
+                and artifact.size <= max_size
+            ):
+                content = self._get_artifact_content_from_e2b(sandbox, artifact.path, max_size)
+                if content is not None:
+                    # Handle subdirectories in artifact path
+                    local_path = Path(local_dir) / artifact.path
+                    local_path.parent.mkdir(parents=True, exist_ok=True)
 
-                        with open(local_path, "wb") as f:
-                            f.write(content)
+                    with open(local_path, "wb") as f:
+                        f.write(content)
 
-                        result[artifact.path] = str(local_path)
+                    result[artifact.path] = str(local_path)
 
         return result

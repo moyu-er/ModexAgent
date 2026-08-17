@@ -287,6 +287,39 @@ class SessionTreeManager:
             self._poller.signal_wakeup()
             await event.wait()
 
+    async def get_active_subtree_nodes(
+        self, tree_id: str, session_id: str
+    ) -> list[str]:
+        """Return active session_ids in the subtree rooted at ``session_id``.
+
+        Active = in ``_running``, in ``_pending_input``, or has a DISPATCHED
+        track targeting it — the same three signals ``is_quiesced`` uses.
+        Includes ``session_id`` itself. Uses ``get_tree_node_records`` (one
+        query) + in-memory BFS over ``parent_session_id`` — no N+1 ``get(s)``.
+        """
+        records = await self._node_store.get_tree_node_records(tree_id)
+        children_map: dict[str, list[str]] = {}
+        for r in records:
+            if r.parent_session_id is not None:
+                children_map.setdefault(r.parent_session_id, []).append(r.session_id)
+        descendants: set[str] = set()
+        queue = [session_id]
+        while queue:
+            current = queue.pop(0)
+            if current in descendants:
+                continue
+            descendants.add(current)
+            queue.extend(children_map.get(current, []))
+        tracks = await self._track_store.list_dispatched(tree_id)
+        sessions_with_tracks = {t.target_session_id for t in tracks}
+        return [
+            s
+            for s in descendants
+            if s in self._running
+            or s in self._pending_input
+            or s in sessions_with_tracks
+        ]
+
     async def on_session_evicted(self, session_id: str) -> None:
         await self._track_store.close_tracks_for_session(
             session_id, MessageTrackStatus.CANCELLED

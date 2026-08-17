@@ -31,6 +31,7 @@ from typing_extensions import TypeVar
 from .constants import NodeTrigger, SchedulerKind
 from .integration import IntegratedInput
 from .node import Node
+from .scheduler.bootstrap import BootstrapMode
 
 if TYPE_CHECKING:
     from .context import GraphContext
@@ -102,7 +103,7 @@ class CompiledGraph(Node[S]):
 
         engine: GraphEngine[S] = GraphEngine(self)
         try:
-            await engine.run_async(ctx)
+            await engine.run_async(ctx, mode=BootstrapMode.FRESH)
         finally:
             ctx.set_dispatch_handler(saved_dispatch_handler)
         return None

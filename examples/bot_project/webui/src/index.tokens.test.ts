@@ -66,6 +66,13 @@ const REQUIRED_TOKENS = [
   // Message bubbles (§6)
   "--color-user-bubble",
   "--color-user-bubble-text",
+  // Session-row hover/active tints (§8) + modal scrim + soft hairline —
+  // consumed by the Rev 3 graph surfaces (.session-row reuse on instance
+  // rows, modal scrim bg-overlay, modal close-button hover).
+  "--color-session-hover",
+  "--color-session-active",
+  "--color-overlay",
+  "--color-hairline-soft",
   // Radius scale (§4)
   "--radius-xs",
   "--radius-sm",
@@ -99,15 +106,18 @@ const REQUIRED_TOKENS = [
   "--tracking-normal",
   "--tracking-wide",
   "--tracking-eyebrow",
-  // Graph visualization semantic tokens (graph PRD §7.1)
+  // Graph visualization semantic tokens (graph PRD §7.1, §6 Rev 4 dot-only)
   "--color-graph-node-fill",
-  "--color-graph-node-fill-done",
   "--color-graph-node-border",
   "--color-graph-node-border-active",
   "--color-graph-edge",
   "--color-graph-edge-active",
   "--color-graph-arrow",
   "--color-graph-arrow-active",
+  "--color-graph-endpoint-fill",
+  "--color-graph-endpoint-border",
+  "--color-graph-endpoint-text",
+  "--color-graph-legend-bg",
   "--color-graph-deliver",
   "--color-graph-deliver-glow",
   "--color-graph-deliver-trail",
@@ -116,6 +126,13 @@ const REQUIRED_TOKENS = [
   "--color-graph-mini-edge",
   "--color-graph-mini-start",
   "--color-graph-mini-end",
+  // Graph per-status hues (graph PRD §6.2 Rev 4 — six mutually distinct)
+  "--color-graph-status-pending",
+  "--color-graph-status-running",
+  "--color-graph-status-completed",
+  "--color-graph-status-crashed",
+  "--color-graph-status-suspended",
+  "--color-graph-status-canceled",
   // Graph motion tokens (graph PRD §7.2)
   "--dur-deliver",
   "--ease-deliver",
@@ -124,8 +141,12 @@ const REQUIRED_TOKENS = [
   "--dur-layout",
 ] as const;
 
-/** Legacy emerald values that must not survive the retokening. */
-const LEGACY_EMERALD = ["#059669", "#10b981", "#047857", "#34d399", "#065f46"];
+/** Legacy emerald values that must not survive the retokening. #059669 and
+ *  #34D399 are intentionally BACK as the canonical graph-status-completed
+ *  values (graph PRD §6.2 — an independent green decoupled from running teal)
+ *  and are pinned in the graph token test below; the rest of the legacy
+ *  emerald ramp stays banned. */
+const LEGACY_EMERALD = ["#10b981", "#047857", "#065f46"];
 
 /** Legacy "Midnight Ink" (cyan/slate) values replaced by Warm Graphite —
  *  catching them here prevents the old cyan brand from sneaking back. */
@@ -198,17 +219,27 @@ describe("Teal & Ember design tokens (index.css)", () => {
     }
   });
 
-  it("pins graph tokens to existing-token aliases (graph PRD §7, Rev 2)", () => {
+  it("pins graph tokens (graph PRD §7 / §6 Rev 4 dot-only status)", () => {
     for (const block of [light, dark]) {
-      // Node/edge derive from existing canvas/hairline/border-strong tokens —
-      // no new color values may be introduced for the graph language.
+      // Node body is status-invariant: elevated fill + border-strong outline
+      // (Rev 4). No status-tinted node fills exist anymore.
       expect(block).toContain("--color-graph-node-fill: var(--color-canvas-elevated)");
-      expect(block).toContain("--color-graph-node-fill-done: color-mix(in srgb, var(--color-brand) 18%, transparent)");
-      expect(block).toContain("--color-graph-node-border: var(--color-hairline)");
+      expect(block).toContain("--color-graph-node-border: var(--color-border-strong)");
       expect(block).toContain("--color-graph-node-border-active: var(--color-brand)");
-      // Rev 2 §C.3: edges/arrows use border-strong, not hairline.
-      expect(block).toContain("--color-graph-edge: var(--color-border-strong)");
-      expect(block).toContain("--color-graph-arrow: var(--color-border-strong)");
+      // Rev 4 hierarchy flip: edges recede below node borders.
+      expect(block).toContain(
+        "--color-graph-edge: color-mix(in srgb, var(--color-border-strong) 70%, transparent)",
+      );
+      expect(block).toContain(
+        "--color-graph-arrow: color-mix(in srgb, var(--color-border-strong) 70%, transparent)",
+      );
+      // START/END ghost terminals + legend chip container.
+      expect(block).toContain(
+        "--color-graph-endpoint-fill: color-mix(in srgb, var(--color-brand) 7%, transparent)",
+      );
+      expect(block).toContain(
+        "--color-graph-endpoint-border: color-mix(in srgb, var(--color-brand) 40%, transparent)",
+      );
       // Deliver pulse + active ring are brand-family color-mix tints.
       expect(block).toContain("--color-graph-deliver: var(--color-brand-bright)");
       expect(block).toContain(
@@ -219,6 +250,43 @@ describe("Teal & Ember design tokens (index.css)", () => {
       expect(block).toContain("--ease-deliver: var(--ease-out)");
       expect(block).toContain("--dur-ring-pulse: 1200ms");
       expect(block).toContain("--dur-layout: 350ms");
+      // Per-status hues (§6.2 Rev 4) — every status except completed/canceled
+      // aliases an existing token; those two are pinned per theme below.
+      expect(block).toContain("--color-graph-status-pending: var(--color-mute)");
+      expect(block).toContain("--color-graph-status-running: var(--color-brand)");
+      expect(block).toContain("--color-graph-status-crashed: var(--color-danger)");
+      expect(block).toContain("--color-graph-status-suspended: var(--color-warning)");
     }
+    // §6.2: completed is the deliberately independent green (~40° off teal);
+    // canceled is violet so all six dot hues stay mutually distinct (Rev 4).
+    expect(light).toContain("--color-graph-status-completed: #059669");
+    expect(dark).toContain("--color-graph-status-completed: #34D399");
+    expect(light).toContain("--color-graph-status-canceled: #6D5AD0");
+    expect(dark).toContain("--color-graph-status-canceled: #A78BFA");
+    // Rev 4 removed the dual-channel tint/dot-pair tokens entirely.
+    for (const block of [light, dark]) {
+      expect(block).not.toContain("--color-graph-node-fill-completed");
+      expect(block).not.toContain("--color-graph-node-fill-crashed");
+      expect(block).not.toContain("--color-graph-dot-pending");
+      expect(block).not.toContain("--color-graph-dot-canceled");
+    }
+  });
+
+  it("ships a global prefers-reduced-motion guard with a static graph-ring fallback", () => {
+    // The global guard is the LAST reduced-motion block in the file; earlier
+    // blocks are per-component refinements (hero, view-crossfade).
+    const guard = css.slice(
+      css.lastIndexOf("@media (prefers-reduced-motion: reduce)"),
+    );
+    // Universal selector zeroes every animation/transition — this covers all
+    // one-shot graph motion (deliver pulses are additionally degraded
+    // in-component via matchMedia, see DeliverPulse.tsx).
+    expect(guard).toContain("animation-duration: 0.01ms !important");
+    expect(guard).toContain("animation-iteration-count: 1 !important");
+    expect(guard).toContain("transition-duration: 0.01ms !important");
+    // The infinite ring pulse gets a static brand stroke instead of a
+    // 0.01ms flicker, so the running state stays readable without motion.
+    expect(guard).toMatch(/\.graph-ring-pulse \{\s*animation: none;/);
+    expect(guard).toContain("stroke-opacity: 1");
   });
 });

@@ -16,7 +16,22 @@ Three convergent changes:
 
 A completed/failed instance can be re-invoked by calling `GraphInstanceStore.begin_invocation(gid)`, which creates a new version (N+1) on the same `graph_instance_id`. The new version executes the graph from `entry_node` as a fresh execution. The old version's records (graph + node) remain as history; the version number ordering (`ORDER BY version DESC LIMIT 1`) naturally makes `load_latest` return the new version — no explicit soft-delete field is needed.
 
-`bootstrap` removes the `has_any_invocation` gate for re-invocation: when seeds is empty (no CRASHED/RUNNING nodes, no PENDING delivers), bootstrap checks the instance status — if RUNNING (`begin_invocation` just set it), return `[entry_node]` unconditionally; if terminal, return `[]`; if Null store, fall back to the `has_any_invocation` check.
+`bootstrap` now takes an explicit `*, mode: BootstrapMode` (keyword-only,
+no default — convergence rule 15). `FRESH` (used by `start_run` /
+`start_invoke` / subgraph `execute`) performs zero scanning and returns
+`[entry_node]` immediately — no auto-promote, no seed derivation, no
+instance-status guesswork. `RECOVERY` (used by `recover_crashed` /
+orphan pickup / `resume` from PAUSED) performs full derivation:
+auto-promotes `STAGED` + `CONSUMED_PENDING` delivers for `COMPLETED`
+nodes before seed derivation, then derives seeds from
+`CRASHED`/orphan-`RUNNING` invocations and `PENDING` delivers, ordered
+topologically (BFS from `entry_node`, `END` included). When `RECOVERY`
+derives an empty seed set (all-COMPLETED graph, no PENDING delivers),
+the empty-seed fallback returns `[entry_node]` — so a re-invoked
+terminal instance re-executes from entry with fresh state. The old
+`has_any_invocation` gate and the `RUNNING`/terminal/Null status
+guesswork block were deleted; the mode parameter makes the intent
+explicit.
 
 ### 2. GraphIORecord version-scoped
 
@@ -76,7 +91,11 @@ With spec immutability, the same `(name, version)` pair naturally has multiple r
 
 ## Consequences
 
-- `bootstrap` no longer applies the `has_any_invocation` gate for the re-invocation path — when seeds is empty and instance status is RUNNING, it returns `[entry_node]` unconditionally. For terminal status (recovery), it returns `[]`. For Null stores (no instance metadata), the `has_any_invocation` fallback remains.
+- `bootstrap` takes an explicit `mode: BootstrapMode`. `FRESH` returns
+  `[entry_node]` with zero scanning (no `has_any_invocation` gate, no
+  status guesswork). `RECOVERY` derives seeds from invocation status +
+  PENDING delivers; an empty seed set falls back to `[entry_node]`. The
+  old `has_any_invocation` gate and status-check guesswork were deleted.
 - `LinearScheduler`'s `seeds[0] if seeds else entry_node` fallback (line 85) becomes redundant for the re-invocation case (bootstrap now returns `[entry_node]`). It remains as a safety net.
 - The `GraphIORecordStore` ABC gains `list_by_instance` as the primary query (already exists); `get_by_instance` (returns single, `LIMIT 1`) is deprecated or removed.
 - No schema changes to `graph_instances` or `node_states` — the existing version chain (`MAX(version)+1`, `ORDER BY version DESC LIMIT 1`) is the superseding mechanism, uniformly at both layers.
@@ -89,12 +108,14 @@ With spec immutability, the same `(name, version)` pair naturally has multiple r
 
 ## Deferred (not in this ADR's scope)
 
-- **`superseded` field as query optimization.** A `superseded INTEGER NOT NULL DEFAULT 0` column on `graph_instances` and `node_states`, set to 1 by `begin_invocation` on the prior version. All "load active" queries filter `WHERE superseded = 0`. Not needed now — current scale (tens to hundreds of versions) has no performance issue. Revisit when version chains reach thousands per instance.
+- **`superseded` field as query optimization.** A `superseded INTEGER NOT NULL DEFAULT 0` column on `graph_instances` and `node_states`, set to 1 by `begin_invocation` on the prior version. All "load active" queries filter `WHERE superseded = 0`. **Not done (ticket 11 disposition).** Version count = crash-retry count (single-digit scale); after phase 07 retired `state_json`/`suspended`, `node_states` rows shrank to pure lifecycle tuples and query load dropped structurally — the trigger is further away than the original "thousands of versions" estimate. **Revisit when a single instance's version chain reaches ~100+ versions.**
 
-- **Running-state dirty data cleanup.** When the process is killed mid-execution, the instance status stays `running` but no execution is active. A periodic cleanup task should mark stale `running` instances (heartbeat timeout) as `crashed`, making them re-invokable. Not addressed now.
+- **Running-state dirty data cleanup — RESOLVED (phase 09).** A stale-`RUNNING` sweeper (`StaleInstanceSweeper`) now marks orphaned `RUNNING` instances (process killed mid-execution) as `CRASHED`, making them re-invokable. It uses `ProcessIdentity` + `ProcessRegistry` ownership tracking: each orchestrator writes its `executor_process_id` into `GraphMetadata.attrs`; the sweeper loads `RUNNING` instances, compares their executor against the alive-process set, and marks stale ones (absent/dead executor, or explicit `None`) `CRASHED` via `update_status`. It marks `CRASHED` only — it does not trigger recovery (recovery is explicit via `GraphRecoveryService`). Terminal-state attrs are preserved as audit trail. See `src/modex_graph/AGENTS.md` (Process ownership) and `examples/bot_project/bot/service/stale_instance_sweeper.py`.
 
-- **`rebuild_main_state` on re-invocation.** `bootstrap` step 1 calls `coordinator.rebuild_main_state()` which restores `ctx.state` from the newest COMPLETED node record's `state_json`. On re-invocation, this restores the prior invocation's final state. Whether re-invocation should carry prior state forward or start fresh is an implementation detail to verify.
+- **`rebuild_main_state` on re-invocation — RESOLVED (removed).** `rebuild_main_state` was removed (phase 07/14). State is NOT restored from the store on re-invocation or recovery — the caller initializes `ctx.state`, and `RECOVERY` mode with an all-`COMPLETED` graph returns `[entry_node]` (empty-seed fallback), so the scheduler re-executes from entry with fresh state. Recovery semantics are derived from invocation status and the four-state deliver admission path, not from a reconstructed business-state snapshot.
 
-- **Orphaned spec GC.** Historical spec rows (no instance references them, and they are not the latest for their name) accumulate over time. A cleanup mechanism (reference counting or periodic sweep) is not addressed now — current scale (tens of specs) has no storage issue. Revisit when spec edit history grows large.
+- **Deliver ledger scope — four-state, at-least-once by design.** The `DeliverStore` consumption state machine is four-state across stateful stores: `STAGED → PENDING → CONSUMED_PENDING → CONSUMED_COMPLETED` (only `PENDING` and `CONSUMED_PENDING` are consumable). External deliver (`deliver_to_node`) caller retries (REST timeout resend, WebUI double-click) may produce duplicate `PENDING` rows — the framework accepts at-least-once by design and provides no deduplication key (ticket 06 disposition: accepted + documented). Crash-retry duplication is also by design: a source invocation that crashed after persisting `STAGED` output is re-executed, and its retry completion promotes both old and new rows for the target to consume. See ADR-0033 persistence contract (2026-08-15 refinement).
+
+- **Orphaned spec GC — not done (ticket 11 disposition).** Historical spec rows (no instance references them, and they are not the latest for their name) accumulate over time. **Not done.** Accumulation rate = human edit frequency (human scale); `GraphSpecLoader` already symmetrically handles disk↔store deletion; pre-release has no production data; a GC misfire (cross-loader reference, broken audit chain) costs more than text storage. **Revisit when spec rows reach thousands, or before first external release** (then choose between startup sweep and on-save cleanup).
 
 - **`list_records` performance with many historical rows.** `MAX(spec_id) GROUP BY name` is O(log n) per name via the `idx_graph_specs_name` index. At current scale (tens of specs per name) this is negligible. If a single name accumulates thousands of historical rows (frequent editing), consider a `latest_spec_id` materialized view or a `is_latest` flag. Not needed now.

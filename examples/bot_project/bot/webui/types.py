@@ -94,9 +94,17 @@ class _WsConnectionState:
         self.graph_subscriptions.clear()
 
     async def cleanup(
-        self, input_adapter: WebSocketInputAdapter, *, include_graphs: bool = True
+        self,
+        input_adapter: WebSocketInputAdapter,
+        ws: object,
+        *,
+        include_graphs: bool = True,
     ) -> None:
         """Drain queues, cancel forward tasks, and unregister all sessions.
+
+        Only THIS connection's per-session queues are drained/unregistered —
+        with multicast queues, other connections attached to the same
+        sessions (duplicate tabs) keep their streams untouched.
 
         ``include_graphs=False`` is used by the ATTACH handler: switching
         conversations must not clear graph subscriptions (the two lifecycles
@@ -111,7 +119,7 @@ class _WsConnectionState:
         # messages intended for an old session and forward them to a reused
         # WebSocket connection during re-attach.
         for session_id in self.attached_sessions:
-            q = input_adapter.get_delta_queue(session_id)
+            q = input_adapter.get_delta_queue(session_id, ws)
             if q is not None:
                 while not q.empty():
                     try:
@@ -125,7 +133,7 @@ class _WsConnectionState:
                     await task
         self.forward_tasks.clear()
         for session_id in self.attached_sessions:
-            input_adapter.unregister_connection(session_id)
+            input_adapter.unregister_connection(session_id, ws)
         self.attached_sessions.clear()
         if include_graphs:
             await self.cleanup_graph_subscriptions()

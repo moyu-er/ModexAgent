@@ -9,7 +9,6 @@ Covers:
 - route_deliver skips END.
 - Lifecycle methods are on ``node_state_store``, not coordinator.
 - promote_delivers upgrades ALL CONSUMED_PENDING for node.
-- rebuild_main_state picks single newest snapshot per node.
 - Crash between save COMPLETED + promote → recovery → auto-promote.
 - close() is a safe-to-call no-op (coordinator owns no connections).
 - Null strategy via create_null_coordinator.
@@ -152,6 +151,7 @@ class TestRouteDeliver:
             content={"data": 1},
             source_node_id="worker",
             source_invocation_id=1001,
+            stage=False,
         )
 
         assert result is not None
@@ -170,6 +170,7 @@ class TestRouteDeliver:
             content={"data": 1},
             source_node_id="source",
             source_invocation_id=1001,
+            stage=False,
         )
         assert deliver_id is not None
         assert deliver_id > 0
@@ -183,6 +184,25 @@ class TestRouteDeliver:
         assert records[0].source_invocation_id == 1001
         assert records[0].content == {"data": 1}
         assert records[0].status == DeliverConsumptionStatus.PENDING
+
+    def test_route_can_stage_until_source_promotion(self) -> None:
+        coord = _memory_coordinator()
+        coord.register_node("worker")
+        store = coord.get_deliver_store("worker")
+        assert store is not None
+
+        coord.route_deliver(
+            target_node_id="worker",
+            content="staged-output",
+            source_node_id="source",
+            source_invocation_id=1001,
+            stage=True,
+        )
+
+        assert store.query_consumable(GID, "worker") == []
+        assert coord.promote_staged_by_source(GID, "source") == {"worker"}
+        records = store.query_consumable(GID, "worker")
+        assert [record.content for record in records] == ["staged-output"]
 
     def test_route_to_unregistered_raises(self) -> None:
         coord = _memory_coordinator()
@@ -217,27 +237,11 @@ class TestLifecycleViaStore:
         store = coord.node_state_store
 
         inv = store.begin_invocation("worker")
-        store.complete_invocation(inv, {"result": "done"})
+        store.complete_invocation(inv)
 
         latest = store.load_latest("worker")
         assert latest is not None
         assert latest.status == InvocationStatus.COMPLETED
-        assert latest.state_json == {"result": "done"}
-
-    def test_suspend_sets_suspended_true(self) -> None:
-        coord = _memory_coordinator()
-        coord.register_node("worker")
-        store = coord.node_state_store
-
-        inv = store.begin_invocation("worker")
-        snapshot = {"resume_target": "tool_node", "intermediate": 42}
-        store.suspend_invocation(inv, snapshot)
-
-        latest = store.load_latest("worker")
-        assert latest is not None
-        assert latest.status == InvocationStatus.RUNNING
-        assert latest.suspended is True
-        assert latest.state_json == snapshot
 
     def test_cancel_saves_canceled(self) -> None:
         coord = _memory_coordinator()
@@ -275,36 +279,6 @@ class TestLifecycleViaStore:
         assert latest is not None
         assert latest.status == InvocationStatus.CRASHED
 
-    def test_finalize_skips_suspended(self) -> None:
-        coord = _memory_coordinator()
-        coord.register_node("worker")
-        store = coord.node_state_store
-
-        inv = store.begin_invocation("worker")
-        store.suspend_invocation(inv, {"snapshot": True})
-        store.finalize_invocation(inv)
-
-        latest = store.load_latest("worker")
-        assert latest is not None
-        assert latest.status == InvocationStatus.RUNNING
-        assert latest.suspended is True
-
-    def test_suspended_running_left_in_place_on_begin(self) -> None:
-        coord = _memory_coordinator()
-        coord.register_node("worker")
-        store = coord.node_state_store
-
-        inv0 = store.begin_invocation("worker")
-        store.suspend_invocation(inv0, {"resume_target": "tool"})
-
-        store.begin_invocation("worker")
-
-        running = store.query_versions("worker", {InvocationStatus.RUNNING})
-        suspended_records = [r for r in running if r.suspended]
-        assert len(suspended_records) == 1
-        assert suspended_records[0].invocation_id == inv0.invocation_id
-        assert suspended_records[0].state_json == {"resume_target": "tool"}
-
     def test_orphan_running_marked_crashed_on_begin(self) -> None:
         coord = _memory_coordinator()
         coord.register_node("worker")
@@ -327,7 +301,7 @@ class TestLifecycleViaStore:
 
         inv1 = store.begin_invocation("worker")
         assert inv1.version == 1
-        store.complete_invocation(inv1, {"step": 1})
+        store.complete_invocation(inv1)
 
         inv2 = store.begin_invocation("worker")
         assert inv2.version == 2
@@ -338,7 +312,7 @@ class TestLifecycleViaStore:
         store = coord.node_state_store
 
         inv0 = store.begin_invocation("worker")
-        store.complete_invocation(inv0, {"step": 0})
+        store.complete_invocation(inv0)
 
         inv1 = store.begin_invocation("worker")
         assert inv1.parent_version == 0
@@ -348,13 +322,24 @@ class TestLifecycleViaStore:
 
 
 class TestPromoteDelivers:
+    def test_promote_staged_unions_targets_across_registered_stores(self) -> None:
+        coord = _memory_coordinator()
+        for target in ("target_a", "target_b"):
+            coord.register_node(target)
+            coord.route_deliver(target, target, "source", 1001, stage=True)
+
+        assert coord.promote_staged_by_source(GID, "source") == {
+            "target_a",
+            "target_b",
+        }
+
     def test_complete_with_promote(self) -> None:
         coord = _memory_coordinator()
         coord.register_node("worker")
         store = coord.node_state_store
 
         inv = store.begin_invocation("worker")
-        store.complete_invocation(inv, {"result": "done"})
+        store.complete_invocation(inv)
         coord.promote_delivers("worker", inv.invocation_id)
 
     def test_promote_all_consumed_pending_for_node(self) -> None:
@@ -363,10 +348,10 @@ class TestPromoteDelivers:
         store = coord.node_state_store
 
         inv0 = store.begin_invocation("worker")
-        store.complete_invocation(inv0, {"step": 0})
+        store.complete_invocation(inv0)
 
-        d1 = coord.route_deliver("worker", {"data": 1}, "source", 9999)
-        d2 = coord.route_deliver("worker", {"data": 2}, "source", 9999)
+        d1 = coord.route_deliver("worker", {"data": 1}, "source", 9999, stage=False)
+        d2 = coord.route_deliver("worker", {"data": 2}, "source", 9999, stage=False)
         assert d1 is not None and d2 is not None
 
         deliver_store = coord.get_deliver_store("worker")
@@ -380,66 +365,12 @@ class TestPromoteDelivers:
         assert pending_count == 2
 
         inv1 = store.begin_invocation("worker")
-        store.complete_invocation(inv1, {"step": 1})
+        store.complete_invocation(inv1)
         coord.promote_delivers("worker", inv1.invocation_id)
 
         consumable_after = deliver_store.query_consumable(GID, "worker")
         for r in consumable_after:
             assert r.status != DeliverConsumptionStatus.CONSUMED_PENDING
-
-
-# ── rebuild_main_state ────────────────────────────────────────────────────
-
-
-class TestRebuildMainState:
-    def test_global_invocation_id_order(self) -> None:
-        coord = _memory_coordinator()
-        coord.register_node("node_a")
-        coord.register_node("node_b")
-        store = coord.node_state_store
-
-        inv_a = store.begin_invocation("node_a")
-        store.complete_invocation(inv_a, {"a_value": 1})
-
-        inv_b = store.begin_invocation("node_b")
-        store.complete_invocation(inv_b, {"b_value": 2, "a_value": 99})
-
-        state = coord.rebuild_main_state()
-        assert state["a_value"] == 99
-        assert state["b_value"] == 2
-
-    def test_newer_completed_beats_older(self) -> None:
-        coord = _memory_coordinator()
-        coord.register_node("worker")
-        store = coord.node_state_store
-
-        inv0 = store.begin_invocation("worker")
-        store.complete_invocation(inv0, {"version": "old", "kept": True})
-
-        inv1 = store.begin_invocation("worker")
-        store.complete_invocation(inv1, {"version": "new"})
-
-        state = coord.rebuild_main_state()
-        assert state == {"version": "new"}
-
-    def test_suspended_running_beats_older_completed(self) -> None:
-        coord = _memory_coordinator()
-        coord.register_node("worker")
-        store = coord.node_state_store
-
-        inv0 = store.begin_invocation("worker")
-        store.complete_invocation(inv0, {"base": 1, "override": "original"})
-
-        inv1 = store.begin_invocation("worker")
-        store.suspend_invocation(inv1, {"override": "suspended", "resume_target": "tool"})
-
-        state = coord.rebuild_main_state()
-        assert state == {"override": "suspended", "resume_target": "tool"}
-
-    def test_empty_state_when_no_completed(self) -> None:
-        coord = _memory_coordinator()
-        coord.register_node("worker")
-        assert coord.rebuild_main_state() == {}
 
 
 # ── get_graph_state ────────────────────────────────────────────────────────
@@ -453,7 +384,7 @@ class TestGetGraphState:
         store = coord.node_state_store
 
         inv = store.begin_invocation("worker")
-        store.complete_invocation(inv, {"result": "done"})
+        store.complete_invocation(inv)
 
         snapshot = coord.get_graph_state()
         assert isinstance(snapshot, GraphStateSnapshot)
@@ -468,7 +399,7 @@ class TestGetGraphState:
         store = coord.node_state_store
 
         inv0 = store.begin_invocation("worker")
-        store.complete_invocation(inv0, {"step": 0})
+        store.complete_invocation(inv0)
         inv1 = store.begin_invocation("worker")
         store.crash_invocation(inv1)
 
@@ -489,12 +420,12 @@ class TestVersionChain:
         inv0 = store.begin_invocation("worker")
         assert inv0.version == 0
         assert inv0.parent_version is None
-        store.complete_invocation(inv0, {"v": 0})
+        store.complete_invocation(inv0)
 
         inv1 = store.begin_invocation("worker")
         assert inv1.version == 1
         assert inv1.parent_version == 0
-        store.complete_invocation(inv1, {"v": 1})
+        store.complete_invocation(inv1)
 
         inv2 = store.begin_invocation("worker")
         assert inv2.version == 2
@@ -511,7 +442,7 @@ class TestVersionChain:
         store = coord.node_state_store
 
         inv0 = store.begin_invocation("worker")
-        store.complete_invocation(inv0, {"v": 0})
+        store.complete_invocation(inv0)
 
         inv1 = store.begin_invocation("worker")
         store.crash_invocation(inv1)
@@ -532,30 +463,7 @@ class TestSqliteLifecycle:
         store = coord.node_state_store
 
         inv = store.begin_invocation("worker")
-        store.complete_invocation(inv, {"result": "done"})
-
-        latest = store.load_latest("worker")
-        assert latest is not None
-        assert latest.status == InvocationStatus.COMPLETED
-        assert latest.state_json == {"result": "done"}
-
-    def test_sqlite_suspend_resume_lifecycle(self) -> None:
-        coord, _, _ = _sqlite_coordinator()
-        coord.register_node("worker")
-        store = coord.node_state_store
-
-        inv0 = store.begin_invocation("worker")
-        store.suspend_invocation(inv0, {"resume_target": "tool"})
-
-        inv1 = store.begin_invocation("worker")
-        assert inv1.version == 1
-        assert inv1.parent_version is None
-
-        running = store.query_versions("worker", {InvocationStatus.RUNNING})
-        suspended_records = [r for r in running if r.suspended]
-        assert len(suspended_records) == 1
-
-        store.complete_invocation(inv1, {"result": "resumed"})
+        store.complete_invocation(inv)
 
         latest = store.load_latest("worker")
         assert latest is not None
@@ -568,12 +476,11 @@ class TestSqliteLifecycle:
         store = coord.node_state_store
 
         inv = store.begin_invocation("worker")
-        store.complete_invocation(inv, {"result": "persisted"})
+        store.complete_invocation(inv)
 
         coord2, _, _ = _sqlite_coordinator(conn=conn, db_path=db_path)
         coord2.register_node("worker")
 
-        assert coord2.rebuild_main_state() == {"result": "persisted"}
         latest = coord2.node_state_store.load_latest("worker")
         assert latest is not None
         assert latest.status == InvocationStatus.COMPLETED
@@ -608,12 +515,11 @@ class TestNullStrategy:
         assert inv.invocation_id > 0
         assert inv.version == 0
 
-        store.complete_invocation(inv, {"result": "done"})
+        store.complete_invocation(inv)
 
         latest = store.load_latest("worker")
         assert latest is None
 
-        assert coord.rebuild_main_state() == {}
 
     def test_null_route_deliver_to_registered_end(self) -> None:
         coord = create_null_coordinator(GID)

@@ -21,7 +21,7 @@ The `memory/` module provides a comprehensive memory system for agents. It manag
 | `context_governance.py` | `ContextGovernance` ABC — `CompositeGovernance`, `TokenBudgetGovernance`, `MicrocompactGovernance`, `ToolChainRepairGovernance`. Mutates only LLM input copy, never persisted session data |
 | `archive_models.py` | Archive data models — typed generated documents, channel writes, bundle results, and archive state |
 | `tags.py` | Injection XML element tag names (StrEnum) shared between injection, governance, and truncation |
-| `cleanup.py` | `cleanup_session()`, `CleanupResult` — 5-phase pipeline: trigger+boundary → compact generation → session commit (`[compact_summary]`+`[tail]`) → pruned catalog write (topic from compact's `## Objective`) → archive generation (optional, default off; archive state advances atomically inside this phase, DreamEngine polling is the only archive-consolidation trigger). `CleanupResult.compact_generated` replaces former `user_retention_extracted`. `cleanup_session()` takes `compactor` param instead of `user_retention` |
+| `cleanup.py` | `cleanup_session()`, `CleanupResult` — 5-phase pipeline: trigger+boundary → compact generation → session commit (`[compact_summary]`+`[tail]`) → pruned catalog write (topic from compact's `## Objective`) → archive generation (optional, default off; archive state advances atomically inside this phase, DreamEngine polling is the only archive-consolidation trigger). `CleanupResult` carries `tokens_before`/`tokens_after` (char-estimated via `TokenEstimator`) for savings/thrash metrics. `cleanup_session()` takes `compactor` param instead of `user_retention` |
 | `sanitizer.py` | `DefaultSessionToolChainSanitizer` — removes invalid tool-chain records (never split assistant.tool_calls from matching tool results) |
 | `recorder.py` | `MemoryAppendRecorder` — records what gets appended and from where |
 | `content_transform.py` | `ContentTransformer` ABC — transforms messages for injection |
@@ -31,7 +31,7 @@ The `memory/` module provides a comprehensive memory system for agents. It manag
 | `xml_truncate.py` | XML-based content truncation for governance — ensures injected XML stays within token budget |
 | `utils.py` | Memory utility helpers |
 | `hooks.py` | `MemoryHookPoint` (`CLEANUP_TRIGGERED`/`CLEANUP_FINISHED`), `MemoryHookContext` (frozen Pydantic), `MemoryHook` ABC, `CleanupTriggeredHook`, `CleanupFinishedHook`, `MemoryHookRunner` — per-system lifecycle dispatch with tuple-snapshot iteration, 10s timeout, log-and-continue isolation |
-| `cleanup_hooks.py` | `TodoReorientationHook(CleanupFinishedHook)` — persists a `<system-reminder>` USER message via `SessionMemoryManager.add_messages` after cleanup prunes messages; event-driven (no heuristic history-diff) |
+| `cleanup_hooks.py` | `TodoReorientationHook(CleanupFinishedHook)` — persists a `<system-reminder>` USER message via `SessionMemoryManager.add_messages` after cleanup prunes messages; event-driven (no heuristic history-diff). `CleanupMetricsHook(CleanupFinishedHook)` — pure observer, appends one `CleanupMetricRecord` JSONL line per triggered cleanup to `<workspace>/.modex/metrics/cleanup.jsonl` (ts/session_id/reason/messages_kept/pruned/compact_generated/prune_ratio/tokens_before/after/saved — char-estimated via `CharTokenEstimator`); registered on both main pool and subagent memory systems; never raises |
 
 ## Subdirectories
 

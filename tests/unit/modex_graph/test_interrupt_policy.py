@@ -1,12 +1,10 @@
-"""Tests for `GraphInstanceStatus` + `InterruptPolicy` / `CrashPolicy`.
+"""Tests for `GraphInstanceStatus` + `InterruptPolicy`.
 
 Covers:
 
 - `GraphInstanceStatus` enum membership and `StrEnum` str equality.
 - `InterruptPolicy` is an ABC (rule 7) — cannot instantiate directly,
   subclass must implement `handle_interrupt`.
-- `CrashPolicy` is the default `InterruptPolicy` implementation; its
-  `handle_interrupt` is a no-op that returns `None`.
 - Subclass polymorphism: a custom policy overriding `handle_interrupt`
   is invoked correctly and receives the original `GraphInterrupt`
   and `graph_instance_id`.
@@ -20,7 +18,6 @@ from abc import ABC
 import pytest
 
 from modex_graph import (
-    CrashPolicy,
     GraphInstanceStatus,
     GraphInterrupt,
     InterruptPolicy,
@@ -127,42 +124,6 @@ class TestInterruptPolicyABC:
             Incomplete()  # type: ignore[abstract]
 
 
-# ── CrashPolicy default ────────────────────────────────────────────────────
-
-
-class TestCrashPolicy:
-    """`CrashPolicy` is the default `InterruptPolicy` — no-op `handle_interrupt`."""
-
-    def test_is_interrupt_policy_subclass(self) -> None:
-        assert issubclass(CrashPolicy, InterruptPolicy)
-
-    def test_instantiable(self) -> None:
-        CrashPolicy()
-
-    def test_handle_interrupt_is_async(self) -> None:
-        assert inspect.iscoroutinefunction(CrashPolicy.handle_interrupt)
-
-    def test_handle_interrupt_is_coroutine_function(self) -> None:
-        """Default policy method is a coroutine function (sanity check)."""
-        assert inspect.iscoroutinefunction(CrashPolicy.handle_interrupt)
-
-    async def test_handle_interrupt_is_noop(self) -> None:
-        """Default policy returns None."""
-        policy = CrashPolicy()
-        interrupt = GraphInterrupt(value="payload", node_name="n")
-        result = await policy.handle_interrupt(
-            interrupt=interrupt,
-            graph_instance_id=42,
-        )
-        assert result is None
-
-    def test_handle_interrupt_overrides_abstract(self) -> None:
-        """CrashPolicy's own dict has a concrete handle_interrupt."""
-        assert "handle_interrupt" in CrashPolicy.__dict__
-        raw = CrashPolicy.__dict__["handle_interrupt"]
-        assert getattr(raw, "__isabstractmethod__", False) is False
-
-
 # ── Subclass polymorphism ──────────────────────────────────────────────────
 
 
@@ -189,24 +150,6 @@ class TestSubclassPolymorphism:
         )
         assert seen["interrupt"] is interrupt
         assert seen["graph_instance_id"] == 99
-
-    async def test_custom_policy_isolation_from_crashpolicy(self) -> None:
-        """Subclassing CrashPolicy and overriding still works."""
-
-        class CustomCrash(CrashPolicy):
-            async def handle_interrupt(
-                self,
-                interrupt: GraphInterrupt,
-                graph_instance_id: int,
-            ) -> None:
-                await super().handle_interrupt(interrupt, graph_instance_id)
-
-        policy = CustomCrash()
-        ret = await policy.handle_interrupt(
-            interrupt=GraphInterrupt(value="x"),
-            graph_instance_id=1,
-        )
-        assert ret is None
 
     def test_subclass_typed_as_interrupt_policy(self) -> None:
         class MyPolicy(InterruptPolicy):

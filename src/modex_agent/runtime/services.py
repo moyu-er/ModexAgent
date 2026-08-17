@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
@@ -21,12 +21,11 @@ if TYPE_CHECKING:
     from modex_agent.approval.runtime import ApprovalRuntime
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.agent import AgentContext
-    from modex_agent.core.runtime_context import RuntimeContextManager
+    from modex_agent.core.governance import ContextGovernance
+    from modex_agent.core.runtime_context import RuntimeContext, RuntimeContextManager
     from modex_agent.hook import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
-    from modex_agent.memory.context_governance import ContextGovernance
     from modex_agent.trace.otel_store import OtelSpanTraceStore
-    from modex_graph.runtime import GraphRuntime
 
     from .store import TurnStateStore
 
@@ -60,24 +59,11 @@ class AgentRuntime:
     compatibility, but callers should prefer the operation methods below
     (snapshot_turn, drain_control) which concentrate the common patterns
     and handle the absent-subsystem case internally.
-
-    ``graph_runtime`` carries the ``ReactGraphRuntime`` adapter (ADR-0033 D5 +
-    ticket 04). Nodes call ``ctx.runtime.graph_runtime.dispatch_hook(...)`` /
-    ``around(...)`` / ``drain_control(...)`` / ``apply_governance(...)`` /
-    ``capture_snapshot(...)`` / ``emit(...)`` instead of reaching directly
-    into ``hooks`` / ``interceptors`` / ``governance`` / ``control_channel``
-    / ``turn_store`` / ``emitter``. ``ReActAgent.run()`` constructs and
-    assigns it once per turn; tests that bypass ``run()`` must assign it
-    themselves (or use the no-op default ``ReactGraphRuntime()``).
     """
 
     services: AgentRuntimeServices
     state: TurnStateBase
-    _runtime_context: Any = field(default=None, repr=False)
-    # ADR-0033 D5 + ticket 04: graph-runtime AOP bridge.
-    # Typed as the GraphRuntime ABC (modex_graph) so the runtime layer
-    # does not depend on the react implementation layer.
-    graph_runtime: GraphRuntime | None = None
+    _runtime_context: RuntimeContext | None = field(default=None, repr=False)
 
     # ------------------------------------------------------------------
     # Field-access properties (backward compat)
@@ -174,7 +160,7 @@ class AgentRuntime:
         )
 
     @property
-    def runtime_context(self) -> Any:
+    def runtime_context(self) -> RuntimeContext | None:
         return self._runtime_context
 
 

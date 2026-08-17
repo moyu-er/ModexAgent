@@ -78,7 +78,7 @@ jobs:
       - run: uv python install ${{ matrix.python-version }}
       - run: uv venv --python ${{ matrix.python-version }}
       - run: uv pip install -e ".[dev,llm,ast,terminal]"
-      - run: uv pip install -e "examples/bot_project"
+      - run: uv pip install -e "examples/bot_project[eval]"
       - run: |
           uv run pytest examples/bot_project/tests/ \
             --ignore=examples/bot_project/tests/integration \

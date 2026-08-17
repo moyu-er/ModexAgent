@@ -39,7 +39,7 @@ Tool subsystem — registry, type definitions, filtering, metadata parsing, MCP 
 ## For AI Agents
 
 - New tools: subclass `Tool` ABC with `name`, `description`, `parameters`, and `execute()` method
-- `MCPClientManager` auto-registers tools/resources/prompts from MCP servers with automatic reconnection
+- `MCPClientManager` auto-registers tools from MCP servers with automatic reconnection
 - `FilteredToolManager` enforces per-agent tool visibility rules at runtime
 - `metadata_parser.py` enables automatic parameter schema extraction from docstrings
 - Terminal sessions are stateful — use session IDs for persistent shell interaction

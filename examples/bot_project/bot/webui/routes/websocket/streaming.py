@@ -6,8 +6,8 @@ access server state directly (e.g. ``server._input``) since they receive
 the server instance as a function argument, not via ``request.app``.
 
 Exports:
-    forward_deltas(server, session_id, ws) -> None
-        -- background task: drain a session's delta queue to the WebSocket.
+    forward_deltas(session_id, ws, queue) -> None
+        -- background task: drain one connection's delta queue to its WebSocket.
     watch_new_queues(server, ws, state) -> None
         -- poll for dynamically-created subagent queues and start forwarding.
 
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from aiohttp import web
@@ -38,15 +39,17 @@ logger = logging.getLogger("bot.webui.server")
 
 
 async def forward_deltas(
-    server: WebUIServer, session_id: str, ws: web.WebSocketResponse
+    session_id: str, ws: web.WebSocketResponse, queue: asyncio.Queue[DeltaEnvelope]
 ) -> None:
-    """Background task: read DeltaEnvelopes and send as structured JSON."""
+    """Background task: drain THIS connection's delta queue to the WebSocket.
+
+    The queue is the one returned by ``register_connection`` — with multicast
+    queues each connection owns its own, so another tab attaching the same
+    session never steals this drainer's stream.
+    """
     try:
-        q = server._input.get_delta_queue(session_id)
-        if q is None:
-            return
         while True:
-            envelope: DeltaEnvelope = await q.get()
+            envelope: DeltaEnvelope = await queue.get()
             await ws.send_json(envelope.to_dict())
     except (asyncio.CancelledError, ConnectionError):
         pass
@@ -57,7 +60,7 @@ async def forward_deltas(
 def _queue_belongs_to_connection(
     attached_sessions: list[str],
     session_id: str,
-    parent_map: dict[str, str],
+    ancestors: Iterable[str] = (),
 ) -> bool:
     """True if *session_id*'s conversation is already owned by this connection.
 
@@ -65,21 +68,17 @@ def _queue_belongs_to_connection(
     1. Prefix match — sessions sharing the same conversation prefix.
     2. Ancestor match — subagent sessions created by
        ``SubagentDispatchStrategy`` use ``invocation_id`` as prefix, so
-       prefix matching alone misses them. The ``parent_map`` records each
-       dynamically-created child → parent link; walk the chain until an
-       ancestor already in ``attached_sessions`` is found. Handles
+       prefix matching alone misses them. The adapter's genealogy map
+       records each dynamically-created child → parent link; walk the
+       chain (cycle-guarded in ``WebSocketInputAdapter.ancestors``) until
+       an ancestor already in ``attached_sessions`` is found. Handles
        arbitrary nesting depth (subagent-of-subagent-of-subagent).
     """
     prefix = session_id_prefix_of(session_id)
     if any(session_id_prefix_of(s) == prefix for s in attached_sessions):
         return True
     attached_set = set(attached_sessions)
-    current = session_id
-    while current in parent_map:
-        current = parent_map[current]
-        if current in attached_set:
-            return True
-    return False
+    return any(ancestor in attached_set for ancestor in ancestors)
 
 
 async def watch_new_queues(
@@ -110,14 +109,17 @@ async def watch_new_queues(
                 if session_id in state.attached_sessions:
                     continue
                 if not _queue_belongs_to_connection(
-                    state.attached_sessions, session_id, server._input._parent_map
+                    state.attached_sessions,
+                    session_id,
+                    server._input.ancestors(session_id),
                 ):
                     # Belongs to another connection's conversation; let that
                     # connection's own watcher claim it.
                     continue
                 state.attached_sessions.append(session_id)
+                q = server._input.register_connection(session_id, ws)
                 state.forward_tasks.append(
-                    asyncio.create_task(forward_deltas(server, session_id, ws))
+                    asyncio.create_task(forward_deltas(session_id, ws, q))
                 )
     except (asyncio.CancelledError, ConnectionError):
         pass

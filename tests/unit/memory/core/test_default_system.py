@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.emitter import AgentResult
 from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.core.consolidation import MemoryUpdate
 from modex_agent.memory.core.models import ArchiveEntry
@@ -31,18 +30,6 @@ async def test_initialize_and_close(system):
     await system.close()
 
 
-async def test_add_and_get_messages(system):
-    await system.initialize()
-    ctx = MemoryContext(session_id="test-1")
-    await system.add_messages(ctx, [
-        {"role": "user", "content": "hello"},
-        {"role": "assistant", "content": "hi there"},
-    ])
-    history = await system.get_history(ctx)
-    assert len(history) == 2
-    assert history[0].content == "hello"
-
-
 async def test_create_message_history(system):
     await system.initialize()
     ctx = MemoryContext(session_id="test-2")
@@ -56,7 +43,7 @@ async def test_create_message_history(system):
 async def test_clear_session(system):
     await system.initialize()
     ctx = MemoryContext(session_id="test-3")
-    await system.add_messages(ctx, [{"role": "user", "content": "msg"}])
+    await system.layers.session.add_messages(ctx, [{"role": "user", "content": "msg"}])
     await system.clear(ctx)
     history = await system.get_history(ctx)
     assert len(history) == 0
@@ -66,18 +53,10 @@ async def test_isolates_scopes(system):
     await system.initialize()
     ctx_a = MemoryContext(session_id="a")
     ctx_b = MemoryContext(session_id="b")
-    await system.add_messages(ctx_a, [{"role": "user", "content": "A"}])
-    await system.add_messages(ctx_b, [{"role": "user", "content": "B"}])
+    await system.layers.session.add_messages(ctx_a, [{"role": "user", "content": "A"}])
+    await system.layers.session.add_messages(ctx_b, [{"role": "user", "content": "B"}])
     assert len(await system.get_history(ctx_a)) == 1
     assert len(await system.get_history(ctx_b)) == 1
-
-
-async def test_handles_empty_messages(system):
-    await system.initialize()
-    ctx = MemoryContext(session_id="test-empty")
-    await system.add_messages(ctx, [])
-    history = await system.get_history(ctx)
-    assert len(history) == 0
 
 
 async def test_exposes_layers_and_registry(system):
@@ -127,38 +106,6 @@ async def test_retrieve_core_memory_defaults_to_get_all(system):
     all_memory = await system.get_core_memory(ctx)
 
     assert retrieved.memory == all_memory.memory
-
-
-async def test_context_manager_save_does_not_duplicate_agent_result_messages(system):
-    await system.initialize()
-    manager = MemorySystemContextManager(system)
-
-    state = await manager.load("dup-session")
-    await manager.save(
-        "dup-session",
-        {"role": "user", "content": "hello"},
-        AgentResult(),
-    )
-    await state.history.append({"role": "assistant", "content": "reply"})
-    await state.history.append({"role": "tool", "content": "tool result"})
-
-    await manager.save(
-        "dup-session",
-        None,
-        AgentResult(
-            messages=[
-                {"role": "assistant", "content": "reply"},
-                {"role": "tool", "content": "tool result"},
-            ]
-        ),
-    )
-
-    stored = await system.get_history(MemoryContext(session_id="dup-session", user_id="default"))
-    assert [(message.role, message.content) for message in stored] == [
-        ("user", "hello"),
-        ("assistant", "reply"),
-        ("tool", "tool result"),
-    ]
 
 
 async def test_default_memory_system_uses_default_char_estimator(tmp_path) -> None:
@@ -224,7 +171,7 @@ async def test_get_full_history_with_limit(system) -> None:
         {"role": "user", "content": f"msg-{i}"} for i in range(9)
     ]
     messages.append({"role": str(MessageRole.COMPACT), "content": "compact summary"})
-    await system.add_messages(ctx, messages)
+    await system.layers.session.add_messages(ctx, messages)
 
     limited = await system.get_full_history(ctx, limit=5)
     assert len(limited) == 5

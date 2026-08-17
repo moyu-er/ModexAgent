@@ -1,7 +1,7 @@
 """Graph REST API (13 endpoints). per-workspace resolution via header/query.
 spec store returns records with id+metadata for spec responses. PUT validates before save.
 Topology endpoint (§11.3) returns compiler-validated structured topology. Node result (§11.4)
-extracts completed node output from state checkpoint with truncation.
+extracts completed node output from the persisted graph I/O record with truncation.
 """
 
 from __future__ import annotations
@@ -404,30 +404,19 @@ async def handle_deliver_to_node(request: web.Request) -> web.Response:
 _RESULT_MAX_CHARS = 500
 
 
-def _extract_node_result(state_json: dict[str, Any]) -> GraphPayload | None:
-    """Extract a completed node's output from its ``state_json`` checkpoint.
+def _extract_node_result(output: list[GraphPayload] | None) -> GraphPayload | None:
+    """Extract a completed END node's summary from the graph invocation output.
 
-    For ``DefaultGraphState`` the END node stores ``result: list[GraphPayload]``.
-    We take the first payload and truncate ``content`` to ``_RESULT_MAX_CHARS``.
-    Returns ``None`` when no result is available.
+    The persisted output is ``list[GraphPayload]``. We take the first payload
+    and truncate ``content`` to ``_RESULT_MAX_CHARS``. Returns ``None`` when no
+    result is available.
     """
-    raw = state_json.get("result")
-    if raw is None:
+    if not output:
         return None
-    # result is list[GraphPayload] (serialized as list[dict])
-    if isinstance(raw, list) and raw:
-        first = raw[0]
-        if isinstance(first, dict) and "content" in first:
-            content = str(first["content"])
-            if len(content) > _RESULT_MAX_CHARS:
-                content = content[:_RESULT_MAX_CHARS] + "..."
-            return GraphPayload(content=content)
-    elif isinstance(raw, dict) and "content" in raw:
-        content = str(raw["content"])
-        if len(content) > _RESULT_MAX_CHARS:
-            content = content[:_RESULT_MAX_CHARS] + "..."
-        return GraphPayload(content=content)
-    return None
+    content = output[0].content
+    if len(content) > _RESULT_MAX_CHARS:
+        content = content[:_RESULT_MAX_CHARS] + "..."
+    return GraphPayload(content=content)
 
 
 async def handle_get_instance(request: web.Request) -> web.Response:
@@ -443,6 +432,9 @@ async def handle_get_instance(request: web.Request) -> web.Response:
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=404)
     id_to_name = {nid: name for name, nid in snapshot.metadata.node_id_map.items()}
+    io_record = orch._io_store.get_latest_by_instance(gid)
+    instance_output = io_record.output if io_record is not None else None
+    end_nid = snapshot.metadata.node_id_map.get(GraphNode.END)
     session_id_map: dict[str, str] = {}
     instance = orch._active_instances.get(gid)
     if instance is not None and instance.compiled is not None:
@@ -454,30 +446,22 @@ async def handle_get_instance(request: web.Request) -> web.Response:
             node_name=id_to_name.get(nid, nid),
             node_id=nid,
             status=inv[-1].status.value if inv else "unknown",
-            result=_extract_node_result(inv[-1].state_json)
-            if inv and inv[-1].status.value == "completed"
+            result=_extract_node_result(instance_output)
+            if nid == end_nid and inv and inv[-1].status.value == "completed"
             else None,
             session_id=session_id_map.get(nid),
         )
         for nid, inv in snapshot.nodes.items()
     ]
-    # Extract instance-level result from END node's state checkpoint.
-    # Converges with the WS path: GraphOrchestrator emits GraphOutput(COMPLETED,
-    # result=dict(final_state).get("result")) which is the same list[GraphPayload]
-    # that EndNode wrote to state.result. REST polling reads it from the END
-    # node's persisted state_json; WS receives it via graph_completed event.
-    end_result: list[GraphPayload] | None = None
-    end_nid = snapshot.metadata.node_id_map.get(GraphNode.END)
-    if end_nid and end_nid in snapshot.nodes:
-        end_inv = snapshot.nodes[end_nid]
-        if end_inv and end_inv[-1].status.value == "completed":
-            raw = end_inv[-1].state_json.get("result")
-            if isinstance(raw, list) and raw:
-                end_result = [
-                    GraphPayload(content=str(item["content"]))
-                    for item in raw
-                    if isinstance(item, dict) and "content" in item
-                ] or None
+    end_invocations = snapshot.nodes.get(end_nid, []) if end_nid is not None else []
+    # Node-level END result is a 500-character preview; end_result intentionally keeps full output.
+    end_result = (
+        instance_output
+        if instance_output
+        and end_invocations
+        and end_invocations[-1].status.value == "completed"
+        else None
+    )
     return web.json_response(
         GraphInstanceResponse(
             spec_id=str(snapshot.metadata.spec_id),

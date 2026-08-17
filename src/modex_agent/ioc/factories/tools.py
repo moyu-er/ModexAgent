@@ -43,7 +43,7 @@ async def connect_mcp(
 
     if registry is not None:
         backend = await registry.acquire(list(servers_dict.keys()))
-        return MCPToolAdapter(mcp_manager=backend, default_prefix=True)
+        return MCPToolAdapter(mcp_manager=backend)
 
     from modex_agent.tools.mcp import MCPClientManager
     from modex_agent.tools.mcp.injector import JsonFileMCPTransportInjector
@@ -56,7 +56,6 @@ async def connect_mcp(
 
     return MCPToolAdapter(
         mcp_manager=manager,
-        default_prefix=True,
     )
 
 

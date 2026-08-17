@@ -98,11 +98,10 @@ class GraphRecursionError(Exception):
 class InvocationStateError(Exception):
     """Raised when a CAS (compare-and-swap) transition on a node invocation fails.
 
-    The strict lifecycle methods (``complete_invocation``,
-    ``suspend_invocation``, ``cancel_invocation``) update the
-    ``node_states`` row only if it is in the ``running`` state with
-    ``suspended=0``. If the row is already terminal (``completed`` /
-    ``canceled`` / ``crashed``) or suspended, the UPDATE affects 0 rows
-    and this exception is raised — indicating a lost race or a duplicate
-    transition attempt.
+    The strict lifecycle methods (``complete_invocation`` and
+    ``cancel_invocation``) update the ``node_states`` row only while it is
+    ``RUNNING``. If the row is already terminal (``COMPLETED`` /
+    ``CANCELED`` / ``CRASHED``), the update affects no rows and this exception
+    indicates a lost race or duplicate transition attempt. Crash and finalize
+    transitions are tolerant and leave terminal rows unchanged.
     """

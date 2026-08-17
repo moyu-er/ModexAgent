@@ -1,25 +1,4 @@
 # ruff: noqa: ANN401
-"""Tests for Node._execute / _deliver / deliver / _submit / submit.
-
-Covers the additive deliver/submit dual-method API on `Node`:
-
-- `run`: orchestrate integrate -> execute -> submit and return None.
-- `deliver`: node-facing API, called during `execute()`, accumulates via
-  `_deliver`.
-- `_deliver`: framework-fixed accumulation (in-memory or DeliverStore-backed).
-- `_submit`: framework-fixed grouping by `next_node` + dispatch.
-- `submit`: node-facing customization point (default delegates to `_submit`).
-- `input_integrator` / `deliver_store` attributes and defaults.
-- Sync and async `execute` overrides.
-- Custom `InputIntegrator`, custom `deliver`, custom `submit` overrides.
-- DeliverStore-backed persistence (InMemory + graph_instance_id on ctx).
-- `next_node=None` resolution raises `NotImplementedError` (additive limitation).
-- `deliver()` outside `_execute` raises `RuntimeError`.
-
-These tests call `_execute` directly — the scheduler is NOT involved
-(additive step). The scheduler still calls `node.execute(ctx)` directly.
-"""
-
 from __future__ import annotations
 
 from typing import Any
@@ -29,10 +8,9 @@ from helpers import CounterState, make_coordinator, make_ctx, make_runtime
 
 from modex_graph import (
     DefaultInputIntegrator,
-    DeliverStore,
+    DeliverConsumptionStatus,
     GraphContext,
     GraphNode,
-    InMemoryDeliverStore,
     InputIntegrator,
     IntegratedInput,
     IntegratedPayload,
@@ -40,13 +18,12 @@ from modex_graph import (
     RoutingError,
     SchedulerKind,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 # ── Test node subclasses ──────────────────────────────────────────────────
 
 
 class _NoDeliverNode(Node[CounterState]):
-    """Node that does not call deliver. _submit_result should be empty."""
-
     async def execute(
         self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
     ) -> None:
@@ -126,48 +103,6 @@ class _CustomDeliverNode(Node[CounterState]):
         return None
 
 
-class _CustomSubmitNode(Node[CounterState]):
-    """Node that overrides submit() to store a custom result."""
-
-    async def execute(
-        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-    ) -> None:
-        self.deliver("data", "target", ctx)
-        return None
-
-    def submit(self, ctx: GraphContext[CounterState]) -> None:
-        self._submit_result = {"custom_submit": ["overridden"]}
-
-
-class _StoreBackedNode(Node[CounterState]):
-    """Node configured with a DeliverStore. Used for persistence tests."""
-
-    def __init__(self, store: DeliverStore) -> None:
-        self.name = "store_node"
-        self.deliver_store = store
-
-    async def execute(
-        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-    ) -> None:
-        self.deliver({"key": "value"}, "db_target", ctx)
-        self.deliver("second", "db_target", ctx)
-        return None
-
-
-class _StoreBackedAsyncNode(Node[CounterState]):
-    """Async node configured with a DeliverStore."""
-
-    def __init__(self, store: DeliverStore) -> None:
-        self.name = "async_store_node"
-        self.deliver_store = store
-
-    async def execute(
-        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-    ) -> None:
-        self.deliver("async_db_data", "async_db_target", ctx)
-        return None
-
-
 # ── Custom InputIntegrator for testing ────────────────────────────────────
 
 
@@ -184,11 +119,11 @@ class _JoinIntegrator(InputIntegrator):
 
 def _make_parallel_ctx(
     state: CounterState | None = None,
-) -> tuple[GraphContext[CounterState], list[tuple[str, str, dict[str, Any] | None]]]:
+) -> tuple[GraphContext[CounterState], list[tuple[str, str]]]:
     """Build a PARALLEL ctx with a recording dispatch handler.
 
-    Returns (ctx, dispatch_calls) where dispatch_calls records each
-    (source_instance, target, state_update) triple passed to the handler.
+    Returns (ctx, dispatch_calls) where dispatch_calls records each pure-wakeup
+    (source_instance, target) pair passed to the handler.
     """
     state = state if state is not None else CounterState()
     ctx: GraphContext[CounterState] = GraphContext(
@@ -197,14 +132,13 @@ def _make_parallel_ctx(
         coordinator=make_coordinator(),
         scheduler_kind=SchedulerKind.PARALLEL,
     )
-    dispatch_calls: list[tuple[str, str, dict[str, Any] | None]] = []
+    dispatch_calls: list[tuple[str, str]] = []
 
     def handler(
         source_instance: str,
         target: str,
-        payload: dict[str, Any] | None,
     ) -> None:
-        dispatch_calls.append((source_instance, target, payload))
+        dispatch_calls.append((source_instance, target))
 
     ctx.set_dispatch_handler(handler)
     return ctx, dispatch_calls
@@ -212,6 +146,15 @@ def _make_parallel_ctx(
 
 def _make_linear_ctx(state: CounterState | None = None) -> GraphContext[CounterState]:
     return make_ctx(state)
+
+
+def _target_contents(ctx: GraphContext[CounterState], target: str) -> list[Any]:
+    store = ctx.coordinator.get_deliver_store(target)
+    assert store is not None
+    return [
+        record.content
+        for record in store.query_consumable(ctx.coordinator.graph_instance_id, target)
+    ]
 
 
 # ── Node attributes ───────────────────────────────────────────────────────
@@ -229,7 +172,7 @@ class TestNodeAttributes:
         assert node.input_integrator is custom
 
 
-# ── _execute: basic orchestration ─────────────────────────────────────────
+# ── run: basic orchestration ──────────────────────────────────────────────
 
 
 class TestExecuteBasic:
@@ -239,15 +182,15 @@ class TestExecuteBasic:
         ctx = _make_linear_ctx(CounterState(count=0))
         result = await node.run(ctx)
         assert result is None
-        assert "downstream_a" in node._submit_result
+        assert _target_contents(ctx, "downstream_a") == ["payload_a"]
 
-    async def test_execute_resets_pending_delivers(self) -> None:
+    async def test_each_execution_persists_its_deliver(self) -> None:
         node = _SingleDeliverNode()
         node.name = "single_deliver"
         ctx = _make_linear_ctx()
         await node.run(ctx)
-        # After _execute, _submit_result should have the deliver.
-        assert "downstream_a" in node._submit_result
+        await node.run(ctx)
+        assert _target_contents(ctx, "downstream_a") == ["payload_a", "payload_a"]
 
     async def test_execute_with_upstream_payloads(self) -> None:
         node = _ReadIntegratedInputNode()
@@ -314,116 +257,87 @@ class TestExecuteBasic:
         ctx = _make_linear_ctx()
         result = await node.run(ctx)
         assert result is None
-        assert "async_target" in node._submit_result
+        assert _target_contents(ctx, "async_target") == ["async_data"]
 
 
-# ── deliver: accumulation ─────────────────────────────────────────────────
+# ── deliver: target-side persistence ──────────────────────────────────────
 
 
-class TestDeliverAccumulation:
-    async def test_single_deliver_in_memory(self) -> None:
+class TestDeliverPersistence:
+    async def test_single_deliver_is_persisted(self) -> None:
         node = _SingleDeliverNode()
         node.name = "single_deliver"
         ctx = _make_linear_ctx()
         await node.run(ctx)
-        assert node._submit_result == {"downstream_a": ["payload_a"]}
+        assert _target_contents(ctx, "downstream_a") == ["payload_a"]
+        store = ctx.coordinator.get_deliver_store("downstream_a")
+        assert store is not None
+        records = store.query_consumable(ctx.coordinator.graph_instance_id, "downstream_a")
+        assert records[0].status is DeliverConsumptionStatus.PENDING
 
     async def test_multiple_delivers_same_next_node(self) -> None:
         node = _MultiDeliverNode()
         node.name = "multi_deliver"
         ctx = _make_linear_ctx()
         await node.run(ctx)
-        assert "target_x" in node._submit_result
-        assert "target_y" in node._submit_result
-        assert node._submit_result["target_x"] == ["data_1", "data_2"]
-        assert node._submit_result["target_y"] == ["data_3"]
+        assert _target_contents(ctx, "target_x") == ["data_1", "data_2"]
+        assert _target_contents(ctx, "target_y") == ["data_3"]
 
     async def test_deliver_with_explicit_ctx(self) -> None:
         node = _DeliverWithCtxNode()
         node.name = "explicit_ctx"
         ctx = _make_linear_ctx()
         await node.run(ctx)
-        assert node._submit_result == {"explicit_target": ["explicit_ctx_data"]}
+        assert _target_contents(ctx, "explicit_target") == ["explicit_ctx_data"]
 
-    async def test_deliver_with_explicit_ctx_outside_execute(self) -> None:
+    def test_deliver_outside_active_invocation_raises(self) -> None:
         node = _SingleDeliverNode()
         node.name = "single_deliver"
         ctx = _make_linear_ctx()
-        # Passing ctx explicitly should work even outside _execute.
-        node._pending_delivers = []
-        node.deliver("data", "target", ctx)
-        assert node._pending_delivers == [("data", "target")]
+        with pytest.raises(RuntimeError, match="active node invocation"):
+            node.deliver("data", "target", ctx)
 
     async def test_custom_deliver_override(self) -> None:
         node = _CustomDeliverNode()
         node.name = "custom_deliver"
         ctx = _make_linear_ctx()
         await node.run(ctx)
-        assert node._submit_result == {"target": ["custom:data"]}
+        assert _target_contents(ctx, "target") == ["custom:data"]
 
 
-# ── _submit: grouping and dispatch ────────────────────────────────────────
+# ── completion: one scheduling wakeup per affected target ────────────────
 
 
-class TestSubmitGrouping:
-    async def test_submit_groups_by_next_node(self) -> None:
+class TestCompletionDispatch:
+    async def test_multiple_delivers_wake_each_target_once(self) -> None:
         node = _MultiDeliverNode()
         node.name = "multi_deliver"
-        ctx = _make_linear_ctx()
-        await node.run(ctx)
-        assert set(node._submit_result.keys()) == {"target_x", "target_y"}
-
-    async def test_submit_under_linear_stores_result(self) -> None:
-        node = _SingleDeliverNode()
-        node.name = "single_deliver"
-        ctx = _make_linear_ctx()
-        await node.run(ctx)
-        # Under LINEAR, _submit_result is set AND ctx.dispatch is called
-        # (rule 15 convergence: no scheduler_kind branch). make_ctx
-        # provides a no-op handler so dispatch succeeds.
-        assert node._submit_result == {"downstream_a": ["payload_a"]}
-
-    async def test_submit_under_parallel_calls_dispatch(self) -> None:
-        node = _SingleDeliverNode()
-        node.name = "single_deliver"
         ctx, dispatch_calls = _make_parallel_ctx()
         await node.run(ctx)
-        assert len(dispatch_calls) == 1
-        _source, target, payload = dispatch_calls[0]
+        targets = [target for _source, target in dispatch_calls]
+        assert sorted(targets) == ["target_x", "target_y"]
+        assert _target_contents(ctx, "target_x") == ["data_1", "data_2"]
+        assert _target_contents(ctx, "target_y") == ["data_3"]
+
+    @pytest.mark.parametrize("kind", [SchedulerKind.LINEAR, SchedulerKind.PARALLEL])
+    async def test_completion_wakeup_carries_no_delivery_payload(
+        self, kind: SchedulerKind
+    ) -> None:
+        node = _SingleDeliverNode()
+        node.name = "single_deliver"
+        calls: list[tuple[str, str]] = []
+        ctx = GraphContext(
+            state=CounterState(),
+            runtime=make_runtime(),
+            coordinator=make_coordinator(),
+            scheduler_kind=kind,
+        )
+        ctx.set_dispatch_handler(lambda source, target: calls.append((source, target)))
+        await node.run(ctx)
+        assert len(calls) == 1
+        _source, target = calls[0]
         assert target == "downstream_a"
-        assert payload and payload["delivered"] == "payload_a"
-
-    async def test_submit_under_parallel_multiple_groups(self) -> None:
-        node = _MultiDeliverNode()
-        node.name = "multi_deliver"
-        ctx, dispatch_calls = _make_parallel_ctx()
-        await node.run(ctx)
-        assert len(dispatch_calls) == 3
-        targets = [call[1] for call in dispatch_calls]
-        assert targets.count("target_x") == 2
-        assert targets.count("target_y") == 1
-
-    async def test_submit_under_parallel_multi_entry_group_dispatches_individually(self) -> None:
-        node = _MultiDeliverNode()
-        node.name = "multi_deliver"
-        ctx, dispatch_calls = _make_parallel_ctx()
-        await node.run(ctx)
-        # target_x has 2 entries -> 2 separate dispatches, each with one content.
-        target_x_payloads = [p for _s, t, p in dispatch_calls if t == "target_x"]
-        target_y_payloads = [p for _s, t, p in dispatch_calls if t == "target_y"]
-        assert len(target_x_payloads) == 2
-        assert target_x_payloads[0]["delivered"] == "data_1"
-        assert target_x_payloads[1]["delivered"] == "data_2"
-        assert len(target_y_payloads) == 1
-        assert target_y_payloads[0]["delivered"] == "data_3"
-
-    async def test_custom_submit_override(self) -> None:
-        node = _CustomSubmitNode()
-        node.name = "custom_submit"
-        ctx = _make_linear_ctx()
-        await node.run(ctx)
-        # Custom submit stores its own result, overriding the default _submit.
-        assert node._submit_result == {"custom_submit": ["overridden"]}
+        assert _target_contents(ctx, "downstream_a") == ["payload_a"]
 
 
 # ── _resolve_default_target limitation ────────────────────────────────────
@@ -440,7 +354,7 @@ class _NullNextNodeDeliver(Node[CounterState]):
 
 
 class TestResolveDefaultTargetLimitation:
-    async def test_deliver_without_next_node_raises_in_submit(self) -> None:
+    async def test_deliver_without_next_node_raises_during_execute(self) -> None:
         node = _NullNextNodeDeliver()
         node.name = "null_next"
         ctx = _make_linear_ctx()
@@ -469,7 +383,7 @@ class TestResolveDefaultTargetLimitation:
         compiled = g.compile()
         ctx = make_ctx(CounterState())
         scheduler = LinearScheduler(compiled)
-        result = await scheduler.run_async(ctx)
+        result = await scheduler.run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 1
 
     async def test_resolve_default_target_no_default_uses_downstream(self) -> None:
@@ -487,7 +401,7 @@ class TestResolveDefaultTargetLimitation:
         compiled = g.compile()
         ctx = make_ctx(CounterState())
         scheduler = LinearScheduler(compiled)
-        result = await scheduler.run_async(ctx)
+        result = await scheduler.run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 1
 
     def test_resolve_default_target_strict_multi_edge_raises(self) -> None:
@@ -550,195 +464,6 @@ class TestResolveDefaultTargetLimitation:
         assert node._resolve_default_target(ctx, policy="graceful") == ["only_down"]
 
 
-# ── DeliverStore-backed persistence ───────────────────────────────────────
-
-
-class TestDeliverStoreBacked:
-    """Ticket 16: _deliver/_collect_delivers are now in-memory only.
-
-    The deliver_store/graph_instance_id persistence branches were removed.
-    These tests verify the new behavior: delivers always go to
-    _pending_delivers, never to the store, and _deliver always returns None.
-    """
-
-    async def test_deliver_does_not_persist_to_store(self) -> None:
-        store = InMemoryDeliverStore()
-        node = _StoreBackedNode(store)
-        ctx = _make_linear_ctx()
-        ctx.graph_instance_id = 5001
-        node._pending_delivers = []
-        node._deliver({"key": "value"}, "db_target", ctx)
-        node._deliver("second", "db_target", ctx)
-        # Store should be empty — _deliver is in-memory only now.
-        assert store.query_consumable(5001, "store_node") == []
-        # Entries are in _pending_delivers instead.
-        assert len(node._pending_delivers) == 2
-
-    async def test_collect_delivers_reads_from_in_memory(self) -> None:
-        store = InMemoryDeliverStore()
-        node = _StoreBackedNode(store)
-        ctx = _make_linear_ctx()
-        ctx.graph_instance_id = 5002
-        node._pending_delivers = []
-        node._deliver({"key": "value"}, "db_target", ctx)
-        node._deliver("second", "db_target", ctx)
-        collected = node._collect_delivers(ctx)
-        assert len(collected) == 2
-        # next_node is preserved from the in-memory entry.
-        assert all(next_node == "db_target" for _, next_node in collected)
-
-    async def test_deliver_store_async_node_in_memory(self) -> None:
-        store = InMemoryDeliverStore()
-        node = _StoreBackedAsyncNode(store)
-        ctx = _make_linear_ctx()
-        ctx.graph_instance_id = 5003
-        node._pending_delivers = []
-        node._deliver("async_db_data", "async_db_target", ctx)
-        # Store should be empty — in-memory only.
-        assert store.query_consumable(5003, "async_store_node") == []
-        assert len(node._pending_delivers) == 1
-
-    async def test_deliver_without_graph_instance_id_uses_in_memory(self) -> None:
-        """If ctx.graph_instance_id is None, falls back to in-memory accumulation."""
-        store = InMemoryDeliverStore()
-        node = _StoreBackedNode(store)
-        ctx = _make_linear_ctx()
-        await node.run(ctx)
-        assert "db_target" in node._submit_result
-        assert len(node._submit_result["db_target"]) == 2
-
-    async def test_deliver_in_memory_under_parallel(self) -> None:
-        store = InMemoryDeliverStore()
-        node = _StoreBackedNode(store)
-        ctx, _dispatch_calls = _make_parallel_ctx()
-        ctx.graph_instance_id = 5004
-        node._pending_delivers = []
-        node._deliver({"key": "value"}, "db_target", ctx)
-        node._deliver("second", "db_target", ctx)
-        # Store should be empty — in-memory only.
-        assert store.query_consumable(5004, "store_node") == []
-        assert len(node._pending_delivers) == 2
-
-    async def test_deliver_always_returns_none_even_with_store(self) -> None:
-        store = InMemoryDeliverStore()
-        node = _StoreBackedNode(store)
-        ctx = _make_linear_ctx()
-        ctx.graph_instance_id = 5005
-        node._pending_delivers = []
-        deliver_id = node._deliver("test_data", "test_target", ctx)
-        # Ticket 16: _deliver always returns None (in-memory only).
-        assert deliver_id is None
-
-    async def test_deliver_returns_none_when_in_memory(self) -> None:
-        node = _SingleDeliverNode()
-        node.name = "single_deliver"
-        ctx = _make_linear_ctx()
-        node._pending_delivers = []
-        deliver_id = node._deliver("test_data", "test_target", ctx)
-        assert deliver_id is None
-
-
-# ── _collect_delivers ─────────────────────────────────────────────────────
-
-
-class TestCollectDelivers:
-    async def test_collect_from_in_memory(self) -> None:
-        node = _MultiDeliverNode()
-        node.name = "multi_deliver"
-        ctx = _make_linear_ctx()
-        await node.run(ctx)
-        # After _execute, _pending_delivers has the raw entries.
-        # _collect_delivers reads from _pending_delivers (no store set).
-        collected = node._collect_delivers(ctx)
-        assert len(collected) == 3
-
-    async def test_collect_from_store(self) -> None:
-        # Ticket 16: _collect_delivers always reads from _pending_delivers
-        # (in-memory only). The deliver_store is no longer consulted.
-        store = InMemoryDeliverStore()
-        node = _StoreBackedNode(store)
-        ctx = _make_linear_ctx()
-        ctx.graph_instance_id = 5006
-        node._pending_delivers = []
-        node._deliver({"key": "value"}, "db_target", ctx)
-        node._deliver("second", "db_target", ctx)
-        collected = node._collect_delivers(ctx)
-        assert len(collected) == 2
-        # Store is empty — _deliver is in-memory only.
-        assert store.query_consumable(5006, "store_node") == []
-
-
-# ── Integration: full _execute flow with DeliverStore ─────────────────────
-
-
-class TestFullFlowWithStore:
-    """Ticket 16: _deliver is in-memory only. These tests verify the
-    full flow works correctly with deliver_store set but unused."""
-
-    async def test_full_flow_sync_node(self) -> None:
-        store = InMemoryDeliverStore()
-        node = _StoreBackedNode(store)
-        ctx = _make_linear_ctx(CounterState(count=0))
-        ctx.graph_instance_id = 5007
-        node._pending_delivers = []
-        node._deliver({"key": "value"}, "db_target", ctx)
-        node._deliver("second", "db_target", ctx)
-        # Store is empty — in-memory only.
-        assert store.query_consumable(5007, "store_node") == []
-        assert len(node._pending_delivers) == 2
-
-    async def test_full_flow_async_node(self) -> None:
-        store = InMemoryDeliverStore()
-        node = _StoreBackedAsyncNode(store)
-        ctx = _make_linear_ctx(CounterState(count=0))
-        ctx.graph_instance_id = 5008
-        node._pending_delivers = []
-        node._deliver("async_db_data", "async_db_target", ctx)
-        # Store is empty — in-memory only.
-        assert store.query_consumable(5008, "async_store_node") == []
-        assert len(node._pending_delivers) == 1
-
-    async def test_full_flow_with_upstream_payloads_and_deliver(self) -> None:
-        """Node receives upstream payloads, integrates them, and delivers output."""
-
-        class _TransformNode(Node[CounterState]):
-            async def execute(
-                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> None:
-                if integrated_input.integrated_content is not None:
-                    self.deliver(
-                        integrated_input.integrated_content,
-                        "transformed_output",
-                        ctx,
-                    )
-                return None
-
-        node = _TransformNode()
-        node.name = "transform"
-        node.node_id = "node-transform"
-        ctx = _make_linear_ctx()
-        ctx.coordinator.register_node(node.node_id)
-        store = ctx.coordinator.get_deliver_store(node.node_id)
-        assert store is not None
-        store.accumulate(
-            graph_instance_id=0,
-            node_id=node.node_id,
-            source_node_id="up_a",
-            source_invocation_id=1,
-            content="input1",
-        )
-        store.accumulate(
-            graph_instance_id=0,
-            node_id=node.node_id,
-            source_node_id="up_b",
-            source_invocation_id=2,
-            content="input2",
-        )
-        await node.run(ctx)
-        assert "transformed_output" in node._submit_result
-        assert node._submit_result["transformed_output"] == [["input1", "input2"]]
-
-
 # ── GraphNode.END as next_node ────────────────────────────────────────────
 
 
@@ -753,95 +478,20 @@ class _DeliverToEndNode(Node[CounterState]):
 
 
 class TestDeliverToEnd:
-    async def test_deliver_to_end_sentinel(self) -> None:
-        node = _DeliverToEndNode()
-        node.name = "deliver_to_end"
-        ctx = _make_linear_ctx()
-        await node.run(ctx)
-        assert GraphNode.END in node._submit_result
-        assert node._submit_result[GraphNode.END] == ["terminal_data"]
+    @pytest.mark.parametrize("kind", [SchedulerKind.LINEAR, SchedulerKind.PARALLEL])
+    async def test_deliver_to_end_reaches_terminal_once(self, kind: SchedulerKind) -> None:
+        from modex_graph import Graph, GraphEngine
 
-    async def test_deliver_to_end_under_parallel(self) -> None:
-        node = _DeliverToEndNode()
-        node.name = "deliver_to_end"
-        ctx, dispatch_calls = _make_parallel_ctx()
-        await node.run(ctx)
-        assert len(dispatch_calls) == 1
-        _source, target, payload = dispatch_calls[0]
-        assert target == GraphNode.END
-        assert payload and payload["delivered"] == "terminal_data"
+        graph: Graph[CounterState] = Graph()
+        graph.add_node("deliver_to_end", _DeliverToEndNode())
+        graph.add_edge(GraphNode.START, "deliver_to_end")
+        graph.add_edge("deliver_to_end", GraphNode.END)
+        compiled = graph.compile(scheduler=kind)
+        ctx = make_ctx(CounterState())
 
+        await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
-# ── Rule 15 convergence: _submit calls ctx.dispatch for BOTH schedulers ───
-
-
-class TestSubmitDispatchConvergence:
-    """Rule 15: _submit has NO scheduler_kind branch — it always calls
-    ctx.dispatch. Both LINEAR and PARALLEL schedulers register a handler.
-    """
-
-    async def test_submit_calls_dispatch_under_linear(self) -> None:
-        """_submit calls ctx.dispatch under LINEAR (no branch on scheduler_kind)."""
-        node = _SingleDeliverNode()
-        node.name = "single_deliver"
-        calls: list[tuple[str, str, dict[str, Any] | None]] = []
-
-        ctx: GraphContext[CounterState] = GraphContext(
-            state=CounterState(),
-            runtime=make_runtime(),
-            coordinator=make_coordinator(),
-            scheduler_kind=SchedulerKind.LINEAR,
-        )
-
-        def handler(src: str, tgt: str, update: dict[str, Any] | None) -> None:
-            calls.append((src, tgt, update))
-
-        ctx.set_dispatch_handler(handler)
-        await node.run(ctx)
-        assert len(calls) == 1
-        _src, target, payload = calls[0]
-        assert target == "downstream_a"
-        assert payload and payload["delivered"] == "payload_a"
-
-    async def test_submit_calls_dispatch_under_parallel(self) -> None:
-        """_submit calls ctx.dispatch under PARALLEL (same path as LINEAR)."""
-        node = _SingleDeliverNode()
-        node.name = "single_deliver"
-        ctx, dispatch_calls = _make_parallel_ctx()
-        await node.run(ctx)
-        assert len(dispatch_calls) == 1
-        _src, target, payload = dispatch_calls[0]
-        assert target == "downstream_a"
-        assert payload and payload["delivered"] == "payload_a"
-
-    async def test_submit_dispatches_all_groups_under_both(self) -> None:
-        """Multiple groups are all dispatched under both scheduler kinds."""
-
-        def make_ctx_with_handler(
-            kind: SchedulerKind,
-        ) -> tuple[
-            GraphContext[CounterState],
-            list[tuple[str, str, dict[str, Any] | None]],
-        ]:
-            calls: list[tuple[str, str, dict[str, Any] | None]] = []
-            ctx = GraphContext(
-                state=CounterState(),
-                runtime=make_runtime(),
-                coordinator=make_coordinator(),
-                scheduler_kind=kind,
-            )
-            ctx.set_dispatch_handler(lambda s, t, p: calls.append((s, t, p)))
-            return ctx, calls
-
-        for kind in (SchedulerKind.LINEAR, SchedulerKind.PARALLEL):
-            node = _MultiDeliverNode()
-            node.name = "multi_deliver"
-            ctx, calls = make_ctx_with_handler(kind)
-            await node.run(ctx)
-            assert len(calls) == 3, f"Expected 3 dispatches under {kind}, got {len(calls)}"
-            targets = [c[1] for c in calls]
-            assert targets.count("target_x") == 2
-            assert targets.count("target_y") == 1
+        assert ctx.reached_end is True
 
 
 # ── upstream_payloads flow: deliver → integrated_input ────────────────────
@@ -879,9 +529,9 @@ class TestUpstreamPayloadsFlow:
     """Delivers flow from Node A's deliver → Node B's
     integrated_input under both LINEAR and PARALLEL schedulers.
 
-    The dispatch handler calls ``coordinator.route_deliver`` to route
-    delivers to the target node's deliver_store, and ``Node.run()``
-    consumes them via ``collect_consumable_delivers``.
+    ``Node.deliver`` stages data in the target store. Source completion promotes
+    it to PENDING, dispatch wakes the target without carrying data, and
+    ``Node.run()`` consumes it via ``collect_consumable_delivers``.
     """
 
     async def test_flow_under_linear(self) -> None:
@@ -902,7 +552,7 @@ class TestUpstreamPayloadsFlow:
             runtime=make_runtime(),
             coordinator=make_coordinator(),
         )
-        await LinearScheduler(compiled).run_async(ctx)
+        await LinearScheduler(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert len(sink.seen_inputs) == 1
         integrated = sink.seen_inputs[0]
@@ -912,9 +562,7 @@ class TestUpstreamPayloadsFlow:
         assert integrated.integrated_content == ["from_a"]
 
     async def test_flow_under_linear_multiple_delivers(self) -> None:
-        """Node A delivers multiple contents to Node B → _submit groups them
-        into one dispatch with a list payload. Node B receives ONE
-        IntegratedPayload whose content is the list."""
+        """Node A stages multiple rows and one wakeup lets B consume both."""
         from modex_graph import Graph, LinearScheduler
 
         class MultiSourceNode(Node[CounterState]):
@@ -935,7 +583,7 @@ class TestUpstreamPayloadsFlow:
         compiled = g.compile()
 
         ctx = make_ctx(CounterState(count=0))
-        await LinearScheduler(compiled).run_async(ctx)
+        await LinearScheduler(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert len(sink.seen_inputs) == 1
         integrated = sink.seen_inputs[0]
@@ -946,8 +594,7 @@ class TestUpstreamPayloadsFlow:
         assert integrated.integrated_content == ["first", "second"]
 
     async def test_flow_under_parallel_on_receive(self) -> None:
-        """Under PARALLEL + ON_RECEIVE: Node A delivers → Node B receives
-        the dispatch payload as an IntegratedPayload via upstream_payloads."""
+        """Under PARALLEL + ON_RECEIVE, B reads promoted data from its store."""
         from modex_graph import (
             Graph,
             NodeTrigger,
@@ -972,7 +619,7 @@ class TestUpstreamPayloadsFlow:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
-        await ParallelScheduler(compiled).run_async(ctx)
+        await ParallelScheduler(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert len(sink.seen_inputs) == 1
         integrated = sink.seen_inputs[0]
@@ -1021,7 +668,7 @@ class TestUpstreamPayloadsFlow:
             coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
-        await ParallelScheduler(compiled).run_async(ctx)
+        await ParallelScheduler(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert len(sink.seen_inputs) == 1
         integrated = sink.seen_inputs[0]
@@ -1044,7 +691,7 @@ class TestUpstreamPayloadsFlow:
         compiled = g.compile()
 
         ctx = make_ctx(CounterState(count=0))
-        await LinearScheduler(compiled).run_async(ctx)
+        await LinearScheduler(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert len(sink.seen_inputs) == 1
         integrated = sink.seen_inputs[0]

@@ -49,8 +49,7 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
 
     _pool_store = PoolStore(base_dir=project_dir)
     _pool_to_main_agent = {
-        s.name: _pool_store.read_pool(s.name).main.agent_name
-        for s in _pool_store.list_pools()
+        s.name: _pool_store.read_pool(s.name).main.agent_name for s in _pool_store.list_pools()
     }
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
@@ -64,9 +63,7 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
     )
     server.set_workspace_index(store)
     server.set_pool_agent_names(["main", "orchestrator"])
-    server.set_agent_resolver(
-        lambda pool_name: _pool_to_main_agent.get(pool_name, pool_name)
-    )
+    server.set_agent_resolver(lambda pool_name: _pool_to_main_agent.get(pool_name, pool_name))
     pool_session_store = PoolSessionStore(data_dir / ".modex")
     server.set_pool_switch_callback(pool_session_store.set)
     server.set_pool_resolver(pool_session_store.get_pool)
@@ -122,7 +119,9 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
 
         # The transcript MUST live under the coder pool directory.
         # Filename suffix is the main agent name (orchestrator), not the pool name.
-        expected_file = data_dir / ".modex" / "sessions" / "coder" / f"{uuid_prefix}.orchestrator.jsonl"
+        expected_file = (
+            data_dir / ".modex" / "sessions" / "coder" / f"{uuid_prefix}.orchestrator.jsonl"
+        )
         assert expected_file.exists(), (
             f"orchestrator transcript not found at expected path {expected_file}"
         )
@@ -145,10 +144,10 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
 
 
 def test_resolver_fallback_default_is_importable_from_module() -> None:
-    """The resolver closure in WebUIService.start() references
-    ``_DEFAULT_AGENT_NAME`` as the fallback pool.  This name must be
-    importable from the module — otherwise live emitters silently crash
-    with NameError and streaming output stops."""
+    """The partition-placement fallbacks in WebUIService reference
+    ``_DEFAULT_AGENT_NAME`` as the explicit default pool.  This name must be
+    importable from the module — otherwise the routing helper's callers
+    silently crash with NameError and index/GC/turn-store placement stops."""
     import bot.service.web_ui_service as wuis
 
     # Direct access: if _DEFAULT_AGENT_NAME is not defined in the module,
@@ -158,30 +157,15 @@ def test_resolver_fallback_default_is_importable_from_module() -> None:
 
 @pytest.mark.asyncio
 async def test_production_style_resolver_does_not_crash_emitter() -> None:
-    """Regression: the resolver wired in WebUIService.start() must not raise
-    a NameError (missing _DEFAULT_AGENT_NAME import) or any other exception.
+    """Regression: the parent resolver bound at emitter-factory time must not
+    raise a NameError or any other exception.
 
-    The resolver is the module-level _session_meta_resolver in
-    register_websocket, set via set_session_meta_resolver(). It is called
-    lazily by every WebBotEmitter._send_event(). If it crashes, the emitter
-    silently stops — no streaming output reaches the frontend.
+    The resolver is bound by register_websocket._parent_meta_for against the
+    shared WS input adapter's genealogy map. It is called lazily by every
+    WebBotEmitter._send_event(). If it crashes, the emitter silently stops —
+    no streaming output reaches the frontend.
     """
-    from bot.adapters.register_websocket import set_session_meta_resolver
-    from bot.webui.events import SessionMeta
-
-    from modex_agent.core.session_id import session_id_prefix_of
-
-    pool_by_prefix: dict[str, str] = {"conv": "coder"}
-
-    def _resolve_session_meta(session_id: str) -> SessionMeta:
-        pool = pool_by_prefix.get(session_id_prefix_of(session_id), "main")
-        return SessionMeta(pool=pool, parent_session_id=None)
-
-    set_session_meta_resolver(_resolve_session_meta)
-
-    # Create an emitter with the resolver wired through the normal factory
-    # closure path (register_websocket._resolve_meta_for → global resolver).
-    from bot.adapters.register_websocket import _resolve_meta_for
+    from bot.adapters.register_websocket import _parent_meta_for
     from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
     from bot.webui.emitter import WebBotEmitter
 
@@ -190,23 +174,28 @@ async def test_production_style_resolver_does_not_crash_emitter() -> None:
     input_adapter = WebSocketInputAdapter()
     output_adapter = WebSocketOutputAdapter(input_adapter)
     input_adapter.register_connection("conv.coder", None)
+    # Genealogy link written at dispatch time — must be visible to the
+    # emit-time parent resolution.
+    input_adapter.register_subagent("conv.coder", "conv.main")
 
     emitter = WebBotEmitter(
         output_adapter=output_adapter,
         session_id="conv.coder",
         config=EmitterConfig(),
-        session_meta_resolver=_resolve_meta_for("conv.coder"),
+        pool="coder",
+        session_meta_resolver=_parent_meta_for(input_adapter, "conv.coder"),
     )
     # Fire a content delta — must not raise.
     await emitter.emit_delta("hello world")
 
     # The envelope must have reached the delta queue.
-    q = input_adapter._delta_queues.get("conv.coder")
+    q = input_adapter.get_delta_queue("conv.coder", None)
     assert q is not None
     envelope = q.get_nowait()
     assert envelope.event_type == "model_content_delta"
-    assert envelope.pool == "coder"  # resolved from the map
+    assert envelope.pool == "coder"
     assert envelope.session_id == "conv.coder"
+    assert envelope.parent_session_id == "conv.main"
 
 
 class TestAttachmentWiring:
@@ -304,8 +293,7 @@ async def test_cross_pool_same_name_subagent_transcript_partitioning() -> None:
 
     _pool_store = PoolStore(base_dir=project_dir)
     _pool_to_main_agent = {
-        s.name: _pool_store.read_pool(s.name).main.agent_name
-        for s in _pool_store.list_pools()
+        s.name: _pool_store.read_pool(s.name).main.agent_name for s in _pool_store.list_pools()
     }
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
@@ -319,9 +307,7 @@ async def test_cross_pool_same_name_subagent_transcript_partitioning() -> None:
     )
     server.set_workspace_index(store)
     server.set_pool_agent_names(["main", "orchestrator", "reviewer"])
-    server.set_agent_resolver(
-        lambda pool_name: _pool_to_main_agent.get(pool_name, pool_name)
-    )
+    server.set_agent_resolver(lambda pool_name: _pool_to_main_agent.get(pool_name, pool_name))
     pool_session_store = PoolSessionStore(data_dir / ".modex")
     server.set_pool_switch_callback(pool_session_store.set)
     server.set_pool_resolver(pool_session_store.get_pool)
@@ -378,20 +364,26 @@ async def test_cross_pool_same_name_subagent_transcript_partitioning() -> None:
             assert echoed["event"] == "user_message", echoed
 
         # The transcript MUST live under the review pool directory.
-        expected_file = data_dir / ".modex" / "sessions" / "review" / f"{uuid_prefix}.reviewer.jsonl"
+        expected_file = (
+            data_dir / ".modex" / "sessions" / "review" / f"{uuid_prefix}.reviewer.jsonl"
+        )
         assert expected_file.exists(), (
             f"reviewer transcript not found at expected path {expected_file}; "
             f"available dirs: {list((data_dir / '.modex' / 'sessions').iterdir())}"
         )
 
         # It MUST NOT have leaked into the coder pool directory.
-        wrong_coder_file = data_dir / ".modex" / "sessions" / "coder" / f"{uuid_prefix}.reviewer.jsonl"
+        wrong_coder_file = (
+            data_dir / ".modex" / "sessions" / "coder" / f"{uuid_prefix}.reviewer.jsonl"
+        )
         assert not wrong_coder_file.exists(), (
             f"reviewer transcript leaked into coder pool directory {wrong_coder_file}"
         )
 
         # It MUST NOT have leaked into the main pool directory either.
-        wrong_main_file = data_dir / ".modex" / "sessions" / "main" / f"{uuid_prefix}.reviewer.jsonl"
+        wrong_main_file = (
+            data_dir / ".modex" / "sessions" / "main" / f"{uuid_prefix}.reviewer.jsonl"
+        )
         assert not wrong_main_file.exists(), (
             f"reviewer transcript leaked into main pool directory {wrong_main_file}"
         )
@@ -403,35 +395,23 @@ async def test_cross_pool_same_name_subagent_transcript_partitioning() -> None:
 async def test_cross_pool_same_name_subagent_emitter_partitioning() -> None:
     """Emitter writes for a review-pool session must land under review/, not coder/.
 
-    Exercises the WebBotEmitter._persist() path — the emitter reads pool from
-    SessionMeta (resolved via PoolSessionStore) and passes it to
-    transcript_store.append(). Before the fix, _persist() did NOT pass pool,
-    so the store defaulted to _DEFAULT_POOL ("main") for every non-main write.
+    Exercises the WebBotEmitter._persist() path: the emitter carries its owning
+    pool into transcript_store.append() instead of consulting prefix routing.
     """
     from bot.webui.emitter import WebBotEmitter
     from bot.webui.events import SessionMeta
 
     from modex_agent.core.emitter import EmitterConfig
-    from modex_agent.core.session_id import session_id_prefix_of
 
     data_dir = Path(tempfile.mkdtemp())
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-    pool_session_store = PoolSessionStore(data_dir / ".modex")
 
     # Simulate: a review-pool session with prefix "rev_conv"
     session_prefix = "rev_conv"
     session_id = f"{session_prefix}.reviewer"
-    pool_session_store.set(session_prefix, "review")
 
-    # Wire the SessionMeta resolver the same way WebUIService.start() does
-    def _resolve_session_meta() -> SessionMeta:
-        prefix = session_id_prefix_of(session_id)
-        pool = pool_session_store.get_pool(prefix) or "main"
-        return SessionMeta(pool=pool, parent_session_id=None)
-
-    from bot.adapters.register_websocket import set_session_meta_resolver
-
-    set_session_meta_resolver(_resolve_session_meta)
+    def _no_parent_meta() -> SessionMeta:
+        return SessionMeta(parent_session_id=None)
 
     output = MagicMock()
     output.send_envelope = AsyncMock()
@@ -441,8 +421,9 @@ async def test_cross_pool_same_name_subagent_emitter_partitioning() -> None:
             output_adapter=output,
             session_id=session_id,
             config=EmitterConfig(),
+            pool="review",
             transcript_store=store,
-            session_meta_resolver=_resolve_session_meta,
+            session_meta_resolver=_no_parent_meta,
             sessions_dir_provider=lambda: WorkspacePaths(root=data_dir / ".modex").sessions_dir,
         )
 
@@ -459,9 +440,7 @@ async def test_cross_pool_same_name_subagent_emitter_partitioning() -> None:
 
     # MUST NOT be under sessions/main/ (the old default-path bug)
     main_file = data_dir / ".modex" / "sessions" / "main" / f"{session_id}.jsonl"
-    assert not main_file.exists(), (
-        f"Emitter transcript leaked into main pool directory {main_file}"
-    )
+    assert not main_file.exists(), f"Emitter transcript leaked into main pool directory {main_file}"
 
     # MUST NOT be under sessions/coder/ (the cross-pool same-name bug)
     coder_file = data_dir / ".modex" / "sessions" / "coder" / f"{session_id}.jsonl"

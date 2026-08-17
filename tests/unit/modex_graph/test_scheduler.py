@@ -39,6 +39,7 @@ from modex_graph import (
     Scheduler,
     SchedulerKind,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 # ── SchedulerKind ─────────────────────────────────────────────────────────
 
@@ -141,7 +142,7 @@ class TestLinearSchedulerExecution:
         compiled = g.compile()
         ctx = make_ctx(CounterState(count=0))
         scheduler = LinearScheduler(compiled)
-        result = await scheduler.run_async(ctx)
+        result = await scheduler.run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 3
 
     async def test_sync_run(self) -> None:
@@ -152,7 +153,7 @@ class TestLinearSchedulerExecution:
         compiled = g.compile()
         ctx = make_ctx(CounterState(count=0))
         scheduler = LinearScheduler(compiled)
-        result = scheduler.run(ctx)
+        result = scheduler.run(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 5
 
     async def test_async_node(self) -> None:
@@ -163,7 +164,7 @@ class TestLinearSchedulerExecution:
         compiled = g.compile()
         ctx = make_ctx(CounterState(count=0))
         scheduler = LinearScheduler(compiled)
-        result = await scheduler.run_async(ctx)
+        result = await scheduler.run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 8
 
     async def test_max_iterations_raises(self) -> None:
@@ -185,7 +186,7 @@ class TestLinearSchedulerExecution:
         from modex_graph import GraphRecursionError
 
         with pytest.raises(GraphRecursionError, match="max_iterations=5"):
-            await scheduler.run_async(ctx)
+            await scheduler.run_async(ctx, mode=BootstrapMode.FRESH)
 
 
 class TestLinearSchedulerTopologyEnforcement:
@@ -215,7 +216,7 @@ class TestLinearSchedulerTopologyEnforcement:
         scheduler = LinearScheduler(compiled)
 
         with pytest.raises(RoutingError, match="not in the outgoing edges"):
-            await scheduler.run_async(ctx)
+            await scheduler.run_async(ctx, mode=BootstrapMode.FRESH)
 
     async def test_allows_deliver_to_downstream_node(self) -> None:
         class GoodDeliverNode(Node[CounterState]):
@@ -238,7 +239,7 @@ class TestLinearSchedulerTopologyEnforcement:
         ctx = make_ctx(CounterState(count=0))
         scheduler = LinearScheduler(compiled)
 
-        result = await scheduler.run_async(ctx)
+        result = await scheduler.run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 3
 
 
@@ -271,7 +272,7 @@ class TestGraphEngineDelegation:
         compiled = g.compile()
         ctx = make_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        result = await engine.run_async(ctx)
+        result = await engine.run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 7
 
     def test_engine_run_delegates(self) -> None:
@@ -282,7 +283,7 @@ class TestGraphEngineDelegation:
         compiled = g.compile()
         ctx = make_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        result = engine.run(ctx)
+        result = engine.run(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 9
 
 
@@ -335,8 +336,8 @@ class TestCompileSchedulerParameter:
 
         ctx1 = make_ctx(CounterState(count=0))
         ctx2 = make_ctx(CounterState(count=0))
-        r1 = await GraphEngine(default_compiled).run_async(ctx1)
-        r2 = await GraphEngine(linear_compiled).run_async(ctx2)
+        r1 = await GraphEngine(default_compiled).run_async(ctx1, mode=BootstrapMode.FRESH)
+        r2 = await GraphEngine(linear_compiled).run_async(ctx2, mode=BootstrapMode.FRESH)
         assert r1.count == r2.count == 7
 
     async def test_compile_with_max_iterations_and_scheduler(self) -> None:
@@ -349,7 +350,7 @@ class TestCompileSchedulerParameter:
         assert compiled.scheduler == SchedulerKind.LINEAR
 
         ctx = make_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 1
 
 
@@ -359,10 +360,10 @@ class TestCompileSchedulerParameter:
 class TestGraphContextDispatch:
     def test_dispatch_works_under_linear_with_handler(self) -> None:
         """dispatch works under LINEAR when a handler is registered."""
-        calls: list[tuple[str, str, dict | None]] = []
+        calls: list[tuple[str, str]] = []
 
-        def handler(src: str, tgt: str, update: dict | None) -> None:
-            calls.append((src, tgt, update))
+        def handler(src: str, tgt: str) -> None:
+            calls.append((src, tgt))
 
         ctx = GraphContext(
             state=CounterState(),
@@ -371,9 +372,9 @@ class TestGraphContextDispatch:
             scheduler_kind=SchedulerKind.LINEAR,
             dispatch_handler=handler,
         )
-        ctx.dispatch("some_target", {"delivered": "payload"})
+        ctx.dispatch("some_target")
         assert len(calls) == 1
-        assert calls[0] == ("", "some_target", {"delivered": "payload"})
+        assert calls[0] == ("", "some_target")
 
     def test_dispatch_works_under_default_linear_with_handler(self) -> None:
         """dispatch works under default LINEAR (make_ctx provides a no-op handler)."""

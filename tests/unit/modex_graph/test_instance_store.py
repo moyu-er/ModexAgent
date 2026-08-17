@@ -91,6 +91,7 @@ class TestGraphInstanceStoreABC:
             "load",
             "load_by_status",
             "load_by_parent",
+            "update_attrs",
             "update_status",
             "delete",
             "begin_invocation",

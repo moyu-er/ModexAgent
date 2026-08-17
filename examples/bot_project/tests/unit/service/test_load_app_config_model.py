@@ -41,7 +41,7 @@ def test_load_app_config_injects_bot_model_config(tmp_path: Path) -> None:
         config_dir=config_dir,
         input_adapter=object(),
         output_adapter=object(),
-        emitter_factory=lambda sid: None,
+        emitter_factory=lambda _sid, *, pool: None,
     )
     app_cfg = _load_app_config(config_dir)
     svc._bot_model_config = _apply_bot_model_config(config_dir, app_cfg)
@@ -62,7 +62,7 @@ def test_pre_supplied_app_config_still_applies_bot_model_config(tmp_path: Path) 
         config_dir=config_dir,
         input_adapter=object(),
         output_adapter=object(),
-        emitter_factory=lambda sid: None,
+        emitter_factory=lambda _sid, *, pool: None,
         app_config=pre_loaded,
     )
     assert svc._bot_model_config is not None

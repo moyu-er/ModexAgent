@@ -49,20 +49,6 @@ class McpBackend(ABC):
             return []
         return await client.list_tools()
 
-    async def list_resources(self, server_name: str) -> list[dict[str, Any]]:
-        """List resources on the specified server."""
-        client = self._client_for(server_name)
-        if not client:
-            return []
-        return await client.list_resources()
-
-    async def list_prompts(self, server_name: str) -> list[dict[str, Any]]:
-        """List prompts on the specified server."""
-        client = self._client_for(server_name)
-        if not client:
-            return []
-        return await client.list_prompts()
-
     async def execute_tool(
         self,
         server_name: str,
@@ -75,28 +61,3 @@ class McpBackend(ABC):
         if not client:
             return {"success": False, "error": f"MCP server not connected: {server_name}"}
         return await client.call_tool(tool_name, params, timeout=timeout)
-
-    async def read_resource(
-        self,
-        server_name: str,
-        uri: str,
-        timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ) -> dict[str, Any]:
-        """Read a resource from the specified server."""
-        client = self._client_for(server_name)
-        if not client:
-            return {"success": False, "error": f"MCP server not connected: {server_name}"}
-        return await client.read_resource(uri, timeout=timeout)
-
-    async def get_prompt(
-        self,
-        server_name: str,
-        prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ) -> dict[str, Any]:
-        """Get a prompt from the specified server."""
-        client = self._client_for(server_name)
-        if not client:
-            return {"success": False, "error": f"MCP server not connected: {server_name}"}
-        return await client.get_prompt(prompt_name, arguments=arguments, timeout=timeout)

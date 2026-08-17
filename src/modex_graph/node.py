@@ -1,24 +1,14 @@
 # ruff: noqa: ANN401
 
-"""`Node[S]` ABC — async node execution with the deliver/submit API.
+"""`Node[S]` ABC — async node execution with persisted delivery routing.
 
 `S` is bound to `GraphState` — the typed Pydantic state the node reads from
 and writes to via `ctx.state`.
 
 ---
 
-Deliver/submit dual-method API:
-
-Three-layer method split:
-
-- `run` (framework-fixed): orchestrate integrate -> execute -> submit.
-- `_deliver` (framework-fixed): accumulate + persist (ABC-backed).
-- `deliver` (node-custom, overridable): actual accumulation logic (default:
-  append to pending list).
-- `_submit` (framework-fixed): after execute returns, group by `next_node`
-  and dispatch.
-- `submit` (node-custom, overridable): actual dispatch logic (default:
-  group by `next_node`, each group integrated).
+Delivery is persisted to the target store during `execute()`, staged until the
+source invocation completes, then promoted and dispatched as a scheduling wakeup.
 
 Data flow: `integrated_input` is an EXPLICIT parameter to `execute`, NOT an
 instance attribute. `run()` creates a local `integrated` variable and passes
@@ -33,13 +23,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import TypeVar
 
-from .constants import (
-    DeliverConsumptionStatus,
-    FrameworkPayloadSource,
-    GraphNode,
-    NodeTrigger,
-)
-from .exceptions import GraphBubbleUp, GraphInterrupt, RoutingError
+from .constants import GraphNode, NodeTrigger, SchedulerKind
+from .exceptions import GraphBubbleUp, RoutingError
 from .execution_context import get_execution
 from .integration import (
     DefaultInputIntegrator,
@@ -85,14 +70,6 @@ class Node[S: "GraphState"](ABC):
     # ── Deliver/submit attributes ───────────────────────────────────
     input_integrator: InputIntegrator = DefaultInputIntegrator()
 
-    # Per-execution state (reset by run). NOT concurrency-safe — a single Node
-    # instance shared across concurrent executions would race. Safety is
-    # guaranteed by the per-node serial gate: under ANY trigger mode, the
-    # scheduler never runs two invocations of the same Node object
-    # concurrently. This is a framework invariant, not a property of the
-    # attributes themselves.
-    _pending_delivers: list[tuple[Any, str | None]] | None = None
-    _submit_result: dict[str, list[Any]] = {}
     # Topology reference (per-execution, set by `run(graph=...)`). Schedulers
     # pass the CompiledGraph so `_resolve_default_target` can resolve
     # `next_node=None` via default edges / downstream / END.
@@ -136,7 +113,7 @@ class Node[S: "GraphState"](ABC):
         """Framework entry point. Store-driven lifecycle via ctx.node_state_store:
 
         begin → integrate → execute →
-        complete/cancel/suspend/crash → finalize.
+        complete/cancel/crash → finalize.
 
         Called by the scheduler (``graph=compiled``) and by direct test
         callers. The coordinator is accessed via ``ctx.coordinator``
@@ -151,44 +128,28 @@ class Node[S: "GraphState"](ABC):
 
         Lifecycle:
 
-        1. ``load_latest`` — resume check (read-only, before
-           begin). If the latest invocation is suspended with a state
-           snapshot, the snapshot is used as integrated input and delivers
-           are NOT re-consumed.
-        2. ``begin_invocation`` — create a new RUNNING invocation.
+        1. ``begin_invocation`` — create a new RUNNING invocation.
            ``parent_version`` computed internally.
-        3. Integrate (inside try — crashes are covered by crash/finalize):
-           - Resume: use ``prev.state_json`` as integrated input.
-           - Normal: collect consumable delivers, mark consumed, integrate
-             via ``input_integrator``.
-        4. Execute (single call): reset per-execution state
-           (``_pending_delivers``), call ``execute(ctx, integrated)``.
+        2. Integrate (inside try — crashes are covered by crash/finalize):
+           collect all consumable delivers, mark consumed, and integrate via
+           ``input_integrator``.
+        3. Execute (single call): call ``execute(ctx, integrated)``.
            Dead-end detection (no delivers produced) is handled by the
            schedulers — a node that delivers nothing produces no dispatches,
            so the graph terminates with ``ctx.reached_end = False`` (FAILED).
-        5. Submit (framework auto-dispatch by ``next_node`` grouping).
-        6. ``complete_invocation`` — save COMPLETED + promote delivers.
+        4. Complete the invocation, promote staged outputs, and dispatch their
+           targets as scheduling wakeups.
+        5. Promote this invocation's consumed inputs.
 
         Exception handling:
 
-        - ``GraphInterrupt``: checkpoint state via
-          ``ctx.state.checkpoint()``, call ``suspend_invocation``, re-raise.
-        - ``GraphBubbleUp`` (other cooperative-control): call
-          ``cancel_invocation``, re-raise.
+        - ``GraphBubbleUp`` cooperative-control exceptions: call
+          ``cancel_invocation``, re-raise. This includes ``GraphInterrupt``.
         - Other ``Exception``: call ``crash_invocation``, re-raise.
-        - ``finally``: ``finalize_invocation`` (safety net for orphan
-           non-suspended RUNNING).
+        - ``finally``: ``finalize_invocation`` (safety net for orphan RUNNING).
         """
         coordinator = ctx.coordinator
         store = ctx.node_state_store
-
-        # Resume check — before begin_invocation (read-only query).
-        # If the latest invocation is suspended, this is a resume from
-        # suspend — use the snapshot as integrated input base, then
-        # append any PENDING delivers that arrived after suspend
-        # (CONSUMED_PENDING are skipped — already consumed pre-suspend).
-        prev = store.load_latest(self.node_id)
-        is_resume = prev is not None and prev.suspended
 
         # Begin invocation (parent_version computed internally).
         invocation = store.begin_invocation(self.node_id)
@@ -213,31 +174,43 @@ class Node[S: "GraphState"](ABC):
             invocation_id=invocation.invocation_id,
         )
 
-        self._submit_result = {}
         self._graph_ref = graph
 
         try:
-            resume_snapshot: dict[str, Any] | None = None
-            if is_resume:
-                assert prev is not None
-                resume_snapshot = prev.state_json
-            integrated = self._integrate_upstream(
-                coordinator,
-                invocation,
-                resume_snapshot=resume_snapshot,
-            )
+            integrated = self._integrate_upstream(coordinator, invocation)
 
             # Execute (single call — schedulers detect dead-end natively
             # when no dispatches are produced).
-            self._pending_delivers = []
             await self.execute(ctx, integrated)
 
-            # Submit (framework auto-dispatch by next_node grouping).
+            store.complete_invocation(invocation)
+            affected = coordinator.promote_staged_by_source(
+                coordinator.graph_instance_id,
+                self.node_id,
+            )
             if self.name != GraphNode.END:
-                self.submit(ctx)
-
-            # Complete: save COMPLETED + promote delivers.
-            store.complete_invocation(invocation, ctx.state.checkpoint())
+                for target_node_id in affected:
+                    target = target_node_id
+                    if graph is not None:
+                        target = next(
+                            (
+                                name
+                                for name, target_node in graph.nodes.items()
+                                if target_node.node_id == target_node_id
+                            ),
+                            None,
+                        )
+                        if target is None:
+                            raise RoutingError(
+                                f"No node name found for promoted target id {target_node_id!r}"
+                            )
+                    if (
+                        ctx.scheduler_kind == SchedulerKind.PARALLEL
+                        and target == self.name
+                    ):
+                        ctx.control.notify_deliver(target)
+                    else:
+                        ctx.dispatch(target)
             coordinator.promote_delivers(self.node_id, invocation.invocation_id)
             coordinator.emit_output(
                 GraphOutputKind.NODE_COMPLETED,
@@ -247,14 +220,7 @@ class Node[S: "GraphState"](ABC):
             )
             return None
 
-        except GraphInterrupt:
-            # Checkpoint state directly, then suspend.
-            snapshot = ctx.state.checkpoint()
-            store.suspend_invocation(invocation, snapshot)
-            raise
         except GraphBubbleUp:
-            # Cancel cooperative-control exceptions. GraphInterrupt is
-            # caught above (suspend path).
             store.cancel_invocation(invocation)
             raise
         except Exception as exc:
@@ -269,6 +235,7 @@ class Node[S: "GraphState"](ABC):
             raise
         finally:
             if _owns_token:
+                assert _run_token is not None
                 reset_execution(_run_token)
             store.finalize_invocation(invocation)
 
@@ -276,25 +243,11 @@ class Node[S: "GraphState"](ABC):
         self,
         coordinator: GraphPersistenceCoordinator,
         invocation: InvocationContext,
-        *,
-        resume_snapshot: dict[str, Any] | None,
     ) -> IntegratedInput:
-        """Collect upstream delivers, mark consumed, and integrate into input.
-
-        Converged pipeline for both normal and resume paths (rule 15).
-        When ``resume_snapshot`` is provided (resume from suspend), only
-        PENDING delivers are consumed (CONSUMED_PENDING were already
-        consumed pre-suspend) and the snapshot is prepended to the
-        integrated payloads.
-        """
-        is_resume = resume_snapshot is not None
+        """Collect all consumable delivers, mark consumed, and integrate them."""
         delivers = coordinator.collect_consumable_delivers(
             self.node_id, invocation.invocation_id
         )
-        if is_resume:
-            delivers = [
-                d for d in delivers if d.status == DeliverConsumptionStatus.PENDING
-            ]
         if delivers:
             coordinator.mark_delivers_consumed(
                 self.node_id,
@@ -305,18 +258,13 @@ class Node[S: "GraphState"](ABC):
                 IntegratedPayload(
                     source_node=r.source_node_id,
                     content=r.content,
+                    status=r.status,
+                    consumed_by_invocation_id=r.consumed_by_invocation_id,
                 )
                 for r in delivers
             ]
         else:
             payloads = []
-        if is_resume:
-            payloads = [
-                IntegratedPayload(
-                    source_node=FrameworkPayloadSource.RESUME,
-                    content=resume_snapshot,
-                )
-            ] + payloads
         return self.input_integrator.integrate(payloads)
 
     def _deliver(
@@ -325,20 +273,27 @@ class Node[S: "GraphState"](ABC):
         next_node: str | None,
         ctx: GraphContext[S],
     ) -> None:
-        """Framework: accumulate a deliver in-memory.
+        """Persist one staged output in its target node's deliver store.
 
-        The ``deliver_store`` / ``graph_instance_id`` persistence
-        branch is removed — delivers are always in-memory during execute.
-        Persistence routing happens via the coordinator's ``route_deliver``
-        in the dispatch handler.
-
-        ``next_node`` resolution (default edge / downstream / END) is deferred
-        to ``_submit`` — here we store the raw ``next_node`` (``None`` or
-        ``str``).
+        When graph is unavailable the name is used as the target id; direct callers
+        must ensure ``node_id == name`` or pass the compiled graph.
         """
-        if self._pending_delivers is None:
-            self._pending_delivers = []
-        self._pending_delivers.append((content, next_node))
+        execution = get_execution()
+        invocation = execution.invocation if execution is not None else None
+        if invocation is None:
+            raise RuntimeError("deliver() requires an active node invocation")
+        targets = [next_node] if next_node is not None else self._resolve_default_target(ctx)
+        graph = self._graph_ref
+        for resolved in targets:
+            target_node_id = graph.nodes[resolved].node_id if graph is not None else resolved
+            ctx.coordinator.route_deliver(
+                target_node_id=target_node_id,
+                content=content,
+                source_node_id=self.node_id,
+                source_invocation_id=invocation.invocation_id,
+                source_node_name=self.name,
+                stage=True,
+            )
 
     def deliver(
         self,
@@ -346,25 +301,8 @@ class Node[S: "GraphState"](ABC):
         next_node: str | None,
         ctx: GraphContext[S],
     ) -> None:
-        """Node-facing API. Call during `execute()` to accumulate a deliver.
-
-        ``ctx`` is required — pass the ``ctx`` received by ``execute()``.
-        Currently accumulates to ``self._pending_delivers``; the ``ctx`` parameter
-        is reserved for future invocation-scoped accumulation.
-        """
+        """Route a staged deliver during `execute()`."""
         self._deliver(content, next_node, ctx)
-
-    def _collect_delivers(self, ctx: GraphContext[S]) -> list[tuple[Any, str | None]]:
-        """Collect all accumulated delivers for this execution (in-memory).
-
-        The ``deliver_store`` / ``graph_instance_id`` read branch
-        is removed — delivers are always read from in-memory
-        ``_pending_delivers``.
-
-        Returns:
-            A list of ``(content, next_node)`` tuples.
-        """
-        return list(self._pending_delivers or [])
 
     def _resolve_default_target(
         self,
@@ -408,59 +346,6 @@ class Node[S: "GraphState"](ABC):
             return targets
         return [GraphNode.END]
 
-    def _submit(self, ctx: GraphContext[S]) -> None:
-        """Framework: after execute returns, dispatch accumulated delivers
-        by `next_node` grouping.
-
-        Groups all accumulated delivers by `next_node`. For each group,
-        each deliver is dispatched individually via
-        `ctx.dispatch(target, state_update={"delivered": content})` so
-        downstream receives one `IntegratedPayload` per deliver.
-
-        Both `LINEAR` and `PARALLEL` schedulers register a dispatch handler,
-        so this is the single dispatch path — no `scheduler_kind` branch
-        (rule 15 convergence).
-
-        `next_node=None` entries call `_resolve_default_target(ctx)`, which
-        returns a list of targets (default edges / downstream / END).
-
-        `self._submit_result` is also set (test-observation seam — no
-        production code reads it; tests inspect it to verify dispatch
-        grouping without mocking the scheduler).
-        """
-        delivers = self._collect_delivers(ctx)
-        groups: dict[str, list[Any]] = {}
-        for content, next_node in delivers:
-            targets = [next_node] if next_node is not None else self._resolve_default_target(ctx)
-            for t in targets:
-                groups.setdefault(t, []).append(content)
-
-        exec_ctx = get_execution()
-        inv_ctx = exec_ctx.invocation if exec_ctx is not None else None
-        # _source_node is set but ignored by route_deliver_from_dispatch,
-        # which derives source_node_id from the corrected source_node_name.
-        for target, contents in groups.items():
-            for content in contents:
-                ctx.dispatch(
-                    target,
-                    state_update={
-                        "delivered": content,
-                        "_source_node": inv_ctx.node_id if inv_ctx else self.node_id,
-                        "_source_inv_id": inv_ctx.invocation_id if inv_ctx else 0,
-                    },
-                )
-
-        self._submit_result = groups
-
-    def submit(self, ctx: GraphContext[S]) -> None:
-        """Node-facing customization point. Default: delegates to `_submit`.
-
-        Override for custom dispatch logic (e.g. custom grouping, custom
-        payload shaping, conditional dispatch). The default `_submit`
-        groups by `next_node` and dispatches each group as an integrated
-        payload.
-        """
-        self._submit(ctx)
 
 
 __all__ = ["Node", "S"]

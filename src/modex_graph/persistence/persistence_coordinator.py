@@ -10,14 +10,13 @@ The coordinator holds:
   invocations (scoped to ``graph_instance_id`` at construction).
 - ``deliver_stores: dict[str, DeliverStore]`` — per-node deliver accumulation.
 
-Lifecycle methods (begin / complete / suspend / crash / cancel / finalize)
+Lifecycle methods (begin / complete / crash / cancel / finalize)
 live on ``NodeStateStore``, NOT on the coordinator. ``Node.run()`` calls
 ``ctx.node_state_store`` directly. The coordinator's role is:
 
 - **Deliver routing** — ``route_deliver``, ``collect_consumable_delivers``,
   ``mark_delivers_consumed``, ``promote_delivers``.
-- **State queries** — ``rebuild_main_state`` and ``get_graph_state`` query the
-  store internally.
+- **State queries** — ``get_graph_state`` queries the store internally.
 - **Registration** — ``register_node`` registers deliver stores.
 
 Consumption methods:
@@ -26,13 +25,7 @@ Consumption methods:
 - ``mark_delivers_consumed`` — delegate to ``deliver_store.mark_consumed``.
 - ``promote_delivers`` — promote ALL CONSUMED_PENDING for the node.
 
-State query methods:
-
-- ``rebuild_main_state`` — for each node, pick the single newest record from
-  the union of COMPLETED and suspended RUNNING, ordered by
-  ``updated_at DESC, invocation_id DESC``. Merge per-node winners in global
-  ``invocation_id`` order.
-- ``get_graph_state`` — collect metadata + each node's version history.
+``get_graph_state`` collects metadata and each node's version history.
 """
 
 from __future__ import annotations
@@ -119,6 +112,11 @@ class GraphPersistenceCoordinator:
     def node_state_store(self) -> NodeStateStore:
         """The node state store (lifecycle + version chain + CAS authority)."""
         return self._node_state_store
+
+    @property
+    def graph_instance_id(self) -> int:
+        """The graph instance ID binding all coordinator stores."""
+        return self._graph_instance_id
 
     @property
     def instance_store(self) -> GraphInstanceStore:
@@ -237,7 +235,8 @@ class GraphPersistenceCoordinator:
         source_node_id: str,
         source_invocation_id: int,
         source_node_name: str | None = None,
-    ) -> int | None:
+        stage: bool = False,
+    ) -> int:
         """Route a deliver to the target node's deliver_store.
 
         Args:
@@ -247,6 +246,8 @@ class GraphPersistenceCoordinator:
             source_invocation_id: The deliverer's invocation_id.
             source_node_name: The delivering node's name (for event emission).
                 ``None`` for external delivers (no source node).
+            stage: Whether the deliver remains invisible until its source
+                invocation completes.
 
         Returns:
             The ``deliver_id`` (Snowflake).
@@ -263,6 +264,11 @@ class GraphPersistenceCoordinator:
             source_node_id=source_node_id,
             source_invocation_id=source_invocation_id,
             content=content,
+            status=(
+                DeliverConsumptionStatus.STAGED
+                if stage
+                else DeliverConsumptionStatus.PENDING
+            ),
         )
         self.emit_output(
             GraphOutputKind.DELIVER_DISPATCHED,
@@ -271,6 +277,17 @@ class GraphPersistenceCoordinator:
             target_node_id=target_node_id,
         )
         return deliver_id
+
+    def promote_staged_by_source(
+        self, graph_instance_id: int, source_node_id: str
+    ) -> set[str]:
+        """Make a completed source node's staged outputs visible."""
+        affected_targets: set[str] = set()
+        for store in self._deliver_stores.values():
+            affected_targets.update(
+                store.promote_staged_by_source(graph_instance_id, source_node_id)
+            )
+        return affected_targets
 
     # ── Consumption methods ─────────────────────────────────────────────
 
@@ -308,11 +325,8 @@ class GraphPersistenceCoordinator:
     def promote_delivers(self, node_id: str, invocation_id: int) -> None:
         """Promote consumed delivers on invocation completion.
 
-        Promotes ALL CONSUMED_PENDING delivers for this node, not just
-        those matching ``invocation_id``. This fixes the resume scenario
-        where a prior suspended invocation's CONSUMED_PENDING delivers
-        (consumed_by=that invocation) are not promoted when the resumed
-        invocation completes.
+        Promotes all currently consumable CONSUMED_PENDING delivers for this
+        node, then promotes rows consumed by ``invocation_id``.
 
         Args:
             node_id: The node ID whose delivers to promote.
@@ -331,36 +345,6 @@ class GraphPersistenceCoordinator:
         for inv_id in consumed_pending_invocation_ids:
             store.promote_consumed(inv_id)
         store.promote_consumed(invocation_id)
-
-    # ── Recovery + state query ──────────────────────────────────────────────
-
-    def rebuild_main_state(self) -> dict[str, Any]:
-        """Rebuild ``main_state`` from the single globally-newest full snapshot.
-
-        Full snapshots are shared-state: the latest ``COMPLETED`` or
-        ``suspended RUNNING`` record already contains all prior accumulated
-        state (imperative mutations from every prior node). Return that
-        snapshot's ``state_json`` directly — no per-node merge needed.
-
-        Single query ``max(updated_at, invocation_id)`` across
-        all nodes' ``{COMPLETED, suspended RUNNING}`` records.
-        """
-        store = self._node_state_store
-        candidates: list[NodeInvocationRecord] = []
-        for node_id in store.list_nodes():
-            versions = store.query_versions(
-                node_id, {InvocationStatus.COMPLETED, InvocationStatus.RUNNING}
-            )
-            candidates.extend(
-                r
-                for r in versions
-                if r.status == InvocationStatus.COMPLETED
-                or (r.status == InvocationStatus.RUNNING and r.suspended)
-            )
-        if not candidates:
-            return {}
-        latest = max(candidates, key=lambda r: (r.updated_at, r.invocation_id))
-        return dict(latest.state_json)
 
     def get_graph_state(
         self, node_status_filter: set[InvocationStatus] | None = None

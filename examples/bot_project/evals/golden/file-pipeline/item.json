@@ -1,0 +1,36 @@
+{
+  "id": "file-pipeline",
+  "turns": [
+    {
+      "user": "Use only the file tools. Read notes/config.py, add the top-level line `VERSION = 2` after the existing content, then create notes/config.bak.py containing the complete updated file. Do not use shell commands. Report done briefly.",
+      "expected_stop": "completed"
+    }
+  ],
+  "toolset": "full",
+  "deny_tools": [
+    "bash"
+  ],
+  "world_setup": {
+    "notes/config.py": "SERVICE = {\"name\": \"demo\"}\n"
+  },
+  "world_assertions": [
+    {
+      "kind": "file_exists",
+      "path": "notes/config.bak.py"
+    },
+    {
+      "kind": "file_contains",
+      "path": "notes/config.py",
+      "content": "VERSION = 2"
+    },
+    {
+      "kind": "command_exit",
+      "command": [
+        "python",
+        "-c",
+        "import ast;ast.parse(open('notes/config.py').read())"
+      ],
+      "expected_exit": 0
+    }
+  ]
+}

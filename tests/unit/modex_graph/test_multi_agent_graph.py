@@ -17,6 +17,7 @@ from modex_graph import (
     NodeTrigger,
     SchedulerKind,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 RESEARCHER: Final = "researcher"
 ANALYZER: Final = "analyzer"
@@ -190,7 +191,7 @@ async def _run_scenario(
     )
     register_graph_nodes(ctx.coordinator, compiled)
 
-    result = await GraphEngine(compiled).run_async(ctx)
+    result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
     assert result is state
     return state, runtime
 

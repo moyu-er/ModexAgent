@@ -185,7 +185,12 @@ class GraphKnowledgeBaseTool(Tool):
         assert pattern is not None
         path = self._resolve_pattern_path(pattern)
         if not path.exists():
-            return f"File not found: {pattern}. Use action='ls' to see available files."
+            return (
+                f"The '{pattern}' knowledge file has not been created yet — "
+                f"no node has recorded {pattern} for this graph instance. "
+                f"Use action='write' with pattern='{pattern}' to create it "
+                f"and record your {pattern}."
+            )
         result = _paginate_file(path, int(kwargs.get("offset", 0)), int(kwargs.get("limit", 200)))
         if not result.startswith("Error:"):
             self._increment_read_count()
@@ -202,7 +207,16 @@ class GraphKnowledgeBaseTool(Tool):
             return f"Error: invalid write mode {mode!r}."
         path = self._resolve_pattern_path(pattern)
         if mode == "create" and path.exists():
-            return f"Error: {pattern}.md already exists. Use mode='overwrite' to replace it."
+            try:
+                existing_content = _read_file(path)[0]
+            except (OSError, UnicodeDecodeError):
+                existing_content = ""
+            if existing_content.strip():
+                return (
+                    f"The '{pattern}' knowledge file already has content. "
+                    f"Read it first with action='read' pattern='{pattern}', "
+                    f"then use action='edit' to append or modify specific sections."
+                )
 
         old, encoding, line_endings = _read_file(path) if path.exists() else ("", "utf-8", "LF")
         _write_file(path, content, encoding, line_endings)
@@ -222,7 +236,11 @@ class GraphKnowledgeBaseTool(Tool):
             return "Error: new_string is required for action 'edit'."
         path = self._resolve_pattern_path(pattern)
         if not path.exists():
-            return f"File not found: {pattern}. Use action='ls' to see available files."
+            return (
+                f"The '{pattern}' knowledge file has not been created yet. "
+                f"Use action='write' with pattern='{pattern}' to create it first, "
+                f"then use 'edit' to refine specific sections."
+            )
 
         content, encoding, line_endings = _read_file(path)
         actual = _find_actual_string(content, str(old_value))

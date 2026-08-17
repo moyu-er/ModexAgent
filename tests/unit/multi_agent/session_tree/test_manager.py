@@ -25,6 +25,9 @@ from modex_agent.multi_agent.session_tree.models import (
     SessionTreeStatus,
     TreeNodeRecord,
 )
+from modex_agent.multi_agent.session_tree.session_binding import (
+    InMemorySessionBindingStore,
+)
 from modex_agent.multi_agent.session_tree.store_node import InMemoryTreeNodeStore
 from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrackStore
 from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
@@ -722,10 +725,6 @@ class TestDeliverDedup:
 
 
 def _make_manager_with_binding() -> tuple[SessionTreeManager, InMemoryInboxServer, InMemorySessionBindingStore]:
-    from modex_agent.multi_agent.session_tree.session_binding import (
-        InMemorySessionBindingStore,
-    )
-
     server = InMemoryInboxServer()
     producer = InboxProducer(server=server)
     consumer = InboxConsumer(server=server)
@@ -854,3 +853,165 @@ class TestMaybeBindSession:
         assert binding_store.get("root.main") is not None
         await manager.on_session_evicted("root.main")
         assert binding_store.get("root.main") is None
+
+
+# ---------------------------------------------------------------------------
+# get_active_subtree_nodes
+# ---------------------------------------------------------------------------
+
+
+async def _create_node(
+    manager: SessionTreeManager,
+    *,
+    tree_id: str,
+    session_id: str,
+    parent_session_id: str | None,
+    agent_name: str = "sub",
+) -> None:
+    await manager._node_store.create(
+        TreeNodeRecord(
+            tree_id=tree_id,
+            session_id=session_id,
+            parent_session_id=parent_session_id,
+            agent_name=agent_name,
+            version=1,
+            parent_version=None,
+            status=NodeVersionStatus.COMPLETED,
+            created_at=now_ms(),
+            updated_at=now_ms(),
+        )
+    )
+
+
+class TestGetActiveSubtreeNodes:
+    async def test_get_active_subtree_nodes_filters_to_descendants(self) -> None:
+        manager, _ = _make_manager()
+        await _setup_tree(manager)
+        # Tree: root.main → childA.sub → grand.sub, root.main → childB.sub
+        for sid, parent in [
+            ("childA.sub", "root.main"),
+            ("grand.sub", "childA.sub"),
+            ("childB.sub", "root.main"),
+        ]:
+            await _create_node(
+                manager,
+                tree_id="t1",
+                session_id=sid,
+                parent_session_id=parent,
+            )
+        manager._running.add("childA.sub")
+        manager._running.add("grand.sub")
+        manager._running.add("childB.sub")
+
+        result = await manager.get_active_subtree_nodes("t1", "childA.sub")
+
+        assert set(result) == {"childA.sub", "grand.sub"}
+        assert "childB.sub" not in result
+
+    async def test_get_active_subtree_nodes_includes_session_itself(self) -> None:
+        manager, _ = _make_manager()
+        await _setup_tree(manager)
+        await _add_subagent(manager)
+        manager._running.add("root.main")
+
+        result = await manager.get_active_subtree_nodes("t1", "root.main")
+
+        assert "root.main" in result
+
+    async def test_get_active_subtree_nodes_empty_when_no_descendants_active(
+        self,
+    ) -> None:
+        manager, _ = _make_manager()
+        await _setup_tree(manager)
+        await _add_subagent(manager)
+        manager._running.add("root.main")
+
+        result = await manager.get_active_subtree_nodes("t1", "root.main")
+
+        assert result == ["root.main"]
+
+    async def test_get_active_subtree_nodes_cycle_in_parent_chain_terminates(
+        self,
+    ) -> None:
+        manager, _ = _make_manager()
+        await _setup_tree(manager)
+        for sid, parent in [("a.sub", "root.main"), ("b.sub", "a.sub"), ("a.sub", "b.sub")]:
+            await manager._node_store.create(
+                TreeNodeRecord(
+                    tree_id="t1",
+                    session_id=sid,
+                    parent_session_id=parent,
+                    agent_name="sub",
+                    version=1,
+                    parent_version=None,
+                    status=NodeVersionStatus.COMPLETED,
+                    created_at=now_ms(),
+                    updated_at=now_ms(),
+                )
+            )
+        manager._running.add("a.sub")
+        manager._running.add("b.sub")
+
+        result = await manager.get_active_subtree_nodes("t1", "a.sub")
+
+        assert set(result) == {"a.sub", "b.sub"}
+
+    async def test_get_active_subtree_nodes_excludes_consumed_track(self) -> None:
+        manager, _ = _make_manager()
+        await _setup_tree(manager)
+        await _add_subagent(manager)
+        await manager._track_store.create(
+            MessageTrack(
+                track_id="track-1",
+                tree_id="t1",
+                message_id="msg-1",
+                message_type=AgentMessageType.TASK_REQUEST.value,
+                invocation_id="inv1",
+                target_session_id="inv.sub",
+                source_session_id="root.main",
+                status=MessageTrackStatus.CONSUMED,
+                consumed_at=now_ms(),
+                dispatched_at=now_ms(),
+            )
+        )
+
+        result = await manager.get_active_subtree_nodes("t1", "root.main")
+
+        assert "inv.sub" not in result
+
+    async def test_get_active_subtree_nodes_self_absent_returns_only_active_descendants(
+        self,
+    ) -> None:
+        manager, _ = _make_manager()
+        await _setup_tree(manager)
+        await _add_subagent(manager)
+        manager._running.add("inv.sub")
+
+        result = await manager.get_active_subtree_nodes("t1", "root.main")
+
+        assert result == ["inv.sub"]
+        assert "root.main" not in result
+
+    async def test_get_active_subtree_nodes_stale_dispatched_still_counted(
+        self,
+    ) -> None:
+        manager, _ = _make_manager()
+        await _setup_tree(manager)
+        await _add_subagent(manager, status=NodeVersionStatus.COMPLETED)
+        await manager._track_store.create(
+            MessageTrack(
+                track_id="track-1",
+                tree_id="t1",
+                message_id="msg-1",
+                message_type=AgentMessageType.TASK_REQUEST.value,
+                invocation_id="inv1",
+                target_session_id="inv.sub",
+                source_session_id="root.main",
+                status=MessageTrackStatus.DISPATCHED,
+                dispatched_at=now_ms(),
+            )
+        )
+
+        result = await manager.get_active_subtree_nodes("t1", "root.main")
+
+        assert set(result) == {"inv.sub"}

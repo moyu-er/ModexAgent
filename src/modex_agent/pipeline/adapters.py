@@ -278,7 +278,7 @@ class OutputAdapter(ABC):
             metadata: 可选元数据（如 reasoning 标记等）
         """
         if not hasattr(self, "_delta_buffers"):
-            self._delta_buffers = {}
+            self._delta_buffers: dict[str, list[str]] = {}
         if session_id not in self._delta_buffers:
             self._delta_buffers[session_id] = []
         self._delta_buffers[session_id].append(delta)

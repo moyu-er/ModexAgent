@@ -127,7 +127,6 @@ class TurnCustomKey(StrEnum):
     CONSECUTIVE_ERRORS = "consecutive_errors"
     DYNAMIC_TOOL_ACTIVE = "_dynamic_tool_active"
     DYNAMIC_TOOL_DENIED = "_dynamic_tool_denied"
-    PRE_APPROVED_TOOL_IDS = "_pre_approved_tool_ids"
     APPROVAL_YOLO = "approval_yolo"
     POLICY_DENIED_TOOLS = "_policy_denied_tools"
     TOOL_USAGE = "usage"
@@ -194,9 +193,26 @@ class TurnCustomKey(StrEnum):
     # KnowledgeHook to decide whether continuation is needed.
     GRAPH_KNOWLEDGE_REQUIRE_READ = "_graph_knowledge_require_read"
     GRAPH_KNOWLEDGE_REQUIRE_WRITE = "_graph_knowledge_require_write"
+    # Whether the KB had readable content (findings.md or open_questions.md
+    # existing and non-empty) at turn start. Set by KnowledgeHook.before_turn
+    # after injecting the summary; read by KnowledgeHook.after_turn to decide
+    # whether require_read is enforceable — when the KB has no prior
+    # contributions, require_read is exempted (the agent cannot read what no
+    # node has written).
+    GRAPH_KNOWLEDGE_HAS_READABLE = "_graph_knowledge_has_readable"
     GRAPH_NODE_DESCRIPTION = "_graph_node_description"
     # Serialized graph topology (markdown) for the ### Topology subsection
     # of ## Graph Node Context in the system prompt. Set by BotAgentNode.execute
     # before execute_turn; read by GraphWorkflowProvider._fetch_content.
     # Empty string when graph_ref is None (test/no-scheduler path).
     GRAPH_TOPOLOGY_CONTEXT = "_graph_topology_context"
+    # Whether the current graph node has at least one AgentNode as a direct
+    # downstream target. Set by GraphTopologyConfigurator from
+    # GraphTurnArtifacts; read by GraphWorkflowProvider to conditionally
+    # render Producer/Relay deliver patterns.
+    GRAPH_DOWNSTREAM_HAS_AGENT = "_graph_downstream_has_agent"
+    # Whether the current graph node has __end__ as a direct downstream
+    # target. Set by GraphTopologyConfigurator from GraphTurnArtifacts;
+    # read by GraphWorkflowProvider to conditionally render the Final
+    # Reply deliver pattern.
+    GRAPH_DOWNSTREAM_HAS_END = "_graph_downstream_has_end"

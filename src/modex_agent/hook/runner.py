@@ -1,6 +1,7 @@
 """HookRunner —— Hook 调度执行器。
 
 按 HookPoint 调度所有注册的 Hook，使用 isinstance 检查替代 getattr 实现类型安全的分发。
+dispatch/dispatch_finalize 按 HookSpec.priority 稳定排序后遍历（同优先级保持注册顺序）。
 """
 
 from __future__ import annotations
@@ -209,7 +210,8 @@ _HOOK_DISPATCH: dict[HookPoint, tuple[type, Callable[..., Any]]] = {
 class HookRunner:
     """Hook 调度执行器。
 
-    按配置顺序遍历 Hook 列表，使用 isinstance 检查替代 getattr 实现类型安全的分发。
+    dispatch/dispatch_finalize 按 HookSpec.priority 稳定排序后遍历（同优先级保持注册顺序），
+    使用 isinstance 检查替代 getattr 实现类型安全的分发。
     每个 hook 带独立超时保护，异常处理策略由 HookSpec.on_error 控制。
     """
 
@@ -267,7 +269,7 @@ class HookRunner:
 
         dispatch_cls, caller = entry
 
-        for spec in self._hook_specs:
+        for spec in sorted(self._hook_specs, key=lambda s: s.priority):
             hook = spec.hook
             if not isinstance(hook, dispatch_cls):
                 continue
@@ -332,7 +334,7 @@ class HookRunner:
         finalize_content 是同步方法，在此依次链式调用。
         """
         result = content
-        for spec in self._hook_specs:
+        for spec in sorted(self._hook_specs, key=lambda s: s.priority):
             hook = spec.hook
             if not isinstance(hook, FinalizeContentHook):
                 continue

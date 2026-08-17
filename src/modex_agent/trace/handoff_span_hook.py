@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from modex_agent.hook.abc import AfterToolExecutionHook
 from modex_agent.runtime.enums import TurnCustomKey
@@ -49,7 +49,7 @@ class HandoffSpanHook(BaseTraceHook, AfterToolExecutionHook):
             tool_calls = ()
 
         dispatch_results = list(results)
-        arguments_by_call_id = {}
+        arguments_by_call_id: dict[str, dict[str, Any]] = {}
         calls_by_id = {
             tool_call.call_id: tool_call
             for tool_call in tool_calls

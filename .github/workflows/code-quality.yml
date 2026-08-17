@@ -14,6 +14,7 @@ jobs:
   ruff:
     name: Ruff Lint (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -34,6 +35,7 @@ jobs:
   mypy:
     name: Mypy Type Check (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:

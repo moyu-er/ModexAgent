@@ -26,7 +26,6 @@ class _TrackingEndNodeTurnHook(EndNodeTurnHook):
         assert state is not None
         assert state.phase == TurnPhase.COMPLETED
         assert state.result is self._result
-        assert self._node._pending_delivers == []
         self.called = True
 
 
@@ -55,4 +54,5 @@ async def test_end_dispatches_end_node_turn_before_deliver(
         ReActHookPoint.END_NODE_TURN,
         ctx,
     )
-    assert node._submit_result == {GraphNode.END: [result]}
+    delivers = ctx.coordinator.collect_consumable_delivers(GraphNode.END, 0)
+    assert [record.content for record in delivers] == [None]

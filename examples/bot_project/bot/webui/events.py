@@ -316,17 +316,13 @@ class ConversationCreatedEvent(ServerEvent):
 
 @dataclass(frozen=True)
 class SessionMeta:
-    """Business routing context for a session, resolved at send time.
-
-    ``pool`` is the authoritative pool the session's agent belongs to (from
-    the configured agent→pool map — deterministic, not inferred).
+    """Parent routing context for a session, resolved at send time.
 
     ``parent_session_id`` is the session that dispatched this one, sourced from
     the dispatch-layer runtime parent registry.  ``None`` for main-agent
     sessions or while the registry is not yet populated.
     """
 
-    pool: str = ""
     parent_session_id: str | None = None
 
 
@@ -384,7 +380,7 @@ class DeltaEnvelope:
         session_id = str(data.pop("session_id", ""))
         agent_name = str(data.pop("agent_name", ""))
         ts_raw = data.pop("timestamp", None)
-        timestamp = int(ts_raw) if isinstance(ts_raw, (int, float)) else int(time.time() * 1000)
+        timestamp = int(ts_raw) if isinstance(ts_raw, int | float) else int(time.time() * 1000)
         return cls(
             session_id=session_id,
             agent_name=agent_name,

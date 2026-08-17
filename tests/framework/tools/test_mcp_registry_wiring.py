@@ -58,12 +58,6 @@ class _StubClient(BaseMCPClient):
     async def list_tools(self) -> list[dict[str, Any]]:  # type: ignore[override]
         return list(self._tools)
 
-    async def list_resources(self) -> list[dict[str, Any]]:  # type: ignore[override]
-        return []
-
-    async def list_prompts(self) -> list[dict[str, Any]]:  # type: ignore[override]
-        return []
-
 
 def _make_connect_fn(
     tools: list[dict[str, Any]] | None = None,
@@ -190,8 +184,8 @@ async def test_load_per_agent_mcp_uses_registry_when_provided(tmp_path: Path) ->
         await load_per_agent_mcp(
             tm, ["s1"], project_dir=tmp_path, agent_name="a", registry=reg,
         )
-        # default_prefix=True → mcp_<server>_<tool>
-        assert "mcp_s1_t1" in tm.list_tools()
+        # tool name = {server}_{tool}
+        assert "s1_t1" in tm.list_tools()
     finally:
         await reg.shutdown()
 

@@ -8,16 +8,15 @@ All methods take ``node_id`` only — the ``graph_instance_id`` is implicit.
 Lifecycle (rule 15: single authority — no parallel ``NodeState`` path):
 
 - ``begin_invocation`` — INSERT a new ``RUNNING`` record (version = max + 1,
-  parent_version from ``load_latest_completed``). If a prior non-suspended
-  ``RUNNING`` record exists, it is marked ``CRASHED`` (orphan cleanup). A
-  prior suspended ``RUNNING`` is left in place (valid rebuild source).
-- ``complete_invocation`` / ``suspend_invocation`` / ``cancel_invocation`` —
-  STRICT CAS: ``UPDATE ... WHERE status='running' AND suspended=0``. If
-  rowcount=0, raise ``InvocationStateError``.
+  parent_version from ``load_latest_completed``). If a prior ``RUNNING``
+  record exists, it is marked ``CRASHED`` (orphan cleanup).
+- ``complete_invocation`` / ``cancel_invocation`` — STRICT CAS:
+  ``UPDATE ... WHERE status='running'``. If rowcount=0, raise
+  ``InvocationStateError``.
 - ``crash_invocation`` / ``finalize_invocation`` — TOLERANT: idempotent
   no-op if already terminal. ``crash`` updates ``RUNNING`` → ``CRASHED``.
-  ``finalize`` promotes orphan non-suspended ``RUNNING`` → ``CRASHED``;
-  leaves terminal and suspended records untouched.
+  ``finalize`` promotes orphan ``RUNNING`` → ``CRASHED`` and leaves terminal
+  records untouched.
 
 Terminal states: ``COMPLETED``, ``CANCELED``, ``CRASHED`` — no transition
 FROM terminal.
@@ -32,8 +31,6 @@ SQL schema (``node_states`` table):
     invocation_id     BIGINT NOT NULL,
     status            TEXT NOT NULL DEFAULT 'running'
                       CHECK (status IN ('running','completed','canceled','crashed')),
-    state_json        TEXT NOT NULL,
-    suspended         INTEGER NOT NULL DEFAULT 0,
     created_at        INTEGER NOT NULL,
     updated_at        INTEGER NOT NULL,
     UNIQUE (graph_instance_id, node_id, version)
@@ -50,7 +47,6 @@ Implementations:
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from abc import ABC, abstractmethod
 from typing import Any
@@ -70,8 +66,6 @@ _COL_VERSION = "version"
 _COL_PARENT_VERSION = "parent_version"
 _COL_STATUS = "status"
 _COL_INVOCATION_ID = "invocation_id"
-_COL_STATE_JSON = "state_json"
-_COL_SUSPENDED = "suspended"
 _COL_CREATED_AT = "created_at"
 _COL_UPDATED_AT = "updated_at"
 
@@ -79,8 +73,8 @@ _COL_UPDATED_AT = "updated_at"
 _SELECT_COLUMNS = (
     f"{_COL_NODE_STATE_ID}, {_COL_GRAPH_INSTANCE_ID}, "
     f"{_COL_NODE_ID}, {_COL_VERSION}, {_COL_PARENT_VERSION}, "
-    f"{_COL_STATUS}, {_COL_INVOCATION_ID}, {_COL_STATE_JSON}, "
-    f"{_COL_SUSPENDED}, {_COL_CREATED_AT}, {_COL_UPDATED_AT}"
+    f"{_COL_STATUS}, {_COL_INVOCATION_ID}, "
+    f"{_COL_CREATED_AT}, {_COL_UPDATED_AT}"
 )
 
 
@@ -112,9 +106,8 @@ class NodeStateStore(ABC):
     def begin_invocation(self, node_id: str) -> InvocationContext:
         """Begin a new invocation. INSERT a new RUNNING record.
 
-        If a prior non-suspended RUNNING record exists, mark it CRASHED
-        (orphan cleanup). A prior suspended RUNNING is left in place
-        (valid rebuild source). Records begin directly as RUNNING.
+        If a prior RUNNING record exists, mark it CRASHED (orphan cleanup).
+        Records begin directly as RUNNING.
 
         Returns the ``InvocationContext`` with invocation_id, version,
         and parent_version.
@@ -122,16 +115,8 @@ class NodeStateStore(ABC):
         ...
 
     @abstractmethod
-    def complete_invocation(self, invocation: InvocationContext, state: dict[str, Any]) -> None:
+    def complete_invocation(self, invocation: InvocationContext) -> None:
         """Mark an invocation COMPLETED. STRICT CAS — raises on lost race."""
-        ...
-
-    @abstractmethod
-    def suspend_invocation(self, invocation: InvocationContext, snapshot: dict[str, Any]) -> None:
-        """Suspend an invocation (GraphInterrupt path).
-
-        Status stays RUNNING, ``suspended`` set to True. STRICT CAS.
-        """
         ...
 
     @abstractmethod
@@ -146,10 +131,7 @@ class NodeStateStore(ABC):
 
     @abstractmethod
     def finalize_invocation(self, invocation: InvocationContext) -> None:
-        """Safety net: orphan non-suspended RUNNING → CRASHED. TOLERANT.
-
-        Terminal and suspended records are left untouched.
-        """
+        """Safety net: orphan RUNNING → CRASHED. TOLERANT."""
         ...
 
     # ── Query ───────────────────────────────────────────────────────────
@@ -222,10 +204,7 @@ class NullNodeStateStore(NodeStateStore):
             parent_version=None,
         )
 
-    def complete_invocation(self, invocation: InvocationContext, state: dict[str, Any]) -> None:
-        pass
-
-    def suspend_invocation(self, invocation: InvocationContext, snapshot: dict[str, Any]) -> None:
+    def complete_invocation(self, invocation: InvocationContext) -> None:
         pass
 
     def crash_invocation(self, invocation: InvocationContext) -> None:
@@ -284,10 +263,9 @@ class InMemoryNodeStateStore(NodeStateStore):
         gid = self._graph_instance_id
         records = self._records.get(node_id, [])
 
-        # Orphan cleanup: prior non-suspended RUNNING → CRASHED.
         if records:
             latest = records[-1]
-            if latest.status == InvocationStatus.RUNNING and not latest.suspended:
+            if latest.status == InvocationStatus.RUNNING:
                 ts = now_ms()
                 crashed = latest.model_copy(
                     update={"status": InvocationStatus.CRASHED, "updated_at": ts}
@@ -311,8 +289,6 @@ class InMemoryNodeStateStore(NodeStateStore):
             version=version,
             parent_version=parent_version,
             status=InvocationStatus.RUNNING,
-            state_json={},
-            suspended=False,
             created_at=ts,
             updated_at=ts,
         )
@@ -333,48 +309,21 @@ class InMemoryNodeStateStore(NodeStateStore):
                 return r
         return None
 
-    def complete_invocation(self, invocation: InvocationContext, state: dict[str, Any]) -> None:
+    def complete_invocation(self, invocation: InvocationContext) -> None:
         current = self._find_current(invocation)
         if current is None:
             raise InvocationStateError(
                 f"No record found for {invocation.node_id!r} version {invocation.version}."
             )
-        if current.status != InvocationStatus.RUNNING or current.suspended:
+        if current.status != InvocationStatus.RUNNING:
             raise InvocationStateError(
                 f"CAS failed: {invocation.node_id!r} v{invocation.version} "
-                f"is {current.status.value} (suspended={current.suspended}), "
-                f"expected non-suspended RUNNING."
+                f"is {current.status.value}, expected RUNNING."
             )
         ts = now_ms()
         updated = current.model_copy(
             update={
                 "status": InvocationStatus.COMPLETED,
-                "state_json": state,
-                "updated_at": ts,
-            }
-        )
-        records = self._records[invocation.node_id]
-        idx = records.index(current)
-        records[idx] = updated
-
-    def suspend_invocation(self, invocation: InvocationContext, snapshot: dict[str, Any]) -> None:
-        current = self._find_current(invocation)
-        if current is None:
-            raise InvocationStateError(
-                f"No record found for {invocation.node_id!r} version {invocation.version}."
-            )
-        if current.status != InvocationStatus.RUNNING or current.suspended:
-            raise InvocationStateError(
-                f"CAS failed: {invocation.node_id!r} v{invocation.version} "
-                f"is {current.status.value} (suspended={current.suspended}), "
-                f"expected non-suspended RUNNING."
-            )
-        ts = now_ms()
-        updated = current.model_copy(
-            update={
-                "status": InvocationStatus.RUNNING,
-                "state_json": snapshot,
-                "suspended": True,
                 "updated_at": ts,
             }
         )
@@ -388,11 +337,10 @@ class InMemoryNodeStateStore(NodeStateStore):
             raise InvocationStateError(
                 f"No record found for {invocation.node_id!r} version {invocation.version}."
             )
-        if current.status != InvocationStatus.RUNNING or current.suspended:
+        if current.status != InvocationStatus.RUNNING:
             raise InvocationStateError(
                 f"CAS failed: {invocation.node_id!r} v{invocation.version} "
-                f"is {current.status.value} (suspended={current.suspended}), "
-                f"expected non-suspended RUNNING."
+                f"is {current.status.value}, expected RUNNING."
             )
         ts = now_ms()
         updated = current.model_copy(
@@ -427,9 +375,6 @@ class InMemoryNodeStateStore(NodeStateStore):
         current = self._find_current(invocation)
         if current is None:
             return
-        # Suspended RUNNING — don't touch.
-        if current.status == InvocationStatus.RUNNING and current.suspended:
-            return
         # Terminal — don't touch.
         if current.status in (
             InvocationStatus.COMPLETED,
@@ -437,7 +382,6 @@ class InMemoryNodeStateStore(NodeStateStore):
             InvocationStatus.CRASHED,
         ):
             return
-        # Orphan non-suspended RUNNING → CRASHED.
         ts = now_ms()
         updated = current.model_copy(
             update={
@@ -503,9 +447,9 @@ class InMemoryNodeStateStore(NodeStateStore):
 class SqliteNodeStateStore(NodeStateStore):
     """SQLite-backed ``NodeStateStore`` with CAS semantics.
 
-    Uses ``UPDATE ... WHERE status='running' AND suspended=0`` for strict
-    transitions (complete / suspend / cancel). ``rowcount == 0`` indicates
-    a lost race → ``InvocationStateError``.
+    Uses ``UPDATE ... WHERE status='running'`` for strict transitions
+    (complete / cancel). ``rowcount == 0`` indicates a lost race →
+    ``InvocationStateError``.
 
     The store uses a single caller-owned ``sqlite3.Connection`` for its
     lifetime. The caller creates the connection (with ``check_same_thread``
@@ -521,26 +465,41 @@ class SqliteNodeStateStore(NodeStateStore):
     def _init_schema(self) -> None:
         """Create the `node_states` table + indexes if they don't exist.
 
-        Detects old-schema tables (missing ``node_id`` column) and rebuilds
-        them from scratch — SQLite ``ALTER TABLE`` cannot remove NOT NULL
-        constraints or change CHECK constraints, so a full rebuild is the
-        only correct path. Safe because there is no production data to
-        preserve.
+        Detects old-schema tables (missing ``node_id`` or containing retired
+        ``state_json`` / ``suspended`` columns) and rebuilds them because
+        SQLite ``ALTER TABLE`` cannot remove columns on all supported builds.
+        Valid lifecycle rows are preserved when the old table has the full
+        invocation identity schema.
 
         The DDL matches `001_initial.sql` table 18 (including the `status`
         CHECK constraint and the ``UNIQUE (graph_instance_id, node_id,
-        version)`` constraint). The ``json_valid(state_json)`` CHECK from
-        the migration is omitted here — JSON1 may not be compiled in on
-        all standalone builds; the migration includes it for workspace DBs
-        where JSON1 is guaranteed (same convention as
-        ``SqliteGraphSpecStore`` and ``SqliteDeliverStore``).
+        version)`` constraint).
         """
         conn = self._conn
         existing = {
             row[1] for row in conn.execute(f"PRAGMA table_info({_NODE_STATE_TABLE})").fetchall()
         }
-        if existing and _COL_NODE_ID not in existing:
-            conn.execute(f"DROP TABLE IF EXISTS {_NODE_STATE_TABLE}")
+        legacy_table: str | None = None
+        if existing:
+            if _COL_NODE_ID not in existing:
+                conn.execute(f"DROP TABLE IF EXISTS {_NODE_STATE_TABLE}")
+            elif {"state_json", "suspended"} & existing:
+                migratable_columns = {
+                    _COL_NODE_STATE_ID,
+                    _COL_GRAPH_INSTANCE_ID,
+                    _COL_NODE_ID,
+                    _COL_VERSION,
+                    _COL_PARENT_VERSION,
+                    _COL_STATUS,
+                    _COL_INVOCATION_ID,
+                    _COL_CREATED_AT,
+                    _COL_UPDATED_AT,
+                }
+                if migratable_columns <= existing:
+                    legacy_table = f"{_NODE_STATE_TABLE}_legacy"
+                    conn.execute(f"ALTER TABLE {_NODE_STATE_TABLE} RENAME TO {legacy_table}")
+                else:
+                    conn.execute(f"DROP TABLE {_NODE_STATE_TABLE}")
         conn.execute(
             f"CREATE TABLE IF NOT EXISTS {_NODE_STATE_TABLE} ("
             f"{_COL_NODE_STATE_ID} INTEGER PRIMARY KEY, "
@@ -556,13 +515,30 @@ class SqliteNodeStateStore(NodeStateStore):
             f"'{InvocationStatus.CRASHED.value}'"
             f")), "
             f"{_COL_INVOCATION_ID} BIGINT NOT NULL DEFAULT 0, "
-            f"{_COL_STATE_JSON} TEXT NOT NULL, "
-            f"{_COL_SUSPENDED} INTEGER NOT NULL DEFAULT 0, "
             f"{_COL_CREATED_AT} INTEGER NOT NULL, "
             f"{_COL_UPDATED_AT} INTEGER NOT NULL, "
             f"UNIQUE ({_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_ID}, {_COL_VERSION})"
             f")"
         )
+        if legacy_table is not None:
+            columns = ", ".join(
+                (
+                    _COL_NODE_STATE_ID,
+                    _COL_GRAPH_INSTANCE_ID,
+                    _COL_NODE_ID,
+                    _COL_VERSION,
+                    _COL_PARENT_VERSION,
+                    _COL_STATUS,
+                    _COL_INVOCATION_ID,
+                    _COL_CREATED_AT,
+                    _COL_UPDATED_AT,
+                )
+            )
+            conn.execute(
+                f"INSERT INTO {_NODE_STATE_TABLE} ({columns}) "
+                f"SELECT {columns} FROM {legacy_table}"
+            )
+            conn.execute(f"DROP TABLE {legacy_table}")
         conn.execute(
             f"CREATE INDEX IF NOT EXISTS idx_{_NODE_STATE_TABLE}_latest "
             f"ON {_NODE_STATE_TABLE} "
@@ -584,18 +560,16 @@ class SqliteNodeStateStore(NodeStateStore):
         gid = self._graph_instance_id
         conn = self._conn
 
-        # Orphan cleanup: prior non-suspended RUNNING → CRASHED (tolerant CAS).
         latest = self.load_latest(node_id)
-        if latest is not None and latest.status == InvocationStatus.RUNNING and not latest.suspended:
+        if latest is not None and latest.status == InvocationStatus.RUNNING:
             ts = now_ms()
             conn.execute(
                 f"UPDATE {_NODE_STATE_TABLE} "
-                f"SET {_COL_STATUS} = ?, {_COL_STATE_JSON} = ?, {_COL_SUSPENDED} = 0, {_COL_UPDATED_AT} = ? "
+                f"SET {_COL_STATUS} = ?, {_COL_UPDATED_AT} = ? "
                 f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_ID} = ? "
-                f"AND {_COL_VERSION} = ? AND {_COL_STATUS} = ? AND {_COL_SUSPENDED} = 0",
+                f"AND {_COL_VERSION} = ? AND {_COL_STATUS} = ?",
                 (
                     InvocationStatus.CRASHED.value,
-                    json.dumps({}),
                     ts,
                     gid, node_id, latest.version,
                     InvocationStatus.RUNNING.value,
@@ -622,9 +596,8 @@ class SqliteNodeStateStore(NodeStateStore):
             f"INSERT INTO {_NODE_STATE_TABLE} "
             f"({_COL_NODE_STATE_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_ID}, "
             f"{_COL_VERSION}, {_COL_PARENT_VERSION}, {_COL_STATUS}, "
-            f"{_COL_INVOCATION_ID}, {_COL_STATE_JSON}, {_COL_SUSPENDED}, "
-            f"{_COL_CREATED_AT}, {_COL_UPDATED_AT}) "
-            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            f"{_COL_INVOCATION_ID}, {_COL_CREATED_AT}, {_COL_UPDATED_AT}) "
+            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 node_state_id,
                 gid,
@@ -633,8 +606,6 @@ class SqliteNodeStateStore(NodeStateStore):
                 parent_version,
                 InvocationStatus.RUNNING.value,
                 invocation_id,
-                json.dumps({}),
-                0,
                 ts,
                 ts,
             ),
@@ -648,39 +619,19 @@ class SqliteNodeStateStore(NodeStateStore):
             parent_version=parent_version,
         )
 
-    def complete_invocation(self, invocation: InvocationContext, state: dict[str, Any]) -> None:
-        self._strict_update(
-            invocation,
-            status=InvocationStatus.COMPLETED,
-            state_json=state,
-            suspended=None,
-        )
-
-    def suspend_invocation(self, invocation: InvocationContext, snapshot: dict[str, Any]) -> None:
-        self._strict_update(
-            invocation,
-            status=InvocationStatus.RUNNING,
-            state_json=snapshot,
-            suspended=True,
-        )
+    def complete_invocation(self, invocation: InvocationContext) -> None:
+        self._strict_update(invocation, status=InvocationStatus.COMPLETED)
 
     def cancel_invocation(self, invocation: InvocationContext) -> None:
-        self._strict_update(
-            invocation,
-            status=InvocationStatus.CANCELED,
-            state_json=None,
-            suspended=None,
-        )
+        self._strict_update(invocation, status=InvocationStatus.CANCELED)
 
     def _strict_update(
         self,
         invocation: InvocationContext,
         *,
         status: InvocationStatus,
-        state_json: dict[str, Any] | None,
-        suspended: bool | None,
     ) -> None:
-        """STRICT CAS: UPDATE only if status='running' AND suspended=0.
+        """STRICT CAS: update only if status is RUNNING.
 
         Raises ``InvocationStateError`` if rowcount=0 (lost race or
         already terminal).
@@ -689,39 +640,28 @@ class SqliteNodeStateStore(NodeStateStore):
         conn = self._conn
         ts = now_ms()
 
-        set_clauses = [
-            f"{_COL_STATUS} = ?",
-            f"{_COL_UPDATED_AT} = ?",
-        ]
-        params: list[Any] = [status.value, ts]
-
-        if state_json is not None:
-            set_clauses.append(f"{_COL_STATE_JSON} = ?")
-            params.append(json.dumps(state_json))
-        if suspended is not None:
-            set_clauses.append(f"{_COL_SUSPENDED} = ?")
-            params.append(1 if suspended else 0)
-
-        params.extend([gid, invocation.node_id, invocation.version])
-
         cursor = conn.execute(
             f"UPDATE {_NODE_STATE_TABLE} "
-            f"SET {', '.join(set_clauses)} "
+            f"SET {_COL_STATUS} = ?, {_COL_UPDATED_AT} = ? "
             f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_ID} = ? "
-            f"AND {_COL_VERSION} = ? "
-            f"AND {_COL_STATUS} = ? AND {_COL_SUSPENDED} = 0",
-            (*params, InvocationStatus.RUNNING.value),
+            f"AND {_COL_VERSION} = ? AND {_COL_STATUS} = ?",
+            (
+                status.value,
+                ts,
+                gid,
+                invocation.node_id,
+                invocation.version,
+                InvocationStatus.RUNNING.value,
+            ),
         )
         conn.commit()
 
         if cursor.rowcount == 0:
             current = self.load_latest(invocation.node_id)
             cur_status = current.status.value if current else "missing"
-            cur_suspended = current.suspended if current else False
             raise InvocationStateError(
                 f"CAS failed: {invocation.node_id!r} v{invocation.version} "
-                f"is {cur_status} (suspended={cur_suspended}), "
-                f"expected non-suspended RUNNING."
+                f"is {cur_status}, expected RUNNING."
             )
 
     def crash_invocation(self, invocation: InvocationContext) -> None:
@@ -731,12 +671,11 @@ class SqliteNodeStateStore(NodeStateStore):
         ts = now_ms()
         conn.execute(
             f"UPDATE {_NODE_STATE_TABLE} "
-            f"SET {_COL_STATUS} = ?, {_COL_STATE_JSON} = ?, {_COL_SUSPENDED} = 0, {_COL_UPDATED_AT} = ? "
+            f"SET {_COL_STATUS} = ?, {_COL_UPDATED_AT} = ? "
             f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_ID} = ? "
             f"AND {_COL_VERSION} = ? AND {_COL_STATUS} = ?",
             (
                 InvocationStatus.CRASHED.value,
-                json.dumps({}),
                 ts,
                 gid,
                 invocation.node_id,
@@ -747,21 +686,17 @@ class SqliteNodeStateStore(NodeStateStore):
         conn.commit()
 
     def finalize_invocation(self, invocation: InvocationContext) -> None:
-        """TOLERANT: orphan non-suspended RUNNING → CRASHED.
-
-        Terminal and suspended records are left untouched.
-        """
+        """TOLERANT: orphan RUNNING → CRASHED; terminal records are unchanged."""
         gid = self._graph_instance_id
         conn = self._conn
         ts = now_ms()
         conn.execute(
             f"UPDATE {_NODE_STATE_TABLE} "
-            f"SET {_COL_STATUS} = ?, {_COL_STATE_JSON} = ?, {_COL_SUSPENDED} = 0, {_COL_UPDATED_AT} = ? "
+            f"SET {_COL_STATUS} = ?, {_COL_UPDATED_AT} = ? "
             f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_ID} = ? "
-            f"AND {_COL_VERSION} = ? AND {_COL_STATUS} = ? AND {_COL_SUSPENDED} = 0",
+            f"AND {_COL_VERSION} = ? AND {_COL_STATUS} = ?",
             (
                 InvocationStatus.CRASHED.value,
-                json.dumps({}),
                 ts,
                 gid,
                 invocation.node_id,
@@ -871,8 +806,6 @@ class SqliteNodeStateStore(NodeStateStore):
             parent_version,
             status,
             invocation_id,
-            state_json,
-            suspended,
             created_at,
             updated_at,
         ) = row
@@ -883,8 +816,6 @@ class SqliteNodeStateStore(NodeStateStore):
             version=version,
             parent_version=parent_version,
             status=InvocationStatus(status),
-            state_json=json.loads(state_json),
-            suspended=bool(suspended),
             created_at=created_at,
             updated_at=updated_at,
         )

@@ -11,7 +11,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -34,6 +33,7 @@ from modex_graph import (
     NodeRegistry,
     NullCoordinatorFactory,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 _BOT_PROJECT = Path(__file__).resolve().parents[2]
 if str(_BOT_PROJECT) not in sys.path:
@@ -719,7 +719,7 @@ async def test_p1_1_graph_routes_accept_ws_query_param(tmp_path: Path) -> None:
     """
     received_ids: list[str] = []
 
-    def resolver(ws_id: str) -> Any:
+    def resolver(ws_id: str) -> SimpleNamespace:
         received_ids.append(ws_id)
         return resources
 
@@ -758,22 +758,45 @@ async def test_p1_3_resume_evicted_instance_via_recovery_path(
     """
     import asyncio
 
+    from pydantic import BaseModel
+
     from modex_agent.orchestration import GraphOrchestrator
     from modex_graph import (
         DefaultGraphState,
         EdgeSpec,
+        GraphContext,
         GraphInstanceStatus,
         GraphSpec,
         InMemoryGraphInstanceStore,
         InMemoryGraphSpecStore,
+        IntegratedInput,
         NodeRegistry,
         NodeSpec,
         NullCoordinatorFactory,
     )
-    from modex_graph.nodes.human_input_node import HumanInputNodeFactory
+    from modex_graph.node import Node
+    from modex_graph.node_factory import NodeFactory
+
+    class _AlwaysInterruptNode(Node[DefaultGraphState]):
+        async def execute(
+            self, ctx: GraphContext[DefaultGraphState], integrated_input: IntegratedInput
+        ) -> None:
+            ctx.interrupt({"prompt": "test", "node": self.name})
+
+    class _AlwaysInterruptNodeFactory(NodeFactory):
+        def create(self, spec: NodeSpec) -> Node[DefaultGraphState]:
+            return _AlwaysInterruptNode()
+
+        def config_schema(self) -> type[BaseModel]:
+            from pydantic import BaseModel, ConfigDict
+
+            class _Schema(BaseModel):
+                model_config = ConfigDict(frozen=True, extra="forbid")
+
+            return _Schema
 
     node_registry = NodeRegistry()
-    node_registry.register("human_input", HumanInputNodeFactory())
+    node_registry.register("always_interrupt", _AlwaysInterruptNodeFactory())
     spec_store = InMemoryGraphSpecStore()
     instance_store = InMemoryGraphInstanceStore()
     orch = GraphOrchestrator(
@@ -784,8 +807,8 @@ async def test_p1_3_resume_evicted_instance_via_recovery_path(
         coordinator_factory=NullCoordinatorFactory(),
     )
     spec = GraphSpec(
-        name="human_input_graph",
-        nodes=[NodeSpec(name="entry", node_type="human_input")],
+        name="interrupting",
+        nodes=[NodeSpec(name="entry", node_type="always_interrupt")],
         edges=[
             EdgeSpec(source="__start__", target="entry"),
             EdgeSpec(source="entry", target="__end__"),
@@ -799,7 +822,7 @@ async def test_p1_3_resume_evicted_instance_via_recovery_path(
     from modex_graph.exceptions import GraphInterrupt as _GraphInterrupt
 
     with pytest.raises(_GraphInterrupt):
-        await orch.run_instance(gid)
+        await orch.run_instance(gid, mode=BootstrapMode.FRESH)
 
     meta = instance_store.load(gid)
     assert meta is not None
@@ -823,12 +846,12 @@ async def test_p1_3_resume_evicted_instance_via_recovery_path(
 
 def _save_spec_with_nodes(spec_store: InMemoryGraphSpecStore) -> int:
     """Save a spec with real functional nodes for topology/result tests."""
-    from modex_graph import NodeSpec, NodeTrigger
+    from modex_graph import NodeSpec, NodeTrigger, SchedulerKind
 
     spec = GraphSpec(
         name="topo-graph",
         state_class="default",
-        scheduler="parallel",
+        scheduler=SchedulerKind.PARALLEL,
         default_trigger=NodeTrigger.ON_ALL_PREDS,
         nodes=[
             NodeSpec(
@@ -916,6 +939,7 @@ def _make_orchestrator_with_inmemory_state() -> tuple[
     """
     from modex_graph import (
         DefaultGraphState,
+        GraphInstanceStore,
         InMemoryDeliverStoreFactory,
         InMemoryNodeStateStore,
         NodeRegistry,
@@ -931,7 +955,11 @@ def _make_orchestrator_with_inmemory_state() -> tuple[
     _state_stores: dict[int, InMemoryNodeStateStore] = {}
 
     class _InMemoryCoordinatorFactory(CoordinatorFactory):
-        def create(self, graph_instance_id, instance_store):
+        def create(
+            self,
+            graph_instance_id: int,
+            instance_store: GraphInstanceStore,
+        ) -> GraphPersistenceCoordinator:
             store = _state_stores.get(graph_instance_id)
             if store is None:
                 store = InMemoryNodeStateStore(graph_instance_id)
@@ -950,15 +978,32 @@ def _make_orchestrator_with_inmemory_state() -> tuple[
         instance_store=instance_store,
         coordinator_factory=_InMemoryCoordinatorFactory(),
         output_adapter=WebUIGraphOutputAdapter(event_store),
+        io_store=InMemoryGraphIORecordStore(),
     )
     return orchestrator, event_store, spec_store
 
 
 @pytest.mark.asyncio
 async def test_get_instance_node_result_completed(tmp_path: Path) -> None:
+    from modex_graph import GraphIORecord
+
     orch, event_store, spec_store = _make_orchestrator_with_inmemory_state()
     spec_id = _save_spec(spec_store)  # __start__ → __end__
-    gid = await orch.create_and_run(spec_id)
+    gid = await orch.create_instance(spec_id)
+    instance = orch._active_instances[gid]
+    end_id = instance.metadata.node_id_map["__end__"]
+    invocation = instance.coordinator._node_state_store.begin_invocation(end_id)
+    instance.coordinator._node_state_store.complete_invocation(invocation)
+    orch._io_store.save(
+        GraphIORecord(
+            record_id=1,
+            graph_instance_id=gid,
+            spec_id=spec_id,
+            version=1,
+            output=[GraphPayload(content="completed output")],
+            created_at=0,
+        )
+    )
     client = _make_client(orch, event_store, tmp_path)
     await client.start_server()
     try:
@@ -972,8 +1017,8 @@ async def test_get_instance_node_result_completed(tmp_path: Path) -> None:
         )
         assert end_node is not None, "expected __end__ node in response"
         assert end_node["status"] == "completed"
-        assert end_node["result"] is not None
-        assert "content" in end_node["result"]
+        assert end_node["result"] == {"content": "completed output"}
+        assert data["result"] == [{"content": "completed output"}]
     finally:
         await orch.cleanup()
         await client.close()
@@ -1000,7 +1045,7 @@ async def test_get_instance_node_result_none_for_pending(tmp_path: Path) -> None
 @pytest.mark.asyncio
 async def test_get_instance_node_result_truncation(tmp_path: Path) -> None:
     """Long result content must be truncated to 500 chars + '...' suffix."""
-    from modex_graph import InvocationStatus, NodeInvocationRecord
+    from modex_graph import GraphIORecord
 
     orch, _, spec_store = _make_orchestrator_with_inmemory_state()
     spec_id = _save_spec(spec_store)
@@ -1016,21 +1061,19 @@ async def test_get_instance_node_result_truncation(tmp_path: Path) -> None:
     end_id = metadata.node_id_map.get("__end__")
     assert end_id is not None
 
-    # Inject a completed invocation with a very long result
     long_content = "x" * 1000
-    fake_record = NodeInvocationRecord(
-        invocation_id=1,
-        graph_instance_id=gid,
-        node_id=end_id,
-        version=1,
-        parent_version=None,
-        status=InvocationStatus.COMPLETED,
-        state_json={"result": [{"content": long_content}]},
-        suspended=False,
-        created_at=0,
-        updated_at=0,
+    invocation = coordinator._node_state_store.begin_invocation(end_id)
+    coordinator._node_state_store.complete_invocation(invocation)
+    orch._io_store.save(
+        GraphIORecord(
+            record_id=1,
+            graph_instance_id=gid,
+            spec_id=spec_id,
+            version=1,
+            output=[GraphPayload(content=long_content)],
+            created_at=0,
+        )
     )
-    coordinator._node_state_store._records[end_id] = [fake_record]
 
     client = _make_client(orch, {}, tmp_path)
     await client.start_server()
@@ -1046,6 +1089,7 @@ async def test_get_instance_node_result_truncation(tmp_path: Path) -> None:
         content = end_node["result"]["content"]
         assert len(content) == 503  # 500 + "..."
         assert content.endswith("...")
+        assert data["result"] == [{"content": long_content}]
     finally:
         await client.close()
 

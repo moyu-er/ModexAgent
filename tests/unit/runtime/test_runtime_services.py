@@ -27,6 +27,10 @@ def test_runtime_services_are_not_part_of_turn_state() -> None:
     assert runtime.state.identity.turn_id == "t1"
 
 
+def test_graph_runtime_is_not_an_agent_runtime_field() -> None:
+    assert "graph_runtime" not in AgentRuntime.__dataclass_fields__
+
+
 def test_require_runtime_state_returns_expected_type() -> None:
     runtime = AgentRuntime(services=AgentRuntimeServices(), state=_make_state())
 

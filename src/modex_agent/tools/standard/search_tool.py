@@ -262,10 +262,8 @@ class SearchFilesTool(Tool):
         max_results: int,
     ) -> str:
         lines: list[str] = []
-        shown = 0
-
         current_file = ""
-        for file_path, lnum, text in entries:
+        for shown, (file_path, lnum, text) in enumerate(entries):
             if shown >= max_results:
                 break
             if file_path != current_file:
@@ -274,7 +272,6 @@ class SearchFilesTool(Tool):
                 current_file = file_path
                 lines.append(f"{file_path}:")
             lines.append(f"  {lnum:4d} | {text}")
-            shown += 1
 
         total = len(entries)
         header = f"Found {total} match{'es' if total != 1 else ''}:"

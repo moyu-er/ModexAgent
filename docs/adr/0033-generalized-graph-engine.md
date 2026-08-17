@@ -27,6 +27,28 @@ state snapshots. The authoritative description lives in
 decision sections below are updated to reflect the current contract;
 historical context is preserved.
 
+**Persistence contract refinement (2026-08-15):** The `node_states`
+schema was slimmed to lifecycle + version-chain facts only:
+`NodeInvocationRecord` and all `NodeStateStore` implementations no
+longer carry `state_json` or `suspended` columns, and
+`suspend_invocation` was removed (a `GraphInterrupt` now
+`cancel_invocation`s the current node invocation and propagates;
+recovery is a fresh re-invocation that reconsumes consumable
+PENDING/CONSUMED_PENDING delivers — phase 07 retirement). State is not
+rebuilt from a persisted snapshot; the caller initializes `ctx.state`
+and crash recovery is derived from invocation status plus the
+four-state deliver admission path. The `DeliverStore` consumption state
+machine is now four-state across all stateful stores:
+`STAGED → PENDING → CONSUMED_PENDING → CONSUMED_COMPLETED` (only
+`PENDING` and `CONSUMED_PENDING` are consumable; `NullDeliverStore` is
+a simple queue with no visibility gate). External deliver
+(`deliver_to_node`) caller retries may produce duplicate `PENDING` rows
+— the framework accepts at-least-once by design and provides no
+deduplication key (ticket 06 disposition: accepted + documented). A
+stale-`RUNNING` sweeper (`StaleInstanceSweeper`, phase 09) marks
+orphaned `RUNNING` instances `CRASHED` via `ProcessIdentity` +
+`ProcessRegistry` ownership tracking; it does not trigger recovery.
+
 ## Historical context
 
 Prior to this ADR, the graph engine was a god-module embedded in
@@ -246,13 +268,21 @@ reference and mutate it imperatively.
 class ReActTurnState(GraphState):
     current_node: ReActNode = ReActNode.START
     iteration: int = 0
-    llm_response: LLMResponse | None = None
     tool_batches: list[ToolBatchState] = Field(default_factory=list)
     approval: ApprovalTransaction | None = None
     messages: list[ChatMessage] = Field(default_factory=list)
     result: AgentResult | None = None
     resume_target: str | None = None
 ```
+
+**Deliver-ization (2026-08-15):** The `llm_response` field — formerly
+the sole inter-node hand-off between `LLMNode` and `ToolNode`/`AfterTurnNode`
+via shared state — was deleted. ReAct nodes no longer communicate through
+shared `ctx.state` fields; `agent_ctx.history` is the sole persistent
+context across nodes, `deliver()` is a routing signal only (default
+content `None`), and `ctx.state` is the per-turn lifecycle workspace.
+This resolves the "ReAct shared-state communication" debt recorded in
+ADR-0034 D7. See `src/modex_agent/agents/react/AGENTS.md` (Data Flow).
 
 **Imperative-only state access:** `ctx.state.iteration += 1` mutates
 the Pydantic field directly. There is no declarative
@@ -275,9 +305,17 @@ class GraphState(BaseModel):
 `ReActSnapshotPolicy._build_payload` (230 lines) +
 `state_from_snapshot` (~80 lines) collapsed to ~10 lines calling
 `state.checkpoint()` / `state.from_checkpoint()`. Net code reduction.
-The persistence layer stores the full snapshot in
-`node_states.state_json` on `complete_invocation` /
-`suspend_invocation`; recovery rebuilds via `model_validate()`.
+(2026-08-15: `node_states` no longer stores `state_json`; the
+full-snapshot persistence path below is the historical Phase-a
+contract. The current contract persists lifecycle + version-chain
+facts only — see the 2026-08-15 persistence refinement above and
+`distributed-persistence.md`.) The persistence layer formerly stored
+the full snapshot in `node_states.state_json` on `complete_invocation`
+/ `suspend_invocation`; recovery rebuilt via `model_validate()`.
+Phase 07 retired `suspend_invocation` and `state_json`: a
+`GraphInterrupt` now `cancel_invocation`s and propagates, and recovery
+is a fresh re-invocation with caller-initialized `ctx.state` that
+reconsumes consumable delivers.
 
 **Channels, multi-write detection, fork/merge — removed.** The
 `BaseChannel` / `LastValue` / `ReducerChannel` ABC + implementations,
@@ -298,8 +336,11 @@ open-questions sections below for traceability.
 - `ReActRuntimeStateCodec.encode_turn/decode_turn` — unchanged.
 - SQLite schema for `TurnSnapshot` — unchanged.
 - Graph-level state persistence: three stores
-  (`GraphInstanceStore` / `NodeStateStore` / `DeliverStore`) with
-  full snapshots in `node_states.state_json`. See
+  (`GraphInstanceStore` / `NodeStateStore` / `DeliverStore`).
+  `node_states` rows carry lifecycle + version-chain facts only (no
+  `state_json`, no `suspended` — retired 2026-08-15); state recovery is
+  derived from invocation status and the four-state deliver admission
+  path, not from a persisted business-state snapshot. See
   `distributed-persistence.md` for the authoritative description.
 
 ### D5 — `GraphRuntime` ABC: AOP concerns out of the node body
@@ -552,6 +593,20 @@ This avoids requiring node idempotency — a fragile constraint for nodes
 with side effects (LLM calls, tool invocations). This is ModexAgent's
 existing behavior, preserved through the migration.
 
+**Phase 07 refinement (2026-08-15):** The *mechanism* for this model
+changed. `suspend_invocation` (which persisted a `state_json` snapshot
+and left the invocation `RUNNING + suspended=True`) was retired. A
+`GraphInterrupt` now `cancel_invocation`s the current node invocation
+(terminal `CANCELED`) and propagates; the persisted `state_json` /
+`suspended` columns were removed from `node_states`. Recovery is a
+fresh re-invocation with caller-initialized `ctx.state` that reconsumes
+every consumable `PENDING` and `CONSUMED_PENDING` deliver — there is no
+resume payload and no suspended-state read-back. The *conceptual*
+guarantee (node authors write linear code; the framework reconsumes
+upstream input on recovery rather than replaying a half-run node body)
+is preserved; the *persistence* basis shifted from a checkpointed
+snapshot to the four-state deliver admission path.
+
 **Resume-target routing (D7 refinement — delivered):** The "resume
 logic is carried by graph topology" promise is delivered via a
 `resume_target` field on `GraphState` (a plain `str | None` field, not
@@ -569,21 +624,45 @@ checking `state.phase == SUSPENDED` to call
 `_resume_suspended_batch`), distinct from `resume_target` (graph-level
 routing signal consumed by the entry node).
 
-### D8 — Graph-is-a-Node (wired in Phase a, exercised in Phase c)
+### D8 — Subgraph composition = node implementation freedom (CompiledGraph is-a Node)
 
-`Graph[S]` is a subclass of `Node[S]`. Its `execute(ctx)` runs its own
-engine loop on `ctx`. This enables:
+**Current contract (2026-08-15 refinement):** `Graph[S]` is the builder;
+`Graph.compile()` returns a `CompiledGraph[S]`, which is a `Node[S]`
+subclass. The `Graph`-is-`Node` type relationship is delivered through
+the compiled form, not through `Graph` directly subclassing `Node`.
+`CompiledGraph.execute(ctx, integrated_input)` runs its own `GraphEngine`
+loop on `ctx` (sharing the parent context's `state`, `runtime`, and
+`user_data`), writes its result to a `ctx.state` field, and returns. The
+`integrated_input` is accepted to satisfy the `Node.execute` contract but
+is ignored — the subgraph manages its own input integration internally.
+
+This is the **subgraph composition = node implementation freedom**
+pattern: any node can internally build and run its own engine without
+the outer graph knowing or caring. The inner engine loop does not
+participate in the outer lifecycle — it shares `ctx` but runs its own
+scheduling. The dispatch handler is saved and restored so the inner
+scheduler does not clobber the outer scheduler's routing; invocation
+identity is handled automatically by the ContextVar-based execution
+context (token-based reset in `Node.run()` restores the parent's value).
+
+**Interrupt contract (ticket 07):** a `GraphInterrupt` raised inside
+the subgraph cancels the current (innermost) node invocation and
+propagates to the subgraph's engine, which propagates to the parent
+`CompiledGraph.execute`, which propagates to the outer graph — the
+engine never swallows `GraphBubbleUp`. There is no separate suspend
+mechanism for subgraphs; recovery is a fresh re-invocation that
+reconsumes consumable PENDING/CONSUMED_PENDING delivers (phase 07
+retirement of `suspend_invocation` / `state_json` / `suspended`).
+
+This enables:
 
 - Subgraph patterns (outer turn graph embeds inner agent graph)
 - Reusable graph fragments as nodes
 - The "graph-of-graphs" / "图套图" target
 
-Phase a wires the type relationship but no consumer uses it. Phase c
-migrates InputPipeline / Approval / OutputRenderer to graph topologies,
-exercising this capability.
-
-This is the Flow-is-a-Node composition pattern — a graph is itself a
-node, enabling zero-ceremony subgraph nesting.
+Phase a wires the type relationship; `CompiledGraph.execute` is
+exercised. Migrating InputPipeline / Approval / OutputRenderer to graph
+topologies (exercising this in non-ReAct contexts) remains future work.
 
 ### D9 — Migration: ReAct switches to the new engine as its kernel
 

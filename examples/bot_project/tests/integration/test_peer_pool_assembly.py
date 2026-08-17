@@ -130,7 +130,7 @@ def _write_pool(
     data: dict[str, Any] = {
         "max_steps": 5,
         "use_terminal": False,
-        "tool_preset": "minimal",
+        "tool_preset": "read_only",
         "main_agent_name": name,
     }
     if peers:
@@ -155,7 +155,10 @@ async def _build_and_initialize_service(
     input_adapter = WebSocketInputAdapter()
     output_adapter = _RecordingOutputAdapter()
 
-    def emitter_factory(session_id: str) -> StreamingAwareEmitter:
+    def emitter_factory(
+        session_id: str, pool: str
+    ) -> StreamingAwareEmitter:
+        assert pool
         return StreamingAwareEmitter(output_adapter, session_id)
 
     service = BotService(

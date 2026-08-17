@@ -36,7 +36,7 @@ So the facade detects the drop itself, at the operation boundary:
   *previously served tools* returning ``[]`` is a dropped session → reconnect
   once and retry. A genuinely-empty server (never had tools) does NOT trigger
   a reconnect (no prior evidence it should have tools).
-- **Call path** (``execute_tool`` / ``read_resource`` / ``get_prompt``): a
+- **Call path** (``execute_tool``): a
   non-success result whose error is empty or contains "not connected" →
   reconnect once and retry.
 
@@ -807,40 +807,12 @@ class SharedMcpBackend(McpBackend):
     ) -> dict[str, Any]:
         """Execute a tool, reconnecting once on a dropped shared connection."""
         result = await super().execute_tool(server_name, tool_name, params, timeout=timeout)
-        if not self._released and self._looks_dropped(result):
-            if await self._request_reconnect(server_name):
-                result = await super().execute_tool(
-                    server_name, tool_name, params, timeout=timeout
-                )
-        return result
-
-    async def read_resource(
-        self,
-        server_name: str,
-        uri: str,
-        timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ) -> dict[str, Any]:
-        """Read a resource, reconnecting once on a dropped shared connection."""
-        result = await super().read_resource(server_name, uri, timeout=timeout)
-        if not self._released and self._looks_dropped(result):
-            if await self._request_reconnect(server_name):
-                result = await super().read_resource(server_name, uri, timeout=timeout)
-        return result
-
-    async def get_prompt(
-        self,
-        server_name: str,
-        prompt_name: str,
-        arguments: dict[str, Any] | None = None,
-        timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ) -> dict[str, Any]:
-        """Get a prompt, reconnecting once on a dropped shared connection."""
-        result = await super().get_prompt(
-            server_name, prompt_name, arguments=arguments, timeout=timeout
-        )
-        if not self._released and self._looks_dropped(result):
-            if await self._request_reconnect(server_name):
-                result = await super().get_prompt(
-                    server_name, prompt_name, arguments=arguments, timeout=timeout
-                )
+        if (
+            not self._released
+            and self._looks_dropped(result)
+            and await self._request_reconnect(server_name)
+        ):
+            result = await super().execute_tool(
+                server_name, tool_name, params, timeout=timeout
+            )
         return result

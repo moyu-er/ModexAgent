@@ -58,11 +58,12 @@ class ChatSpanHook(BaseTraceHook, BeforeLLMHook, AfterLLMResponseHook):
         trace_id = str(trace_value)
         self._session.llm_start_times[trace_id] = time.time()
         tools = ctx.get_tool_descriptions() if ctx.tool_manager else None
+        resolved_system_prompt = await ctx.get_resolved_system_prompt()
         self._session.llm_request_attrs[trace_id] = self._prompt_capture.capture(
             request,
             self._model,
             tools=tools,
-            system_prompt=ctx.system_prompt or None,
+            system_prompt=resolved_system_prompt or None,
         )
 
     async def after_llm_response(self, ctx: AgentContext, response: LLMResponse) -> None:

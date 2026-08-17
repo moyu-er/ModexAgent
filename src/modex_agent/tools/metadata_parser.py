@@ -154,7 +154,7 @@ class DocstringParser:
     @staticmethod
     def _parse_param_docs(doc: str) -> dict[str, str]:
         """解析参数文档"""
-        param_docs = {}
+        param_docs: dict[str, str] = {}
 
         if not doc:
             return param_docs
@@ -187,7 +187,7 @@ class DocstringParser:
     @staticmethod
     def _extract_tags(doc: str) -> set[str]:
         """提取标签"""
-        tags = set()
+        tags: set[str] = set()
 
         # 查找 Tags: tag1, tag2, tag3
         match = re.search(r"[Tt]ags?\s*:\s*(.+?)(?=\n\s*\w+:|$)", doc)

@@ -50,7 +50,7 @@ def _build_assembly_context(
     retention: SessionRetentionPolicy,
     workspace_handle: WorkspaceHandle | None,
     workspace_resolver: WorkspaceResolverCell | None,
-    emitter_factory: Callable[[str], ContentEmitter] | None,
+    emitter_factory: Callable[[str], ContentEmitter[Any]] | None,
     app_config: Any | None,
     persistence: Any | None,
     mcp_registry: McpConnectionRegistry | None,

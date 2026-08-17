@@ -1,4 +1,4 @@
-"""`InterruptPolicy` ABC + `CrashPolicy` default.
+"""`InterruptPolicy` ABC — graph-level `GraphInterrupt` handling policy.
 
 When a node's `execute()` raises `GraphInterrupt` and the node does not
 catch it, the exception propagates to the graph level. The scheduler
@@ -13,21 +13,13 @@ Design:
   it to implement custom behavior (e.g. `WaitOthersPolicy` — let other
   running instances finish before pausing; `NodeOnlyPolicy` — only
   affect the interrupting node, others continue).
-- `CrashPolicy` is the default. Its observed behavior is: the graph
-  instance transitions to `crashed`, other running instances are
-  cancelled (asyncio task cancellation), and the instance waits for
-  external recovery (reload via `graph_instance_id`).
 
-`CrashPolicy.handle_interrupt` is intentionally a no-op. The actual
-crash behavior — instance cancellation and status transition — is
-handled by the scheduler's existing exception propagation path (which
-invokes the policy as part of that flow). The policy is the EXTENSION
-POINT: a non-default subclass overrides `handle_interrupt` to inject
-custom behavior (e.g. record telemetry, emit an event, or coordinate
-across instances) before the scheduler's default crash flow takes
-effect. `CrashPolicy` exists so that the default path has a concrete,
-instantiable policy object and so that subclasses have a stable base
-to inherit from.
+The policy is the EXTENSION POINT: a subclass overrides `handle_interrupt`
+to inject custom behavior (e.g. record telemetry, emit an event, or
+coordinate across instances) before the scheduler's default crash flow
+takes effect. The scheduler remains responsible for instance cancellation
+and status transition (its existing default behavior), unless the policy
+actively overrides that flow.
 """
 
 from __future__ import annotations
@@ -71,33 +63,3 @@ class InterruptPolicy(ABC):
         actively overrides that flow.
         """
         ...
-
-
-class CrashPolicy(InterruptPolicy):
-    """Default `InterruptPolicy` — crash the graph instance.
-
-    Observed behavior (delegated to the scheduler's default exception
-    propagation):
-
-    1. `GraphInterrupt` propagates to `GraphEngine` → graph instance
-       status transitions to `crashed`.
-    2. Other running instances are cancelled (asyncio task
-       cancellation — handled by the scheduler's exception propagation).
-    3. Wait for external recovery (`graph_instance_id` reload).
-    4. On recovery: re-enter the interrupted node + re-dispatch other
-       interrupted nodes.
-
-    `handle_interrupt` is a no-op: the default crash behavior is what
-    happens when the scheduler does not receive an overriding policy
-    decision. `CrashPolicy` exists as the concrete default and as the
-    stable base for business subclasses (`WaitOthersPolicy`,
-    `NodeOnlyPolicy`, etc.).
-    """
-
-    async def handle_interrupt(
-        self,
-        interrupt: GraphInterrupt,
-        graph_instance_id: int,
-    ) -> None:
-        """No-op. The scheduler handles cancellation and status."""
-        return None

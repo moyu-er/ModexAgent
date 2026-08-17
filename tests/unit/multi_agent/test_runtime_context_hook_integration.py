@@ -68,7 +68,6 @@ class FakeAgent:
         self.max_iterations = 5
 
     async def run(self, context: AgentContext, emitter: ContentEmitter) -> AgentResult:
-        # Simulate ReActAgent._call_hooks(): prefer services.hooks, fallback to extension hooks
         hook_runner = None
         if context.runtime is not None and context.runtime.services is not None:
             hook_runner = context.runtime.services.hooks

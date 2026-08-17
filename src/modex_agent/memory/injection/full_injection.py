@@ -11,7 +11,7 @@ from modex_agent.memory.core.models import (
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.injection.policy import MemoryInjectionPolicy
 from modex_agent.memory.tags import CoreMemoryTag
-from modex_agent.memory.utils import estimate_text_tokens
+from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 from modex_agent.utils.xml import xml_attr, xml_text
 
 logger = logging.getLogger(__name__)
@@ -37,8 +37,10 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         self,
         *,
         budget: MemoryBudget | None = None,
+        token_estimator: TokenEstimator | None = None,
     ) -> None:
         self._budget = budget or MemoryBudget()
+        self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
 
     async def assemble(
         self,
@@ -194,7 +196,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         kept: list[_PromptSection] = []
         running = 0
         for sec in sorted_sections:
-            tokens = estimate_text_tokens(sec.content)
+            tokens = self._token_estimator.estimate_text(sec.content)
             if running + tokens <= max_tokens:
                 kept.append(sec)
                 running += tokens
@@ -202,7 +204,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 trimmed = self._trim_section_by_paragraphs(sec, max_tokens - running)
                 if trimmed:
                     kept.append(trimmed)
-                    running += estimate_text_tokens(trimmed.content)
+                    running += self._token_estimator.estimate_text(trimmed.content)
         return kept
 
     @staticmethod

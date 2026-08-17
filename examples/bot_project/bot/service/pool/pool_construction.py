@@ -104,6 +104,7 @@ async def _register_main_agent(
         comm_kind=AgentCommKind.NORMAL,
         memory_config=assembly_deps.memory,
         roles=list(main_spec.roles),
+        role_description=main_spec.description,
     )
     instance = await factory.create_agent(
         descriptor,

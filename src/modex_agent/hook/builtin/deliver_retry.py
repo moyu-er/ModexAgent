@@ -14,6 +14,8 @@ AfterTurnHook continuation sources.  This hook:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import StopReason
@@ -22,6 +24,9 @@ from modex_agent.core.message_utils import wrap_system_reminder
 from modex_agent.core.types import MessageRole
 from modex_agent.hook.abc import AfterTurnHook
 from modex_agent.runtime.enums import TurnCustomKey
+
+if TYPE_CHECKING:
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 
 
 class DeliverRetryHook(AfterTurnHook):
@@ -32,6 +37,9 @@ class DeliverRetryHook(AfterTurnHook):
     CONTINUATION_REQUEST because it covers both normal stop and max-iteration
     exits. The old AFTER_LLM_RESPONSE timing missed max-iteration exits.
     """
+
+    def __init__(self, tree: SessionTreeManager | None = None) -> None:
+        self._tree = tree
 
     @property
     def name(self) -> str:
@@ -51,6 +59,15 @@ class DeliverRetryHook(AfterTurnHook):
         deliver_count = react_state.custom.get(TurnCustomKey.GRAPH_DELIVER_COUNT, 0)
         if deliver_count > 0:
             return
+
+        if self._tree is not None:
+            tree_id = await self._tree.tree_id_for_session(str(ctx.session))
+            if tree_id is not None:
+                active = await self._tree.get_active_subtree_nodes(
+                    tree_id, str(ctx.session)
+                )
+                if len(active) > 1:
+                    return
 
         reminder = (
             "You ended without calling the `deliver` tool. Your regular "

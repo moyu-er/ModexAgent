@@ -30,10 +30,6 @@ from .tool_dedup import ToolCallDeduplicator
 
 logger = logging.getLogger(__name__)
 
-# P0-a: 合理默认值
-_HOOK_TIMEOUT = 10.0
-
-
 class ReActEvent(AgentEvent, Enum):
     """ReActAgent 特有的事件类型
 
@@ -80,10 +76,7 @@ def _get_turn_messages(ctx: AgentContext) -> list[dict[str, Any]]:
     """Extract current-turn messages from typed state or metadata fallback."""
     state = get_react_state(ctx)
     if state is not None:
-        return [
-            md.message.to_dict() if hasattr(md.message, "to_dict") else md.message
-            for md in state.message_delta
-        ]
+        return [md.message.to_dict() for md in state.message_delta]
     return []
 
 
@@ -161,7 +154,6 @@ class ReActAgent(Agent[ReActEvent]):
     def __init__(
         self,
         provider: LLMProvider,
-        hook_timeout: float = _HOOK_TIMEOUT,
         *,
         mode: Literal["clean", "full"] = "full",
     ) -> None:
@@ -170,7 +162,6 @@ class ReActAgent(Agent[ReActEvent]):
         from modex_agent.agents.react.tool_executor import ToolExecutor
 
         self.provider = provider
-        self._hook_timeout = hook_timeout
         self.mode: Literal["clean", "full"] = mode
         self._llm_client = ReactLlmClient(provider)
         self._injection_drainer = InjectionDrainer()
@@ -220,13 +211,14 @@ class ReActAgent(Agent[ReActEvent]):
         # ADR-0033 D5 + D13 Stage 4: construct ``ReactGraphRuntime`` (AOP bridge)
         # and pass it as ``GraphContext.runtime``. ``ReactGraphRuntime`` methods
         # handle ``None`` services as no-ops, so clean mode (no services) is fine.
-        # ``runtime.graph_runtime`` is no longer set — the graph runtime lives
-        # on ``GraphContext.runtime`` for the duration of ``engine.run_async``.
+        # The graph runtime lives exclusively on ``GraphContext.runtime`` for
+        # the duration of ``engine.run_async``.
         from modex_agent.agents.react.context import ReActGraphContext
         from modex_agent.agents.react.graph import build_react_graph
         from modex_agent.agents.react.runtime import ReactGraphRuntime
         from modex_agent.agents.react.state import ReActSnapshotPolicy
         from modex_graph.engine import GraphEngine
+        from modex_graph.scheduler.bootstrap import BootstrapMode
 
         graph_runtime = ReactGraphRuntime(
             hook_runner=runtime.services.hooks,
@@ -237,7 +229,6 @@ class ReActAgent(Agent[ReActEvent]):
             turn_state_store=runtime.services.turn_store,
             emitter=emitter,
         )
-        runtime.graph_runtime = graph_runtime
 
         ctx_token = current_agent_context.set(context)
 
@@ -247,7 +238,7 @@ class ReActAgent(Agent[ReActEvent]):
         # it to a concrete AgentResult before the ``finally`` runs.
         result: AgentResult | None = AgentResult(content="", stop_reason=StopReason.ERROR)
 
-        async def actual_turn():
+        async def actual_turn() -> AgentResult:
             nonlocal result
             if runtime.hooks:
                 await runtime.hooks.dispatch(HookPoint.BEFORE_GRAPH, context)
@@ -298,7 +289,7 @@ class ReActAgent(Agent[ReActEvent]):
                 user_data=context,
                 coordinator=coordinator,
             )
-            returned_state = await engine.run_async(graph_ctx)
+            returned_state = await engine.run_async(graph_ctx, mode=BootstrapMode.FRESH)
             # ADR-0033 D9.3: the terminal ``EndNode`` writes ``state.result``;
             # ``engine.run_async`` returns the final state. Read the typed
             # ``result`` field — the old ``custom[GRAPH_RESULT]`` dual-write is
@@ -315,6 +306,7 @@ class ReActAgent(Agent[ReActEvent]):
                     context,
                     HookPayload(data={"result": result}),
                 )
+            assert result is not None
             return result
 
         try:
@@ -406,20 +398,20 @@ class ReActAgent(Agent[ReActEvent]):
                 except Exception:
                     logger.exception("FINALLY_GRAPH hook dispatch failed")
             # Clean up typed state
-            state = get_react_state(context)
-            if state is not None:
+            final_state = get_react_state(context)
+            if final_state is not None:
                 # GraphInterrupt (approval suspend) already persisted a
                 # SUSPENDED snapshot in ToolNode._suspend_for_approval.
                 # Do NOT overwrite it with a terminal snapshot here —
                 # otherwise list_active_turns(phase=SUSPENDED) returns empty
                 # and the resume path cannot find the turn.
-                if state.phase == TurnPhase.SUSPENDED:
+                if final_state.phase == TurnPhase.SUSPENDED:
                     pass
                 else:
-                    state.phase = (
+                    final_state.phase = (
                         TurnPhase.COMPLETED
-                        if state.phase not in (TurnPhase.COMPLETED, TurnPhase.FAILED)
-                        else state.phase
+                        if final_state.phase not in (TurnPhase.COMPLETED, TurnPhase.FAILED)
+                        else final_state.phase
                     )
                     if runtime is not None and runtime.services.turn_store is not None:
                         try:
@@ -427,58 +419,17 @@ class ReActAgent(Agent[ReActEvent]):
                             from modex_agent.runtime.enums import SnapshotReason
 
                             terminal_snapshot = ReActSnapshotPolicy().capture(
-                                state, SnapshotReason.TURN_INTERRUPTED
+                                final_state, SnapshotReason.TURN_INTERRUPTED
                             )
                             await runtime.services.turn_store.save_turn(terminal_snapshot)
                         except Exception:
                             logger.warning(
                                 "Failed to persist terminal turn snapshot for turn %s",
-                                state.identity.turn_id,
+                                final_state.identity.turn_id,
                                 exc_info=True,
                             )
             context.emitter = None
             current_agent_context.reset(ctx_token)
-
-    def _resolve_hook_timeout(self, context: AgentContext) -> float:
-        """从 runtime.safety 读取 hook_timeout，带 fallback。"""
-        safety = context.runtime.safety if context.runtime else None
-        if safety is not None:
-            return safety.turn.hook_timeout_seconds
-        return self._hook_timeout
-
-    async def _call_hooks(
-        self,
-        hook_point: HookPoint,
-        context: AgentContext,
-        *args: Any,
-        **kwargs: Any,
-    ) -> None:
-        """Dispatch hook via context.runtime (set by ReActAgent.run()).
-
-        Used by LLMNode and ToolNode during graph execution.
-        """
-        if context.runtime is None or context.runtime.hooks is None:
-            return
-
-        payload_data: dict[str, Any] = {}
-        method_name = hook_point.value
-        if args:
-            if method_name == "after_turn":
-                payload_data = {"result": args[0]} if args else {}
-            elif method_name == "after_llm_response":
-                payload_data = {"response": args[0]} if args else {}
-            elif method_name in ("before_tool_execution", "after_tool_execution"):
-                if method_name == "before_tool_execution":
-                    payload_data = {"tool_calls": args[0]}
-                else:
-                    payload_data = {"results": args[0]}
-
-        await context.runtime.hooks.dispatch(
-            hook_point,
-            context,
-            HookPayload(data=payload_data),
-            hook_timeout=self._resolve_hook_timeout(context),
-        )
 
     # Message construction helpers live in this package's message_builder module
     # (build_assistant_message, build_tool_message, build_interrupted_assistant_message)

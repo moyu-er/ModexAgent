@@ -22,7 +22,6 @@ class _TrackingStartNodeTurnHook(StartNodeTurnHook):
         assert state is not None
         assert state.phase == TurnPhase.RUNNING
         assert state.current_node == ReActNode.START
-        assert self._node._pending_delivers == []
         self.called = True
 
 
@@ -53,7 +52,8 @@ async def test_fresh_start_dispatches_start_node_turn(
         ReActHookPoint.START_NODE_TURN,
         ctx,
     )
-    assert node._submit_result == {ReActNode.BEFORE: [None]}
+    delivers = ctx.coordinator.collect_consumable_delivers(ReActNode.BEFORE, 0)
+    assert [record.content for record in delivers] == [None]
 
 
 async def test_resume_does_not_dispatch_start_node_turn(
@@ -72,4 +72,5 @@ async def test_resume_does_not_dispatch_start_node_turn(
 
     assert not hook.called
     ctx.runtime.dispatch_hook.assert_not_awaited()
-    assert node._submit_result == {ReActNode.TOOL: [None]}
+    delivers = ctx.coordinator.collect_consumable_delivers(ReActNode.TOOL, 0)
+    assert [record.content for record in delivers] == [None]

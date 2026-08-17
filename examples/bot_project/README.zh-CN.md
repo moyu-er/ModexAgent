@@ -537,7 +537,7 @@ config/pools/
 | `full` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅* |
 | `read_write` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | `read_only` | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | — |
-| `minimal` | ✅ | ✅ | — | ✅ | ✅ | — | — | — |
+| `read_only` | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | — |
 
 `*` 终端工具需 `use_terminal: true`。subagent 的 bash 一律走 `SubprocessTool`（无状态）。
 
@@ -548,7 +548,7 @@ subagent 模板 `config/pools/<pool>/templates/my-agent.yml`：
 ```yaml
 name: "my-agent"
 max_steps: 60
-tool_preset: read_write        # read_only / read_write / full / minimal
+tool_preset: read_write        # read_only / read_write / full
 extra_tools: []                # 可选：preset 之外再加的工具名
 system_prompt: |
   你是一个...的 Agent。
@@ -586,7 +586,8 @@ def build_discord(ctx: AdapterBuildContext):
     discord_input = DiscordInputAdapter(...)
     discord_output = DiscordOutputAdapter(discord_input)
 
-    def emitter_factory(session_id: str):
+    def emitter_factory(session_id: str, pool: str):
+        _ = pool
         return DiscordEmitter(
             output_adapter=discord_output,
             session_id=session_id,

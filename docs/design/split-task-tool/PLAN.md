@@ -2,6 +2,10 @@
 
 > Companion to `DESIGN.md`. Read that first for the full design rationale.
 > This file defines the ordered, executable steps.
+>
+> **Historical note (2026-08-14):** `tests/integration/bot_project/test_external_pool_boot.py`
+> (the pi external pool-boot suite referenced below as a verification surface) was retired —
+> pi integration is no longer in use. All references to it in this plan are historical.
 
 ## Dependency Graph
 

@@ -491,18 +491,18 @@ def _extract_litellm_usage(usage_obj: Any) -> dict[str, int]:
         "prompt_cache_hit_tokens", "prompt_cache_miss_tokens",
     ):
         val = getattr(usage_obj, attr, None)
-        if val is not None and isinstance(val, (int, float)):
+        if val is not None and isinstance(val, int | float):
             result[attr] = int(val)
 
     prompt_details = getattr(usage_obj, "prompt_tokens_details", None)
     if prompt_details is not None:
         cached = getattr(prompt_details, "cached_tokens", None)
-        if cached is not None and isinstance(cached, (int, float)):
+        if cached is not None and isinstance(cached, int | float):
             result["cache_read_input_tokens"] = int(cached)
 
     completion_details = getattr(usage_obj, "completion_tokens_details", None)
     if completion_details is not None:
         reasoning = getattr(completion_details, "reasoning_tokens", None)
-        if reasoning is not None and isinstance(reasoning, (int, float)):
+        if reasoning is not None and isinstance(reasoning, int | float):
             result["reasoning_tokens"] = int(reasoning)
     return result

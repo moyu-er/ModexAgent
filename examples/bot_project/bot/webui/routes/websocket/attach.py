@@ -117,8 +117,9 @@ async def handle_attach(
     # ── New conversation path: frontend sends uuid_prefix + pool ──
     uuid_prefix_raw = str(data.get("uuid_prefix", ""))
     pool_from_client = str(data.get("pool", ""))
+    is_new_session_attach = bool(uuid_prefix_raw and pool_from_client)
 
-    if uuid_prefix_raw and pool_from_client:
+    if is_new_session_attach:
         agent_name = (
             server._agent_resolver(pool_from_client)
             if server._agent_resolver is not None
@@ -174,24 +175,39 @@ async def handle_attach(
     # and the new watcher spawned below must run. Graph subscriptions are
     # orthogonal to the attached conversation -- switching sessions must
     # NOT clear them, so they are excluded from this cleanup.
-    await state.cleanup(server._input, include_graphs=False)
+    await state.cleanup(server._input, ws, include_graphs=False)
     state._stopped = False
 
-    server._input.register_connection(session_id, ws)
-    state.attached_sessions.append(session_id)
+    def _claim(sid: str) -> None:
+        """Register *sid* for this connection (once) and start its forwarder."""
+        if sid in state.attached_sessions:
+            return
+        q = server._input.register_connection(sid, ws)
+        state.attached_sessions.append(sid)
+        state.forward_tasks.append(asyncio.create_task(forward_deltas(sid, ws, q)))
+
+    _claim(session_id)
 
     # PoolRouter's session store is the single source of truth for routing.
     # pool_from_client is the user's explicit choice from the UI dropdown;
     # use it directly as the pool name without going through agent_pool_map
     # (which may not yet be populated in every edge case).
     pool_name = server._resolve_pool_for_request(pool_from_client or None, uuid_prefix)
-    if server._pool_switch_callback is not None:
-        await asyncio.to_thread(server._pool_switch_callback, session_prefix, pool_name)
-    # Failsafe: if the callback is not wired (edge case during early
-    # startup or test setups), write directly through the input context's
-    # pool_session_store so the PoolRouter can still read the mapping.
-    elif server._input_ctx is not None and server._input_ctx.pool_session_store is not None:
-        server._input_ctx.pool_session_store.set(session_prefix, pool_name)
+    routed_pool = server._resolve_pool_for_request(None, session_prefix)
+    routed_main_agent = (
+        server._agent_resolver(routed_pool)
+        if server._agent_resolver is not None
+        else routed_pool
+    )
+    is_routed_main_session = session_id == f"{session_prefix}.{routed_main_agent}"
+    if is_new_session_attach or is_routed_main_session:
+        if server._pool_switch_callback is not None:
+            await asyncio.to_thread(server._pool_switch_callback, session_prefix, pool_name)
+        # Failsafe: if the callback is not wired (edge case during early
+        # startup or test setups), write directly through the input context's
+        # pool_session_store so the PoolRouter can still read the mapping.
+        elif server._input_ctx is not None and server._input_ctx.pool_session_store is not None:
+            server._input_ctx.pool_session_store.set(session_prefix, pool_name)
 
     # Proactively register ALL pool agent sessions so deltas from any
     # pool's agent are forwarded to this WebSocket client.
@@ -200,12 +216,8 @@ async def handle_attach(
     # match the transcript/delta-queue keys -- do NOT re-encode.
     for agent_name in server._pool_agent_names:
         if agent_name == _DEFAULT_AGENT_NAME:
-            continue  # already registered above
-        pool_sid = f"{session_prefix}.{agent_name}"
-        if server._input.get_delta_queue(pool_sid) is None:
-            server._input.register_connection(pool_sid, ws)
-            state.attached_sessions.append(pool_sid)
-            state.forward_tasks.append(asyncio.create_task(forward_deltas(server, pool_sid, ws)))
+            continue  # already claimed above
+        _claim(f"{session_prefix}.{agent_name}")
 
     # Also register subagent sessions found in transcript (for history).
     # These are full session ids (``{conv}.{agent}.{invocation_id}``); each
@@ -228,10 +240,7 @@ async def handle_attach(
         )
         if is_main_agent_session:
             continue
-        if server._input.get_delta_queue(sub_sid) is None:
-            server._input.register_connection(sub_sid, ws)
-            state.attached_sessions.append(sub_sid)
-            state.forward_tasks.append(asyncio.create_task(forward_deltas(server, sub_sid, ws)))
+        _claim(sub_sid)
 
     # Also register subagent sessions from relation store -- these may have
     # been dispatched but not yet written to transcript.
@@ -239,20 +248,12 @@ async def handle_attach(
     if attach_store is not None:
         for parent_sid in list(state.attached_sessions):
             for child_session in await attach_store.get_children(parent_sid):
-                child_sid = str(child_session)
-                if server._input.get_delta_queue(child_sid) is None:
-                    server._input.register_connection(child_sid, ws)
-                    state.attached_sessions.append(child_sid)
-                    state.forward_tasks.append(
-                        asyncio.create_task(forward_deltas(server, child_sid, ws))
-                    )
+                _claim(str(child_session))
 
     # Watch for dynamically-created subagent delta queues (created by
     # send_envelope auto-create).  When a new queue appears for a
     # session_id not yet forwarded, start a forward_deltas task.
     state.forward_tasks.append(asyncio.create_task(watch_new_queues(server, ws, state)))
-
-    state.forward_tasks.append(asyncio.create_task(forward_deltas(server, session_id, ws)))
 
     att_agent = await server._resolve_agent(session_id, index_dir=attach_index_dir)
     att_pool = server._resolve_pool_for_request(pool_name or None, uuid_prefix)

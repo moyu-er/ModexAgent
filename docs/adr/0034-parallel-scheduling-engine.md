@@ -214,7 +214,9 @@ shared graph state — there is no separate payload-to-state merge.
 
 Shared state mutations happen via imperative `ctx.state.x = y` inside
 `execute()`. The full snapshot is persisted on `complete_invocation`
-(`ctx.state.checkpoint()` → `node_states.state_json`). There is no
+(`ctx.state.checkpoint()` → `node_states.state_json` — historical;
+phase 07 retired `state_json`, `complete_invocation` now writes lifecycle
+facts only). There is no
 channel-level merge, no `LastValue` / `ReducerChannel` fold, no
 `InvalidUpdateError`.
 
@@ -283,11 +285,18 @@ removed (execute is async void), channels were removed (state is a
 plain `BaseModel`), and the merge step was replaced by direct shared
 mutation + full-snapshot persistence on `complete_invocation`.
 
-**Known debt — ReAct shared-state communication:** ReAct's LLM/TOOL
-nodes communicate via shared `ReActTurnState` fields rather than
-deliver → IntegratedInput. This is known debt — ReAct uses
-`LinearScheduler` (sequential, no concurrency risk). A future
-deliver-based rewrite is deferred.
+**Resolved (2026-08-15) — ReAct deliver-ization:** The shared-state
+hand-off debt is eliminated. `ReActTurnState.llm_response` (the sole
+inter-node hand-off field) was deleted; the six ReAct nodes now source
+data from `agent_ctx.history` (tool calls), `integrated_input.payloads`
+(error descriptors), or `state.message_delta` (final answer content).
+History is the sole persistent context across nodes; `deliver()` is a
+routing signal only (default content `None`); `ctx.state` is the
+per-turn lifecycle workspace, not an inter-node data channel. ReAct
+still uses `LinearScheduler` (sequential), so the concurrency argument
+for shared state is moot — but the data-flow contract is now uniform
+with the graph engine's deliver/IntegratedInput model. See
+`src/modex_agent/agents/react/AGENTS.md` (Data Flow).
 
 ### D8 — State merge semantics (removed; shared state + full snapshots)
 
@@ -300,13 +309,20 @@ its own key. The full-snapshot persistence path is unchanged —
 `model_dump()`. The historical shared-state model is preserved below
 for traceability.
 
-**Current contract (2026-08-05 refinement):** There is no merge step.
+**Current contract (2026-08-05 refinement, superseded by phase 07 — see below):** There is no merge step.
 The graph has one **main state** (`ctx.state`), shared across all
-instances. Instances mutate it directly. Persistence is via full
-snapshots: `complete_invocation` writes
-`ctx.state.checkpoint()` (= `model_dump(mode="json")`) to
-`node_states.state_json`; `suspend_invocation` does the same.
-Recovery rebuilds via `model_validate(rebuilt_main_state)`.
+instances. Instances mutate it directly. (Historical 2026-08-05 path:
+persistence was via full snapshots — `complete_invocation` wrote
+`ctx.state.checkpoint()` to `node_states.state_json`; `suspend_invocation`
+did the same; recovery rebuilt via `model_validate(rebuilt_main_state)`.)
+
+**Phase 07 refinement (2026-08-15):** `node_states` no longer stores
+`state_json` and `suspend_invocation` was removed. State is NOT restored
+from the store — the caller initializes `ctx.state`, and recovery is a
+fresh re-invocation that reconsumes consumable PENDING/CONSUMED_PENDING
+delivers (derived from invocation status + four-state deliver admission,
+not a persisted snapshot). See ADR-0033 persistence contract
+(2026-08-15 refinement) and `distributed-persistence.md`.
 
 There is no `WriteConflictDetector`, no `GenerationWriteTracker`, no
 `InvalidUpdateError`. Concurrent writes to the same field are
@@ -426,9 +442,10 @@ rebuilt from PENDING delivers on recovery.
   running tasks are cancelled. Same as Phase a — the engine never
   swallows `GraphBubbleUp`.
 - **`InvocationStateError` (CAS failure)**: raised by strict lifecycle
-  methods (`complete_invocation` / `suspend_invocation` /
-  `cancel_invocation`) when the `node_states` row is already terminal
-  or suspended. Propagates as above. Since lifecycle calls are
+  methods (`complete_invocation` / `cancel_invocation`) when the
+  `node_states` row is already terminal. (`suspend_invocation` was
+  removed in phase 07 — `GraphInterrupt` now `cancel_invocation`s.)
+  Propagates as above. Since lifecycle calls are
   synchronous (no `await`), the error is raised atomically. See
   `distributed-persistence.md` §4.5 for CAS semantics.
 
@@ -488,8 +505,8 @@ the framework decides everything else.
   - No → stays in pending queue.
 
 **Event 3 — instance completes:**
-- `Node.run`'s `complete_invocation` persists the full state snapshot
-  to `node_states.state_json` (synchronous, no `await`).
+- `Node.run`'s `complete_invocation` persists the lifecycle facts to
+  `node_states` (synchronous, no `await`; no `state_json` — phase 07).
 - `submit` has already dispatched accumulated delivers (events 1 or 2)
   inside `Node.run`, before `complete_invocation`.
 - Drain the per-node `ON_RECEIVE` serial-gate queue (D3) — fire the
@@ -525,6 +542,17 @@ was dropped — without forked state, there are no concurrent writers
 to the same field to detect.
 
 ### D19 — Recovery (three-store, deliver scan)
+
+**Phase 07+08 supersession (2026-08-15):** The `load_for_recovery()` /
+`RecoveryContext` / `rebuilt_main_state` API described below was removed.
+Recovery now lives in `bootstrap(ctx, graph, *, mode=BootstrapMode.RECOVERY)`
+(`scheduler/bootstrap.py`): auto-promotes STAGED + CONSUMED_PENDING
+delivers before seed derivation, derives seeds from CRASHED/orphan-RUNNING
+invocations + PENDING delivers, and returns a seed node-name list. State is
+NOT restored (caller initializes `ctx.state`); the empty-seed fallback
+returns `[entry_node]`. See `src/modex_graph/AGENTS.md` (Scheduling
+Convergence) and `distributed-persistence.md` §10. The detailed flow below
+is preserved as the historical 2026-08-05 contract for traceability.
 
 **Current contract (2026-08-05 refinement):** There is no
 `CheckpointStore` ABC, no `CheckpointData`, no async checkpoint after

@@ -52,6 +52,8 @@ from modex_agent.control.graph_control import (
 )
 from modex_agent.control.graph_recovery import GraphRecoveryService
 from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
+from modex_agent.runtime.constants import EXECUTOR_PROCESS_ID_KEY
+from modex_agent.runtime.process_identity import ProcessIdentity
 from modex_graph import (
     CoordinatorFactory,
     GraphContext,
@@ -61,7 +63,6 @@ from modex_graph import (
     GraphInstanceStatus,
     GraphInstanceStore,
     GraphInterrupt,
-    GraphInvocationContext,
     GraphIORecord,
     GraphIORecordStore,
     GraphMetadata,
@@ -82,6 +83,7 @@ from modex_graph import (
     default_id_generator,
 )
 from modex_graph.persistence._time import now_ms
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +146,7 @@ class GraphOrchestrator:
         coordinator_factory: CoordinatorFactory = _NULL_COORDINATOR_FACTORY,
         output_adapter: GraphOutputAdapter | None = None,
         io_store: GraphIORecordStore = _NULL_IO_STORE,
+        process_identity: ProcessIdentity | None = None,
     ) -> None:
         """Initialize the orchestrator with the required registries + stores.
 
@@ -168,6 +171,13 @@ class GraphOrchestrator:
                 ``NullGraphIORecordStore`` (no-op); business layers substitute
                 an ``InMemoryGraphIORecordStore`` or
                 ``SqliteGraphIORecordStore`` for I/O tracking.
+            process_identity: optional process identity used for graph
+                instance ownership. When injected, the orchestrator writes
+                ``executor_process_id`` into ``instance.attrs`` on
+                ``begin_invocation`` and the recovery path so a sweeper can
+                detect stale-RUNNING instances whose executor process has
+                died. ``None`` (default) disables tracking — backwards
+                compatible with callers that do not inject a identity.
         """
         self._node_registry = node_registry
         self._state_classes = state_classes
@@ -176,6 +186,7 @@ class GraphOrchestrator:
         self._coordinator_factory = coordinator_factory
         self._output_adapter = output_adapter
         self._io_store = io_store
+        self._process_identity = process_identity
         self._compiler = GraphSpecCompiler(node_registry, state_classes)
         self._runtime = GraphRuntime()
         self._active_instances: dict[int, GraphInstance] = {}
@@ -258,12 +269,16 @@ class GraphOrchestrator:
         return graph_instance_id
 
     async def run_instance(
-        self, graph_instance_id: int, *, user_input: GraphPayload | None = None
+        self,
+        graph_instance_id: int,
+        *,
+        user_input: GraphPayload | None = None,
+        mode: BootstrapMode,
     ) -> None:
         """Execute a graph instance with version-chain lifecycle.
 
-        Loads latest metadata from store, resumes a paused version or begins
-        a new one, rebuilds coordinator + compiled graph, runs the engine,
+        Loads latest metadata from store, begins a new invocation version,
+        rebuilds coordinator + compiled graph, runs the engine,
         and finalizes via invocation methods (complete/suspend/crash).
 
         Raises:
@@ -287,21 +302,22 @@ class GraphOrchestrator:
         if user_input is None and existing is not None:
             user_input = existing.user_input
 
-        if latest.status == GraphInstanceStatus.PAUSED:
-            invocation = GraphInvocationContext(graph_instance_id=gid, version=latest.version)
-        else:
-            invocation = self._instance_store.begin_invocation(gid)
-            self._io_store.save(
-                GraphIORecord(
-                    record_id=default_id_generator().generate(),
-                    graph_instance_id=gid,
-                    spec_id=latest.spec_id,
-                    version=invocation.version,
-                    user_input=user_input,
-                    output=None,
-                    created_at=now_ms(),
-                )
+        invocation = self._instance_store.begin_invocation(gid)
+        if self._process_identity is not None:
+            self._instance_store.update_attrs(
+                gid, {EXECUTOR_PROCESS_ID_KEY: self._process_identity.process_id}
             )
+        self._io_store.save(
+            GraphIORecord(
+                record_id=default_id_generator().generate(),
+                graph_instance_id=gid,
+                spec_id=latest.spec_id,
+                version=invocation.version,
+                user_input=user_input,
+                output=None,
+                created_at=now_ms(),
+            )
+        )
 
         if gid in self._active_instances:
             self.unregister_instance(gid)
@@ -342,7 +358,7 @@ class GraphOrchestrator:
             controller = LiveGraphEngineController(gid, ctx.control)
             self._control_service.register_engine(controller)
 
-            final_state = await GraphEngine(compiled).run_async(ctx)
+            final_state = await GraphEngine(compiled).run_async(ctx, mode=mode)
             status = (
                 GraphInstanceStatus.COMPLETED
                 if ctx.reached_end
@@ -439,7 +455,7 @@ class GraphOrchestrator:
                 f"can be re-invoked."
             )
         task = asyncio.create_task(
-            self.run_instance(graph_instance_id, user_input=user_input)
+            self.run_instance(graph_instance_id, user_input=user_input, mode=BootstrapMode.FRESH)
         )
         self._run_tasks.add(task)
         task.add_done_callback(self._run_tasks.discard)
@@ -484,7 +500,7 @@ class GraphOrchestrator:
         ``_run_tasks``.
         """
         task = asyncio.create_task(
-            self.run_instance(graph_instance_id, user_input=user_input)
+            self.run_instance(graph_instance_id, user_input=user_input, mode=BootstrapMode.FRESH)
         )
         self._run_tasks.add(task)
         task.add_done_callback(self._run_tasks.discard)
@@ -710,7 +726,7 @@ class GraphOrchestrator:
             instance.coordinator.register_node(node.node_id)
         instance.compiled = compiled
         self._active_instances[gid] = instance
-        await self.run_instance(gid)
+        await self.run_instance(gid, mode=BootstrapMode.RECOVERY)
 
     # ── Internal: coordinator lookup ────────────────────────────
 

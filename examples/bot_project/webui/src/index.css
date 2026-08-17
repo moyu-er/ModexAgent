@@ -114,20 +114,39 @@
   --color-session-hover: color-mix(in oklab, var(--color-brand) 6%, var(--color-canvas-sidebar));
   --color-session-active: color-mix(in oklab, var(--color-brand) 10%, var(--color-canvas-sidebar));
 
-  /* ── Graph visualization semantic tokens (graph PRD §7.1/§7.2) ──────────
-     All values derive from existing tokens — no new colors introduced.
-     Theme-invariant aliases: they reference --color-* tokens that flip under
-     .dark, so both blocks carry the same declarations. */
+  /* ── Graph visualization semantic tokens (graph PRD §7.1/§7.2, §6 Rev 4) ─
+     Rev 4 (dot-only status): the status dot IS the status channel — the node
+     body never changes color with status. Nodes read against the canvas via
+     border-strong + a soft drop-shadow (edges are softened so nodes win the
+     hierarchy). canceled gets its own violet hue so all six status dots are
+     mutually distinct at 10px. */
   --color-graph-node-fill: var(--color-canvas-elevated);
-  --color-graph-dot-pending: var(--color-mute);
-  --color-graph-dot-canceled: color-mix(in srgb, var(--color-mute) 45%, transparent);
-  --color-graph-node-fill-done: color-mix(in srgb, var(--color-brand) 18%, transparent); /* completed 双通道编码: 底色 tint (18% brand) */
-  --color-graph-node-border: var(--color-hairline);
+
+  /* graph-status tokens (PRD §6.2 Rev 4) — six MUTUALLY DISTINCT hues for
+     the status dot / badge / mini topology. completed is an independent
+     green (~40° off the teal brand); canceled is violet (was mute-45% —
+     indistinguishable from pending). Global --color-success / --color-warning
+     stay untouched. */
+  --color-graph-status-pending: var(--color-mute);
+  --color-graph-status-running: var(--color-brand);
+  --color-graph-status-completed: #059669;
+  --color-graph-status-crashed: var(--color-danger);
+  --color-graph-status-suspended: var(--color-warning);
+  --color-graph-status-canceled: #6D5AD0;
+  --color-graph-node-border: var(--color-border-strong);
   --color-graph-node-border-active: var(--color-brand);
-  --color-graph-edge: var(--color-border-strong);
-  --color-graph-edge-active: color-mix(in srgb, var(--color-brand) 60%, transparent);
-  --color-graph-arrow: var(--color-border-strong);
-  --color-graph-arrow-active: color-mix(in srgb, var(--color-brand) 60%, transparent);
+  /* Edges recede below node borders (Rev 4 hierarchy flip: nodes > edges). */
+  --color-graph-edge: color-mix(in srgb, var(--color-border-strong) 70%, transparent);
+  --color-graph-edge-active: color-mix(in srgb, var(--color-brand) 70%, transparent);
+  --color-graph-arrow: color-mix(in srgb, var(--color-border-strong) 70%, transparent);
+  --color-graph-arrow-active: color-mix(in srgb, var(--color-brand) 70%, transparent);
+  /* START/END ghost terminals (Rev 4): quiet pill — brand-tinted fill,
+     brand border, brand text. Replaces the loud solid-brand rect. */
+  --color-graph-endpoint-fill: color-mix(in srgb, var(--color-brand) 7%, transparent);
+  --color-graph-endpoint-border: color-mix(in srgb, var(--color-brand) 40%, transparent);
+  --color-graph-endpoint-text: var(--color-brand-deep);
+  /* Legend chip container — translucent elevated surface over the dot grid. */
+  --color-graph-legend-bg: color-mix(in srgb, var(--color-canvas-elevated) 88%, transparent);
   --color-graph-deliver: var(--color-brand-bright);
   --color-graph-deliver-glow: color-mix(in srgb, var(--color-brand-bright) 12%, transparent);
   --color-graph-deliver-trail: color-mix(in srgb, var(--color-brand) 40%, transparent);
@@ -136,6 +155,9 @@
   --color-graph-mini-edge: var(--color-hairline);
   --color-graph-mini-start: var(--color-brand);
   --color-graph-mini-end: var(--color-brand);
+  /* SVG drop-shadow for node bodies (filter value, not a color). */
+  --filter-graph-node: drop-shadow(0 1px 2px rgba(15, 23, 20, 0.1))
+    drop-shadow(0 6px 16px rgba(15, 23, 20, 0.06));
   --dur-deliver: 600ms;
   --ease-deliver: var(--ease-out);
   --dur-ring-pulse: 1200ms;
@@ -285,19 +307,29 @@
   --color-session-hover: color-mix(in oklab, var(--color-brand) 8%, var(--color-canvas-sidebar));
   --color-session-active: color-mix(in oklab, var(--color-brand) 12%, var(--color-canvas-sidebar));
 
-  /* ── Graph visualization semantic tokens (graph PRD §7.1/§7.2) ──────────
+  /* ── Graph visualization semantic tokens (graph PRD §7.1/§7.2, §6 Rev 4) ─
      Same declarations as :root — they alias --color-* tokens that flip per
      theme; restated so both blocks carry the full set. */
   --color-graph-node-fill: var(--color-canvas-elevated);
-  --color-graph-dot-pending: var(--color-mute);
-  --color-graph-dot-canceled: color-mix(in srgb, var(--color-mute) 45%, transparent);
-  --color-graph-node-fill-done: color-mix(in srgb, var(--color-brand) 18%, transparent);
-  --color-graph-node-border: var(--color-hairline);
+
+  /* graph-status tokens (PRD §6.2 Rev 4) — see :root note. completed is the
+     independent green; canceled is violet so all six dots stay distinct. */
+  --color-graph-status-pending: var(--color-mute);
+  --color-graph-status-running: var(--color-brand);
+  --color-graph-status-completed: #34D399;
+  --color-graph-status-crashed: var(--color-danger);
+  --color-graph-status-suspended: var(--color-warning);
+  --color-graph-status-canceled: #A78BFA;
+  --color-graph-node-border: var(--color-border-strong);
   --color-graph-node-border-active: var(--color-brand);
-  --color-graph-edge: var(--color-border-strong);
-  --color-graph-edge-active: color-mix(in srgb, var(--color-brand) 60%, transparent);
-  --color-graph-arrow: var(--color-border-strong);
-  --color-graph-arrow-active: color-mix(in srgb, var(--color-brand) 60%, transparent);
+  --color-graph-edge: color-mix(in srgb, var(--color-border-strong) 70%, transparent);
+  --color-graph-edge-active: color-mix(in srgb, var(--color-brand) 70%, transparent);
+  --color-graph-arrow: color-mix(in srgb, var(--color-border-strong) 70%, transparent);
+  --color-graph-arrow-active: color-mix(in srgb, var(--color-brand) 70%, transparent);
+  --color-graph-endpoint-fill: color-mix(in srgb, var(--color-brand) 7%, transparent);
+  --color-graph-endpoint-border: color-mix(in srgb, var(--color-brand) 40%, transparent);
+  --color-graph-endpoint-text: var(--color-brand-bright);
+  --color-graph-legend-bg: color-mix(in srgb, var(--color-canvas-elevated) 88%, transparent);
   --color-graph-deliver: var(--color-brand-bright);
   --color-graph-deliver-glow: color-mix(in srgb, var(--color-brand-bright) 12%, transparent);
   --color-graph-deliver-trail: color-mix(in srgb, var(--color-brand) 40%, transparent);
@@ -306,6 +338,8 @@
   --color-graph-mini-edge: var(--color-hairline);
   --color-graph-mini-start: var(--color-brand);
   --color-graph-mini-end: var(--color-brand);
+  --filter-graph-node: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35))
+    drop-shadow(0 8px 20px rgba(0, 0, 0, 0.25));
   --dur-deliver: 600ms;
   --ease-deliver: var(--ease-out);
   --dur-ring-pulse: 1200ms;
@@ -451,47 +485,340 @@
 }
 
 @layer components {
-  /* ── Top status bar (brand · workspace · pool) ────────────────────────── */
-  .statusline {
+  /* ── Workspace tab bar (browser-tab-style workspace switching) ─────────
+     Variant "card tabs": the active tab shares the main canvas color and
+     its bottom edge is borderless, so tab and content read as one surface. */
+  .wstabs {
     display: flex;
-    align-items: center;
-    gap: 12px;
-    height: 32px;
-    padding: 0 16px;
-    /* Gentle chrome tone: halfway between the lit canvas and the recessed
-       sidebar. Reads as a distinct but soft top band in both light and dark
-       — never matching the panels below — while staying in the same neutral
-       family (no harsh contrast). Flips automatically with the theme tokens. */
-    background: color-mix(in oklab, var(--color-canvas), var(--color-canvas-sidebar));
+    align-items: flex-end;
+    gap: 2px;
+    height: 42px;
+    padding: 0 8px;
+    background: var(--color-canvas-sidebar);
     border-bottom: 1px solid var(--color-hairline);
-    font-size: var(--text-xs);
-    color: var(--color-mute);
     flex-shrink: 0;
   }
-  .statusline .brand {
+  /* Overflow mode grows the bar so the tabs keep their full 33px above the
+     scrollbar lane instead of being clipped by it. */
+  .wstabs:has(.wstabs-scroll.overflowing) {
+    height: 45px;
+  }
+  .wstabs-scroll {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    overflow-x: auto;
+    /* Explicit hidden: with overflow-x non-visible, the y axis's "visible"
+       computes to "auto" and a stray vertical scrollbar appears. */
+    overflow-y: hidden;
+  }
+  /* Scrollbar model follows the two-path contract: the standard properties
+     only apply where the webkit pseudo-elements are unsupported — a non-auto
+     scrollbar-width/color makes Chromium discard every ::-webkit-scrollbar*
+     rule for the element, so the two paths must never mix on one element. */
+  @supports not selector(::-webkit-scrollbar) {
+    .wstabs-scroll {
+      scrollbar-width: none;
+    }
+    .wstabs-scroll.overflowing {
+      scrollbar-width: thin;
+      scrollbar-color: var(--color-faint) transparent;
+    }
+  }
+  .wstabs-scroll::-webkit-scrollbar {
+    /* Zero-height, NOT display:none — Chromium marks a display:none pseudo
+       as "no custom scrollbar" and never re-enables it from later rules. */
+    height: 0;
+  }
+  /* Overflow mode: the strip gains a thin, themed, draggable horizontal
+     scrollbar in its own lane below the tabs (tabs shrink to fit above it). */
+  .wstabs-scroll.overflowing::-webkit-scrollbar {
+    height: 7px;
+  }
+  .wstabs-scroll.overflowing::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .wstabs-scroll.overflowing::-webkit-scrollbar-thumb {
+    background: var(--color-faint);
+    border-radius: var(--radius-full);
+  }
+  .wstabs-scroll.overflowing::-webkit-scrollbar-thumb:hover {
+    background: var(--color-mute);
+  }
+  .wstabs-scroll.overflowing::-webkit-scrollbar-button {
+    display: none;
+  }
+  .wstabs-brand {
     display: inline-flex;
     align-items: center;
+    align-self: center;
     gap: 6px;
+    padding: 0 10px 0 6px;
+    flex-shrink: 0;
     color: var(--color-signal);
-    /* Display font for the brand wordmark (DESIGN.md §3, §8) */
     font-family: theme("fontFamily.display");
     font-weight: 700;
+    font-size: var(--text-xs);
     letter-spacing: var(--tracking-wide);
   }
-  .statusline .brand-mark {
+  .wstabs-brand .brand-mark {
     color: var(--color-brand);
     display: inline-flex;
     align-items: center;
     flex-shrink: 0;
   }
-  .statusline .v {
-    color: var(--color-body);
+  .wstab {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    height: 33px;
+    padding: 0 12px;
+    margin-bottom: -1px;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    color: var(--color-mute);
     font-family: theme("fontFamily.mono");
+    font-size: var(--text-xs);
+    white-space: nowrap;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+    transition:
+      background var(--dur-fast) var(--ease-out),
+      color var(--dur-fast) var(--ease-out);
+  }
+  .wstab:hover {
+    background: var(--color-hairline-soft);
+    color: var(--color-body);
+  }
+  .wstab.active {
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    border-color: var(--color-border-strong);
+  }
+  /* 2px brand bar along the active tab's top edge. */
+  .wstab.active::before {
+    content: "";
+    position: absolute;
+    top: -1px;
+    left: 8px;
+    right: 8px;
+    height: 2px;
+    background: var(--color-brand);
+    border-radius: 0 0 2px 2px;
+  }
+  .wstab .wstab-icon {
+    flex-shrink: 0;
+    opacity: 0.75;
+    display: inline-flex;
+  }
+  .wstab.active .wstab-icon {
+    opacity: 1;
+    color: var(--color-brand);
+  }
+  .wstab .wstab-label {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .wstab .wstab-dot {
+    flex-shrink: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: var(--radius-full);
+  }
+  .wstab .wstab-dot.run {
+    background: var(--color-brand);
+    animation: wstab-pulse 1.6s var(--ease-in-out, ease-in-out) infinite;
+  }
+  .wstab .wstab-dot.warn {
+    background: var(--color-ember);
+  }
+  @keyframes wstab-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  .wstab .wstab-close {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: var(--radius-full);
+    color: var(--color-faint);
+    opacity: 0;
+    transition:
+      opacity var(--dur-fast) var(--ease-out),
+      background var(--dur-fast) var(--ease-out);
+  }
+  .wstab:hover .wstab-close,
+  .wstab .wstab-close:focus-visible {
+    opacity: 1;
+  }
+  .wstab .wstab-close:hover {
+    background: var(--color-border-strong);
+    color: var(--color-ink);
+  }
+  .wstab.dragging {
+    opacity: 0.4;
+  }
+  .wstabs-plus {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    align-self: center;
+    margin-left: 2px;
+    border-radius: var(--radius-full);
+    color: var(--color-mute);
+    transition:
+      background var(--dur-fast) var(--ease-out),
+      color var(--dur-fast) var(--ease-out);
+  }
+  .wstabs-plus:hover {
+    background: var(--color-hairline-soft);
+    color: var(--color-ink);
+  }
+  .wstabs-right {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    align-self: center;
+    padding-left: 6px;
+  }
+
+  /* ── Open-workspace menu ("+" popover: filter + recents + browse) ────── */
+  .wsopen-menu {
+    position: absolute;
+    top: 46px;
+    left: 12px;
+    z-index: 50;
+    width: 380px;
+    max-width: calc(100vw - 24px);
+    background: var(--color-canvas-popover);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-popover);
+    padding: 6px;
+    animation: wsopen-in var(--dur) var(--ease-out);
+  }
+  /* Overflow mode: the "+" is pinned top-right, so the menu anchors right. */
+  .wsopen-menu.right {
+    left: auto;
+    right: 12px;
+  }
+  @keyframes wsopen-in {
+    from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  }
+  .wsopen-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    margin-bottom: 4px;
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-sm);
+    background: var(--color-hairline-soft);
+    color: var(--color-mute);
+  }
+  .wsopen-search input {
+    flex: 1;
+    min-width: 0;
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--color-ink);
+    font-size: var(--text-sm);
+  }
+  .wsopen-search input::placeholder {
+    color: var(--color-faint);
+  }
+  .wsopen-sec {
+    padding: 6px 10px 4px;
+    font-family: theme("fontFamily.mono");
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--color-faint);
+  }
+  .wsopen-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    text-align: left;
+    color: var(--color-mute);
+    transition: background var(--dur-fast) var(--ease-out);
+    cursor: pointer;
+  }
+  .wsopen-item:hover {
+    background: var(--color-hairline-soft);
+  }
+  .wsopen-item .wsopen-path {
+    flex: 1;
+    min-width: 0;
+    font-family: theme("fontFamily.mono");
+    font-size: var(--text-xs);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    direction: rtl; /* clip the head of long paths, keeping the basename */
+    text-align: left;
+  }
+  .wsopen-item .wsopen-path .base {
+    color: var(--color-ink);
+  }
+  .wsopen-item .wsopen-label {
+    font-size: var(--text-sm);
+    color: var(--color-body);
+  }
+  .wsopen-empty {
+    padding: 10px 12px;
+    color: var(--color-faint);
+    font-size: var(--text-xs);
+  }
+  .wsopen-divider {
+    height: 1px;
+    background: var(--color-hairline);
+    margin: 5px 4px;
+  }
+
+  /* ── Pod workspace path header (read-only full path, click to copy) ──── */
+  .wspath-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--color-hairline);
+    color: var(--color-mute);
+    font-family: theme("fontFamily.mono");
+    font-size: var(--text-xs);
+    cursor: pointer;
+    text-align: left;
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+  .wspath-header:hover {
+    color: var(--color-body);
+  }
+  .wspath-header .wspath-text {
+    flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    direction: rtl; /* keep the tail (basename) visible on long paths */
   }
+
 
   /* ── Settings category nav (icon chip + label, per-category color) ────── */
   .nav-item {
@@ -1068,6 +1395,42 @@
       infinite;
   }
 
+  /* ── GraphStatusBadge per-status chips (PRD §6.4) ───────────────────────
+    * Filled chip: text = status color, border = status 35% mix, bg = status
+    * 12% mix. pending 走灰阶分离(mute 文本 + hairline 边框 + 8% bg);
+    * canceled(stopped)加删除线,chip 色与节点圆点同源(violet,Rev 4)。 */
+  .graph-badge-pending {
+    color: var(--color-mute);
+    border-color: var(--color-hairline);
+    background: color-mix(in srgb, var(--color-graph-status-pending) 8%, transparent);
+  }
+  .graph-badge-running {
+    color: var(--color-graph-status-running);
+    border-color: color-mix(in srgb, var(--color-graph-status-running) 35%, transparent);
+    background: color-mix(in srgb, var(--color-graph-status-running) 12%, transparent);
+  }
+  .graph-badge-completed {
+    color: var(--color-graph-status-completed);
+    border-color: color-mix(in srgb, var(--color-graph-status-completed) 35%, transparent);
+    background: color-mix(in srgb, var(--color-graph-status-completed) 12%, transparent);
+  }
+  .graph-badge-crashed {
+    color: var(--color-graph-status-crashed);
+    border-color: color-mix(in srgb, var(--color-graph-status-crashed) 35%, transparent);
+    background: color-mix(in srgb, var(--color-graph-status-crashed) 12%, transparent);
+  }
+  .graph-badge-suspended {
+    color: var(--color-graph-status-suspended);
+    border-color: color-mix(in srgb, var(--color-graph-status-suspended) 35%, transparent);
+    background: color-mix(in srgb, var(--color-graph-status-suspended) 12%, transparent);
+  }
+  .graph-badge-canceled {
+    color: var(--color-graph-status-canceled);
+    border-color: color-mix(in srgb, var(--color-graph-status-canceled) 35%, transparent);
+    background: color-mix(in srgb, var(--color-graph-status-canceled) 12%, transparent);
+    text-decoration: line-through;
+  }
+
 @layer utilities {
   /* ── Markdown prose (.prose-chat) — chat message body (§3, §6) ───────────
    * Optimized for long-answer readability: prose-tier line-height (1.7),
@@ -1374,7 +1737,7 @@
   .app-enter {
     animation: app-fade 250ms var(--ease-out) both;
   }
-  .app-enter .statusline {
+  .app-enter .wstabs {
     animation: app-rise 250ms var(--ease-out) both;
   }
   .app-enter main {

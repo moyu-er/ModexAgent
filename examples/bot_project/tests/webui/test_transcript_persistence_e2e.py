@@ -43,8 +43,9 @@ def _build_emitter(session_id: str, store: WorkspaceScopedTranscriptStore) -> We
         output_adapter=output,
         session_id=session_id,
         config=EmitterConfig(),
+        pool=pool,
         transcript_store=transcript_store,
-        session_meta_resolver=lambda: SessionMeta(pool=pool, parent_session_id=None),
+        session_meta_resolver=lambda: SessionMeta(parent_session_id=None),
     )
 
 

@@ -1,12 +1,12 @@
 // Restart indicator: a restart_required save arms `toast.restart.setRestartNeeded(true)`,
-// which renders a red dot on the Sidebar settings gear. Tested at the seam
-// (ToastContext + Sidebar) rather than via a full save flow, since the
+// which renders a red dot on the tab bar's settings gear. Tested at the seam
+// (ToastContext + WorkspaceTabBar) rather than via a full save flow, since the
 // indicator's contract is just "any setRestartNeeded(true) → dot appears".
 
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, act, cleanup } from "@testing-library/react";
 import { ToastProvider, useToast } from "../components/ToastContext";
-import { Sidebar } from "../components/Sidebar";
+import { WorkspaceTabBar } from "../components/WorkspaceTabBar";
 
 vi.mock("../lib/api", () => ({ changeWorkspace: vi.fn() }));
 
@@ -17,27 +17,23 @@ function Harness() {
   return (
     <div>
       <button
+        type="button"
         onClick={() => restart.setRestartNeeded(true)}
         data-testid="arm"
       >
         arm
       </button>
-      <Sidebar
-        sessionTree={[]}
-        pools={[{ name: "main" }]}
-        selected={null}
-        workspace="/home"
-        isHome
-        activePool="main"
+      <WorkspaceTabBar
+        tabs={[{ id: "__home__", path: "/home" }]}
+        activeId="__home__"
+        statuses={{}}
+        home="/home"
         recentWorkspaces={[]}
-        mobileOpen={false}
-        onCloseMobile={noop}
-        onSelect={noop}
-        onNew={noop}
-        onDelete={noop}
-        onWorkspaceChanged={noop}
-        onGoHome={noop}
-        onPoolChange={noop}
+        onOpenWorkspace={noop}
+        onOpenRecent={noop}
+        onActivate={noop}
+        onClose={noop}
+        onReorder={noop}
         onOpenSettings={noop}
       />
     </div>

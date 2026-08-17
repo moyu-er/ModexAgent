@@ -6,10 +6,15 @@ import {
   getSpec,
   getInvocations,
   invokeInstance,
+  deliverToNode,
+  pauseGraph,
+  resumeGraph,
+  stopGraph,
   type GraphInstance,
   type GraphInvocationRecord,
   type GraphSpecResponse,
 } from "../../lib/graphsApi";
+import { ToastProvider } from "../ToastContext";
 
 vi.mock("../../hooks/useGraphExecution", () => ({
   useGraphExecution: vi.fn(),
@@ -19,12 +24,20 @@ vi.mock("../../lib/graphsApi", () => ({
   getSpec: vi.fn(),
   getInvocations: vi.fn(),
   invokeInstance: vi.fn(),
+  deliverToNode: vi.fn(),
+  pauseGraph: vi.fn(),
+  resumeGraph: vi.fn(),
+  stopGraph: vi.fn(),
 }));
 
 const mockUseGraphExecution = vi.mocked(useGraphExecution);
 const mockGetSpec = vi.mocked(getSpec);
 const mockGetInvocations = vi.mocked(getInvocations);
 const mockInvokeInstance = vi.mocked(invokeInstance);
+const mockDeliverToNode = vi.mocked(deliverToNode);
+const mockPauseGraph = vi.mocked(pauseGraph);
+const mockResumeGraph = vi.mocked(resumeGraph);
+const mockStopGraph = vi.mocked(stopGraph);
 
 const SPEC_YAML = `
 name: review_workflow
@@ -108,12 +121,14 @@ function renderDetail(props?: {
   onJumpToSession?: ReturnType<typeof vi.fn>;
 }): void {
   render(
-    <GraphInstanceDetail
-      workspaceId={props?.workspaceId ?? ""}
-      instanceId={props?.instanceId ?? "12345"}
-      onBack={props?.onBack ?? vi.fn()}
-      onJumpToSession={props?.onJumpToSession ?? vi.fn()}
-    />,
+    <ToastProvider>
+      <GraphInstanceDetail
+        workspaceId={props?.workspaceId ?? ""}
+        instanceId={props?.instanceId ?? "12345"}
+        onBack={props?.onBack ?? vi.fn()}
+        onJumpToSession={props?.onJumpToSession ?? vi.fn()}
+      />
+    </ToastProvider>,
   );
 }
 
@@ -128,6 +143,10 @@ beforeEach(() => {
   mockGetSpec.mockReset();
   mockGetInvocations.mockReset();
   mockInvokeInstance.mockReset();
+  mockDeliverToNode.mockReset();
+  mockPauseGraph.mockReset();
+  mockResumeGraph.mockReset();
+  mockStopGraph.mockReset();
 
   mockHook();
   mockGetSpec.mockResolvedValue(SPEC_RESPONSE);
@@ -135,6 +154,23 @@ beforeEach(() => {
   mockInvokeInstance.mockResolvedValue({
     graph_instance_id: "12345",
     status: "running",
+  });
+  mockDeliverToNode.mockResolvedValue({
+    graph_instance_id: "12345",
+    node_name: "designer",
+    status: "ok",
+  });
+  mockPauseGraph.mockResolvedValue({
+    graph_instance_id: "12345",
+    status: "paused",
+  });
+  mockResumeGraph.mockResolvedValue({
+    graph_instance_id: "12345",
+    status: "running",
+  });
+  mockStopGraph.mockResolvedValue({
+    graph_instance_id: "12345",
+    status: "stopped",
   });
 });
 
@@ -158,7 +194,8 @@ describe("GraphInstanceDetail — header", () => {
     renderDetail();
     await waitForDetail();
 
-    expect(screen.getByText("Topology")).toBeTruthy();
+    const openButton = screen.getByText("Topology");
+    expect(openButton.getAttribute("aria-haspopup")).toBe("dialog");
   });
 
   it("calls onBack when back button is clicked", async () => {
@@ -311,55 +348,103 @@ describe("GraphInstanceDetail — composer", () => {
   });
 });
 
-describe("GraphInstanceDetail — topology drawer", () => {
-  it("opens drawer when Topology button is clicked", async () => {
+describe("GraphInstanceDetail — run graph modal", () => {
+  it("does not render the run graph dialog by default", async () => {
     renderDetail();
     await waitForDetail();
 
-    expect(screen.queryByTestId("topology-drawer")).toBeNull();
+    expect(screen.queryByTestId("run-graph-modal")).toBeNull();
+  });
+
+  it("opens the run graph dialog when Topology button is clicked", async () => {
+    renderDetail();
+    await waitForDetail();
 
     fireEvent.click(screen.getByText("Topology"));
 
     await waitFor(() => {
-      expect(screen.getByTestId("topology-drawer")).toBeTruthy();
+      expect(screen.getByTestId("run-graph-modal")).toBeTruthy();
+    });
+    expect(screen.getByTestId("run-graph-backdrop")).toBeTruthy();
+  });
+
+  it("dialog has role=dialog and aria-modal=true", async () => {
+    renderDetail();
+    await waitForDetail();
+
+    fireEvent.click(screen.getByText("Topology"));
+
+    await waitFor(() => {
+      const dialog = screen.getByRole("dialog");
+      expect(dialog.getAttribute("aria-modal")).toBe("true");
     });
   });
 
-  it("closes drawer when X button is clicked", async () => {
+  it("dialog shows control bar with Pause and Stop when running", async () => {
+    mockHook({ instance: makeInstance({ status: "running" }) });
+    renderDetail();
+    await waitForDetail();
+
+    fireEvent.click(screen.getByText("Topology"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("run-graph-modal")).toBeTruthy();
+    });
+    const bar = within(screen.getByTestId("run-graph-modal")).getByTestId("control-bar");
+    expect(within(bar).getByText("Pause")).toBeTruthy();
+    expect(within(bar).getByText("Stop")).toBeTruthy();
+  });
+
+  it("closes dialog when X button is clicked", async () => {
     renderDetail();
     await waitForDetail();
 
     fireEvent.click(screen.getByText("Topology"));
     await waitFor(() => {
-      expect(screen.getByTestId("topology-drawer")).toBeTruthy();
+      expect(screen.getByTestId("run-graph-modal")).toBeTruthy();
     });
 
-    const drawer = screen.getByTestId("topology-drawer");
-    const closeBtn = within(drawer).getByLabelText("Close");
-    fireEvent.click(closeBtn);
+    const dialog = screen.getByTestId("run-graph-modal");
+    fireEvent.click(within(dialog).getByLabelText("Close"));
 
     await waitFor(() => {
-      expect(screen.queryByTestId("topology-drawer")).toBeNull();
+      expect(screen.queryByTestId("run-graph-modal")).toBeNull();
     });
   });
 
-  it("closes drawer on Escape key", async () => {
+  it("closes dialog on Escape key", async () => {
     renderDetail();
     await waitForDetail();
 
     fireEvent.click(screen.getByText("Topology"));
     await waitFor(() => {
-      expect(screen.getByTestId("topology-drawer")).toBeTruthy();
+      expect(screen.getByTestId("run-graph-modal")).toBeTruthy();
     });
 
     fireEvent.keyDown(window, { key: "Escape" });
 
     await waitFor(() => {
-      expect(screen.queryByTestId("topology-drawer")).toBeNull();
+      expect(screen.queryByTestId("run-graph-modal")).toBeNull();
     });
   });
 
-  it("renders TopologyCanvas inside drawer", async () => {
+  it("closes dialog on backdrop click", async () => {
+    renderDetail();
+    await waitForDetail();
+
+    fireEvent.click(screen.getByText("Topology"));
+    await waitFor(() => {
+      expect(screen.getByTestId("run-graph-backdrop")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByTestId("run-graph-backdrop"));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("run-graph-modal")).toBeNull();
+    });
+  });
+
+  it("renders TopologyCanvas inside the dialog", async () => {
     renderDetail();
     await waitForDetail();
 
@@ -370,17 +455,53 @@ describe("GraphInstanceDetail — topology drawer", () => {
     });
   });
 
-  it("renders meta info (scheduler, trigger, nodes) inside drawer", async () => {
+  it("renders instance summary meta (scheduler, trigger) inside the dialog", async () => {
     renderDetail();
     await waitForDetail();
 
     fireEvent.click(screen.getByText("Topology"));
 
     await waitFor(() => {
-      const drawer = screen.getByTestId("topology-drawer");
-      expect(within(drawer).getByText("parallel")).toBeTruthy();
-      expect(within(drawer).getByText("on_all_preds")).toBeTruthy();
+      const dialog = screen.getByTestId("run-graph-modal");
+      expect(within(dialog).getByText("parallel")).toBeTruthy();
+      expect(within(dialog).getByText("on_all_preds")).toBeTruthy();
     });
+  });
+
+  it("moves focus into the dialog on open and returns focus to the Topology button on close", async () => {
+    renderDetail();
+    await waitForDetail();
+
+    const openButton = screen.getByText("Topology");
+    (openButton as HTMLElement).focus();
+    fireEvent.click(openButton);
+
+    await waitFor(() => {
+      const dialog = screen.getByTestId("run-graph-modal");
+      expect(dialog.contains(document.activeElement)).toBe(true);
+    });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("run-graph-modal")).toBeNull();
+    });
+    expect(document.activeElement).toBe(openButton);
+  });
+
+  it("keeps focus inside the dialog on Tab", async () => {
+    renderDetail();
+    await waitForDetail();
+
+    fireEvent.click(screen.getByText("Topology"));
+    await waitFor(() => {
+      expect(screen.getByTestId("run-graph-modal")).toBeTruthy();
+    });
+
+    fireEvent.keyDown(window, { key: "Tab" });
+
+    const dialog = screen.getByTestId("run-graph-modal");
+    expect(dialog.contains(document.activeElement)).toBe(true);
   });
 });
 

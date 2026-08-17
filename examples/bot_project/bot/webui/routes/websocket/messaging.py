@@ -66,9 +66,8 @@ async def handle_send_message(
     # when there are pending uploads even with empty text (ADR-0013: a file
     # in a conversation is itself the message). Drop only when there is
     # neither text nor any attachment payload.
-    has_attachment_payload = (
-        isinstance(data.get("attachments"), list) and len(data.get("attachments") or []) > 0
-    )
+    raw_attachments = data.get("attachments")
+    has_attachment_payload = isinstance(raw_attachments, list) and bool(raw_attachments)
     if "." not in session_id or (not content and not has_attachment_payload):
         return
 
@@ -98,13 +97,19 @@ async def handle_send_message(
     uuid_prefix = resolved.session_id_prefix
     explicit_agent = resolved.agent_name
 
-    # Pool is carried by the client (first-class like ws). Fall back to
-    # PoolSessionStore (authoritative persisted mapping) when the client
-    # does not send pool.
     pool_from_payload = str(data.get("pool", ""))
-    explicit_pool = server._resolve_pool_for_request(
-        pool_from_payload or None, uuid_prefix
-    ) if uuid_prefix else (pool_from_payload or _DEFAULT_AGENT_NAME)
+    explicit_pool = pool_from_payload or None
+    tree_resolved_pool: str | None = None
+    session_pool_index = server._session_pool_index_of_ws(ws_raw)
+    if explicit_pool is None and session_pool_index is not None:
+        tree_resolved_pool = await session_pool_index.pool_of(session_id)
+    routing_pool = explicit_pool or tree_resolved_pool
+    if routing_pool is None:
+        routing_pool = (
+            server._resolve_pool_for_request(None, uuid_prefix)
+            if uuid_prefix
+            else _DEFAULT_AGENT_NAME
+        )
 
     # The session was already established upstream (attach / create_session).
     # Pass it through so the pipeline reuses session.session_id verbatim
@@ -127,11 +132,9 @@ async def handle_send_message(
     # the ingest stage copy its bytes into the media store -- making them
     # agent-perceivable and downloadable (path traversal / exfiltration).
     # The QQ adapter is unaffected (it builds the ref server-side).
-    raw_attachments = data.get("attachments")
     attachments: list[AttachmentRef] = []
     if isinstance(raw_attachments, list):
-        staging_pool = explicit_pool or _DEFAULT_AGENT_NAME
-        staging_root = server._media_tmp_dir_of_ws(ws_raw, staging_pool).resolve()
+        staging_root = server._media_tmp_dir_of_ws(ws_raw, routing_pool).resolve()
         for entry in raw_attachments:
             if not isinstance(entry, dict):
                 continue
@@ -176,6 +179,8 @@ async def handle_send_message(
         attachments=attachments,
     )
     envelope.metadata[RoutingMeta.WORKSPACE] = str(workspace_path)
+    if tree_resolved_pool is not None:
+        envelope.metadata[RoutingMeta.TREE_RESOLVED_POOL] = tree_resolved_pool
     # Thread the UI-selected provider/model into the envelope so
     # ModelChoiceStage (WebUI-only) reads them off the metadata.
     provider_name = data.get("provider_name")
@@ -184,7 +189,9 @@ async def handle_send_message(
         envelope.metadata[RoutingMeta.MODEL_PROVIDER] = str(provider_name)
     if model_name:
         envelope.metadata[RoutingMeta.MODEL_MODEL] = str(model_name)
-    result = await server._input_pipeline.handle(envelope, server._input_ctx)
+    input_pipeline = server._input_pipeline
+    assert input_pipeline is not None
+    result = await input_pipeline.handle(envelope, server._input_ctx)
 
     if result.should_continue():
         # Echo the user message back to the WS client so the frontend
@@ -221,14 +228,13 @@ async def handle_send_message(
         if response is not None:
             with contextlib.suppress(KeyError, TypeError):
                 message = str(response["message"])
-        pool = explicit_pool or _DEFAULT_AGENT_NAME
         await _safe_send_json(
             ws,
             DeltaEnvelope(
                 session_id=session_id,
                 agent_name=explicit_agent or _DEFAULT_AGENT_NAME,
                 event_type=WebUIEventType.ERROR.value,
-                pool=pool,
+                pool=routing_pool,
                 payload={"message": message or "unsupported command in WebUI chat"},
             ).to_dict(),
         )

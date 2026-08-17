@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from typing import TYPE_CHECKING, overload
 
+from modex_agent.core.constants import StopReason
 from modex_agent.hook.abc import FinallyGraphHook, StartNodeTurnHook
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.trace.base_hook import BaseTraceHook
+from modex_agent.trace.scoring import compute_root_subtrees, compute_score
 from modex_agent.trace.semconv import (
     GenAiAttr,
     LangfuseObservationType,
@@ -17,6 +20,8 @@ from modex_agent.trace.semconv import (
     SpanStatusCode,
 )
 from modex_agent.trace.store import SpanStatus
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -138,4 +143,22 @@ class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook):
             status=status,
             ctx=ctx,
         )
+        if result is None or result.stop_reason is not StopReason.COMPLETED:
+            self._session.clear_trace(trace_id)
+            return
+        if self._score_injector is not None and self._store is not None:
+            try:
+                spans = await self._store.list_by_trace_id(trace_id)
+                subtree = compute_root_subtrees(spans)[root_span_id]
+                await self._score_injector.inject_scores(
+                    trace_id,
+                    compute_score(subtree),
+                    observation_id=root_span_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Root trace score injection failed (trace_id=%s, observation_id=%s)",
+                    trace_id,
+                    root_span_id,
+                )
         self._session.clear_trace(trace_id)

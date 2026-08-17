@@ -2,8 +2,8 @@
 
 """E2E integration tests for distributed persistence.
 
-Verifies 9 end-to-end scenarios: recovery flow, Node.run lifecycle, dual
-execution path, and self-loop scheduling. Each scenario exercises real
+Verifies end-to-end scenarios for recovery flow, Node.run lifecycle,
+instance pause, and self-loop scheduling. Each scenario exercises real
 wiring across multiple components (coordinator + GraphInstance +
 GraphOrchestrator + GraphControlService).
 """
@@ -46,7 +46,6 @@ from modex_graph import (
     NodeSpec,
     RoutingError,
     SqliteGraphInstanceStore,
-    create_null_coordinator,
 )
 
 pytestmark = pytest.mark.integration
@@ -224,28 +223,13 @@ def _cleanup_db_dir(tmp_dir: str) -> None:
 def _simulate_node_run_complete(
     coord: GraphPersistenceCoordinator,
     node_name: str,
-    state_update: dict[str, Any],
 ) -> InvocationContext:
     """Simulate the Node.run() lifecycle: begin -> complete.
 
     Returns the InvocationContext so callers can inspect it.
     """
     inv = coord.node_state_store.begin_invocation(node_name)
-    coord.node_state_store.complete_invocation(inv, state_update)
-    return inv
-
-
-def _simulate_node_run_suspend(
-    coord: GraphPersistenceCoordinator,
-    node_name: str,
-    state_snapshot: dict[str, Any],
-) -> InvocationContext:
-    """Simulate the Node.run() lifecycle: begin -> suspend (GraphInterrupt).
-
-    Returns the InvocationContext so callers can inspect it.
-    """
-    inv = coord.node_state_store.begin_invocation(node_name)
-    coord.node_state_store.suspend_invocation(inv, state_snapshot)
+    coord.node_state_store.complete_invocation(inv)
     return inv
 
 
@@ -301,99 +285,11 @@ class TestScenario1NormalExecution:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# Scenario 2: GraphInterrupt suspend/resume (Memory coordinator)
+# Scenario 2: Retired node-level snapshot model
 # ══════════════════════════════════════════════════════════════════════════
 
-
-class TestScenario2SuspendResumeMemory:
-    """State snapshot survives across _execute calls.
-
-    The coordinator is bound to the GraphInstance lifecycle. When a
-    GraphInterrupt suspends, the coordinator persists the state snapshot.
-    On resume (same GraphInstance + same coordinator), the snapshot is
-    available via load_latest / rebuild_main_state. Resume
-    skips re-consume (the snapshot is used as integrated input).
-    """
-
-    async def test_suspend_resume_state_snapshot_survives(self) -> None:
-        coord = _memory_coordinator()
-        coord.register_node("worker")
-        coord._instance_store.save(_metadata())
-        GraphInstance(_metadata(), coord)
-
-        # Simulate execute -> suspend (GraphInterrupt).
-        snapshot = {"resume_target": "tool_node", "intermediate": 42}
-        _simulate_node_run_suspend(coord, "worker", snapshot)
-
-        # Verify: coordinator has suspended invocation.
-        latest = coord.node_state_store.load_latest("worker")
-        assert latest is not None
-        assert latest.status == InvocationStatus.RUNNING
-        assert latest.suspended is True
-        assert latest.state_json == snapshot
-
-        # The GraphInstance is still alive (coordinator not released).
-        # Resume: begin_invocation creates v1; v0 stays suspended RUNNING.
-        inv1 = coord.node_state_store.begin_invocation("worker")
-        assert inv1.version == 1
-        assert inv1.parent_version is None  # no prior COMPLETED
-
-        # The suspended invocation's snapshot is available.
-        running = coord.node_state_store.query_versions("worker", {InvocationStatus.RUNNING})
-        suspended_records = [r for r in running if r.suspended]
-        assert len(suspended_records) == 1
-        assert suspended_records[0].state_json == snapshot
-
-        # rebuild_main_state picks the suspended snapshot (newest for the node).
-        state = coord.rebuild_main_state()
-        assert state.get("resume_target") == "tool_node"
-        assert state.get("intermediate") == 42
-
-        # Complete the resumed invocation.
-        coord.node_state_store.complete_invocation(inv1, {"final": True})
-
-        latest = coord.node_state_store.load_latest("worker")
-        assert latest is not None
-        assert latest.status == InvocationStatus.COMPLETED
-
-    async def test_i16_resume_skips_reconsume(self) -> None:
-        """Resume uses state_snapshot, skips re-consume.
-
-        When resuming, the prior suspended invocation's snapshot is the
-        integrated input source — delivers are NOT re-consumed (they
-        were already consumed by the suspended invocation).
-        """
-        coord = _memory_coordinator()
-        coord.register_node("worker")
-
-        # Normal begin -> deliver -> mark_consumed -> suspend.
-        inv0 = coord.node_state_store.begin_invocation("worker")
-        d1 = coord.route_deliver("worker", {"data": 1}, "source", 9999)
-        assert d1 is not None
-        coord.mark_delivers_consumed("worker", [d1], inv0.invocation_id)
-        coord.node_state_store.suspend_invocation(inv0, {"resume_target": "tool", "consumed_data": [1]})
-
-        # Resume: begin_invocation creates v1; v0 stays suspended RUNNING.
-        inv1 = coord.node_state_store.begin_invocation("worker")
-
-        # Check: prev invocation (latest by invocation_id) is the new v1.
-        prev = coord.node_state_store.load_latest("worker")
-        assert prev is not None
-        assert prev.status == InvocationStatus.RUNNING  # the new v1
-
-        # The suspended record (v0) has the snapshot.
-        running = coord.node_state_store.query_versions("worker", {InvocationStatus.RUNNING})
-        suspended_records = [r for r in running if r.suspended]
-        assert len(suspended_records) == 1
-        assert suspended_records[0].state_json == {"resume_target": "tool", "consumed_data": [1]}
-
-        # rebuild_main_state picks the suspended snapshot (newest for the node).
-        state = coord.rebuild_main_state()
-        assert state.get("resume_target") == "tool"
-        assert state.get("consumed_data") == [1]
-
-        # Complete v1 — promotes all CONSUMED_PENDING for the node.
-        coord.node_state_store.complete_invocation(inv1, {"final": True})
+# Node-level snapshot/suspension tests were retired. GraphInterrupt cancellation
+# and four-state deliver crash windows are covered by test_crash_window_matrix.py.
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -402,12 +298,11 @@ class TestScenario2SuspendResumeMemory:
 
 
 class TestScenario3CrashRecoverySqlite:
-    """Recovery flow: execute -> crash -> recover_crashed -> verify state.
+    """Recovery flow: execute -> crash -> restart -> verify lifecycle facts.
 
     SQLite strategy provides crash recovery (data persists across process
-    restarts). The test simulates: execute -> crash -> new coordinator with
-    same connection (process restart) -> rebuild_main_state -> verify
-    CRASHED node identified for re-dispatch.
+    restarts). A new coordinator over the same database identifies the
+    CRASHED node for re-dispatch through its invocation record.
     """
 
     async def test_crash_recovery_sqlite_coordinator(self) -> None:
@@ -427,9 +322,6 @@ class TestScenario3CrashRecoverySqlite:
         coord2, _, _ = _sqlite_coordinator(conn=conn, db_path=db_path)
         coord2.register_node("worker")
 
-        # rebuild_main_state -> verify state restoration.
-        assert coord2.rebuild_main_state() == {}
-
         # The CRASHED node is identified for re-dispatch.
         node_state = coord2.node_state_store.load_latest("worker")
         assert node_state is not None
@@ -441,10 +333,8 @@ class TestScenario3CrashRecoverySqlite:
         assert inv_new.parent_version is None  # no prior COMPLETED
 
         # Complete the re-dispatched invocation.
-        coord2.node_state_store.complete_invocation(inv_new, {"result": "recovered"})
+        coord2.node_state_store.complete_invocation(inv_new)
 
-        # Verify: the graph now has COMPLETED state.
-        assert coord2.rebuild_main_state() == {"result": "recovered"}
         worker_state = coord2.node_state_store.load_latest("worker")
         assert worker_state is not None
         assert worker_state.status == InvocationStatus.COMPLETED
@@ -461,7 +351,7 @@ class TestScenario3CrashRecoverySqlite:
         coord._instance_store.save(_metadata())
 
         # node_a completes, node_b crashes.
-        _simulate_node_run_complete(coord, "node_a", {"a_value": 1})
+        _simulate_node_run_complete(coord, "node_a")
         _simulate_node_run_crash(coord, "node_b")
 
         # New coordinator (process restart).
@@ -469,8 +359,6 @@ class TestScenario3CrashRecoverySqlite:
         coord2.register_node("node_a")
         coord2.register_node("node_b")
 
-        # rebuild_main_state includes node_a's COMPLETED state.
-        assert coord2.rebuild_main_state() == {"a_value": 1}
         # node_a is COMPLETED (skip on re-dispatch).
         node_a_state = coord2.node_state_store.load_latest("node_a")
         assert node_a_state is not None
@@ -511,7 +399,7 @@ class TestScenario5F2CrashBetween:
         store.mark_consumed([d1, d2], inv.invocation_id)
 
         # Simulate crash: save COMPLETED directly (skip promote_delivers).
-        coord.node_state_store.complete_invocation(inv, {"result": "done"})
+        coord.node_state_store.complete_invocation(inv)
 
         # Verify: delivers are CONSUMED_PENDING before recovery.
         consumable_before = store.query_consumable(GID, "worker")
@@ -577,7 +465,7 @@ class TestScenario6SelfLoop:
         assert d1 is not None
 
         # A completes v0.
-        coord.node_state_store.complete_invocation(inv0, {"executed": 0})
+        coord.node_state_store.complete_invocation(inv0)
         assert inv0.version == 0
 
         # v0 is COMPLETED before v1 begins (serial execution).
@@ -601,7 +489,8 @@ class TestScenario6SelfLoop:
         )
 
         # v1 completes — promotes the consumed deliver.
-        coord.node_state_store.complete_invocation(inv1, {"executed": 1})
+        coord.node_state_store.complete_invocation(inv1)
+        coord.promote_delivers("node_a", inv1.invocation_id)
 
         # Verify: the deliver is now consumed (not pending).
         store = coord.get_deliver_store("node_a")
@@ -624,14 +513,14 @@ class TestScenario6SelfLoop:
         assert inv0.version == 0
 
         # v0 must complete before v1 can begin (serial).
-        coord.node_state_store.complete_invocation(inv0, {"v": 0})
+        coord.node_state_store.complete_invocation(inv0)
 
         # v1 begins after v0 completes.
         inv1 = coord.node_state_store.begin_invocation("node_a")
         assert inv1.version == 1
         assert inv1.parent_version == 0
 
-        coord.node_state_store.complete_invocation(inv1, {"v": 1})
+        coord.node_state_store.complete_invocation(inv1)
 
         # Version chain: 0 (COMPLETED) -> 1 (COMPLETED).
         versions = coord.node_state_store.query_versions("node_a")
@@ -644,41 +533,8 @@ class TestScenario6SelfLoop:
 # ══════════════════════════════════════════════════════════════════════════
 
 
-class TestScenario7DualPath:
-    """Two execution paths are orthogonal layers, not divergence.
-
-    - ReActAgent path: Null coordinator (no-op persistence, AgentContext
-      holds turn state).
-    - GraphOrchestrator path: coordinator persists state across _execute.
-
-    Both use the same Node.run() code path (always coordinator). The
-    divergence is in who holds cross-suspend/resume state (coordinator vs
-    AgentContext) — different concerns, different mechanisms.
-    """
-
-    async def test_null_coordinator_suspend_is_noop(self) -> None:
-        """ReActAgent path: Null coordinator suspend is a no-op.
-
-        The Null coordinator's suspend_invocation discards the record
-        (NullNodeStateStore). rebuild_main_state returns empty dict. This is
-        correct — AgentContext holds the turn state, not the coordinator.
-        """
-        coord = create_null_coordinator(GID)
-        coord.register_node("llm_node")
-
-        inv = coord.node_state_store.begin_invocation("llm_node")
-        assert inv.invocation_id > 0
-        assert inv.version == 0
-
-        # Suspend — Null coordinator: no-op (discards).
-        coord.node_state_store.suspend_invocation(inv, {"resume_target": "tool"})
-
-        # load_latest returns None (NullNodeStateStore discards).
-        latest = coord.node_state_store.load_latest("llm_node")
-        assert latest is None
-
-        # rebuild_main_state returns empty dict.
-        assert coord.rebuild_main_state() == {}
+class TestScenario7InstancePause:
+    """GraphInterrupt cancellation and graph-instance PAUSED remain separate."""
 
     async def test_graph_orchestrator_path_suspend_persists(self) -> None:
         """GraphOrchestrator path: GraphInterrupt -> PAUSED status.
@@ -700,45 +556,6 @@ class TestScenario7DualPath:
 
         # Instance stays in registry (coordinator alive for resume — I1).
         assert gid in orch._active_instances
-
-    async def test_orthogonal_layers_no_interference(self) -> None:
-        """Both paths coexist without interference.
-
-        A Null coordinator (ReActAgent path) and a Memory coordinator
-        (GraphOrchestrator path) can coexist. The Null path's no-op
-        behavior doesn't affect the Memory path's persistence.
-        """
-        # Null coordinator (ReActAgent path).
-        null_coord = create_null_coordinator(100)
-        null_coord.register_node("llm_node")
-
-        # Memory coordinator (GraphOrchestrator path).
-        mem_coord = _memory_coordinator(gid=200)
-        mem_coord.register_node("worker")
-        mem_coord._instance_store.save(_metadata(gid=200))
-
-        # Null path: suspend is no-op.
-        null_inv = null_coord.node_state_store.begin_invocation("llm_node")
-        null_coord.node_state_store.suspend_invocation(null_inv, {"target": "tool"})
-        assert null_coord.node_state_store.load_latest("llm_node") is None
-
-        # Memory path: suspend persists (suspended=True, snapshot in state_json).
-        mem_inv = mem_coord.node_state_store.begin_invocation("worker")
-        mem_coord.node_state_store.suspend_invocation(mem_inv, {"target": "tool"})
-        mem_latest = mem_coord.node_state_store.load_latest("worker")
-        assert mem_latest is not None
-        assert mem_latest.suspended is True
-        assert mem_latest.state_json == {"target": "tool"}
-
-        # No interference: Null path recovery is empty, Memory path snapshot
-        # is available via load_latest. The snapshot enters
-        # rebuild_main_state as the newest record for the node (suspended
-        # RUNNING is a valid rebuild source).
-        assert null_coord.rebuild_main_state() == {}
-        mem_coord.node_state_store.begin_invocation("worker")
-        mem_state = mem_coord.rebuild_main_state()
-        assert mem_state.get("target") == "tool"
-
 
 # ══════════════════════════════════════════════════════════════════════════
 # Scenario 8: GraphControlService deliver convergence

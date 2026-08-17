@@ -120,12 +120,21 @@ async def test_summary_missing_react_state_is_noop(tmp_path: Path) -> None:
     await _assert_no_history_append(context)
 
 
-async def test_summary_dir_with_no_files_is_noop(tmp_path: Path) -> None:
+async def test_summary_dir_with_no_files_injects_not_created(tmp_path: Path) -> None:
     context, _state = _make_context(knowledge_dir=str(tmp_path))
 
     await KnowledgeHook().before_turn(context)
 
-    await _assert_no_history_append(context)
+    messages = await context.history.to_list()
+    assert len(messages) == 1
+    assert messages[0].role == MessageRole.SYSTEM_REMINDER
+    content = _str_content(messages)
+    assert "<knowledge_base>" in content
+    assert "Findings: not yet created" in content
+    assert "Open questions: not yet created" in content
+    assert "action='write'" in content
+    assert "pattern='findings'" in content
+    assert "pattern='open_questions'" in content
 
 
 async def test_summary_injects_findings(tmp_path: Path) -> None:
@@ -140,8 +149,9 @@ async def test_summary_injects_findings(tmp_path: Path) -> None:
     content = _str_content(messages)
     assert "<knowledge_base>" in content
     assert "Found API endpoint at /v2" in content
-    assert "Recent findings" in content
-    assert "Open questions" not in content
+    assert "Findings (current content)" in content
+    assert "Open questions: not yet created" in content
+    assert "action='read' pattern='findings'" in content
 
 
 async def test_summary_injects_open_questions(tmp_path: Path) -> None:
@@ -172,8 +182,10 @@ async def test_summary_injects_both_findings_and_open_questions(tmp_path: Path) 
     content = _str_content(messages)
     assert "Discovered the auth flow" in content
     assert "Is rate limiting enabled?" in content
-    assert "Recent findings" in content
-    assert "Open questions" in content
+    assert "Findings (current content)" in content
+    assert "Open questions (current content)" in content
+    assert "action='read' pattern='findings'" in content
+    assert "action='read' pattern='open_questions'" in content
 
 
 async def test_summary_truncates_long_findings(tmp_path: Path) -> None:
@@ -220,6 +232,7 @@ async def test_retry_require_read_missing_sets_continuation() -> None:
     context, state = _make_context()
     state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_REQUIRE_READ] = True
     state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_READ_COUNT] = 0
+    state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_HAS_READABLE] = True
 
     await KnowledgeHook().after_turn(
         context,
@@ -298,6 +311,7 @@ async def test_retry_both_required_both_missing_mentions_both() -> None:
     state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_REQUIRE_WRITE] = True
     state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_READ_COUNT] = 0
     state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_WRITE_COUNT] = 0
+    state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_HAS_READABLE] = True
 
     await KnowledgeHook().after_turn(
         context,
@@ -315,6 +329,7 @@ async def test_retry_existing_continuation_request_still_injects_reminder() -> N
     context, state = _make_context()
     state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_REQUIRE_READ] = True
     state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_READ_COUNT] = 0
+    state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_HAS_READABLE] = True
     state.custom[TurnCustomKey.CONTINUATION_REQUEST] = True
 
     await KnowledgeHook().after_turn(
@@ -360,6 +375,7 @@ async def test_retry_max_turns_boundary_injects_reminder_without_flag() -> None:
     context, state = _make_context()
     state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_REQUIRE_READ] = True
     state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_READ_COUNT] = 0
+    state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_HAS_READABLE] = True
     state.turn_attempt = 3
 
     await KnowledgeHook().after_turn(
@@ -384,6 +400,90 @@ async def test_retry_missing_react_state_skips() -> None:
     )
 
     assert TurnCustomKey.CONTINUATION_REQUEST not in state.custom
+
+
+# ============================================================
+# after_turn: require_read exemption when KB has no readable content
+# ============================================================
+
+
+async def test_retry_require_read_exempt_when_kb_empty() -> None:
+    context, state = _make_context()
+    state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_REQUIRE_READ] = True
+    state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_READ_COUNT] = 0
+    state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_HAS_READABLE] = False
+
+    await KnowledgeHook().after_turn(
+        context,
+        AgentResult(content="done", stop_reason=StopReason.COMPLETED),
+    )
+
+    assert TurnCustomKey.CONTINUATION_REQUEST not in state.custom
+    await _assert_no_history_append(context)
+
+
+async def test_retry_require_read_exempt_but_write_still_required() -> None:
+    context, state = _make_context()
+    state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_REQUIRE_READ] = True
+    state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_REQUIRE_WRITE] = True
+    state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_READ_COUNT] = 0
+    state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_WRITE_COUNT] = 0
+    state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_HAS_READABLE] = False
+
+    await KnowledgeHook().after_turn(
+        context,
+        AgentResult(content="done", stop_reason=StopReason.COMPLETED),
+    )
+
+    assert state.custom[TurnCustomKey.CONTINUATION_REQUEST] is True
+    messages = await context.history.to_list()
+    assert len(messages) == 1
+    content = _str_content(messages)
+    assert "write" in content
+    assert "read" not in content
+
+
+# ============================================================
+# before_turn: has_readable computation
+# ============================================================
+
+
+async def test_before_turn_sets_has_readable_false_when_kb_empty(tmp_path: Path) -> None:
+    context, state = _make_context(knowledge_dir=str(tmp_path))
+
+    await KnowledgeHook().before_turn(context)
+
+    assert state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_HAS_READABLE] is False
+
+
+async def test_before_turn_sets_has_readable_true_when_findings_exist(tmp_path: Path) -> None:
+    (tmp_path / "findings.md").write_text("discovery", encoding="utf-8")
+    context, state = _make_context(knowledge_dir=str(tmp_path))
+
+    await KnowledgeHook().before_turn(context)
+
+    assert state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_HAS_READABLE] is True
+
+
+async def test_before_turn_sets_has_readable_true_when_open_questions_exist(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "open_questions.md").write_text("why?", encoding="utf-8")
+    context, state = _make_context(knowledge_dir=str(tmp_path))
+
+    await KnowledgeHook().before_turn(context)
+
+    assert state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_HAS_READABLE] is True
+
+
+async def test_before_turn_sets_has_readable_false_when_files_empty(tmp_path: Path) -> None:
+    (tmp_path / "findings.md").write_text("   \n\n", encoding="utf-8")
+    (tmp_path / "open_questions.md").write_text("", encoding="utf-8")
+    context, state = _make_context(knowledge_dir=str(tmp_path))
+
+    await KnowledgeHook().before_turn(context)
+
+    assert state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_HAS_READABLE] is False
 
 
 # ============================================================

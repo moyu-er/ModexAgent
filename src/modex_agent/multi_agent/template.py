@@ -29,6 +29,26 @@ if TYPE_CHECKING:
     from modex_agent.hook.abc import Hook
     from modex_agent.multi_agent.descriptor import AgentInstance
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
+    from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
+
+
+def build_preset_tool_manager(
+    root_provider: WorkspaceRootProvider | None,
+    preset: ToolPreset,
+) -> InMemoryToolManager:
+    """Build the unfiltered workspace-bound tool manager for one preset."""
+    from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
+    from modex_agent.tools.presets import get_preset_tools
+    from modex_agent.tools.terminal import SubprocessTool
+
+    tool_manager = InMemoryToolManager(config=ToolManagerConfig())
+    for tool in get_preset_tools(
+        preset,
+        subprocess_tool_factory=lambda: SubprocessTool(timeout=300),
+        root_provider=root_provider,
+    ):
+        tool_manager.register(tool)
+    return tool_manager
 
 
 def _pool_name(deps: AgentMaterializeDeps) -> str:
@@ -40,7 +60,7 @@ def _pool_name(deps: AgentMaterializeDeps) -> str:
     """
     resolver = deps.workspace_path_resolver
     if resolver is not None and resolver.pool_name:
-        return resolver.pool_name
+        return str(resolver.pool_name)
     logger.debug(
         "_pool_name: no workspace_path_resolver wired (or empty pool_name); "
         "convention skill root defaulting to pool='main'."
@@ -133,6 +153,15 @@ class AgentTemplate:
         # ── Workspace path resolution (needed by both branches) ──
         resolver = deps.workspace_path_resolver
         runtime_dir: Path | None = resolver.runtime_dir() if resolver else None
+        subagent_workspace_root: Path
+        if deps.project_dir is not None:
+            subagent_workspace_root = deps.project_dir
+        elif runtime_dir is not None and len(runtime_dir.parents) >= 3:
+            subagent_workspace_root = runtime_dir.parents[2]
+        elif runtime_dir is not None:
+            subagent_workspace_root = runtime_dir
+        else:
+            subagent_workspace_root = Path(".")
 
         # ── Build session-scoped memory + preset tools (subagent-only, Design B) ──
         # materialize is always subagent construction: session-scoped memory +
@@ -177,7 +206,7 @@ class AgentTemplate:
             comm_kind=AgentCommKind.SUBAGENT,
         )
 
-        # ── Register TodoReorientationHook on the subagent's memory system ──
+        # ── Register cleanup hooks on the subagent's memory system ──
         # Every native subagent needs post-cleanup reorientation: when
         # ``messages_pruned > 0`` the hook persists a ``<system-reminder>``
         # so the agent re-orients on its next iteration.  When the subagent
@@ -186,10 +215,13 @@ class AgentTemplate:
         # otherwise a generic "Continue your work" reminder is written.
         # ``has_archive`` is always False for subagents (``subagent_memory()``
         # sets ``archive=None``).
-        from modex_agent.memory.cleanup_hooks import TodoReorientationHook
+        from modex_agent.memory.cleanup_hooks import CleanupMetricsHook, TodoReorientationHook
 
         subagent_ctx.memory_system.add_cleanup_hook(
             TodoReorientationHook(todo_store=deps.todo_store, has_archive=False)
+        )
+        subagent_ctx.memory_system.add_cleanup_hook(
+            CleanupMetricsHook(metrics_dir=subagent_workspace_root / ".modex" / "metrics")
         )
 
         tool_manager = await self._build_tool_manager(deps, name, runtime_dir)
@@ -233,16 +265,6 @@ class AgentTemplate:
         from modex_agent.agents.external.types import ExternalEnvSpec
         from modex_agent.hook.builtin import NativeEnvInjectionHook
 
-        subagent_workspace_root: Path
-        if deps.project_dir is not None:
-            subagent_workspace_root = deps.project_dir
-        elif runtime_dir is not None and len(runtime_dir.parents) >= 3:
-            subagent_workspace_root = runtime_dir.parents[2]
-        elif runtime_dir is not None:
-            subagent_workspace_root = runtime_dir
-        else:
-            subagent_workspace_root = Path(".")
-
         subagent_pool_name = _pool_name(deps)
         subagent_pool_map: dict[str, str] = {name: subagent_pool_name}
         if parent_name:
@@ -283,6 +305,7 @@ class AgentTemplate:
             comm_kind=comm_kind,
             memory_config=self.memory,
             roles=list(self.spec.roles),
+            role_description=self.spec.description,
         )
 
         # ── Create instance ──
@@ -313,6 +336,18 @@ class AgentTemplate:
                 instance.pipeline.hooks.extend(
                     HookSpec(hook=hook, on_error=HookErrorPolicy.LOG) for hook in hooks
                 )
+
+        # ── Tree-aware continuation hooks — converge with main-agent path
+        # (_wire_main_pipeline calls the same function). Subagents with todo
+        # tools need TodoContinuationHook to drive continuation; DeliverRetryHook
+        # is a no-op for subagents (no deliver tool) but registered for
+        # consistency. The tree-aware subtree check is safe for subagents:
+        # their subtree is empty (star topology), so the check always passes
+        # and the hook fires normally.
+        if instance.pipeline is not None and deps.tree is not None:
+            from modex_agent.hook.wiring import register_tree_aware_hooks
+
+            register_tree_aware_hooks(instance.pipeline.hook_runner, deps.tree)
 
         # ── Register resident (new two-arg signature: descriptor + instance) ──
         await deps.pool.register_resident(descriptor, instance)
@@ -364,6 +399,7 @@ class AgentTemplate:
             system_prompt_template="",
             safety_policy=deps.safety,
             roles=list(self.spec.roles),
+            role_description=self.spec.description,
         )
 
         instance = await deps.subagent_external_builder.build(
@@ -402,21 +438,9 @@ class AgentTemplate:
         wired against a subagent-scoped communication service (baked
         default — every subagent can delegate/reply).
         """
-        from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
-        from modex_agent.tools.presets import get_preset_tools, get_supplement_tools
-        from modex_agent.tools.terminal import SubprocessTool
+        from modex_agent.tools.presets import get_supplement_tools
 
-        tm = InMemoryToolManager(config=ToolManagerConfig())
-
-        def _make_bash() -> SubprocessTool:
-            return SubprocessTool(timeout=300)
-
-        for tool in get_preset_tools(
-            self.spec.tool_preset,
-            subprocess_tool_factory=_make_bash,
-            root_provider=deps.root_provider,
-        ):
-            tm.register(tool)
+        tm = build_preset_tool_manager(deps.root_provider, self.spec.tool_preset)
 
         # Additive supplement tools (e.g. AST_GREP, TODO) layered on top of the preset.
         for tool in get_supplement_tools(

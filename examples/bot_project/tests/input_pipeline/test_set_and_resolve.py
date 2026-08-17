@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from bot.adapters import channels
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.resolve_pool import ResolvePoolStage
+from bot.input_pipeline.stages.resolve_pool import ResolvePoolStage, RoutingMeta
 from bot.input_pipeline.stages.set_channel import SetChannelStage
 
 from modex_agent.core.session_id import SessionIdFactory, encode_snowflake
@@ -13,13 +13,15 @@ from modex_agent.input_pipeline.envelope import UserInputEnvelope
 from modex_agent.input_pipeline.stage import Terminate
 
 
-def _ctx(store_get: str = "main") -> BotInputContext:
-    store = MagicMock()
-    store.get.return_value = store_get
+def _ctx(
+    store_get: str = "main", *, store: MagicMock | None = None
+) -> BotInputContext:
+    pool_store = store if store is not None else MagicMock()
+    pool_store.get.return_value = store_get
     return BotInputContext(
         default_pool="main",
         available_pools=lambda: {"main", "coding"},
-        pool_session_store=store,
+        pool_session_store=pool_store,
         agent_resolver=lambda p: p,
         transcript_store=MagicMock(),
         enqueue_message=MagicMock(),
@@ -61,6 +63,37 @@ async def test_resolve_pool_falls_back_to_session_store() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resolve_pool_tree_attribution_precedes_session_store_without_persisting() -> None:
+    store = MagicMock()
+    ctx = _ctx(store_get="main", store=store)
+    env = UserInputEnvelope(
+        external_id="u1", content="hi", channel="websocket", explicit_pool=None
+    )
+    env.metadata[RoutingMeta.TREE_RESOLVED_POOL] = "coding"
+
+    await ResolvePoolStage().process(env, ctx)
+
+    assert env.metadata[RoutingMeta.RESOLVED_POOL] == "coding"
+    store.get.assert_not_called()
+    store.set.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resolve_pool_im_without_tree_attribution_reads_session_store() -> None:
+    store = MagicMock()
+    ctx = _ctx(store_get="coding", store=store)
+    env = UserInputEnvelope(
+        external_id="u1", content="hi", channel="qq", explicit_pool=None
+    )
+
+    await ResolvePoolStage().process(env, ctx)
+
+    assert env.metadata[RoutingMeta.RESOLVED_POOL] == "coding"
+    store.get.assert_called_once_with(encode_snowflake("u1"), "main")
+    store.set.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_resolve_pool_default_when_store_empty() -> None:
     env = UserInputEnvelope(
         external_id="u1", content="hi", channel="qq", explicit_pool=None
@@ -91,7 +124,7 @@ async def test_resolve_pool_persists_explicit_pool_choice() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_pool_persists_even_when_no_explicit_pool() -> None:
+async def test_resolve_pool_does_not_persist_session_store_fallback() -> None:
     store = MagicMock()
     store.get.return_value = "coding"
     ctx = BotInputContext(
@@ -107,7 +140,7 @@ async def test_resolve_pool_persists_even_when_no_explicit_pool() -> None:
         external_id="u1", content="hi", channel="qq", explicit_pool=None
     )
     await ResolvePoolStage().process(env, ctx)
-    store.set.assert_called_once_with("4YEJ6AuZcPW5eZRoP", "coding")
+    store.set.assert_not_called()
     assert env.metadata["resolved_pool"] == "coding"
 
 

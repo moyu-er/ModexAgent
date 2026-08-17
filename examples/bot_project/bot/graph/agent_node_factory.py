@@ -23,6 +23,9 @@ class BotAgentNodeConfig(BaseModel):
 
     agent: str
     pool: str = "default"
+    description: str | None = None
+    """Graph-node-level role description. Overrides the agent's pool/template
+    description for THIS node's deliver targets and system-prompt Role section."""
     knowledge: KnowledgeNodeConfig = KnowledgeNodeConfig()
 
 
@@ -39,6 +42,7 @@ class BotAgentNodeFactory(NodeFactory):
             pool_name=config.pool,
             workspace_resolver=self._workspace_resolver,
             knowledge_config=config.knowledge,
+            node_description=config.description,
         )
 
     def config_schema(self) -> type[BaseModel] | None:

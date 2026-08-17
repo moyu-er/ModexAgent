@@ -87,6 +87,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         session_id: str,
         config: EmitterConfig | None = None,
         *,
+        pool: str | None = None,
         send_timeout: float | None = None,
         transcript_store: TranscriptStore | None = None,
         session_meta_resolver: Callable[[], SessionMeta] | None = None,
@@ -100,11 +101,11 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         # id — two subagent invocations never collapse into one transcript.
         self._session_id: str = session_id
         self._agent_name: str = agent_of(session_id, default="main")
+        self._pool: str | None = pool
         self._turn_counter: int = 1
         self._transcript_store: TranscriptStore | None = transcript_store
-        # Lazy resolver for business routing context (pool, parent_session_id).
-        # Read at send time so it reflects the latest pool map / parent
-        # registry (populated by WebUIService after pool init).
+        # Lazy resolver for parent_session_id only. Pool ownership is fixed by
+        # the factory when this emitter is constructed.
         self._session_meta_resolver = session_meta_resolver or _empty_session_meta
         # Resolver-cell-driven workspace resolution for transcript writes. When
         # set, the owning workspace's sessions_dir is resolved per write from
@@ -138,7 +139,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         sessions_dir = (
             self._sessions_dir_provider() if self._sessions_dir_provider else None
         )
-        pool = self._session_meta_resolver().pool
+        pool = self._pool or ""
         if sessions_dir is not None:
             await self._transcript_store.append(
                 self._session_id, event, pool=pool, sessions_dir=sessions_dir

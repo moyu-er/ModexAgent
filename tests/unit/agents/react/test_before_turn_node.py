@@ -25,7 +25,6 @@ class _TrackingBeforeTurnHook(BeforeTurnHook):
         assert state is not None
         assert state.turn_attempt == 1
         assert state.current_node == ReActNode.BEFORE
-        assert self._node._pending_delivers == []
         self.called = True
 
 
@@ -68,7 +67,8 @@ class TestBeforeTurnNode:
 
         await node.run(ctx)
 
-        assert node._submit_result == {ReActNode.LLM: [None]}
+        delivers = ctx.coordinator.collect_consumable_delivers(ReActNode.LLM, 0)
+        assert [record.content for record in delivers] == [None]
 
     @pytest.mark.asyncio
     async def test_dispatches_before_turn_after_state_setup_before_deliver(
@@ -92,4 +92,5 @@ class TestBeforeTurnNode:
             ReActHookPoint.BEFORE_TURN,
             ctx,
         )
-        assert node._submit_result == {ReActNode.LLM: [None]}
+        delivers = ctx.coordinator.collect_consumable_delivers(ReActNode.LLM, 0)
+        assert [record.content for record in delivers] == [None]

@@ -3,7 +3,7 @@
 Provides:
 - MCPClientManager: unified management of MCP server connections
 - connect_single_server: reusable per-server connect primitive
-- MCPTool/MCPResourceTool/MCPPromptTool: wraps MCP capabilities as framework Tools
+- MCPTool: wraps MCP capabilities as framework Tools
 - Support for stdio, sse, and streamable_http transports
 """
 
@@ -24,7 +24,7 @@ from modex_agent.tools.mcp.registry import (
     McpConnectionState,
     SharedMcpBackend,
 )
-from modex_agent.tools.mcp.tool import MCPPromptTool, MCPResourceTool, MCPTool
+from modex_agent.tools.mcp.tool import MCPTool
 
 __all__ = [
     "MCPClientManager",
@@ -32,8 +32,6 @@ __all__ = [
     "connect_single_server",
     "McpBackend",
     "MCPTool",
-    "MCPResourceTool",
-    "MCPPromptTool",
     "BaseMCPClient",
     "StdioMCPClient",
     "SSEMCPClient",

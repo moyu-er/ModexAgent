@@ -1,31 +1,18 @@
-import { useState, useCallback, useEffect, useMemo, useRef, type FC } from "react";
-import { Sidebar } from "./components/Sidebar";
-import { ChatView } from "./components/ChatView";
+import { useState, useCallback, useEffect, useRef, type FC } from "react";
 import { SettingsModal } from "./components/settings/SettingsView";
-import { ToastProvider } from "./components/ToastContext";
-import { useWebUIStream } from "./hooks/useWebUIStream";
-import { useSessions } from "./hooks/useSessions";
+import { ToastProvider, useToast } from "./components/ToastContext";
+import { WorkspaceTabBar } from "./components/WorkspaceTabBar";
+import { WorkspacePod } from "./components/WorkspacePod";
 import { useBackendReady } from "./hooks/useBackendReady";
-import { useHashRoute } from "./hooks/useHashRoute";
-import { GraphSpecListPage } from "./components/graphs/GraphSpecListPage";
-import { GraphSpecEditor } from "./components/graphs/GraphSpecEditor";
-import { GraphSpecDetail } from "./components/graphs/GraphSpecDetail";
-import { GraphInstanceDetail } from "./components/graphs/GraphInstanceDetail";
+import { useHashRoute, parseHash } from "./hooks/useHashRoute";
+import { useWorkspaceTabs, fallbackTabId } from "./hooks/useWorkspaceTabs";
 import BootScreen from "./components/BootScreen";
 import { DISPERSE_MS } from "./lib/particles";
-import { buildTree } from "./lib/sessionTree";
 import { storageGetInt, storageSet } from "./lib/storage";
+import { cdWorkspace, fetchPools, fetchWorkspace, type PoolInfo } from "./lib/api";
 import { listPools } from "./lib/poolApi";
-import type { OutgoingAttachmentRef } from "./types/attachments";
+import { setTimezone } from "./lib/timezone";
 import { useT } from "./i18n";
-import { LogoMarkIcon } from "./components/ui/icons";
-
-interface PendingHeroSend {
-  content: string;
-  files?: File[];
-  providerName?: string;
-  modelName?: string;
-}
 
 const SIDEBAR_WIDTH_KEY = "modexbot_sidebar_width";
 const DEFAULT_SIDEBAR_WIDTH = 260;
@@ -44,136 +31,54 @@ function saveSidebarWidth(width: number): void {
   storageSet(localStorage, SIDEBAR_WIDTH_KEY, String(width));
 }
 
-const AppInner: FC = () => {
+const AppShell: FC = () => {
   const t = useT();
-  const {
-    sessions,
-    selectedId,
-    pools,
-    activePool,
-    workspace,
-    isHome,
-    recentWorkspaces,
-    isLoadingSessions,
-    revealSessionId,
-    getPoolForUuid,
-    handleSessionReady,
-    onSessionActivity,
-    onSessionCreated,
-    selectSession,
-    handleNew,
-    createDraftForSend,
-    handleDelete,
-    handleWorkspaceChanged,
-    handleGoHome,
-    handlePoolChange,
-    onSent,
-    newConvNonce,
-  } = useSessions();
+  const { show } = useToast();
 
-  // Home is its own workspace partition; pass ws only for non-home so home
-  // reads/writes use the canonical home dir (matching the no-ws behavior).
-  const streamWs = isHome ? "" : workspace;
-
-  const { route, navigate } = useHashRoute();
-
-  // Agent-node click in the graph execution viewer: session_id comes from
-  // NodeStatusInfo, populated by the orchestrator from BotAgentNode._session
-  // (CACHED strategy) or the last executed session. Jump back to chat and
-  // select that session's transcript.
-  const handleJumpToSession = useCallback(
-    (sessionId: string): void => {
-      navigate("");
-      selectSession(sessionId);
-    },
-    [navigate, selectSession],
-  );
-
-  // Sidebar actions that imply "leave the graph view and go back to chat".
-  // Without navigate("") the hash stays on #/graphs/* and App keeps rendering
-  // the graph component, so the click appears to do nothing. Mirrors onSelect
-  // / handleJumpToSession — the single converged graph→chat exit path.
-  const handleNewWithRoute = useCallback(
-    (pool: string): void => {
-      navigate("");
-      handleNew(pool);
-    },
-    [navigate, handleNew],
-  );
-  const handlePoolChangeWithRoute = useCallback(
-    (pool: string): void => {
-      navigate("");
-      handlePoolChange(pool);
-    },
-    [navigate, handlePoolChange],
-  );
-  const handleWorkspaceChangedWithRoute = useCallback(
-    (cwd: string): void => {
-      navigate("");
-      handleWorkspaceChanged(cwd);
-    },
-    [navigate, handleWorkspaceChanged],
-  );
-  const handleGoHomeWithRoute = useCallback(async (): Promise<void> => {
-    navigate("");
-    await handleGoHome();
-  }, [navigate, handleGoHome]);
-
-  // Pool for the active session (or the hero view's active pool). Threads
-  // into useWebUIStream (session-scoped API calls) and resolves the skill
-  // set for /skillName autocomplete.
-  const chatPool = useMemo(() => {
-    if (!selectedId) return activePool;
-    return sessions.find((x) => x.session_id === selectedId)?.pool ?? activePool;
-  }, [sessions, selectedId, activePool]);
-
-  const {
-    messages,
-    isStreaming,
-    isPending,
-    todos,
-    pendingApprovals,
-    isApprovingBatch,
-    isConnected,
-    wsClient,
-    submitApproval,
-    connect,
-    disconnect,
-    send,
-    pause,
-  } = useWebUIStream(
-    selectedId,
-    getPoolForUuid,
-    handleSessionReady,
-    onSessionActivity,
-    streamWs,
-    onSessionCreated,
-    chatPool,
-  );
-
-  // Approve every currently-pending card. Client-side loop — no new endpoint;
-  // the batch runs once all requests are approved.
-  const onApproveAll = useCallback((): void => {
-    pendingApprovals.forEach((v) => submitApproval(v.tool_call_id, "allow"));
-  }, [pendingApprovals, submitApproval]);
-
-  const sessionTree = useMemo(() => buildTree(sessions), [sessions]);
-
-  const isSelectedSubagent = useMemo(
-    () => !!(selectedId && sessions.some((s) => s.session_id === selectedId && s.parent_session_id)),
-    [selectedId, sessions],
-  );
-
-  // Pool → main_agent_name map, fetched once so the hero view (no session
-  // selected) can still resolve the main agent for skill autocomplete.
+  // ── Global (workspace-independent) data, fetched once ─────────────────
+  const [home, setHome] = useState<string>("");
+  const [recentWorkspaces, setRecentWorkspaces] = useState<{ path: string }[]>([]);
+  const [pools, setPools] = useState<PoolInfo[]>([]);
   const [poolAgentMap, setPoolAgentMap] = useState<Record<string, string>>({});
+  const [workspaceError, setWorkspaceError] = useState<string>("");
+
+  const loadWorkspace = useCallback((): void => {
+    fetchWorkspace()
+      .then((info) => {
+        setHome(info.home);
+        setRecentWorkspaces(info.recent);
+        if (info.timezone) {
+          setTimezone(info.timezone);
+        }
+        setWorkspaceError("");
+      })
+      .catch((err) => {
+        console.error("Failed to load workspace info:", err);
+        setWorkspaceError(err instanceof Error ? err.message : String(err));
+      });
+  }, []);
+
+  useEffect(() => {
+    loadWorkspace();
+  }, [loadWorkspace]);
+
+  useEffect(() => {
+    fetchPools()
+      .then(setPools)
+      .catch((err) => {
+        console.error("Failed to load pools:", err);
+      });
+  }, []);
+
+  // Pool → main_agent_name map, so a pod's hero view (no session selected)
+  // can still resolve the main agent for skill autocomplete.
   useEffect(() => {
     let cancelled = false;
     listPools()
-      .then((pools) => {
+      .then((loaded) => {
         if (cancelled) return;
         const m: Record<string, string> = {};
-        for (const p of pools) m[p.name] = p.main_agent_name;
+        for (const p of loaded) m[p.name] = p.main_agent_name;
         setPoolAgentMap(m);
       })
       .catch(() => {});
@@ -182,67 +87,90 @@ const AppInner: FC = () => {
     };
   }, []);
 
-  // Three-tier fallback: session list → infer from id suffix → active pool's
-  // main agent (via poolAgentMap). Keeps the header populated through the
-  // hero-send → attach window and gives the hero view a real agent name for
-  // skill autocomplete.
-  const agentName = useMemo(() => {
-    if (!selectedId) {
-      return (activePool && poolAgentMap[activePool]) || undefined;
-    }
-    const s = sessions.find((x) => x.session_id === selectedId);
-    if (s && s.agent_name !== "…" && s.agent_name) return s.agent_name;
-    const parts = selectedId.split(".");
-    if (parts.length >= 2) return parts[1] || "main";
-    return activePool || "main";
-  }, [sessions, selectedId, activePool, poolAgentMap]);
+  const refreshRecents = useCallback((): void => {
+    fetchWorkspace()
+      .then((info) => setRecentWorkspaces(info.recent))
+      .catch(() => {});
+  }, []);
 
-  const handleSend = useCallback(
-    (
-      content: string,
-      attachments?: OutgoingAttachmentRef[],
-      providerName?: string,
-      modelName?: string,
-    ): void => {
-      onSent(selectedId);
-      send(content, attachments, providerName, modelName);
+  // ── Workspace tabs ─────────────────────────────────────────────────────
+  const tabs = useWorkspaceTabs(home);
+  const { route, navigate } = useHashRoute();
+  // Per-tab hash memory: EVERY transition that changes the active tab saves
+  // the outgoing tab's hash and restores the incoming tab's, so each pod
+  // keeps its own chat/graph route. Closed tabs' entries are pruned.
+  const podHashesRef = useRef<Record<string, string>>({});
+
+  const activateTab = useCallback(
+    (id: string): void => {
+      if (id === tabs.activeId) return;
+      podHashesRef.current[tabs.activeId] = window.location.hash;
+      tabs.activateTab(id);
+      const stored = podHashesRef.current[id] ?? "";
+      if (window.location.hash !== stored) {
+        window.location.hash = stored;
+      }
     },
-    [onSent, send, selectedId],
+    [tabs],
   );
 
-  // Hero-send flow: when the user submits from the no-session hero composer,
-  // create a client-side draft (which useWebUIStream attaches to the backend)
-  // and stash the payload. The effect below fires send() as soon as
-  // selectedId becomes the uuid prefix — send() adds the optimistic message
-  // immediately and queues the ws send for the `attached` handler to flush
-  // with the real session id. This bridges the async gap between "user
-  // pressed send" and "backend attached + ready to receive".
-  const pendingHeroSendRef = useRef<PendingHeroSend | null>(null);
-
-  const handleHeroSend = useCallback(
-    (
-      content: string,
-      files?: File[],
-      providerName?: string,
-      modelName?: string,
-    ): void => {
-      createDraftForSend(activePool);
-      pendingHeroSendRef.current = { content, files, providerName, modelName };
+  // Opening a workspace ALWAYS appends a new tab (no dedupe). The recent
+  // list path runs cd first (backend registration + recents bump); the
+  // browse modal already ran cd itself. Both paths save the outgoing tab's
+  // hash and reset to the chat route for the fresh tab.
+  const openRecent = useCallback(
+    (path: string): void => {
+      cdWorkspace(path)
+        .then((cwd) => {
+          podHashesRef.current[tabs.activeId] = window.location.hash;
+          tabs.openWorkspace(cwd);
+          if (window.location.hash) {
+            window.location.hash = "";
+          }
+          refreshRecents();
+        })
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : t("workspace.networkError");
+          show({ message, tone: "error" });
+        });
     },
-    [createDraftForSend, activePool],
+    [tabs, show, t, refreshRecents],
   );
 
-  useEffect((): void => {
-    const pending = pendingHeroSendRef.current;
-    if (!pending || !selectedId) return;
-    pendingHeroSendRef.current = null;
-    onSent(selectedId);
-    send(pending.content, undefined, pending.providerName, pending.modelName, pending.files);
-  }, [selectedId, onSent, send]);
+  const openBrowsed = useCallback(
+    (path: string): void => {
+      podHashesRef.current[tabs.activeId] = window.location.hash;
+      tabs.openWorkspace(path);
+      if (window.location.hash) {
+        window.location.hash = "";
+      }
+      refreshRecents();
+    },
+    [tabs, refreshRecents],
+  );
 
+  // Closing the active tab restores the fallback tab's remembered route
+  // (fallbackTabId is the same left-neighbor rule the hook uses); the
+  // closed tab's entry is pruned either way.
+  const closeTab = useCallback(
+    (id: string): void => {
+      const fallback = fallbackTabId(tabs.tabs, id);
+      if (fallback === null) return;
+      const closingActive = id === tabs.activeId;
+      delete podHashesRef.current[id];
+      tabs.closeTab(id);
+      if (closingActive) {
+        const stored = podHashesRef.current[fallback] ?? "";
+        if (window.location.hash !== stored) {
+          window.location.hash = stored;
+        }
+      }
+    },
+    [tabs],
+  );
+
+  // ── Shared chrome state ────────────────────────────────────────────────
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
-
-  // ── Sidebar resize (refs keep the drag smooth without re-registering listeners)
   const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => loadSidebarWidth());
   const resizing = useRef(false);
@@ -283,152 +211,87 @@ const AppInner: FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Connect WebSocket on mount
-  useEffect(() => {
-    connect();
-    return (): void => {
-      disconnect();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const onSelect = useCallback(
-    (sessionId: string): void => {
-      navigate("");
-      selectSession(sessionId);
-      setSidebarMobileOpen(false);
-    },
-    [navigate, selectSession],
-  );
-
-  return (
-    <ToastProvider>
-      <div className="flex h-[100dvh] w-screen flex-col overflow-hidden bg-canvas">
-        {/* Top status bar — logo mark · brand wordmark · workspace · pool (§8) */}
-        <div className="statusline" role="contentinfo" aria-label={t("chat.sessionStatus")}>
-          <span className="brand" title={isConnected ? t("chat.connected") : t("chat.disconnected")}>
-            <span className="brand-mark" aria-hidden="true">
-              <LogoMarkIcon className="h-4 w-4" />
-            </span>
-            <span className={isConnected ? "dot-signal" : "dot-dim"} aria-hidden="true" />
-            ModexBot
-          </span>
-          <span className="v" title={workspace || "—"}>
-            {workspace || "—"}
-          </span>
-          <span className="v">{activePool || "default"}</span>
-        </div>
-
-        <div className="flex min-h-0 flex-1 overflow-hidden">
-        <Sidebar
-          style={{ ["--sidebar-width" as string]: `${sidebarWidth}px` }}
-          sessionTree={sessionTree}
-          pools={pools}
-          selected={selectedId}
-          workspace={workspace}
-          isHome={isHome}
-          activePool={activePool}
-          recentWorkspaces={recentWorkspaces}
-          isLoadingSessions={isLoadingSessions}
-          mobileOpen={sidebarMobileOpen}
-          onCloseMobile={() => setSidebarMobileOpen(false)}
-          onSelect={onSelect}
-          onNew={handleNewWithRoute}
-          onDelete={handleDelete}
-          onWorkspaceChanged={handleWorkspaceChangedWithRoute}
-          onGoHome={handleGoHomeWithRoute}
-          onPoolChange={handlePoolChangeWithRoute}
-          revealSessionId={revealSessionId}
-          onOpenSettings={() => setSettingsOpen(true)}
-          graphsActive={route.kind !== "chat"}
-          onOpenGraphs={() => navigate("/graphs")}
-        />
-
-        {/* Resize handle — desktop only */}
-        <div
-          onMouseDown={onResizeMouseDown}
-          className="group relative hidden w-2 flex-shrink-0 cursor-col-resize select-none md:block"
-          title={t("chat.dragResizeSidebar")}
-        >
-          <div
-            className={`absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors ${
-              resizing.current
-                ? "bg-brand"
-                : "bg-hairline group-hover:bg-brand"
-            }`}
-          />
-        </div>
-
-        <main className="flex flex-1 flex-col min-w-0">
-          {route.kind === "graphs" ? (
-            <GraphSpecListPage
-              workspaceId={streamWs}
-              onEditSpec={(specId): void => navigate(`/graphs/${specId}`)}
-            />
-          ) : route.kind === "graphSpecDetail" ? (
-            <GraphSpecDetail
-              workspaceId={streamWs}
-              specId={route.specId}
-              onBack={(): void => navigate("/graphs")}
-              onEditYaml={(): void => navigate(`/graphs/${route.specId}/edit`)}
-              onOpenInstance={(instanceId): void => navigate(`/graphs/instances/${instanceId}`)}
-            />
-          ) : route.kind === "graphSpecEdit" ? (
-            <GraphSpecEditor
-              workspaceId={streamWs}
-              specId={route.specId}
-              onBack={(): void => navigate(`/graphs/${route.specId}`)}
-              onSpecIdChanged={(newId): void => navigate(`/graphs/${newId}`)}
-            />
-          ) : route.kind === "graphInstance" ? (
-            <GraphInstanceDetail
-              workspaceId={streamWs}
-              instanceId={route.instanceId}
-              wsClient={wsClient ?? undefined}
-              onBack={(): void => navigate("/graphs")}
-              onJumpToSession={handleJumpToSession}
-            />
-          ) : (
-          <ChatView
-            messages={messages}
-            isStreaming={isStreaming}
-            isPending={isPending}
-            todos={todos}
-            pendingApprovals={pendingApprovals}
-            isApprovingBatch={isApprovingBatch}
-            submitApproval={submitApproval}
-            onApproveAll={onApproveAll}
-            sessionId={selectedId}
-            workspace={streamWs}
-            onSend={handleSend}
-            onHeroSend={handleHeroSend}
-            onPause={pause}
-            readOnly={isSelectedSubagent}
-            onOpenSidebar={() => setSidebarMobileOpen(true)}
-            agentName={agentName}
-            pool={chatPool}
-            heroFocusNonce={newConvNonce}
-          />
-          )}
-        </main>
-
-        <SettingsModal
-          open={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
-        />
-
-        {sidebarMobileOpen && (
-          <div
-            className="fixed inset-0 z-30 bg-overlay md:hidden"
-            onClick={() => setSidebarMobileOpen(false)}
-            aria-hidden="true"
-          />
-        )}
+  if (!tabs.ready) {
+    // fetchWorkspace failed after the backend-ready gate: never brick the
+    // page on a transient error — offer a retry instead of a blank screen.
+    if (!workspaceError) return null;
+    return (
+      <div className="flex h-[100dvh] w-screen items-center justify-center bg-canvas">
+        <div className="flex flex-col items-center gap-3">
+          <p className="text-sm text-mute">{t("common.failedToLoad", { error: workspaceError })}</p>
+          <button type="button" className="btn-primary" onClick={loadWorkspace}>
+            {t("common.retry")}
+          </button>
         </div>
       </div>
-    </ToastProvider>
+    );
+  }
+
+  return (
+    <div className="flex h-[100dvh] w-screen flex-col overflow-hidden bg-canvas">
+      <WorkspaceTabBar
+        tabs={tabs.tabs}
+        activeId={tabs.activeId}
+        statuses={tabs.statuses}
+        home={home}
+        recentWorkspaces={recentWorkspaces}
+        onOpenWorkspace={openBrowsed}
+        onOpenRecent={openRecent}
+        onActivate={activateTab}
+        onClose={closeTab}
+        onReorder={tabs.reorderTab}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
+
+      {tabs.tabs.map((tab) => {
+        const isActive = tab.id === tabs.activeId;
+        const scopeWs = tab.path === home ? "" : tab.path;
+        const podRoute = isActive
+          ? route
+          : parseHash(podHashesRef.current[tab.id] ?? "");
+        return (
+          <WorkspacePod
+            key={tab.id}
+            tabId={tab.id}
+            workspacePath={tab.path}
+            scopeWs={scopeWs}
+            active={isActive}
+            route={podRoute}
+            navigate={navigate}
+            pools={pools}
+            poolAgentMap={poolAgentMap}
+            sidebarWidth={sidebarWidth}
+            resizing={resizing.current}
+            onResizeMouseDown={onResizeMouseDown}
+            mobileOpen={isActive && sidebarMobileOpen}
+            onCloseMobile={() => setSidebarMobileOpen(false)}
+            onOpenMobile={() => setSidebarMobileOpen(true)}
+            onReportStatus={tabs.reportStatus}
+          />
+        );
+      })}
+
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
+
+      {sidebarMobileOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-overlay md:hidden"
+          onClick={() => setSidebarMobileOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+    </div>
   );
 };
+
+const AppInner: FC = () => (
+  <ToastProvider>
+    <AppShell />
+  </ToastProvider>
+);
 
 const App: FC = () => {
   const { ready, attempts, lastError, retry } = useBackendReady();

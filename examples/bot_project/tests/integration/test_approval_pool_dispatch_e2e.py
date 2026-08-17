@@ -27,6 +27,7 @@ import asyncio
 import contextlib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -46,6 +47,7 @@ from modex_agent.multi_agent import AgentDescriptor, AgentFactory, AgentPool
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentInstance
 from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
+from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.runtime.enums import SnapshotReason, TurnPhase
 from modex_agent.runtime.models import StateQueryScope
@@ -162,7 +164,7 @@ class _ValidatingProvider:
         self.received: list[list[dict]] = []
 
     async def chat(self, messages, **kwargs):
-        self.received.append([dict(m) for m in messages])
+        self.received.append([m.to_dict() if hasattr(m, "to_dict") else dict(m) for m in messages])
         self._assert_tool_messages_follow_tool_calls(messages)
         resp = self._script[min(self.calls, len(self._script) - 1)]
         self.calls += 1
@@ -170,12 +172,12 @@ class _ValidatingProvider:
 
     @staticmethod
     def _assert_tool_messages_follow_tool_calls(messages) -> None:
-        msgs = list(messages)
+        msgs = [m.to_dict() if hasattr(m, "to_dict") else dict(m) for m in messages]
         i = 0
         while i < len(msgs):
             m = msgs[i]
             if m.get("role") == "assistant" and m.get("tool_calls"):
-                expected = {tc.get("id") for tc in m["tool_calls"]}
+                expected = {tc.get("id") if isinstance(tc, dict) else tc.id for tc in m["tool_calls"]}
                 j = i + 1
                 seen: set[str] = set()
                 while j < len(msgs) and msgs[j].get("role") == "tool":
@@ -236,17 +238,18 @@ class _WriteTool(Tool):
         return f"wrote {kwargs.get('path', '')}"
 
 
-class _RecordingOutputAdapter:
+class _RecordingOutputAdapter(OutputAdapter):
     def __init__(self) -> None:
         self.sent: list[OutputMessage] = []
 
-    async def start(self) -> None: ...
-    async def stop(self) -> None: ...
+    @property
+    def name(self) -> str:
+        return "recording"
 
     async def send(self, message: OutputMessage, session_id: str) -> None:
         self.sent.append(message)
 
-    async def send_delta(self, delta: str, session_id: str) -> None: ...
+    async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None: ...
     async def flush_deltas(self, session_id: str) -> None: ...
 
     @property
@@ -376,6 +379,31 @@ async def _build_stack(
     pool._status["main"] = AgentState.IDLE
     poller = InboxPoller(pool, interval=0.02)
     pool.attach_poller(poller)
+
+    # SessionTreeManager wiring (required since session-tree Phase 2 convergence
+    # made pool.submit_input fail-loud when pool.tree is None). Mirrors the
+    # production create_pool path (factory.py:388-406) and the framework
+    # integration test pattern (test_human_dm_fidelity.py:94-112).
+    from modex_agent.core.session_registry import InMemorySessionRegistry
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+    from modex_agent.multi_agent.session_tree.store_node import InMemoryTreeNodeStore
+    from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrackStore
+    from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
+
+    tree_manager = SessionTreeManager(
+        tree_store=InMemorySessionTreeStore(),
+        node_store=InMemoryTreeNodeStore(),
+        track_store=InMemoryMessageTrackStore(),
+        bus=agent_bus,
+        poller=poller,
+        pool_name="main",
+        workspace_root=str(tmp_path),
+        session_registry=InMemorySessionRegistry(),
+    )
+    inbox_consumer.set_on_consumed(tree_manager.on_consumed)
+    poller.attach_tree_manager(tree_manager)
+    pool.tree = tree_manager
+
     pool.start_poller()
 
     session_store = PoolSessionStore(tmp_path)

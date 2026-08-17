@@ -264,7 +264,7 @@ def detect_platform_shell() -> ShellInfo | None:
         if wsl_path and _verify_wsl(wsl_path):
             for candidate in [
                 shutil.which("bash"),
-                str(Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "bash.exe"),
+                str(Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "bash.exe"),
             ]:
                 if candidate and Path(candidate).is_file():
                     info = _verify_bash(candidate)
@@ -276,7 +276,7 @@ def detect_platform_shell() -> ShellInfo | None:
         if pwsh_path:
             return ShellInfo(family=ShellFamily.POWERSHELL, path=pwsh_path, platform=plat)
         ps_path = shutil.which("powershell") or str(
-            Path(os.environ.get("SystemRoot", r"C:\Windows"))
+            Path(os.environ.get("SYSTEMROOT", r"C:\Windows"))
             / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
         )
         if Path(ps_path).is_file():

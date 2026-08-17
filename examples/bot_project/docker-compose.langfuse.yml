@@ -35,6 +35,8 @@ services:
       TELEMETRY_ENABLED: "false"
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
       DISABLE_SIGNUP: "false"
+      NEXT_PUBLIC_LANGFUSE_RUN_NEXT_INIT: "false"
+      NODE_OPTIONS: "--max-old-space-size=1024"
     depends_on:
       langfuse-db:
         condition: service_healthy
@@ -44,6 +46,21 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    memswap_limit: 1024m
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+          pids: 200
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   langfuse-worker:
@@ -77,6 +94,7 @@ services:
       REDIS_PORT: "6379"
       REDIS_AUTH: "myredissecret"
       TELEMETRY_ENABLED: "false"
+      NODE_OPTIONS: "--max-old-space-size=448"
     depends_on:
       langfuse-db:
         condition: service_healthy
@@ -86,6 +104,21 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    memswap_limit: 448m
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 448M
+          pids: 200
+        reservations:
+          cpus: '0.25'
+          memory: 96M
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   langfuse-db:
@@ -97,6 +130,16 @@ services:
       POSTGRES_DB: langfuse
       TZ: UTC
       PGTZ: UTC
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=32MB"
+      - "-c"
+      - "work_mem=4MB"
+      - "-c"
+      - "maintenance_work_mem=64MB"
+      - "-c"
+      - "max_connections=50"
     volumes:
       - langfuse_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -104,6 +147,21 @@ services:
       interval: 3s
       timeout: 3s
       retries: 10
+    memswap_limit: 128m
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+          pids: 200
+        reservations:
+          cpus: '0.25'
+          memory: 96M
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   clickhouse:
@@ -117,12 +175,30 @@ services:
     volumes:
       - langfuse_clickhouse_data:/var/lib/clickhouse
       - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    configs:
+      - source: clickhouse_local
+        target: /etc/clickhouse-server/config.d/local.xml
     healthcheck:
       test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
       interval: 5s
       timeout: 5s
-      retries: 10
-      start_period: 1s
+      retries: 20
+      start_period: 30s
+    memswap_limit: 1024m
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+          pids: 1024
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   minio:
@@ -143,6 +219,21 @@ services:
       timeout: 5s
       retries: 5
       start_period: 1s
+    memswap_limit: 192m
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 192M
+          pids: 100
+        reservations:
+          cpus: '0.10'
+          memory: 64M
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   redis:
@@ -150,6 +241,7 @@ services:
     container_name: modex-langfuse-redis
     command: >
       --requirepass myredissecret
+      --maxmemory 96mb
       --maxmemory-policy noeviction
     volumes:
       - langfuse_redis_data:/data
@@ -158,6 +250,21 @@ services:
       interval: 3s
       timeout: 10s
       retries: 10
+    memswap_limit: 128m
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+          pids: 100
+        reservations:
+          cpus: '0.10'
+          memory: 64M
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
 volumes:
@@ -166,3 +273,21 @@ volumes:
   langfuse_clickhouse_logs:
   langfuse_minio_data:
   langfuse_redis_data:
+
+configs:
+  clickhouse_local:
+    content: |
+      <clickhouse>
+          <!-- Caches: local traces are tiny, shrink from defaults (5GiB) -->
+          <mark_cache_size>33554432</mark_cache_size>
+          <uncompressed_cache_size>16777216</uncompressed_cache_size>
+          <mmap_cache_size>8388608</mmap_cache_size>
+
+          <!-- Memory: let cgroup be the sole hard limit, no internal cap -->
+          <max_server_memory_usage_to_ram_ratio>1.0</max_server_memory_usage_to_ram_ratio>
+
+          <!-- Logging: reduce noise -->
+          <logger>
+              <level>warning</level>
+          </logger>
+      </clickhouse>

@@ -24,7 +24,7 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.capabilities import Modality
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.types import MessageRole
+from modex_agent.core.types import LLMResponse, MessageRole
 from modex_agent.media.media_utils import build_inline_image_block
 from modex_agent.media.tool_media import (
     SyntheticUserMessageStrategy,
@@ -39,15 +39,11 @@ from modex_agent.runtime.enums import (
     TurnPhase,
 )
 from modex_agent.runtime.models import MessageDelta
-from modex_graph import create_null_coordinator
+from modex_graph import GraphPersistenceCoordinator
 from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node
-
-# Module-level Null coordinator for the governance helper context.
-# Node.run() is never called on it — it only provides the coordinator
-# reference that ReActGraphContext requires for governance application.
-_governance_coordinator = create_null_coordinator()
+from modex_graph.runtime import GraphRuntime
 
 _default_tool_media_strategy = SyntheticUserMessageStrategy()
 
@@ -178,12 +174,15 @@ class LLMNode(Node[ReActTurnState]):
         # edge to AFTER.
         if state.iteration > agent_ctx.max_iterations:
             await ctx.runtime.emit(GraphReActEvent.MAX_ITERATIONS, None, ctx)
-            self.deliver(state.llm_response, ReActNode.AFTER, ctx)
+            self.deliver(None, ReActNode.AFTER, ctx)
             return None
 
         agent_runtime = agent_ctx.runtime
 
+        response: LLMResponse | None = None
+
         async def actual_iteration() -> None:
+            nonlocal response
             # ITERATION_START is NOT in ``constants.ReActEvent`` (the
             # graph-runtime subset) — it stays as a direct emitter call.
             if agent_ctx.emitter is not None:
@@ -199,7 +198,11 @@ class LLMNode(Node[ReActTurnState]):
             if agent_runtime and agent_runtime.injection_queue:
                 await self._injection_drainer.drain(agent_ctx)
 
-            messages = await self._build_messages(agent_ctx)
+            messages = await self._build_messages(
+                agent_ctx,
+                ctx.runtime,
+                ctx.coordinator,
+            )
 
             # Coerce to ChatMessage for a typed BEFORE_LLM hook payload (T10
             # prompt capture); ReactLlmClient.call coerces again internally.
@@ -220,7 +223,6 @@ class LLMNode(Node[ReActTurnState]):
             await ctx.runtime.drain_control(ctx)
 
             if response.finish_reason == FinishReason.ERROR.value:
-                state.llm_response = response
                 return
 
             from modex_agent.utils.helpers import strip_think
@@ -237,7 +239,6 @@ class LLMNode(Node[ReActTurnState]):
                 response.reasoning_content,
             )
             await agent_ctx.history.append(assistant_msg)
-            state.llm_response = response
             state.add_operation(OperationKind.LLM_CALL, None)
             state.message_delta.append(
                 MessageDelta(message=assistant_msg, source=MessageDeltaSource.ASSISTANT)
@@ -257,16 +258,17 @@ class LLMNode(Node[ReActTurnState]):
         )
         renew_dispatch_deadline(_round_extension)
 
-        response = state.llm_response
         # AFTER_ITERATION fires at current-iteration-end (not next-iteration-start),
         # so all three exit paths (ERROR, TOOL, AFTER) get the dispatch (T16).
         await ctx.runtime.dispatch_hook(ReActHookPoint.AFTER_ITERATION, ctx)
         if response is not None and response.finish_reason == FinishReason.ERROR.value:
-            self.deliver(response, ReActNode.AFTER, ctx)
+            state.phase = TurnPhase.FAILED
+            error_text = response.error or response.content or "LLM request failed"
+            self.deliver({"error": error_text}, ReActNode.AFTER, ctx)
             return None
 
         if response is not None and response.tool_calls:
-            self.deliver(response, ReActNode.TOOL, ctx)
+            self.deliver(None, ReActNode.TOOL, ctx)
             return None
 
         await ctx.runtime.emit(
@@ -274,44 +276,34 @@ class LLMNode(Node[ReActTurnState]):
             {"iteration": state.iteration, "has_tool_calls": False},
             ctx,
         )
-        self.deliver(response, ReActNode.AFTER, ctx)
+        self.deliver(None, ReActNode.AFTER, ctx)
         return None
 
     async def _build_messages(
         self,
         ctx: AgentContext,
+        graph_runtime: GraphRuntime,
+        coordinator: GraphPersistenceCoordinator,
     ) -> list[dict[str, object]]:
         messages: list[dict[str, object]] = []
 
-        # Use pipeline for dynamic system prompt if available
-        if ctx.system_prompt_pipeline is not None:
-            system_content = await ctx.system_prompt_pipeline.get_or_refresh()
-            if system_content:
-                messages.append({"role": "system", "content": system_content})
-        elif ctx.system_prompt:
-            messages.append({"role": "system", "content": ctx.system_prompt})
+        system_content = await ctx.get_resolved_system_prompt()
+        if system_content:
+            messages.append({"role": "system", "content": system_content})
 
         messages.extend(await ctx.to_messages())
 
-        # Route governance through ``ReactGraphRuntime.apply_governance`` when
-        # a runtime is wired; otherwise skip (matches the original
-        # ``governance = ctx.runtime.governance if ctx.runtime else None``
-        # graceful-None path).
-        runtime = ctx.runtime
-        if runtime is not None:
-            from modex_agent.agents.react.state import get_react_state
+        from modex_agent.agents.react.state import get_react_state
 
-            state = get_react_state(ctx)
-            if state is not None:
-                graph_runtime = runtime.graph_runtime
-                if graph_runtime is not None:
-                    graph_ctx = ReActGraphContext(
-                        state=state,
-                        runtime=graph_runtime,
-                        user_data=ctx,
-                        coordinator=_governance_coordinator,
-                    )
-                    messages = await graph_runtime.apply_governance(messages, graph_ctx)
+        state = get_react_state(ctx)
+        if state is not None:
+            graph_ctx = ReActGraphContext(
+                state=state,
+                runtime=graph_runtime,
+                user_data=ctx,
+                coordinator=coordinator,
+            )
+            messages = await graph_runtime.apply_governance(messages, graph_ctx)
 
         return enrich_inline_media(messages, ctx)
 

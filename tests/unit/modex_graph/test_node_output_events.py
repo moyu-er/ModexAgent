@@ -65,7 +65,7 @@ def _make_ctx(
         runtime=make_runtime(),
         coordinator=coordinator,
     )
-    ctx.set_dispatch_handler(lambda _src, _tgt, _update: None)
+    ctx.set_dispatch_handler(lambda _src, _tgt: None)
     return ctx
 
 
@@ -90,16 +90,17 @@ async def test_node_run_emits_started_then_completed() -> None:
 
     assert [o.kind for o in adapter.outputs] == [
         GraphOutputKind.NODE_STARTED,
+        GraphOutputKind.DELIVER_DISPATCHED,
         GraphOutputKind.NODE_COMPLETED,
     ]
-    for output in adapter.outputs:
+    for output in (adapter.outputs[0], adapter.outputs[2]):
         assert output.node_id == "adder"
         assert output.node_name == "adder"
         assert output.invocation_id is not None
         assert output.timestamp is not None
         assert output.graph_instance_id == 0
     assert (
-        adapter.outputs[0].invocation_id == adapter.outputs[1].invocation_id
+        adapter.outputs[0].invocation_id == adapter.outputs[2].invocation_id
     )
 
 

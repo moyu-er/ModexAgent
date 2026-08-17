@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     # These live in bot.service, whose package __init__ imports BotService,
     # which imports the bundle via wiring; deferring them to TYPE_CHECKING
     # keeps the import graph acyclic (handle is the low-level bundle module).
+    from bot.service.session_pool_index import SessionPoolIndex
     from bot.service.workspace_store import WorkspaceScopedTranscriptStore
     from bot.webui.transcript_store import TranscriptStore
     from bot.workspace.background import BackgroundTaskRunner
@@ -136,6 +137,8 @@ class PoolWorkspaceResources(WorkspaceResources):
     # WebUIGraphOutputAdapter fans out to these queues on emit.
     graph_event_subscribers: dict[int, list[asyncio.Queue[GraphOutput]]] | None = None
     graph_conn: sqlite3.Connection | None = None
+    # Released with the bundle on workspace eviction — no explicit cleanup API.
+    session_pool_index: SessionPoolIndex | None = None
 
     def resolve_workspace(self) -> PoolWorkspaceResources:
         """Resolver entry point the framework pipeline calls.

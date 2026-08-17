@@ -18,6 +18,7 @@ Core business logic for the ModexAgent bot — service lifecycle, I/O adapters, 
 |-----------|---------|
 | `adapters/` | Input/output adapters for QQ, Telegram, WebSocket (see `adapters/AGENTS.md`) |
 | `config/` | Typed config code — config domains, pool/MCP/skills/prompt stores (see `config/AGENTS.md`) |
+| `eval/` | Eval harness package — task schema, agent harness, experiment runner, cassette replay, metrics, dataset curators, CLI (opt-in, separate process; no Langfuse SDK in the bot process; see `eval/AGENTS.md`) |
 | `input_pipeline/` | Converged user-input stage pipeline (see `input_pipeline/AGENTS.md`) |
 | `service/` | Service lifecycle and pool orchestration (see `service/AGENTS.md`) |
 | `webui/` | WebUI backend — server, events, transcript store (see `webui/AGENTS.md`) |

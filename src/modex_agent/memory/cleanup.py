@@ -20,7 +20,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.scope import MemoryContext
@@ -62,6 +62,8 @@ class CleanupResult:
     triggered: bool
     messages_kept: int = 0
     messages_pruned: int = 0
+    tokens_before: int = 0
+    tokens_after: int = 0
     archive_skipped: bool = False
     compact_generated: bool = False
     reason: CompressionReason | None = None
@@ -112,20 +114,21 @@ async def _prepare_cleanup_phase(
     keep_ratio: float,
     max_backups: int,
     estimator: TokenEstimator,
-) -> _CleanupPlan | None:
+) -> tuple[_CleanupPlan | None, int]:
     """Phase 1: trigger check → backup → sanitize → compute keep/prune boundary.
 
-    Returns ``None`` when cleanup is not triggered.  On success returns a
-    :class:`_CleanupPlan` containing sanitized messages and the boundary split.
+    Returns the optional cleanup plan and the estimated content-token count
+    before pruning.
     """
     all_messages = await session.get_all_messages(context)
     total_count = len(all_messages)
+    tokens_before = _estimate_content_tokens(all_messages, estimator)
 
-    trigger_reason = _check_trigger(
+    trigger_reason = check_cleanup_trigger(
         all_messages, estimator, max_context_tokens, max_token_ratio, max_output_tokens
     )
     if trigger_reason is None:
-        return None
+        return None, tokens_before
 
     logger.info(
         "Cleanup triggered: session=%s reason=%s total=%d",
@@ -152,12 +155,15 @@ async def _prepare_cleanup_phase(
 
     sanitized = sanitization.messages
     if not sanitized:
-        return _CleanupPlan(
-            trigger_reason=trigger_reason,
-            total_count=total_count,
-            sanitized=[],
-            keep_messages=[],
-            pruned_messages=all_dicts,
+        return (
+            _CleanupPlan(
+                trigger_reason=trigger_reason,
+                total_count=total_count,
+                sanitized=[],
+                keep_messages=[],
+                pruned_messages=all_dicts,
+            ),
+            tokens_before,
         )
 
     keep_target_tokens = max(1, int((max_context_tokens or 0) * keep_ratio))
@@ -165,21 +171,27 @@ async def _prepare_cleanup_phase(
 
     if not keep_messages:
         logger.warning("No safe keep boundary found: session=%s", context.session_id)
-        return _CleanupPlan(
-            trigger_reason=trigger_reason,
-            total_count=total_count,
-            sanitized=sanitized,
-            keep_messages=[],
-            pruned_messages=pruned_messages,
+        return (
+            _CleanupPlan(
+                trigger_reason=trigger_reason,
+                total_count=total_count,
+                sanitized=sanitized,
+                keep_messages=[],
+                pruned_messages=pruned_messages,
+            ),
+            tokens_before,
         )
 
     keep_messages = _resanitize_keep(keep_messages)
-    return _CleanupPlan(
-        trigger_reason=trigger_reason,
-        total_count=total_count,
-        sanitized=sanitized,
-        keep_messages=keep_messages,
-        pruned_messages=pruned_messages,
+    return (
+        _CleanupPlan(
+            trigger_reason=trigger_reason,
+            total_count=total_count,
+            sanitized=sanitized,
+            keep_messages=keep_messages,
+            pruned_messages=pruned_messages,
+        ),
+        tokens_before,
     )
 
 
@@ -253,11 +265,11 @@ async def _commit_session_phase(
     pruned_messages: list[dict[str, Any]],
     compact_outcome: _CompactOutcome,
     estimator: TokenEstimator,
-) -> tuple[int, int] | None:
+) -> tuple[int, int, int] | None:
     """Phase 3: replace session messages with [compact_summary] + [tail].
 
-    Returns ``(keep_count, prune_count)`` on success, or ``None`` when a
-    revision conflict prevents the commit.
+    Returns keep count, prune count, and estimated remaining content tokens on
+    success, or ``None`` when a revision conflict prevents the commit.
     """
     # Build the final keep list: compact summary (if generated) + tail.
     final_keep = list(keep_messages)
@@ -295,7 +307,7 @@ async def _commit_session_phase(
         prune_count,
         compact_outcome.generated,
     )
-    return keep_count, prune_count
+    return keep_count, prune_count, _estimate_content_tokens(final_keep, estimator)
 
 
 async def _write_pruned_phase(
@@ -495,7 +507,7 @@ async def cleanup_session(
     """
     # Phase 1: prepare
     estimator = token_estimator or CharTokenEstimator()
-    plan = await _prepare_cleanup_phase(
+    plan, tokens_before = await _prepare_cleanup_phase(
         session,
         context,
         max_context_tokens,
@@ -506,7 +518,11 @@ async def cleanup_session(
         estimator,
     )
     if plan is None:
-        return CleanupResult(triggered=False)
+        return CleanupResult(
+            triggered=False,
+            tokens_before=tokens_before,
+            tokens_after=tokens_before,
+        )
 
     # Edge case: all messages invalid -> clear session.
     # triggered=True but pruned=total; FINISHED dispatches, TRIGGERED does not.
@@ -517,6 +533,8 @@ async def cleanup_session(
             triggered=True,
             messages_kept=0,
             messages_pruned=plan.total_count,
+            tokens_before=tokens_before,
+            tokens_after=0,
             archive_skipped=True,
             reason=plan.trigger_reason,
         )
@@ -537,6 +555,8 @@ async def cleanup_session(
             triggered=True,
             messages_kept=plan.total_count,
             messages_pruned=0,
+            tokens_before=tokens_before,
+            tokens_after=tokens_before,
             archive_skipped=True,
             reason=plan.trigger_reason,
         )
@@ -587,6 +607,8 @@ async def cleanup_session(
             triggered=True,
             messages_kept=plan.total_count,
             messages_pruned=0,
+            tokens_before=tokens_before,
+            tokens_after=tokens_before,
             archive_skipped=True,
             compact_generated=compact_outcome.generated,
             reason=plan.trigger_reason,
@@ -600,7 +622,7 @@ async def cleanup_session(
             result=result,
         )
         return result
-    keep_count, prune_count = commit_result
+    keep_count, prune_count, tokens_after = commit_result
 
     # Phase 4: pruned catalog write
     await _write_pruned_phase(
@@ -625,6 +647,8 @@ async def cleanup_session(
         triggered=True,
         messages_kept=keep_count,
         messages_pruned=prune_count,
+        tokens_before=tokens_before,
+        tokens_after=tokens_after,
         archive_skipped=archive_outcome.skipped,
         compact_generated=compact_outcome.generated,
         reason=plan.trigger_reason,
@@ -640,9 +664,24 @@ async def cleanup_session(
     return result
 
 
-_MessageLike = Union[dict[str, Any], ChatMessage]
+_MessageLike = dict[str, Any] | ChatMessage
 
 _SYSTEM_ROLE = str(MessageRole.SYSTEM)
+
+
+def _estimate_content_tokens(
+    messages: Sequence[_MessageLike],
+    estimator: TokenEstimator,
+) -> int:
+    """Estimate persisted message content with the cleanup estimator."""
+    total = 0
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            total += estimator.estimate_text(content)
+        elif content is not None:
+            total += estimator.estimate_text(json.dumps(content, ensure_ascii=False))
+    return total
 
 
 def _resolve_message_tokens(
@@ -666,7 +705,7 @@ def _sum_tokens(messages: Sequence[_MessageLike], estimator: TokenEstimator) -> 
     return sum(_resolve_message_tokens(m, estimator) for m in messages)
 
 
-def _check_trigger(
+def check_cleanup_trigger(
     messages: Sequence[_MessageLike],
     estimator: TokenEstimator,
     max_context_tokens: int | None,

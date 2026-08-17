@@ -4,8 +4,7 @@ Deliver-only routing: nodes MUST call ``deliver()``
 during ``execute()``. The scheduler reads the recorded dispatches (via
 ``ctx.dispatch`` → ``_handle_linear_dispatch``) for the next target.
 Upstream payloads now flow through the coordinator's
-``collect_consumable_delivers``; the dispatch handler →
-``coordinator.route_deliver`` wiring is in the scheduler.
+``collect_consumable_delivers``; dispatch carries only a scheduling wakeup.
 
 ``GraphBubbleUp`` exceptions propagate verbatim — the scheduler NEVER catches
 and swallows them (D7).
@@ -18,9 +17,9 @@ from typing import TYPE_CHECKING, Any
 from ..constants import GraphNode, SchedulerKind
 from ..exceptions import GraphRecursionError
 from ..execution_context import NodeExecution, reset_execution, set_execution
-from ._dispatch_utils import route_deliver_from_dispatch, validate_dispatch_target
+from ._dispatch_utils import record_end_reachability, validate_dispatch_target
 from .base import Scheduler
-from .bootstrap import bootstrap
+from .bootstrap import BootstrapMode, bootstrap
 
 if TYPE_CHECKING:
     from ..compiled_graph import CompiledGraph
@@ -54,7 +53,7 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
         # Stored ctx for dispatch handler access to coordinator.
         self._ctx: GraphContext[S] | None = None
 
-    async def run_async(self, ctx: GraphContext[S]) -> S:
+    async def run_async(self, ctx: GraphContext[S], *, mode: BootstrapMode) -> S:
         """Run the graph from its derived start until `GraphNode.END`.
 
         Returns `ctx.state` (the final state). The terminal node writes its
@@ -68,9 +67,9 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
         `ctx.interrupt(value, resume_to=...)`).
 
         Routing is deliver-only: nodes MUST call
-        ``deliver()`` during ``execute()``. The ``_submit`` step calls
-        ``ctx.dispatch(target, ...)`` for each deliver group; the linear
-        dispatch handler records the target + payload. The scheduler reads
+        ``deliver()`` during ``execute()``. After node completion,
+        ``Node.run`` calls ``ctx.dispatch(target)`` for each affected target;
+        the linear dispatch handler records the target. The scheduler reads
         the first recorded target as the next node (LINEAR is sequential).
         Upstream payloads flow through the coordinator.
 
@@ -81,7 +80,7 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
         ctx.set_dispatch_handler(self._handle_linear_dispatch)
         self._ctx = ctx
 
-        seeds = bootstrap(ctx, self.graph)
+        seeds = bootstrap(ctx, self.graph, mode=mode)
         current = seeds[0] if seeds else self.graph.entry_node
         iteration = 0
 
@@ -130,26 +129,21 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
         self,
         source_instance: str,
         target: str,
-        state_update: dict[str, Any] | None,
     ) -> None:
         """Record a dispatch for LINEAR next-node selection.
 
-        Called synchronously from ``GraphContext.dispatch`` during
-        ``Node._submit``. Records the target and extracted payload so
-        ``run_async`` can determine the next node. Also routes the deliver
-        to the target node's deliver_store via the coordinator.
+        Called synchronously from ``GraphContext.dispatch`` after a node's
+        staged outputs are promoted. Records the target so ``run_async`` can
+        determine the next node.
 
-        topology enforcement and deliver routing are shared with
+        Topology enforcement and END reachability are shared with
         ``ParallelScheduler._handle_dispatch`` via ``_dispatch_utils``.
         """
         validate_dispatch_target(self.graph, source_instance, target)
 
-        payload = state_update.get("delivered") if state_update else None
-        self._dispatches.setdefault(target, []).append(payload)
+        self._dispatches.setdefault(target, [])
         assert self._ctx is not None
-        route_deliver_from_dispatch(
-            self._ctx, self.graph, source_instance, target, state_update
-        )
+        record_end_reachability(self._ctx, target)
 
 
 __all__ = ["LinearScheduler"]

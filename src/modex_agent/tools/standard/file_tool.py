@@ -288,7 +288,7 @@ def _paginate_file(
     # ── 第一遍：统计总行数 ──────────────────────────────────
     total_lines = 0
     with file_path.open("r", encoding="utf-8") as f:
-        for line in f:
+        for _line in f:
             total_lines += 1
 
     # ── 空文件 ──────────────────────────────────────────────
@@ -507,6 +507,9 @@ class ReadFileTool(Tool):
             "30-line slices. If you need more context, read a larger window.\n"
             "- Prefer grep/glob when searching for content or files — read is for "
             "examining a specific known file.\n"
+            "- Only accepts file paths — directories are not supported. "
+            "To explore a directory's contents, use ls; to find files by "
+            "pattern, use glob.\n"
             "- You can call multiple read tools in a single response — batch "
             "speculative reads that are potentially useful.\n"
             "- Typically reads text files (UTF-8). Image files may also be "
@@ -519,7 +522,14 @@ class ReadFileTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "The file path to read"},
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "The file path to read. Must point to an existing file, "
+                        "not a directory. Relative paths resolve against the "
+                        "current working directory."
+                    ),
+                },
                 "offset": {
                     "type": "integer",
                     "description": "Number of lines to skip from the beginning (0-based, default: 0)",
@@ -559,9 +569,15 @@ class ReadFileTool(Tool):
         try:
             file_path = _resolve_path(path)
             if not file_path.exists():
-                return ToolResult(tool_name=self.name, error=f"File not found: {path}")
+                return ToolResult(
+                    tool_name=self.name,
+                    error=f"File not found: {path}. Use glob to search for files by pattern.",
+                )
             if not file_path.is_file():
-                return ToolResult(tool_name=self.name, error=f"Not a file: {path}")
+                return ToolResult(
+                    tool_name=self.name,
+                    error=f"Not a file: {path}. Use the ls tool to list directory contents.",
+                )
 
             with open(file_path, "rb") as f:
                 header = f.read(16)

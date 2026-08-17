@@ -1,0 +1,16 @@
+{
+  "model": "openai/glm-5.2",
+  "temperature": 0.7,
+  "tool_names": [
+    "edit",
+    "glob",
+    "grep",
+    "ls",
+    "read",
+    "write"
+  ],
+  "tool_schema_sha256": "9a636581cc736d591a783af5d96def571cc93a0174f9a67fc32dda62080fb6ba",
+  "prompt_sha256": "c3a5bf8498ace8837381076bce468a4bf0893d1e4f94a74a062f93d44e50d678",
+  "platform": "win32",
+  "recorded_at": "2026-08-15T05:23:14.614372+00:00"
+}

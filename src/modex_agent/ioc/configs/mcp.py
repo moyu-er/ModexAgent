@@ -93,4 +93,3 @@ class MCPConfig(BaseModel):
     enabled: bool = True
     config_dir: str = "mcp"
     servers: dict[str, MCPServerEntry] = Field(default_factory=dict)
-    tool_prefix: str = "mcp"

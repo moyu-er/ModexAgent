@@ -59,7 +59,12 @@ class TestHookRunnerLogging:
             await runner.dispatch(HookPoint.AFTER_ITERATION, async_ctx)
             await runner.dispatch(HookPoint.AFTER_GRAPH, async_ctx, HookPayload(data={"result": None}))
 
-        assert len(caplog.records) == 5
+        # Each failed dispatch emits 2 records: a WARNING ("Hook X failed in Y")
+        # and a DEBUG with exc_info ("Hook X.Y exception details"). 5 dispatches × 2 = 10.
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert len(warning_records) == 5
+        assert len(debug_records) == 5
         for record in caplog.records:
             assert "broken_hook" in record.message
 

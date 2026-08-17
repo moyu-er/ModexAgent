@@ -17,6 +17,7 @@ See ``docs/design/session-tree/layered-config-matrix.md`` for the full design.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -312,17 +313,20 @@ class TestGraphAwareComponentsSubagentExclusion:
         """GraphWorkflowProvider returns 'graph' for main agent in graph mode."""
         from modex_agent.core.agent import current_agent_context
 
+        state = _full_graph_state()
+        state.custom[TurnCustomKey.GRAPH_DOWNSTREAM_HAS_AGENT] = True
         ctx = _ctx(
             graph_context=_graph_ctx(),
             graph_instance_id=42,
-            state=_full_graph_state(),
+            state=state,
         )
         token = current_agent_context.set(ctx)
         try:
             provider = GraphWorkflowProvider()
             version = await provider._fetch_version()
             content = await provider._fetch_content()
-            assert version == "graph"
+            expected = f"graph:10:{hashlib.sha1(b'node desc').hexdigest()[:8]}"
+            assert version == expected
             assert "## Graph Node Context" in content
             assert "### Topology" in content
         finally:

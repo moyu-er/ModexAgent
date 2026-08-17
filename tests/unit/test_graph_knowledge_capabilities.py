@@ -51,12 +51,6 @@ class TestFromPreset:
         assert caps.has_write is False
         assert caps.has_edit is False
 
-    def test_minimal_grants_read_write_no_edit(self) -> None:
-        caps = KnowledgeToolCapabilities.from_preset(ToolPreset.MINIMAL)
-        assert caps.has_read is True
-        assert caps.has_write is True
-        assert caps.has_edit is False
-
     def test_none_grants_nothing(self) -> None:
         caps = KnowledgeToolCapabilities.from_preset(ToolPreset.NONE)
         assert caps.has_read is False
@@ -90,10 +84,6 @@ class TestAllowedActions:
     def test_read_only_actions(self) -> None:
         caps = KnowledgeToolCapabilities.from_preset(ToolPreset.READ_ONLY)
         assert caps.allowed_actions() == ["read", "ls", "grep"]
-
-    def test_minimal_actions(self) -> None:
-        caps = KnowledgeToolCapabilities.from_preset(ToolPreset.MINIMAL)
-        assert caps.allowed_actions() == ["read", "ls", "grep", "write"]
 
     def test_none_actions_empty(self) -> None:
         caps = KnowledgeToolCapabilities.from_preset(ToolPreset.NONE)

@@ -18,20 +18,10 @@ from bot.webui.transcript_store import TranscriptStore
 from modex_agent.core.emitter import EmitterConfig
 from modex_agent.core.session_id import SessionIdFactory
 
-
-def _default_meta_resolver(session_id: str) -> SessionMeta:
-    """Default resolver: no business routing context known."""
-    return SessionMeta()
-
-
 # Module-level references so WebUIServer can access the WebSocket adapter
 # without circular imports.
 _ws_input: WebSocketInputAdapter | None = None
 _ws_output: WebSocketOutputAdapter | None = None
-# Lazy resolver for per-session business routing context (pool,
-# parent_session_id).  Populated by WebUIService after pool init; read at
-# emit time so it always reflects the latest pool map / parent registry.
-_session_meta_resolver: Callable[[str], SessionMeta] = _default_meta_resolver
 
 
 def get_ws_input() -> WebSocketInputAdapter:
@@ -46,21 +36,12 @@ def get_ws_output() -> WebSocketOutputAdapter:
     return _ws_output
 
 
-def set_session_meta_resolver(resolver: Callable[[str], SessionMeta]) -> None:
-    """Inject the per-session business routing resolver (pool, parent).
-
-    Called by WebUIService.start() once the agent→pool map and the parent
-    registry are ready.  The resolver is read lazily at emit time.
-    """
-    global _session_meta_resolver
-    _session_meta_resolver = resolver
-
-
 def build_websocket_emitter(
     session_id: str,
     output_adapter: WebSocketOutputAdapter,
     transcript_store: TranscriptStore,
     *,
+    pool: str | None = None,
     sessions_dir_provider: Callable[[], Path | None] | None = None,
     session_meta_resolver: Callable[[], SessionMeta] | None = None,
 ) -> WebBotEmitter:
@@ -74,6 +55,7 @@ def build_websocket_emitter(
         output_adapter=output_adapter,
         session_id=session_id,
         config=EmitterConfig(),
+        pool=pool,
         transcript_store=transcript_store,
         session_meta_resolver=session_meta_resolver,
         sessions_dir_provider=sessions_dir_provider,
@@ -85,27 +67,36 @@ def build_websocket(ctx: AdapterBuildContext):
     """Build WebSocket channel adapters + emitter."""
     global _ws_input, _ws_output
 
-    _ws_input = WebSocketInputAdapter(session_factory=SessionIdFactory())
-    _ws_output = WebSocketOutputAdapter(_ws_input)
+    ws_input = WebSocketInputAdapter(session_factory=SessionIdFactory())
+    ws_output = WebSocketOutputAdapter(ws_input)
+    _ws_input = ws_input
+    _ws_output = ws_output
 
     store = ctx.transcript_store
     assert isinstance(store, TranscriptStore)
 
-    def emitter_factory(session_id: str) -> WebBotEmitter:
+    def emitter_factory(session_id: str, pool: str) -> WebBotEmitter:
         return build_websocket_emitter(
             session_id,
-            output_adapter=_ws_output,
+            output_adapter=ws_output,
             transcript_store=store,
-            session_meta_resolver=_resolve_meta_for(session_id),
+            pool=pool,
+            session_meta_resolver=_parent_meta_for(ws_input, session_id),
         )
 
-    return _ws_input, _ws_output, emitter_factory
+    return ws_input, ws_output, emitter_factory
 
 
-def _resolve_meta_for(session_id: str) -> Callable[[], SessionMeta]:
-    """Bind a resolver that captures *session_id* and reads the global resolver."""
+def _parent_meta_for(ws_input: WebSocketInputAdapter, session_id: str) -> Callable[[], SessionMeta]:
+    """Bind a lazy parent-session resolver against the WS genealogy map.
+
+    Parent lineage ONLY: pool ownership is fixed on each emitter by its
+    factory's ``pool`` argument and is never resolved here. ``get_parent``
+    is read at emit time so dispatch-time ``register_subagent`` entries
+    appended after emitter construction are still reflected.
+    """
 
     def _resolve() -> SessionMeta:
-        return _session_meta_resolver(session_id)
+        return SessionMeta(parent_session_id=ws_input.get_parent(session_id))
 
     return _resolve

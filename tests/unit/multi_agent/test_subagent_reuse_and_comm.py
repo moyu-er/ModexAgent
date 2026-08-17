@@ -369,6 +369,7 @@ async def test_send_to_agent_routes_through_tree():
         comm_kind=AgentCommKind.NORMAL,
         workspace=None,
         graph_instance_id=None,
+        runtime=None,
     )
     await svc._send(
         target=_tgt("scout", AgentCommKind.SUBAGENT),

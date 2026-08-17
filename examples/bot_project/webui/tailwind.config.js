@@ -82,19 +82,26 @@ export default {
           prompts: v("cat-prompts"),
         },
 
-        // Graph 可视化语义 token（graph PRD §7.3）— 全部映射 var()，
+        // Graph 可视化语义 token（graph PRD §7.3, §6 Rev 4）— 全部映射 var()，
         // 不要加 /alpha 修饰用法（var() token 上不生成 CSS）。
         graph: {
           "node-fill": v("graph-node-fill"),
-          "node-fill-done": v("graph-node-fill-done"),
-          "dot-pending": v("graph-dot-pending"),
-          "dot-canceled": v("graph-dot-canceled"),
+          "status-pending": v("graph-status-pending"),
+          "status-running": v("graph-status-running"),
+          "status-completed": v("graph-status-completed"),
+          "status-crashed": v("graph-status-crashed"),
+          "status-suspended": v("graph-status-suspended"),
+          "status-canceled": v("graph-status-canceled"),
           "node-border": v("graph-node-border"),
           "node-border-active": v("graph-node-border-active"),
           edge: v("graph-edge"),
           "edge-active": v("graph-edge-active"),
           arrow: v("graph-arrow"),
           "arrow-active": v("graph-arrow-active"),
+          "endpoint-fill": v("graph-endpoint-fill"),
+          "endpoint-border": v("graph-endpoint-border"),
+          "endpoint-text": v("graph-endpoint-text"),
+          "legend-bg": v("graph-legend-bg"),
           deliver: v("graph-deliver"),
           "deliver-glow": v("graph-deliver-glow"),
           "deliver-trail": v("graph-deliver-trail"),

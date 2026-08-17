@@ -10,6 +10,7 @@ upper bound when the agent is still making progress on its todos.
 from __future__ import annotations
 
 import hashlib
+from typing import TYPE_CHECKING
 
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.core.agent import AgentContext
@@ -21,6 +22,9 @@ from modex_agent.hook.abc import AfterTurnHook
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.runtime.store import TodoItem
 from modex_agent.tools.standard.todo_tool import TodoReadTool
+
+if TYPE_CHECKING:
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 
 
 def _active_todo_hash(active: list[TodoItem]) -> str:
@@ -38,10 +42,13 @@ class TodoContinuationHook(AfterTurnHook):
       3. If the active-todo signature is unchanged since the last check —
          returns (deadlock: no progress made).
       4. Otherwise — injects a ``<system-reminder>`` with the full active
-         todo list, sets ``CONTINUATION_REQUEST``, and sets
+          todo list, sets ``CONTINUATION_REQUEST``, and sets
          ``CONTINUATION_RENEW_MAX_TURNS`` (watchdog: authorizes the gate to
          extend MAX_TURNS by 1 when the agent is still making progress).
     """
+
+    def __init__(self, tree: SessionTreeManager | None = None) -> None:
+        self._tree = tree
 
     @property
     def name(self) -> str:
@@ -63,6 +70,15 @@ class TodoContinuationHook(AfterTurnHook):
         react_state = get_react_state(ctx)
         if react_state is None:
             return
+
+        if self._tree is not None:
+            tree_id = await self._tree.tree_id_for_session(str(ctx.session))
+            if tree_id is not None:
+                active_subtree = await self._tree.get_active_subtree_nodes(
+                    tree_id, str(ctx.session)
+                )
+                if len(active_subtree) > 1:
+                    return
 
         todos = await todo_store.get(str(ctx.session))
         active = [

@@ -83,9 +83,8 @@ async def poll_until_settled(
             return PollResult(PollOutcome.PROCESS_EXIT, output_parts, elapsed_ms)
 
         # 2. Content-based input wait (fast path)
-        if check_input_wait and output_received:
-            if is_waiting_for_input("".join(output_parts)):
-                return PollResult(PollOutcome.INPUT_WAIT, output_parts, elapsed_ms)
+        if check_input_wait and output_received and is_waiting_for_input("".join(output_parts)):
+            return PollResult(PollOutcome.INPUT_WAIT, output_parts, elapsed_ms)
 
         # 2b. Idle-based input wait — catches silent prompts (e.g. ``read -s``)
         # that have no marker text for the content detector above. Uses the
@@ -125,9 +124,12 @@ async def poll_until_settled(
                     return PollResult(PollOutcome.STUCK, output_parts, elapsed_ms)
 
         # 5.5 Long-running detection (before yield)
-        if elapsed_ms >= config.long_running_threshold_ms:
-            if output_received and await session.is_alive():
-                return PollResult(PollOutcome.LONG_RUNNING, output_parts, elapsed_ms)
+        if (
+            elapsed_ms >= config.long_running_threshold_ms
+            and output_received
+            and await session.is_alive()
+        ):
+            return PollResult(PollOutcome.LONG_RUNNING, output_parts, elapsed_ms)
 
         # 6. Yield window
         if elapsed_ms >= yield_ms:

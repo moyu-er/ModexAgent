@@ -18,6 +18,7 @@ from modex_graph import (
     Node,
     ParentCommand,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 
 class TestGraphBubbleUpFamily:
@@ -59,7 +60,7 @@ class TestEngineDoesNotSwallow:
         compiled = g.compile()
         ctx = make_ctx(CounterState())
         with pytest.raises(GraphInterrupt) as exc_info:
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert exc_info.value.value == {"approval": "needed"}
 
     async def test_engine_propagates_graphdrained(self) -> None:
@@ -76,7 +77,7 @@ class TestEngineDoesNotSwallow:
         compiled = g.compile()
         ctx = make_ctx(CounterState())
         with pytest.raises(GraphDrained):
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
     async def test_engine_propagates_parentcommand(self) -> None:
         class ParentCmdNode(Node[CounterState]):
@@ -92,7 +93,7 @@ class TestEngineDoesNotSwallow:
         compiled = g.compile()
         ctx = make_ctx(CounterState())
         with pytest.raises(ParentCommand):
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
     async def test_engine_propagates_from_before_node(self) -> None:
         """GraphBubbleUp raised in runtime.before_node propagates."""
@@ -119,7 +120,7 @@ class TestEngineDoesNotSwallow:
             coordinator=make_coordinator(),
         )
         with pytest.raises(GraphInterrupt) as exc_info:
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert exc_info.value.value == "from_before_node"
 
     async def test_engine_propagates_from_after_node(self) -> None:
@@ -147,7 +148,7 @@ class TestEngineDoesNotSwallow:
             coordinator=make_coordinator(),
         )
         with pytest.raises(GraphDrained):
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
 
 class TestCtxInterrupt:

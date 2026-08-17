@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
@@ -166,3 +166,68 @@ async def test_none_tool_manager_returns_early() -> None:
     )
 
     _assert_unchanged(state)
+
+
+def _make_tree_mock(tree_id: str | None, active_nodes: list[str]) -> MagicMock:
+    tree = MagicMock()
+    tree.tree_id_for_session = AsyncMock(return_value=tree_id)
+    tree.get_active_subtree_nodes = AsyncMock(return_value=active_nodes)
+    return tree
+
+
+async def test_tree_aware_skips_when_subtree_has_active_nodes() -> None:
+    context, state = _make_context()
+    tree = _make_tree_mock("tree-1", ["session.agent", "child.session"])
+
+    await DeliverRetryHook(tree=tree).after_turn(
+        context,
+        AgentResult(content="done", stop_reason=StopReason.COMPLETED),
+    )
+
+    _assert_unchanged(state)
+    assert await context.history.to_list() == []
+
+
+async def test_tree_aware_triggers_when_subtree_has_only_self() -> None:
+    context, state = _make_context()
+    tree = _make_tree_mock("tree-1", ["session.agent"])
+
+    await DeliverRetryHook(tree=tree).after_turn(
+        context,
+        AgentResult(content="done", stop_reason=StopReason.COMPLETED),
+    )
+
+    assert state.custom[TurnCustomKey.CONTINUATION_REQUEST] is True
+    messages = await context.history.to_list()
+    assert len(messages) == 1
+    assert messages[0].role == MessageRole.SYSTEM_REMINDER
+    assert "deliver" in messages[0].content
+
+
+async def test_tree_none_falls_through() -> None:
+    context, state = _make_context()
+
+    await DeliverRetryHook().after_turn(
+        context,
+        AgentResult(content="done", stop_reason=StopReason.COMPLETED),
+    )
+
+    assert state.custom[TurnCustomKey.CONTINUATION_REQUEST] is True
+    messages = await context.history.to_list()
+    assert len(messages) == 1
+    assert messages[0].role == MessageRole.SYSTEM_REMINDER
+
+
+async def test_tree_aware_falls_through_when_tree_id_is_none() -> None:
+    context, state = _make_context()
+    tree = _make_tree_mock(None, [])
+
+    await DeliverRetryHook(tree=tree).after_turn(
+        context,
+        AgentResult(content="done", stop_reason=StopReason.COMPLETED),
+    )
+
+    assert state.custom[TurnCustomKey.CONTINUATION_REQUEST] is True
+    messages = await context.history.to_list()
+    assert len(messages) == 1
+    assert messages[0].role == MessageRole.SYSTEM_REMINDER

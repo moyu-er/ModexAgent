@@ -21,6 +21,7 @@ from modex_graph import (
     IntegratedInput,
     Node,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 
 class TestLinearChain:
@@ -37,7 +38,7 @@ class TestLinearChain:
         compiled = g.compile()
         ctx = make_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        result = await engine.run_async(ctx)
+        result = await engine.run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 3
 
     async def test_linear_chain_sync_run(self) -> None:
@@ -48,7 +49,7 @@ class TestLinearChain:
         compiled = g.compile()
         ctx = make_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        result = engine.run(ctx)
+        result = engine.run(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 5
 
 
@@ -75,7 +76,7 @@ class TestLoopWithCycleGuard:
         compiled = g.compile(max_iterations=100)
 
         ctx = make_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 5
 
     async def test_max_iterations_raises_recursion_error(self) -> None:
@@ -95,7 +96,7 @@ class TestLoopWithCycleGuard:
 
         ctx = make_ctx(CounterState(count=0))
         with pytest.raises(GraphRecursionError, match="max_iterations=5"):
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
 
 class TestHitlInterruptResume:
@@ -110,7 +111,7 @@ class TestHitlInterruptResume:
 
         ctx = make_ctx(CounterState(count=0))
         with pytest.raises(GraphInterrupt) as exc_info:
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert exc_info.value.value == "approval_needed"
 
     async def test_interrupt_persists_prior_state_mutations(self) -> None:
@@ -132,7 +133,7 @@ class TestHitlInterruptResume:
 
         ctx = make_ctx(CounterState(count=0))
         with pytest.raises(GraphInterrupt):
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         # The mutation persisted across the interrupt.
         assert ctx.state.count == 42
 
@@ -171,14 +172,14 @@ class TestHitlInterruptResume:
         # First run: start -> interrupt -> raises.
         ctx = make_ctx(CounterState(count=0))
         with pytest.raises(GraphInterrupt):
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert ctx.state.count == 1
 
         # Clear node state so bootstrap returns [entry_node] on resume.
         ctx.coordinator.node_state_store.clear()
 
         # Resume: start detects count > 0 -> after_resume.
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 101
 
     async def test_resume_routes_via_resume_target_channel(self) -> None:
@@ -223,14 +224,14 @@ class TestHitlInterruptResume:
 
         ctx = make_ctx(CounterState(count=0))
         with pytest.raises(GraphInterrupt):
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert ctx.state.count == 1
         assert ctx.state.resume_target == "after_resume"
 
         # Clear node state so bootstrap returns [entry_node] on resume.
         ctx.coordinator.node_state_store.clear()
 
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 101
         assert result.resume_target is None
 
@@ -245,7 +246,7 @@ class TestSyncAsyncMixed:
         g.add_edge("a", GraphNode.END)
         compiled = g.compile()
         ctx = make_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 7
 
     async def test_async_only_node(self) -> None:
@@ -255,7 +256,7 @@ class TestSyncAsyncMixed:
         g.add_edge("a", GraphNode.END)
         compiled = g.compile()
         ctx = make_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 8
 
     async def test_mixed_sync_and_async_nodes(self) -> None:
@@ -269,7 +270,7 @@ class TestSyncAsyncMixed:
         g.add_edge("sync_c", GraphNode.END)
         compiled = g.compile()
         ctx = make_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 6
 
     async def test_sync_run_with_async_nodes(self) -> None:
@@ -280,5 +281,5 @@ class TestSyncAsyncMixed:
         g.add_edge("a", GraphNode.END)
         compiled = g.compile()
         ctx = make_ctx(CounterState(count=0))
-        result = GraphEngine(compiled).run(ctx)
+        result = GraphEngine(compiled).run(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 9

@@ -123,9 +123,12 @@ async def test_hidden_process_interaction(tools) -> None:
     await _answer_and_verify(tools, "no", "B2", negative_marker="B1")
 
     # ── 6. Multi-line paste — every line preserved ──────────────────────────
+    # The trailing newline is load-bearing: without it the last line stays in
+    # the PTY's canonical line buffer and one Ctrl-D delivers it WITHOUT EOF,
+    # so cat never exits and the follow-up `cat` is guard-rejected.
     lines = ["line-one-7c1", "line-two-7c1", "line-three-7c1"]
     await run_command(tools, "cat > /tmp/modex_paste_test_7c1.txt", timeout=15.0)
-    await tools.process.execute(action="paste", text="\n".join(lines))
+    await tools.process.execute(action="paste", text="\n".join(lines) + "\n")
     await tools.process.execute(action="send_keys", hex=["04"])  # Ctrl-D EOF
     await asyncio.sleep(0.5)
     cat_out = await run_command(tools, "cat /tmp/modex_paste_test_7c1.txt", timeout=15.0)

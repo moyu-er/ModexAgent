@@ -432,7 +432,6 @@ class TestCheckpointRoundTrip:
             "current_node",
             "iteration",
             "turn_attempt",
-            "llm_response",
             "tool_batches",
             "approval",
             "result",
@@ -552,20 +551,18 @@ class TestCheckpointRoundTrip:
         state = _make_state()
         restored = ReActTurnState.from_checkpoint(state.checkpoint())
 
-        assert restored.llm_response is None
         assert restored.result is None
         assert restored.cancellation is None
 
     def test_round_trip_preserves_pep604_union_with_value(self) -> None:
         """PEP 604 union fields (``T | None``) round-trip with real values, not just ``None``.
 
-        Covers ``cancellation`` / ``llm_response`` / ``approval`` / ``result`` —
+        Covers ``cancellation`` / ``approval`` / ``result`` —
         the case that was silently broken before ticket 01 fixed the per-channel
         codec's PEP 604 handling.
         """
         from modex_agent.core.constants import StopReason
         from modex_agent.core.emitter import AgentResult
-        from modex_agent.core.types import LLMResponse
         from modex_agent.runtime.enums import CancellationSource
         from modex_agent.runtime.models import CancellationState
 
@@ -574,10 +571,6 @@ class TestCheckpointRoundTrip:
             reason="user stopped",
             source=CancellationSource.USER_COMMAND,
             operation_id="op-1",
-        )
-        state.llm_response = LLMResponse(
-            content="thinking...",
-            finish_reason="stop",
         )
         state.result = AgentResult(
             content="done",
@@ -590,10 +583,6 @@ class TestCheckpointRoundTrip:
         assert restored.cancellation.reason == "user stopped"
         assert restored.cancellation.source is CancellationSource.USER_COMMAND
         assert restored.cancellation.operation_id == "op-1"
-
-        assert restored.llm_response is not None
-        assert restored.llm_response.content == "thinking..."
-        assert restored.llm_response.finish_reason == "stop"
 
         assert restored.approval is not None
         assert restored.approval.approval_id == "ap-1"

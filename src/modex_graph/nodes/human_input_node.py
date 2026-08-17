@@ -1,17 +1,9 @@
 # ruff: noqa: ANN401
 """`HumanInputNode` + `HumanInputNodeFactory` — suspend for human input.
 
-A generic node that suspends graph execution for human
-input via `GraphInterrupt`. On first entry, `execute()` raises
-`GraphInterrupt` with a prompt payload. On resume (re-entry), the node
-delivers a "human_input_resumed" signal.
-
-Suspend-without-re-execution model (ADR-0033 D7): already-applied state
-updates persist across the interrupt boundary. Resume re-enters the graph
-at the entry node; the interrupted node body is NOT re-run in the real
-engine flow. This node uses a `_resumed` phase flag to distinguish first
-entry from resume when `execute` IS called again (e.g. in isolated testing
-or when the convergence step wires re-entry semantics).
+The node interrupts when no human answer is pending and otherwise passes
+the most recently delivered answer downstream. Its behavior depends only on
+`IntegratedInput`, so retries and crash recovery do not require instance state.
 
 `NodeSpec.config = {"prompt": <str>, "next_node": <str> (optional)}`.
 """
@@ -48,20 +40,8 @@ class HumanInputNodeConfig(BaseModel):
 class HumanInputNode(Node[Any]):
     """Suspends for human input via `GraphInterrupt`.
 
-    `execute()`:
-
-    - First entry (`_resumed` is False): sets `_resumed = True`, then calls
-      `ctx.interrupt({"prompt": ..., "node": ...})` which raises
-      `GraphInterrupt`. The lines after the interrupt call are unreachable
-      on first entry.
-    - Resume (`_resumed` is True): skips the interrupt, delivers
-      `{"human_input": "resumed", "prompt": ...}` to the next node, and
-      resets `_resumed` to False for potential re-use.
-
-    In the real engine flow (suspend-without-re-execution), the node body
-    is NOT re-run on resume — the graph re-enters at the entry node. The
-    `_resumed` flag is the testing seam: a test simulates resume by setting
-    `_resumed = True` before calling `_execute`, verifying the deliver path.
+    With no pending payloads, `execute()` interrupts with the configured
+    prompt. Otherwise, it delivers the last payload's content downstream.
     """
 
     def __init__(self, prompt: str, *, next_node: str | None = None) -> None:
@@ -74,24 +54,18 @@ class HumanInputNode(Node[Any]):
         """
         self._prompt = prompt
         self._next_node = next_node
-        self._resumed = False
 
     async def execute(
         self,
         ctx: GraphContext[Any],
         integrated_input: IntegratedInput,
     ) -> None:
-        """Suspend for human input on first entry; deliver on resume."""
-        if not self._resumed:
-            self._resumed = True
+        """Interrupt without input; otherwise pass the latest answer through."""
+        if integrated_input.payloads:
+            answer = integrated_input.payloads[-1]
+            self.deliver(answer.content, self._next_node, ctx)
+        else:
             ctx.interrupt({"prompt": self._prompt, "node": self.name})
-        # On resume (re-entry), _resumed is True — deliver the resume signal.
-        self.deliver(
-            {"human_input": "resumed", "prompt": self._prompt},
-            self._next_node,
-            ctx,
-        )
-        self._resumed = False
         return None
 
 

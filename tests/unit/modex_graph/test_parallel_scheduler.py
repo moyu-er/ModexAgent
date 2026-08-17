@@ -7,7 +7,7 @@ Covers the Task 03 acceptance criteria:
   status, upstream_payloads. instance_id format `{node_name}#{seq}`.
 - `ParallelScheduler` execution loop: entry → execute → dispatch →
   downstream → ... → terminate when ready+active empty.
-- `ctx.dispatch(target, state_update)`: validates target in outgoing edges,
+- `ctx.dispatch(target)`: validates target in outgoing edges,
   and takes effect immediately.
 - `RoutingError` on invalid dispatch target.
 - `max_iterations` per-instance-execution counting.
@@ -45,6 +45,7 @@ from modex_graph import (
     Scheduler,
     SchedulerKind,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 # ── Test helpers ──────────────────────────────────────────────────────────
 
@@ -203,7 +204,7 @@ class TestLinearGraphParallel:
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
         ctx = make_parallel_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 3
 
     async def test_sync_run(self) -> None:
@@ -214,7 +215,7 @@ class TestLinearGraphParallel:
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
         ctx = make_parallel_ctx(CounterState(count=0))
-        result = GraphEngine(compiled).run(ctx)
+        result = GraphEngine(compiled).run(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 5
 
     async def test_three_node_chain(self) -> None:
@@ -229,7 +230,7 @@ class TestLinearGraphParallel:
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
         ctx = make_parallel_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 6
 
     async def test_node_without_dispatch_terminates(self) -> None:
@@ -250,7 +251,7 @@ class TestLinearGraphParallel:
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
         ctx = make_parallel_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 10
 
 
@@ -268,7 +269,7 @@ class TestSingleNodeExecution:
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
         ctx = make_parallel_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 7
 
     async def test_creates_start_work_and_end_instances(self) -> None:
@@ -280,7 +281,7 @@ class TestSingleNodeExecution:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -298,7 +299,7 @@ class TestSingleNodeExecution:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -318,7 +319,7 @@ class TestEndDispatch:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -351,7 +352,7 @@ class TestRoutingError:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         with pytest.raises(RoutingError, match="nonexistent"):
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
     async def test_dispatch_to_registered_node_without_edge_raises(self) -> None:
         """dispatch to a registered node with no edge from source raises.
@@ -383,7 +384,7 @@ class TestRoutingError:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         with pytest.raises(RoutingError, match="outgoing edges"):
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
 
 # ── max_iterations in parallel mode ──────────────────────────────────────
@@ -414,7 +415,7 @@ class TestMaxIterations:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         with pytest.raises(GraphRecursionError, match="max_iterations=5"):
-            await GraphEngine(compiled).run_async(ctx)
+            await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert ctx.state.count == 4
 
     async def test_iteration_count_matches_executions(self) -> None:
@@ -428,7 +429,7 @@ class TestMaxIterations:
 
         ctx = make_parallel_ctx(CounterState(count=0))
         engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+        await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
@@ -473,7 +474,7 @@ class TestMaxIterations:
         scheduler = ParallelScheduler(compiled)
 
         with pytest.raises(GraphRecursionError, match="max_iterations=2"):
-            await scheduler.run_async(ctx)
+            await scheduler.run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert scheduler._iteration_count == compiled.max_iterations
         assert set(runtime.before_calls) == {GraphNode.START, "a"}
@@ -506,7 +507,7 @@ class TestExecutionContextShell:
             scheduler_kind=SchedulerKind.PARALLEL,
         )
 
-        await ParallelScheduler(compiled).run_async(ctx)
+        await ParallelScheduler(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
 
         assert runtime.before_invocations == [None, None, None]
 
@@ -529,7 +530,7 @@ class TestLinearDispatchWorks:
         compiled = g.compile(scheduler=SchedulerKind.LINEAR)
 
         ctx = make_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 3
 
 
@@ -550,12 +551,12 @@ class TestGraphContextDispatch:
             ctx.dispatch("target")
 
     def test_set_dispatch_handler(self) -> None:
-        from modex_graph.execution_context import NodeExecution, set_execution, reset_execution
+        from modex_graph.execution_context import NodeExecution, reset_execution, set_execution
 
-        calls: list[tuple[str, str, Any]] = []
+        calls: list[tuple[str, str]] = []
 
-        def handler(s: str, t: str, p: dict[str, Any] | None) -> None:
-            calls.append((s, t, p))
+        def handler(source: str, target: str) -> None:
+            calls.append((source, target))
 
         ctx = GraphContext(
             state=CounterState(),
@@ -567,10 +568,10 @@ class TestGraphContextDispatch:
         exec_ctx = NodeExecution(instance_id="a#0")
         token = set_execution(exec_ctx)
         try:
-            ctx.dispatch("b", {"key": "val"})
+            ctx.dispatch("b")
         finally:
             reset_execution(token)
-        assert calls == [("a#0", "b", {"key": "val"})]
+        assert calls == [("a#0", "b")]
 
 
 # ── Architecture guard ────────────────────────────────────────────────────
@@ -629,7 +630,7 @@ class TestRoutingCompilationIntegration:
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
         ctx = make_parallel_ctx(CounterState(count=0))
-        result = await GraphEngine(compiled).run_async(ctx)
+        result = await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert result.count == 11
 
 
@@ -687,7 +688,7 @@ class TestEndNodeForcedOnAllPreds:
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         engine = GraphEngine(compiled)
-        result = await engine.run_async(ctx)
+        result = await engine.run_async(ctx, mode=BootstrapMode.FRESH)
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)

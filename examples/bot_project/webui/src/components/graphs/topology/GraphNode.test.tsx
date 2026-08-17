@@ -4,13 +4,13 @@ import {
   GraphNode,
   truncateLabel,
   ringSlotGeometry,
-  NODE_TYPE_GLYPHS,
+  NODE_TYPE_ICONS,
   type GraphNodeVisualStatus,
 } from "./GraphNode";
 import type { ParsedNode } from "../yaml/parseGraphSpec";
 
 const RECT = { x: 100, y: 100, width: 140, height: 44 };
-const FE0E = "\uFE0E";
+const ENDPOINT_RECT = { x: 100, y: 100, width: 76, height: 30 };
 
 function agentNode(overrides: Partial<ParsedNode> = {}): ParsedNode {
   return {
@@ -24,38 +24,41 @@ function agentNode(overrides: Partial<ParsedNode> = {}): ParsedNode {
 function renderNode(
   node: ParsedNode,
   props: Partial<Parameters<typeof GraphNode>[0]> = {},
+  rect = RECT,
 ) {
   return render(
     <svg>
-      <GraphNode node={node} rect={RECT} {...props} />
+      <GraphNode node={node} rect={rect} {...props} />
     </svg>,
   );
 }
 
 describe("GraphNode", () => {
-  it("renders glyph per node type with U+FE0E variation selector", () => {
+  it("renders a lucide SVG icon per node type", () => {
     const cases: [string, string][] = [
-      ["agent", "◉"],
-      ["function", "ƒ"],
-      ["delay", "◷"],
-      ["human_input", "⏸"],
-      ["graph", "⬕"],
+      ["agent", "bot"],
+      ["function", "braces"],
+      ["delay", "timer"],
+      ["human_input", "user"],
+      ["graph", "workflow"],
     ];
-    for (const [nodeType, glyph] of cases) {
+    for (const [nodeType, iconName] of cases) {
       const { container, unmount } = renderNode(
         agentNode({ nodeType: nodeType as ParsedNode["nodeType"] }),
       );
       const el = container.querySelector('[data-testid="graph-node-designer"]');
-      expect(el?.textContent).toContain(`${glyph}${FE0E}`);
+      const icon = el?.querySelector(`svg.lucide-${iconName}`);
+      expect(icon).not.toBeNull();
+      expect(icon?.getAttribute("width")).toBe("14");
       unmount();
     }
-    // 映射表自身也全部携带 FE0E
-    for (const g of Object.values(NODE_TYPE_GLYPHS)) {
-      expect(g.endsWith(FE0E)).toBe(true);
-    }
+    // 映射表自身与五种功能类型一一对应
+    expect(Object.keys(NODE_TYPE_ICONS).sort()).toEqual(
+      ["agent", "delay", "function", "graph", "human_input"].sort(),
+    );
   });
 
-  it("renders name (font-medium) and sub label (type · pool)", () => {
+  it("renders name (font-medium) and sub label (type · pool, text-mute)", () => {
     const { container } = renderNode(agentNode());
     const texts = [...container.querySelectorAll("text")];
     const name = texts.find((el) => el.textContent === "designer");
@@ -63,7 +66,7 @@ describe("GraphNode", () => {
     expect(name?.getAttribute("class")).toContain("font-medium");
     expect(name?.getAttribute("class")).toContain("text-ink");
     expect(sub?.getAttribute("class")).toContain("font-mono");
-    expect(sub?.getAttribute("class")).toContain("text-faint");
+    expect(sub?.getAttribute("class")).toContain("text-mute");
   });
 
   it("truncates long names with ellipsis and keeps the full name in <title>", () => {
@@ -79,11 +82,11 @@ describe("GraphNode", () => {
 
   it("truncateLabel leaves short text untouched", () => {
     expect(truncateLabel("abc")).toBe("abc");
-    expect(truncateLabel("12345678901")).toBe("12345678901");
-    expect(truncateLabel("123456789012")).toBe("1234567890…");
+    expect(truncateLabel("123456789012")).toBe("123456789012");
+    expect(truncateLabel("1234567890123")).toBe("12345678901…");
   });
 
-  describe("status coloring matrix (§5.2 双通道)", () => {
+  describe("status coloring (§6 Rev 4 dot-only — 节点本体不随状态变化)", () => {
     function bodyAndDot(status: GraphNodeVisualStatus) {
       const { container } = renderNode(agentNode(), { status });
       return {
@@ -94,19 +97,24 @@ describe("GraphNode", () => {
       };
     }
 
-    it("pending: graph-dot-pending dot, hairline border, default fill", () => {
-      const { body, dot, ring } = bodyAndDot("pending");
-      expect(dot.getAttribute("class")).toContain("fill-graph-dot-pending");
-      expect(body.getAttribute("class")).toContain("stroke-graph-node-border");
+    it.each([
+      ["pending", "fill-graph-status-pending"],
+      ["running", "fill-graph-status-running"],
+      ["completed", "fill-graph-status-completed"],
+      ["crashed", "fill-graph-status-crashed"],
+      ["suspended", "fill-graph-status-suspended"],
+      ["canceled", "fill-graph-status-canceled"],
+    ] as const)(" %s: solid status dot, body stays neutral", (status, dotCls) => {
+      const { body, dot } = bodyAndDot(status);
+      expect(dot.getAttribute("class")).toContain(dotCls);
+      expect(dot.getAttribute("r")).toBe("5");
       expect(body.getAttribute("class")).toContain("fill-graph-node-fill");
-      expect(ring).toBeNull();
+      expect(body.getAttribute("class")).toContain("stroke-graph-node-border");
+      expect(body.getAttribute("stroke-dasharray")).toBeNull();
     });
 
-    it("running: hollow brand dot + brand border + ring slot reserved", () => {
-      const { body, dot, ring } = bodyAndDot("running");
-      expect(body.getAttribute("class")).toContain("stroke-brand");
-      expect(dot.getAttribute("class")).toContain("stroke-brand");
-      expect(dot.getAttribute("class")).toContain("fill-graph-node-fill");
+    it("running: ring slot reserved (motion cue outside the node body)", () => {
+      const { ring } = bodyAndDot("running");
       expect(ring).not.toBeNull();
       // 外扩 4px 同形圆角矩形(§4.4)
       expect(ring!.getAttribute("x")).toBe("-74");
@@ -116,30 +124,31 @@ describe("GraphNode", () => {
       expect(ring!.getAttribute("rx")).toBe("16");
     });
 
-    it("completed: solid success dot + brand-soft body fill (双通道)", () => {
-      const { body, dot, ring } = bodyAndDot("completed");
-      expect(dot.getAttribute("class")).toContain("fill-success");
-      expect(body.getAttribute("class")).toContain("fill-graph-node-fill-done");
+    it("non-running statuses render no ring slot", () => {
+      const { ring } = bodyAndDot("completed");
       expect(ring).toBeNull();
     });
 
-    it("crashed: danger dot + danger border", () => {
-      const { body, dot } = bodyAndDot("crashed");
-      expect(dot.getAttribute("class")).toContain("fill-danger");
-      expect(body.getAttribute("class")).toContain("stroke-danger");
+    it("canceled: no strikethrough — the violet dot is the only channel", () => {
+      const { container } = renderNode(agentNode(), { status: "canceled" });
+      const name = [...container.querySelectorAll("text")].find(
+        (el) => el.textContent === "designer",
+      )!;
+      expect(name.getAttribute("class")).not.toContain("line-through");
     });
 
-    it("canceled: graph-dot-canceled dot, hairline border", () => {
-      const { body, dot } = bodyAndDot("canceled");
-      expect(dot.getAttribute("class")).toContain("fill-graph-dot-canceled");
-      expect(body.getAttribute("class")).toContain("stroke-graph-node-border");
-    });
-
-    it("suspended: warning dot + warning dashed border", () => {
-      const { body, dot } = bodyAndDot("suspended");
-      expect(dot.getAttribute("class")).toContain("fill-warning");
-      expect(body.getAttribute("class")).toContain("stroke-warning");
-      expect(body.getAttribute("stroke-dasharray")).toBe("5 3");
+    it("all six dot classes are mutually distinct", () => {
+      const classes = (
+        [
+          "pending",
+          "running",
+          "completed",
+          "crashed",
+          "suspended",
+          "canceled",
+        ] as const
+      ).map((s) => bodyAndDot(s).dot.getAttribute("class")!);
+      expect(new Set(classes).size).toBe(6);
     });
   });
 
@@ -165,15 +174,20 @@ describe("GraphNode", () => {
     });
   });
 
-  describe("virtual endpoints (统一形状)", () => {
-    it("START renders as a unified rect with brand fill and centered 'START' label", () => {
+  describe("virtual endpoints (Rev 4 ghost pill)", () => {
+    it("START renders as a ghost pill with centered 'START' label", () => {
       const { container } = renderNode(
         agentNode({ name: "__start__", nodeType: "__start__", config: {} }),
+        {},
+        ENDPOINT_RECT,
       );
       const body = container.querySelector("[data-node-body]")!;
-      expect(body.getAttribute("class")).toContain("fill-brand");
-      expect(body.getAttribute("width")).toBe("140");
-      expect(body.getAttribute("height")).toBe("44");
+      expect(body.getAttribute("class")).toContain("fill-graph-endpoint-fill");
+      expect(body.getAttribute("class")).toContain("stroke-graph-endpoint-border");
+      expect(body.getAttribute("width")).toBe("76");
+      expect(body.getAttribute("height")).toBe("30");
+      // 全圆角药丸:rx = height / 2
+      expect(body.getAttribute("rx")).toBe("15");
       // 显示友好标签 "START"(不是 __start__)
       const texts = [...container.querySelectorAll("text")];
       const label = texts.find((el) => el.textContent === "START");
@@ -181,22 +195,24 @@ describe("GraphNode", () => {
       expect(label?.getAttribute("text-anchor")).toBe("middle");
       expect(label?.getAttribute("class")).toContain("font-mono");
       expect(label?.getAttribute("class")).toContain("font-semibold");
+      expect(label?.getAttribute("class")).toContain("text-graph-endpoint-text");
       // <title> 保留原始内部名
       expect(container.querySelector("title")?.textContent).toBe("__start__");
-      // 无 glyph、无 status dot
+      // 无图标、无 status dot
       expect(container.querySelector("[data-status-dot]")).toBeNull();
+      expect(container.querySelector("svg.lucide")).toBeNull();
       // 不可交互(无 role=button)
       expect(container.querySelector('[role="button"]')).toBeNull();
     });
 
-    it("END renders as a unified rect with brand fill and centered 'END' label", () => {
+    it("END renders as a ghost pill with centered 'END' label", () => {
       const { container } = renderNode(
         agentNode({ name: "__end__", nodeType: "__end__", config: {} }),
+        {},
+        ENDPOINT_RECT,
       );
       const body = container.querySelector("[data-node-body]")!;
-      expect(body.getAttribute("class")).toContain("fill-brand");
-      expect(body.getAttribute("width")).toBe("140");
-      expect(body.getAttribute("height")).toBe("44");
+      expect(body.getAttribute("class")).toContain("fill-graph-endpoint-fill");
       const texts = [...container.querySelectorAll("text")];
       const label = texts.find((el) => el.textContent === "END");
       expect(label).toBeDefined();

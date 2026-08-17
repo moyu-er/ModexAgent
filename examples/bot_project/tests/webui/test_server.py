@@ -1004,8 +1004,8 @@ async def test_ws_attach_switches_all_sessions() -> None:
         assert attached["event"] == "attached"
 
         # Server registers main.A and coding.A for this WebSocket
-        assert "web:conv-a.main" in input_adapter._connections
-        assert "web:conv-a.coding" in input_adapter._connections
+        assert "web:conv-a.main" in input_adapter._delta_queues
+        assert "web:conv-a.coding" in input_adapter._delta_queues
 
         # Now switch to session B
         await ws.send_json({"action": "attach", "session_id": "web:conv-b.main"})
@@ -1013,14 +1013,14 @@ async def test_ws_attach_switches_all_sessions() -> None:
         assert attached["event"] == "attached"
 
         # Previous session sessions must be fully unregistered
-        assert "web:conv-a.main" not in input_adapter._connections
-        assert "web:conv-a.coding" not in input_adapter._connections
+        assert "web:conv-a.main" not in input_adapter._delta_queues
+        assert "web:conv-a.coding" not in input_adapter._delta_queues
         assert "web:conv-a.main" not in input_adapter._delta_queues
         assert "web:conv-a.coding" not in input_adapter._delta_queues
 
         # New session sessions must be registered
-        assert "web:conv-b.main" in input_adapter._connections
-        assert "web:conv-b.coding" in input_adapter._connections
+        assert "web:conv-b.main" in input_adapter._delta_queues
+        assert "web:conv-b.coding" in input_adapter._delta_queues
     finally:
         await client.close()
 
@@ -1192,10 +1192,8 @@ async def test_subagent_streaming_delta_arrives_at_ws_client() -> None:
             output_adapter,
             child_sid,
             config=EmitterConfig(),
-            session_meta_resolver=lambda: SessionMeta(
-                pool="coding", parent_session_id=parent_sid
-            )
-)
+            session_meta_resolver=lambda: SessionMeta(parent_session_id=parent_sid),
+        )
 
         # Emit a delta — this should enqueue into the delta queue
         await emitter.emit_delta("subagent streaming test")
@@ -1270,7 +1268,6 @@ async def test_ws_full_stream_isolation_across_sessions() -> None:
         # so the next receive_json would timeout.  We assert the connection is
         # clean by checking the adapter state directly.
         assert "web:conv-a.main" not in input_adapter._delta_queues
-        assert "web:conv-a.main" not in input_adapter._connections
 
         # Emit for B and confirm it DOES arrive
         emitter_b = WebBotEmitter(
@@ -1377,8 +1374,8 @@ async def test_ws_attach_existing_session_does_not_crash() -> None:
         assert attached["session_id"] == "abc123.main"
 
         # Main session and proactive pool sessions must be registered.
-        assert "abc123.main" in input_adapter._connections
-        assert "abc123.coding" in input_adapter._connections
+        assert "abc123.main" in input_adapter._delta_queues
+        assert "abc123.coding" in input_adapter._delta_queues
     finally:
         await client.close()
 
@@ -1816,7 +1813,8 @@ async def test_ws_attach_starts_forward_deltas_for_main_session() -> None:
         from bot.webui.events import SessionMeta
         emitter = WebBotEmitter(
             output, "web:main-sess.main", config=EmitterConfig(),
-            session_meta_resolver=lambda: SessionMeta(pool="main", parent_session_id=None),
+            pool="main",
+            session_meta_resolver=lambda: SessionMeta(parent_session_id=None),
         )
         await emitter.emit_delta("streaming test for main session")
 
@@ -1860,8 +1858,9 @@ async def test_cleanup_drains_delta_queues() -> None:
     from bot.webui.server import _WsConnectionState
 
     input_adapter = WebSocketInputAdapter()
-    input_adapter.register_connection("sess1", object())
-    q = input_adapter.get_delta_queue("sess1")
+    ws = object()
+    input_adapter.register_connection("sess1", ws)
+    q = input_adapter.get_delta_queue("sess1", ws)
     assert q is not None
     q.put_nowait(DeltaEnvelope.content(session_id="sess1", agent_name="main", text="old"))
 
@@ -1869,10 +1868,10 @@ async def test_cleanup_drains_delta_queues() -> None:
     state.attached_sessions.append("sess1")
     state.forward_tasks.append(asyncio.create_task(asyncio.sleep(3600)))
 
-    await state.cleanup(input_adapter)
+    await state.cleanup(input_adapter, ws)
 
     assert q.empty()
-    assert input_adapter.get_delta_queue("sess1") is None
+    assert input_adapter.get_delta_queue("sess1", ws) is None
     assert not state.forward_tasks
     assert not state.attached_sessions
 
@@ -1919,7 +1918,7 @@ async def test_subagent_invocation_id_matching_agent_name_still_registered() -> 
             assert attached["event"] == "attached"
 
             # The subagent session must have its own delta queue registered.
-            assert input_adapter.get_delta_queue("conv.reviewer.main") is not None
+            assert input_adapter.get_delta_queues("conv.reviewer.main")
         finally:
             await client.close()
 

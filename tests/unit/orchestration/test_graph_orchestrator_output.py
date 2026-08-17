@@ -26,6 +26,7 @@ from modex_graph import (
     NodeSpec,
     NullGraphInstanceStore,
 )
+from modex_graph.scheduler.bootstrap import BootstrapMode
 
 
 class _RecordingOutputAdapter(GraphOutputAdapter):
@@ -147,6 +148,8 @@ async def test_completed_output_uses_state_returned_by_scheduler(
     async def run_with_recovered_state(
         self: LinearScheduler[DefaultGraphState],
         ctx: GraphContext[DefaultGraphState],
+        *,
+        mode: BootstrapMode,
     ) -> DefaultGraphState:
         final_state = DefaultGraphState(result=recovered_result)
         ctx.state = final_state

@@ -50,7 +50,7 @@ treat ``None`` services as no-ops, so clean mode (no services) still works.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from modex_agent.agents.react.constants import ReActHookPoint, ReActScope
 from modex_agent.agents.react.context import get_agent_ctx
@@ -63,7 +63,6 @@ if TYPE_CHECKING:
     from modex_agent.core.emitter import ContentEmitter
     from modex_agent.core.governance import ContextGovernance
     from modex_agent.hook import HookRunner
-    from modex_agent.interceptor.abc import IterationNext
     from modex_agent.interceptor.chain import InterceptorChain
     from modex_agent.runtime.models import TurnStateBase
     from modex_agent.runtime.policy import SnapshotPolicy
@@ -209,13 +208,10 @@ class ReactGraphRuntime(GraphRuntime):
             turn_id=str(agent_ctx.session),
             turn_state=turn_state,
         )
-        # ``body`` is ``Callable[[], Awaitable[Any]]`` (from the ABC) but
-        # ``around_iteration`` expects ``IterationNext = Callable[[], None]``.
-        # The existing ``IterationNext`` alias is imprecise — at runtime
-        # ``body`` is an async callable that returns a coroutine, which
-        # ``around_iteration`` awaits internally. The cast bridges the type
-        # gap without changing the ``IterationNext`` alias (out of scope).
-        return await chain.around_iteration(agent_ctx, ic, cast("IterationNext", body))
+        async def next_iteration() -> None:
+            await body()
+
+        return await chain.around_iteration(agent_ctx, ic, next_iteration)
 
     async def apply_governance(self, messages: list[Any], ctx: GraphContext[Any]) -> list[Any]:
         """Apply governance (filtering / rewriting) to ``messages`` before LLM call.

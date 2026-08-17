@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
     from modex_agent.multi_agent.session_tree.session_binding import (
         SessionBindingStore,
     )
@@ -26,6 +27,7 @@ from modex_agent.core.tool_manager import ToolManager
 from modex_agent.hook import HookErrorPolicy, HookSpec
 from modex_agent.hook.builtin import NativeEnvInjectionHook
 from modex_agent.hook.notification import TurnOutcomeNotifyHook
+from modex_agent.hook.wiring import register_tree_aware_hooks
 from modex_agent.ioc.factories.governance import create_governance
 from modex_agent.multi_agent import AgentPool
 from modex_agent.multi_agent.comm_kind import AgentCommKind
@@ -75,6 +77,7 @@ def _wire_main_pipeline(
     control_origin: str = "",
     graph_context_resolver: Callable[[int], GraphContext[Any] | None] | None = None,
     session_binding_store: SessionBindingStore | None = None,
+    tree_manager: SessionTreeManager | None = None,
 ) -> None:
     """Wire hooks, interceptors, governance, and command processor on main pipeline.
 
@@ -105,6 +108,10 @@ def _wire_main_pipeline(
     # pipeline.hook_runner for every agent (main + subagent) with
     # inbox_strategy != "none", so fold-in is wired in one place.
     _add_hook(pipeline, TurnOutcomeNotifyHook(notification_service=notification_service))
+    # Tree-aware per-pool hooks — converge with subagent path via
+    # register_tree_aware_hooks (also called by AgentTemplate.materialize).
+    if tree_manager is not None:
+        register_tree_aware_hooks(pipeline.hook_runner, tree_manager)
     _add_hook(
         pipeline,
         ModelChoiceBindHook(

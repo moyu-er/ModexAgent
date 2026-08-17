@@ -426,7 +426,7 @@
 
 **描述**: 当前 WebUIGraphOutputAdapter 用内存 event store + REST 轮询。后续增强为 WebSocket 实时推送。
 
-### P4-8. GraphSpec node 级 description 覆盖
+### P4-8. GraphSpec node 级 description 覆盖 — ✅ FIXED
 
 **来源**: ticket 06
 

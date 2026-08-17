@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -124,13 +124,13 @@ LLMStreamNext = Callable[[], AsyncIterator[LLMStreamChunk]]
 # Next-call 协议
 # ---------------------------------------------------------------------------
 
-ToolCallNext = Callable[[], "ToolResult"]
+ToolCallNext = Callable[[], Awaitable["ToolResult"]]
 """工具调用 next 函数：调用即执行下一个 interceptor 或实际 tool。"""
 
-TurnNext = Callable[[], "AgentResult"]
+TurnNext = Callable[[], Awaitable["AgentResult"]]
 """Turn next 函数：调用即执行下一个 interceptor 或实际 turn。"""
 
-IterationNext = Callable[[], None]
+IterationNext = Callable[[], Awaitable[None]]
 """迭代 next 函数：调用即执行下一个 interceptor 或实际迭代。"""
 
 

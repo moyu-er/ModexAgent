@@ -371,7 +371,7 @@ are the converged seams; no platform preconditions on any OS.
   scans the loaded assistant messages for the most recent todo tool block with a
   result and parses it. If history doesn't carry results reliably, fall back to
   a server fetch endpoint (see spec §12 — deferred).
-- Enabled only for the `main` and `coder` pools' main agents (registered in `_build_tools`; subagents do not get these tools).
+- Registered via `tool_supplements: [todo]` in pool/main and subagent template YAML. Both main agents and subagents can opt in; all bundled subagent templates (office-expert, explore, general) include `todo`. `TodoContinuationHook` is registered on every agent (main + subagent) via `register_tree_aware_hooks` in `hook/wiring.py` — the shared convergence function called from both `_wire_main_pipeline` and `AgentTemplate.materialize`.
 - No prompt injection (v1); the agent reads state via `todo_read` or tool results in history.
 
 ## Subdirectories

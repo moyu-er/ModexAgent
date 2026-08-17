@@ -44,6 +44,7 @@ class BotAgentNode(AgentNode):
         *,
         session_strategy: SessionStrategy = SessionStrategy.CACHED,
         knowledge_config: KnowledgeNodeConfig | None = None,
+        node_description: str | None = None,
     ) -> None:
         super().__init__(session_strategy=session_strategy)
         self._agent_name = agent_name
@@ -51,6 +52,7 @@ class BotAgentNode(AgentNode):
         self._workspace_resolver = workspace_resolver
         self._deliver_tool: GraphDeliverTool | None = None
         self._knowledge_config = knowledge_config or KnowledgeNodeConfig()
+        self._description = node_description
 
     def agent_name(self) -> str:
         return self._agent_name
@@ -98,6 +100,8 @@ class BotAgentNode(AgentNode):
         return instance
 
     def resolve_description(self) -> str:
+        if self._description:
+            return self._description
         instance = self._resolve_agent_instance()
         return instance.descriptor.role_description or AgentNode.DESCRIPTION_NOT_FOUND
 
@@ -166,6 +170,20 @@ class BotAgentNode(AgentNode):
         deliver_tool = self._ensure_deliver_tool()
         topology_section = self._build_topology_section()
         node_description = self.resolve_description()
+        if node_description == AgentNode.DESCRIPTION_NOT_FOUND:
+            node_description = ""
+
+        # Compute downstream target types for topology-aware prompt rendering.
+        downstream_has_end = False
+        downstream_has_agent = False
+        if self._graph_ref is not None:
+            for edge in self._graph_ref.edges_from(self.name):
+                if edge.target == GraphNode.END:
+                    downstream_has_end = True
+                elif edge.target in self._graph_ref.nodes and isinstance(
+                    self._graph_ref.nodes[edge.target], AgentNode
+                ):
+                    downstream_has_agent = True
 
         knowledge_dir: Path | None = None
         if self._knowledge_config.enabled and ctx.graph_instance_id is not None:
@@ -181,6 +199,8 @@ class BotAgentNode(AgentNode):
             node_description=node_description,
             knowledge_config=self._knowledge_config,
             knowledge_dir=knowledge_dir,
+            downstream_has_agent=downstream_has_agent,
+            downstream_has_end=downstream_has_end,
         )
 
     async def _build_graph_input_envelope(
@@ -192,15 +212,8 @@ class BotAgentNode(AgentNode):
         """Build the envelope delivered to the agent's inbox for this graph turn."""
         upstream = self._format_integrated_input(integrated_input)
 
-        # Re-execution detection: session already has messages from a prior
-        # invocation (crash recovery). Skip [Origin Request] to avoid duplication.
-        ctx_mgr = self._resolve_agent_instance().context_manager
-        state = await ctx_mgr.load(session.session_id)
-        existing_messages = await state.history.to_list()
-        is_re_execution = len(existing_messages) > 0
-
         sections: list[str] = []
-        if not is_re_execution and ctx.user_input is not None and ctx.user_input.content:
+        if ctx.user_input is not None and ctx.user_input.content:
             sections.append("[Origin Request]:\n" + str(ctx.user_input.content))
         if upstream:
             sections.append(upstream)

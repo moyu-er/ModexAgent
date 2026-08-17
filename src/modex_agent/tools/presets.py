@@ -31,7 +31,6 @@ class ToolPreset(StrEnum):
     FULL = "full"  # all tools + bash + terminal
     READ_WRITE = "read_write"  # read + write + edit + grep/glob + bash (review & fix)
     READ_ONLY = "read_only"  # read + grep/glob + bash (prompt-constrained read-only)
-    MINIMAL = "minimal"  # read + write + list + grep (no edit, no bash)
     NONE = "none"  # no standard tools — communication tools only (MCP still loaded)
     WEB = "web"  # web search + web reader (opt-in, not included in FULL)
 
@@ -87,16 +86,6 @@ def _make_standard_full() -> list[Tool]:
     ]
 
 
-def _make_standard_minimal() -> list[Tool]:
-    """Create minimal tools (read + write + search, no edit, no bash)."""
-    return [
-        ReadFileTool(),
-        WriteFileTool(),
-        ListDirTool(),
-        SearchFilesTool(),
-    ]
-
-
 def _make_standard_none() -> list[Tool]:
     """Create empty standard tool set (communication + MCP tools registered separately)."""
     return []
@@ -137,7 +126,6 @@ def get_preset_tools(
         ToolPreset.FULL: _make_standard_full,
         ToolPreset.READ_WRITE: _make_standard_read_write,
         ToolPreset.READ_ONLY: _make_standard_read,
-        ToolPreset.MINIMAL: _make_standard_minimal,
         ToolPreset.NONE: _make_standard_none,
         ToolPreset.WEB: _make_web_tools,
     }
@@ -160,7 +148,7 @@ def get_preset_tools(
         tools.append(ScopedWriteFileTool(allowed_dirs=scoped))
         tools.append(ScopedEditFileTool(allowed_dirs=scoped))
 
-    # Bash tool: FULL, READ_ONLY, and READ_WRITE get bash; MINIMAL and NONE do not
+    # Bash tool: FULL, READ_ONLY, and READ_WRITE get bash; NONE does not
     if subprocess_tool_factory is not None and preset in (
         ToolPreset.FULL,
         ToolPreset.READ_ONLY,

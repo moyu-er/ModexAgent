@@ -7,7 +7,7 @@ from modex_agent.core.types import OutputMessage
 @pytest.mark.asyncio
 async def test_approval_message_emits_structured_envelope() -> None:
     inp = WebSocketInputAdapter()
-    inp.register_connection("s.main", object())
+    inp.register_connection("s.main", None)
     out = WebSocketOutputAdapter(inp)
     await out.send(
         OutputMessage(
@@ -18,7 +18,7 @@ async def test_approval_message_emits_structured_envelope() -> None:
         ),
         "s.main",
     )
-    q = inp.get_delta_queue("s.main")
+    q = inp.get_delta_queue("s.main", None)
     assert q is not None
     env = q.get_nowait()
     assert env.event_type == "approval_request"
@@ -30,10 +30,10 @@ async def test_approval_message_emits_structured_envelope() -> None:
 @pytest.mark.asyncio
 async def test_normal_message_still_content_delta() -> None:
     inp = WebSocketInputAdapter()
-    inp.register_connection("s.main", object())
+    inp.register_connection("s.main", None)
     out = WebSocketOutputAdapter(inp)
     await out.send(OutputMessage(content="hello", message_type="text"), "s.main")
-    q = inp.get_delta_queue("s.main")
+    q = inp.get_delta_queue("s.main", None)
     assert q is not None
     env = q.get_nowait()
     assert env.event_type == "content"  # unchanged path
