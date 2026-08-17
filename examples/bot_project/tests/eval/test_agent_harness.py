@@ -11,6 +11,7 @@ from bot.eval.agent_harness import (
     _WorkspaceTokenNormalizer,
     build_runtime_services,
     build_tool_manager,
+    build_trace_only_services,
     static_system_prompt,
     wrap_provider,
 )
@@ -241,6 +242,26 @@ def test_build_runtime_services_adds_flush_hook_for_recorder(tmp_path: Path) -> 
         spec.hook for spec in services.hooks.hook_specs if isinstance(spec.hook, CassetteFlushHook)
     ]
     assert len(flush_hooks) == 1
+
+
+def test_build_trace_only_services_excludes_governance_and_runtime_hooks(tmp_path: Path) -> None:
+    """build_trace_only_services must register ONLY trace hooks — no governance, loop, checkpoint, or turn_store."""
+    services = build_trace_only_services(tmp_path / "traces")
+
+    assert services.hooks is not None
+    assert services.governance is None, "clean mode must not have governance"
+    assert services.turn_store is None, "clean mode must not have turn_store"
+    assert services.trace_store is not None, "trace store must exist for span writing"
+    hook_names = {spec.hook.name for spec in services.hooks.hook_specs}
+    assert "loop_detection" not in hook_names, "clean mode must not have LoopDetectionHook"
+    assert "checkpoint" not in hook_names, "clean mode must not have CheckpointHook"
+    assert "cassette_flush" not in hook_names, "clean mode must not have CassetteFlushHook"
+    trace_hook_names = {
+        "RootSpanHook", "ChatSpanHook", "ToolSpanHook",
+        "HandoffSpanHook", "ApprovalSpanHook",
+        "AgentStartSpanHook", "IterationSpanHook",
+    }
+    assert trace_hook_names <= hook_names, f"trace hooks missing: {trace_hook_names - hook_names}"
 
 
 def test_static_system_prompt_is_path_and_time_independent() -> None:

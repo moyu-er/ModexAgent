@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final, assert_never
+from urllib.parse import urlparse
 
 from bot.config.memory_defaults import main_agent_memory
 from bot.eval.task_spec import EvalToolset
@@ -43,10 +46,77 @@ from modex_agent.trace.cassette import (
     CassetteReplayEngine,
 )
 from modex_agent.trace.factory import build_trace_hooks
-from modex_agent.trace.otel_store import OtelSpanTraceStore
+from modex_agent.trace.otel_store import build_trace_stores
+from modex_agent.trace.score_injector import L2ScoreInjector
+
+logger = logging.getLogger(__name__)
 
 _WORKSPACE_TOKEN: Final = "<workspace>"
 _STATIC_WORKSPACE_SENTENCE: Final = "Use the available tools to operate on the workspace."
+
+
+def _eval_observability() -> tuple[ObservabilityConfig, L2ScoreInjector | None]:
+    """Build observability config and score injector from env vars.
+
+    Mirrors the ``${ENV}`` interpolation in ``bot_config.yml`` so that eval
+    harness (a separate process) behaves identically to the bot runtime when
+    the same env vars are set.
+
+    - ``OTEL_FORMAT`` → trace_backend (file/otel_http/off; default: file)
+    - ``LANGFUSE_HOST`` → OTLP endpoint + score injection ingestion URL
+    - ``LANGFUSE_BASIC_AUTH`` → OTLP headers + score injection auth
+
+    When ``OTEL_FORMAT=otel_http`` and Langfuse creds are present, returns a
+    fully wired config with OTLP export and score injection. Otherwise falls
+    back to file-only trace backend with no score injection.
+    """
+    raw_backend = os.environ.get("OTEL_FORMAT", "file").lower()
+    try:
+        trace_backend = TraceBackend(raw_backend)
+    except ValueError:
+        logger.warning("Unknown OTEL_FORMAT=%s, defaulting to file", raw_backend)
+        trace_backend = TraceBackend.FILE
+
+    langfuse_host = os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
+    basic_auth = os.environ.get("LANGFUSE_BASIC_AUTH", "")
+
+    otel_headers: dict[str, str] | None = None
+    if basic_auth:
+        otel_headers = {
+            "Authorization": f"Basic {basic_auth}",
+            "x-langfuse-ingestion-version": "4",
+        }
+
+    config = ObservabilityConfig(
+        trace_backend=trace_backend,
+        otel_endpoint=f"{langfuse_host}/api/public/otel/v1/traces" if trace_backend == TraceBackend.OTEL_HTTP else None,
+        otel_headers=otel_headers,
+        prompt_capture=PromptCaptureMode.FULL,
+        trace_spans=TraceSpanMode.FULL,
+    )
+
+    return config, _build_score_injector(langfuse_host, basic_auth, trace_backend)
+
+
+def _build_score_injector(
+    langfuse_host: str, basic_auth: str, trace_backend: TraceBackend,
+) -> L2ScoreInjector | None:
+    """Create L2ScoreInjector when Langfuse is reachable and OTLP is enabled."""
+    if trace_backend != TraceBackend.OTEL_HTTP or not langfuse_host or not basic_auth:
+        return None
+    try:
+        parsed = urlparse(langfuse_host)
+        ingestion_url = f"{parsed.scheme}://{parsed.netloc}/api/public/ingestion"
+        return L2ScoreInjector(
+            ingestion_url=ingestion_url,
+            headers={
+                "Authorization": f"Basic {basic_auth}",
+                "x-langfuse-ingestion-version": "4",
+            },
+        )
+    except Exception:
+        logger.warning("L2ScoreInjector creation failed; score injection disabled.", exc_info=True)
+        return None
 
 
 class _FixedWorkspaceRootProvider(WorkspaceRootProvider):
@@ -190,19 +260,21 @@ def build_runtime_services(
     trace_dir: Path,
     recorder: CassetteRecorder | None = None,
 ) -> AgentRuntimeServices:
-    """Build trace, governance, loop detection, and checkpoint services for evals."""
-    config = ObservabilityConfig(
-        trace_backend=TraceBackend.FILE,
-        prompt_capture=PromptCaptureMode.FULL,
-        trace_spans=TraceSpanMode.FULL,
-    )
-    trace_store = OtelSpanTraceStore(trace_dir)
+    """Build trace, governance, loop detection, and checkpoint services for evals.
+
+    Observability (OTLP export + score injection) is driven by env vars
+    ``OTEL_FORMAT``, ``LANGFUSE_HOST``, ``LANGFUSE_BASIC_AUTH`` — identical to
+    the bot runtime's ``bot_config.yml`` interpolation. File-only when
+    ``OTEL_FORMAT`` is unset or ``file``.
+    """
+    config, score_injector = _eval_observability()
+    trace_store = build_trace_stores(config, trace_dir)
     hook_specs = build_trace_hooks(
         config=config,
         model=None,
         provider_name="eval",
         request_params=None,
-        score_injector=None,
+        score_injector=score_injector,
         store=trace_store,
     )
     hook_specs.extend(
@@ -223,19 +295,20 @@ def build_runtime_services(
 
 
 def build_trace_only_services(trace_dir: Path) -> AgentRuntimeServices:
-    """Build trace-only services for clean-mode eval — no governance/loop/checkpoint."""
-    config = ObservabilityConfig(
-        trace_backend=TraceBackend.FILE,
-        prompt_capture=PromptCaptureMode.FULL,
-        trace_spans=TraceSpanMode.FULL,
-    )
-    trace_store = OtelSpanTraceStore(trace_dir)
+    """Build trace-only services for clean-mode eval — no governance/loop/checkpoint.
+
+    Observability (OTLP export + score injection) is driven by env vars,
+    same as ``build_runtime_services``. Trace hooks are registered; runtime
+    governance/loop/checkpoint/turn_store are not.
+    """
+    config, score_injector = _eval_observability()
+    trace_store = build_trace_stores(config, trace_dir)
     hook_specs = build_trace_hooks(
         config=config,
         model=None,
         provider_name="eval",
         request_params=None,
-        score_injector=None,
+        score_injector=score_injector,
         store=trace_store,
     )
     return AgentRuntimeServices(

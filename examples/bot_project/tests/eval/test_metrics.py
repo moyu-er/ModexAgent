@@ -198,9 +198,17 @@ def test_aggregate_reports_span_histograms_handoffs_and_l2_averages(tmp_path: Pa
     assert "- Root traces: 2" in report
     assert "- No-tool traces: 1" in report
     assert "- Tool success rate: 100.0%" in report
-    assert "- Reasoning depth: 15.0 tokens" in report
-    assert "- Trajectory compactness: 6.0%" in report
-    assert "- Overall: 51.6%" in report
+    assert "- Avg tool calls: 0.5" in report
+    assert "- Avg error tools: 0.0" in report
+    assert "- Avg iterations: 0.0" in report
+    assert "- Avg LLM calls: 1.0" in report
+    assert "- Avg input tokens: 15" in report
+    assert "- Avg output tokens: 35" in report
+    assert "- Avg reasoning tokens: 15" in report
+    assert "- Avg API latency: 0.00s" in report
+    assert "- Cache hit rate: 0.0%" in report
+    assert "- Response token ratio: 35.0%" in report
+    assert "- Reasoning trace rate: 50.0%" in report
 
 
 def test_aggregate_excludes_records_older_than_days_window(tmp_path: Path) -> None:
@@ -273,4 +281,3 @@ def test_metrics_command_reports_empty_workspace_without_langfuse_env(
     assert "No local metrics data found for this period." in result.stdout
     assert "## Cleanup metrics" in result.stdout
     assert "## L2 score averages" in result.stdout
-    assert "Langfuse trend comparison: v2 (rc.3 /api/public/v2/scores is 404)" in result.stdout

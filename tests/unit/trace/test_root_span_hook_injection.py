@@ -15,7 +15,6 @@ from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.root_span_hook import RootSpanHook
 from modex_agent.trace.score_injector import L2ScoreInjector
-from modex_agent.trace.scoring import compute_score
 from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
 from modex_agent.trace.session_state import TraceSessionState
 from modex_agent.trace.store import SpanModel, SpanStatus
@@ -92,7 +91,7 @@ async def test_single_root_injects_score_for_only_its_subtree() -> None:
 
     injector.inject_scores.assert_awaited_once_with(
         _TRACE_ID,
-        compute_score(subtree),
+        subtree,
         observation_id=root_span.span_id,
     )
 
@@ -155,12 +154,12 @@ async def test_shared_trace_injects_each_root_without_cross_contamination() -> N
         [
             call(
                 _TRACE_ID,
-                compute_score(parent_subtree),
+                parent_subtree,
                 observation_id=parent_root.span_id,
             ),
             call(
                 _TRACE_ID,
-                compute_score(child_subtree),
+                child_subtree,
                 observation_id=child_root.span_id,
             ),
         ]

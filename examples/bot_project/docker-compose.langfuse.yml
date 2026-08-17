@@ -1,6 +1,6 @@
 services:
   langfuse-web:
-    image: docker.xuanyuan.run/langfuse/langfuse:4.0.0-rc.3
+    image: docker.xuanyuan.run/langfuse/langfuse:4.11.0
     container_name: modex-langfuse-web
     ports:
       - "3000:3000"
@@ -36,7 +36,7 @@ services:
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
       DISABLE_SIGNUP: "false"
       NEXT_PUBLIC_LANGFUSE_RUN_NEXT_INIT: "false"
-      NODE_OPTIONS: "--max-old-space-size=1024"
+      NODE_OPTIONS: "--max-old-space-size=896"
     depends_on:
       langfuse-db:
         condition: service_healthy
@@ -64,7 +64,7 @@ services:
     restart: unless-stopped
 
   langfuse-worker:
-    image: docker.xuanyuan.run/langfuse/langfuse-worker:4.0.0-rc.3
+    image: docker.xuanyuan.run/langfuse/langfuse-worker:4.11.0
     container_name: modex-langfuse-worker
     environment:
       NEXTAUTH_URL: "http://localhost:3000"
@@ -94,7 +94,7 @@ services:
       REDIS_PORT: "6379"
       REDIS_AUTH: "myredissecret"
       TELEMETRY_ENABLED: "false"
-      NODE_OPTIONS: "--max-old-space-size=448"
+      NODE_OPTIONS: "--max-old-space-size=640"
     depends_on:
       langfuse-db:
         condition: service_healthy
@@ -104,12 +104,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    memswap_limit: 448m
+    memswap_limit: 768m
     deploy:
       resources:
         limits:
           cpus: '0.75'
-          memory: 448M
+          memory: 768M
           pids: 200
         reservations:
           cpus: '0.25'
@@ -184,12 +184,12 @@ services:
       timeout: 5s
       retries: 20
       start_period: 30s
-    memswap_limit: 1024m
+    memswap_limit: 768m
     deploy:
       resources:
         limits:
           cpus: '1.0'
-          memory: 1024M
+          memory: 768M
           pids: 1024
         reservations:
           cpus: '0.25'

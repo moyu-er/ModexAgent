@@ -234,8 +234,7 @@ async def test_world_command_exit_records_matching_and_wrong_codes() -> None:
 
     assert [result["passed"] for result in output["world_results"]] == [True, False]
     assert all(
-        result["assertion"].startswith("command_exit:")
-        for result in output["world_results"]
+        result["assertion"].startswith("command_exit:") for result in output["world_results"]
     )
 
 
@@ -259,7 +258,9 @@ async def test_world_setup_rejects_paths_outside_workspace(
     absolute_target = tmp_path / "absolute.txt"
     resolved_unsafe_path = str(absolute_target) if unsafe_path == "{absolute}" else unsafe_path
     outside_target = absolute_target if unsafe_path == "{absolute}" else tmp_path / "evil.txt"
-    runner = EvalRunner(provider=_ScriptedProvider([_response("must not run")]), system_prompt="eval")
+    runner = EvalRunner(
+        provider=_ScriptedProvider([_response("must not run")]), system_prompt="eval"
+    )
 
     output = await runner.task(
         item=_item(
@@ -275,6 +276,7 @@ async def test_world_setup_rejects_paths_outside_workspace(
     assert output["stop_reason"] == "error"
     assert output["error"]
     assert output["turns_executed"] == 0
+    assert output["tool_stats"]["source"] == "spans", "error output must use span-based source"
     assert not outside_target.exists()
 
 
@@ -300,7 +302,7 @@ async def test_expected_stop_mismatch_is_recorded() -> None:
     assert output["turn_records"][0]["stop_reason"] == "error"
 
 
-async def test_clean_tool_stats_count_error_tool_messages() -> None:
+async def test_clean_tool_stats_count_error_tool_spans() -> None:
     provider = _ScriptedProvider(
         [
             _tool_response("missing_tool", {}),
@@ -323,9 +325,7 @@ async def test_clean_tool_stats_count_error_tool_messages() -> None:
         "total": 1,
         "errors": 1,
         "success_rate": 0.0,
-        "reasoning_depth": 0.0,
-        "trajectory_compactness": 0.0,
-        "source": "messages",
+        "source": "spans",
     }
 
 

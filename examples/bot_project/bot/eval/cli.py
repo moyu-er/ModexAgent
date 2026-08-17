@@ -259,73 +259,112 @@ def run(
 def compare(
     dataset: Annotated[str, typer.Option("--dataset", help="Dataset to compare runs for.")],
 ) -> None:
-    """List experiment runs for a dataset with their aggregated scores."""
+    """List experiment runs for a dataset with their aggregated scores.
+
+    Uses the Langfuse v4 ``experiments`` API (v3 dataset-runs endpoint is
+    disabled in events_only mode). Each experiment's scores are fetched via
+    ``v3/scores`` filtered by the experiment's time window.
+    """
     host, public_key, secret_key = _load_langfuse_env()
-    lf = Langfuse(host=host, public_key=public_key, secret_key=secret_key)
     headers = _basic_auth_header(public_key, secret_key)
 
+    # Resolve dataset ID from name (experiments API returns datasetId, not name).
+    lf = Langfuse(host=host, public_key=public_key, secret_key=secret_key)
     try:
-        paginated = lf.get_dataset_runs(dataset_name=dataset, limit=100)
-    except NotFoundError as exc:
-        _echo_dataset_runs_unavailable(dataset, status=f"HTTP {exc.status_code}")
+        ds = lf.get_dataset(dataset)
+    except NotFoundError:
+        typer.echo(f"Dataset '{dataset}' not found.")
         return
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code != 404:
-            raise
-        _echo_dataset_runs_unavailable(dataset, status=f"HTTP {exc.response.status_code}")
-        return
+    dataset_id = ds.id
 
-    runs = paginated.data
-    if not runs:
+    experiments = _fetch_experiments(
+        host=host,
+        headers=headers,
+        dataset_id=dataset_id,
+    )
+    if not experiments:
         typer.echo(f"No experiment runs found for dataset '{dataset}'.")
+        typer.echo("(Tip: experiments are created by 'run' — check local archives in evals/runs/)")
         return
 
     typer.echo(f"Experiment runs for dataset '{dataset}':")
     typer.echo()
-    typer.echo(f"{'Run':<30} {'Created':<20} {'Scores'}")
-    typer.echo(f"{'---':<30} {'---':<20} {'---'}")
+    typer.echo(f"{'Run':<45} {'Items':<6} {'Scores'}")
+    typer.echo(f"{'---':<45} {'---':<6} {'---'}")
 
-    for run in runs:
-        created = run.created_at.strftime("%Y-%m-%d %H:%M")
-        scores = _fetch_run_scores(
+    for exp in experiments:
+        scores = _fetch_experiment_scores(
             host=host,
             headers=headers,
-            dataset_run_id=run.id,
+            start_time=exp["startTime"],
+            end_time=exp["endTime"],
         )
-        typer.echo(f"{run.name:<30} {created:<20} {scores}")
+        typer.echo(f"{exp['name'][:45]:<45} {exp.get('itemCount', '?'):<6} {scores}")
 
 
-def _echo_dataset_runs_unavailable(dataset: str, *, status: str) -> None:
-    """Report dataset-runs unavailability and list local run archives instead."""
-    archive_root = Path("evals/runs") / dataset
-    typer.echo(
-        f"Dataset runs unavailable on this Langfuse deployment ({status}) "
-        f"— local run archives: {archive_root}/"
-    )
-    if not archive_root.is_dir():
-        typer.echo("No local run archives found.")
-        return
-    for experiment_dir in sorted(archive_root.iterdir()):
-        if not experiment_dir.is_dir():
-            continue
-        run_count = len(list(experiment_dir.glob("*.json")))
-        typer.echo(f"  {experiment_dir.name}: {run_count} run(s)")
-
-
-def _fetch_run_scores(
+def _fetch_experiments(
     *,
     host: str,
     headers: dict[str, str],
-    dataset_run_id: str,
-) -> str:
-    """Fetch and aggregate scores for a dataset run via the REST API.
+    dataset_id: str,
+) -> list[dict[str, Any]]:
+    """Fetch experiments for a dataset via the v4 ``experiments`` API."""
+    url = f"{host.rstrip('/')}/api/public/experiments"
+    params: dict[str, Any] = {
+        "fromStartTime": "2000-01-01T00:00:00Z",
+        "toStartTime": "2100-01-01T00:00:00Z",
+        "limit": 100,
+    }
+    try:
+        with httpx.Client(timeout=_SCORES_TIMEOUT) as client:
+            response = client.get(url, params=params, headers=headers)
+    except Exception:
+        return []
 
-    Queries ``GET /api/public/v2/scores?datasetRunId=...`` and averages each
-    score name. Returns a compact summary like ``accuracy=75%, completion=80%``
-    or ``"(no scores)"`` / ``"(unavailable)"`` on failure.
+    if response.status_code != 200:
+        return []
+
+    try:
+        body = response.json()
+    except Exception:
+        return []
+
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, list):
+        return []
+
+    return [exp for exp in data if isinstance(exp, dict) and exp.get("datasetId") == dataset_id]
+
+
+def _fetch_experiment_scores(
+    *,
+    host: str,
+    headers: dict[str, str],
+    start_time: str,
+    end_time: str,
+) -> str:
+    """Fetch and aggregate scores for an experiment via ``v3/scores``.
+
+    Filters by the experiment's ``startTime``–``endTime`` window (the v4
+    ``v3/scores`` endpoint does not support ``experimentId`` filtering).
+    A 2-second buffer is added to ``end_time`` because score timestamps can
+    land exactly on the experiment boundary and be excluded by an open
+    upper range. Returns a compact summary like ``accuracy=75%,
+    completion=80%`` or ``"(no scores)"`` / ``"(unavailable)"`` on failure.
     """
-    url = f"{host.rstrip('/')}/api/public/v2/scores"
-    params = {"datasetRunId": dataset_run_id, "limit": 500}
+    from datetime import datetime, timedelta
+
+    url = f"{host.rstrip('/')}/api/public/v3/scores"
+    try:
+        end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+        end_buffered = (end_dt + timedelta(seconds=2)).isoformat().replace("+00:00", "Z")
+    except Exception:
+        end_buffered = end_time
+    params = {
+        "fromTimestamp": start_time,
+        "toTimestamp": end_buffered,
+        "limit": 100,
+    }
     try:
         with httpx.Client(timeout=_SCORES_TIMEOUT) as client:
             response = client.get(url, params=params, headers=headers)
