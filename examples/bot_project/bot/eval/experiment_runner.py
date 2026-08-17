@@ -45,6 +45,7 @@ from bot.eval.agent_harness import (
     _WorkspaceTokenNormalizer,
     build_runtime_services,
     build_tool_manager,
+    build_trace_only_services,
     static_system_prompt,
     wrap_provider,
 )
@@ -70,10 +71,9 @@ from modex_agent.core.types import MessageRole
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
-from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.runtime.services import AgentRuntime
 from modex_agent.trace.cassette import CassetteRecorder, CassetteReplayEngine
-from modex_agent.trace.scoring import compute_score
-from modex_agent.trace.semconv import SpanName
+from modex_agent.trace.scoring import compute_metrics
 from modex_agent.trace.store import JsonlSpanQuery
 
 logger = logging.getLogger(__name__)
@@ -163,35 +163,13 @@ async def _evaluate_world_assertion(
             assert_never(unreachable)
 
 
-async def _message_tool_stats(history: ListMessageHistory) -> ToolStats:
-    messages = await history.to_list()
-    tool_messages = [message for message in messages if message.role is MessageRole.TOOL]
-    errors = sum(
-        1
-        for message in tool_messages
-        if isinstance(message.content, str) and "Error:" in message.content
-    )
-    total = len(tool_messages)
-    success_rate = (total - errors) / total if total else 1.0
-    return ToolStats(
-        total=total,
-        errors=errors,
-        success_rate=success_rate,
-        source="messages",
-    )
-
-
 async def _span_tool_stats(trace_dir: Path, session: SessionInfo) -> ToolStats:
     spans = await JsonlSpanQuery(trace_dir).list_by_session(str(session))
-    score = compute_score(spans)
-    total = sum(1 for span in spans if span.name == SpanName.EXECUTE_TOOL.value)
-    errors = total - round(total * score.tool_success_rate)
+    metrics = compute_metrics(spans)
     return ToolStats(
-        total=total,
-        errors=errors,
-        success_rate=score.tool_success_rate,
-        reasoning_depth=float(score.reasoning_depth),
-        trajectory_compactness=score.trajectory_compactness,
+        total=metrics.tool_call_count,
+        errors=metrics.error_tool_count,
+        success_rate=metrics.tool_success_rate,
         source="spans",
     )
 
@@ -341,7 +319,7 @@ class EvalRunner:
 
             match self._mode:
                 case "clean":
-                    services = AgentRuntimeServices()
+                    services = build_trace_only_services(trace_dir)
                     agent = ReActAgent(provider, mode="clean")
                 case "production":
                     services = build_runtime_services(trace_dir=trace_dir, recorder=None)
@@ -392,13 +370,7 @@ class EvalRunner:
                 await _evaluate_world_assertion(assertion, workspace)
                 for assertion in spec.world_assertions
             ]
-            match self._mode:
-                case "clean":
-                    tool_stats = await _message_tool_stats(history)
-                case "production":
-                    tool_stats = await _span_tool_stats(trace_dir, session)
-                case unreachable:
-                    assert_never(unreachable)
+            tool_stats = await _span_tool_stats(trace_dir, session)
             final_turn = turn_records[-1]
             return EvalTaskOutput(
                 output=final_turn.content,
@@ -415,15 +387,12 @@ class EvalRunner:
             shutil.rmtree(trace_dir, ignore_errors=True)
 
     def _error_output(self, error: str) -> dict[str, Any]:
-        source: Literal["spans", "messages"] = (
-            "spans" if self._mode == "production" else "messages"
-        )
         return EvalTaskOutput(
             output="",
             stop_reason=StopReason.ERROR,
             error=error,
             world_results=[],
-            tool_stats=ToolStats(total=0, errors=0, success_rate=1.0, source=source),
+            tool_stats=ToolStats(total=0, errors=0, success_rate=1.0, source="spans"),
             turns_executed=0,
             stop_mismatches=[],
             turn_records=[],

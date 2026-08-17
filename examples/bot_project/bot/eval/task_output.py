@@ -27,8 +27,6 @@ class ToolStats(BaseModel):
     total: int
     errors: int
     success_rate: float
-    reasoning_depth: float = 0.0
-    trajectory_compactness: float = 0.0
     source: Literal["spans", "messages"]
 
 

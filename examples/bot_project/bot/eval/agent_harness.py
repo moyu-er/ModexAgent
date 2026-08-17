@@ -222,6 +222,30 @@ def build_runtime_services(
     )
 
 
+def build_trace_only_services(trace_dir: Path) -> AgentRuntimeServices:
+    """Build trace-only services for clean-mode eval — no governance/loop/checkpoint."""
+    config = ObservabilityConfig(
+        trace_backend=TraceBackend.FILE,
+        prompt_capture=PromptCaptureMode.FULL,
+        trace_spans=TraceSpanMode.FULL,
+    )
+    trace_store = OtelSpanTraceStore(trace_dir)
+    hook_specs = build_trace_hooks(
+        config=config,
+        model=None,
+        provider_name="eval",
+        request_params=None,
+        score_injector=None,
+        store=trace_store,
+    )
+    return AgentRuntimeServices(
+        hooks=HookRunner(hook_specs),
+        governance=None,
+        turn_store=None,
+        trace_store=trace_store,
+    )
+
+
 def static_system_prompt(base: str) -> str:
     """Build cassette-stable instructions without runtime path or time data.
 
@@ -236,6 +260,7 @@ __all__ = [
     "_WorkspaceTokenNormalizer",
     "build_runtime_services",
     "build_tool_manager",
+    "build_trace_only_services",
     "static_system_prompt",
     "wrap_provider",
 ]

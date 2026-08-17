@@ -42,6 +42,8 @@ from bot.eval.evaluators import (
     accuracy_evaluator,
     completion_evaluator,
     response_length_evaluator,
+    tool_success_evaluator,
+    world_state_evaluator,
 )
 from bot.eval.experiment_runner import EvalRunner as _BaseEvalRunner
 from bot.eval.task_spec import EvalItemSpec, EvalToolset
@@ -242,6 +244,8 @@ def run(
             accuracy_evaluator,
             completion_evaluator,
             response_length_evaluator,
+            world_state_evaluator,
+            tool_success_evaluator,
         ],
         max_concurrency=max_concurrency,
     )
