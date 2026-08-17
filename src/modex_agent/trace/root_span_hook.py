@@ -11,7 +11,7 @@ from modex_agent.core.constants import StopReason
 from modex_agent.hook.abc import FinallyGraphHook, StartNodeTurnHook
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.trace.base_hook import BaseTraceHook
-from modex_agent.trace.scoring import compute_root_subtrees, compute_score
+from modex_agent.trace.scoring import compute_root_subtrees
 from modex_agent.trace.semconv import (
     GenAiAttr,
     LangfuseObservationType,
@@ -152,7 +152,7 @@ class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook):
                 subtree = compute_root_subtrees(spans)[root_span_id]
                 await self._score_injector.inject_scores(
                     trace_id,
-                    compute_score(subtree),
+                    subtree,
                     observation_id=root_span_id,
                 )
             except Exception:

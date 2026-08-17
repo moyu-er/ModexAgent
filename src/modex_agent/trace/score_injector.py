@@ -18,7 +18,8 @@ from uuid import uuid4
 
 import httpx
 
-from modex_agent.trace.scoring import TrajectoryScore, overall_score
+from modex_agent.trace.scoring import compute_metrics
+from modex_agent.trace.store import SpanModel
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +29,17 @@ _INJECT_TIMEOUT = httpx.Timeout(5.0)
 # Langfuse score names — order is stable for readability.
 _SCORE_NAMES: tuple[str, ...] = (
     "tool_success_rate",
-    "reasoning_depth",
-    "trajectory_compactness",
-    "overall",
+    "tool_call_count",
+    "error_tool_count",
+    "iteration_count",
+    "llm_call_count",
+    "total_input_tokens",
+    "total_output_tokens",
+    "total_reasoning_tokens",
+    "api_latency_avg_s",
+    "cache_hit_rate",
+    "response_token_ratio",
+    "has_reasoning",
 )
 
 
@@ -54,21 +63,18 @@ class L2ScoreInjector:
     async def inject_scores(
         self,
         trace_id: str,
-        scores: TrajectoryScore,
+        spans: list[SpanModel],
         *,
         observation_id: str | None = None,
     ) -> None:
-        """Inject 4 NUMERIC scores: ``tool_success_rate``, ``reasoning_depth``,
-        ``trajectory_compactness``, and ``overall``.
+        """Inject 12 NUMERIC scores derived from ``spans`` via :func:`compute_metrics`.
 
-        Uses :func:`overall_score` from :mod:`modex_agent.trace.scoring` to
-        compute the combined score.  Creates a fresh
-        :class:`httpx.AsyncClient` (5s timeout), POSTs the batch, logs a
-        warning on any failure.  Never raises.
+        Creates a fresh :class:`httpx.AsyncClient` (5s timeout), POSTs the
+        batch, logs a warning on any failure.  Never raises.
         """
         batch = _build_score_batch(
             trace_id=trace_id,
-            scores=scores,
+            spans=spans,
             observation_id=observation_id,
         )
         try:
@@ -79,7 +85,9 @@ class L2ScoreInjector:
                     headers=self._headers,
                 )
         except Exception:
-            logger.warning("L2ScoreInjector: failed to POST scores to Langfuse (trace_id=%s)", trace_id)
+            logger.warning(
+                "L2ScoreInjector: failed to POST scores to Langfuse (trace_id=%s)", trace_id
+            )
             return
 
         if response.status_code != 207:
@@ -115,7 +123,7 @@ class L2ScoreInjector:
 def _build_score_batch(
     *,
     trace_id: str,
-    scores: TrajectoryScore,
+    spans: list[SpanModel],
     observation_id: str | None,
 ) -> list[dict[str, Any]]:
     """Build the ``batch`` array of ``score-create`` events.
@@ -125,11 +133,20 @@ def _build_score_batch(
     ``traceId``, ``name``, ``value``, ``dataType="NUMERIC"``, plus
     ``observationId`` when one is supplied.
     """
+    scores = compute_metrics(spans)
     values: dict[str, float] = {
         "tool_success_rate": scores.tool_success_rate,
-        "reasoning_depth": float(scores.reasoning_depth),
-        "trajectory_compactness": scores.trajectory_compactness,
-        "overall": overall_score(scores),
+        "tool_call_count": float(scores.tool_call_count),
+        "error_tool_count": float(scores.error_tool_count),
+        "iteration_count": float(scores.iteration_count),
+        "llm_call_count": float(scores.llm_call_count),
+        "total_input_tokens": float(scores.total_input_tokens),
+        "total_output_tokens": float(scores.total_output_tokens),
+        "total_reasoning_tokens": float(scores.total_reasoning_tokens),
+        "api_latency_avg_s": scores.api_latency_avg_s,
+        "cache_hit_rate": scores.cache_hit_rate,
+        "response_token_ratio": scores.response_token_ratio,
+        "has_reasoning": float(scores.has_reasoning),
     }
     timestamp = datetime.now(UTC).isoformat()
     batch: list[dict[str, Any]] = []

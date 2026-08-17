@@ -8,8 +8,10 @@ aggregates spans by ``trace_id`` into trajectories, and produces:
 * **DPO** — preference-pair JSONL from approval data (approved=chosen,
   denied=rejected).
 
-L2 heuristic scoring (tool success rate, reasoning depth, trajectory
-compactness), 3-tier deduplication (exact SHA-256 → n-gram Jaccard → semantic
+Trajectory metrics (12 direction-clear fields including tool_success_rate,
+tool_call_count, error_tool_count, iteration_count, token counts, latency,
+cache hit rate, and reasoning indicator) computed via ``compute_metrics``,
+3-tier deduplication (exact SHA-256 → n-gram Jaccard → semantic
 embedding [Phase 1: tier 3 not implemented]), and scope-aware filtering
 (cross-tenant warning) are applied.
 """
@@ -28,12 +30,10 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.trace.scoring import (
-    TrajectoryScore,
-    compute_score,
+    TrajectoryMetrics,
+    compute_metrics,
     extract_final_response,
     extract_output_text,
-    overall_score,
-    score_to_rating,
 )
 from modex_agent.trace.semconv import GenAiAttr, SpanName
 from modex_agent.trace.store import SpanModel, TraceQuery
@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 _NGRAM_SIZE: int = 3
 _NGRAM_SIMILARITY_THRESHOLD: float = 0.8
 _SCORE_GAP_THRESHOLD: float = 0.5
+"""Minimum directional gap: chosen tool_success_rate must exceed rejected by at least this amount."""
 _EDIT_DISTANCE_RATIO_THRESHOLD: float = 0.1
 _REFUSAL_PHRASES: tuple[str, ...] = (
     "i can't",
@@ -98,7 +99,7 @@ class SFTExample(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     messages: list[dict[str, Any]] = Field(default_factory=list)
-    score: TrajectoryScore | None = None
+    score: TrajectoryMetrics | None = None
 
 
 class DPOPair(BaseModel):
@@ -109,10 +110,10 @@ class DPOPair(BaseModel):
     prompt: str
     chosen: str
     chosen_model: str
-    chosen_rating: int
+    chosen_tool_success_rate: float
     rejected: str
     rejected_model: str
-    rejected_rating: int
+    rejected_tool_success_rate: float
 
 
 class ExportResult(BaseModel):
@@ -512,7 +513,7 @@ class TrainingDataExporter:
         self._check_cross_tenant(trajectories, allow_cross_tenant=allow_cross_tenant)
 
         # Build SFT candidates from training-relevant trajectories.
-        candidates: list[tuple[list[dict[str, Any]], TrajectoryScore]] = []
+        candidates: list[tuple[list[dict[str, Any]], TrajectoryMetrics]] = []
         for spans in trajectories.values():
             if not _is_training_relevant(spans):
                 continue
@@ -520,7 +521,7 @@ class TrainingDataExporter:
             if len(messages) < 2:
                 # Need at least user + assistant.
                 continue
-            score = compute_score(spans)
+            score = compute_metrics(spans)
             candidates.append((messages, score))
 
         accepted, deduped_count = self._dedup_sft(candidates)
@@ -596,16 +597,18 @@ class TrainingDataExporter:
         raw_pairs: list[DPOPair] = []
         for task_msg, groups in task_groups.items():
             for chosen_spans in groups["approved"]:
-                chosen_score = overall_score(compute_score(chosen_spans))
+                chosen_metrics = compute_metrics(chosen_spans)
+                chosen_score = chosen_metrics.tool_success_rate
                 chosen_response = extract_final_response(chosen_spans)
                 chosen_agent = _extract_agent_name(chosen_spans)
                 for rejected_spans in groups["denied"]:
-                    rejected_score = overall_score(compute_score(rejected_spans))
+                    rejected_metrics = compute_metrics(rejected_spans)
+                    rejected_score = rejected_metrics.tool_success_rate
                     rejected_response = extract_final_response(rejected_spans)
                     rejected_agent = _extract_agent_name(rejected_spans)
 
                     # Filter: min score gap.
-                    if abs(chosen_score - rejected_score) < _SCORE_GAP_THRESHOLD:
+                    if chosen_score - rejected_score < _SCORE_GAP_THRESHOLD:
                         continue
                     # Filter: min edit-distance ratio.
                     if (
@@ -622,10 +625,10 @@ class TrainingDataExporter:
                             prompt=task_msg,
                             chosen=chosen_response,
                             chosen_model=chosen_agent,
-                            chosen_rating=score_to_rating(chosen_score),
+                            chosen_tool_success_rate=chosen_score,
                             rejected=rejected_response,
                             rejected_model=rejected_agent,
-                            rejected_rating=score_to_rating(rejected_score),
+                            rejected_tool_success_rate=rejected_score,
                         )
                     )
 
@@ -708,8 +711,8 @@ class TrainingDataExporter:
 
     def _dedup_sft(
         self,
-        candidates: list[tuple[list[dict[str, Any]], TrajectoryScore]],
-    ) -> tuple[list[tuple[list[dict[str, Any]], TrajectoryScore]], int]:
+        candidates: list[tuple[list[dict[str, Any]], TrajectoryMetrics]],
+    ) -> tuple[list[tuple[list[dict[str, Any]], TrajectoryMetrics]], int]:
         """Apply 3-tier deduplication (cheapest first).
 
         Tier 1: exact SHA-256 hash of the messages list.
@@ -718,7 +721,7 @@ class TrainingDataExporter:
         """
         seen_hashes: set[str] = set()
         seen_ngrams: list[frozenset[str]] = []
-        accepted: list[tuple[list[dict[str, Any]], TrajectoryScore]] = []
+        accepted: list[tuple[list[dict[str, Any]], TrajectoryMetrics]] = []
         deduped_count = 0
 
         for messages, score in candidates:
