@@ -416,7 +416,9 @@ class DefaultAgentFactory(AgentFactory):
                 from modex_agent.trace.score_injector import L2ScoreInjector
 
                 parsed = urlparse(obs.otel_endpoint)
-                ingestion_url = f"{parsed.scheme}://{parsed.netloc}/api/public/ingestion"
+                ingestion_url = obs.eval_ingestion_url or (
+                    f"{parsed.scheme}://{parsed.netloc}/api/public/ingestion"
+                )
                 headers = obs.otel_headers or {}
                 score_injector = L2ScoreInjector(
                     ingestion_url=ingestion_url,

@@ -146,6 +146,12 @@ class TurnCustomKey(StrEnum):
     # The parent agent's handoff span ID, stored on the child's turn state
     # so the child can reference the specific handoff span that spawned it.
     HANDOFF_SPAN_ID = "handoff_span_id"
+    # TrajectoryMetrics for the finished turn, derived by RootSpanHook from
+    # the TraceSessionState scalar counters at finally_graph (BEFORE
+    # clear_trace pops the counters bucket). Value: the frozen
+    # TrajectoryMetrics model. Read by eval-side turn aggregation so it
+    # never reads spans back from the trace store.
+    TRAJECTORY_METRICS = "trajectory_metrics"
     # Resolved image-kind Attachment records for the current turn (ADR-0014 §3 /
     # OpenSpec native-multimodal-inline unit 3). Path-only VOs (path/mime/kind/
     # name/size) — never bytes. Read by the inline renderer (unit 4) to bind

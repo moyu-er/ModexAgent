@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from modex_agent.trace.scoring import compute_metrics
+from modex_agent.trace.semconv import SpanName
 from modex_agent.trace.session_state import TraceSessionState
+from modex_agent.trace.store import SpanModel
 
 
 def test_trace_session_state_initialization() -> None:
@@ -32,6 +35,19 @@ def test_clear_trace_removes_all_state() -> None:
     state.tool_batch_info["t1"] = (3.0, "span-1", [])
     state.turn_usage["t1"] = {"prompt_tokens": 10, "completion_tokens": 20}
     state.user_inputs["t1"] = "hello"
+    state.accumulate_span(
+        "t1",
+        "span-1",
+        SpanModel(
+            trace_id="t1",
+            span_id="chat-1",
+            parent_span_id="span-1",
+            name=SpanName.CHAT.value,
+            start_time=1.0,
+            end_time=2.0,
+        ),
+    )
+    assert state.read_metrics("t1", "span-1").llm_call_count == 1
 
     state.clear_trace("t1")
 
@@ -42,6 +58,7 @@ def test_clear_trace_removes_all_state() -> None:
     assert "t1" not in state.tool_batch_info
     assert "t1" not in state.turn_usage
     assert "t1" not in state.user_inputs
+    assert state.read_metrics("t1", "span-1") == compute_metrics([])
 
 
 def test_clear_trace_nonexistent_no_error() -> None:

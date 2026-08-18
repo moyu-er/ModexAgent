@@ -16,6 +16,12 @@ from modex_agent.trace.chat_span_hook import ChatSpanHook
 from modex_agent.trace.factory import build_trace_hooks
 from modex_agent.trace.handoff_span_hook import HandoffSpanHook
 from modex_agent.trace.iteration_span_hook import IterationSpanHook
+from modex_agent.trace.langfuse_query import (
+    LangfuseClient,
+    LangfuseTraceQuery,
+    ObservationData,
+    SessionSummary,
+)
 from modex_agent.trace.otel_store import (
     OtelSpanTraceStore,
     build_trace_stores,
@@ -38,7 +44,7 @@ from modex_agent.trace.semconv import (
     SpanName,
     SpanStatusCode,
 )
-from modex_agent.trace.session_state import TraceSessionState
+from modex_agent.trace.session_state import MetricCounters, TraceSessionState
 from modex_agent.trace.store import JsonlSpanQuery, SpanModel, SpanStatus, TraceQuery
 from modex_agent.trace.tool_span_hook import ToolSpanHook
 
@@ -59,13 +65,18 @@ __all__ = [
     "IterationSpanHook",
     "JsonlSpanQuery",
     "L2ScoreInjector",
+    "LangfuseClient",
     "LangfuseObservationLevel",
     "LangfuseObservationType",
+    "LangfuseTraceQuery",
+    "MetricCounters",
+    "ObservationData",
     "OffPromptCapture",
     "OtelSpanTraceStore",
     "PromptCaptureMode",
     "PromptCaptureStrategy",
     "RootSpanHook",
+    "SessionSummary",
     "SpanKind",
     "SpanModel",
     "SpanName",

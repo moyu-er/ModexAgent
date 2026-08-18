@@ -1,10 +1,20 @@
-"""OTel-compatible span trace store — JSONL writer + OTLP export.
+"""OTel-compatible span trace store — backend-gated persistence + async OTLP export.
 
-:class:`OtelSpanTraceStore` writes :class:`SpanModel` values (OTel-compatible
-span JSON) to ``spans.jsonl`` and — when an OTel SDK ``Tracer`` is provided —
-also emits each span via the SDK for remote OTLP export.  The JSONL file is
-the primary local store for agent self-read; the OTel SDK path is independent
-— a failure in one export path does not affect the other.
+:class:`OtelSpanTraceStore` persists :class:`SpanModel` values (OTel-compatible
+span JSON) in one of two modes selected by :class:`TraceBackend`:
+
+- ``FILE`` (default): append-only ``spans.jsonl`` per session — the local
+  store for agent self-read. Never touches the network, regardless of
+  ``otlp_endpoint``.
+- ``OTEL_HTTP``: no local jsonl, and the store is WRITE-ONLY —
+  :meth:`save_span` appends to a bounded export queue drained by a single
+  daemon sender thread that POSTs each span via JSON OTLP
+  (``_emit_span_via_json_otlp``, 3 s client timeout). The read methods
+  :meth:`list_by_session` / :meth:`list_by_trace_id` raise
+  ``NotImplementedError`` in this mode; read traces back through
+  :class:`modex_agent.trace.langfuse_query.LangfuseTraceQuery` instead. The
+  hot path never touches the network and never raises — a slow or down
+  collector can stall the sender, never the agent.
 
 The ``[observability]`` extra (``opentelemetry-sdk`` +
 ``opentelemetry-exporter-otlp-proto-http``) is required only when OTLP
@@ -19,6 +29,9 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
+import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -34,74 +47,128 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SPANS_FILENAME = "spans.jsonl"
+_SENDER_JOIN_TIMEOUT_S = 2.0
+_WARN_WINDOW_S = 5.0
 
 
 # ── OtelSpanTraceStore ────────────────────────────────────────────────
 
 
 class OtelSpanTraceStore(TraceQuery):
-    """Writes OTel-compatible span JSON to ``spans.jsonl`` and (optionally)
-    exports via JSON OTLP HTTP POST.
+    """Persists OTel-compatible span JSON per the selected :class:`TraceBackend`.
 
-    File layout::
+    ``FILE`` file layout::
 
         {base_dir}/{session_id}/spans.jsonl
 
-    Each line is a JSON-encoded :class:`SpanModel`.
+    Each line is a JSON-encoded :class:`SpanModel`. IO errors propagate to
+    the caller; no OTLP client is ever created in this mode.
 
-    When ``otlp_endpoint`` is provided, :meth:`save_span` also exports each
-    span via direct JSON OTLP HTTP POST (not via the OTel SDK). This bypasses
-    the SDK's context-propagation model, which is incompatible with our
-    "write SpanModel first, forward later" architecture — the SDK generates
-    its own trace_id/span_id, losing our parent-child relationships.
+    ``OTEL_HTTP`` is write-only: :meth:`save_span` hands each span to a
+    bounded export queue (``export_queue_size``) drained by a daemon sender
+    thread; when the queue is full the oldest span is dropped and counted
+    (:attr:`dropped_spans`); sender-side export failures drop the span and
+    count it too. Warnings are rate-limited to one per failure kind per
+    5 s window. Reads are not supported — :meth:`list_by_session` and
+    :meth:`list_by_trace_id` raise ``NotImplementedError``; use
+    ``LangfuseTraceQuery`` to read traces back (cross-process by design).
 
     Direct JSON OTLP preserves our trace_id, span_id, and parent_span_id
     exactly as written in SpanModel, so Langfuse receives a correct trace
-    tree. A failure in OTLP export is logged and does not prevent the
-    JSONL write.
+    tree.
     """
 
     def __init__(
         self,
         base_dir: Path,
         *,
+        backend: TraceBackend = TraceBackend.FILE,
         retain_reasoning_content: bool = True,
         tracer: OtelTracer | None = None,
         otlp_endpoint: str | None = None,
         otlp_headers: dict[str, str] | None = None,
         otlp_service_name: str = "modex_agent",
+        export_queue_size: int = 10_000,
     ) -> None:
         self._base_dir = base_dir
+        self._backend = backend
         self._retain_reasoning_content = retain_reasoning_content
         self._tracer: OtelTracer | None = tracer
         self._otlp_endpoint = otlp_endpoint
         self._otlp_headers = otlp_headers or {}
         self._otlp_service_name = otlp_service_name
+
+        self._export_queue: queue.Queue[SpanModel] = queue.Queue(maxsize=export_queue_size)
+        self._stats_lock = threading.Lock()
+        self._dropped_spans = 0
+        self._exported_spans = 0
+        self._warn_times: dict[str, float] = {}
+        self._stop_event = threading.Event()
+        self._closed = False
+
+        # Owned by the sender thread; created lazily on first export so a
+        # pre-save injection (tests) or a failed construction never leaks.
         self._otlp_client: httpx.Client | None = None
-        if otlp_endpoint:
-            try:
-                self._otlp_client = httpx.Client(timeout=httpx.Timeout(10.0))
-            except Exception:
-                logger.warning("Failed to create httpx.Client for OTLP export")
+        self._sender_thread: threading.Thread | None = None
+        if backend == TraceBackend.OTEL_HTTP and otlp_endpoint is not None:
+            self._sender_thread = threading.Thread(
+                target=self._sender_loop,
+                name=f"otel-span-sender-{id(self):x}",
+                daemon=True,
+            )
+            self._sender_thread.start()
 
     @property
     def retain_reasoning_content(self) -> bool:
         return self._retain_reasoning_content
 
+    @property
+    def backend(self) -> TraceBackend:
+        return self._backend
+
+    @property
+    def dropped_spans(self) -> int:
+        """Total spans dropped: export-queue overflow (oldest evicted) plus sender-side export failures."""
+        with self._stats_lock:
+            return self._dropped_spans
+
+    @property
+    def exported_spans(self) -> int:
+        """Spans handed to the OTLP endpoint without exception."""
+        with self._stats_lock:
+            return self._exported_spans
+
     def _session_path(self, session_id: str) -> Path:
         return self._base_dir / session_id / _SPANS_FILENAME
 
-    async def save_span(self, span: SpanModel) -> None:
-        """Persist a single :class:`SpanModel`.
+    def _count_drop(self) -> None:
+        with self._stats_lock:
+            self._dropped_spans += 1
 
-        Writes one JSON line to ``{base_dir}/{session_id}/spans.jsonl`` and,
-        when an OTel SDK ``Tracer`` is configured, emits the span via the SDK
-        for OTLP export.  OTel SDK failures are logged and do not prevent the
-        local JSONL write.
+    def _warn_rate_limited(self, kind: str, message: str, *args: object) -> None:
+        now = time.monotonic()
+        with self._stats_lock:
+            last = self._warn_times.get(kind, 0.0)
+            if now - last < _WARN_WINDOW_S:
+                return
+            self._warn_times[kind] = now
+        logger.warning(message, *args)
+
+    async def save_span(self, span: SpanModel) -> None:
+        """Persist a single :class:`SpanModel` (µs-scale hot path).
+
+        ``FILE`` backend: appends one JSON line to
+        ``{base_dir}/{session_id}/spans.jsonl``; IO errors propagate.
+
+        ``OTEL_HTTP`` backend: appends to the bounded export queue only;
+        the daemon sender thread performs the OTLP POST asynchronously.
+        This path never raises and never touches the network — export-queue
+        overflow evicts the oldest queued span and increments
+        :attr:`dropped_spans`.
 
         When ``retain_reasoning_content`` is ``False``, the
         ``gen_ai.output.reasoning_content`` attribute is stripped before
-        writing or emitting.
+        persisting.
         """
         span_to_write = span
         if not self._retain_reasoning_content:
@@ -109,59 +176,195 @@ class OtelSpanTraceStore(TraceQuery):
             span_to_write = span.model_copy(update={"attributes": stripped})
 
         session_id = str(span_to_write.attributes.get(GenAiAttr.CONVERSATION_ID.value, "unknown"))
-        path = self._session_path(session_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(span_to_write.model_dump(mode="json"), ensure_ascii=False)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
 
-        if self._otlp_endpoint and self._otlp_client is not None:
+        if self._backend == TraceBackend.FILE:
+            path = self._session_path(session_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            line = json.dumps(span_to_write.model_dump(mode="json"), ensure_ascii=False)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+            return
+
+        try:
+            self._export_queue.put_nowait(span_to_write)
+        except queue.Full:
+            # Drop-oldest is not atomic: between the failed put and the
+            # eviction get the sender may drain the queue — get_nowait then
+            # raises Empty, meaning space already exists and nothing was
+            # dropped (no count). The retried put can only hit Full again if
+            # another producer refilled that window; then the NEW span is
+            # dropped and counted instead.
             try:
-                _emit_span_via_json_otlp(
-                    self._otlp_client,
-                    self._otlp_endpoint,
-                    self._otlp_headers,
-                    self._otlp_service_name,
-                    span_to_write,
+                self._export_queue.get_nowait()
+            except queue.Empty:
+                pass
+            else:
+                self._count_drop()
+                self._warn_rate_limited(
+                    "queue-full",
+                    "OTLP export queue full (%s items) — dropped oldest span",
+                    self._export_queue.maxsize,
                 )
-            except Exception:
-                logger.warning("OTLP export failed for span %s (remote unavailable)", span_to_write.name)
+            try:
+                self._export_queue.put_nowait(span_to_write)
+            except queue.Full:
+                self._count_drop()
+                self._warn_rate_limited(
+                    "queue-full-new",
+                    "OTLP export queue full (%s items) — dropped new span",
+                    self._export_queue.maxsize,
+                )
+
+    def _sender_loop(self) -> None:
+        try:
+            while True:
+                try:
+                    span = self._export_queue.get(timeout=0.1)
+                except queue.Empty:
+                    if self._stop_event.is_set():
+                        return
+                    continue
+                self._send_one(span)
+                self._export_queue.task_done()
+        finally:
+            # The sender owns the client lifecycle: it created the client
+            # (lazily, possibly as a replacement mid-drain after close()
+            # timed out), so it closes it on loop exit — exactly once.
+            self._close_client_once()
+
+    def _send_one(self, span: SpanModel) -> None:
+        endpoint = self._otlp_endpoint
+        if endpoint is None:
+            return
+        client = self._ensure_client()
+        if client is None:
+            self._count_drop()
+            return
+        try:
+            _emit_span_via_json_otlp(
+                client,
+                endpoint,
+                self._otlp_headers,
+                self._otlp_service_name,
+                span,
+            )
+        except Exception as exc:
+            self._count_drop()
+            self._warn_rate_limited(
+                f"export-failed:{type(exc).__name__}",
+                "OTLP export failed for span %s (%s: %s) — span dropped",
+                span.name,
+                type(exc).__name__,
+                exc,
+            )
+            return
+        with self._stats_lock:
+            self._exported_spans += 1
+
+    def _ensure_client(self) -> httpx.Client | None:
+        if self._otlp_client is None:
+            try:
+                self._otlp_client = httpx.Client(timeout=httpx.Timeout(3.0))
+            except Exception as exc:
+                self._warn_rate_limited(
+                    "client-create-failed",
+                    "Failed to create httpx.Client for OTLP export (%s) — span dropped",
+                    exc,
+                )
+        return self._otlp_client
+
+    def _close_client_once(self) -> None:
+        """Close the OTLP client exactly once; concurrent callers are no-ops.
+
+        The swap-to-None under the lock is the exactly-once claim: whichever
+        closer (sender-loop exit or ``close()`` backstop) wins the swap does
+        the closing; the other sees ``None``.
+        """
+        with self._stats_lock:
+            client = self._otlp_client
+            if client is None:
+                return
+            self._otlp_client = None
+        try:
+            client.close()
+        except Exception:
+            logger.debug("OTLP client close failed", exc_info=True)
+
+    def close(self) -> None:
+        """Graceful shutdown: signal stop, join the sender (≤ 2 s), close the OTLP client.
+
+        The client lifecycle belongs to the sender thread: it lazily creates
+        the client (drain-time replacement included) and closes it when its
+        loop exits. If the sender is still alive after the join (e.g. stuck
+        in a 3 s POST), this method logs a warning and returns WITHOUT
+        touching the client — the sender closes it on exit. When the sender
+        is dead (or never started), any remaining client is closed here
+        (backstop; the sender will usually have closed it itself already).
+        Idempotent.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        self._stop_event.set()
+        sender = self._sender_thread
+        if sender is not None:
+            sender.join(timeout=_SENDER_JOIN_TIMEOUT_S)
+            if sender.is_alive():
+                logger.warning(
+                    "OTLP sender still draining after %.1fs join — sender owns "
+                    "client cleanup and will close it when its loop exits",
+                    _SENDER_JOIN_TIMEOUT_S,
+                )
+                return
+        self._close_client_once()
 
     async def list_by_session(self, session_id: str) -> list[SpanModel]:
-        """Return all spans for *session_id* from ``spans.jsonl``."""
-        from modex_agent.utils.file_io import read_jsonl_robust
+        """Return spans for *session_id* (``FILE`` only).
 
-        path = self._session_path(session_id)
-        data = read_jsonl_robust(path)
-        out: list[SpanModel] = []
-        for d in data:
-            try:
-                out.append(SpanModel.model_validate(d))
-            except Exception:
-                logger.warning("Skipping malformed span line: %s", str(d)[:120])
-        return out
+        ``FILE``: all spans from ``spans.jsonl`` in file order.
+        ``OTEL_HTTP``: raises ``NotImplementedError`` — the store is
+        write-only; read traces back via ``LangfuseTraceQuery``.
+        """
+        if self._backend == TraceBackend.FILE:
+            from modex_agent.utils.file_io import read_jsonl_robust
+
+            path = self._session_path(session_id)
+            data = read_jsonl_robust(path)
+            out: list[SpanModel] = []
+            for d in data:
+                try:
+                    out.append(SpanModel.model_validate(d))
+                except Exception:
+                    logger.warning("Skipping malformed span line: %s", str(d)[:120])
+            return out
+        raise NotImplementedError("OTEL_HTTP store is write-only; use LangfuseTraceQuery")
 
     async def list_by_trace_id(self, trace_id: str) -> list[SpanModel]:
-        """Return all spans for *trace_id* across all session dirs."""
-        from modex_agent.utils.file_io import read_jsonl_robust
+        """Return all spans for *trace_id* across all sessions (``FILE`` only).
 
-        if not self._base_dir.exists():
-            return []
-        out: list[SpanModel] = []
-        for session_dir in self._base_dir.iterdir():
-            if not session_dir.is_dir():
-                continue
-            path = session_dir / _SPANS_FILENAME
-            data = read_jsonl_robust(path)
-            for d in data:
-                if d.get("trace_id") == trace_id:
-                    try:
-                        out.append(SpanModel.model_validate(d))
-                    except Exception:
-                        logger.warning(
-                            "Skipping malformed span line: %s", str(d)[:120]
-                        )
-        return out
+        ``FILE``: scans every session dir's ``spans.jsonl``.
+        ``OTEL_HTTP``: raises ``NotImplementedError`` — the store is
+        write-only; read traces back via ``LangfuseTraceQuery``.
+        """
+        if self._backend == TraceBackend.FILE:
+            from modex_agent.utils.file_io import read_jsonl_robust
+
+            if not self._base_dir.exists():
+                return []
+            out: list[SpanModel] = []
+            for session_dir in self._base_dir.iterdir():
+                if not session_dir.is_dir():
+                    continue
+                path = session_dir / _SPANS_FILENAME
+                data = read_jsonl_robust(path)
+                for d in data:
+                    if d.get("trace_id") == trace_id:
+                        try:
+                            out.append(SpanModel.model_validate(d))
+                        except Exception:
+                            logger.warning("Skipping malformed span line: %s", str(d)[:120])
+            return out
+        raise NotImplementedError("OTEL_HTTP store is write-only; use LangfuseTraceQuery")
 
 
 # ── Factory ───────────────────────────────────────────────────────────
@@ -177,11 +380,13 @@ def build_trace_stores(
     - ``FILE`` (default): returns an :class:`OtelSpanTraceStore` that writes
       local JSONL only — no network traffic, regardless of ``otel_endpoint``
       / ``otel_headers``. Those fields are ignored in this mode.
-    - ``OTEL_HTTP``: returns an :class:`OtelSpanTraceStore` that writes local
-      JSONL AND exports via OTLP when ``otel_endpoint`` + ``otel_headers`` are
-      both set. Requires the ``[observability]`` extra when OTLP export is
-      active; falls back to file-only if the extra is missing or headers are
-      empty.
+    - ``OTEL_HTTP``: returns an :class:`OtelSpanTraceStore` in write-only
+      sender mode — no local JSONL, no read buffers; spans go to the
+      bounded export queue drained by the daemon sender thread that
+      exports via OTLP. Requires the
+      ``[observability]`` extra AND non-empty ``otel_endpoint`` +
+      ``otel_headers``; when either is missing the factory falls back to a
+      FILE-mode store (jsonl) with a warning.
 
     Args:
         config: The observability configuration.
@@ -194,11 +399,6 @@ def build_trace_stores(
     if config.trace_backend == TraceBackend.OFF:
         return None
 
-    # OTLP export is gated SOLELY on trace_backend==OTEL_HTTP. FILE must never
-    # touch the network, even when otel_endpoint/otel_headers are set (they are
-    # ignored). Previously this OR'd with ``otel_endpoint is not None``, which
-    # leaked OTLP export into FILE mode whenever an endpoint was configured —
-    # and bot_config.yml's default makes otel_endpoint always non-null.
     needs_otlp_extra = config.trace_backend == TraceBackend.OTEL_HTTP
     tracer: OtelTracer | None = None
     otlp_headers: dict[str, str] | None = None
@@ -239,11 +439,18 @@ def build_trace_stores(
                 exc,
             )
 
+    # OTLP export is gated SOLELY on trace_backend==OTEL_HTTP. FILE must never
+    # touch the network, even when otel_endpoint/otel_headers are set (they are
+    # ignored). Previously this OR'd with ``otel_endpoint is not None``, which
+    # leaked OTLP export into FILE mode whenever an endpoint was configured —
+    # and bot_config.yml's default makes otel_endpoint always non-null.
+    otlp_active = config.trace_backend == TraceBackend.OTEL_HTTP and otlp_headers is not None
     return OtelSpanTraceStore(
         base_dir=base_dir,
+        backend=TraceBackend.OTEL_HTTP if otlp_active else TraceBackend.FILE,
         retain_reasoning_content=config.retain_reasoning_content,
         tracer=tracer,
-        otlp_endpoint=config.otel_endpoint if otlp_headers is not None else None,
+        otlp_endpoint=config.otel_endpoint if otlp_active else None,
         otlp_headers=otlp_headers or {},
         otlp_service_name=config.otel_service_name,
     )

@@ -113,6 +113,13 @@ class ObservabilityConfig(BaseModel):
             "Requires trace_backend=otel_http and a reachable Langfuse instance."
         ),
     )
+    eval_ingestion_url: str | None = Field(
+        default=None,
+        description=(
+            "Explicit Langfuse ingestion URL for score injection; "
+            "None derives from otel_endpoint."
+        ),
+    )
     environment: str = Field(
         default="default",
         description=(

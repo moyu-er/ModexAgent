@@ -180,9 +180,24 @@ class BaseTraceHook:
     ) -> None:
         """Construct a :class:`SpanModel` from individual fields and persist it.
 
-        Creates the span, calls ``self._store.save_span(span)`` (which
-        handles JSONL write + OTLP emission internally), and logs failures
-        without raising. Returns early if no store is configured.
+        Creates the span, folds it into the session's scalar metric counters
+        (:meth:`TraceSessionState.accumulate_span`), then calls
+        ``self._store.save_span(span)`` (which handles JSONL write + OTLP
+        emission internally), logging failures without raising.
+
+        Counter key: the span's own turn root, read from
+        ``ctx.runtime.state.custom[TurnCustomKey.ROOT_SPAN_ID]`` — the same
+        value ``RootSpanHook.start_node_turn`` seeds into both the turn state
+        and ``root_span_info``, and the same root ``finally_graph`` reads the
+        counters back with, so the write and read sides always resolve the
+        same ``(trace_id, root_span_id)`` bucket. Nested subagent turns carry
+        their own root in their own turn state (and their own
+        ``TraceSessionState``), so they accumulate in isolation. A span saved
+        before any root is registered (no ``ROOT_SPAN_ID`` in the turn state)
+        accumulates nowhere — no ``finally_graph`` could read it.
+
+        Returns early if no store is configured (off-mode accumulates
+        nothing).
         """
         if self._store is None:
             return
@@ -197,6 +212,9 @@ class BaseTraceHook:
             attributes=attributes,
             status=status,
         )
+        root_span_id = self._root_span_id(ctx)
+        if root_span_id is not None:
+            self._session.accumulate_span(trace_id, root_span_id, span)
         try:
             await self._store.save_span(span)
         except Exception:

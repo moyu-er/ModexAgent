@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import time
 import types
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -11,6 +12,8 @@ from unittest.mock import MagicMock
 import pytest
 
 pytest.importorskip("opentelemetry.sdk")  # skip if opentelemetry-sdk not installed (CI [dev] doesn't include [observability] deps)
+
+_SENDER_DEADLINE = 15.0
 
 from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
 from modex_agent.trace.otel_store import (
@@ -20,6 +23,15 @@ from modex_agent.trace.otel_store import (
 from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
 from modex_agent.trace.store import SpanModel, SpanStatus
 from modex_agent.utils.file_io import read_jsonl_robust
+
+
+def _wait_until(predicate, timeout: float, description: str) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.02)
+    pytest.fail(f"timed out after {timeout}s waiting for {description}")
 
 
 def _make_span(
@@ -165,6 +177,45 @@ class TestOtelSpanTraceStoreQueries:
         store = OtelSpanTraceStore(base_dir=tmp_path / "does_not_exist")
         results = await store.list_by_trace_id("any")
         assert results == []
+
+
+# ── FILE-mode characterization (baseline before non-blocking refactor) ──
+
+
+class TestFileModeCharacterization:
+    """Pin today's FILE-mode behavior: jsonl always written, no OTLP emission.
+
+    These tests pass on the pre-refactor code and must keep passing after:
+    FILE mode stays byte-identical (jsonl append, IO errors propagate, no
+    network).
+    """
+
+    async def test_jsonl_written_even_with_endpoint_set(self, tmp_path: Path) -> None:
+        """FILE + otlp_endpoint set: jsonl is still written (endpoint ignored)."""
+        store = OtelSpanTraceStore(
+            base_dir=tmp_path,
+            otlp_endpoint="http://127.0.0.1:1/v1/traces",
+        )
+        await store.save_span(_make_span())
+
+        spans = read_jsonl_robust(tmp_path / "sess-001" / "spans.jsonl")
+        assert len(spans) == 1
+        assert spans[0]["name"] == SpanName.INVOKE_AGENT.value
+
+    async def test_no_otlp_emit_when_endpoint_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Endpoint None: no OTLP POST is ever attempted, jsonl written."""
+        calls: list[object] = []
+        monkeypatch.setattr(
+            "modex_agent.trace.otel_store._emit_span_via_json_otlp",
+            lambda *args: calls.append(args),
+        )
+        store = OtelSpanTraceStore(base_dir=tmp_path)
+        await store.save_span(_make_span())
+
+        assert calls == []
+        assert len(read_jsonl_robust(tmp_path / "sess-001" / "spans.jsonl")) == 1
 
 
 # ── build_trace_stores ────────────────────────────────────────────────
@@ -492,6 +543,7 @@ class TestOtlpExport:
     async def test_save_span_emits_span_via_json_otlp(
         self, tmp_path: Path, fake_otel: types.SimpleNamespace
     ) -> None:
+        """otel_http: span exported by the sender thread; jsonl NOT written (dual-write removed)."""
         config = ObservabilityConfig(
             trace_backend=TraceBackend.OTEL_HTTP,
             otel_endpoint="http://collector:4318/v1/traces",
@@ -509,22 +561,30 @@ class TestOtlpExport:
         span = _make_span(name=SpanName.INVOKE_AGENT.value)
         await store.save_span(span)
 
-        spans = read_jsonl_robust(tmp_path / "sess-001" / "spans.jsonl")
-        assert len(spans) == 1
+        try:
+            _wait_until(
+                lambda: store.exported_spans == 1,
+                timeout=_SENDER_DEADLINE,
+                description="exported_spans == 1 after sender export",
+            )
 
-        assert store._otlp_client.post.called
-        call_kwargs = store._otlp_client.post.call_args
-        payload = call_kwargs[1]["json"] if "json" in call_kwargs[1] else call_kwargs[0][1]
-        rs = payload["resourceSpans"][0]
-        assert "resource" in rs
-        res_attrs = {a["key"]: a["value"] for a in rs["resource"]["attributes"]}
-        assert res_attrs["service.name"]["stringValue"] == "modex_agent"
-        otlp_span = rs["scopeSpans"][0]["spans"][0]
-        assert "resource" not in otlp_span
-        assert otlp_span["name"] == SpanName.INVOKE_AGENT.value
-        attrs_dict = {a["key"]: a["value"] for a in otlp_span["attributes"]}
-        assert attrs_dict[GenAiAttr.AGENT_NAME]["stringValue"] == "react_main"
-        assert attrs_dict[GenAiAttr.CONVERSATION_ID]["stringValue"] == "sess-001"
+            assert not (tmp_path / "sess-001" / "spans.jsonl").exists()
+
+            assert store._otlp_client.post.called
+            call_kwargs = store._otlp_client.post.call_args
+            payload = call_kwargs[1]["json"] if "json" in call_kwargs[1] else call_kwargs[0][1]
+            rs = payload["resourceSpans"][0]
+            assert "resource" in rs
+            res_attrs = {a["key"]: a["value"] for a in rs["resource"]["attributes"]}
+            assert res_attrs["service.name"]["stringValue"] == "modex_agent"
+            otlp_span = rs["scopeSpans"][0]["spans"][0]
+            assert "resource" not in otlp_span
+            assert otlp_span["name"] == SpanName.INVOKE_AGENT.value
+            attrs_dict = {a["key"]: a["value"] for a in otlp_span["attributes"]}
+            assert attrs_dict[GenAiAttr.AGENT_NAME]["stringValue"] == "react_main"
+            assert attrs_dict[GenAiAttr.CONVERSATION_ID]["stringValue"] == "sess-001"
+        finally:
+            store.close()
 
     async def test_save_span_emits_error_span_status_via_json_otlp(
         self, tmp_path: Path, fake_otel: types.SimpleNamespace
@@ -551,12 +611,20 @@ class TestOtlpExport:
         )
         await store.save_span(error_span)
 
-        assert store._otlp_client.post.call_count == 2
-        call_kwargs = store._otlp_client.post.call_args[1]
-        payload = call_kwargs["json"] if "json" in call_kwargs else call_kwargs[0][1]
-        otlp_span = payload["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
-        assert otlp_span["status"]["code"] == "STATUS_CODE_ERROR"
-        assert otlp_span["status"]["message"] == "boom"
+        try:
+            _wait_until(
+                lambda: store.exported_spans == 2,
+                timeout=_SENDER_DEADLINE,
+                description="exported_spans == 2 after two sender exports",
+            )
+
+            call_kwargs = store._otlp_client.post.call_args
+            payload = call_kwargs[1]["json"] if "json" in call_kwargs[1] else call_kwargs[0][1]
+            otlp_span = payload["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+            assert otlp_span["status"]["code"] == "STATUS_CODE_ERROR"
+            assert otlp_span["status"]["message"] == "boom"
+        finally:
+            store.close()
 
 
 # ── format_send_ack single-path ──────────────────────────────────────

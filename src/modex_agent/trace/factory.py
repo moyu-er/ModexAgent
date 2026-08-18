@@ -17,6 +17,7 @@ returns ``[]`` regardless of tier.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, TypedDict
 
 from modex_agent.hook.abc import Hook, HookErrorPolicy, HookSpec
@@ -59,7 +60,7 @@ def build_trace_hooks(
     *,
     model: str | None,
     provider_name: str | None,
-    request_params: dict[str, object] | None,
+    request_params: Mapping[str, object] | None,
     score_injector: L2ScoreInjector | None,
     store: OtelSpanTraceStore | None,
 ) -> list[HookSpec]:
@@ -94,7 +95,7 @@ def build_trace_hooks(
         "store": store,
         "model": model,
         "provider_name": provider_name,
-        "request_params": request_params,
+        "request_params": dict(request_params) if request_params is not None else None,
         "score_injector": score_injector,
         "environment": config.environment,
         "version": config.version,

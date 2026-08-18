@@ -41,6 +41,13 @@ class TestObservabilityConfigDefaults:
         assert cfg.prompt_capture is PromptCaptureMode.SUMMARY
         assert cfg.trace_spans is TraceSpanMode.STANDARD
         assert cfg.capture_tools is False
+        assert cfg.eval_ingestion_url is None
+
+    def test_eval_ingestion_url_explicit_string(self) -> None:
+        cfg = ObservabilityConfig(
+            eval_ingestion_url="https://lf.example.invalid/api/public/ingestion"
+        )
+        assert cfg.eval_ingestion_url == "https://lf.example.invalid/api/public/ingestion"
 
     def test_prompt_capture_mode_enum_values(self) -> None:
         assert PromptCaptureMode.OFF == "off"
