@@ -119,3 +119,29 @@ output.
 3. any intentional agent-behavior change (prompt, tool, governance) that
    needs a golden before/after diff, or
 4. the weekly cadence date, 2026-08-22.
+
+## 2026-08-18 — Golden v1 suite removed (all four cases)
+
+**Observed:** audit of the four committed cases — `chat-notools` (zero world
+assertions; constant-signal sensor with no discriminating power), `readonly-qa`
+and `file-multi-turn` (file-shape assertions only; `file-multi-turn`'s summary
+content was unasserted), `file-pipeline` (strongest, but one case cannot anchor
+a standard). No case exercised execute-to-verify behavior assertions, and the
+suite had zero governance/compression-sensitive trajectories — the double-run
+sabotage check documented in tests_ext/regression/test_golden_replay.py was
+explicitly unusable on it.
+
+**Decision:** delete all four (suite, not mechanism). The cassette
+record/replay machinery, the four-gate contract, and the harness are retained
+unchanged. The `eval-regression` CI workflow is paused to manual
+`workflow_dispatch` (guards kept; record job now discovers cases dynamically).
+Rebuild standard captured in evals/README.md "Golden v2 (TODO)"; rebuild
+itself is deferred until the eval-integration judge/benchmark pieces land
+(docs/design/eval-integration/MAP.md).
+
+**Why:** a weak suite anchors a weak standard — keeping any of the four would
+temple the v2 rebuild toward the old shapes. Deletion is cheap and reversible
+(git history) and the $0 replay gate returns the moment a v2 case is committed.
+
+**Next trigger:** eval-integration judge architecture (ticket 03) resolution,
+which determines the rubric-assertion layer referenced by the v2 standard.

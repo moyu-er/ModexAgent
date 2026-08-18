@@ -1,5 +1,13 @@
 # evals: golden-case conventions
 
+> **Status (2026-08-18):** the committed golden suite (`evals/golden/`) was
+> removed — the four v1 cases were too weak to anchor a standard (three
+> file-shape-only assertion sets, one zero-assertion case). The cassette
+> MECHANISM (record/replay, four gates, this contract) is unchanged and
+> retained. The CI regression workflow is paused to manual dispatch until a
+> v2 suite is committed. Rebuild standard: see "Golden v2 (TODO)" at the end
+> of this file; the removal decision is logged in DECISIONS.md.
+
 Golden cases are recorded LLM transcripts that replay offline, bit-identically,
 to detect agent behavior drift. This file is the contract that the eval
 harness implements (Wave 3 replay, Wave 4 record-golden). It documents
@@ -166,3 +174,32 @@ no gate substitutes for another:
 - Harness-side `command_exit` assertions (bot/eval/task_spec.py:47-54) run
   OUTSIDE the agent: the harness executes the command itself, so they never
   touch agent tools or the cassette and are fine in v1.
+
+## Golden v2 (TODO — not scheduled)
+
+The v2 suite is deferred until the eval-integration effort
+(docs/design/eval-integration/MAP.md) lands its judge and benchmark pieces.
+When it is built, the standard is:
+
+- **Assertion layering**: behavior assertions first — execute the artifact
+  and compare stdout/exit (e.g. `command_exit` running a `python -c` wrapper
+  over the produced file), not file-shape checks alone. Zero-assertion cases
+  are forbidden (`baseline: true` remains the only exception, and only for
+  cases whose oracle IS determinism).
+- **Composition guidance**: at least one case per sensor class —
+  execute-to-verify repair (broken input, agent must read→locate→edit→
+  self-verify), multi-turn state pipeline (each turn consumes the previous
+  turn's product), read-only discipline (analysis without side effects),
+  and one governance/compression-sensitive long trajectory (many tool
+  results; the only replay sensor for lossy-compaction and tool-chain-repair
+  regressions — v1 had none, which left the double-run sabotage check
+  unusable).
+- **Environment neutrality + platform pinning**: tasks live entirely inside
+  the temp workspace; shell-using cases pin replay via the meta `platform`
+  field (v1 scope rules above still apply to non-shell cases).
+- **Freeze discipline**: the suite is frozen once committed; a bad case is
+  fixed by adding to a v(n+1) set, never by editing committed cases.
+- **Flywheel logging**: every add/refresh/remove lands in DECISIONS.md.
+- **Rubric assertions**: a subjective-dimension assertion layer is expected
+  once the judge architecture (eval-integration ticket 03) is settled; do
+  not design around it yet.

@@ -1,22 +1,14 @@
 name: Eval Regression
 
 # Golden-cassette regression for the examples/bot_project eval harness.
-# replay: keyless golden replay on PRs touching eval surfaces, plus weekly and manual runs.
-# record: real-LLM golden refresh PREVIEW on schedule/dispatch only - never blocks PRs,
-# and refreshing the COMMITTED goldens stays a manual, human-reviewed step.
+# PAUSED (2026-08-18): the committed golden suite was removed pending a
+# rebuild against the eval-integration standard (see
+# examples/bot_project/evals/README.md "Golden v2 (TODO)"). PR/schedule
+# triggers are disabled; both jobs stay runnable via workflow_dispatch so the
+# contract, guards, and record path remain exercisable manually. Re-enable the
+# pull_request/schedule blocks when a golden suite is committed again.
 
 on:
-  pull_request:
-    branches: [main, develop*]
-    paths:
-      - examples/bot_project/bot/eval/**
-      - examples/bot_project/evals/golden/**
-      - examples/bot_project/tests_ext/**
-      - src/modex_agent/trace/**
-      - src/modex_agent/memory/**
-  schedule:
-    # Weekly: Mondays 03:00 UTC
-    - cron: "0 3 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -30,9 +22,9 @@ jobs:
   replay:
     name: Golden Replay (keyless)
     runs-on: ubuntu-latest
-    # Runs on every trigger of this workflow (PR + schedule + dispatch); listed
-    # explicitly so the gating stays grep-able next to the record job's gate.
-    if: github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Manual-only while paused (see header). Listed explicitly so the gating
+    # stays grep-able next to the record job's gate.
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 15
     env:
       UV_PYTHON: "3.12"
@@ -56,14 +48,15 @@ jobs:
       - name: Replay golden suite (task 13 canonical command, keyless)
         run: uv run python -m pytest examples/bot_project/tests_ext/regression -q
       # Anti empty-suite false green: if discovery breaks and pytest collects
-      # nothing (or import errors deselect the suite), fail loudly. Threshold 5
-      # is pinned to the current suite: 4 golden replays + 1 double-run identity.
-      - name: Collect guard (fail if fewer than 5 tests discovered)
+      # nothing (or import errors deselect the suite), fail loudly. Threshold 1
+      # = the unconditionally-collected double-run identity test; parametrized
+      # golden replays add themselves once cases are committed again.
+      - name: Collect guard (fail if fewer than 1 test discovered)
         run: |
           COLLECTED=$(uv run python -m pytest examples/bot_project/tests_ext --collect-only -q | tee /tmp/eval_collected.txt | grep -c '::' || true)
           cat /tmp/eval_collected.txt
           echo "Collected $COLLECTED test ids in examples/bot_project/tests_ext"
-          if [ "$COLLECTED" -lt 5 ]; then
+          if [ "$COLLECTED" -lt 1 ]; then
             echo "::error::Expected at least 5 collected tests in examples/bot_project/tests_ext, got $COLLECTED - suite discovery is broken (anti empty-suite false green guard)."
             exit 1
           fi
@@ -105,10 +98,21 @@ jobs:
       # cwd=examples/bot_project so --case evals/golden/<name> resolves against the
       # bot project; ../../.venv is the repo-root uv venv (running uv here would
       # target the bot project's own pyproject and provision a different env).
+      # Discover committed cases from the golden dir so this job tracks
+      # whatever suite exists (currently none — paused, see header).
       - name: Record golden cases (real provider)
         working-directory: examples/bot_project
         run: |
-          for case in chat-notools file-pipeline file-multi-turn readonly-qa; do
+          shopt -s nullglob
+          cases=()
+          for case_dir in evals/golden/*/; do
+            [ -f "$case_dir/item.json" ] && cases+=("$(basename "$case_dir")")
+          done
+          if [ ${#cases[@]} -eq 0 ]; then
+            echo "No golden cases committed — nothing to record."
+            exit 0
+          fi
+          for case in "${cases[@]}"; do
             echo "Recording evals/golden/$case"
             ../../.venv/bin/python -m bot.eval.cli record-golden --case "evals/golden/$case"
           done
@@ -119,12 +123,12 @@ jobs:
           path: |
             examples/bot_project/evals/golden/*/cassette/
             examples/bot_project/evals/golden/*/meta.json
-          if-no-files-found: error
+          if-no-files-found: ignore
       - name: Step summary (refresh policy)
         if: always()
         run: |
           {
             echo "## Golden record preview"
-            echo "Fresh cassettes and meta.json for all 4 golden cases are attached as the \`golden-recordings\` artifact (schedule/dispatch run only)."
+            echo "Fresh cassettes and meta.json for the committed golden cases (if any) are attached as the \`golden-recordings\` artifact."
             echo "Refreshing the COMMITTED goldens under \`examples/bot_project/evals/golden/\` stays a manual, human-reviewed step - this job only produces the preview artifact."
           } >> "$GITHUB_STEP_SUMMARY"
