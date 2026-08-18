@@ -62,15 +62,17 @@ def _eval_observability() -> tuple[ObservabilityConfig, L2ScoreInjector | None]:
     harness (a separate process) behaves identically to the bot runtime when
     the same env vars are set.
 
-    - ``OTEL_FORMAT`` → trace_backend (file/otel_http/off; default: file)
-    - ``LANGFUSE_HOST`` → OTLP endpoint + score injection ingestion URL
+    - ``OTEL_FORMAT`` → trace_backend (file/otel_http/off; default: otel_http)
+    - ``OTEL_TRACES_ENDPOINT`` → OTLP endpoint, typically the collector
+      (default: http://localhost:4318/v1/traces)
+    - ``LANGFUSE_HOST`` → score injection ingestion URL (direct to Langfuse)
     - ``LANGFUSE_BASIC_AUTH`` → OTLP headers + score injection auth
 
-    When ``OTEL_FORMAT=otel_http`` and Langfuse creds are present, returns a
-    fully wired config with OTLP export and score injection. Otherwise falls
-    back to file-only trace backend with no score injection.
+    With Langfuse creds present, the default collector path includes OTLP export
+    and score injection. ``file`` remains the explicit legacy fallback and
+    ``off`` disables tracing.
     """
-    raw_backend = os.environ.get("OTEL_FORMAT", "file").lower()
+    raw_backend = os.environ.get("OTEL_FORMAT", "otel_http").lower()
     try:
         trace_backend = TraceBackend(raw_backend)
     except ValueError:
@@ -87,9 +89,16 @@ def _eval_observability() -> tuple[ObservabilityConfig, L2ScoreInjector | None]:
             "x-langfuse-ingestion-version": "4",
         }
 
+    otel_endpoint = (
+        os.environ.get("OTEL_TRACES_ENDPOINT", "http://localhost:4318/v1/traces")
+        if trace_backend == TraceBackend.OTEL_HTTP
+        else None
+    )
+
     config = ObservabilityConfig(
         trace_backend=trace_backend,
-        otel_endpoint=f"{langfuse_host}/api/public/otel/v1/traces" if trace_backend == TraceBackend.OTEL_HTTP else None,
+        otel_endpoint=otel_endpoint,
+        eval_ingestion_url=f"{langfuse_host}/api/public/ingestion",
         otel_headers=otel_headers,
         prompt_capture=PromptCaptureMode.FULL,
         trace_spans=TraceSpanMode.FULL,
@@ -98,18 +107,28 @@ def _eval_observability() -> tuple[ObservabilityConfig, L2ScoreInjector | None]:
         tags=os.environ.get("LANGFUSE_TAGS", "").split(",") if os.environ.get("LANGFUSE_TAGS") else [],
     )
 
-    return config, _build_score_injector(langfuse_host, basic_auth, trace_backend)
+    return config, _build_score_injector(
+        langfuse_host,
+        basic_auth,
+        trace_backend,
+        eval_ingestion_url=config.eval_ingestion_url,
+    )
 
 
 def _build_score_injector(
-    langfuse_host: str, basic_auth: str, trace_backend: TraceBackend,
+    langfuse_host: str,
+    basic_auth: str,
+    trace_backend: TraceBackend,
+    eval_ingestion_url: str | None = None,
 ) -> L2ScoreInjector | None:
     """Create L2ScoreInjector when Langfuse is reachable and OTLP is enabled."""
     if trace_backend != TraceBackend.OTEL_HTTP or not langfuse_host or not basic_auth:
         return None
     try:
         parsed = urlparse(langfuse_host)
-        ingestion_url = f"{parsed.scheme}://{parsed.netloc}/api/public/ingestion"
+        ingestion_url = eval_ingestion_url or (
+            f"{parsed.scheme}://{parsed.netloc}/api/public/ingestion"
+        )
         return L2ScoreInjector(
             ingestion_url=ingestion_url,
             headers={
@@ -267,8 +286,8 @@ def build_runtime_services(
 
     Observability (OTLP export + score injection) is driven by env vars
     ``OTEL_FORMAT``, ``LANGFUSE_HOST``, ``LANGFUSE_BASIC_AUTH`` — identical to
-    the bot runtime's ``bot_config.yml`` interpolation. File-only when
-    ``OTEL_FORMAT`` is unset or ``file``.
+    the bot runtime's ``bot_config.yml`` interpolation. The collector path is
+    the default; set ``OTEL_FORMAT=file`` for the legacy JSONL fallback.
     """
     config, score_injector = _eval_observability()
     trace_store = build_trace_stores(config, trace_dir)

@@ -38,7 +38,6 @@ async def test_max_iterations_sends_exactly_one_failed_agent_result() -> None:
     tree=_mock_tree(bus),
         self_name="worker",
         parent_name="main",
-        trace_enabled=False,
     )
     context = AgentContext(
         system_prompt="test",

@@ -49,11 +49,12 @@ plugins:
 observability:
   run_logging: true
   level: "INFO"
-  # Trace Path (A) — OTel span format (default: file).
-  # "file" writes spans.jsonl (OTel-compatible spans).
-  # "off" disables all trace emission. "otel_http" requires [observability] extra.
-  trace_backend: "${OTEL_FORMAT:-file}"
-  otel_endpoint: "${LANGFUSE_HOST:-http://localhost:3000}/api/public/otel/v1/traces"
+  # Trace Path (A) — OTel HTTP collector path (default: otel_http).
+  # "otel_http" exports to the collector. "file" is the dormant legacy fallback
+  # that writes spans.jsonl (OTel-compatible spans). "off" disables all trace emission.
+  trace_backend: "${OTEL_FORMAT:-otel_http}"
+  otel_endpoint: "${OTEL_TRACES_ENDPOINT:-http://localhost:4318/v1/traces}"
+  eval_ingestion_url: "${LANGFUSE_HOST:-http://localhost:3000}/api/public/ingestion"
   otel_service_name: "modex-bot"
   otel_headers:
     Authorization: "Basic ${LANGFUSE_BASIC_AUTH:-}"

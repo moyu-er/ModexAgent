@@ -70,7 +70,6 @@ class AgentMaterializeDeps:
     workspace_path_resolver: WorkspacePathResolver | None = None
     mcp_registry: McpConnectionRegistry | None = None
     todo_store: TodoStore | None = None
-    trace_enabled: bool = True
     subagent_external_builder: SubagentExternalBuilder | None = None
     memory_store_registry: MemoryStoreRegistry | None = None
     """Main agent's ``MemoryStoreRegistry``, threaded to native subagent

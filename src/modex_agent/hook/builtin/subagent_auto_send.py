@@ -10,17 +10,16 @@ programmatically — every field must be self-explanatory to an LLM.
 The hook delegates to ``build_agent_comm_message`` from ``message_format.py``
 (convergence — single source of truth for the result markdown format).  The
 ``content`` body carries the subagent's last output; result metadata (status,
-stop reason, issue, output path, trace path) is carried by ``ResultMeta`` and
+stop reason, issue, output path) is carried by ``ResultMeta`` and
 rendered in the header block.
 
-Native (react) subagent — includes output/trace paths::
+Native (react) subagent — includes the output path::
 
     Message from subagent 'explore':
     invocation_id: 638aaa67
     status: success
     Stop reason: completed
     Output: /path/to/OUTPUT_1.md
-    Trace: /path/to/spans.jsonl
 
     Result:
     Exploration complete. Found 3 entry points...
@@ -43,7 +42,6 @@ On failure an ``Issue:`` line explains the problem and how to resume::
     Stop reason: error
     Issue: Subagent crashed with error: timeout. To continue, send a message with invocation_id=638aaa67.
     Output: /path/to/OUTPUT_1.md
-    Trace: /path/to/spans.jsonl
 
     Result:
 
@@ -56,8 +54,8 @@ Design rationale (ADR-0027 evolution):
   native deliverable files preserve the full content.
 - ``issue`` merges the old ``error`` + ``hint`` and appears **only** on
   failure, keeping the success notification clean.
-- Native subagents keep ``Output:`` / ``Trace:`` lines so the parent can read
-  the full deliverable and trace file.
+- Native subagents keep the ``Output:`` line so the parent can read the
+  full deliverable.
 - External subagents omit file-based artifacts (no OUTPUT.md concept).  The
   ``Replied:`` line is omitted when ``replied`` is None (the per-session
   send-tracking mechanism does not exist yet; the parent judges the outcome
@@ -92,8 +90,8 @@ class SubagentAutoSendHook(FinallyGraphHook):
     Sends a markdown result notification to the parent inbox via
     ``build_agent_comm_message`` from ``message_format.py``.
 
-    Native (react) subagents include ``Output:`` and ``Trace:`` file paths so
-    the parent can read the full deliverable.  External coding subagents omit
+    Native (react) subagents include the ``Output:`` file path so the parent
+    can read the full deliverable.  External coding subagents omit
     file artifacts.
     """
 
@@ -119,7 +117,6 @@ class SubagentAutoSendHook(FinallyGraphHook):
         self_name: str = "",
         parent_name: str = "main",
         runtime_dir: Path | None = None,
-        trace_enabled: bool = True,
         execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
         max_result_chars: int = NOTIFY_MAX_RESULT_CHARS,
     ) -> None:
@@ -127,7 +124,6 @@ class SubagentAutoSendHook(FinallyGraphHook):
         self._self_name = self_name
         self._parent_name = parent_name
         self._runtime_dir = runtime_dir or Path(".")
-        self._trace_enabled = trace_enabled
         self._execution_strategy = execution_strategy
         self._max_result_chars = max_result_chars
 
@@ -166,10 +162,6 @@ class SubagentAutoSendHook(FinallyGraphHook):
         except Exception as exc:
             output_path, write_error = None, str(exc)
 
-        trace_path: Path | None = None
-        if self._trace_enabled:
-            trace_path = self._runtime_dir / "trace" / session_id / "spans.jsonl"
-
         success, issue = self._classify(
             stop_reason, error, invocation_id,
             is_external=False,
@@ -190,7 +182,6 @@ class SubagentAutoSendHook(FinallyGraphHook):
             result_text=notify_text,
             issue=issue,
             stop_reason=stop_reason,
-            trace_path=str(trace_path) if trace_path is not None else None,
             output_path=str(output_path) if output_path is not None else None,
             replied=None,
         )
@@ -223,7 +214,6 @@ class SubagentAutoSendHook(FinallyGraphHook):
             result_text=result_text,
             issue=issue,
             stop_reason=stop_reason,
-            trace_path=None,
             output_path=None,
             replied=replied,
         )
@@ -237,7 +227,6 @@ class SubagentAutoSendHook(FinallyGraphHook):
         result_text: str,
         issue: str,
         stop_reason: str = "",
-        trace_path: str | None = None,
         output_path: str | None = None,
         replied: bool | None = None,
     ) -> str:
@@ -245,7 +234,7 @@ class SubagentAutoSendHook(FinallyGraphHook):
 
         Delegates to ``build_agent_comm_message`` with ``ResultMeta``
         (convergence -- single source of truth).  Result metadata fields
-        (status, stop reason, issue, output, trace, replied) render in the
+        (status, stop reason, issue, output, replied) render in the
         header; ``result_text`` is the body under the ``Result:`` heading.
         """
         from modex_agent.multi_agent.message_format import (
@@ -265,7 +254,6 @@ class SubagentAutoSendHook(FinallyGraphHook):
                 stop_reason=StopReason(stop_reason) if stop_reason else None,
                 issue=issue or None,
                 output_path=output_path,
-                trace_path=trace_path,
                 replied=replied,
             ),
             reply_contract=None,
@@ -391,11 +379,7 @@ class SubagentAutoSendHook(FinallyGraphHook):
 
         # --- Hard failures (both kinds) ---
         if error:
-            detail = (
-                "Check the subagent's last output for details."
-                if is_external
-                else "Check the trace for details."
-            )
+            detail = "Check the subagent's last output for details."
             return False, (
                 f"Subagent crashed with error: {error}. Task is incomplete. "
                 f"{detail}{resume}"

@@ -60,8 +60,14 @@ class PoolRoutingStore(ABC):
         """Convenience alias: delegate to ``set_pool``."""
         self.set_pool(session_prefix, pool_name)
 
-    def close(self) -> None:  # noqa: B027 - file-backed stores own no resources
-        """Release resources owned by this store."""
+    def close(self) -> None:  # noqa: B027 - no-op default; resource-owning stores override
+        """Release resources owned by this store.
+
+        The no-op default suits the file-backed routing stores, which own no
+        dedicated resources. Stores that own real resources (a shared SQLite
+        connection; an OTEL_HTTP trace store's sender thread + OTLP client)
+        override this and must be closed at teardown.
+        """
         return None
 
 

@@ -27,7 +27,7 @@ class ToolStats(BaseModel):
     total: int
     errors: int
     success_rate: float
-    source: Literal["spans", "messages"]
+    source: Literal["metrics", "messages"]
 
 
 class TurnRecord(BaseModel):

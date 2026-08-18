@@ -59,7 +59,6 @@ def test_result_meta_defaults():
     assert meta.stop_reason is None
     assert meta.issue is None
     assert meta.output_path is None
-    assert meta.trace_path is None
     assert meta.replied is None
 
 
@@ -246,7 +245,6 @@ def test_subagent_result_success_native():
             status=ResultStatus.SUCCESS,
             stop_reason=StopReason.COMPLETED,
             output_path="/output/OUTPUT.md",
-            trace_path="/trace/spans.jsonl",
         ),
     )
     assert "Message from subagent 'worker'" in result
@@ -257,7 +255,7 @@ def test_subagent_result_success_native():
     assert "All tasks finished." in result
     assert "Output: /output/OUTPUT.md" in result
     assert "(written)" not in result
-    assert "Trace: /trace/spans.jsonl" in result
+    assert "Trace:" not in result
     assert "Issue:" not in result
 
 
@@ -272,7 +270,6 @@ def test_subagent_result_failed_with_issue():
             stop_reason=StopReason.ERROR,
             issue="Subagent crashed with error: timeout.",
             output_path="/output/OUTPUT.md",
-            trace_path="/trace/spans.jsonl",
         ),
     )
     assert "status: failed" in result

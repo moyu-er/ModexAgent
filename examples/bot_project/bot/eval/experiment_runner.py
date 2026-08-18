@@ -69,12 +69,11 @@ from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import MessageRole
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.enums import AgentKind, TurnPhase
+from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime
 from modex_agent.trace.cassette import CassetteRecorder, CassetteReplayEngine
-from modex_agent.trace.scoring import compute_metrics
-from modex_agent.trace.store import JsonlSpanQuery
+from modex_agent.trace.scoring import TrajectoryMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -163,15 +162,26 @@ async def _evaluate_world_assertion(
             assert_never(unreachable)
 
 
-async def _span_tool_stats(trace_dir: Path, session: SessionInfo) -> ToolStats:
-    spans = await JsonlSpanQuery(trace_dir).list_by_session(str(session))
-    metrics = compute_metrics(spans)
-    return ToolStats(
-        total=metrics.tool_call_count,
-        errors=metrics.error_tool_count,
-        success_rate=metrics.tool_success_rate,
-        source="spans",
-    )
+def _span_tool_stats(contexts: list[AgentContext]) -> ToolStats:
+    """Aggregate the per-turn stashed TrajectoryMetrics into item-level stats.
+
+    Reads the stash ``RootSpanHook`` leaves on each turn's context
+    (``runtime.state.custom[TurnCustomKey.TRAJECTORY_METRICS]``, written
+    before ``clear_trace`` on every turn outcome) — the same state object
+    the runner built and the hook mutated, so no trace-store read-back is
+    needed. A turn without a stash (OFF mode, hook-less harness)
+    contributes zero.
+    """
+    total = 0
+    errors = 0
+    for context in contexts:
+        assert context.runtime is not None
+        stashed = context.runtime.state.custom.get(TurnCustomKey.TRAJECTORY_METRICS)
+        if isinstance(stashed, TrajectoryMetrics):
+            total += stashed.tool_call_count
+            errors += stashed.error_tool_count
+    success_rate = (total - errors) / total if total > 0 else 1.0
+    return ToolStats(total=total, errors=errors, success_rate=success_rate, source="metrics")
 
 
 class _NoopEmitter(ContentEmitter[ReActEvent]):
@@ -328,6 +338,7 @@ class EvalRunner:
                     assert_never(unreachable)
 
             turn_records: list[TurnRecord] = []
+            turn_contexts: list[AgentContext] = []
             stop_mismatches: list[str] = []
             emitter = _NoopEmitter()
             for turn_number, turn in enumerate(spec.turns, start=1):
@@ -361,6 +372,7 @@ class EvalRunner:
                         content=result.content or "",
                     )
                 )
+                turn_contexts.append(context)
                 if turn.expected_stop is not None and turn.expected_stop != stop_reason.value:
                     stop_mismatches.append(
                         f"turn {turn_number}: expected {turn.expected_stop}, got {stop_reason.value}"
@@ -370,7 +382,7 @@ class EvalRunner:
                 await _evaluate_world_assertion(assertion, workspace)
                 for assertion in spec.world_assertions
             ]
-            tool_stats = await _span_tool_stats(trace_dir, session)
+            tool_stats = _span_tool_stats(turn_contexts)
             final_turn = turn_records[-1]
             return EvalTaskOutput(
                 output=final_turn.content,
@@ -392,7 +404,7 @@ class EvalRunner:
             stop_reason=StopReason.ERROR,
             error=error,
             world_results=[],
-            tool_stats=ToolStats(total=0, errors=0, success_rate=1.0, source="spans"),
+            tool_stats=ToolStats(total=0, errors=0, success_rate=1.0, source="metrics"),
             turns_executed=0,
             stop_mismatches=[],
             turn_records=[],

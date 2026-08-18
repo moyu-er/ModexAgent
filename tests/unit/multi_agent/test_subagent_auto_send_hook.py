@@ -289,6 +289,7 @@ class TestSubagentAutoSendHookClassify:
         )
         assert success is False
         assert "Division by zero" in issue
+        assert "last output" in issue.lower()
         assert "invocation_id=abc" in issue
 
     def test_native_max_iterations_returns_failure(self) -> None:
@@ -563,12 +564,12 @@ class TestSubagentAutoSendHookBuildXml:
             success=True,
             result_text="Task done",
             issue="",
-            trace_path="trace/session/spans.jsonl",
             output_path="output/session/OUTPUT_1.md",
         )
         assert "status: success" in notification
         assert "Output: output/session/OUTPUT_1.md" in notification
         assert "Task done" in notification
+        assert "Trace:" not in notification
         assert "(written)" not in notification
         assert "(missing)" not in notification
 
@@ -579,7 +580,6 @@ class TestSubagentAutoSendHookBuildXml:
             success=False,
             result_text="",
             issue="Subagent crashed with error: timeout",
-            trace_path="trace",
             output_path="output/session/OUTPUT_1.md",
         )
         assert "status: failed" in notification

@@ -26,7 +26,6 @@ Unified layout (field-absent => line omitted, no empty labels)::
     Stop reason: {reason}                        # result only, non-empty
     Issue: {issue}                               # result, failure
     Output: {path}                                # result, native
-    Trace: {path}                                # result, native
     Replied: {bool}                              # result, when set
 
     Content:                                     # "Result:" when result set
@@ -70,7 +69,7 @@ class ResultMeta(BaseModel):
     """Metadata for hook-generated turn results (SubagentAutoSendHook).
 
     Carries the fields that previously appeared as ad-hoc body lines
-    (Issue, Output, Trace, Replied) so :func:`build_agent_comm_message`
+    (Issue, Output, Replied) so :func:`build_agent_comm_message`
     can render them in the header block uniformly.
     """
 
@@ -80,7 +79,6 @@ class ResultMeta(BaseModel):
     stop_reason: StopReason | None = None
     issue: str | None = None
     output_path: str | None = None
-    trace_path: str | None = None
     replied: bool | None = None
 
 
@@ -185,7 +183,7 @@ def build_agent_comm_message(
         derived id (parent needs it to continue).
     result:
         When set, renders result metadata fields (status, stop reason,
-        issue, output, trace, replied) in the header and uses ``Result:``
+        issue, output, replied) in the header and uses ``Result:``
         as the body heading instead of ``Content:``.
     reply_contract:
         When set, appends a ``---`` reply-contract block telling the
@@ -205,8 +203,6 @@ def build_agent_comm_message(
             lines.append(f"Issue: {result.issue}")
         if result.output_path:
             lines.append(f"Output: {result.output_path}")
-        if result.trace_path:
-            lines.append(f"Trace: {result.trace_path}")
         if result.replied is not None:
             lines.append(f"Replied: {str(result.replied).lower()}")
 

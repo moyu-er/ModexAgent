@@ -117,6 +117,10 @@ async def test_incomplete_pool_stop_keeps_owned_workspace_manager_open(
     pool_instance.pool.shutdown_all = AsyncMock(return_value=False)
     pool_instance.broker_bridge.stop = AsyncMock()
     resources.pools["retryable"] = pool_instance
+    trace_store = MagicMock()
+    pool_data_entry = MagicMock()
+    pool_data_entry.trace_store = trace_store
+    resources.pool_data["retryable"] = pool_data_entry
     assert resources.persistence is not None
     connection = resources.persistence.connection
 
@@ -124,11 +128,13 @@ async def test_incomplete_pool_stop_keeps_owned_workspace_manager_open(
     with pytest.raises(RuntimeError, match="pool shutdown incomplete"):
         await _stop_resources(resources)
     assert await connection.query_value("SELECT 1", int) == 1
+    trace_store.close.assert_not_called()
 
     pool_instance.pool.shutdown_all.return_value = True
     await _stop_resources(resources)
     with pytest.raises(ConnectionNotOpenError):
         await connection.query_value("SELECT 1", int)
+    trace_store.close.assert_called_once()
 
 
 async def test_cancelled_pool_stop_cleans_non_persistence_and_propagates(

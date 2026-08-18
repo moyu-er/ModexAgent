@@ -9,6 +9,8 @@ import bot.eval.agent_harness as agent_harness
 import pytest
 from bot.eval.agent_harness import (
     _WorkspaceTokenNormalizer,
+    _build_score_injector,
+    _eval_observability,
     build_runtime_services,
     build_tool_manager,
     build_trace_only_services,
@@ -30,6 +32,7 @@ from modex_agent.core.tool_manager import (
     ToolResult,
 )
 from modex_agent.core.types import LLMResponse, MessageRole
+from modex_agent.ioc.configs.observability import TraceBackend
 from modex_agent.runtime.models import JsonValue
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.presets import ToolPreset
@@ -274,3 +277,55 @@ def test_static_system_prompt_is_path_and_time_independent() -> None:
     assert first == second
     assert re.search(r"\b\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2})?", first) is None
     assert re.search(r"(?:[A-Za-z]:[\\/]|/(?:[^/\s]+/)+)", first) is None
+
+
+def test_eval_observability_splits_otel_endpoint_from_ingestion_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OTEL_FORMAT", "otel_http")
+    monkeypatch.setenv("LANGFUSE_HOST", "https://lf.example.invalid")
+    monkeypatch.setenv("LANGFUSE_BASIC_AUTH", "dGVzdA==")
+    monkeypatch.delenv("OTEL_TRACES_ENDPOINT", raising=False)
+
+    config, injector = _eval_observability()
+
+    assert config.otel_endpoint == "http://localhost:4318/v1/traces"
+    assert config.eval_ingestion_url == "https://lf.example.invalid/api/public/ingestion"
+    assert injector is not None
+    assert injector._ingestion_url == "https://lf.example.invalid/api/public/ingestion"
+
+
+def test_eval_observability_otel_endpoint_env_overrides_collector_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OTEL_FORMAT", "otel_http")
+    monkeypatch.setenv("LANGFUSE_HOST", "http://localhost:3000")
+    monkeypatch.setenv("LANGFUSE_BASIC_AUTH", "dGVzdA==")
+    monkeypatch.setenv("OTEL_TRACES_ENDPOINT", "http://collector.example.invalid:4318/v1/traces")
+
+    config, injector = _eval_observability()
+
+    assert config.otel_endpoint == "http://collector.example.invalid:4318/v1/traces"
+    assert injector is not None
+    assert injector._ingestion_url == "http://localhost:3000/api/public/ingestion"
+
+
+def test_build_score_injector_derives_url_when_eval_ingestion_url_none() -> None:
+    injector = _build_score_injector(
+        "https://lf.example.invalid", "dGVzdA==", TraceBackend.OTEL_HTTP,
+    )
+
+    assert injector is not None
+    assert injector._ingestion_url == "https://lf.example.invalid/api/public/ingestion"
+
+
+def test_build_score_injector_prefers_explicit_eval_ingestion_url() -> None:
+    injector = _build_score_injector(
+        "https://lf.example.invalid",
+        "dGVzdA==",
+        TraceBackend.OTEL_HTTP,
+        eval_ingestion_url="https://direct.example.invalid/api/public/ingestion",
+    )
+
+    assert injector is not None
+    assert injector._ingestion_url == "https://direct.example.invalid/api/public/ingestion"

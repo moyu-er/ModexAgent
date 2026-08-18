@@ -34,7 +34,6 @@ async def test_notify_parent_injects_graph_instance_id_into_metadata() -> None:
         tree=tree,
         self_name="explore",
         parent_name="main",
-        trace_enabled=False,
     )
     ctx = _make_context(graph_instance_id=42)
 
@@ -53,7 +52,6 @@ async def test_notify_parent_omits_graph_instance_id_when_none() -> None:
         tree=tree,
         self_name="explore",
         parent_name="main",
-        trace_enabled=False,
     )
     ctx = _make_context(graph_instance_id=None)
 

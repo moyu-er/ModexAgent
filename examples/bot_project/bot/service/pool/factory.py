@@ -459,7 +459,6 @@ async def create_pool(
         workspace_path_resolver=path_resolver,
         mcp_registry=mcp_registry,
         todo_store=todo_store,
-        trace_enabled=_resolve_trace_enabled(app_config),
         subagent_external_builder=subagent_external_builder,
         emitter_factory=_workspace_emitter_factory,
         control_origin=control_origin,

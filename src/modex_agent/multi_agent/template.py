@@ -246,7 +246,6 @@ class AgentTemplate:
                     self_name=name,
                     parent_name=parent_name,
                     runtime_dir=runtime_dir,
-                    trace_enabled=deps.trace_enabled,
                 )
             )
         # NativeEnvInjectionHook — populate _modex_env / _current_session_id

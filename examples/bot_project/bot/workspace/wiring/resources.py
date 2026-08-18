@@ -481,9 +481,10 @@ async def _stop_resources(resources: PoolWorkspaceResources) -> None:
     """Tear down one workspace's resources (re-home of _on_workspace_deactivate).
 
     Stop order: background tasks → terminals → pools (MCP release + shutdown +
-    broker bridges) → broker → graph orchestrator → graph connection. The
-    workspace DB closes LAST (after all DB-writing producers have stopped and
-    final flushes complete) so no write races a closing connection.
+    broker bridges) → broker → per-pool trace stores (bounded OTLP flush) →
+    graph orchestrator → graph connection. The workspace DB closes LAST
+    (after all DB-writing producers have stopped and final flushes complete)
+    so no write races a closing connection.
     """
     pools_ok = False
     try:
@@ -546,6 +547,10 @@ async def _stop_pools(resources: PoolWorkspaceResources) -> None:
         raise _PoolShutdownIncompleteError("pool shutdown incomplete")
     if resources.transcript_store is not None:
         resources.transcript_store.release_workspace(resources.ctx.paths.sessions_dir)
+    for pool_data in resources.pool_data.values():
+        if pool_data.trace_store is not None:
+            with contextlib.suppress(BaseException):
+                pool_data.trace_store.close()
     if resources.owned_pool_routing_store is not None:
         with contextlib.suppress(BaseException):
             resources.owned_pool_routing_store.close()

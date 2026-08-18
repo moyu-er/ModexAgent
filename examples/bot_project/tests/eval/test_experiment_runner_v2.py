@@ -12,7 +12,7 @@ from typing import Any, TypedDict, Unpack
 from unittest.mock import MagicMock
 
 import pytest
-from bot.eval.experiment_runner import EvalRunner
+from bot.eval.experiment_runner import EvalRunner, _span_tool_stats
 from bot.eval.task_output import EvalTaskOutput, ToolStats, TurnRecord
 from langfuse import Langfuse
 
@@ -21,8 +21,14 @@ from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.constants import FinishReason, StopReason
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import LLMResponse, MessageRole, ToolCall
-from modex_agent.runtime.models import JsonValue
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.runtime.models import JsonValue, TurnIdentity
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.trace.scoring import TrajectoryMetrics
 
 
 class _ScriptedProvider(StreamingLLMProvider):
@@ -276,7 +282,7 @@ async def test_world_setup_rejects_paths_outside_workspace(
     assert output["stop_reason"] == "error"
     assert output["error"]
     assert output["turns_executed"] == 0
-    assert output["tool_stats"]["source"] == "spans", "error output must use span-based source"
+    assert output["tool_stats"]["source"] == "metrics", "error output must use metrics source"
     assert not outside_target.exists()
 
 
@@ -325,8 +331,80 @@ async def test_clean_tool_stats_count_error_tool_spans() -> None:
         "total": 1,
         "errors": 1,
         "success_rate": 0.0,
-        "source": "spans",
+        "source": "metrics",
     }
+
+
+def _turn_metrics(tool_calls: int, error_tools: int) -> TrajectoryMetrics:
+    return TrajectoryMetrics(
+        tool_success_rate=(tool_calls - error_tools) / tool_calls if tool_calls > 0 else 1.0,
+        tool_call_count=tool_calls,
+        error_tool_count=error_tools,
+        iteration_count=0,
+        llm_call_count=0,
+        total_input_tokens=0,
+        total_output_tokens=0,
+        total_reasoning_tokens=0,
+        api_latency_avg_s=0.0,
+        cache_hit_rate=0.0,
+        response_token_ratio=0.0,
+        has_reasoning=False,
+    )
+
+
+def _turn_context(
+    session: SessionInfo,
+    turn_id: str,
+    stash: TrajectoryMetrics | None,
+) -> AgentContext:
+    state = ReActTurnState(
+        identity=TurnIdentity(agent_id="react", session=session, turn_id=turn_id),
+        agent_kind=AgentKind.REACT,
+        phase=TurnPhase.CREATED,
+    )
+    if stash is not None:
+        state.custom[TurnCustomKey.TRAJECTORY_METRICS] = stash
+    return AgentContext(
+        system_prompt="eval",
+        history=ListMessageHistory(),
+        tool_manager=InMemoryToolManager(),
+        session=session,
+        max_iterations=1,
+        runtime=AgentRuntime(services=AgentRuntimeServices(), state=state),
+    )
+
+
+def test_span_tool_stats_sums_stashed_metrics_across_turn_contexts() -> None:
+    session = SessionInfo.from_str("eval.stats.react")
+    contexts = [
+        _turn_context(session, "turn-1", _turn_metrics(2, 1)),
+        _turn_context(session, "turn-2", _turn_metrics(1, 1)),
+    ]
+
+    stats = _span_tool_stats(contexts)
+
+    assert stats == ToolStats(total=3, errors=2, success_rate=1 / 3, source="metrics")
+
+
+def test_span_tool_stats_skips_turns_without_stash() -> None:
+    session = SessionInfo.from_str("eval.mixed.react")
+    contexts = [
+        _turn_context(session, "turn-1", _turn_metrics(2, 0)),
+        _turn_context(session, "turn-2", None),
+    ]
+
+    stats = _span_tool_stats(contexts)
+
+    assert stats == ToolStats(total=2, errors=0, success_rate=1.0, source="metrics")
+
+
+def test_span_tool_stats_without_stash_yields_zero_stats() -> None:
+    session = SessionInfo.from_str("eval.off.react")
+    contexts = [_turn_context(session, "turn-1", None)]
+
+    stats = _span_tool_stats(contexts)
+
+    assert stats == ToolStats(total=0, errors=0, success_rate=1.0, source="metrics")
 
 
 def test_run_archives_teed_item_outputs(tmp_path: Path) -> None:

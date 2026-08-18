@@ -264,7 +264,6 @@ class BotSubagentExternalBuilder(SubagentExternalBuilder):
                     self_name=agent_name,
                     parent_name=parent_name,
                     runtime_dir=runtime_dir or Path("."),
-                    trace_enabled=False,
                     execution_strategy=ExecutionStrategyKind.EXTERNAL,
                 ),
                 on_error=HookErrorPolicy.LOG,
