@@ -43,8 +43,15 @@ async def test_unknown_llm_lookup_increments_misses(tmp_path: Path) -> None:
     engine.load()
     replay = engine.wrap_provider(_ScriptedProvider())
 
+    # Call chat_stream directly, not chat(): chat() routes through the
+    # provider retry wrapper, whose _is_transient matches bare digit
+    # substrings ("429"/"500"/"502"...) in the error text. A per-run
+    # content-addressed key (created_at is part of the key payload) can
+    # randomly contain such a substring, re-triggering the lookup and
+    # counting a second miss — a ~7% flake. The miss counter, not retry
+    # semantics, is this test's subject.
     with pytest.raises(KeyError, match="Cassette miss"):
-        await replay.chat(
+        await replay.chat_stream(
             messages=[ChatMessage(role=MessageRole.USER, content="unknown")]
         )
 
