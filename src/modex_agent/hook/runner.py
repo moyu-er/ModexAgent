@@ -24,6 +24,7 @@ from modex_agent.hook.abc import (
     BeforeLLMHook,
     BeforeToolExecutionHook,
     BeforeTurnHook,
+    ClosableHook,
     EndNodeTurnHook,
     FinalizeContentHook,
     FinallyGraphHook,
@@ -238,6 +239,16 @@ class HookRunner:
     def extend(self, specs: list[HookSpec]) -> None:
         """批量追加 hook 规格。"""
         self._hook_specs.extend(specs)
+
+    async def aclose(self) -> None:
+        """Close resources owned by registered hooks."""
+        await asyncio.gather(
+            *(
+                spec.hook.aclose()
+                for spec in self._hook_specs
+                if isinstance(spec.hook, ClosableHook)
+            )
+        )
 
     async def dispatch(
         self,

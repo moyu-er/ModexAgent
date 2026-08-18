@@ -87,6 +87,13 @@ class Hook(ABC):  # noqa: B024
         return type(self).__name__
 
 
+class ClosableHook(Hook):
+    """Hook that owns process-lifetime resources released at pipeline stop."""
+
+    @abstractmethod
+    async def aclose(self) -> None: ...
+
+
 class BeforeGraphHook(Hook):
     """Graph-level hook — fires once per actual_turn() call.
 

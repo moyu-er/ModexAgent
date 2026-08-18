@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
 from typing import TYPE_CHECKING, overload
 
 from modex_agent.core.constants import StopReason
-from modex_agent.hook.abc import FinallyGraphHook, StartNodeTurnHook
+from modex_agent.hook.abc import ClosableHook, FinallyGraphHook, StartNodeTurnHook
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.trace.base_hook import BaseTraceHook
-from modex_agent.trace.scoring import compute_root_subtrees
+from modex_agent.trace.scoring import TrajectoryMetrics
 from modex_agent.trace.semconv import (
     GenAiAttr,
     LangfuseObservationType,
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
     from modex_agent.trace.session_state import TraceSessionState
 
 
-class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook):
+class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook, ClosableHook):
     """Emit one complete root span after an agent turn finishes."""
 
     def __init__(
@@ -58,6 +59,22 @@ class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook):
             version=version,
             tags=tags,
         )
+        # Fire-and-forget injection tasks. Strong references are MANDATORY:
+        # the event loop keeps only weak references to tasks, so an
+        # unreferenced task can be garbage-collected mid-flight. Entries
+        # self-discard via done callbacks — bounded by in-flight injections,
+        # never keyed by session.
+        self._pending_injections: set[asyncio.Task[None]] = set()
+        self._closing = False
+
+    async def aclose(self) -> None:
+        """Drain scheduled score injections and close their HTTP client."""
+        self._closing = True
+        pending = tuple(self._pending_injections)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        if self._score_injector is not None:
+            await self._score_injector.aclose()
 
     async def start_node_turn(self, ctx: AgentContext) -> None:
         """Register root span state without emitting an incomplete span."""
@@ -95,10 +112,41 @@ class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook):
         *,
         error: Exception | None = None,
     ) -> None:
-        """Emit the turn's complete root span and release its trace state."""
+        """Emit the turn's complete root span and release its trace state.
+
+        Suspend vs terminal: the ReAct agent raises ``GraphInterrupt`` for an
+        approval suspend and re-enters ``actual_turn()`` after resume — that
+        path's ``finally`` dispatches with ``result=None`` (the runner never
+        passes ``error``), while every terminal path assigns a concrete
+        ``AgentResult`` first. So ``result is None and error is None`` is the
+        suspend signal: emit nothing, stash nothing, clear nothing — the
+        scalar counters bucket MUST survive so the resumed segment
+        accumulates into the same ``(trace_id, root_span_id)`` bucket and the
+        terminal invocation below derives whole-turn metrics (the turn-state
+        snapshot carries neither the stash nor these hook-private counters,
+        so anything cleared here is lost to the resume). A suspended turn
+        that is never resumed leaks at most its one scalar bucket
+        (~80 bytes) for the hook's lifetime — bounded by abandoned suspends.
+
+        Root resolution: the ``root_span_info`` entry seeded by
+        :meth:`start_node_turn` — still present at the terminal invocation
+        because the suspend path above no longer clears it (same-process
+        resume shares this hook's session state). When the entry is missing
+        anyway (cross-process crash recovery: the resumed process builds a
+        fresh ``TraceSessionState`` from nothing), the root falls back to
+        the snapshot-restored ``custom[TurnCustomKey.ROOT_SPAN_ID]`` with
+        ``state.created_at`` — the turn's original creation time, also
+        restored — so the resumed root span covers the whole turn.
+        """
         assert ctx.runtime is not None
+        if result is None and error is None:
+            return
         trace_id = str(ctx.runtime.state.custom[TurnCustomKey.TRACE_ID])
-        root_span_id, start_time = self._session.root_span_info[trace_id]
+        root_info = self._session.root_span_info.get(trace_id)
+        if root_info is None:
+            root_span_id, start_time = self._resumed_root(ctx, trace_id)
+        else:
+            root_span_id, start_time = root_info
         parent_value = ctx.runtime.state.custom.get(TurnCustomKey.PARENT_SPAN_ID)
         parent_span_id = str(parent_value) if parent_value is not None else None
 
@@ -150,21 +198,81 @@ class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook):
             ctx=ctx,
         )
         if result is None or result.stop_reason is not StopReason.COMPLETED:
+            self._stash_turn_metrics(ctx, trace_id, root_span_id)
             self._session.clear_trace(trace_id)
             return
-        if self._score_injector is not None and self._store is not None:
-            try:
-                spans = await self._store.list_by_trace_id(trace_id)
-                subtree = compute_root_subtrees(spans)[root_span_id]
-                await self._score_injector.inject_scores(
+        metrics = self._stash_turn_metrics(ctx, trace_id, root_span_id)
+        if self._score_injector is not None and not self._closing:
+            injection_task = asyncio.create_task(
+                self._inject_scores_async(
+                    self._score_injector,
                     trace_id,
-                    subtree,
-                    observation_id=root_span_id,
-                )
-            except Exception:
-                logger.warning(
-                    "Root trace score injection failed (trace_id=%s, observation_id=%s)",
-                    trace_id,
+                    metrics,
                     root_span_id,
                 )
+            )
+            self._pending_injections.add(injection_task)
+            injection_task.add_done_callback(self._pending_injections.discard)
         self._session.clear_trace(trace_id)
+
+    def _resumed_root(self, ctx: AgentContext, trace_id: str) -> tuple[str, float]:
+        """Resolve ``(root_span_id, start_time)`` when ``root_span_info`` has no entry.
+
+        Reached on cross-process recovery resumes: a fresh process builds a
+        fresh ``TraceSessionState``, while the restored turn state still
+        carries ``custom[ROOT_SPAN_ID]`` and ``created_at`` (both written
+        before the interrupt and checkpoint-restored). When even
+        ``ROOT_SPAN_ID`` is gone — unreachable while ``start_node_turn``
+        remains its only writer — the counters bucket is popped as a leak
+        backstop before the ``KeyError`` surfaces through the hook error
+        policy, matching the pre-refactor failure mode.
+        """
+        assert ctx.runtime is not None
+        root_value = ctx.runtime.state.custom.get(TurnCustomKey.ROOT_SPAN_ID)
+        if root_value is None:
+            self._session.clear_trace(trace_id)
+            raise KeyError(trace_id)
+        return str(root_value), ctx.runtime.state.created_at
+
+    def _stash_turn_metrics(
+        self,
+        ctx: AgentContext,
+        trace_id: str,
+        root_span_id: str,
+    ) -> TrajectoryMetrics:
+        """Derive the turn's metrics from the counters and stash them.
+
+        Reads ``read_metrics(trace_id, root_span_id)`` — the same
+        ``(trace_id, root_span_id)`` bucket every ``_save_span`` call of this
+        turn accumulated into — and stores the model on the turn-scoped
+        carrier ``ctx.runtime.state.custom[TurnCustomKey.TRAJECTORY_METRICS]``
+        so eval-side turn aggregation can read it without touching the trace
+        store. MUST run before ``clear_trace`` pops the counters bucket;
+        ``read_metrics`` returns the zero shape for a missing bucket, so a
+        turn with no accumulating spans stashes zeros.
+        """
+        assert ctx.runtime is not None
+        metrics = self._session.read_metrics(trace_id, root_span_id)
+        ctx.runtime.state.custom[TurnCustomKey.TRAJECTORY_METRICS] = metrics
+        return metrics
+
+    async def _inject_scores_async(
+        self,
+        injector: L2ScoreInjector,
+        trace_id: str,
+        metrics: TrajectoryMetrics,
+        observation_id: str,
+    ) -> None:
+        """Inject L2 scores off the turn's critical path; never raises."""
+        try:
+            await injector.inject_scores(
+                trace_id,
+                metrics,
+                observation_id=observation_id,
+            )
+        except Exception:
+            logger.warning(
+                "Root trace score injection failed (trace_id=%s, observation_id=%s)",
+                trace_id,
+                observation_id,
+            )

@@ -381,4 +381,9 @@ class AgentPipeline:
         for sid in self._registry.session_ids():
             await self.cleanup_session_resources(sid)
         logger.info("Pipeline stop requested, waiting for current message to complete...")
-        await self.agent.stop()
+        try:
+            hook_runner = self.hook_runner
+            if hook_runner is not None:
+                await hook_runner.aclose()
+        finally:
+            await self.agent.stop()

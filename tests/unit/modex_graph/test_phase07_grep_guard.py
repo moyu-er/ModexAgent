@@ -9,6 +9,11 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SRC_DIR = REPO_ROOT / "src"
 
+# Phase 07 retired modex_graph APIs (suspend_invocation era). Scoped to
+# src/modex_graph — NOT all of src/: `_resumed` is a common English word and
+# modex_agent has legitimate resume concepts (approval resume, cross-process
+# graph recovery), e.g. RootSpanHook._resumed_root (2026-08-18 CI false
+# positive). The retired symbols themselves are modex_graph-internal.
 FORBIDDEN_PATTERNS = [
     "rebuild_main_state",
     "GraphAsNode",
@@ -41,10 +46,10 @@ def _grep(pattern: str, path: Path) -> list[str]:
 
 
 @pytest.mark.parametrize("pattern", FORBIDDEN_PATTERNS)
-def test_forbidden_patterns_absent_in_src(pattern: str) -> None:
-    matches = _grep(pattern, SRC_DIR)
+def test_forbidden_patterns_absent_in_modex_graph(pattern: str) -> None:
+    matches = _grep(pattern, SRC_DIR / "modex_graph")
     assert not matches, (
-        f"Forbidden pattern {pattern!r} found in src/:\n" + "\n".join(matches)
+        f"Forbidden pattern {pattern!r} found in src/modex_graph/:\n" + "\n".join(matches)
     )
 
 

@@ -35,6 +35,7 @@ from modex_agent.trace.training_exporter import (
     _edit_distance_ratio,
     _extract_system_message,
     _extract_user_message,
+    _is_training_relevant,
     _jaccard_similarity,
     _levenshtein,
     _ngram_set,
@@ -369,6 +370,51 @@ class TestSFTExport:
         result = await exporter.export_sft(session_ids=["conv-1:agent-1"])
 
         assert result.sft_count == 0
+
+    def test_any_true_tag_accepts_trajectory(self) -> None:
+        """Locks the exporter's any-true acceptance semantics — the reason a
+        single stray suspend-time ``relevant=true`` tag is fatal: a
+        [true, false] trajectory (the legacy suspend-then-failed shape) is
+        exported. Exporter code is intentionally unchanged; the fix lives in
+        TrainingDataHook, which no longer emits the true tag at suspend."""
+        spans = _make_trajectory(training_relevant=False)
+        spans.append(
+            _make_span(
+                name="training_tag",
+                start_time=5000.0,
+                attributes={"gen_ai.training.relevant": True},
+            )
+        )
+
+        assert _is_training_relevant(spans) is True
+
+    async def test_suspend_then_failed_turn_not_exported(self, tmp_path: Path) -> None:
+        """A suspended-then-failed turn now carries exactly one false tag
+        (zero tags at suspend, one false at the terminal finalize — the
+        TrainingDataHook suspend sentinel). The any-true exporter therefore
+        rejects it. The same trajectory with a legacy suspend-time true tag
+        appended WOULD be exported, which is the defect this locks out."""
+        store = InMemoryTraceStore()
+        for span in _make_trajectory(training_relevant=False):
+            store._spans.append(span)
+
+        exporter = TrainingDataExporter(store, output_dir=tmp_path)
+        result = await exporter.export_sft(session_ids=["conv-1:agent-1"])
+        assert result.sft_count == 0
+
+        legacy = InMemoryTraceStore()
+        for span in _make_trajectory(training_relevant=False):
+            legacy._spans.append(span)
+        legacy._spans.append(
+            _make_span(
+                name="training_tag",
+                start_time=5000.0,
+                attributes={"gen_ai.training.relevant": True},
+            )
+        )
+        legacy_exporter = TrainingDataExporter(legacy, output_dir=tmp_path)
+        legacy_result = await legacy_exporter.export_sft(session_ids=["conv-1:agent-1"])
+        assert legacy_result.sft_count == 1  # proves the delta is the stray true tag
 
     async def test_empty_session_ids_returns_empty(self, tmp_path: Path) -> None:
         store = InMemoryTraceStore()
