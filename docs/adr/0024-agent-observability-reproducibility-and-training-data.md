@@ -185,6 +185,19 @@ boundaries as `cassette.incomplete` with a warning.
   trajectory. Convert to target format. Apply L2 heuristic scoring (tool success rate,
   reasoning depth, trajectory compactness). Optional L3 annotation (approval-as-preference
   or LLM-as-judge).
+- **Storage path (amended 2026-08-17 collector migration; amended 2026-08-18
+  write-only refactor)**: The former dual-path (every backend also writes local
+  `spans.jsonl`) is superseded — the active path is OTel-only: spans are exported
+  via the local OTel Collector (contrib 0.158.0) to Langfuse, the system of record
+  for `otel_http` mode (the default). `TraceBackend.FILE` + `JsonlSpanQuery` are
+  retained as a dormant, selectable fallback (ADR-0007). In `otel_http` mode the
+  store is WRITE-ONLY: `save_span` feeds a bounded export queue drained by the
+  daemon sender thread, nothing is buffered for read-back, and the read methods
+  `list_by_session` / `list_by_trace_id` raise `NotImplementedError` (FILE
+  branches unchanged). Same-process metric consumers read the scalar
+  `MetricCounters` accumulated in `TraceSessionState` (plus the per-turn
+  `TurnCustomKey.TRAJECTORY_METRICS` stash) — never span read-back; cross-process
+  reads go through `LangfuseTraceQuery` (Langfuse v2 API).
 - **Approval-as-preference** (L3, opt-in): `ApprovalDecision.APPROVED/DENIED` + `deny_reason`
   is a free human-preference signal. Same-task multiple trajectories → DPO pairs (chosen =
   approved trajectory, rejected = denied trajectory). Unique to ModexAgent (most frameworks
@@ -682,10 +695,12 @@ analysis, (2) the local `spans.jsonl` becomes complete enough for the agent
 to self-read in Phase 3 (`TraceDrivenLoopDetectorHook`, IN13). One fix, two
 consumers. This dual-use is unique to the OTLP-only route.
 
-**Configuration**: `bot_config.yml` sets `otel_endpoint` to Langfuse's OTLP
-URL. `trace_backend=otel_http` (or `file` + `otel_endpoint` set) activates
-dual-path: local `spans.jsonl` (agent self-read) + OTLP to Langfuse (human
-analysis). Default remains `file` (local-only, zero external dependency).
+**Configuration** (amended 2026-08-17, collector migration): `bot_config.yml`
+points `otel_endpoint` at the local OTel Collector
+(`http://localhost:4318/v1/traces`). `trace_backend=otel_http` (the default)
+is OTel-only — OTLP via the collector to Langfuse; no local `spans.jsonl` is
+written. `trace_backend=file` is the dormant no-network fallback (local jsonl
+only; `otel_endpoint` is ignored in that mode).
 
 **Langfuse deployment**: not bundled with the framework. The bot project
 (`examples/bot_project/`) carries a Docker Compose reference + teaching
@@ -760,22 +775,29 @@ extension / flexible switching to other tiers." ABC-first per architecture
 rule 4/10. Deletion test: inlining truncation logic in the hook is shorter
 but loses the extension point → ABC retained.
 
-### IN12 — SQLite trace path deferred (jsonl + OTLP dual path retained)
+### IN12 — SQLite trace path deferred (OTel-only active path; FILE = no-network fallback)
 
-**Decision**: The trace storage architecture remains the 2026-07-17 design:
-local `spans.jsonl` (D6, agent self-read) + optional OTLP export (D7,
-external backend). **No SQLite trace store** is added in Phase 2.
+**Decision**: **No SQLite trace store** is added. The former dual-path
+retention (local `spans.jsonl` + optional OTLP export, "jsonl + OTLP dual
+path retained") was superseded by the 2026-08-17 collector migration: the
+active backend is OTel-only — OTLP via the local OTel Collector (contrib
+0.158.0) to Langfuse (see the D6 storage-path amendment). Air-gapped
+posture: trace-derived features (score injection, training-data export,
+cross-session analysis) now require the Langfuse stack; `trace_backend=off`
+still runs the agent (untraced, zero overhead); FILE mode remains the
+no-network fallback for offline tracing needs (dormant, selectable).
 
 **Considered and rejected**: A SQLite trace path (third `TraceQuery`
 implementation alongside `JsonlSpanQuery`) was considered for cross-session
 SQL aggregation. Rejected because: (a) agent self-read is satisfied by
-`JsonlSpanQuery.list_by_session()` / `list_by_trace_id()`; (b) human
+`JsonlSpanQuery.list_by_session()` / `list_by_trace_id()` (FILE mode) and
+the store's in-process buffer (otel_http mode); (b) human
 cross-session analysis is satisfied by Langfuse's dashboard/score/dataset;
 (c) a SQLite trace store is an ADR-level schema decision (coexist with
 State DB? independent DB? migration strategy?) that doesn't unlock new
 harness capabilities; (d) the only beneficiary is air-gapped cross-session
 SQL analysis without Langfuse, which can be met by an offline
-`jsonl → SQLite` import script.
+`jsonl → SQLite` import script over FILE-mode data.
 
 **Code annotation**: `ObservabilityConfig.trace_backend` and
 `OtelSpanTraceStore` carry comments documenting this deferral and the
@@ -790,8 +812,10 @@ only docstring + `name` property + `pass`. It is **not registered** in any
 factory and has **no configuration** and **no tests**.
 
 **Purpose**: Documents the Phase 3 harness-engineering entry point — an
-agent-self-read hook that consumes local `spans.jsonl` to drive runtime
-decisions (loop detection via tool-call fingerprint hashing, error
+agent-self-read hook that consumes the `TraceQuery` read path (store buffer
+same-process / `LangfuseTraceQuery` cross-process; `JsonlSpanQuery` in the
+dormant FILE fallback) to drive runtime decisions (loop detection via
+tool-call fingerprint hashing, error
 recovery strategy selection, predictive compression). Implementation is
 deferred until Phase 2 data is available to observe actual agent behavior
 patterns (where does the agent loop? where do tools fail? what's the
@@ -811,17 +835,25 @@ iteration boundary.
 preserve direction; detailed design will be written when Phase 2 data is
 available to calibrate strategies.
 
-**Current state after Phase 2:** Traces are complete enough for both human
-analysis (Langfuse via OTLP) and agent self-read (local `spans.jsonl` via
-`TraceQuery`). The `TraceDrivenLoopDetectorHook` placeholder exists (IN13).
+**Current state after Phase 2 (amended 2026-08-17, collector migration):**
+Traces are complete enough for both human analysis and agent self-read. The
+division of labor is now fixed: the framework emits (non-blocking OTLP via
+the local collector); the collector provides retry/buffer reliability
+(outage redelivery); Langfuse is the system of record and the analysis
+surface; cross-process reads go through `LangfuseTraceQuery` (Langfuse v2
+API), while same-process metric readers use the session counters and the
+per-turn `TRAJECTORY_METRICS` stash (the store's in-process buffer was
+removed by the 2026-08-18 write-only refactor).
+The `TraceDrivenLoopDetectorHook` placeholder exists (IN13).
 No trace-consuming harness logic exists yet.
 
 **Four directions** (reference: hermes-agent cross-reference):
 
 1. **Loop/stuck detection** — implement `TraceDrivenLoopDetectorHook`
-   consuming `spans.jsonl`: tool fingerprint hashing, output similarity,
-   oscillation, stale-call circuit breaker. Hermes #58962 incident (494
-   consecutive failures, 3+ days) shows the cost of not having this.
+   consuming the `TraceQuery` read path: tool fingerprint hashing, output
+   similarity, oscillation, stale-call circuit breaker. Hermes #58962
+   incident (494 consecutive failures, 3+ days) shows the cost of not
+   having this.
 
 2. **Error recovery taxonomy** — replace overflow-only `error_recovery.py`
    with classification-driven recovery (rate limit / billing / content
@@ -1028,9 +1060,14 @@ eval capability:
 
 1. **Score injection live at `RootSpanHook`** — the injector dead-end was
    wired in `finally_graph` (after root-span persistence, before
-   `TraceSessionState.clear_trace`); injection is subtree-scoped from the
-   current root (stops at nested `invoke_agent` roots) and attaches with
+   `TraceSessionState.clear_trace`); injection attaches with
    `observation_id=root_span_id`; failures are warning-only.
+   (Amended 2026-08-18, write-only refactor: the metrics now come from the
+   session's scalar `MetricCounters` via
+   `read_metrics(trace_id, root_span_id)` — no span read-back, no subtree
+   extraction — and `inject_scores` takes a `TrajectoryMetrics`, not spans.
+   The hook also stashes the metrics on `TurnCustomKey.TRAJECTORY_METRICS`
+   before `clear_trace` for same-process readers.)
 2. **Langfuse v4.0.0-rc.3 API surface** — `/api/public/v2/observations` is
    the only live query surface (`/api/public/traces`, `/api/public/v2/traces`,
    `/api/public/v2/scores` all 404), so curation derives agent-turn summaries

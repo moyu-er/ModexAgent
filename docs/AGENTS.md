@@ -61,6 +61,7 @@ Each feature has a directory under `design/<feature-slug>/` containing:
 | Phase 1 persistence schema optimization | ADR-0028/0029/0030/0031 | PRD.md |
 | External coding subagent | ADR-0027 | PRD.md |
 | Agent observability | ADR-0024 | PRD.md |
+| OTel-only tracing + collector (implemented 2026-08-17) | ADR-0024 | otel-collector/PRD.md |
 | Hybrid persistence | ADR-0023 | PRD.md, sqlite-deployment-and-lifecycle.md, webui-transcript-sqlite.md |
 | External coding agent integration | ADR-0022 | spec.md, glossary.md, child-session-capture.md |
 | Model reasoning effort | ADR-0021 | PRD.md |

@@ -158,8 +158,7 @@ by pipeline providers, so reuse is safe.)
   (`hook/builtin/`) fires on `FINALLY_GRAPH` and calls `tree.deliver(parent_sid,
   agent_result envelope)` — the same carrier as `task`/`send_to_agent`. It does not
   hand-build envelopes or call a parallel mechanism. The notification carries
-  absolute, workspace-rooted trace/output paths (parity with the `task`
-  ack). **Note**: this hook fires ONLY for subagent turns — peer (NORMAL) agents
+  the absolute, workspace-rooted output path. **Note**: this hook fires ONLY for subagent turns — peer (NORMAL) agents
   do NOT auto-notify; they must explicitly call `send_to_peer` to reply
   (ADR-0019 deferred #1). Peer agents reply via `send_to_peer`, not `task`.
 - Human DM / WebUI / approval decisions enter via `pool.submit_input(session_id,
