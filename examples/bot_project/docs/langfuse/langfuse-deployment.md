@@ -20,6 +20,7 @@ survive `down` (only `down -v` deletes them).
 | PostgreSQL | `16-alpine` | `docker-compose.langfuse.yml` |
 | Redis | `7` | `docker-compose.langfuse.yml` |
 | MinIO | `RELEASE.2025-09-07T16-13-09Z` | `docker-compose.langfuse.yml` |
+| OTel Collector (contrib) | `0.158.0` | `docker-compose.langfuse.yml` |
 | LiteLLM | `1.90.1` | framework dependency |
 | OpenTelemetry SDK + OTLP exporter | `1.44.0` | `[observability]` extra; range `>=1.33.1,<2` required by Langfuse SDK |
 
@@ -84,6 +85,89 @@ then go to **Settings → API Keys** and create a key pair. You need both the
 public key (`pk-lf-...`) and secret key (`sk-lf-...`) — they feed two
 separate auth paths in §2.
 
+### The `otel-collector` service (between the bot and Langfuse)
+
+Since the 2026-08-17 collector migration, the compose stack includes an
+OTel Collector service (`otel/opentelemetry-collector-contrib:0.158.0`,
+pinned; 128M memory / 0.5 CPU limit; port bound to `127.0.0.1:4318`)
+between the bot and Langfuse:
+
+```
+app (daemon sender thread) → collector :4318 (batch) → http://langfuse-web:3000/api/public/otel
+```
+
+With `OTEL_FORMAT=otel_http` (the default), `bot_config.yml` points
+`otel_endpoint` at the collector
+(`${OTEL_TRACES_ENDPOINT:-http://localhost:4318/v1/traces}`). The
+collector is the reliability path: its `sending_queue` (4096) +
+`retry_on_failure` (1s→5s backoff, 60s cap) buffer spans during a
+Langfuse outage and redeliver when it returns.
+
+Two deployment footguns (both verified on 0.158.0):
+
+1. **The explicit `--config` flag is mandatory.** The image's default CMD
+   loads `/etc/otelcol-contrib/config.yaml`, not the bind-mounted
+   `/etc/otelcol/config.yaml`. Without
+   `command: ["--config=/etc/otelcol/config.yaml"]` the collector
+   silently runs its built-in default config — the receiver returns 200,
+   the traces pipeline is absent, spans are dropped, and zero errors are
+   logged.
+2. **The exporter must be named `otlp_http/langfuse`.** `otlphttp` is a
+   deprecated alias in 0.158.0 — the shipped `otel-collector.yaml` uses
+   the modern name.
+
+`otel-collector.yaml` sends `x-langfuse-ingestion-version: "4"` on every
+export — keep this header in every deployment mode. Without it Langfuse
+ingests via the slow path and v2 reads can lag by up to **15 minutes**;
+with it, spans are queryable in seconds (~12 s via raw curl, ~2 s through
+the collector's 1 s batch timeout). A `health_check` extension on
+`:13133` reports readiness in `docker logs modex-otel-collector` (no
+compose healthcheck — the distroless image has no shell).
+
+**Memory budget (3072M total)**:
+
+| Service | Limit |
+|---|---|
+| langfuse-web | 1024M |
+| langfuse-worker | 768M |
+| clickhouse | 768M |
+| otel-collector | 128M |
+| langfuse-db (postgres) | 128M |
+| minio | 128M |
+| redis | 128M |
+| **Total** | **3072M** |
+
+### Degradation behavior (R1–R6, drill-verified 2026-08-17)
+
+The agent must run independently of the telemetry stack — degradation may
+lose data, never block or crash a turn. R2/R3/R5/R6 semantics live in
+`OtelSpanTraceStore` (daemon sender thread, 3 s per-POST timeout, drop
+counters, bounded queue); R4 is the collector's `sending_queue` +
+`retry_on_failure`.
+
+| # | Scenario | Agent behavior | Data behavior |
+|---|---|---|---|
+| R1 | `OTEL_FORMAT=off` | normal | nothing emitted |
+| R2 | collector refused | normal | dropped at sender + counted |
+| R3 | collector hanging | normal | sender timeout 3 s, drop, keep draining |
+| R4 | Langfuse down, collector up | normal | collector buffers, redelivers |
+| R5 | long outage, queue full | normal, bounded memory | oldest dropped + counted |
+| R6 | shutdown with queued spans | clean exit | best-effort flush ≤ 2 s |
+
+Live drill evidence (2026-08-17, real harness turns; full ledger:
+`.omo/notepads/otel-collector-migration/learnings.md`, "Ticket 10"):
+baseline `otel_http` turn 3.013 s (6 spans exported, 0 dropped); R1
+0.802 s (nothing emitted); R2 collector stopped → 3.057 s, +0.044 s vs
+baseline, 1 span dropped as designed; R4 worker stopped → 1.843 s turn,
+all 6 spans buffered and visible within 0.172 s of the post-restart
+poll; rollback (`OTEL_FORMAT=file`) 2.170 s, 6-span `spans.jsonl` with
+the complete legacy byte shape. R3/R5/R6 are covered by the resilience
+test suite (`tests/unit/trace/test_otel_store_resilience.py`).
+
+**Rollback** to pre-migration behavior: set `OTEL_FORMAT=file` and unset
+`OTEL_TRACES_ENDPOINT` — the dormant FILE backend writes `spans.jsonl`
+exactly as before; nothing else changes.
+
 ## 2. Configure `.env`
 
 Four Langfuse variables + one LLM provider mapping. Copy `.env.example` to
@@ -134,8 +218,10 @@ Bot runtime observability is configured in `config/bot_config.yml` under
 `trace_backend` (file / otel_http / off), `prompt_capture` (off / hash /
 summary / full), `trace_spans` (minimal / standard / full), `retain_reasoning_content`.
 
-When `OTEL_FORMAT=otel_http`, each completed turn emits a span tree to
-Langfuse **and** writes local `spans.jsonl` (dual-path, ADR-0024 D6/D7).
+When `OTEL_FORMAT=otel_http` (the default), each completed turn's span
+tree is exported through the collector to Langfuse — no local
+`spans.jsonl` is written in this mode (`trace_backend: file` is the
+dormant fallback, see §1; ADR-0024 D6 amendment).
 
 ### Span Tree
 
@@ -317,22 +403,23 @@ flywheel decision log.
 
 `TrainingDataExporter` (`src/modex_agent/trace/training_exporter.py`)
 derives SFT and DPO training datasets from traced trajectories. It is a
-**programmatic API** today — no CLI command yet, and it reads **local
-`spans.jsonl` only**, never the Langfuse API.
+**programmatic API** today — no CLI command yet.
 
-**Why local-first**: training-data quality must not depend on Langfuse
-version churn (v4 events_only disabled v3 query endpoints), worker
-availability, or the ClickHouse consistency delay (§9). The local JSONL
-copy is the stable, version-independent substrate; Langfuse is the
-analysis / dataset / experiment surface. Neither path makes the other
-redundant (ADR-0024 D6/D7).
+**Direction (shipped 2026-08-17)**: the active trace path is OTel-only —
+app → OTel Collector (contrib 0.158.0, retry/buffer) → Langfuse, which is
+the system of record. Local `spans.jsonl` stays as a **dormant legacy mode**
+(`trace_backend: file`, selectable fallback — not deleted). The exporter
+reads via `LangfuseTraceQuery` (Langfuse `v2` API) in otel_http mode, with
+read-side reverse-normalization (TOOL observations restored to
+`execute_tool`, metadata attributes authoritative, `{"result": ...}`
+envelopes unwrapped). Subagent notifications no longer carry a `Trace:`
+path. Design + drill evidence: `docs/design/otel-collector/PRD.md`.
 
-**Planned (not yet implemented)**:
+**Still planned (not yet implemented)**:
 
-- `export-training` CLI command (`bot.eval.cli`) — auto-discover session
-  IDs under `.modex/runtime_state/*/trace/` and invoke the exporter.
-- Retention policy for `spans.jsonl` (currently unbounded growth).
-- Optional scheduled export for continuous SFT/DPO accumulation.
+- `export-training` CLI command (`bot.eval.cli`) — session auto-discovery
+  via Langfuse `v2/sessions` + the exporter.
+- Retention via Langfuse/ClickHouse TTL (replaces local-file retention).
 
 ### SFT Export
 
@@ -378,8 +465,9 @@ intentional.
 
 ## 7. Local Metrics Report
 
-Aggregate the 12 trajectory metrics from local `spans.jsonl` — no Langfuse
-or LLM needed:
+Aggregate the 12 trajectory metrics from local `spans.jsonl` (legacy /
+FILE-mode data — `otel_http` writes no local jsonl; for live data use the
+Langfuse UI §8 or `compare`) — no Langfuse or LLM needed:
 
 ```bash
 python -m bot.eval.cli metrics --workspace . --days 7
@@ -444,7 +532,219 @@ The eval CLI uses `LiteLLMProvider`, which reads standard provider env vars
 (`OPENAI_API_KEY` etc.), not the bot's `LLM_API_KEY`. See §2 for the
 mapping.
 
-**Local `spans.jsonl` still growing:**
-Expected — dual-path (local JSONL + OTLP) is by design (ADR-0024 D6/D7).
-The local copy powers `metrics` reports and `TrainingDataExporter` without
-network round-trips.
+**Local `spans.jsonl` not growing under `otel_http`:**
+Expected — since the collector migration, `otel_http` is OTel-only (no
+local jsonl dual-write). Only `trace_backend: file` writes `spans.jsonl`;
+the `metrics` CLI reads those legacy/FILE files.
+
+**Traces appear in Langfuse only after ~15 minutes:**
+The `x-langfuse-ingestion-version: "4"` header is missing from the export
+path. Without it Langfuse ingests via the slow path — v2 reads lag up to
+15 minutes. The shipped `otel-collector.yaml` sends the header; keep it
+in every deployment mode.
+
+**`/api/public/v2/traces*` returns 404:**
+Removed in v4 events_only mode. Read `v2/observations` instead and group
+by `traceId` when you need trace-level views.
+
+## 10. Operations: Data Retention & Disk Growth
+
+### What Langfuse manages natively vs what we own
+
+Langfuse ships a built-in **Data Retention** feature: a nightly job deletes
+traces, observations, scores, and media assets older than N days, configured
+per project in Project Settings or via the org-scoped Projects API. **It is an
+Enterprise Edition feature** — on self-hosted OSS without
+`LANGFUSE_EE_LICENSE_KEY` the setting is unavailable (the UI hides it, and
+`PUT /api/public/projects/{id}` returns 403 "Organization-scoped API key
+required"; org keys and the Instance Management API are EE-gated too).
+
+Langfuse's own docs sanction the OSS fallback
+([scaling → Increasing Disk Usage](https://langfuse.com/self-hosting/configuration/scaling)
+→ ClickHouse Disk Usage): **ClickHouse TTL on the trace tables + S3 lifecycle
+rules for the event blob prefix**. That is what this deployment uses. We own
+these two knobs; Langfuse will not fight them (its migrations only
+`ADD COLUMN`-style alter, never touching TTL).
+
+### Configured policy (applied 2026-08-18, all live-verified)
+
+| Store | Mechanism | Retention |
+|-------|-----------|-----------|
+| ClickHouse `traces`, `scores` | `MODIFY TTL timestamp + INTERVAL 180 DAY` | 180 days |
+| ClickHouse `observations`, `events_core`, `events_full` | `MODIFY TTL start_time + INTERVAL 180 DAY` | 180 days |
+| ClickHouse `blob_storage_file_log` | `MODIFY TTL created_at + INTERVAL 180 DAY` | 180 days |
+| MinIO bucket `langfuse`, prefix `events/` | ILM expiry rule | 180 days |
+| MinIO prefix `media/` | none — Langfuse docs: media lifecycle rules break trace references | indefinite |
+| ClickHouse system log tables | config.d opt-out in `docker-compose.langfuse.yml` | write-disabled |
+
+`blob_storage_file_log` rows track the `events/` blobs one-to-one, so the
+table's TTL column is `created_at` aligned with the MinIO ILM window — rows
+expire as their blobs do, and the table cannot grow unbounded the way the
+system log tables did. (Langfuse's retention FAQ explicitly treats a TTL on
+this table as a supported mechanism.)
+
+Evidence: `SHOW CREATE TABLE` shows the TTL clause on all six tables and it
+survives container recreation (TTL lives in the data volume's table metadata,
+not the container). Expired data drops organically during background TTL
+merges (`ttl_merge_frequency`, default 4h) — the stale 2025-08 partition in
+`events_full` was dropped this way immediately after the TTL was applied.
+Ingest was re-verified end-to-end after all changes: synthetic span →
+collector `:4318` → `events_full` row within 5s → visible in
+`GET /api/public/v2/observations`.
+
+### Automated provisioning (`langfuse-retention-init`)
+
+Everything in the table above is applied by the one-shot
+`langfuse-retention-init` compose service on every `docker compose up -d`
+(fresh volume included) — no manual ALTERs, nothing to forget. It runs the
+minio image (ships `mc` + `curl`), waits for `langfuse-web` health and for
+Langfuse's migrations to create the six tables, then converges:
+
+1. ClickHouse `MODIFY TTL` per table — skipped when the target TTL is
+   already present (checked via `SHOW CREATE TABLE`).
+2. MinIO `mc ilm rule add --prefix events/` — only when no `events/` rule
+   exists (`mc ilm rule add` would otherwise create duplicates; verified
+   live).
+
+Then it exits (`restart: "no"`). The whole run is idempotent — re-running
+produces only `ok/skip` log lines, zero new mutations, zero duplicate rules.
+
+**Memory budget:** the service has a 64M cap but only during the boot window
+— it exits immediately after converging, so the steady-state budget stays
+3072M across the 7 long-running services. (Shrinking MinIO to fund it
+permanently was rejected: T13 showed MinIO OOM-kills at 128M under span
+bursts; halving it would reopen a known failure mode for a one-shot's sake.)
+
+**Troubleshooting:**
+
+```bash
+# init logs (the authoritative record of what was applied/skipped):
+docker compose -f docker-compose.langfuse.yml logs langfuse-retention-init
+# exit state (expect: Exited (0), oom=false):
+docker inspect modex-langfuse-retention-init --format "{{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}"
+# re-run (e.g. after fixing a problem, or to converge after edits):
+docker compose -f docker-compose.langfuse.yml up -d langfuse-retention-init
+```
+
+The service waits up to 240s for web health and 300s per table — hard upper
+bounds: the deadline is checked before each poll, every poll's curl is capped
+at `min(10s, remaining budget)` (hanging polls cannot extend the window), and
+the inter-poll sleep is capped at the remaining budget too (residual
+overshoot: the 1s granularity of `date +%s`). On timeout it exits non-zero
+with a `FATAL:` line naming what it
+waited for. An `ALTER` that exceeds the 10s per-call cap exits non-zero too,
+but the mutation keeps running server-side — re-run the service and it will
+converge (skip what landed). It does not
+depend on `langfuse-web: service_healthy` because web defines no healthcheck
+(and adding one means touching the core service) — the script polls
+`/api/public/health` itself, which is also the signal that migrations have
+started.
+
+### How to change the retention window
+
+1. Edit `RETENTION_DAYS` in the `langfuse-retention-init` service block of
+   `docker-compose.langfuse.yml`, then re-run it — ClickHouse TTLs converge
+   automatically:
+
+```bash
+docker compose -f docker-compose.langfuse.yml up -d langfuse-retention-init
+```
+
+2. The MinIO rule cannot be day-edited blindly (`mc ilm rule edit` needs the
+   rule ID): the init log prints a WARN with the exact command when the
+   `events/` rule days disagree with `RETENTION_DAYS`. Find the ID and edit:
+
+```bash
+docker exec modex-langfuse-minio mc ilm ls local/langfuse
+docker exec modex-langfuse-minio mc ilm rule edit local/langfuse --id <id> --expire-days 90
+```
+
+Equivalent manual ClickHouse commands (the init script's own statements, for
+reference or one-off use without the service):
+
+```bash
+docker exec modex-langfuse-clickhouse clickhouse-client \
+  --query "ALTER TABLE default.traces MODIFY TTL timestamp + INTERVAL 90 DAY"
+docker exec modex-langfuse-clickhouse clickhouse-client \
+  --query "ALTER TABLE default.observations MODIFY TTL start_time + INTERVAL 90 DAY"
+docker exec modex-langfuse-clickhouse clickhouse-client \
+  --query "ALTER TABLE default.scores MODIFY TTL timestamp + INTERVAL 90 DAY"
+docker exec modex-langfuse-clickhouse clickhouse-client \
+  --query "ALTER TABLE default.blob_storage_file_log MODIFY TTL created_at + INTERVAL 90 DAY"
+# events tables need the full-text-index flag (their text indices re-validate on ALTER):
+docker exec modex-langfuse-clickhouse clickhouse-client --enable_full_text_index=1 \
+  --query "ALTER TABLE default.events_full MODIFY TTL start_time + INTERVAL 90 DAY"
+docker exec modex-langfuse-clickhouse clickhouse-client --enable_full_text_index=1 \
+  --query "ALTER TABLE default.events_core MODIFY TTL start_time + INTERVAL 90 DAY"
+```
+
+**Ordering footgun (hit live on 2026-08-18):** applying TTL to the events
+tables spawns a `MATERIALIZE TTL` mutation; when the ClickHouse server idles
+near its 768M cap it dies with `MEMORY_LIMIT_EXCEEDED` and the stuck mutation
+blocks all later ALTERs on that table. If it happens:
+`KILL MUTATION WHERE database='default' AND table='events_full'` (and
+`events_core`), then retry — with the system-log opt-out active the server
+idles ~500MiB and the mutation completes.
+
+**Fresh-volume rebuild:** nothing manual. After `down -v` + `up -d`,
+Langfuse migrations recreate the tables without TTL, and
+`langfuse-retention-init` — which `up -d` always runs — waits for those
+tables, then applies the full policy (TTL + ILM) automatically. Its
+container appearing as `Exited (0)` in `docker compose ps -a` is the success
+state, not a fault.
+
+### Disk-growth expectations
+
+- **Langfuse trace data is small**: `events_full` 14.8 MiB + `events_core`
+  2.9 MiB + `scores` 12 KiB after ~2 weeks of runs (~8.7k events). At this
+  rate expect single-digit MiB/day; the 180d TTL caps the working set at a few
+  GiB worst case. Blob (`events/`) objects add roughly the same order (one
+  JSON per event, ~0.6-2 KiB each; the ILM rule caps them at 180d too).
+- **The historic growth driver was ClickHouse system log tables**, not
+  Langfuse data: `trace_log` 1.40 GiB / 70M rows (query profiler writes
+  continuously), `asynchronous_metric_log` 405 MiB / 688M rows,
+  `text_log` 499 MiB, `part_log` 194 MiB, `metric_log` 190 MiB — vs ~18 MiB
+  of actual trace data. These are now write-disabled via
+  `docker-compose.langfuse.yml` (`<trace_log remove="1"/>` etc., the Langfuse
+  Terraform-module default). `query_log`, `part_log`, `error_log` stay on
+  per Langfuse docs (useful, small).
+- **Existing system-table data is not reclaimed** by the opt-out — the ~2.7
+  GiB already written stays on disk. One-time manual reclamation if disk
+  pressure demands (owner decision, destructive, skipped by the 2026-08-18
+  change):
+  `docker exec modex-langfuse-clickhouse clickhouse-client --query "SET max_table_size_to_drop=0; TRUNCATE TABLE system.trace_log"` (repeat per table).
+
+### ClickHouse memory cap & transient errors (T13)
+
+ClickHouse is capped at 768M (settled 3GB-stack budget). Known behaviors
+under large scans/bursts, all observed in T13 drills and again during this
+change:
+
+- Fat `events_full` scans under the cap yield **transient 422s AND HTTP-200
+  empty pages** — always poll queries to count-convergence, never conclude
+  from a single empty read.
+- Unthrottled ~1.5k-span bursts OOM-kill MinIO and the collector/worker;
+  ~7 spans/s is the safe ingest rate.
+- TTL-materialization mutations count as big scans: they OOM when the server
+  idles near the cap (see the KILL MUTATION runbook above). Removing the
+  system log tables dropped idle RSS from ~767MiB to ~500MiB, restoring
+  headroom for merges.
+
+### Monitoring: table sizes
+
+```bash
+docker exec modex-langfuse-clickhouse clickhouse-client --query "
+SELECT table, formatReadableSize(sum(bytes_on_disk)) AS disk, sum(rows) AS rows
+FROM system.parts WHERE active AND database='default'
+GROUP BY table ORDER BY sum(bytes_on_disk) DESC FORMAT PrettyCompact"
+
+# system-table check (frozen after the opt-out; query_log may grow slowly):
+docker exec modex-langfuse-clickhouse clickhouse-client --query "
+SELECT name, total_rows, formatReadableSize(total_bytes) FROM system.tables
+WHERE database='system' AND engine LIKE '%MergeTree%' AND total_bytes > 0
+ORDER BY total_bytes DESC LIMIT 10 FORMAT PrettyCompact"
+```
+
+Watch that `events_full` disk trends with ingest rate and that no
+`system.*_log` row count moves except `query_log`.
+

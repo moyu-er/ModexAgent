@@ -121,6 +121,32 @@ services:
         max-file: "3"
     restart: unless-stopped
 
+  otel-collector:
+    image: docker.xuanyuan.run/otel/opentelemetry-collector-contrib:0.158.0
+    container_name: modex-otel-collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      LANGFUSE_BASIC_AUTH: "${LANGFUSE_BASIC_AUTH:-}"
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "127.0.0.1:4318:4318"
+    depends_on:
+      langfuse-web:
+        condition: service_started
+    memswap_limit: 128m
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
   langfuse-db:
     image: docker.xuanyuan.run/postgres:16-alpine
     container_name: modex-langfuse-db
@@ -219,16 +245,16 @@ services:
       timeout: 5s
       retries: 5
       start_period: 1s
-    memswap_limit: 192m
+    memswap_limit: 128m
     deploy:
       resources:
         limits:
           cpus: '0.25'
-          memory: 192M
+          memory: 128M
           pids: 100
         reservations:
           cpus: '0.10'
-          memory: 64M
+          memory: 32M
     logging:
       driver: local
       options:
@@ -267,6 +293,43 @@ services:
         max-file: "3"
     restart: unless-stopped
 
+  # One-shot retention provisioning: ClickHouse TTL (6 trace tables) + MinIO
+  # events/ ILM. Runs to completion on every `up -d`, then exits (restart: "no")
+  # - steady-state memory budget is unaffected (64M cap applies only during
+  #   the boot window). Manual re-run:
+  #   docker compose -f docker-compose.langfuse.yml up -d langfuse-retention-init
+  langfuse-retention-init:
+    image: docker.xuanyuan.run/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: modex-langfuse-retention-init
+    entrypoint: ["/bin/sh", "/etc/langfuse-retention/init.sh"]
+    environment:
+      RETENTION_DAYS: "180"
+      CLICKHOUSE_USER: "clickhouse"
+      CLICKHOUSE_PASSWORD: "clickhouse"
+      MINIO_ROOT_USER: "minio"
+      MINIO_ROOT_PASSWORD: "miniosecret"
+    volumes:
+      - ./langfuse-retention-init.sh:/etc/langfuse-retention/init.sh:ro
+    depends_on:
+      langfuse-web:
+        condition: service_started
+      clickhouse:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    memswap_limit: 64m
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: "no"
+
 volumes:
   langfuse_pgdata:
   langfuse_clickhouse_data:
@@ -290,4 +353,16 @@ configs:
           <logger>
               <level>warning</level>
           </logger>
+
+          <!-- Data retention: opt out of system log tables Langfuse never reads
+               (trace_log was 1.4 GiB / 70M rows and the query profiler writes to
+               it continuously; async_metric_log 688M rows). query_log, part_log
+               and error_log stay enabled per Langfuse docs. Source:
+               https://langfuse.com/self-hosting/configuration/scaling#clickhouse-system-log-tables -->
+          <trace_log remove="1"/>
+          <text_log remove="1"/>
+          <opentelemetry_span_log remove="1"/>
+          <asynchronous_metric_log remove="1"/>
+          <metric_log remove="1"/>
+          <latency_log remove="1"/>
       </clickhouse>

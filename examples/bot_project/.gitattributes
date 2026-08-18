@@ -2,3 +2,8 @@
 # They MUST be stored verbatim — never let core.autocrlf convert LF<->CRLF,
 # which corrupts the byte stream and silently breaks token counting.
 *.tiktoken binary -text -diff
+
+# Container shell entrypoints (langfuse-retention-init.sh etc.) run under
+# /bin/sh inside Linux images: CRLF makes them die on line 1 (`set -eu\r`).
+# Force LF in index and working tree on every platform.
+*.sh text eol=lf
