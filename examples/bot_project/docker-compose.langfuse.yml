@@ -46,12 +46,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    memswap_limit: 1024m
+    memswap_limit: 1152m
     deploy:
       resources:
         limits:
           cpus: '1.0'
-          memory: 1024M
+          memory: 1152M
           pids: 200
         reservations:
           cpus: '0.25'
@@ -104,12 +104,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    memswap_limit: 768m
+    memswap_limit: 864m
     deploy:
       resources:
         limits:
           cpus: '0.75'
-          memory: 768M
+          memory: 864M
           pids: 200
         reservations:
           cpus: '0.25'
@@ -198,6 +198,12 @@ services:
       CLICKHOUSE_DB: default
       CLICKHOUSE_USER: clickhouse
       CLICKHOUSE_PASSWORD: clickhouse
+      # Shrink jemalloc retention: thread stacks + allocator tcaches otherwise
+      # pin hundreds of MiB (THP rounds every touched stack to 2MiB pages;
+      # narenas:2 + 5s decay returns freed pages to the OS quickly). Verified
+      # bootable in isolation — the earlier startup deadlock came from capping
+      # max_thread_pool_size, not from this.
+      MALLOC_CONF: "narenas:2,dirty_decay_ms:5000,muzzy_decay_ms:5000,thp:never"
     volumes:
       - langfuse_clickhouse_data:/var/lib/clickhouse
       - langfuse_clickhouse_logs:/var/log/clickhouse-server
@@ -210,12 +216,12 @@ services:
       timeout: 5s
       retries: 20
       start_period: 30s
-    memswap_limit: 768m
+    memswap_limit: 1g
     deploy:
       resources:
         limits:
           cpus: '1.0'
-          memory: 768M
+          memory: 1G
           pids: 1024
         reservations:
           cpus: '0.25'
@@ -245,12 +251,12 @@ services:
       timeout: 5s
       retries: 5
       start_period: 1s
-    memswap_limit: 128m
+    memswap_limit: 192m
     deploy:
       resources:
         limits:
           cpus: '0.25'
-          memory: 128M
+          memory: 192M
           pids: 100
         reservations:
           cpus: '0.10'
@@ -346,7 +352,25 @@ configs:
           <uncompressed_cache_size>16777216</uncompressed_cache_size>
           <mmap_cache_size>8388608</mmap_cache_size>
 
-          <!-- Memory: let cgroup be the sole hard limit, no internal cap -->
+          <!-- Thread pools: default background_schedule_pool_size=512 spawns
+               512 idle scheduler threads (~1.3MiB THP'd stack each ≈ 700MiB
+               anon). Shrink ONLY this pool — do NOT lower max_thread_pool_size
+               (global pool): named pools borrow threads from it on demand, and
+               capping the global pool starves startup into an all-futex
+               deadlock (verified live 2026-08-18: 76 threads, all futex,
+               never binds ports). -->
+          <background_schedule_pool_size>16</background_schedule_pool_size>
+
+          <!-- Memory: cgroup is the sole hard ceiling (ratio 1.0 → internal
+               limit = container limit). Do NOT add an explicit
+               max_server_memory_usage below the cgroup cap: the resident
+               binary/shared-lib pages alone form a ~450MiB RSS floor
+               (measured: anon only 85MiB of 532MiB RSS), so a 600MiB cap
+               left ~70MiB for merges — boot-time merges failed in a retry
+               loop and startup deadlocked before binding ports (verified
+               live 2026-08-18). Bloat is controlled by shrinking thread
+               pools + allocator settings instead, which brought idle anon
+               from ~930MiB (692 threads) to ~85MiB (76 threads). -->
           <max_server_memory_usage_to_ram_ratio>1.0</max_server_memory_usage_to_ram_ratio>
 
           <!-- Logging: reduce noise -->

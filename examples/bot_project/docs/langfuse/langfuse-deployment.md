@@ -124,18 +124,18 @@ the collector's 1 s batch timeout). A `health_check` extension on
 `:13133` reports readiness in `docker logs modex-otel-collector` (no
 compose healthcheck — the distroless image has no shell).
 
-**Memory budget (3072M total)**:
+**Memory budget (3616M total)**:
 
 | Service | Limit |
 |---|---|
-| langfuse-web | 1024M |
-| langfuse-worker | 768M |
-| clickhouse | 768M |
+| langfuse-web | 1152M |
+| langfuse-worker | 864M |
+| clickhouse | 1024M |
+| minio | 192M |
 | otel-collector | 128M |
 | langfuse-db (postgres) | 128M |
-| minio | 128M |
 | redis | 128M |
-| **Total** | **3072M** |
+| **Total** | **3616M** |
 
 ### Degradation behavior (R1–R6, drill-verified 2026-08-17)
 
@@ -611,9 +611,10 @@ produces only `ok/skip` log lines, zero new mutations, zero duplicate rules.
 
 **Memory budget:** the service has a 64M cap but only during the boot window
 — it exits immediately after converging, so the steady-state budget stays
-3072M across the 7 long-running services. (Shrinking MinIO to fund it
-permanently was rejected: T13 showed MinIO OOM-kills at 128M under span
-bursts; halving it would reopen a known failure mode for a one-shot's sake.)
+3616M across the 7 long-running services. (Shrinking MinIO to fund it
+permanently was rejected: T13 showed MinIO OOM-kills under span bursts at
+its old 128M cap — it now runs at 192M; halving it would reopen a known
+failure mode for a one-shot's sake.)
 
 **Troubleshooting:**
 
@@ -716,7 +717,10 @@ state, not a fault.
 
 ### ClickHouse memory cap & transient errors (T13)
 
-ClickHouse is capped at 768M (settled 3GB-stack budget). Known behaviors
+ClickHouse is capped at 1024M (raised from 768M on 2026-08-18 together with
+the idle-memory tuning below; stack budget raised to 3616M the same day —
+web 1152M / worker 864M / minio 192M — after steady-state usage showed
+minio at 74% and worker at 71% of their old caps). Known behaviors
 under large scans/bursts, all observed in T13 drills and again during this
 change:
 
@@ -729,6 +733,47 @@ change:
   idles near the cap (see the KILL MUTATION runbook above). Removing the
   system log tables dropped idle RSS from ~767MiB to ~500MiB, restoring
   headroom for merges.
+
+### ClickHouse idle-memory tuning (2026-08-18, all live-verified)
+
+**Why ClickHouse RSS looked bloated.** The stock image ships defaults for
+big hosts: `background_schedule_pool_size=512` pre-spawns 512 idle scheduler
+threads, and the kernel's transparent hugepages (THP=always inside the Docker
+Desktop VM) round every touched thread stack up to 2MiB pages. Measured:
+692 idle threads, ~930MiB anon RSS with only ~126MiB live (`MemoryTracking`),
+and idle RSS grew to fill whatever cgroup cap existed (745MiB at a 768M cap,
+950MiB at a 1G cap) — while data queries failed with RSS-corrected
+`MEMORY_LIMIT_EXCEEDED` and TTL mutations stuck.
+
+**What shipped** (in `docker-compose.langfuse.yml`):
+
+1. `<background_schedule_pool_size>16</background_schedule_pool_size>` —
+   idle threads 692 → 188, anon ~930MiB → ~320MiB, THP-anon 538 → 46MiB.
+2. `MALLOC_CONF: "narenas:2,dirty_decay_ms:5000,muzzy_decay_ms:5000,thp:never"`
+   — the persistent form of `SYSTEM JEMALLOC PURGE` (official low-memory
+   tip): freed pages return to the OS within seconds and thread stacks stop
+   being THP-inflated.
+3. Container limit 768M → 1G. No explicit `max_server_memory_usage` — the
+   cgroup is the sole ceiling (`ratio 1.0`).
+
+**Two footguns found the hard way (do not re-add either):**
+
+- **Never cap `max_thread_pool_size`.** Named pools (BgSchPool, MergeMutate,
+  …) borrow threads from the global pool on demand; capping the global pool
+  starves startup into a deadlock — all threads sleeping on futexes, the
+  server never binds :9000/:8123, healthcheck goes unhealthy (verified live;
+  reproduces with `max_thread_pool_size=64`). Shrinking
+  `background_schedule_pool_size` alone is safe.
+- **Never set an explicit `max_server_memory_usage` below the cgroup cap.**
+  Resident binary/shared-lib pages alone form a ~450MiB RSS floor (anon is
+  only ~85MiB of a 532MiB RSS); a 600MiB cap left ~70MiB for merges, so
+  boot-time merges failed in a retry loop and data queries were rejected
+  (RSS-corrected limit check). The cgroup limit is the correct single
+  ceiling.
+
+Resulting steady state: ~188 threads, RSS ~770MiB (≈450MiB reclaimable
+file-backed binary pages + ~320MiB anon), boot peak ~837MiB — comfortably
+inside the 1G cap, and idle RSS no longer scales with the container limit.
 
 ### Monitoring: table sizes
 
