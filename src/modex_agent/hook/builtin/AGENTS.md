@@ -17,7 +17,7 @@ channel — see the separate table below.
 | `logging.py` | `RunLoggingHook` | `AfterLLMResponseHook`, `BeforeToolExecutionHook`, `AfterToolExecutionHook` | after_llm_response, before/after_tool_execution | Basic execution logging |
 | `runtime_context.py` | `RuntimeContextHook` | `StartNodeTurnHook`, `BeforeToolExecutionHook`, `AfterToolExecutionHook` | start_node_turn, before/after_tool_execution | Tracks tool calls per session via RuntimeContextManager |
 | `inbox_flush.py` | `InboxFlushHook` | `StartNodeTurnHook`, `BeforeIterationHook` | start_node_turn, before_iteration | Flushes inbox messages at fresh-turn start |
-| `subagent_auto_send.py` | `SubagentAutoSendHook` | `FinallyGraphHook` | finally_graph | On subagent turn completion, writes the numbered OUTPUT_<n>.md deliverable (hook-owned, not subagent-written) and notifies the parent via the bus (notification truncated ≤300 chars; result metadata carries only the output path) |
+| `subagent_auto_send.py` | `SubagentAutoSendHook` | `OutcomeFinallyHook` | finally_graph | On subagent turn completion, writes the numbered OUTPUT_<n>.md deliverable (hook-owned, not subagent-written) and notifies the parent via the bus (notification truncated ≤300 chars; result metadata carries only the output path). The suspend leg (`result=None`) is skipped by `OutcomeFinallyHook` — one notification per logical turn |
 | `env_injection.py` | `NativeEnvInjectionHook` | `BeforeGraphHook` | before_graph | Populates `MODEX_*` env contextvars for native agent subprocess tools |
 | `loop_detection.py` | `LoopDetectionHook` | `AfterLLMResponseHook` | after_llm_response | Detects ReAct tool-repeating loops and force-exits the turn (stateless) |
 | `experience_review.py` | `ExperienceReviewHook` | `AfterGraphHook` | after_graph | Background conversation-review agent; spawns its own task after graph execution |
@@ -25,7 +25,7 @@ channel — see the separate table below.
 | `current_time.py` | `CurrentTimeInjectionHook` | `StartNodeTurnHook` | start_node_turn | Injects second-precision current time (with timezone and weekday) as a system-reminder at fresh-turn start |
 | `todo_continuation.py` | `TodoContinuationHook` | `AfterTurnHook` | after_turn | The primary continuation driver. Registered per-pool in `pipeline_wiring.py` with `priority=-1000` (guarantees first execution among AfterTurnHook sources via stable sort). Tree-aware: accepts `tree: SessionTreeManager \| None = None` — when set and the session's subtree has >1 active nodes (subagents still working), skips the reminder entirely. Injects a system-reminder with the full active (pending + in_progress) todo list, sets `CONTINUATION_REQUEST`, and sets `CONTINUATION_RENEW_MAX_TURNS` (watchdog: authorizes the gate to extend `MAX_TURNS` by 1 when the agent is still making progress). Anti-deadlock: caches sha256 signature of active todo content+status; skips if unchanged since last check. Clears the cached signature when no active todos remain. Independent of other hooks — no OR/AND coordination |
 | `checkpoint.py` | `CheckpointHook` | `AfterIterationHook` | after_iteration | Captures per-iteration checkpoint snapshots |
-| `training_data.py` | `TrainingDataHook` | `FinallyGraphHook` | finally_graph | Records training data at graph teardown |
+| `training_data.py` | `TrainingDataHook` | `OutcomeFinallyHook` | finally_graph | Records training data at graph teardown (suspend leg skipped by `OutcomeFinallyHook`) |
 
 ## Continuation Gate (AfterTurnNode)
 

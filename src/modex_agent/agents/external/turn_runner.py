@@ -239,7 +239,12 @@ class ExternalTurnRunner(TurnRunner):
                 session_id,
                 agent_name,
             )
-            await emitter.emit_complete(AgentResult(stop_reason=StopReason.CANCELLED))
+            # Assign before re-raise so the shielded FINALLY_GRAPH below sees a
+            # terminal CANCELLED outcome, never ``result=None`` — the suspend
+            # signature is reserved for GraphInterrupt approval suspension
+            # (mirrors the ReAct cancel path in agents/react/agent.py).
+            result = AgentResult(stop_reason=StopReason.CANCELLED)
+            await emitter.emit_complete(result)
             raise
         except Exception as exc:
             # Defensive: ExternalAgent.run() catches its own exceptions

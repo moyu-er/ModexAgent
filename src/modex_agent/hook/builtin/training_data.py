@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.core.constants import StopReason
-from modex_agent.hook.abc import FinallyGraphHook
+from modex_agent.hook.abc import OutcomeFinallyHook
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.trace.scoring import TrajectoryMetrics
 from modex_agent.trace.semconv import GenAiAttr, SpanKind, SpanName, SpanStatusCode
@@ -66,12 +66,13 @@ _NON_TRAINING_STOP_REASONS: frozenset[StopReason] = frozenset(
 )
 
 
-class TrainingDataHook(FinallyGraphHook):
+class TrainingDataHook(OutcomeFinallyHook):
     """Tag a turn's trace with the ``gen_ai.training.relevant`` attribute.
 
-    Stateless across turns: every ``finally_graph`` invocation re-reads the
+    Stateless across turns: every ``on_outcome`` invocation re-reads the
     ``ReActTurnState`` from ``ctx.runtime.state`` and the trace store from
     ``ctx.runtime.services.trace_store``, so pool-mode session reuse is safe.
+    The suspend leg (``result=None``) is skipped by ``OutcomeFinallyHook``.
     """
 
     def __init__(
@@ -87,23 +88,13 @@ class TrainingDataHook(FinallyGraphHook):
     def name(self) -> str:
         return "training_data"
 
-    async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None:
-        """Tag the turn's trace, except on an approval suspend.
-
-        ``result=None`` here is the GraphInterrupt suspend payload — the
-        ReAct agent sets ``result = None`` only on ``except GraphInterrupt``
-        (agents/react/agent.py) and re-enters ``actual_turn()`` after the
-        resume, while every terminal path assigns a concrete ``AgentResult``
-        first. This hook receives no ``error`` kwarg (result-only dispatch),
-        so ``result is None`` carries the same suspend semantics as
-        ``RootSpanHook``'s ``result is None and error is None`` sentinel.
-        Emitting nothing at suspend is load-bearing: the training exporter
-        accepts a trajectory on ANY ``training_relevant=true`` tag, so a
-        suspend-time ``true`` would permanently mark a turn that later
-        terminal-finalizes as failed/cancelled/over-budget.
+    async def on_outcome(self, ctx: AgentContext, result: AgentResult) -> None:
+        """Tag the turn's trace. Emitting nothing at suspend is load-bearing:
+        the training exporter accepts a trajectory on ANY
+        ``training_relevant=true`` tag, so a suspend-time ``true`` would
+        permanently mark a turn that later terminal-finalizes as
+        failed/cancelled/over-budget.
         """
-        if result is None:
-            return
         react_state = get_react_state(ctx)
         if react_state is None:
             return

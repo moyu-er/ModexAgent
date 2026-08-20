@@ -9,7 +9,12 @@ import uuid
 from typing import TYPE_CHECKING, overload
 
 from modex_agent.core.constants import StopReason
-from modex_agent.hook.abc import ClosableHook, FinallyGraphHook, StartNodeTurnHook
+from modex_agent.hook.abc import (
+    ClosableHook,
+    FinallyGraphHook,
+    StartNodeTurnHook,
+    is_suspend_leg,
+)
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.trace.base_hook import BaseTraceHook
 from modex_agent.trace.scoring import TrajectoryMetrics
@@ -114,15 +119,12 @@ class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook, ClosableH
     ) -> None:
         """Emit the turn's complete root span and release its trace state.
 
-        Suspend vs terminal: the ReAct agent raises ``GraphInterrupt`` for an
-        approval suspend and re-enters ``actual_turn()`` after resume — that
-        path's ``finally`` dispatches with ``result=None`` (the runner never
-        passes ``error``), while every terminal path assigns a concrete
-        ``AgentResult`` first. So ``result is None and error is None`` is the
-        suspend signal: emit nothing, stash nothing, clear nothing — the
+        Suspend vs terminal: ``is_suspend_leg`` (hook/abc.py — the single
+        authority for this interpretation) identifies the approval-suspend
+        dispatch: emit nothing, stash nothing, clear nothing — the
         scalar counters bucket MUST survive so the resumed segment
-        accumulates into the same ``(trace_id, root_span_id)`` bucket and the
-        terminal invocation below derives whole-turn metrics (the turn-state
+        accumulates into the same ``(trace_id, root_span_id)`` bucket and
+        the terminal invocation below derives whole-turn metrics (the turn-state
         snapshot carries neither the stash nor these hook-private counters,
         so anything cleared here is lost to the resume). A suspended turn
         that is never resumed leaks at most its one scalar bucket
@@ -139,7 +141,7 @@ class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook, ClosableH
         restored — so the resumed root span covers the whole turn.
         """
         assert ctx.runtime is not None
-        if result is None and error is None:
+        if is_suspend_leg(result, error):
             return
         trace_id = str(ctx.runtime.state.custom[TurnCustomKey.TRACE_ID])
         root_info = self._session.root_span_info.get(trace_id)

@@ -72,7 +72,7 @@ from typing import TYPE_CHECKING, Any
 from modex_agent.core.constants import ExecutionStrategyKind, StopReason
 from modex_agent.core.message_utils import sanitize_reminder_content
 from modex_agent.core.types import ReminderKind
-from modex_agent.hook.abc import FinallyGraphHook
+from modex_agent.hook.abc import OutcomeFinallyHook
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -83,12 +83,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SubagentAutoSendHook(FinallyGraphHook):
-    """Always-fire result notification for subagents.
+class SubagentAutoSendHook(OutcomeFinallyHook):
+    """Result notification for subagents — one per logical turn.
 
-    Fires on FINALLY_GRAPH (success, error, cancel, max_iterations — always).
-    Sends a markdown result notification to the parent inbox via
-    ``build_agent_comm_message`` from ``message_format.py``.
+    Fires on the terminal FINALLY_GRAPH leg (success, error, cancel,
+    max_iterations); the suspend leg (``result=None``, approval pending) is
+    skipped by ``OutcomeFinallyHook``. Sends a markdown result notification
+    to the parent inbox via ``build_agent_comm_message`` from
+    ``message_format.py``.
 
     Native (react) subagents include the ``Output:`` file path so the parent
     can read the full deliverable.  External coding subagents omit
@@ -129,7 +131,7 @@ class SubagentAutoSendHook(FinallyGraphHook):
 
     # -- FINALLY_GRAPH (always fires) ------------------------------------------
 
-    async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None:
+    async def on_outcome(self, ctx: AgentContext, result: AgentResult) -> None:
         if self._tree is None:
             raise RuntimeError(
                 "SubagentAutoSendHook.tree not wired — "

@@ -27,7 +27,9 @@ from modex_agent.hook.abc import (
     HookPayload,
     HookPoint,
     HookSpec,
+    OutcomeFinallyHook,
     StartNodeTurnHook,
+    is_suspend_leg,
 )
 from modex_agent.hook.runner import HookRunner
 
@@ -53,5 +55,7 @@ __all__ = [
     "HookPoint",
     "HookRunner",
     "HookSpec",
+    "OutcomeFinallyHook",
     "StartNodeTurnHook",
+    "is_suspend_leg",
 ]

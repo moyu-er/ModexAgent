@@ -135,9 +135,9 @@ Graph-level hooks (`BeforeGraphHook` / `AfterGraphHook` / `FinallyGraphHook`) fi
 | 6 | `DeliverRetryHook` | `AfterTurnHook` | ④ after_turn | Injects a deliver-reminder and sets `CONTINUATION_REQUEST` (only when `turn_attempt < MAX_TURNS`) when the agent stops without calling `deliver`. Reminder is always injected so the agent understands why it stopped, even at the turn budget limit. Independent of other AfterTurnHook continuation sources — no OR/AND coordination. Does not set `CONTINUATION_RENEW_MAX_TURNS` (binary signal, no watchdog renewal). Moved from `AfterLLMResponseHook` to `AfterTurnHook` to cover the max-iteration blind spot |
 | 7 | `TodoContinuationHook` ⭐ | `AfterTurnHook` | ④ after_turn | The primary continuation driver — registered first among AfterTurnHook sources. Injects a system-reminder with the full active (pending + in_progress) todo list, sets `CONTINUATION_REQUEST`, and sets `CONTINUATION_RENEW_MAX_TURNS` (watchdog: authorizes the gate to extend `MAX_TURNS` by 1 when the agent is still making progress). Anti-deadlock: caches sha256 signature of active todo content+status in `state.custom[LAST_CONTINUATION_TODO_SIG]`; skips if unchanged since last check (agent made no progress). Clears the cached signature when no active todos remain. Independent of other hooks — no OR/AND coordination |
 | 8 | `ExperienceReviewHook` | `AfterGraphHook` | ⑥ after_graph | Spawns background conversation-review agent after graph execution; main agent only |
-| 9 | `SubagentAutoSendHook` | `FinallyGraphHook` | ⑦ finally_graph | On subagent turn completion, writes numbered OUTPUT\_\<n\>.md deliverable and notifies parent via bus |
-| 10 | `TurnOutcomeNotifyHook` | `FinallyGraphHook` | ⑦ finally_graph | Sends user-facing notification on max_iterations/error turn outcomes |
-| 11 | `TrainingDataHook` | `FinallyGraphHook` | ⑦ finally_graph | Records training data at graph teardown |
+| 9 | `SubagentAutoSendHook` | `OutcomeFinallyHook` | ⑦ finally_graph | On subagent turn completion, writes numbered OUTPUT\_\<n\>.md deliverable and notifies parent via bus (suspend leg skipped by template-method base) |
+| 10 | `TurnOutcomeNotifyHook` | `OutcomeFinallyHook` | ⑦ finally_graph | Sends user-facing notification on max_iterations/error turn outcomes |
+| 11 | `TrainingDataHook` | `OutcomeFinallyHook` | ⑦ finally_graph | Records training data at graph teardown (suspend leg skipped by template-method base) |
 | 12 | `CassetteFlushHook` | `FinallyGraphHook` | ⑦ finally_graph | Saves cassette recording at graph teardown |
 | 13 | `CheckpointHook` | `AfterIterationHook` | after_iteration | Captures per-iteration checkpoint snapshots |
 | — | `EndNodeTurnHook` | (reserved) | ⑤ end_node_turn | ABC + dispatch entry exist for future extensibility; no concrete hook inherits it yet (by design) |
@@ -175,6 +175,30 @@ Default `MAX_TURNS` is 3 (set in `TurnContextBuilder.build_runtime_and_context`)
 | `BEFORE_GRAPH` | `before_graph` | Graph | `actual_turn()` entry, once per call | Env injection, model binding |
 | `AFTER_GRAPH` | `after_graph` | Graph | `actual_turn()` exit (all paths) | Experience review, post-turn logging |
 | `FINALLY_GRAPH` | `finally_graph` | Graph | `actual_turn()` teardown (all paths) | Subagent delivery, cassette flush, training data |
+
+### FINALLY_GRAPH `result=None` Contract
+
+`result=None` (with no `error`) is the **GraphInterrupt approval-suspend
+signature** — the turn has NOT ended; it re-enters `actual_turn()` on resume.
+Terminal legs always dispatch a concrete `AgentResult`.
+
+- **Outcome-dependent hooks** (notifications, deliveries, trace tags — side
+  effects that must fire once per logical turn) MUST inherit
+  `OutcomeFinallyHook` and implement `on_outcome`. The template method skips
+  the suspend leg structurally; a subclass can never see a suspend dispatch.
+  This closes the duplicated-subagent-notification bug class (one logical
+  turn → two envelopes with different `message_id`s → inbox dedup cannot
+  collapse them → parent consumes both).
+- **Cleanup hooks** with correct suspend-leg side effects (idempotent flush,
+  e.g. `CassetteFlushHook`) may keep overriding `finally_graph` directly.
+- `RootSpanHook` dispatches with an `error` variant (crash) and therefore
+  uses the shared predicate `is_suspend_leg(result, error)` from
+  `hook/abc.py` — the single authority for this interpretation.
+- The contract is enforced by
+  `tests/unit/hook/test_finally_graph_suspend_contract.py`: every concrete
+  `FinallyGraphHook` subclass in `src/modex_agent` must be classified there
+  (outcome / cleanup), and outcome hooks are asserted silent on
+  `finally_graph(ctx, None)`.
 | `START_NODE_TURN` | `start_node_turn` | Node | `StartNode` entry (fresh turns only) | Current-time injection, per-turn model binding, inbox flush, runtime context tracking |
 | `END_NODE_TURN` | `end_node_turn` | Node | `EndNode` exit (terminal only) | Post-turn observation |
 | `BEFORE_TURN` | `before_turn` | TurnAttempt | `BeforeTurnNode` entry, per attempt | Turn-attempt initialization |

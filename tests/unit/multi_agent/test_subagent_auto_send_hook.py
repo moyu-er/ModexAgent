@@ -174,7 +174,12 @@ class TestSubagentAutoSendHookFinallyTurn:
         assert "Issue:" in notification
         assert "max_iterations" in notification
 
-    async def test_none_result_still_writes_output_1(self, tmp_path: Path) -> None:
+    async def test_suspend_result_none_writes_nothing_and_notifies_no_one(
+        self, tmp_path: Path
+    ) -> None:
+        """``result=None`` is the GraphInterrupt (approval suspend) dispatch —
+        the turn has not ended, so no OUTPUT file is written and the parent
+        receives no notification (the resumed turn notifies on completion)."""
         runtime_dir = tmp_path / "runtime"
         session_id = "a1b2c3d4.worker"
         bus = _make_bus(tmp_path)
@@ -182,12 +187,8 @@ class TestSubagentAutoSendHookFinallyTurn:
 
         await hook.finally_graph(_make_context(session_id), result=None)
 
-        output_path = runtime_dir / "output" / session_id / "OUTPUT_1.md"
-        notification = await _consume_content(bus)
-        assert output_path.exists()
-        assert "status: failed" in notification
-        assert "Issue:" in notification
-        assert "subagent crashed" in notification
+        assert not (runtime_dir / "output" / session_id).exists()
+        assert await bus.consume("conv123.main") == []
 
     async def test_file_uses_last_assistant_message_without_truncation(
         self,
@@ -609,3 +610,42 @@ class TestSubagentAutoSendHookBuildXml:
             issue="crashed <with> &special 'chars'",
         )
         assert "crashed <with> &special 'chars'" in notification
+
+
+class TestSubagentAutoSendHookSuspendResume:
+    """One logical subagent turn must produce exactly one notification.
+
+    A subagent turn suspended by approval (GraphInterrupt) re-enters
+    ``actual_turn()`` on resume, so FINALLY_GRAPH fires twice: once with
+    ``result=None`` on the suspend leg (``react/agent.py`` sets ``result =
+    None`` before the finally dispatch — "None signals no turn outcome") and
+    once with the real result on completion. A notification fired on the
+    suspend leg is delivered to the parent's inbox as a *second*
+    ``AGENT_RESULT`` envelope with a fresh ``message_id`` — the inbox's
+    message_id dedup cannot collapse it, and the parent consumes both (fold-in
+    while busy, poller turn when idle).
+    """
+
+    async def test_suspend_then_resume_delivers_exactly_one_notification(
+        self, tmp_path: Path
+    ) -> None:
+        runtime_dir = tmp_path / "runtime"
+        session_id = "a1b2c3d4.worker"
+        bus = _make_bus(tmp_path)
+        hook = _make_hook(bus, runtime_dir)
+        ctx = _make_context(session_id)
+
+        # Approval suspend: FINALLY_GRAPH fires with result=None.
+        await hook.finally_graph(ctx, None)
+        # Approval resume: actual_turn() re-enters and the turn completes.
+        await hook.finally_graph(
+            ctx, AgentResult(content="done", stop_reason=StopReason.COMPLETED)
+        )
+
+        messages = await bus.consume("conv123.main")
+        assert len(messages) == 1, (
+            "expected exactly one notification after suspend+resume, got "
+            f"{len(messages)}: "
+            f"{[m.payload.get('content', '')[:80] for m in messages]}"
+        )
+        assert "done" in messages[0].payload["content"]
