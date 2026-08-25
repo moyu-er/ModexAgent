@@ -1,99 +1,58 @@
+"""MCP resilience at the Stage-4 seam (ticket 10).
+
+Ticket 10 moved per-agent MCP loading from the BIZ strategy helper into
+``assemble_native_agent`` (the FW loader reads the chain's shared-connection
+handle). The resilience contract is unchanged: an MCP selection that cannot
+be resolved or connected must NEVER block the agent's tool manager or pool
+creation. Pinned here at the loader seam the strategy path now shares.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
-from tempfile import TemporaryDirectory
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from bot.service.react_strategy import ReactExecutionStrategy
 
-from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.specs import MainAgentSpec
+from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
+from modex_agent.tools.mcp_loader import load_per_agent_mcp
 
 
-class TestBuildToolsMcpResilience:
-    @pytest.fixture
-    def main_spec(self) -> MainAgentSpec:
-        return MainAgentSpec(agent_name="main")
+def _tool_manager_with_sentinel() -> InMemoryToolManager:
+    """A tool manager already holding a registered tool (the agent's other
+    products) — the resilience assertion target."""
 
-    @pytest.fixture
-    def assembly_deps(self) -> PoolAssemblyDeps:
-        return PoolAssemblyDeps()
+    class _SentinelTool:
+        name = "sentinel"
 
-    @pytest.fixture
-    def project_dir(self) -> Path:
-        return Path(__file__).resolve().parent.parent
+        async def execute(self, *args: object, **kwargs: object) -> str:  # type: ignore[no-untyped-def]
+            return "ok"
 
-    @pytest.fixture
-    def data_dir(self) -> Path:
-        with TemporaryDirectory() as tmp:
-            return Path(tmp)
+    tm = InMemoryToolManager(config=ToolManagerConfig())
+    tm.register(_SentinelTool())  # type: ignore[arg-type]
+    return tm
 
-    @pytest.fixture
-    def strategy(self) -> ReactExecutionStrategy:
-        return ReactExecutionStrategy()
 
-    @pytest.mark.asyncio
-    async def test_mcp_empty_selection_skips_loading(
-        self,
-        main_spec: MainAgentSpec,
-        assembly_deps: PoolAssemblyDeps,
-        project_dir: Path,
-        data_dir: Path,
-        strategy: ReactExecutionStrategy,
-    ) -> None:
-        assert main_spec.mcp == []
+@pytest.mark.asyncio
+async def test_mcp_empty_selection_skips_loading(tmp_path: Path) -> None:
+    """Empty selection returns None without touching the filesystem."""
+    tm = _tool_manager_with_sentinel()
 
-        output_adapter = MagicMock()
+    backend = await load_per_agent_mcp(tm, [], tmp_path, "main")
 
-        with patch(
-            "bot.service.builders._load_agent_mcp_tools",
-            new=AsyncMock(return_value=([], None)),
-        ) as mock_load_mcp:
-            tool_manager, mcp_manager, _todo_store = await strategy._build_tools(
-                main_spec=main_spec,
-                assembly_deps=assembly_deps,
-                terminal_manager=None,
-                project_dir=project_dir,
-                output_adapter=output_adapter,
-                pool_name="main",
-                data_dir=data_dir,
-                pool_data=None,
-                root_provider=None,
-            )
+    assert backend is None
+    assert tm.list_tools() == ["sentinel"]
 
-        mock_load_mcp.assert_not_called()
-        assert mcp_manager is None
 
-    @pytest.mark.asyncio
-    async def test_mcp_failure_does_not_block_tool_manager(
-        self,
-        assembly_deps: PoolAssemblyDeps,
-        project_dir: Path,
-        data_dir: Path,
-        strategy: ReactExecutionStrategy,
-    ) -> None:
-        main_spec = MainAgentSpec(agent_name="main", mcp=["playwright"])
+@pytest.mark.asyncio
+async def test_mcp_failure_does_not_block_tool_manager(tmp_path: Path) -> None:
+    """An unresolvable MCP selection (no registry.json on disk) drops to
+    ``None`` with a warning — the previously-registered tools survive and
+    agent assembly proceeds."""
+    tm = _tool_manager_with_sentinel()
 
-        output_adapter = MagicMock()
+    backend = await load_per_agent_mcp(
+        tm, ["playwright"], tmp_path / "missing", "main"
+    )
 
-        with patch(
-            "bot.service.builders._load_agent_mcp_tools",
-            new=AsyncMock(side_effect=RuntimeError("MCP boom")),
-        ) as mock_load_mcp:
-            tool_manager, mcp_manager, _todo_store = await strategy._build_tools(
-                main_spec=main_spec,
-                assembly_deps=assembly_deps,
-                terminal_manager=None,
-                project_dir=project_dir,
-                output_adapter=output_adapter,
-                pool_name="main",
-                data_dir=data_dir,
-                pool_data=None,
-                root_provider=None,
-            )
-
-        mock_load_mcp.assert_called_once()
-        assert mcp_manager is None
-        tool_names = tool_manager.list_tools()
-        assert len(tool_names) > 0
+    assert backend is None
+    assert tm.list_tools() == ["sentinel"]

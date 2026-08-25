@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-07-24 -->
+<!-- Updated: 2026-08-19 -->
 
 # input_pipeline
 
@@ -20,21 +20,26 @@ A slash command flows through the pipeline with a `command_status` lifecycle (`U
                ▼                           ▼
      ┌─────────────────────────────────────────┐
      │ S4  SetChannelStage                      │  tag conversation with channel (runs first!)
+     │     ResolveWorkspaceStage                │  anchor the live workspace root
      ├─────────────────────────────────────────┤
      │ S2  EnvironmentControlStage              │  IM-only: /cd, /pool, /exit, /pwd
      │ S3  SessionControlStage                  │  IM-only: /stop (cancel turn)
      ├─────────────────────────────────────────┤
      │ S5  ResolvePoolStage                     │  resolve pool + agent, persist UI choice
+     │     ModelChoiceStage                     │  WebUI-only: resolve per-turn model
      │    CommandDispatchStage                  │  shared: cross-channel commands (/continue)
+     │    AttachmentIngestStage                 │  ingest staged attachment references
+     │    ApprovalStage                         │  claim approval decisions
      │ S6  SkillParseStage                      │  validate /skillName, convert to XML
+     │    UnsupportedCommandStage               │  reject unclaimed slash commands
      │ S7  PersistUserMessageStage              │  write UserMessageEvent to transcript store
      │ S8  EnqueueStage                         │  build InputMessage, enqueue via ctx callback
      └─────────────────────────────────────────┘
 ```
 
 - **S0 (adapter-side normalization)**: NOT a pipeline stage. Each channel adapter (QQ / Telegram `_on_message`, WebSocket `_ws_send_message`) handles dedup, attachment download, content extraction and produces a seed `UserInputEnvelope`. This keeps channel-specific concerns in the adapter layer.
-- **IM pipeline** (8 stages: S4→S2→S3→S5→CommandDispatch→S6→S7→S8): Full path for IM channels. S4 runs FIRST so ``ChannelRouterOutputAdapter`` can route command responses to the correct channel. S2/S3 intercept IM-only control commands before they reach persistence or the agent queue.
-- **WebUI pipeline** (6 stages: S4→S5→CommandDispatch→S6→S7→S8): WebUI has UI-level controls for workspace/pool/session operations, so S2/S3 are skipped. Unknown `/command` typed in the chat box reaches S6 and terminates with an error notice. The pause button sends a WebSocket `pause` action which invokes the same control-channel cancellation as IM `/stop`.
+- **IM pipeline** (12 stages): Full path for IM channels. S4 runs FIRST so ``ChannelRouterOutputAdapter`` can route command responses to the correct channel. S2/S3 intercept IM-only control commands before they reach persistence or the agent queue.
+- **WebUI pipeline** (11 stages): WebUI has UI-level controls for workspace/pool/session operations, so S2/S3 are skipped and `ModelChoiceStage` is included. Unknown `/command` input terminates at `UnsupportedCommandStage`. The pause button sends a WebSocket `pause` action which invokes the same control-channel cancellation as IM `/stop`.
 
 ## Pipeline Semantics
 
@@ -44,6 +49,28 @@ Each stage is an `InputStage` subclass. It receives a `UserInputEnvelope` and a 
 - **`Terminate(reason=..., response=...)`** — stop the pipeline. The envelope is not persisted and not enqueued. The `response` dict is surfaced to the user (pool switch notice, invalid skill error, etc.).
 
 The pipeline runs stages in order and stops at the first `Terminate`. There is no branching or conditional skip beyond early termination.
+
+### Slot-based assembly
+
+`build_im_pipeline()` and `build_webui_pipeline()` never instantiate concrete
+stages. They resolve every stage factory by name from the service-level
+`ComponentRegistry` under `ComponentSlot.INPUT_STAGE`, construct the factory's
+config model from per-stage constructor kwargs, and await
+`factory.create(config, service_assembly_ctx)`. Configs are ALWAYS built from
+the registry-resolved factory's own `config_model` — never from a direct
+plugin-module import — because directory-discovered plugin files load under
+synthetic module names and a cross-identity instance fails validation
+(regression 2026-08-20).
+
+The IM and WebUI skeletons remain code-defined tuples in `assembly.py`. Their
+relative order is not configurable through YAML, roster, or plugin metadata.
+Additional plugin stage names are sorted deterministically and inserted at the
+single code-defined extension point immediately before
+`UnsupportedCommandStage`; plugins can add behavior there but cannot reorder the
+built-in skeleton. Constructor dependencies such as `skill_registry`,
+`known_pools`, `workspace_controller`, and `bot_model_config` travel through the
+corresponding frozen factory config model, while service/workspace dependencies
+come from the shared `AssemblyContext`.
 
 ## Stage Reference
 
@@ -168,8 +195,10 @@ This pipeline reuses the framework's `InputAdapter._try_intercept_control` for `
 1. Create a class extending `InputStage` in `stages/`.
 2. Implement `async def process(self, envelope: UserInputEnvelope, ctx: BotInputContext) -> StageResult`.
 3. Return `Continue(value=envelope)` to pass through, or `Terminate(reason=..., response=...)` to stop.
-4. Add the stage to `build_im_pipeline()` and/or `build_webui_pipeline()` in `assembly.py` at the correct position.
-5. If the stage needs new context dependencies, add them to `BotInputContext` and update callers.
+4. Register a `ComponentFactory` under `ComponentSlot.INPUT_STAGE`; a custom name runs at the fixed extension point.
+5. Only built-in stages may be added to the code-defined IM/WebUI skeleton tuples, preserving the existing relative order.
+6. Carry constructor inputs in the factory's frozen config model or consume service/workspace dependencies from `AssemblyContext`.
+7. If processing needs new per-message dependencies, add them to `BotInputContext` and update callers.
 
 ## Adding a New Channel
 

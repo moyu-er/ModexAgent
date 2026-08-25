@@ -52,7 +52,7 @@ from modex_agent.multi_agent.tools import CommunicationTarget
 logger = logging.getLogger(__name__)
 
 #: Resolve a workspace root to its ``PoolWorkspaceResources`` bundle.
-#: In production this is ``WorkspaceRegistry.get_or_open`` + ``materialize``.
+#: In production this is ``ScopeRegistry.get_or_open`` + ``materialize``.
 WorkspaceResolver = Callable[[Path], Awaitable[PoolWorkspaceResources]]
 
 #: Resolve a ``BotRecordScope`` + ``PoolWorkspaceResources`` to the
@@ -98,7 +98,7 @@ class BotControlFacade:
     """Application orchestrator for the control API.
 
     Dependencies are injected as callbacks so the facade is testable in
-    isolation (Seam 1) without constructing a full ``WorkspaceRegistry`` +
+    isolation (Seam 1) without constructing a full ``ScopeRegistry`` +
     memory system.
     """
 
@@ -168,7 +168,7 @@ class BotControlFacade:
         self._validate_history_target(caller, pool_instance)
 
         target_agent = self._resolve_target_agent(caller)
-        if target_agent == pool_instance.main_agent_name:
+        if target_agent == pool_instance.root_agent_name:
             execution_strategy = pool_instance.main_execution_strategy
         else:
             target = pool_instance.target_store.get(target_agent)
@@ -289,9 +289,9 @@ class BotControlFacade:
         # 5. Resolve target from the live CommunicationTargetStore.
         target = pool_instance.target_store.get(request.target_agent)
         if target is None:
-            if request.target_agent == pool_instance.main_agent_name:
+            if request.target_agent == pool_instance.root_agent_name:
                 target = CommunicationTarget(
-                    name=pool_instance.main_agent_name,
+                    name=pool_instance.root_agent_name,
                     kind=AgentCommKind.NORMAL,
                     pool_name=caller.pool,
                     execution_strategy=pool_instance.main_execution_strategy,

@@ -10,6 +10,7 @@ called earlier from :meth:`WebUIServer._setup_routes`), matching the
 Routes registered:
     GET  /api/workspace         -- home path, recent workspaces, and timezone.
     POST /api/workspace/cd      -- change current workspace directory.
+    POST /api/workspace/create  -- create a workspace at runtime (ticket 17).
     POST /api/workspace/pick    -- open OS-native folder picker and switch.
     GET  /api/workspace/recent  -- recently visited workspace paths.
 
@@ -198,6 +199,66 @@ async def handle_workspace_cd(request: web.Request) -> web.Response:
     )
 
 
+async def handle_workspace_create(request: web.Request) -> web.Response:
+    """``POST /api/workspace/create`` -- create a workspace at runtime.
+
+    Body ``{"name": "...", "backend": "sqlite" | "file" | null}``. Creation
+    writes the per-workspace declaration to ``config/scopes/workspaces/``,
+    materializes the workspace through the registry (its pools boot from
+    the declaration), and returns the new workspace's path — the client
+    then switches to it the same way ``/cd`` does. No restart is involved.
+    """
+    server: WebUIServer = request.app["server"]
+    creator = server._workspace_creator
+    if creator is None:
+        return web.json_response(
+            {"success": False, "error": "workspace creation not configured"},
+            status=503,
+        )
+    try:
+        body = await request.json()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to parse workspace/create JSON body: %s", exc)
+        return web.json_response({"error": "invalid body"}, status=400)
+    name = body.get("name") if isinstance(body, dict) else None
+    backend = body.get("backend") if isinstance(body, dict) else None
+    if not isinstance(name, str) or not name.strip():
+        return web.json_response({"error": "missing workspace name"}, status=400)
+    if backend is not None and (not isinstance(backend, str) or not backend.strip()):
+        return web.json_response({"error": "invalid backend"}, status=400)
+    backend_name = backend.strip() if isinstance(backend, str) and backend.strip() else None
+    from bot.workspace.dynamic_workspaces import (
+        WorkspaceCreationError,
+        WorkspaceExistsError,
+    )
+
+    try:
+        result = await creator(name.strip(), backend_name)
+    except WorkspaceExistsError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    except WorkspaceCreationError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("workspace/create failed")
+        return web.json_response(
+            {"error": f"workspace creation failed: {exc}"}, status=500
+        )
+    if server._recent_workspaces is not None:
+        server._recent_workspaces.add(str(result.root))
+    return web.json_response(
+        {
+            "success": True,
+            "name": result.name,
+            "path": str(result.root),
+            "cwd": str(result.root),
+            "notice": (
+                f"workspace {result.name!r} created at {result.root} "
+                f"({len(result.pools)} pool(s) booted)"
+            ),
+        }
+    )
+
+
 async def handle_workspace_pick(request: web.Request) -> web.Response:
     """``POST /api/workspace/pick`` -- open the OS-native folder picker and switch.
 
@@ -309,6 +370,7 @@ def register_workspace_routes(server: WebUIServer) -> None:
         app["server"] = server
     app.router.add_get("/api/workspace", handle_workspace)
     app.router.add_post("/api/workspace/cd", handle_workspace_cd)
+    app.router.add_post("/api/workspace/create", handle_workspace_create)
     app.router.add_post("/api/workspace/pick", handle_workspace_pick)
     app.router.add_get("/api/workspace/recent", handle_workspace_recent)
 
@@ -317,6 +379,7 @@ __all__ = [
     "clear_dir_contents",
     "handle_workspace",
     "handle_workspace_cd",
+    "handle_workspace_create",
     "handle_workspace_pick",
     "handle_workspace_recent",
     "known_workspace_data_roots",

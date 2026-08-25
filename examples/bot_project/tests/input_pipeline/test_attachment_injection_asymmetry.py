@@ -32,6 +32,10 @@ from modex_agent.media.models import AttachmentLocator, Kind
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.workspace.runtime import bind_workspace_root
+from tests.input_pipeline.assembly_support import (
+    TEST_ASSEMBLY_CTX,
+    TEST_COMPONENT_REGISTRY,
+)
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
@@ -110,7 +114,9 @@ async def test_injection_is_transient_transcript_excludes_it() -> None:
             current_ws_provider=(lambda r=root: r),
             media_store=media_store,
         )
-        pipeline = build_webui_pipeline(
+        pipeline = await build_webui_pipeline(
+            registry=TEST_COMPONENT_REGISTRY,
+            ctx=TEST_ASSEMBLY_CTX,
             skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
         )
 

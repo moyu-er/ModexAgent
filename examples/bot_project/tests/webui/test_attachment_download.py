@@ -35,6 +35,10 @@ from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
+from tests.input_pipeline.assembly_support import (
+    TEST_ASSEMBLY_CTX,
+    TEST_COMPONENT_REGISTRY,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -67,7 +71,9 @@ class _NoSkill(SkillRegistry):
         return None
 
 
-def _full_pipeline_server(tmp_path: Path) -> tuple[WebUIServer, WorkspaceScopedMediaStore]:
+async def _full_pipeline_server(
+    tmp_path: Path,
+) -> tuple[WebUIServer, WorkspaceScopedMediaStore]:
     """Build a WebUIServer whose input pipeline + context are wired with a real
     WorkspaceScopedMediaStore (the default fixture wires none). Used by the
     integration cases that exercise ingest → perception → download end-to-end.
@@ -85,7 +91,9 @@ def _full_pipeline_server(tmp_path: Path) -> tuple[WebUIServer, WorkspaceScopedM
     pool_store = MagicMock()
     pool_store.get.return_value = "main"
     cmd = MagicMock()
-    pipe = build_webui_pipeline(
+    pipe = await build_webui_pipeline(
+        registry=TEST_COMPONENT_REGISTRY,
+        ctx=TEST_ASSEMBLY_CTX,
         skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
     )
     ctx = BotInputContext(
@@ -656,7 +664,7 @@ async def test_upload_ws_send_ingest_preprocess_e2e() -> None:
     png_bytes = _PNG_MAGIC + b"\x00" * 40
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        server, media_store = _full_pipeline_server(root)
+        server, media_store = await _full_pipeline_server(root)
         session_id = "web:i2.main"
 
         # Capture the InputMessage EnqueueStage builds so preprocess runs on the
@@ -780,7 +788,7 @@ async def test_ingest_then_download_round_trip() -> None:
     png_bytes = _PNG_MAGIC + b"\x00" * 40
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        server, _ = _full_pipeline_server(root)
+        server, _ = await _full_pipeline_server(root)
         session_id = "web:i3.main"
 
         # Ingest directly through the pipeline (the WS adapter would also work,

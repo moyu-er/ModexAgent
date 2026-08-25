@@ -35,19 +35,15 @@ from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook import HookRunner
 from modex_agent.hook.builtin import NativeEnvInjectionHook
 from modex_agent.ioc.configs.approval import ApprovalConfig
-from modex_agent.multi_agent.pool_config import PoolStore
+from modex_agent.multi_agent.communication.peer_resolution import PeerLink
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.specs import (
-    MainAgentSpec,
-    PoolSpec,
-    SubagentSpec,
-)
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+from modex_agent.scope.spec import AgentSpec, PoolSpec
 
 pytestmark = pytest.mark.skipif(
     shutil.which("modexctl") is None,
@@ -187,15 +183,12 @@ def _find_env_hook(pipeline: AgentPipeline) -> NativeEnvInjectionHook:
     )
 
 
-def _write_peer_pool(project_dir: Path, peer_name: str, peer_main: str) -> None:
-    """Write a minimal peer pool to disk so PoolStore.read_pool succeeds."""
-    store = PoolStore(base_dir=project_dir)
-    spec = PoolSpec(
-        name=peer_name,
-        main_agent_name=peer_main,
-        main=MainAgentSpec(agent_name=peer_main, description=f"{peer_main} peer"),
+def _peer_link(peer_name: str, peer_main: str) -> PeerLink:
+    return PeerLink(
+        peer_pool=peer_name,
+        peer_agent=peer_main,
+        peer_description=f"{peer_main} peer",
     )
-    store.write_pool(peer_name, spec)
 
 
 def test_wire_main_pipeline_builds_complete_pool_map_and_targets(tmp_path: Path) -> None:
@@ -209,14 +202,11 @@ def test_wire_main_pipeline_builds_complete_pool_map_and_targets(tmp_path: Path)
     peer_name = "peer_pool"
     peer_main = "peer_main"
 
-    _write_peer_pool(project_dir, peer_name, peer_main)
-
     pool_spec = PoolSpec(
         name=pool_name,
-        main_agent_name=main_name,
-        main=MainAgentSpec(agent_name=main_name),
-        subagents=[
-            SubagentSpec(agent_name=sub_name, description="explore subagent"),
+        agents=[
+            AgentSpec(name=main_name),
+            AgentSpec(name=sub_name, parent=main_name, description="explore subagent"),
         ],
         peers=[peer_name],
     )
@@ -225,20 +215,22 @@ def test_wire_main_pipeline_builds_complete_pool_map_and_targets(tmp_path: Path)
     pool = _StandInPool(main_name, pipeline)
     _wire_main_pipeline(
         pool=pool,
-        main_agent_name=main_name,
+        root_agent_name=main_name,
         inbox_consumer=MagicMock(name="inbox_consumer"),
         notification_service=MagicMock(name="notification_service"),
         shared_interceptor_chain=MagicMock(name="interceptor_chain"),
         im_ui=MagicMock(name="im_ui"),
-        main_spec=MainAgentSpec(agent_name=main_name, approval=ApprovalConfig()),
+        main_spec=AgentSpec(name=main_name, approval=ApprovalConfig()),
         assembly_deps=PoolAssemblyDeps(),
         project_dir=project_dir,
         command_processor=None,
         pool_name=pool_name,
         tool_manager=InMemoryToolManager(),
         pool_spec=pool_spec,
+        peer_links=(_peer_link(peer_name, peer_main),),
         bot_model_config=_BOT_CFG,
         model_choice_registry=_REGISTRY,
+        roster_hook_names=frozenset(),
     )
 
     hook = _find_env_hook(pipeline)
@@ -248,64 +240,54 @@ def test_wire_main_pipeline_builds_complete_pool_map_and_targets(tmp_path: Path)
         sub_name: pool_name,
         peer_main: peer_name,
     }
-    # Subagent description is the spec's; peer description is read from
-    # the peer pool's MainAgentSpec on disk (set by _write_peer_pool).
+    # Subagent description is the declaration's; peer description rides the
+    # declared link face.
     assert spec.targets == [
         (sub_name, "explore subagent"),
         (peer_main, f"{peer_main} peer"),
     ]
 
 
-def test_wire_main_pipeline_skips_missing_peer_pool_with_warning(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """A missing peer pool is logged and skipped — the rest of the
-    pool map and targets are still wired by the external strategy."""
-    import logging
-
+def test_wire_main_pipeline_without_peer_links_omits_peers(tmp_path: Path) -> None:
+    """No declared peer links → the pool map and targets carry only the
+    pool's own agents (the legacy missing-peer-on-disk fail-soft road is
+    gone: links arrive validated from the declaration, so the no-links
+    case is the only empty-peer shape)."""
     project_dir = tmp_path
     pool_name = "default"
     main_name = "main"
     sub_name = "explore"
-    missing_peer = "ghost_pool"
 
     pool_spec = PoolSpec(
         name=pool_name,
-        main_agent_name=main_name,
-        main=MainAgentSpec(agent_name=main_name),
-        subagents=[
-            SubagentSpec(agent_name=sub_name, description="explore subagent"),
+        agents=[
+            AgentSpec(name=main_name),
+            AgentSpec(name=sub_name, parent=main_name, description="explore subagent"),
         ],
-        peers=[missing_peer],
     )
 
     pipeline = _make_pipeline()
     pool = _StandInPool(main_name, pipeline)
-    with caplog.at_level(logging.WARNING, logger="bot.service.pool.pipeline_wiring"):
-        _wire_main_pipeline(
-            pool=pool,
-            main_agent_name=main_name,
-            inbox_consumer=MagicMock(name="inbox_consumer"),
-            notification_service=MagicMock(name="notification_service"),
-            shared_interceptor_chain=MagicMock(name="interceptor_chain"),
-            im_ui=MagicMock(name="im_ui"),
-            main_spec=MainAgentSpec(agent_name=main_name, approval=ApprovalConfig()),
-            assembly_deps=PoolAssemblyDeps(),
-            project_dir=project_dir,
-            command_processor=None,
-            pool_name=pool_name,
-            tool_manager=InMemoryToolManager(),
-            pool_spec=pool_spec,
-            bot_model_config=_BOT_CFG,
-            model_choice_registry=_REGISTRY,
-        )
+    _wire_main_pipeline(
+        pool=pool,
+        root_agent_name=main_name,
+        inbox_consumer=MagicMock(name="inbox_consumer"),
+        notification_service=MagicMock(name="notification_service"),
+        shared_interceptor_chain=MagicMock(name="interceptor_chain"),
+        im_ui=MagicMock(name="im_ui"),
+        main_spec=AgentSpec(name=main_name, approval=ApprovalConfig()),
+        assembly_deps=PoolAssemblyDeps(),
+        project_dir=project_dir,
+        command_processor=None,
+        pool_name=pool_name,
+        tool_manager=InMemoryToolManager(),
+        pool_spec=pool_spec,
+        bot_model_config=_BOT_CFG,
+        model_choice_registry=_REGISTRY,
+        roster_hook_names=frozenset(),
+    )
 
     hook = _find_env_hook(pipeline)
     spec = hook._template  # noqa: SLF001
-    # Main + subagent present; missing peer omitted from both maps.
     assert spec.agent_pool_map == {main_name: pool_name, sub_name: pool_name}
     assert spec.targets == [(sub_name, "explore subagent")]
-    # Warning logged for both pool_map and targets reads (two attempts).
-    warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("ghost_pool" in m and "agent_pool_map" in m for m in warning_messages)
-    assert any("ghost_pool" in m and "targets" in m for m in warning_messages)

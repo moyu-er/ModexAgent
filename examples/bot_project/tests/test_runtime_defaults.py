@@ -36,26 +36,22 @@ class _InputAdapter(InputAdapter):
 def test_default_interceptor_chain_keeps_only_effective_defaults() -> None:
     """The per-workspace interceptor chain (re-homed from BotService into
     wiring) still installs the ToolResultLimitInterceptor."""
-    from unittest.mock import MagicMock
-
-    from bot.workspace.wiring.pool_wiring import _build_workspace_interceptor_chain
+    from bot.workspace.wiring import build_tool_overflow_interceptor_chain
 
     from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 
-    service = MagicMock()
-    service.control_channel = MagicMock()
     overflow_store = LocalFileToolOverflowStore(
         workspace=Path("/tmp/_test_overflow")
     )
-    chain = _build_workspace_interceptor_chain(service, overflow_store)
+    chain = build_tool_overflow_interceptor_chain(overflow_store)
     interceptors = chain.interceptors
 
     assert any(isinstance(item, ToolResultLimitInterceptor) for item in interceptors)
 
 
-def test_tool_timeout_default_is_400() -> None:
-    """Framework default tool timeout is 400 seconds, enforced by
-    ToolTimeoutInterceptor."""
+def test_tool_timeout_default_is_540() -> None:
+    """Framework default tool timeout is 540 seconds, enforced by
+    ToolTimeoutInterceptor (persistent bash ladder: 480s tool < 540s interceptor)."""
     from modex_agent.core.constants import DefaultValues
 
-    assert DefaultValues.TOOL_TIMEOUT_SECONDS == 400.0
+    assert DefaultValues.TOOL_TIMEOUT_SECONDS == 540.0

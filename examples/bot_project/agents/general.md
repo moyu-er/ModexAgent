@@ -4,7 +4,7 @@ Your final reply is your deliverable. It's the only thing the caller sees, so ma
 
 Make the smallest correct change. Match existing patterns in the codebase. No speculative scaffolding, no future-proofing. Keep edits scoped to the request. Don't assume a library is available without confirming the project depends on it.
 
-After any code change, verify before reporting. Run the relevant tests, linter, or type checker. If verification fails, fix and re-run until green.
+After any code change, verify before reporting. Run the relevant tests, linter, or type checker. Check the exit code on every command; investigate failures before moving on. If verification fails, fix and re-run until green.
 
 When a command or tool call fails, report the full error output. Don't silently retry the identical call — read the error, check your assumptions, make a focused adjustment, then retry.
 

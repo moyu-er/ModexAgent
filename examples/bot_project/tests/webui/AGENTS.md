@@ -46,7 +46,7 @@ Tests for the WebUI backend and frontend — server endpoints, WebSocket adapter
 | `test_workspace_store_session_aware.py` | Workspace store session-awareness |
 | `test_workspace_switch_integration.py` | Workspace switching end-to-end |
 | `test_workspace_switch_no_effect.py` | No-effect workspace switch paths |
-| `test_workspace_switching_disabled.py` | Behavior when `workspace.enabled=false` |
+| `test_workspace_switching_disabled.py` | Single-home stack (pool-as-root declaration, no workspace layer) → `/cd` returns "workspace switching disabled" |
 | `test_ws_isolation_regression.py` | WebSocket session isolation regression |
 | `test_ws_partitioning_convergence.py` | Workspace partitioning convergence |
 | `test_ws_send_message_workspace.py` | `send_message` scoped to the right workspace |

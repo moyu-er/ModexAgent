@@ -159,7 +159,7 @@ _SKILL_MAX_FILE_BYTES: int = _SKILL_MAX_FILE_MB * 1024 * 1024
 _SKILL_MAX_TOTAL_BYTES: int = _SKILL_MAX_TOTAL_MB * 1024 * 1024
 
 
-class _SkillUploadFallback(Exception):
+class _SkillUploadFallbackError(Exception):
     """Internal sentinel: multipart upload unavailable, fall back to JSON."""
 
 

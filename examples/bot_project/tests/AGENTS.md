@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-22 -->
+<!-- Updated: 2026-08-19 -->
 
 # tests
 
@@ -16,12 +16,11 @@ Test suites for the bot_project. Unit and integration tests covering service lif
 | `test_memory_construction.py` | Memory system construction per pool/agent |
 | `test_agent_communication.py` | Inter-agent communication (send_to_agent, subagent dispatch) |
 | `test_pool_experience_review.py` | Experience review in pool mode |
-| `test_plugin_integration.py` | Plugin lifecycle and integration |
 | `test_policy.py` | Runtime safety policy enforcement |
 | `test_qq_adapter.py` | QQ input/output adapter behavior |
 | `test_runtime_defaults.py` | Default runtime configuration values |
 | `test_slash_commands.py` | Slash command parsing and dispatch |
-| `unit/service/test_terminal_degrades_to_subprocess.py` | Bot falls back to `SubprocessTool` when terminal backends are unavailable |
+| `unit/service/test_terminal_degrades_to_persistent_bash.py` | Bot falls back to `PersistentBashTool` (+ `bash_input`) when terminal backends are unavailable |
 | `test_config_model.py` | `config/model.yml` read/write/check helpers (global model config) |
 | `test_interactive_config.py` | Interactive model-config wizard (`run_config_wizard`) behavior |
 | `test_mcp_resilience.py` | MCP registration failure does not block pool/tool-manager build |

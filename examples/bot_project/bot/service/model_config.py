@@ -220,3 +220,35 @@ class BotModelConfig(BaseModel):
             reasoning_effort=r.model.reasoning_effort,
             interface_format=r.provider.interface_format,
         )
+
+
+def _placeholder_model_config() -> BotModelConfig:
+    """A minimal valid BotModelConfig used when no model.yml is configured.
+
+    Lets the bot boot so the user can configure a real model via the WebUI
+    (Settings -> Models) or ``modexbot config``. The placeholder provider has
+    empty api_key/base_url, so every real LLM call fails — but
+    ``BotModelProvider.chat_stream`` catches the provider-build failure and
+    returns an ``LLMResponse(finish_reason=ERROR)``, and the ReAct LLM/end
+    nodes surface that as a turn error instead of crashing the process.
+    """
+    return BotModelConfig(
+        default_provider="_unconfigured",
+        default_model="_placeholder",
+        providers=[
+            ProviderCfg(
+                key="_unconfigured",
+                name="_unconfigured",
+                api_key="",
+                base_url="",
+                models=[
+                    ModelCfg(name="_placeholder", model="_placeholder"),
+                ],
+            )
+        ],
+    )
+
+
+def _resolved_or_placeholder(cfg: BotModelConfig | None) -> BotModelConfig:
+    """Return ``cfg`` when a real model is configured, else the placeholder."""
+    return cfg or _placeholder_model_config()

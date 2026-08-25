@@ -14,7 +14,7 @@ Business half of the workspace mechanism — pool-scoped resource bundle and Bot
 | `factory.py` | `PoolResourceFactory` — orchestrates workspace resource build/evict via injected closures |
 | `dispatch.py` | `WorkspaceMessageDispatcher` — per-message workspace routing, contextvar binding |
 | `pool_data.py` | `PoolData` (frozen dataclass) + `build_pool_data` — bundles per-pool stores |
-| `wiring/` | `build_workspace_stack` / `build_single_workspace_stack` — workspace assembly (imports service layer). Split into `__init__.py` (re-exports), `stack.py`, `resources.py`, `pool_wiring.py` |
+| `wiring/` | `build_workspace_stack` — workspace assembly (imports service layer). Split into `__init__.py` (re-exports), `stack.py` (stack + assembly-deps roads), `resources.py` (per-workspace resource build/teardown, workspace interceptor chain + legacy pool wiring folded in — ticket 14) |
 | `background.py` | `BackgroundTaskRunner` — per-workspace background tasks (dream, curation, retention) |
 
 ## For AI Agents

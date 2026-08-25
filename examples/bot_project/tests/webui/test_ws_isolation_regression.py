@@ -205,7 +205,7 @@ async def test_send_message_then_attach_under_ws_finds_history() -> None:
         server, store, routing_store = _build_server(home)
         from tests.webui._pipeline_fixture import attach_default_pipeline
 
-        attach_default_pipeline(
+        await attach_default_pipeline(
             server,
             store,
             server._input,

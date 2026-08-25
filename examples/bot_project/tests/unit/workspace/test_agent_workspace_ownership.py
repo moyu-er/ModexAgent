@@ -20,6 +20,14 @@ from bot.workspace.handle import (
     WorkspaceHandle,
 )
 
+_POOL_DECLARATION = """\
+pool:
+  name: test_pool
+  agents:
+    main:
+      description: ownership test root
+"""
+
 from modex_agent.core.session_store import LocalFileSessionStore
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
@@ -149,8 +157,8 @@ async def test_subagent_tool_manager_uses_workspace_root_provider(tmp_path: Path
     get_preset_tools (the tool-manager build moved here from
     AgentCommunicationService in ADR-0015 D5)."""
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
-    from modex_agent.multi_agent.pool_config.specs import SubagentSpec
     from modex_agent.multi_agent.template import AgentTemplate
+    from modex_agent.scope.spec import AgentSpec
 
     provider = _StaticRootProvider(tmp_path)
     deps = AgentMaterializeDeps(
@@ -162,14 +170,21 @@ async def test_subagent_tool_manager_uses_workspace_root_provider(tmp_path: Path
         root_provider=provider,
     )
     template = AgentTemplate(
-        spec=SubagentSpec(
-            agent_name="scout",
-            tool_preset=ToolPreset.READ_ONLY,
+        spec=AgentSpec(
+            name="scout",
+            toolset=ToolPreset.READ_ONLY,
             description="Test scout",
         ),
+        toolset_profile=ToolPreset.READ_ONLY,
     )
 
-    tm = await template._build_tool_manager(deps, "scout", runtime_dir=None)
+    tm = await template._build_tool_manager(
+        deps,
+        "scout",
+        runtime_dir=None,
+        assembly_spec=MagicMock(mcp_servers=()),
+        component_ctx=MagicMock(),
+    )
     tools = tm.list_tools()
     assert len(tools) > 0
     for name in tools:
@@ -195,16 +210,10 @@ async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> No
     from modex_agent.ioc.configs.memory import MemoryConfig
     from modex_agent.multi_agent import SessionRetentionPolicy
     from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-    from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
 
     target = tmp_path / "ws"
     target.mkdir()
 
-    pool_spec = PoolSpec(
-        name="test_pool",
-        main_agent_name="main",
-        main=MainAgentSpec(agent_name="main"),
-    )
     assembly_deps = PoolAssemblyDeps(memory=MemoryConfig())
 
     broker = InMemoryMessageBroker()
@@ -222,11 +231,20 @@ models:
     (target / "model.yml").write_text(_yml, encoding="utf-8")
     bot_model_config = BotModelConfig.from_yaml(target / "model.yml")
 
+    from ...declaration_driver import build_declared
+
     pool_instance = await create_pool(
         pool_name="test_pool",
-        pool_spec=pool_spec,
+        declared=build_declared(
+            _POOL_DECLARATION,
+            project_dir=tmp_path,
+            data_dir=target / ".modex",
+            pool_name="test_pool",
+        ),
         assembly_deps=assembly_deps,
         project_dir=tmp_path,
+        workspace_registry=object(),
+        workspace_resources=object(),
         data_dir=target / ".modex",
         broker=broker,
         output_adapter=object(),  # type: ignore[arg-type]
@@ -265,20 +283,16 @@ async def test_pool_resources_experience_dir_from_pool_data(tmp_path: Path) -> N
 
     from modex_agent.ioc.configs.memory import MemoryConfig
     from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-    from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
+    from modex_agent.scope.spec import AgentSpec
 
     target = tmp_path / "ws"
     target.mkdir()
     ctx = WorkspaceContext.from_target(target, data_dir_name=".modex", home=tmp_path)
 
-    pool_spec = PoolSpec(
-        name="test_pool",
-        main_agent_name="main",
-        main=MainAgentSpec(agent_name="main"),
-    )
+    root_agent = AgentSpec(name="main")
     assembly_deps = PoolAssemblyDeps(memory=MemoryConfig())
 
-    pool_data = await build_pool_data(ctx, "test_pool", pool_spec, None, assembly_deps, "")
+    pool_data = await build_pool_data(ctx, "test_pool", root_agent, None, assembly_deps, "")
     # experience_dir should exactly match the workspace paths accessor
     expected = ctx.paths.experience_dir("test_pool", "main")
     assert pool_data.experience_dir == expected
@@ -293,24 +307,20 @@ async def test_build_pool_data_uses_workspace_sqlite_for_session_memory(
     from modex_agent.ioc.configs.app import AppConfig
     from modex_agent.ioc.configs.memory import MemoryConfig
     from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-    from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
     from modex_agent.persistence.managers import WorkspacePersistenceManager
+    from modex_agent.scope.spec import AgentSpec
 
     target = tmp_path / "ws"
     target.mkdir()
     ctx = WorkspaceContext.from_target(target, data_dir_name=".modex", home=tmp_path)
-    pool_spec = PoolSpec(
-        name="test_pool",
-        main_agent_name="main",
-        main=MainAgentSpec(agent_name="main"),
-    )
+    root_agent = AgentSpec(name="main")
     persistence = WorkspacePersistenceManager(ctx.paths.root / "state.db")
     await persistence.open()
     try:
         pool_data = await build_pool_data(
             ctx,
             "test_pool",
-            pool_spec,
+            root_agent,
             None,
             PoolAssemblyDeps(memory=MemoryConfig()),
             "",
@@ -357,22 +367,18 @@ async def test_build_pool_data_file_backend_has_no_decision_coordinator(
     from modex_agent.ioc.configs.app import AppConfig
     from modex_agent.ioc.configs.memory import MemoryConfig
     from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-    from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
     from modex_agent.persistence.config import PersistenceBackend, PersistenceConfig
+    from modex_agent.scope.spec import AgentSpec
 
     target = tmp_path / "ws"
     target.mkdir()
     ctx = WorkspaceContext.from_target(target, data_dir_name=".modex", home=tmp_path)
-    pool_spec = PoolSpec(
-        name="test_pool",
-        main_agent_name="main",
-        main=MainAgentSpec(agent_name="main"),
-    )
+    root_agent = AgentSpec(name="main")
 
     pool_data = await build_pool_data(
         ctx,
         "test_pool",
-        pool_spec,
+        root_agent,
         None,
         PoolAssemblyDeps(memory=MemoryConfig()),
         "",

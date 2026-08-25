@@ -75,7 +75,7 @@ async def test_pool_fixed_on_creation_not_overridden_by_attach() -> None:
 
     # Inject the WebUI input pipeline so _ws_send_message works.
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(
+    await attach_default_pipeline(
         server,
         server._store,
         inp,
@@ -129,7 +129,7 @@ async def test_pool_survives_multiple_attach_cycles() -> None:
 
     # Inject the WebUI input pipeline so _ws_send_message works.
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(
+    await attach_default_pipeline(
         server,
         server._store,
         inp,

@@ -8,8 +8,10 @@ from bot.config.domain import (
     DomainFlavor,
     FieldDescriptor,
     FieldType,
+    RestartMarker,
     Secret,
     SecretMask,
+    atomic_write,
     describe,
     get_domain,
     mask,
@@ -114,6 +116,22 @@ def test_singleton_read_masks_and_write_marks_restart(tmp_path: Path) -> None:
     values, _, restart_required = dom.read()
     assert values["name"] == "world"
     assert restart_required is True
+
+
+def test_atomic_write_always_advances_mtime(tmp_path: Path) -> None:
+    """Regression (Windows clock-tick race): back-to-back writes can land in
+    the same ~15.6ms timer tick, leaving the mtime unchanged — the restart
+    marker then missed real writes intermittently. ``atomic_write`` must
+    guarantee the mtime strictly advances every write."""
+    yml = tmp_path / "tick.yml"
+    yml.write_text("a: 0\n", encoding="utf-8")
+    marker = RestartMarker()
+    marker.capture(yml)
+
+    for i in range(1, 4):
+        atomic_write(yml, f"a: {i}\n")
+        assert marker.is_modified(yml), f"write #{i} did not advance the mtime"
+        marker.capture(yml)
 
 
 def test_singleton_validation_error_does_not_touch_disk(tmp_path: Path) -> None:

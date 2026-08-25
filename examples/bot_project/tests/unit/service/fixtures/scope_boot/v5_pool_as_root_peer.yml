@@ -1,0 +1,8 @@
+# Boot-failure fixture: a pool-as-root declaration (no workspace layer)
+# carries peers — the same-workspace premise is undefined for it (v1 rule).
+pool:
+  name: v5_pool
+  peers: [other]
+  agents:
+    root:
+      description: the root

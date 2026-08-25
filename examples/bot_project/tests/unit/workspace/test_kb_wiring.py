@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import fields
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from bot.workspace.handle import PoolWorkspaceResources
 from bot.workspace.wiring.resources import _build_resources, _stop_resources
@@ -45,9 +45,12 @@ async def _build_empty_workspace(
     service = _service(home, app_config)
     ctx = WorkspaceContext.from_target(target, data_dir_name=".modex", home=home)
 
-    with patch("bot.workspace.wiring.resources.PoolStore") as pool_store_type:
-        pool_store_type.return_value.list_pools.return_value = []
-        return await _build_resources(service, ctx)
+    scopes_dir = home / "config" / "scopes"
+    scopes_dir.mkdir(parents=True, exist_ok=True)
+    (scopes_dir / "bot.yml").write_text(
+        "workspace:\n  name: empty\n  pools: {}\n", encoding="utf-8"
+    )
+    return await _build_resources(service, ctx)
 
 
 def test_pool_workspace_resources_declares_kb_provider_field() -> None:

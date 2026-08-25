@@ -25,9 +25,9 @@ from modex_agent.core.provider import LLMProvider
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.specs import PoolSpec
 from modex_agent.persistence.managers import WorkspacePersistenceManager
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
+from modex_agent.scope.spec import AgentSpec
 from modex_agent.trace import OtelSpanTraceStore, build_trace_stores
 from modex_agent.workspace.context import WorkspaceContext
 
@@ -46,11 +46,6 @@ class PoolData(PoolDataSnapshot):
     experience_meta: PerFileExperienceMetaStore
 
 
-def _main_agent_name(pool_spec: PoolSpec) -> str:
-    """Name of the pool's main agent."""
-    return pool_spec.main.agent_name
-
-
 def _build_experience_manager(
     assembly_deps: PoolAssemblyDeps,
     experience_dir: Path,
@@ -67,15 +62,16 @@ def _build_experience_manager(
 async def build_pool_data(
     ctx: WorkspaceContext,
     pool_name: str,
-    pool_spec: PoolSpec,
+    root_agent: AgentSpec,
     provider: LLMProvider | None,
     assembly_deps: PoolAssemblyDeps,
     base_system_prompt: str = "",
     *,
     app_config: AppConfig | None = None,
     persistence: WorkspacePersistenceManager | None = None,
+    trace_store: OtelSpanTraceStore | None = None,
 ) -> PoolData:
-    """Build one pool's stores + context_manager bound to ``ctx.paths``."""
+    """Build one pool's stores; ``trace_store`` is a caller-owned injection seam."""
     # Local imports keep the module import graph thin: the codec / store
     # / experience / memory-factory modules are only needed when a pool
     # is actually built, not when this module is imported.
@@ -136,16 +132,17 @@ async def build_pool_data(
             persistence.connection,
             codec_registry,
         )
-    trace_base_dir = ctx.paths.runtime_dir(pool_name, "trace")
-    obs_config = app_config.observability if app_config is not None else None
-    if obs_config is not None:
-        trace_store = build_trace_stores(obs_config, trace_base_dir)
-    else:
-        # No config → default to file-only OTel span store (backward compat).
-        trace_store = OtelSpanTraceStore(base_dir=trace_base_dir)
+    if trace_store is None:
+        trace_base_dir = ctx.paths.runtime_dir(pool_name, "trace")
+        obs_config = app_config.observability if app_config is not None else None
+        if obs_config is not None:
+            trace_store = build_trace_stores(obs_config, trace_base_dir)
+        else:
+            # No config → default to file-only OTel span store (backward compat).
+            trace_store = OtelSpanTraceStore(base_dir=trace_base_dir)
 
     # ── Experience layer (experiences/<pool>/<main_agent>) ───────────
-    main_agent = _main_agent_name(pool_spec)
+    main_agent = root_agent.name
     experience_dir = ctx.paths.experience_dir(pool_name, main_agent)
     experience_dir.mkdir(parents=True, exist_ok=True)
     experience_manager = _build_experience_manager(assembly_deps, experience_dir)
@@ -168,7 +165,7 @@ async def build_pool_data(
         if memory_cfg.archive is not None and memory_cfg.archive.enabled
         else ArchiveInjectionConfig(count=0),
         experience_manager=experience_manager,
-        roles=list(pool_spec.main.roles),
+        roles=list(root_agent.roles),
     )
 
     return PoolData(

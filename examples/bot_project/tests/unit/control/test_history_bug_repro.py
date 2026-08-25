@@ -91,7 +91,7 @@ def _make_facade_mixed_pool(
     # Mock PoolInstance: native main plus OpenCode-backed external subagent.
     mock_pool_instance = MagicMock()
     mock_pool_instance.main_execution_strategy = ExecutionStrategyKind.REACT
-    mock_pool_instance.main_agent_name = _MAIN_AGENT
+    mock_pool_instance.root_agent_name = _MAIN_AGENT
     mock_pool_instance.target_store = target_store
 
     mock_resources = MagicMock()
@@ -229,7 +229,7 @@ class TestNativeSubagentStillWorks:
 
         mock_pool_instance = MagicMock()
         mock_pool_instance.main_execution_strategy = ExecutionStrategyKind.REACT
-        mock_pool_instance.main_agent_name = _MAIN_AGENT
+        mock_pool_instance.root_agent_name = _MAIN_AGENT
         mock_pool_instance.target_store = target_store
 
         mock_resources = MagicMock()
@@ -301,7 +301,7 @@ class TestExternalMainAgentSelfHistory:
 
         mock_pool_instance = MagicMock()
         mock_pool_instance.main_execution_strategy = ExecutionStrategyKind.EXTERNAL
-        mock_pool_instance.main_agent_name = "opencode"
+        mock_pool_instance.root_agent_name = "opencode"
         mock_pool_instance.target_store.list = MagicMock(return_value=[])
         mock_pool_instance.target_store.get = MagicMock(return_value=None)
 
@@ -377,7 +377,7 @@ class TestSubagentCannotReadMainAgentHistory:
 
         mock_pool_instance = MagicMock()
         mock_pool_instance.main_execution_strategy = ExecutionStrategyKind.REACT
-        mock_pool_instance.main_agent_name = _MAIN_AGENT
+        mock_pool_instance.root_agent_name = _MAIN_AGENT
         mock_pool_instance.target_store = target_store
 
         mock_resources = MagicMock()

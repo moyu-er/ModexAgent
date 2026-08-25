@@ -46,8 +46,11 @@ async def test_home_path_ws_roundtrip() -> None:
             )
         )
         from tests.webui._pipeline_fixture import attach_default_pipeline
-        attach_default_pipeline(
-            server, store, input_adapter, workspace_root=home,
+        await attach_default_pipeline(
+            server,
+            store,
+            input_adapter,
+            workspace_root=home,
         )
 
         client = TestClient(TestServer(server.app))

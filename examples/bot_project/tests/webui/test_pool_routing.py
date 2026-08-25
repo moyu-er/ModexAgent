@@ -88,7 +88,7 @@ async def test_pool_switch_full_flow_routes_to_coding() -> None:
     from tests.webui._pipeline_fixture import attach_default_pipeline
     # _make_server uses a holder pattern to get the workspace; unwrap
     store = server._store
-    attach_default_pipeline(server, store, inp, pool_session_store=real_store, workspace_root=data_dir)
+    await attach_default_pipeline(server, store, inp, pool_session_store=real_store, workspace_root=data_dir)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -162,7 +162,7 @@ async def test_no_callback_defaults_to_main() -> None:
     # Inject pipeline (uses a MagicMock pool_session_store)
     from tests.webui._pipeline_fixture import attach_default_pipeline
     store = server._store
-    attach_default_pipeline(server, store, inp, workspace_root=data_dir)
+    await attach_default_pipeline(server, store, inp, workspace_root=data_dir)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -371,7 +371,7 @@ async def test_pool_mapping_survives_server_recreation() -> None:
     server1.set_session_store(session_store1)
     server1.set_session_factory(factory)
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(
+    await attach_default_pipeline(
         server1,
         store1,
         inp1,
@@ -453,7 +453,7 @@ async def test_different_conversations_route_to_different_pools() -> None:
     server.set_pool_resolver(real_store.get_pool)
 
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server, server._store, inp, pool_session_store=real_store, workspace_root=data_dir)
+    await attach_default_pipeline(server, server._store, inp, pool_session_store=real_store, workspace_root=data_dir)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -539,7 +539,7 @@ async def test_control_interception_in_full_server_flow() -> None:
 
     # Inject the input pipeline
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server, store, inp, workspace_root=data_dir)
+    await attach_default_pipeline(server, store, inp, workspace_root=data_dir)
 
     callback, real_store, calls = _make_real_callback(data_dir)
     server.set_pool_switch_callback(callback)
@@ -687,7 +687,7 @@ async def test_server_intercepts_cd_before_enqueue() -> None:
 
     # Inject the input pipeline (no-op skill registry — /cd terminates at S6)
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server, store, inp, workspace_root=data_dir)
+    await attach_default_pipeline(server, store, inp, workspace_root=data_dir)
 
     callback, _, _ = _make_real_callback(data_dir)
     server.set_pool_switch_callback(callback)
@@ -763,7 +763,7 @@ async def test_conversations_survive_pool_switching() -> None:
     server.set_session_store(session_store)
 
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server, server._store, inp, pool_session_store=real_store, workspace_root=data_dir)
+    await attach_default_pipeline(server, server._store, inp, pool_session_store=real_store, workspace_root=data_dir)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -861,7 +861,7 @@ async def test_conversation_visible_after_first_message() -> None:
     server.set_session_store(session_store)
 
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server, server._store, inp, pool_session_store=real_store, workspace_root=data_dir)
+    await attach_default_pipeline(server, server._store, inp, pool_session_store=real_store, workspace_root=data_dir)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -1024,7 +1024,7 @@ async def test_pool_router_forwards_agent_session_id() -> None:
     session_store = PoolSessionStore(data_dir)
 
     class _MockPool:
-        main_agent_name = "coding"
+        root_agent_name = "coding"
         main_address = "pool:coding"
 
         def __init__(self) -> None:
@@ -1035,10 +1035,6 @@ async def test_pool_router_forwards_agent_session_id() -> None:
                 async def submit_input(sid: str, msg: InputMessage) -> None:
                     self.submitted.append((sid, msg))
 
-                @staticmethod
-                def serves_agent(name: str) -> bool:
-                    return True
-
             self.pool = _Inner()
 
     pool = _MockPool()
@@ -1048,6 +1044,7 @@ async def test_pool_router_forwards_agent_session_id() -> None:
         pools={"coding": pool},
         session_store=session_store,
         default_pool="main",
+        agent_pool_ownership={"coding": ("coding",)},
     )
 
     existing_sid = "legacy123.coding"

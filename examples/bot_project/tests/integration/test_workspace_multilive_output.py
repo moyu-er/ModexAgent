@@ -17,9 +17,12 @@ through the real workspace dispatcher, runs each turn against a scripted
 output adapter. The LLM is mocked; everything else (registry, factory,
 create_pool, broker, bridge, InboxPoller, dispatcher, pool_router) is real.
 """
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -134,6 +137,14 @@ def _write_minimal_config(project_dir: Path) -> Path:
     config_dir.mkdir(parents=True, exist_ok=True)
     (project_dir / "agents").mkdir(parents=True, exist_ok=True)
 
+    # BIZ components (execution strategies: react/external) are directory-
+    # discovered from <project>/plugins by BotService — a bootable project
+    # carries the real plugin set, so the synthetic one must too.
+    shutil.copytree(
+        Path(__file__).resolve().parents[2] / "plugins",
+        project_dir / "plugins",
+    )
+
     (project_dir / "agents" / "main.md").write_text(
         "You are a helpful assistant. Reply briefly.\n", encoding="utf-8"
     )
@@ -145,8 +156,23 @@ safety:
   turn: {agent_run_timeout: 60.0, hook_timeout: 10.0, tool_timeout: 30.0}
 paths:
   data_dir_name: ".modex"
+""",
+        encoding="utf-8",
+    )
+
+    # Ticket 14: the workspace layer of the scope declaration selects the
+    # multi-live stack (N15 — workspace.enabled is dead). Ticket 11: the
+    # declared pool boots the declaration road (every declared pool does).
+    (config_dir / "scopes").mkdir(parents=True, exist_ok=True)
+    (config_dir / "scopes" / "bot.yml").write_text(
+        """
 workspace:
-  enabled: true
+  name: multilive-test
+  pools:
+    main:
+      agents:
+        main:
+          description: test main agent
 """,
         encoding="utf-8",
     )
@@ -211,9 +237,7 @@ async def test_every_materialized_workspace_delivers_output(
     input_adapter = WebSocketInputAdapter()
     output_adapter = _RecordingOutputAdapter()
 
-    def emitter_factory(
-        session_id: str, pool: str
-    ) -> StreamingAwareEmitter:
+    def emitter_factory(session_id: str, pool: str) -> StreamingAwareEmitter:
         assert pool == "main"
         return StreamingAwareEmitter(output_adapter, session_id)
 
@@ -230,16 +254,12 @@ async def test_every_materialized_workspace_delivers_output(
 
     provider = _ScriptedProvider()
 
-    # Mock the LLM everywhere it could be reached: per-pool provider (turns) and
-    # the service default provider (memory summarizer / background).
+    # Only the service default provider (memory summarizer / background) is
+    # mocked: the pool-level LLM_PROVIDER slot resolves through the registry
+    # (bot_default → BotModelProvider over the dummy model.yml).
     import bot.service.core as core_mod
-    import bot.service.react_strategy as react_strategy_mod
 
-    original_llm_provider = react_strategy_mod.ReactExecutionStrategy._build_llm_provider
     original_default_provider = core_mod.BotService._build_default_provider
-    react_strategy_mod.ReactExecutionStrategy._build_llm_provider = (
-        lambda self, *a, **k: provider
-    )
     core_mod.BotService._build_default_provider = lambda self: provider  # type: ignore[assignment]
 
     # _project_dir is hard-coded to the bot project source tree; repoint it at
@@ -247,6 +267,34 @@ async def test_every_materialized_workspace_delivers_output(
     # under tmp (no real MCP subprocesses, no writing into the repo).
     original_project_dir = core_mod.BotService._project_dir
     core_mod.BotService._project_dir = property(lambda self: tmp_path)  # type: ignore[assignment]
+
+    # Pool turns resolve their LLM through the registry (bot_default →
+    # BotModelProvider over the dummy model.yml URL), which the service-level
+    # provider patch above never reaches — echo at the provider class instead.
+    from bot.service.model_provider import BotModelProvider
+
+    original_chat_stream = BotModelProvider.chat_stream
+
+    async def _echo_chat_stream(
+        self: BotModelProvider,
+        messages: list[Any],
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_output_tokens: int | None = None,
+        tools: list[dict] | None = None,
+        on_content_delta: Any = None,
+        on_reasoning_delta: Any = None,
+        **kwargs: object,
+    ) -> Any:
+        del model, temperature, max_output_tokens, tools, on_reasoning_delta, kwargs
+        provider.calls += 1
+        content = _last_user_content(messages)
+        text = f"echo:{content}" if content else "echo:ok"
+        if on_content_delta is not None:
+            await on_content_delta(text)
+        return LLMResponse(content=text)
+
+    BotModelProvider.chat_stream = _echo_chat_stream  # type: ignore[method-assign]
 
     try:
         await service.initialize()
@@ -304,7 +352,8 @@ async def test_every_materialized_workspace_delivers_output(
         # 1. Every non-home workspace was materialized (cached in the registry).
         resolved_targets = {Path(ws).resolve() for ws in ws_targets}
         cached_targets = {
-            Path(t).resolve() for t in registry._resources  # type: ignore[attr-defined]
+            Path(t).resolve()
+            for t in registry._resources  # type: ignore[attr-defined]
         }
         assert resolved_targets.issubset(cached_targets), (
             f"Not all workspaces materialized: missing={resolved_targets - cached_targets}"
@@ -314,26 +363,24 @@ async def test_every_materialized_workspace_delivers_output(
         for resources in registry.iter_materialized_resources():
             for pi in resources.pools.values():
                 assert pi.broker_bridge._tasks, (
-                    f"workspace {resources.target} pool bridge not running "
-                    f"(the silent-switch bug)"
+                    f"workspace {resources.target} pool bridge not running (the silent-switch bug)"
                 )
 
         # 3. Each workspace's distinct reply was delivered end-to-end.
         contents = [c for _, c in output_adapter.sent]
         for m in marker:
-            assert f"echo:{m}" in contents, (
-                f"reply {m!r} not delivered; got {contents!r}"
-            )
+            assert f"echo:{m}" in contents, f"reply {m!r} not delivered; got {contents!r}"
 
     finally:
         if "router_task" in locals():
             router_task.cancel()
-            import contextlib
-
             with contextlib.suppress(BaseException):
                 await router_task
-        react_strategy_mod.ReactExecutionStrategy._build_llm_provider = original_llm_provider
+        # Full service stop, not bare evict_all(): the service-level registry
+        # persistence (aiosqlite) is closed only in stop(), and its non-daemon
+        # worker thread otherwise hangs interpreter exit.
+        with contextlib.suppress(BaseException):
+            await service.stop()
         core_mod.BotService._build_default_provider = original_default_provider  # type: ignore[assignment]
         core_mod.BotService._project_dir = original_project_dir  # type: ignore[assignment]
-        with __import__("contextlib").suppress(BaseException):
-            await service.workspace_stack.registry.evict_all()
+        BotModelProvider.chat_stream = original_chat_stream  # type: ignore[method-assign]

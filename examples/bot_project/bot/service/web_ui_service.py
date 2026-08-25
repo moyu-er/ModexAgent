@@ -370,31 +370,22 @@ class WebUIService(BotService):
 
         self._server.set_config_controller(ConfigController(restarter=_trigger_restart))
         self._server.set_data_dir_name(_data_dir_name)
-        # Pool/MCP/skills/prompt REST API (Phase 2B). All four stores share the
-        # same base dir (the bot project root) and the MCP registry path under
-        # ``config/mcp/registry.json``; default_pool comes from BotService.
-        # ``PromptStore.DEFAULT_PROMPT_SEED`` is the single canonical default
-        # prompt text (no framework-layer duplicate) — passed into ``PoolStore``
-        # so ``create_pool`` seeds main-agent prompt md with the canonical text
-        # instead of a framework-hardcoded string.
+        # MCP/skills/prompt REST API + the declaration-backed pool listing.
+        # The stores share the same base dir (the bot project root) and the
+        # MCP registry path under ``config/mcp/registry.json``; pool trees
+        # are edited through the scope declaration (config/scopes/bot.yml).
         from bot.config.mcp_registry import REGISTRY_PATH as _mcp_registry_path  # noqa: N811
         from bot.config.prompt_store import PromptStore
         from bot.config.skills_store import SkillsStore
         from bot.service.pool_config_controller import PoolConfigController
-        from modex_agent.multi_agent.pool_config import PoolStore
 
         self._server.set_pool_config_controller(
             PoolConfigController(
-                pool_store=PoolStore(
-                    base_dir=project_dir,
-                    default_prompt_seed=PromptStore.DEFAULT_PROMPT_SEED,
-                ),
+                declaration_path=project_dir / "config" / "scopes" / "bot.yml",
                 skills_store=SkillsStore(base_dir=project_dir),
                 prompt_store=PromptStore(base_dir=project_dir),
                 mcp_registry_path=project_dir / _mcp_registry_path,
                 restarter=_trigger_restart,
-                pool_session_store=self._pool_session_store,
-                is_pool_busy=self._is_pool_busy_provider,
             )
         )
 
@@ -480,19 +471,6 @@ class WebUIService(BotService):
             return None
         return self._pool_session_store.get(session_prefix, "") or None
 
-    def _is_pool_busy_provider(self, pool_name: str) -> tuple[bool, list[str]]:
-        """Check if a pool has agents with active turns (``AgentState.WORKING``)."""
-        from modex_agent.multi_agent.state import AgentState
-
-        pool_instance = self._pools.get(pool_name)
-        if pool_instance is None:
-            return (False, [])
-        busy: list[str] = []
-        for desc in pool_instance.pool.list_agents():
-            if pool_instance.pool.get_status(desc.address.name) == AgentState.WORKING:
-                busy.append(desc.address.name)
-        return (bool(busy), busy)
-
     async def start(self) -> None:
         """Start aiohttp server, then BotService (pools, router).
 
@@ -504,15 +482,20 @@ class WebUIService(BotService):
         assert app_config is not None, "AppConfig must be loaded before start"
 
         # ── Inject server callbacks BEFORE aiohttp starts ───────────
-        # Use main_agent_name from each pool's config — NOT the pool key.
+        # Use root_agent_name from each pool's config — NOT the pool key.
         # This ensures the frontend only sees main agent events, never
         # subagent (reviewer, scout, query-12306, etc.) entries.
-        pool_agent_names: list[str] = [pi.main_agent_name for pi in self._pools.values()]
+        pool_agent_names: list[str] = [pi.root_agent_name for pi in self._pools.values()]
         self._server.set_pool_agent_names(pool_agent_names)
         logger.info("Pool agents: %s", pool_agent_names)
 
         if self.workspace_stack is not None:
             self._server.set_workspace_control(self.workspace_stack.controller)
+            from bot.workspace.dynamic_workspaces import create_workspace
+
+            self._server.set_workspace_creator(
+                lambda name, backend: create_workspace(self, name=name, backend=backend)
+            )
 
         from bot.service.liveness import DefaultLivenessProvider
         from bot.service.session_cleaner_factory import SessionCleanerFactory
@@ -584,7 +567,7 @@ class WebUIService(BotService):
         # Pool is resolved via PoolSessionStore (session_prefix → pool),
         # the authoritative persisted mapping written by S5 ResolvePoolStage.
         # No agent_name → pool reverse-engineering.
-        _agent_map: dict[str, str] = {name: pi.main_agent_name for name, pi in self._pools.items()}
+        _agent_map: dict[str, str] = {name: pi.root_agent_name for name, pi in self._pools.items()}
 
         def _agent_resolver(pool_name: str) -> str:
             return _agent_map.get(pool_name, pool_name)
@@ -653,11 +636,15 @@ class WebUIService(BotService):
         # both pipelines; the XML form is produced by the framework helper.
         known_pools = set(self._pools.keys())
         skill_registry = PoolSkillManagerRegistry(self._pools)
+        assert self._component_registry is not None
+        assert self._service_assembly_ctx is not None
 
         self._session_factory = SessionIdFactory()
         self._server.set_session_factory(self._session_factory)
 
-        webui_pipeline = build_webui_pipeline(
+        webui_pipeline = await build_webui_pipeline(
+            registry=self._component_registry,
+            ctx=self._service_assembly_ctx,
             skill_registry=skill_registry,
             bot_model_config=self._bot_model_config,
         )
@@ -678,7 +665,9 @@ class WebUIService(BotService):
         )
 
         # ── IM pipeline (QQ, etc.) ─────────────────────────────────
-        im_pipeline = build_im_pipeline(
+        im_pipeline = await build_im_pipeline(
+            registry=self._component_registry,
+            ctx=self._service_assembly_ctx,
             skill_registry=skill_registry,
             known_pools=known_pools,
             workspace_controller=self.workspace_stack.controller
@@ -878,13 +867,15 @@ class WebUIService(BotService):
         """Return the current set of pool names (re-read from disk each call).
 
         Used by the input pipeline's ``ResolvePoolStage`` to guard the
-        zero-pool and stale-pool cases. Reads the same PoolStore the
-        PoolConfigController wraps so the WebUI's pool CRUD is reflected
+        zero-pool and stale-pool cases. Reads the scope declaration (the
+        single pool source) so WebUI declaration edits are reflected
         without a service restart.
         """
-        from modex_agent.multi_agent.pool_config import PoolStore
+        from bot.config.scope_pools import declared_pool_names
 
-        return {p.name for p in PoolStore(base_dir=self._project_dir).list_pools()}
+        return declared_pool_names(
+            self._project_dir / "config" / "scopes" / "bot.yml"
+        )
 
     async def stop(self) -> None:
         if self._session_gc is not None:

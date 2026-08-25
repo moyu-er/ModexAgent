@@ -52,11 +52,9 @@ def _validate_agent_name(name: str) -> None:
 class PromptStore:
     """Read/write ``agents/<name>.md``. Plain runtime class (base_dir).
 
-    :data:`DEFAULT_PROMPT_SEED` is the single canonical default prompt text —
-    the bot-layer wiring passes it into :class:`PoolStore` as
-    ``default_prompt_seed`` so ``create_pool`` seeds main-agent prompt md with
-    the canonical text instead of a framework-hardcoded string. No duplicate
-    exists in the framework layer.
+    :data:`DEFAULT_PROMPT_SEED` is the single canonical default prompt text
+    (no framework-layer duplicate); it seeds new prompt md files created
+    through the prompts REST API.
     """
 
     DEFAULT_PROMPT_SEED: str = """\

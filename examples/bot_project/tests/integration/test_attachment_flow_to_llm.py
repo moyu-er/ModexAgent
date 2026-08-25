@@ -32,6 +32,10 @@ from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
+from tests.input_pipeline.assembly_support import (
+    TEST_ASSEMBLY_CTX,
+    TEST_COMPONENT_REGISTRY,
+)
 
 # Mechanism-A enrichment layer (native-multimodal-inline unit 5/6, ADR-0014)
 from modex_agent.agents.react.nodes.llm import enrich_inline_attachments
@@ -148,7 +152,9 @@ async def test_attachment_flow_to_llm_injection_and_asymmetry() -> None:
             current_ws_provider=(lambda r=root: r),
             media_store=media_store,
         )
-        pipeline = build_webui_pipeline(
+        pipeline = await build_webui_pipeline(
+            registry=TEST_COMPONENT_REGISTRY,
+            ctx=TEST_ASSEMBLY_CTX,
             skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
         )
 

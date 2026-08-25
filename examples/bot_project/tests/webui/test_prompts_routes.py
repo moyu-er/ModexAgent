@@ -23,8 +23,6 @@ from bot.service.pool_config_controller import PoolConfigController
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.server import WebUIServer
 
-from modex_agent.multi_agent.pool_config import PoolStore
-
 _BOT_PROJECT = Path(__file__).resolve().parents[2]
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
@@ -32,10 +30,7 @@ if str(_BOT_PROJECT) not in sys.path:
 
 def _make_controller(tmp_path: Path) -> PoolConfigController:
     return PoolConfigController(
-        pool_store=PoolStore(
-            base_dir=tmp_path,
-            default_prompt_seed=PromptStore.DEFAULT_PROMPT_SEED,
-        ),
+        declaration_path=tmp_path / "config" / "scopes" / "bot.yml",
         skills_store=SkillsStore(base_dir=tmp_path, user_global_dir=tmp_path / "user_skills"),
         prompt_store=PromptStore(base_dir=tmp_path),
         mcp_registry_path=tmp_path / REGISTRY_PATH,
@@ -449,6 +444,9 @@ async def test_post_sets_restart_required(tmp_path: Path) -> None:
 # ─── DELETE (reference-checked) ───────────────────────────────────────────────
 
 
+_POOLS_BY_TMP: dict[str, dict[str, dict[str, Any]]] = {}
+
+
 def _seed_pool_yml(
     tmp_path: Path,
     pool_name: str,
@@ -457,29 +455,24 @@ def _seed_pool_yml(
     main_agent_name: str | None = None,
     subagents: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Write a pool.yml (+ optional subagent templates) under tmp_path/config/pools/.
-
-    Directly writes the YAML so the PoolStore.read_pool picks up ``prompt_name``
-    on MainAgentSpec (top-level key) and SubagentSpec (template key) without
-    needing the full write_pool path.
-    """
-    pool_dir = tmp_path / "config" / "pools" / pool_name
-    pool_dir.mkdir(parents=True, exist_ok=True)
+    """Add one pool to the tmp declaration (accumulates across calls)."""
+    pools = _POOLS_BY_TMP.setdefault(str(tmp_path), {})
     agent_name = main_agent_name or pool_name
-    pool_data: dict[str, Any] = {"main_agent_name": agent_name}
+    root: dict[str, Any] = {"description": f"{agent_name} root"}
     if main_prompt_name is not None:
-        pool_data["prompt_name"] = main_prompt_name
-    (pool_dir / "pool.yml").write_text(
-        yaml.safe_dump(pool_data, sort_keys=False), encoding="utf-8"
+        root["prompt_name"] = main_prompt_name
+    for sub in subagents or []:
+        sub_body: dict[str, Any] = {"description": f"{sub['agent_name']} sub"}
+        if sub.get("prompt_name") is not None:
+            sub_body["prompt_name"] = sub["prompt_name"]
+        root.setdefault("agents", {})[sub["agent_name"]] = sub_body
+    pools[pool_name] = {"agents": {agent_name: root}}
+    scopes_dir = tmp_path / "config" / "scopes"
+    scopes_dir.mkdir(parents=True, exist_ok=True)
+    (scopes_dir / "bot.yml").write_text(
+        yaml.safe_dump({"workspace": {"name": "w", "pools": pools}}, sort_keys=False),
+        encoding="utf-8",
     )
-    if subagents:
-        tdir = pool_dir / "templates"
-        tdir.mkdir(exist_ok=True)
-        for sub in subagents:
-            name = sub["agent_name"]
-            (tdir / f"{name}.yml").write_text(
-                yaml.safe_dump(sub, sort_keys=False), encoding="utf-8"
-            )
 
 
 @pytest.mark.asyncio

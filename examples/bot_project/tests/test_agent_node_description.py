@@ -14,6 +14,8 @@ from pydantic import ValidationError
 from modex_agent.agents.agent_node import AgentNode
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentDescriptor
+from modex_agent.multi_agent.template import AgentTemplate
+from modex_agent.scope.spec import AgentSpec
 from modex_graph.constants import GraphNode
 from modex_graph.context import GraphContext
 from modex_graph.graph import Graph
@@ -32,6 +34,24 @@ def _resolver(role_description: str, *, pool_name: str = "p") -> MagicMock:
     pool = SimpleNamespace(pool=SimpleNamespace(get=lambda _name: instance))
     resolver = MagicMock()
     resolver.resolve_workspace.return_value = SimpleNamespace(pools={pool_name: pool})
+    return resolver
+
+
+def _lazy_resolver(
+    template: AgentTemplate | None, *, pool_name: str = "p"
+) -> MagicMock:
+    """Pool stand-in with NO live instance — the lazy-agent cold-start face.
+
+    ``get_template`` mirrors :meth:`AgentPool.get_template`, the same
+    existence/materialization source the InboxPoller reads."""
+    agent_pool = SimpleNamespace(
+        get=lambda _name: None,
+        get_template=lambda _name: template,
+    )
+    resolver = MagicMock()
+    resolver.resolve_workspace.return_value = SimpleNamespace(
+        pools={pool_name: SimpleNamespace(pool=agent_pool)}
+    )
     return resolver
 
 
@@ -75,6 +95,33 @@ def test_description_sentinel_is_used_when_descriptions_are_empty() -> None:
         _resolver(""),
         node_description=None,
     )
+
+    assert node.resolve_description() == AgentNode.DESCRIPTION_NOT_FOUND
+
+
+def test_lazy_agent_description_resolves_from_compiled_declaration() -> None:
+    """Ticket 08 AC (b): fresh boot, no instance — the description comes from
+    the template registry (the compiled declaration's runtime carrier seeded
+    at boot), so resolve_description does not raise."""
+    template = AgentTemplate(
+        spec=AgentSpec(name="a", description="Declared leaf role")
+    )
+    node = BotAgentNode("a", "p", _lazy_resolver(template), node_description=None)
+
+    assert node.resolve_description() == "Declared leaf role"
+
+
+def test_lazy_agent_template_without_description_uses_sentinel() -> None:
+    template = AgentTemplate(spec=AgentSpec(name="a", description=""))
+    node = BotAgentNode("a", "p", _lazy_resolver(template))
+
+    assert node.resolve_description() == AgentNode.DESCRIPTION_NOT_FOUND
+
+
+def test_unknown_agent_description_uses_sentinel() -> None:
+    """No live instance AND no template: the framework sentinel, not an
+    exception — V10 owns typo'd references at startup."""
+    node = BotAgentNode("a", "p", _lazy_resolver(None))
 
     assert node.resolve_description() == AgentNode.DESCRIPTION_NOT_FOUND
 

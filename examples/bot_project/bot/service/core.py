@@ -28,21 +28,24 @@ if TYPE_CHECKING:
         RegistryPersistenceManager,
         WorkspacePersistenceManager,
     )
+    from modex_agent.plugins.assembly.context import AssemblyContext
     from modex_agent.runtime.codec import RuntimeStateCodecRegistry
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
 
-from bot.plugins.integration import PluginIntegration
 from bot.service._model_config_loader import _apply_bot_model_config, _load_app_config
-from bot.service._runtime_builders import (
-    _build_control_channel,
-    _build_main_command_processor,
-)
 from bot.service.errors import BotServiceShutdownIncompleteError
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from bot.service.model_provider import BotModelProvider
+from bot.service.pool.declaration import (
+    apply_workspace_resource_selection,
+    load_scope_declaration_opt,
+    validate_workspace_mcp_set,
+    workspace_layer_present,
+    workspace_mcp_prewarm_names,
+)
 from bot.utils.config_loader import ConfigLoader
-from bot.workspace.wiring import build_single_workspace_stack, build_workspace_stack
+from bot.workspace.wiring import build_workspace_stack
 from modex_agent import (
     LLMProvider,
 )
@@ -65,7 +68,11 @@ from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 from modex_agent.workspace.paths import RESERVED_GLOBAL_DIR, WORKSPACE_STATE_DB
 
-from .builders import AgentBuilderMixin, resolve_system_prompt
+from .builders import (
+    AgentBuilderMixin,
+    _build_control_channel,
+    _build_main_command_processor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +136,12 @@ class BotService(AgentBuilderMixin):
         # the cd/exit/pwd handlers; ``workspace_context`` is a compat alias.
         self.workspace_stack: Any = None
         self.workspace_context: Any = None
+        # The loaded scope declaration (ticket 14): ``None`` when
+        # config/scopes/bot.yml is absent. Its workspace layer selects the
+        # multi-live stack shape (N15 — the ``workspace.enabled`` flag is
+        # dead; declaration absence IS the single-workspace form) and its
+        # resource-selection overrides resolve onto ``_app_config`` at boot.
+        self._scope_spec: Any = None
         # Eagerly materialized home resources (the default workspace). Holds
         # the home pools + router; BotService.start/stop operate on these for
         # v1 (home-only materialization).
@@ -142,7 +155,6 @@ class BotService(AgentBuilderMixin):
         # a mapping written by the WebUI (or ResolvePoolStage) is visible to the
         # pool_router of whatever workspace ultimately dispatches the message.
         self._pool_session_store: PoolRoutingStore | None = None
-        self.plugin_integration: PluginIntegration | None = None
 
         # Shared MCP connection registry (ADR-0017 Task 5a). Service-scoped,
         # concurrent, dedup-by-config-hash. Built in initialize() when the
@@ -157,6 +169,14 @@ class BotService(AgentBuilderMixin):
         # create_pool so react pools are assembled via
         # ReactExecutionStrategy.assemble() instead of inline _build_* calls.
         self._strategy_registry: Any = None
+
+        # Component registry (loaded in initialize() before pool creation).
+        # The registry holds all plugin-registered component factories
+        # (DefaultPlugin bundled + project plugins from
+        # examples/bot_project/plugins/); pool/agent config lives in the
+        # scope declaration (config/scopes/bot.yml).
+        self._component_registry: Any = None
+        self._service_assembly_ctx: AssemblyContext | None = None
 
         # T26: Registry-level SQLite persistence manager. Opened at initialize()
         # (before workspace materialize), closed at stop() AFTER evict_all (the
@@ -178,9 +198,6 @@ class BotService(AgentBuilderMixin):
 
         # Approval
         self._default_provider: LLMProvider | None = None
-
-        # Cached system prompts per pool (resolved once, reused across switches)
-        self._system_prompt_cache: dict[str, str] = {}
 
         # Router task (the workspace dispatcher loop)
         self._router_task: asyncio.Task | None = None
@@ -270,9 +287,9 @@ class BotService(AgentBuilderMixin):
 
     async def initialize(self) -> None:
         """Initialize all components."""
-        print("=" * 60)
-        print(">> Initializing Bot Service")
-        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info(">> Initializing Bot Service")
+        logger.info("=" * 60)
 
         # ADR-0027 T8: register cooperative SIGTERM/SIGINT handlers that
         # run atexit cleanup (killing any live ``opencode serve``
@@ -288,10 +305,27 @@ class BotService(AgentBuilderMixin):
             self._app_config = _load_app_config(self.config_dir)
             self._bot_model_config = _apply_bot_model_config(self.config_dir, self._app_config)
         assert self._app_config is not None, "AppConfig must be loaded before initialize"
-        from modex_agent.multi_agent.pool_config import PoolStore
 
-        pool_store = PoolStore(base_dir=self._project_dir)
-        print(f"[OK] Config loaded ({len(pool_store.list_pools())} pools)")
+        # Ticket 14 (SPEC §3.1): the scope declaration's workspace layer is
+        # the resource-selection authority. Loading it here decides (a) the
+        # stack shape — a workspace-layer declaration boots the multi-live
+        # stack; its absence (pool-as-root or no declaration) boots the
+        # single-workspace deployment (N15), and (b) the resource-selection
+        # overrides (memory backend, path layout) resolved onto the config
+        # view every workspace-scoped consumer reads. Malformed
+        # declarations fail the boot loudly.
+        self._scope_spec = load_scope_declaration_opt(
+            self._project_dir / "config" / "scopes" / "bot.yml"
+        )
+        self._app_config = apply_workspace_resource_selection(
+            self._app_config, self._scope_spec
+        )
+        declared_pool_count = (
+            len(self._scope_spec.workspace.pools)
+            if self._scope_spec is not None and self._scope_spec.workspace is not None
+            else (1 if self._scope_spec is not None and self._scope_spec.pool is not None else 0)
+        )
+        logger.info("Config loaded (%d declared pools)", declared_pool_count)
 
         # Shared MCP connection registry (ADR-0017 Task 5a). Service-scoped,
         # concurrent, dedup-by-config-hash. When the sharedRegistry flag is on
@@ -299,7 +333,7 @@ class BotService(AgentBuilderMixin):
         # configured server and switching/first-open of workspaces is free.
         # start_connecting fires all supervisors now so connections are READY
         # by the time the home workspace's pools build (which call
-        # _load_agent_mcp_tools → registry.acquire and find them instantly).
+        # the Stage-4 MCP loader → registry.acquire and find them instantly).
         # Set ``sharedRegistry: false`` in config/mcp/registry.json to disable
         # and fall back to today's per-pool MCPClientManager path.
         from bot.config.mcp_registry import read_registry, read_shared_registry_flag
@@ -310,6 +344,11 @@ class BotService(AgentBuilderMixin):
         mcp_registry_path = self._project_dir / "config" / "mcp" / "registry.json"
         if read_shared_registry_flag(mcp_registry_path):
             raw_servers = read_registry(mcp_registry_path)
+            # Ticket 14: the declared workspace MCP set is validated loudly
+            # against the registry (typo'd names abort the boot) and scopes
+            # the pre-warm; undeclared workspaces pre-warm everything.
+            validate_workspace_mcp_set(self._scope_spec, raw_servers)
+            prewarm_names = workspace_mcp_prewarm_names(self._scope_spec, raw_servers)
             if raw_servers:
                 # ${ENV} interpolation MUST happen before the registry hashes
                 # and connects, else tokens like ${MY_TOKEN} reach the
@@ -319,8 +358,8 @@ class BotService(AgentBuilderMixin):
                     servers=servers,
                     injector=JsonFileMCPTransportInjector(),
                 )
-                self._mcp_registry.start_connecting(list(servers.keys()))
-                print(f"[OK] Shared MCP registry: {len(servers)} server(s) connecting concurrently")
+                self._mcp_registry.start_connecting(prewarm_names)
+                logger.info("Shared MCP registry: %d server(s) connecting concurrently", len(servers))
             else:
                 self._mcp_registry = None
         else:
@@ -357,32 +396,41 @@ class BotService(AgentBuilderMixin):
                     )
 
             # 1.5 Build the default LLM provider + the workspace stack.
-            # Branch on workspace.enabled: False -> single-home stack (no /cd);
-            # True -> full multi-live stack.
+            # Ticket 14 (N15): the declaration form selects the stack — a
+            # workspace layer boots multi-live; its absence (pool-as-root /
+            # no declaration) boots the single-workspace deployment. The
+            # ``workspace.enabled`` config flag is dead.
             self._model_choice_registry = ModelChoiceRegistry()
             self._default_provider = self._build_default_provider()
             self.control_channel = _build_control_channel(self.control_channel)
             self.command_processor = _build_main_command_processor()
-            self.plugin_integration = PluginIntegration(config={"enabled": False})
 
-            # ADR-0025 ticket 3: build the execution-strategy registry with
-            # the shipped react strategy. Threaded through wiring.py into
-            # create_pool so react pools are assembled via
-            # ReactExecutionStrategy.assemble() instead of inline _build_*.
-            # ADR-0025 ticket 4: register ExternalExecutionStrategy so
-            # external pools are assembled via strategy.assemble()
-            # (provider-availability gate + external_deps build).
-            from bot.service.external_strategy import (
-                ExternalExecutionStrategy,
+            # Component registry: load DefaultPlugin (bundled FW defaults) +
+            # project plugins from examples/bot_project/plugins/ (BotStrategies,
+            # BotHooks, IMInputStages, and any user-added plugins). Loaded once
+            # at service level so all pools share the same factory set.
+            from modex_agent.plugins.defaults import DefaultPlugin
+            from modex_agent.plugins.loader import (
+                ComponentRegistryLoader,
+                PluginDiscoveryConfig,
             )
-            from bot.service.react_strategy import ReactExecutionStrategy
-            from modex_agent.multi_agent.execution_strategy import (
-                ExecutionStrategyRegistry,
+            from modex_agent.plugins.registry import (
+                ComponentRegistry,
+                strategy_registry_from_components,
             )
 
-            self._strategy_registry = ExecutionStrategyRegistry()
-            self._strategy_registry.register(ReactExecutionStrategy())
-            self._strategy_registry.register(ExternalExecutionStrategy())
+            self._component_registry = ComponentRegistry()
+            await ComponentRegistryLoader.load(
+                self._component_registry,
+                PluginDiscoveryConfig(
+                    bundled_factories=(DefaultPlugin(),),
+                    project_plugin_paths=(self._project_dir / "plugins",),
+                ),
+            )
+            self._strategy_registry = strategy_registry_from_components(
+                self._component_registry
+            )
+            logger.info("Component registry: %s", self._project_dir / "plugins")
 
             # T26: open the registry DB BEFORE workspace materialization so the
             # registry store is ready when workspaces start using it. The
@@ -418,16 +466,28 @@ class BotService(AgentBuilderMixin):
                 db_path=home_data_dir / WORKSPACE_STATE_DB,
             )
 
-            if self._app_config.workspace.enabled:
-                self.workspace_stack = build_workspace_stack(
-                    self, data_dir_name=self._app_config.paths.data_dir_name
-                )
-            else:
-                self.workspace_stack = build_single_workspace_stack(
-                    self, data_dir_name=self._app_config.paths.data_dir_name
-                )
+            self.workspace_stack = build_workspace_stack(
+                self,
+                data_dir_name=self._app_config.paths.data_dir_name,
+                enabled=workspace_layer_present(self._scope_spec),
+            )
             self.workspace_context = self.workspace_stack.controller
+            from modex_agent.plugins.assembly.context import AssemblyContext
+
+            self._service_assembly_ctx = AssemblyContext(
+                registry=self._component_registry,
+                workspace_ctx=self.workspace_stack.registry.home_context,
+                workspace_registry=self.workspace_stack.registry,
+            )
             await self.workspace_stack.registry.initialize()
+
+            # Ticket 17: runtime-created workspaces persist as declaration
+            # files under config/scopes/workspaces/. Re-register each at
+            # boot (lazily materialized on the first turn that targets
+            # them — the same road a /cd-switched workspace takes).
+            from bot.workspace.dynamic_workspaces import register_dynamic_workspaces
+
+            await register_dynamic_workspaces(self)
 
             # Eagerly materialize the HOME workspace so its pools/router are live
             # for BotService.start/stop (v1 = home-only materialization). The
@@ -439,7 +499,7 @@ class BotService(AgentBuilderMixin):
             self.pool_router = self._home_resources.pool_router
             self._print_pool_info()
 
-            print("=" * 60)
+            logger.info("=" * 60)
         except BaseException as initialization_error:
             resources_evicted = True
             if self.workspace_stack is not None:
@@ -475,28 +535,16 @@ class BotService(AgentBuilderMixin):
 
     def _print_pool_info(self) -> None:
         """Display pool configuration summary."""
-        print(f"\n[INFO] Pools: {list(self._pools.keys())}")
+        logger.info("Pools: %s", list(self._pools.keys()))
         for name, pi in self._pools.items():
-            print(f"   {name}: {pi.main_agent_name} + {pi.subagent_count} subagents")
-        print(f"[INFO] Switch commands: /{' /'.join(self._pools.keys())}")
-        print(f"[INFO] Default pool: {self._default_pool_name}")
+            logger.info("  %s: %s + %d subagents", name, pi.root_agent_name, pi.subagent_count)
+        logger.info("Switch commands: /%s", " /".join(self._pools.keys()))
+        logger.info("Default pool: %s", self._default_pool_name)
 
     # ------------------------------------------------------------------ #
     # ------------------------------------------------------------------ #
     # System-prompt resolution (per-pool, cached)
     # ------------------------------------------------------------------ #
-
-    def _system_prompt_for(self, name: str) -> str:
-        """Resolve the pool's main-agent system prompt (cached per pool)."""
-        cached = self._system_prompt_cache.get(name)
-        if cached is not None:
-            return cached
-        from modex_agent.multi_agent.pool_config import PoolStore
-
-        pool_spec = PoolStore(base_dir=self._project_dir).read_pool(name)
-        prompt = resolve_system_prompt(pool_spec.main.agent_name, self._project_dir)
-        self._system_prompt_cache[name] = prompt
-        return prompt
 
     # ------------------------------------------------------------------ #
     # Workspace helpers
@@ -523,6 +571,8 @@ class BotService(AgentBuilderMixin):
                 ),
             )
         else:
+            from modex_agent.core.constants import DefaultValues
+
             policy = RuntimeSafetyPolicy(
                 llm=LLMTimeoutPolicy(
                     request_timeout_seconds=None,
@@ -533,7 +583,7 @@ class BotService(AgentBuilderMixin):
                 turn=TurnTimeoutPolicy(
                     agent_run_timeout_seconds=600.0,
                     hook_timeout_seconds=10.0,
-                    tool_timeout_seconds=400.0,
+                    tool_timeout_seconds=DefaultValues.TOOL_TIMEOUT_SECONDS,
                 ),
             )
         self._safety_policy_cache = policy
@@ -601,7 +651,7 @@ class BotService(AgentBuilderMixin):
             await self.input_adapter.start()
 
             self._router_task = asyncio.create_task(self.workspace_stack.dispatcher.run())
-            print(f"[OK] WorkspaceDispatcher running, {len(self._pools)} pools active")
+            logger.info("WorkspaceDispatcher running, %d pools active", len(self._pools))
             await self._shutdown_event.wait()
 
     async def stop(self) -> None:

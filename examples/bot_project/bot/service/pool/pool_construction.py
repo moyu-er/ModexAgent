@@ -1,19 +1,25 @@
 """Agent pool construction and main-agent registration.
 
 Extracted from ``pool_builder.py`` (ADR-0025 ticket 6 split). Builds the
-``AgentPool`` and registers the main (NORMAL) agent with factory defaults.
+``AgentPool``, registers the main (NORMAL) agent with factory defaults,
+and initializes default long-term memory files.
 """
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from bot.service.model_config import BotModelConfig
 from modex_agent.core.capabilities import ModelInfo
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.core.scope import MemoryContext
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
+from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.messaging import MessageBroker
 from modex_agent.multi_agent import (
     AgentPool,
@@ -22,11 +28,68 @@ from modex_agent.multi_agent import (
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.specs import MainAgentSpec
+from modex_agent.scope.spec import AgentSpec
 
-from .._assembly_helpers import _resolved_or_placeholder
+from ..model_config import _resolved_or_placeholder
 
 logger = logging.getLogger(__name__)
+
+
+async def ensure_long_term_defaults(
+    project_dir: Path,
+    memory_cfg: MemoryConfig | None,
+    memory_system: DefaultMemorySystem,
+) -> None:
+    """Initialize default long-term memory files if core memory is enabled.
+
+    Supports both old ``long_term`` config (deprecated) and new ``core``
+    config. Template paths in config are relative to the project directory.
+    Resolves them to absolute paths before calling ``ensure_defaults`` so
+    the core memory layer finds templates regardless of CWD (critical after
+    ``/cd`` switches the conversation to a different workspace).
+    """
+    if memory_cfg is None:
+        return
+
+    core_enabled = False
+    if memory_cfg.long_term is not None and memory_cfg.long_term.enabled:
+        core_enabled = True
+    if memory_cfg.core is not None and memory_cfg.core.enabled:
+        core_enabled = True
+    if not core_enabled:
+        return
+
+    lt_mgr = memory_system.core_memory_manager
+    if lt_mgr is None:
+        return
+
+    raw_template_dir: str | None = None
+    if memory_cfg.core is not None:
+        raw_template_dir = memory_cfg.core.default_templates_dir
+    if not raw_template_dir and memory_cfg.long_term is not None:
+        raw_template_dir = memory_cfg.long_term.default_templates_dir
+    if raw_template_dir:
+        abs_template_dir = str((project_dir / raw_template_dir).resolve())
+        lt_mgr._config = lt_mgr._config.model_copy(
+            update={"default_templates_dir": abs_template_dir}
+        )
+
+    defaults: dict[str, str] = {
+        "soul": (
+            "## 沟通风格\n"
+            "- 使用中文回复，风格自然、简洁\n"
+            "- 优先给出直接答案，再补充解释\n"
+            "- 不确定的事情如实说明，不编造\n"
+        ),
+        "user": (
+            "## 用户画像\n- 首次使用，暂无特定偏好记录\n- 后续对话中会逐渐积累用户习惯和偏好\n"
+        ),
+        "memory": ("## 相关知识\n- 暂无特定领域知识记录\n- 长期对话中会自动整理和更新\n"),
+    }
+
+    ctx = MemoryContext(session_id="default", user_id="default")
+    await lt_mgr.ensure_defaults(ctx, defaults)
+    logger.info("Long-term memory defaults ensured")
 
 
 def _build_agent_pool(
@@ -57,9 +120,9 @@ def _build_agent_pool(
     return pool
 
 
-async def _register_main_agent(
+async def _register_external_main_agent(
     pool: AgentPool,
-    main_spec: MainAgentSpec,
+    main_spec: AgentSpec,
     assembly_deps: PoolAssemblyDeps,
     system_prompt: str,
     safety: RuntimeSafetyPolicy,
@@ -71,11 +134,12 @@ async def _register_main_agent(
     bot_model_config: BotModelConfig | None,
     output_adapter: Any | None = None,
 ) -> None:
-    """Register the main (NORMAL) agent with factory defaults (Design B).
+    """Register an external main agent through its strategy-aware factory.
 
-    The normal agent is a plain ``MainAgentSpec`` (inline in ``pool.yml``); its
-    ``max_steps`` / ``tool_preset`` / ``tool_supplements`` / ``approval`` /
-    ``use_terminal`` / ``terminal_visibility`` are read from ``main_spec``.
+    The external agent is the declared pool's root
+    :class:`modex_agent.scope.spec.AgentSpec`; its ``max_steps`` /
+    ``execution_strategy`` / ``roles`` / ``description`` are read from
+    ``main_spec``.
     """
     from modex_agent.multi_agent.descriptor import (
         AgentDescriptor,
@@ -85,7 +149,7 @@ async def _register_main_agent(
     resolved_cfg = _resolved_or_placeholder(bot_model_config)
     default_resolved = resolved_cfg.default_resolved()
     descriptor = AgentDescriptor(
-        address=AgentAddress(kind="agent", name=main_spec.agent_name),
+        address=AgentAddress(name=main_spec.name),
         llm_config=AgentLLMConfig(
             model=default_resolved.model.model,
             temperature=default_resolved.model.temperature,
@@ -98,7 +162,7 @@ async def _register_main_agent(
         ),
         system_prompt_template=system_prompt,
         max_iterations=main_spec.max_steps,
-        execution_strategy=main_spec.execution_strategy,
+        execution_strategy=ExecutionStrategyKind(main_spec.execution_strategy),
         context_strategy="persistent",
         safety_policy=safety,
         comm_kind=AgentCommKind.NORMAL,
@@ -119,5 +183,5 @@ async def _register_main_agent(
     logger.info(
         "Pool '%s': main agent '%s' registered (factory defaults)",
         pool_name,
-        main_spec.agent_name,
+        main_spec.name,
     )

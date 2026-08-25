@@ -1,0 +1,192 @@
+# Scope declaration for the bot workspace (ADR-0042 / SPEC §3).
+#
+# Single source of truth for scope assembly — the legacy
+# config/pools/<name>/pool.yml + templates/*.yml road is deleted
+# (ticket 11); this declaration is the only pool format.
+#
+# Form: workspace layer (ticket 14 — the full resource-selection face:
+# memory backend, path layout, shared MCP server set, hosted pools)
+# carrying the bidirectional peer topology (ADR-0019: default<->opencode,
+# default<->review). Each pool declares its agents tree — nesting under
+# `agents:` is sugar for the flat parent-reference model. Position-derived
+# defaults (SPEC §3.2) are NOT transcribed: root agents get the full
+# toolset profile, non-roots read-write; only deviations declare
+# `toolset` explicitly.
+#
+# Resource-selection values match the shipped service defaults
+# (bot_config.yml) — data landing is unchanged (split-brain equivalence).
+# Absent selection fields inherit the service-level domain config.
+workspace:
+  name: bot
+  persistence:
+    backend: sqlite
+  paths:
+    data_dir_name: .modex
+  mcp:
+  - playwright
+  pools:
+    default:
+      peers:
+      - opencode
+      - review
+      agents:
+        default:
+          description: >-
+            General-purpose assistant. Handles broad conversation, web research and
+            content retrieval, and Office-document work. Carries file, shell, and
+            browser tools. Use as the default for ambiguous or cross-domain requests.
+          max_steps: 50
+          use_terminal: false
+          terminal_visibility: false
+          tool_supplements:
+          - aci
+          hooks:
+          - +reference_collector
+          # Ticket 09: notification + experience-review hooks are HOOK-slot
+          # components referenced from the declaration — the declaration road
+          # dispatches them at Stage 4 (the legacy road code-wires them in
+          # create_pool / pool_wiring until ticket 17).
+          - +user_notice_cleanup
+          - +experience_review
+          hook_configs:
+            reference_collector:
+              max_sources: 20
+          approval:
+            enabled: true
+            tools:
+              write:
+                allowed_paths:
+                - ./*
+              edit:
+                allowed_paths:
+                - ./*
+          mcp:
+          - playwright
+          agents:
+            office-expert:
+              description: >-
+                Creates, reads, edits, converts, and analyzes Office documents (Word, Excel,
+                PowerPoint, PDF) using the OfficeCLI toolchain. Handles formatting, charts,
+                batch operations, and format conversion. Use when the task involves .docx,
+                .xlsx, .pptx, or .pdf file manipulation.
+              max_steps: 100
+              tool_supplements:
+              - todo
+              - aci
+              context_mode: fresh
+    coder:
+      agents:
+        orchestrator:
+          description: >-
+            Software engineering agent for codebase investigation, implementation
+            planning, design validation, change review, and structured technical
+            analysis. Performs quick codebase lookups, planning, diff review, and
+            design checks. Use when a task needs investigation, planning, review,
+            or design analysis of a codebase.
+          max_steps: 200
+          use_terminal: false
+          terminal_visibility: false
+          tool_supplements:
+          - aci
+          - todo
+          # Ticket 11: notification + experience-review are HOOK-slot
+          # roster references (Stage 4 dispatch) — config evolution only
+          # walks the declaration (09 precedent).
+          hooks:
+          - +user_notice_cleanup
+          - +experience_review
+          approval:
+            enabled: true
+            tools:
+              write:
+                allowed_paths:
+                - ./*
+              edit:
+                allowed_paths:
+                - ./*
+          agents:
+            explore:
+              description: >-
+                Read-only codebase search and analysis agent. Searches, reads, and
+                analyzes code, tracing dependencies and returning structured findings
+                with exact file paths and line numbers. Cannot modify files. Use for
+                any read-only investigation requiring more than a few searches, or
+                when parallel analysis of independent questions is valuable.
+              max_steps: 100
+              toolset: read_only
+              tool_supplements:
+              - ast_grep
+              - todo
+              context_mode: fresh
+            general:
+              description: >-
+                General-purpose assistant with full capabilities. Handles research,
+                planning, task decomposition, documentation, and implementation when
+                the task doesn't warrant dedicated exploration or is cross-domain.
+                Use for any task that needs a fresh, isolated context.
+              max_steps: 100
+              toolset: full
+              tool_supplements:
+              - aci
+              - ast_grep
+              - todo
+              context_mode: fresh
+    review:
+      peers:
+      - default
+      agents:
+        reviewer:
+          description: >-
+            Code review agent responsible for inspecting code changes, running
+            verification, and either approving or requesting revisions from the
+            upstream implementation team. Carries full tools for reading code,
+            running tests, and executing verification commands.
+          max_steps: 80
+          use_terminal: false
+          terminal_visibility: false
+          tool_supplements:
+          - ast_grep
+          - todo
+          # Ticket 11: notification + experience-review are HOOK-slot
+          # roster references (Stage 4 dispatch) — config evolution only
+          # walks the declaration (09 precedent).
+          hooks:
+          - +user_notice_cleanup
+          - +experience_review
+          agents:
+            explore:
+              description: >-
+                Read-only codebase search and analysis agent. Searches, reads, and
+                analyzes code, tracing dependencies and returning structured findings
+                with exact file paths and line numbers. Cannot modify files.
+              max_steps: 60
+              toolset: read_only
+              tool_supplements:
+              - ast_grep
+              - todo
+              context_mode: fresh
+            general:
+              description: >-
+                General-purpose assistant with full capabilities. Handles research,
+                planning, task decomposition, documentation, and implementation when
+                the task doesn't warrant dedicated exploration or is cross-domain.
+                Use for any task that needs a fresh, isolated context.
+              max_steps: 80
+              toolset: full
+              tool_supplements:
+              - ast_grep
+              - todo
+              context_mode: fresh
+    opencode:
+      peers:
+      - default
+      agents:
+        opencode:
+          description: >-
+            Autonomous software engineering agent with full file and terminal
+            access. Handles implementation, debugging, refactoring, and
+            verification across a complete codebase end-to-end. Use for heavy
+            coding work that benefits from a dedicated, self-directed coding
+            context.
+          execution_strategy: external
+          provider_kind: opencode

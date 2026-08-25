@@ -23,10 +23,19 @@ from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
 from modex_agent.pipeline.adapters import OutputAdapter
-from modex_agent.tools.presets import ToolPreset
 from modex_graph.spec import NodeSpec
+
+from ..declaration_driver import build_declared
+
+_POOL_DECLARATION = """\
+pool:
+  name: graph-pool
+  agents:
+    main:
+      description: graph test root
+      toolset: none
+"""
 
 _POOL_NAME = "graph-pool"
 _SESSION_ID = "same-prefix.main"
@@ -47,11 +56,6 @@ async def test_graph_node_resolves_pool_assembled_emitter_with_node_pool(
     def emitter_factory(session_id: str, pool: str) -> WebBotEmitter:
         return WebBotEmitter(web_output, session_id, pool=pool)
 
-    pool_spec = PoolSpec(
-        name=_POOL_NAME,
-        main_agent_name="main",
-        main=MainAgentSpec(agent_name="main", tool_preset=ToolPreset.NONE),
-    )
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "modexctl.bat").write_text("@exit /b 0\n", encoding="ascii")
@@ -62,9 +66,16 @@ async def test_graph_node_resolves_pool_assembled_emitter_with_node_pool(
         with patch.dict("os.environ", {"MODEXBOT_BIN_DIR": str(bin_dir)}):
             pool_instance = await create_pool(
                 pool_name=_POOL_NAME,
-                pool_spec=pool_spec,
+                declared=build_declared(
+                    _POOL_DECLARATION,
+                    project_dir=tmp_path,
+                    data_dir=tmp_path / ".modex",
+                    pool_name=_POOL_NAME,
+                ),
                 assembly_deps=PoolAssemblyDeps(),
                 project_dir=tmp_path,
+                workspace_registry=object(),
+                workspace_resources=object(),
                 data_dir=tmp_path / ".modex",
                 broker=broker,
                 output_adapter=output_adapter,

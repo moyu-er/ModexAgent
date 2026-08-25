@@ -1,0 +1,60 @@
+{
+  "tools": [
+    {
+      "name": "read",
+      "tool_class": "ReadFileTool",
+      "source": "builders",
+      "params": {}
+    },
+    {
+      "name": "write",
+      "tool_class": "WriteFileTool",
+      "source": "builders",
+      "params": {}
+    },
+    {
+      "name": "edit",
+      "tool_class": "AciEditTool",
+      "source": "builders",
+      "params": {}
+    },
+    {
+      "name": "ls",
+      "tool_class": "ListDirTool",
+      "source": "builders",
+      "params": {}
+    },
+    {
+      "name": "grep",
+      "tool_class": "SearchFilesTool",
+      "source": "builders",
+      "params": {}
+    },
+    {
+      "name": "glob",
+      "tool_class": "GlobTool",
+      "source": "builders",
+      "params": {}
+    },
+    {
+      "name": "bash",
+      "tool_class": "SubprocessTool",
+      "source": "builders",
+      "params": {
+        "timeout": 90
+      }
+    },
+    {
+      "name": "send_file_to_user",
+      "tool_class": "SendFileToUserTool",
+      "source": "builders",
+      "params": {}
+    },
+    {
+      "name": "experience",
+      "tool_class": "ExperienceTool",
+      "source": "builders",
+      "params": {}
+    }
+  ]
+}

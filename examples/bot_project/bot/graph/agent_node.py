@@ -1,9 +1,12 @@
 """BotAgentNode -- agent-backed graph node wiring pool/pipeline resources.
 
 Bridges the static graph scheduling layer (modex_graph) to the bot's pool-mode
-agent runtime. Each node binds a named agent from a named pool, resolves the
-pool's AgentInstance, and drives a graph turn via the session tree: pre-build
-graph artifacts → tree.deliver → tree.wait_quiesce → return. Per-turn
+agent runtime. Each node binds a named agent from a named pool and drives a
+graph turn via the session tree: pre-build graph artifacts → tree.deliver →
+tree.wait_quiesce → return. The agent may be a never-dispatched lazy leaf —
+instance absence is not an error: the InboxPoller cold-starts the agent from
+its template (the same inbox-driven materialization as session mode, SPEC §4
+axis 3), so this node never resolves the instance up front. Per-turn
 configuration (tools, topology, approval, knowledge) is handled by the
 TurnContextConfigPipeline configurators, not inline mutation.
 """
@@ -29,6 +32,7 @@ if TYPE_CHECKING:
     from modex_agent.core.session_registry import SessionRegistry
     from modex_agent.multi_agent.descriptor import AgentInstance
     from modex_agent.multi_agent.pool_instance import PoolInstance
+    from modex_agent.multi_agent.template import AgentTemplate
     from modex_graph.context import GraphContext
     from modex_graph.integration import IntegratedInput
 
@@ -90,33 +94,30 @@ class BotAgentNode(AgentNode):
             raise RuntimeError(f"Pool {self._pool_name!r} not found in workspace")
         return pool
 
-    def _resolve_agent_instance(self) -> AgentInstance:
-        pool = self._resolve_pool()
-        instance: AgentInstance | None = pool.pool.get(self._agent_name)
-        if instance is None:
-            raise RuntimeError(
-                f"Agent {self._agent_name!r} not found in pool {self._pool_name!r}"
-            )
-        return instance
-
     def resolve_description(self) -> str:
         if self._description:
             return self._description
-        instance = self._resolve_agent_instance()
-        return instance.descriptor.role_description or AgentNode.DESCRIPTION_NOT_FOUND
+        agent_pool = self._resolve_pool().pool
+        instance: AgentInstance | None = agent_pool.get(self._agent_name)
+        if instance is not None:
+            return instance.descriptor.role_description or AgentNode.DESCRIPTION_NOT_FOUND
+        # Never-dispatched lazy agent (fresh boot): the template registry is
+        # the compiled declaration's runtime carrier — boot seeds it from the
+        # 06 compilation and the InboxPoller materializes from the same
+        # source, so existence and description resolve without an instance.
+        # ``role_description`` and the template description carry the same
+        # declared value on both boot roads, so the order never diverges.
+        template: AgentTemplate | None = agent_pool.get_template(self._agent_name)
+        if template is not None:
+            return template.spec.description or AgentNode.DESCRIPTION_NOT_FOUND
+        return AgentNode.DESCRIPTION_NOT_FOUND
 
     async def execute(
         self,
         ctx: GraphContext[Any],
         integrated_input: IntegratedInput,
     ) -> None:
-        # 1. Resolve pool resources.
-        instance = self._resolve_agent_instance()
-        pipeline = instance.pipeline
-        if pipeline is None:
-            raise RuntimeError(f"Agent {self._agent_name!r} has no pipeline")
-
-        # 2. Ensure session.
+        # 1. Ensure session.
         session = await self._ensure_session(ctx)
 
         binding_store = self._resolve_pool().session_binding_store
@@ -124,13 +125,13 @@ class BotAgentNode(AgentNode):
         bound_here = False
 
         try:
-            # 3. Build artifacts and store on graph context for the configurator pipeline.
+            # 2. Build artifacts and store on graph context for the configurator pipeline.
             artifacts = self._build_graph_artifacts(ctx)
             if ctx.user_data is None:
                 ctx.user_data = {}
             ctx.user_data.setdefault("node_artifacts", {})[self.name] = artifacts
 
-            # 3b. Bind session — binding store replaces envelope transport
+            # 2b. Bind session — binding store replaces envelope transport
             # for graph_node_name / is_node_execution / graph_artifacts.
             if binding_store is not None and ctx.graph_instance_id is not None:
                 binding_store.bind(
@@ -144,15 +145,18 @@ class BotAgentNode(AgentNode):
                 )
                 bound_here = True
 
-            # 4. Build input envelope (formats Origin Request + upstream input).
+            # 3. Build input envelope (formats Origin Request + upstream input).
             envelope = await self._build_graph_input_envelope(
                 ctx, integrated_input, session
             )
 
-            # 5. Deliver to session inbox via tree — InboxPoller drives the turn.
+            # 4. Deliver to session inbox via tree — InboxPoller drives the
+            # turn, cold-starting the agent from its template when no live
+            # instance exists yet (SPEC §4 axis 3: same materialization
+            # semantics as session mode).
             await tree.deliver(session.session_id, envelope, track_consume=True)
 
-            # 6. Wait for the tree to quiesce (turn + any subagents complete).
+            # 5. Wait for the tree to quiesce (turn + any subagents complete).
             tree_id = await tree.tree_id_for_session(session.session_id)
             if tree_id is not None:
                 await tree.wait_quiesce(tree_id)

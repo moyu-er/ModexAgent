@@ -133,7 +133,7 @@ async def test_alternating_tabs_without_pool_keep_prefix_route_stable(
     pool_store = _new_pool_store(tmp_path)
     server.set_pool_resolver(pool_store.get_pool)
     server.set_pool_switch_callback(pool_store.set_pool)
-    attach_default_pipeline(
+    await attach_default_pipeline(
         server,
         transcript_store,
         input_adapter,

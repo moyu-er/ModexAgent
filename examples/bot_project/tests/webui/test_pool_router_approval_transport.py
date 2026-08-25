@@ -43,7 +43,7 @@ class _MockBroker:
 class _MockPool:
     """Records the InputMessage handed to ``pool.pool.submit_input``."""
 
-    main_agent_name = "main"
+    root_agent_name = "main"
     main_address = "pool:main"
 
     def __init__(self) -> None:
@@ -53,10 +53,6 @@ class _MockPool:
             @staticmethod
             async def submit_input(sid: str, msg: InputMessage) -> None:
                 self.submitted.append((sid, msg))
-
-            @staticmethod
-            def serves_agent(name: str) -> bool:
-                return True
 
         self.pool = _Inner()
 
@@ -71,6 +67,7 @@ def _router(tmp_path: Path, pool: _MockPool) -> PoolRouter:
         pools={"main": pool},
         session_store=session_store,
         default_pool="main",
+        agent_pool_ownership={"main": ("main",)},
     )
 
 

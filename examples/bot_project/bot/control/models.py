@@ -167,7 +167,7 @@ class SendResult(BaseModel):
     to emit. ``is_peer_send`` and ``is_external_target`` drive the CLI's
     format selection. ``trace_dir`` is sourced verbatim from
     :class:`AgentSendResult` (never re-derived from
-    :class:`WorkspacePathResolver`). ``requested_invocation_id`` is
+    the scope-path resolution). ``requested_invocation_id`` is
     populated only in T07.
     """
 

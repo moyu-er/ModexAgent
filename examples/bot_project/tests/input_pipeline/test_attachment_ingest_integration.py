@@ -24,6 +24,10 @@ from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
 from modex_agent.media.models import AttachmentLocator, Kind
 from modex_agent.workspace.runtime import bind_workspace_root
+from tests.input_pipeline.assembly_support import (
+    TEST_ASSEMBLY_CTX,
+    TEST_COMPONENT_REGISTRY,
+)
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
@@ -77,7 +81,9 @@ async def test_pipeline_turns_attachment_ref_into_persisted_attachment() -> None
             current_ws_provider=(lambda r=root: r),
             media_store=media_store,
         )
-        pipeline = build_webui_pipeline(
+        pipeline = await build_webui_pipeline(
+            registry=TEST_COMPONENT_REGISTRY,
+            ctx=TEST_ASSEMBLY_CTX,
             skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
         )
 
@@ -131,7 +137,9 @@ async def test_pipeline_noop_when_no_attachments() -> None:
             current_ws_provider=(lambda r=root: r),
             media_store=media_store,
         )
-        pipeline = build_webui_pipeline(
+        pipeline = await build_webui_pipeline(
+            registry=TEST_COMPONENT_REGISTRY,
+            ctx=TEST_ASSEMBLY_CTX,
             skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
         )
 

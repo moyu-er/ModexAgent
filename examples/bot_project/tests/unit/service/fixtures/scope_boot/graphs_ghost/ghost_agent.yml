@@ -1,0 +1,14 @@
+name: ghost_graph
+version: "1.0"
+state_class: default
+nodes:
+  - name: ghost
+    node_type: agent
+    config:
+      agent: does-not-exist
+      pool: default
+edges:
+  - source: __start__
+    target: ghost
+  - source: ghost
+    target: __end__

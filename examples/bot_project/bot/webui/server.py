@@ -36,6 +36,7 @@ from bot.webui.routes.graph_routes import register_graph_routes
 from bot.webui.routes.kb_routes import register_kb_routes
 from bot.webui.routes.models import register_models_routes
 from bot.webui.routes.pool_config import register_pool_config_routes
+from bot.webui.routes.scope_routes import register_scope_routes
 from bot.webui.routes.sessions import register_sessions_routes
 from bot.webui.routes.websocket import register_websocket_routes
 from bot.webui.routes.workspace import register_workspace_routes
@@ -55,6 +56,7 @@ if TYPE_CHECKING:
 
     from bot.service.session_gc import SessionGarbageCollector
     from bot.service.session_pool_index import SessionPoolIndex
+    from bot.workspace.dynamic_workspaces import WorkspaceCreationResult
     from bot.workspace.handle import PoolWorkspaceResources
 
 logger = logging.getLogger(__name__)
@@ -117,6 +119,12 @@ class WebUIServer:
         # single-active (the browser's current workspace), so it drives the
         # port under a global sentinel conversation id.
         self._workspace_control: WorkspaceControlPort | None = None
+        # Runtime workspace creation (ticket 17) — injected by WebUIService;
+        # takes (name, backend|None) and returns the creation result. None
+        # degrades POST /api/workspace/create to 503.
+        self._workspace_creator: (
+            Callable[[str, str | None], Awaitable[WorkspaceCreationResult]] | None
+        ) = None
         # Workspace+pool partition index -- injected by WebUIService.  When None,
         # the flat shared store is used (workspace-agnostic, basic tests).
         self._workspace_index: WorkspaceIndex | None = None
@@ -342,7 +350,7 @@ class WebUIServer:
         self._pool_resolver = callback
 
     def set_agent_resolver(self, callback: Callable[[str], str]) -> None:
-        """Set callback for resolving pool_name -> main_agent_name."""
+        """Set callback for resolving pool_name -> root_agent_name."""
         self._agent_resolver = callback
 
     def set_data_dir_name(self, data_dir_name: str) -> None:
@@ -352,6 +360,20 @@ class WebUIServer:
     def set_workspace_control(self, control: WorkspaceControlPort) -> None:
         """Inject the WorkspaceControlPort for the workspace API."""
         self._workspace_control = control
+
+    def set_workspace_creator(
+        self,
+        creator: Callable[[str, str | None], Awaitable[WorkspaceCreationResult]] | None,
+    ) -> None:
+        """Inject the runtime workspace-creation callback (ticket 17).
+
+        The creator takes ``(name, backend|None)`` and performs the full
+        creation road: write the per-workspace declaration to disk,
+        materialize the workspace through the registry (pools boot from the
+        declaration), and return the creation result. ``None`` degrades
+        ``POST /api/workspace/create`` to 503 (minimal test wiring).
+        """
+        self._workspace_creator = creator
 
     def set_session_gc(self, gc: SessionGarbageCollector | None) -> None:
         """Inject the SessionGarbageCollector for cascade session deletion."""
@@ -512,6 +534,11 @@ class WebUIServer:
         # the resolver is not yet injected (matches the degradation pattern
         # for ConfigController / PoolConfigController).
         register_graph_routes(self, self._graph_workspace_resolver)
+        # Scope declaration REST API (ticket 16) — declaration YAML
+        # read/write-back, tree topology, and the per-request recomputed
+        # provenance bill. Same late-bound workspace resolver seam as the
+        # graph routes (503 until injected).
+        register_scope_routes(self)
         register_kb_routes(self)
 
         # Control API (T04). The handler checks ``app["control_facade"]`` and

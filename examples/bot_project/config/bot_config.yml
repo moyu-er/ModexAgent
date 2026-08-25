@@ -1,7 +1,7 @@
 # ============================================================
 # bot_config.yml — Shared infrastructure only
 #
-# Each agent pool is configured in config/pools/{name}.yml.
+# Agent pools are declared in the scope declaration (config/scopes/bot.yml).
 # This file holds only cross-cutting concerns.
 # ============================================================
 
@@ -15,7 +15,9 @@ safety:
   turn:
     agent_run_timeout: 600.0
     hook_timeout: 10.0
-    tool_timeout: 400.0
+    # tool_timeout intentionally unset — the framework default
+    # (DefaultValues.TOOL_TIMEOUT_SECONDS, 540s) applies. It must stay
+    # strictly above the persistent bash session's own 480s deadline.
 
 # ---- Paths ----
 paths:
@@ -30,8 +32,10 @@ webui:
   host: "0.0.0.0"
 
 # ---- Workspace (multi-live) ----
-workspace:
-  enabled: true
+# Ticket 14: the workspace.enabled flag is dead. The stack shape is
+# selected by the scope declaration's form (config/scopes/bot.yml):
+# a workspace-layer declaration boots multi-live; its absence
+# (pool-as-root or no declaration) boots the single-workspace deployment.
 
 # ---- Multi-agent ----
 multi_agent:
@@ -40,10 +44,6 @@ multi_agent:
     max_sessions_global: 200
     ttl_seconds: 86400
     cleanup_interval_seconds: 1800
-
-# ---- Plugins (OFF by default) ----
-plugins:
-  enabled: false
 
 # ---- Observability ----
 observability:

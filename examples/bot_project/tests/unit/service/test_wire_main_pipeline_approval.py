@@ -37,7 +37,6 @@ from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.pipeline import AgentPipeline
@@ -54,6 +53,7 @@ from modex_agent.pipeline.turn_context_config import (
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.services import AgentRuntimeServices
+from modex_agent.scope.spec import AgentSpec, PoolSpec
 
 pytestmark = pytest.mark.skipif(
     shutil.which("modexctl") is None,
@@ -179,8 +179,8 @@ def _make_pipeline() -> AgentPipeline:
     return pipeline
 
 
-def _make_main_spec(*, approval: ApprovalConfig | None) -> MainAgentSpec:
-    return MainAgentSpec(agent_name="main", approval=approval)
+def _make_main_spec(*, approval: ApprovalConfig | None) -> AgentSpec:
+    return AgentSpec(name="main", approval=approval)
 
 
 def _wire(*, approval: ApprovalConfig | None) -> AgentPipeline:
@@ -189,7 +189,7 @@ def _wire(*, approval: ApprovalConfig | None) -> AgentPipeline:
     main_spec = _make_main_spec(approval=approval)
     _wire_main_pipeline(
         pool=pool,
-        main_agent_name="main",
+        root_agent_name="main",
         inbox_consumer=MagicMock(name="inbox_consumer"),
         notification_service=MagicMock(name="notification_service"),
         shared_interceptor_chain=MagicMock(name="interceptor_chain"),
@@ -200,9 +200,10 @@ def _wire(*, approval: ApprovalConfig | None) -> AgentPipeline:
         command_processor=None,
         pool_name="main",
         tool_manager=InMemoryToolManager(),
-        pool_spec=PoolSpec(name="main", main_agent_name="main", main=main_spec),
+        pool_spec=PoolSpec(name="main", agents=[main_spec]),
         bot_model_config=_BOT_CFG,
         model_choice_registry=_REGISTRY,
+        roster_hook_names=frozenset(),
     )
     return pipeline
 
@@ -274,7 +275,7 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
     )
     _wire_main_pipeline(
         pool=pool,
-        main_agent_name="main",
+        root_agent_name="main",
         inbox_consumer=MagicMock(name="inbox_consumer"),
         notification_service=MagicMock(name="notification_service"),
         shared_interceptor_chain=MagicMock(name="interceptor_chain"),
@@ -285,10 +286,11 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
         command_processor=None,
         pool_name="main",
         tool_manager=InMemoryToolManager(),
-        pool_spec=PoolSpec(name="main", main_agent_name="main", main=main_spec),
+        pool_spec=PoolSpec(name="main", agents=[main_spec]),
         root_provider=_Provider(),
         bot_model_config=_BOT_CFG,
         model_choice_registry=_REGISTRY,
+        roster_hook_names=frozenset(),
     )
 
     builder = pipeline._turn_runner.turn_context_builder
@@ -333,7 +335,7 @@ def test_wires_graph_context_resolver_and_config_pipeline_when_passed() -> None:
 
     _wire_main_pipeline(
         pool=pool,
-        main_agent_name="main",
+        root_agent_name="main",
         inbox_consumer=MagicMock(name="inbox_consumer"),
         notification_service=MagicMock(name="notification_service"),
         shared_interceptor_chain=MagicMock(name="interceptor_chain"),
@@ -344,9 +346,10 @@ def test_wires_graph_context_resolver_and_config_pipeline_when_passed() -> None:
         command_processor=None,
         pool_name="main",
         tool_manager=InMemoryToolManager(),
-        pool_spec=PoolSpec(name="main", main_agent_name="main", main=main_spec),
+        pool_spec=PoolSpec(name="main", agents=[main_spec]),
         bot_model_config=_BOT_CFG,
         model_choice_registry=_REGISTRY,
+        roster_hook_names=frozenset(),
         graph_context_resolver=_resolver,
     )
 

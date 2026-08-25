@@ -1,0 +1,5 @@
+# Model keys are case-insensitive regex prefixes. Only specified fields override
+# the framework entry; omitted fields retain the built-in value.
+models:
+  glm-5\.2:
+    input: 1.4

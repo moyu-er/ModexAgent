@@ -10,7 +10,7 @@ inclusion, error paths.
 
 The workspace resolver, message-store provider, and transcript-store provider
 are injected as closures so the test never touches a real
-``WorkspaceRegistry`` or memory system.
+``ScopeRegistry`` or memory system.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ from modex_agent.core.session_store import SessionStore
 from modex_agent.core.types import MessageRole
 from modex_agent.memory.core.split_stores import MessageStore
 from modex_agent.memory.stores.scoped_in_memory import InMemoryScopedStorage
-from modex_agent.multi_agent.pool_config import MainAgentSpec, PoolSpec
+from modex_agent.scope.spec import AgentSpec, PoolSpec
 
 # ---------------------------------------------------------------------------
 # Sample data
@@ -168,16 +168,12 @@ def _make_session_info(
 def _make_pool_spec(
     strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
 ) -> PoolSpec:
-    kwargs: dict[str, Any] = {"agent_name": _AGENT_NAME, "execution_strategy": strategy}
+    kwargs: dict[str, Any] = {"name": _AGENT_NAME, "execution_strategy": strategy}
     if strategy == ExecutionStrategyKind.EXTERNAL:
         from modex_agent.agents.external.paths import ProviderKind
 
         kwargs["provider_kind"] = ProviderKind.PI
-    return PoolSpec(
-        name=_POOL,
-        main_agent_name=_AGENT_NAME,
-        main=MainAgentSpec(**kwargs),
-    )
+    return PoolSpec(name=_POOL, agents=[AgentSpec(**kwargs)])
 
 
 def _make_request(
@@ -248,12 +244,12 @@ def _make_facade(
     effective_pool_spec = pool_spec if pool_spec is not None else _make_pool_spec()
 
     mock_pool_instance = MagicMock()
-    mock_pool_instance.main_execution_strategy = effective_pool_spec.main.execution_strategy
-    mock_pool_instance.main_agent_name = effective_pool_spec.main_agent_name
+    mock_pool_instance.main_execution_strategy = effective_pool_spec.root_agent.execution_strategy
+    mock_pool_instance.root_agent_name = effective_pool_spec.root_agent.name
     mock_pool_instance.target_store.list = MagicMock(return_value=[])
     mock_pool_instance.target_store.get = MagicMock(
         return_value=MagicMock(
-            execution_strategy=effective_pool_spec.main.execution_strategy
+            execution_strategy=effective_pool_spec.root_agent.execution_strategy
         )
     )
 

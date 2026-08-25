@@ -64,9 +64,9 @@ def _resolve_trace_enabled(app_config: AppConfig | None) -> bool:
 def _cell_sessions_dir(cell: WorkspaceResolverCell | None) -> Path | None:
     """Resolve the workspace sessions dir from a resolver cell.
 
-    Duplicated from :mod:`bot.service._assembly_helpers` (ticket 6: "Duplicate
-    the tiny helper") because ``_build_agent_factory`` uses it for the emitter
-    factory wrapper.
+    Duplicated from :class:`bot.service.builders._PoolAssemblyMixin`
+    (ticket 6: "Duplicate the tiny helper") because ``_build_agent_factory``
+    uses it for the emitter factory wrapper.
     """
     if cell is None:
         return None

@@ -28,7 +28,7 @@ from modex_agent.workspace.paths import WorkspacePaths
 _DATA_DIR_NAME = ".modex"
 
 
-def _build_real_coding_server(
+async def _build_real_coding_server(
     tmp_root: Path,
 ) -> tuple[WebUIServer, WebSocketInputAdapter, PoolSessionStore]:
     """Build a server wired like production with a real PoolSessionStore."""
@@ -79,7 +79,7 @@ def _build_real_coding_server(
     # Inject the WebUI input pipeline so _ws_send_message works.
     from tests.webui._pipeline_fixture import attach_default_pipeline
 
-    attach_default_pipeline(
+    await attach_default_pipeline(
         server,
         store,
         input_adapter,
@@ -99,7 +99,7 @@ async def test_new_conversation_attach_persists_pool_to_disk() -> None:
     """
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        server, _, pool_store = _build_real_coding_server(root)
+        server, _, pool_store = await _build_real_coding_server(root)
 
         client = TestClient(TestServer(server.app))
         await client.start_server()

@@ -1,8 +1,8 @@
 """Structural regression test for bundled pool agent descriptions.
 
-Loads every shipped pool under ``examples/bot_project/config/pools`` via the
-real :class:`PoolStore` and asserts self-containment invariants on the ten
-main + subagent specs:
+Loads every shipped pool from the scope declaration
+(``examples/bot_project/config/scopes/bot.yml``) and asserts
+self-containment invariants on the declared agents:
 
 * the discovered agent-name set is exactly the expected eight-name roster;
 * every description is non-empty;
@@ -29,9 +29,9 @@ _BOT_PROJECT = Path(__file__).resolve().parents[3]
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from modex_agent.multi_agent.pool_config.store import PoolStore  # noqa: E402
+from modex_agent.scope.loader import load_scope_declaration  # noqa: E402
 
-# The complete roster shipped under ``config/pools/``. Drift (a name added or
+# The complete roster shipped in the declaration. Drift (a name added or
 # removed without updating this set) is itself a regression the test catches.
 _EXPECTED_AGENT_NAMES: frozenset[str] = frozenset(
     {
@@ -47,19 +47,18 @@ _EXPECTED_AGENT_NAMES: frozenset[str] = frozenset(
 _EXPECTED_SPEC_COUNT = 9
 
 
-def _load_specs(store: PoolStore) -> list[tuple[str, str, str]]:
-    """Collect ``(pool_name, agent_name, description)`` for every main + subagent."""
-    specs: list[tuple[str, str, str]] = []
-    for summary in store.list_pools():
-        tree = store.read_pool(summary.name)
-        specs.append((summary.name, tree.main.agent_name, tree.main.description))
-        for sub in tree.subagents:
-            specs.append((summary.name, sub.agent_name, sub.description))
-    return specs
+def _load_specs() -> list[tuple[str, str, str]]:
+    """Collect ``(pool_name, agent_name, description)`` for every declared agent."""
+    spec = load_scope_declaration(_BOT_PROJECT / "config" / "scopes" / "bot.yml")
+    pools = spec.workspace.pools if spec.workspace is not None else []
+    return [
+        (pool.name, agent.name, agent.description)
+        for pool in pools
+        for agent in pool.agents
+    ]
 
 
-_STORE: PoolStore = PoolStore(base_dir=_BOT_PROJECT)
-_SPECS: list[tuple[str, str, str]] = _load_specs(_STORE)
+_SPECS: list[tuple[str, str, str]] = _load_specs()
 _AGENT_NAMES: frozenset[str] = frozenset(name for _, name, _ in _SPECS)
 _DESC_BY_AGENT: dict[str, tuple[str, str]] = {name: (pool, desc) for pool, name, desc in _SPECS}
 
@@ -81,7 +80,7 @@ def _mentions_whole_token(name: str, text: str) -> bool:
 
 
 def test_discovered_agent_names_match_expected_roster() -> None:
-    """The ten bundled specs must be exactly the expected roster."""
+    """The bundled specs must be exactly the expected roster."""
     assert len(_SPECS) == _EXPECTED_SPEC_COUNT, (
         f"Expected {_EXPECTED_SPEC_COUNT} specs, found {len(_SPECS)}"
     )

@@ -9,6 +9,11 @@ from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
 from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 
+from tests.input_pipeline.assembly_support import (
+    TEST_ASSEMBLY_CTX,
+    TEST_COMPONENT_REGISTRY,
+)
+
 
 class _NoSkillRegistry(SkillRegistry):
     async def resolve(self, pool: str, name: str, content: str) -> ParsedSkill | None:
@@ -28,7 +33,7 @@ def _bot_model_config() -> BotModelConfig:
     )
 
 
-def attach_default_pipeline(
+async def attach_default_pipeline(
     server,
     store,
     input_adapter,
@@ -36,7 +41,9 @@ def attach_default_pipeline(
     workspace_root: Path | None = None,
     available_pools: Callable[[], set[str]] | None = None,
 ) -> None:
-    pipe = build_webui_pipeline(
+    pipe = await build_webui_pipeline(
+        registry=TEST_COMPONENT_REGISTRY,
+        ctx=TEST_ASSEMBLY_CTX,
         skill_registry=_NoSkillRegistry(), bot_model_config=_bot_model_config()
     )
     if pool_session_store is None:

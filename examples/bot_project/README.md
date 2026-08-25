@@ -40,7 +40,7 @@ Uses **Pool mode** — multi-agent persistent pools with `MessageBroker` + `Agen
 | **Tool Approval** | The agent asks before writing/editing outside your project; approve via WebUI or `/approve`. Off by default; opt-in per agent |
 | **Multi-Agent Collaboration** | Per-pool star (main agent + subagents via `task`/`send_to_agent`) + cross-pool peer messaging between main agents via `send_to_peer` |
 | **Skill System** | Dynamic system prompt construction from Markdown skill files (`local_skills/` or bundled by packages) |
-| **Plugin System** | Dynamically extend tools, memory providers, and skill sources |
+| **Plugin System** | Register component factories into the 10-slot `ComponentRegistry` (tools, hooks, providers, strategies, …) and reference them by name from pool YAML |
 | **Slash Commands** | `/approve`, `/deny`, `/continue`, and skill-triggering commands |
 | **Pool Runtime** | Multi-agent persistent pools with `MessageBroker` + `AgentMessageBus` routing |
 | **Self-Deployment** | Agent connects via SSH to remote servers, pulls code, and restarts itself |
@@ -470,33 +470,24 @@ Commands are resolved inside the input pipeline before reaching the agent — `E
 
 ### Governance
 
-Governance runs on the model-visible message copy before each LLM call. It is configured under `memory.governance` in a pool config or subagent template.
+Governance runs on the model-visible message copy before each LLM call. It is **not configurable in YAML** — each agent's governance is derived from its memory preset: main agents get tool-chain repair plus lossy content compaction, subagents get tool-chain repair only.
 
-Main-agent example (`config/pools/default/pool.yml`):
+The `memory:` block accepts only preset-level toggles:
+
+Main agent (`config/pools/default/pool.yml`) — the archive/core layer toggle only (a `session` or `governance` key is rejected and fails pool loading):
 
 ```yaml
 memory:
-  session:
-    max_messages: 150
-    max_context_tokens: 100000
-  governance:
-    tool_chain_repair: true      # Required: repair orphan/incomplete tool-call groups
-    lossy_compaction:
-      tool_result_head_chars: 1200
-      assistant_head_chars: 1200
-      agent_head_chars: 2000
-      user_head_chars: 4000
-      compact_range_count: 50    # Optional: default 50, min 20
+  archive_enabled: true   # long-term archive layer
+  core_enabled: false     # core memory — requires archive_enabled
 ```
 
-Subagent templates (`config/pools/*/templates/*.yml`) should keep governance lightweight:
+Subagent templates (`config/pools/*/templates/*.yml`) — a session token-budget override only (a `governance` key is warned and ignored):
 
 ```yaml
 memory:
   session:
-    max_messages: 100
-  governance:
-    tool_chain_repair: true
+    max_context_tokens: 32000
 ```
 
 ## Pools & Workspaces
@@ -541,9 +532,11 @@ A subagent's tool set is summarized by a **preset** (what it's allowed to do):
 | `full` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅* |
 | `read_write` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | `read_only` | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | — |
-| `read_only` | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | — |
+| `none` | — | — | — | — | — | — | — | — |
+| `web` | ✅† | — | — | — | — | — | — | — |
 
-`*` Terminal tools require `use_terminal: true`. Subagents always use `SubprocessTool` for bash (stateless).
+`*` Terminal tools require `use_terminal: true`. Without a terminal manager, bash falls back to `PersistentBashTool` (one stateful shell per pool + `bash_input`; POSIX-only).
+`†` The `web` preset reads via `web_search` / `web_reader` only.
 
 ### By hand (YAML)
 
@@ -557,10 +550,9 @@ extra_tools: []                # optional extra tool names on top of the preset
 system_prompt: |
   You are a specialized agent for …
   Reply to the main agent via send_to_agent (target_agent="main").
-skills:
-  roots:
-    - "skills/subagents/my-agent"
 ```
+
+Skills are assigned per agent on disk (`skills/<pool>/<agent>/`, via the WebUI **Skills** tab) — the template YAML carries no `skills` field.
 
 Restart the service (or save in the WebUI) and the agent registers automatically — the main agent can then delegate to it.
 
@@ -663,19 +655,18 @@ Models live in `config/model.yml` — the single source of truth (see *Quick Sta
 ### Memory
 
 ```yaml
+# pool.yml (main agent) — archive/core layer toggle only
+memory:
+  archive_enabled: true
+  core_enabled: false
+
+# templates/*.yml (subagent) — session token budget only
 memory:
   session:
-    max_messages: 150
-    max_context_tokens: 100000
-  governance:
-    tool_chain_repair: true
-    lossy_compaction:
-      tool_result_head_chars: 1200
-      assistant_head_chars: 1200
-      agent_head_chars: 2000
-      user_head_chars: 4000
-      compact_range_count: 50
+    max_context_tokens: 32000
 ```
+
+Governance (tool-chain repair, lossy compaction) is derived from the memory preset — it is not YAML-configurable.
 
 ### MCP
 
@@ -720,13 +711,7 @@ tools:
 
 ## Plugin System
 
-Plugins dynamically extend tools, memory providers, and skill sources without modifying core code:
-
-```yaml
-plugins:
-  enabled: true
-  configurations: {}
-```
+Extensions plug into the framework `ComponentRegistry` — a fixed set of 10 component slots (tools, hooks, LLM providers, prompt providers, memory systems, interceptors, command handlers, execution strategies, input stages, data namespaces). A plugin is a `Plugin` class that registers named component factories at startup, from four sources: the framework's bundled defaults, project plugins under `plugins/`, user plugins, or installed packages discovered via entry points. Pool YAML then references components by name (`tools: [+bash]`, `llm_provider:`, `memory_system:`, …) and assembly resolves them through the registry at agent construction. Registration is restart-effective — there is no hot-plug. The authoritative slot list and semantics live in [`docs/design/scope-converge/SPEC.md`](../../docs/design/scope-converge/SPEC.md) (§4, Errata-8).
 
 ## Logs
 

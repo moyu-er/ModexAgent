@@ -79,7 +79,6 @@ def _make_react_pipeline(
     from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
     from modex_agent.pipeline.turn_runner import ReActTurnRunner
     from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-    _UNSET = object()
     if sanitizer is None:
         from modex_agent.utils.sanitizer import ContentSanitizer
         sanitizer = ContentSanitizer.sanitize
@@ -274,7 +273,7 @@ class _PoolRef:
     """PoolRouter's pools value: thin holder for the routing fields + the pool
     itself. ``_route_to_pool`` reads ``.pool.submit_input(...)``."""
 
-    main_agent_name: str
+    root_agent_name: str
     main_address: AgentAddress
     pool: AgentPool
 
@@ -411,9 +410,10 @@ async def _build_stack(
     router = PoolRouter(
         input_adapter=None,  # type: ignore[arg-type]
         broker=broker,
-        pools={"main": _PoolRef(main_agent_name="main", main_address=descriptor.address, pool=pool)},
+        pools={"main": _PoolRef(root_agent_name="main", main_address=descriptor.address, pool=pool)},
         session_store=session_store,
         default_pool="main",
+        agent_pool_ownership={"main": ("main",)},
     )
     return router, pool, instance, turn_store, broker, read_recorded, write_recorded
 

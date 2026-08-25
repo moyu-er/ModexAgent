@@ -1,0 +1,11 @@
+# Boot-failure fixture: TWO roots (V3) + a duplicate agent name "x" under
+# each root (V11) — both issues must surface in one ScopeBootError.
+pool:
+  name: broken
+  agents:
+    a:
+      agents:
+        x: {}
+    b:
+      agents:
+        x: {}

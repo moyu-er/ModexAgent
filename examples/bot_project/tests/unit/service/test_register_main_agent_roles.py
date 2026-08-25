@@ -1,9 +1,9 @@
-"""T1 data-layer透传 test: ``_register_main_agent`` reads ``roles`` from
-``MainAgentSpec`` and writes it onto the constructed ``AgentDescriptor``.
+"""External main registration propagates descriptor metadata.
 
-The main-agent factory in ``pool_builder.py`` is the main-agent-side twin
-of ``AgentTemplate.materialize`` (subagent side). Both must propagate
-``roles`` from the wire model to the runtime descriptor.
+``_register_external_main_agent`` reads the declared root
+``AgentSpec`` and writes it onto the constructed ``AgentDescriptor`` —
+``roles`` and ``description`` must propagate from the declaration to the
+runtime descriptor.
 """
 
 from __future__ import annotations
@@ -16,16 +16,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from bot.service.pool.pool_construction import _register_main_agent
+from bot.service.pool.pool_construction import _register_external_main_agent
 
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.specs import MainAgentSpec
+from modex_agent.scope.spec import AgentSpec
 
 
 @pytest.mark.asyncio
-async def test_register_main_agent_passes_roles_to_descriptor() -> None:
-    """MainAgentSpec.roles lands on AgentDescriptor.roles via _register_main_agent."""
+async def test_register_external_main_agent_passes_roles_to_descriptor() -> None:
     fake_instance = MagicMock()
     fake_instance.pipeline = MagicMock()
     fake_instance.stop = AsyncMock()
@@ -36,9 +35,9 @@ async def test_register_main_agent_passes_roles_to_descriptor() -> None:
     factory = MagicMock()
     factory.create_agent = AsyncMock(return_value=fake_instance)
 
-    main_spec = MainAgentSpec(agent_name="main", roles=["coordinator"])
+    main_spec = AgentSpec(name="main", roles=["coordinator"])
 
-    await _register_main_agent(
+    await _register_external_main_agent(
         pool=pool,
         main_spec=main_spec,
         assembly_deps=PoolAssemblyDeps(),
@@ -57,8 +56,8 @@ async def test_register_main_agent_passes_roles_to_descriptor() -> None:
 
 
 @pytest.mark.asyncio
-async def test_register_main_agent_roles_default_empty() -> None:
-    """When MainAgentSpec omits roles, descriptor.roles defaults to []."""
+async def test_register_external_main_agent_roles_default_empty() -> None:
+    """When the declared root omits roles, descriptor.roles defaults to []."""
     fake_instance = MagicMock()
     fake_instance.pipeline = MagicMock()
     fake_instance.stop = AsyncMock()
@@ -69,9 +68,9 @@ async def test_register_main_agent_roles_default_empty() -> None:
     factory = MagicMock()
     factory.create_agent = AsyncMock(return_value=fake_instance)
 
-    main_spec = MainAgentSpec(agent_name="main")
+    main_spec = AgentSpec(name="main")
 
-    await _register_main_agent(
+    await _register_external_main_agent(
         pool=pool,
         main_spec=main_spec,
         assembly_deps=PoolAssemblyDeps(),
@@ -90,8 +89,7 @@ async def test_register_main_agent_roles_default_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_register_main_agent_preserves_multiple_roles() -> None:
-    """Multiple roles (preset + custom) round-trip through _register_main_agent."""
+async def test_register_external_main_agent_preserves_multiple_roles() -> None:
     fake_instance = MagicMock()
     fake_instance.pipeline = MagicMock()
     fake_instance.stop = AsyncMock()
@@ -102,12 +100,12 @@ async def test_register_main_agent_preserves_multiple_roles() -> None:
     factory = MagicMock()
     factory.create_agent = AsyncMock(return_value=fake_instance)
 
-    main_spec = MainAgentSpec(
-        agent_name="main",
+    main_spec = AgentSpec(
+        name="main",
         roles=["coordinator", "communicator", "custom-role"],
     )
 
-    await _register_main_agent(
+    await _register_external_main_agent(
         pool=pool,
         main_spec=main_spec,
         assembly_deps=PoolAssemblyDeps(),
@@ -126,7 +124,7 @@ async def test_register_main_agent_preserves_multiple_roles() -> None:
 
 
 @pytest.mark.asyncio
-async def test_register_main_agent_passes_description_to_descriptor() -> None:
+async def test_register_external_main_agent_passes_description_to_descriptor() -> None:
     fake_instance = MagicMock()
     fake_instance.pipeline = MagicMock()
     fake_instance.stop = AsyncMock()
@@ -137,12 +135,12 @@ async def test_register_main_agent_passes_description_to_descriptor() -> None:
     factory = MagicMock()
     factory.create_agent = AsyncMock(return_value=fake_instance)
 
-    main_spec = MainAgentSpec(
-        agent_name="main",
+    main_spec = AgentSpec(
+        name="main",
         description="Pool main agent desc",
     )
 
-    await _register_main_agent(
+    await _register_external_main_agent(
         pool=pool,
         main_spec=main_spec,
         assembly_deps=PoolAssemblyDeps(),

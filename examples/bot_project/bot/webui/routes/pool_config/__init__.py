@@ -11,19 +11,17 @@ itself called from :meth:`WebUIServer._setup_routes`), matching the
 This package owns the pool / MCP / skills / prompts REST endpoints.
 Sub-modules own the per-concern handlers:
 
-- :mod:`bot.webui.routes.pool_config.pools` -- pool CRUD + bidirectional peers.
+- :mod:`bot.webui.routes.pool_config.pools` -- declared pool listing (read-only).
 - :mod:`bot.webui.routes.pool_config.mcp` -- MCP registry read / upsert / delete.
 - :mod:`bot.webui.routes.pool_config.skills` -- global skills + per-agent copies.
 - :mod:`bot.webui.routes.pool_config.prompts` -- agent prompt md CRUD.
 
+Pool trees are edited through the scope declaration editor
+(``PUT /api/scope/declaration``, ticket 16); the legacy pool.yml CRUD
+routes retired with the legacy roster road (ticket 11).
+
 Routes registered:
     GET    /api/pools                                          -- list pool summaries.
-    POST   /api/pools                                          -- create a pool.
-    GET    /api/pools/{pool}                                   -- read one pool tree.
-    PUT    /api/pools/{pool}                                   -- validate + persist a pool tree.
-    DELETE /api/pools/{pool}                                   -- delete a pool.
-    POST   /api/pools/{pool}/peers                             -- add a bidirectional peer edge.
-    DELETE /api/pools/{pool}/peers/{peer}                      -- remove a bidirectional peer edge.
     GET    /api/mcp                                            -- read the typed MCP registry mapping.
     POST   /api/mcp/{server}                                   -- insert or update one MCP server entry.
     PUT    /api/mcp/{server}                                   -- insert or update one MCP server entry.
@@ -135,15 +133,7 @@ from bot.webui.routes.pool_config.mcp import (  # noqa: E402
     handle_read_mcp,
     handle_upsert_mcp,
 )
-from bot.webui.routes.pool_config.pools import (  # noqa: E402
-    handle_add_peer,
-    handle_create_pool,
-    handle_delete_pool,
-    handle_list_pools,
-    handle_read_pool,
-    handle_remove_peer,
-    handle_write_pool,
-)
+from bot.webui.routes.pool_config.pools import handle_list_pools  # noqa: E402
 from bot.webui.routes.pool_config.prompts import (  # noqa: E402
     handle_create_prompt,
     handle_delete_prompt_global,
@@ -182,12 +172,6 @@ def register_pool_config_routes(server: WebUIServer) -> None:
     if "server" not in app:
         app["server"] = server
     app.router.add_get("/api/pools", handle_list_pools)
-    app.router.add_post("/api/pools", handle_create_pool)
-    app.router.add_get("/api/pools/{pool}", handle_read_pool)
-    app.router.add_put("/api/pools/{pool}", handle_write_pool)
-    app.router.add_delete("/api/pools/{pool}", handle_delete_pool)
-    app.router.add_post("/api/pools/{pool}/peers", handle_add_peer)
-    app.router.add_delete("/api/pools/{pool}/peers/{peer}", handle_remove_peer)
     app.router.add_get("/api/mcp", handle_read_mcp)
     app.router.add_post("/api/mcp/{server}", handle_upsert_mcp)
     app.router.add_put("/api/mcp/{server}", handle_upsert_mcp)
@@ -213,12 +197,9 @@ def register_pool_config_routes(server: WebUIServer) -> None:
 
 __all__ = [
     "_materialize_skill_files",
-    "handle_add_peer",
     "handle_assign_skill",
-    "handle_create_pool",
     "handle_create_prompt",
     "handle_delete_mcp",
-    "handle_delete_pool",
     "handle_delete_prompt_global",
     "handle_delete_skill",
     "handle_list_agent_skills",
@@ -226,13 +207,10 @@ __all__ = [
     "handle_list_prompts",
     "handle_list_skills",
     "handle_read_mcp",
-    "handle_read_pool",
     "handle_read_prompt_strict",
-    "handle_remove_peer",
     "handle_unassign_skill",
     "handle_upsert_mcp",
     "handle_upload_skill",
-    "handle_write_pool",
     "handle_write_prompt_global",
     "pool_cfg_required",
     "register_pool_config_routes",

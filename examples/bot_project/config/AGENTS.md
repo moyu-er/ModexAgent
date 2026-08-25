@@ -1,15 +1,15 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-07-08 -->
+<!-- Updated: 2026-08-22 -->
 
 # config
 
-Runtime configuration files for the bot: main config, IM adapter credentials, model definitions, MCP server registry, and pool definitions. YAML/JSON with `${ENV_VAR}` interpolation. The **typed config code** (Pydantic domain schemas, stores, controllers) lives in `bot/config/` (a separate Python package), not here — this directory holds only data files.
+Runtime configuration files for the bot: main config, IM adapter credentials, model definitions, MCP server registry, and the scope declaration (the single source of pool/agent assembly). YAML/JSON with `${ENV_VAR}` interpolation. The **typed config code** (Pydantic domain schemas, stores, controllers) lives in `bot/config/` (a separate Python package), not here — this directory holds only data files.
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
-| `bot_config.yml` | Main config — runtime safety, observability, workspace toggle. (Pool/agent config no longer lives here; see `pools/`) |
+| `bot_config.yml` | Main config — runtime safety, observability, persistence defaults. (Pool/agent composition no longer lives here; see `scopes/`) |
 | `im.yml` | IM adapter credentials — one top-level section per platform (`qq`, `telegram`). Gitignored (contains secrets). Each adapter reads only its own section. Configured via the WebUI Settings → IM tab (no template shipped) |
 | `model.yml` | Model definitions — the single source of truth: `default_provider` / `default_model` + a per-provider model list. Shared across all pools. Bootstrapped by the `modexbot config` wizard (no template shipped) |
 
@@ -17,26 +17,26 @@ Runtime configuration files for the bot: main config, IM adapter credentials, mo
 
 | Directory | Purpose |
 |-----------|---------|
+| `scopes/` | Scope declarations (see below) |
+| `graphs/` | Declarative graph specifications (DAG workflows) — loaded by `GraphSpecLoader` at startup; agent nodes reference (pool, agent) pairs cross-checked against the declaration at boot (V10) |
 | `mcp/` | MCP server registry (see below) |
-| `pools/` | Pool definitions (see below) |
 
-## pools/ Structure
+## scopes/ Structure
 
-Each pool is a **directory** — the directory name is the pool identity. Inside sits `pool.yml` (main agent config) and a `templates/` dir of subagent templates:
+The **scope declaration** (ADR-0042) is the single source of truth for pool/agent assembly — the legacy `config/pools/<name>/pool.yml` + `templates/*.yml` roster is deleted (ticket 11). One primary file, plus runtime-created workspace declarations:
 
 ```
-pools/
-├── default/                 # pool name = directory name
-│   ├── pool.yml             # main agent config (max_steps, tools, approval, memory, …)
-│   └── templates/           # subagent templates — one .yml each, auto-registered
-└── coder/
-    ├── pool.yml
-    └── templates/
+scopes/
+├── bot.yml                    # the workspace declaration — resource selection + all pools
+└── workspaces/                # WebUI runtime-created workspaces (ticket 17), one file each:
+    └── <name>.yml             #   file STEM = workspace identity; restart-persistent authority
 ```
 
-- The **main agent name** defaults to the directory name (override via `main_agent_name` in `pool.yml`).
-- Subagents are `templates/*.yml` — the main agent delegates to them via `send_to_agent`.
-- The bundled `default` and `coder` pools are examples — use, inspect, or replace them.
+`bot.yml` shape — a `workspace:` root carrying resource selection (`persistence:` memory backend, `paths:` data-dir layout, `mcp:` shared server-name set; every field `None` = inherit the service-level domain config) and the pool trees. Each pool is a name key with optional `peers:` (cross-pool links, bidirectional, same-workspace) and an `agents:` mapping; agent names are mapping keys, nesting `agents:` under an agent is sugar for the flat `parent` model. A pool-as-root declaration (root key `pool:` instead of `workspace:`) boots the single-home stack.
+
+Position-derived defaults (SPEC §3.2) are NOT transcribed — only deviations declare: `toolset` (root → `full`, non-root → `read_write`), `eager`, `memory` (`archive_enabled`/`core_enabled`/`session.max_context_tokens`), `approval` (root-only), `execution_strategy` + `provider_kind` (external pools), `hooks` (with `+`/`-` merge prefixes), `tool_supplements`, `tools`, plus the roster face (`llm_provider`, `system_prompt`/`system_prompt_provider`, `memory_system`, `interceptors`, `commands`) resolved through the 10-slot `ComponentRegistry`. The full field face is `AgentSpec`/`WorkspaceSpec` in `modex_agent/scope/spec.py` (see `src/modex_agent/scope/AGENTS.md`).
+
+Editing: by hand, or via the WebUI Settings → Scope tab (tree canvas + provenance bill; writes back through `PUT /api/scope/declaration`, restart-effective).
 
 ## mcp/ Structure
 
@@ -48,24 +48,25 @@ mcp/
 └── registry.example.json    # template
 ```
 
-Each agent selects which registered servers it sees via its pool/subagent config (the WebUI **MCP** tab edits `registry.json`; the per-agent selection lives in pool config). MCP JSON uses `command`/`args` (stdio) or `url` + `headers` (SSE/streamable_http).
+Agents select which registered servers they see via their `mcp:` list (agent level) narrowed by the workspace's `mcp:` set (workspace level); the WebUI **MCP** tab edits `registry.json`. MCP JSON uses `command`/`args` (stdio) or `url` + `headers` (SSE/streamable_http).
 
 ## For AI Agents
 
 ### Working In This Directory
-- These are **data files**; the code that loads/validates them lives in `bot/config/` (`domain.py`, `domains/im.py`, `domains/model.py`, `pool_store.py`, `mcp_registry.py`, `skills_store.py`, …).
+- These are **data files**; the code that loads/validates them lives in `bot/config/` (`domain.py`, `domains/im.py`, `domains/model.py`, `mcp_registry.py`, `skills_store.py`, …). The scope declaration is loaded/validated/compiled by `modex_agent/scope/` (boot wiring: `bot/service/pool/declaration.py`).
 - `im.yml` and `model.yml` are REGISTRY-flavored config domains — each platform/provider registers a Pydantic schema via `register_kind` (`bot/config/domains/im.py` registers `qq` + `telegram`; `bot/config/domains/model.py` registers providers). Secrets use `Annotated[str, Secret()]`.
 - `${ENV_VAR}` in yml values are interpolated at load time.
-- Adding a new pool: create `pools/<name>/pool.yml` + `pools/<name>/templates/` dir.
-- Adding a new subagent: create `pools/<pool>/templates/<agent>.yml`.
+- Adding a new pool: add a name key under `workspace.pools` in `bot.yml` with its `agents:` tree (root agent = the one with no parent).
+- Adding a new subagent: nest an `agents:` mapping under the parent agent (or add a flat entry with `parent:`). Position defaults handle the rest — declare only deviations.
 
 ### Common Patterns
 - Secrets (IM tokens, API keys) live in `im.yml` / `model.yml` / `.env`, never committed.
-- Editing these via the WebUI Settings tabs writes back to the same files you could edit by hand.
+- Editing pools via the WebUI Settings → Scope tab writes back to `bot.yml` (same file you could edit by hand); restart applies.
 
 ## Dependencies
 
 ### Internal
 - `bot/config/` — typed config code (domains, stores, controllers) that loads and validates these files
+- `modex_agent/scope/` — declaration loading, validation, compilation for `scopes/`
 
 <!-- MANUAL -->

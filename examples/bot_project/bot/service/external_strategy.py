@@ -35,11 +35,9 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
-
-import yaml
 
 from bot.config.webui_config import build_control_origin
 from modex_agent.agents.external.agent import StreamingProviderBackend
@@ -62,9 +60,17 @@ from modex_agent.agents.external.session_store import ExternalSessionMapStore
 from modex_agent.agents.external.types import (
     ExternalEnvSpec,
 )
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.session_registry import SessionRegistry
+from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
+from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.communication.peer_resolution import PeerLink
 from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
 from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy as ExecutionStrategyABC,
@@ -72,12 +78,15 @@ from modex_agent.multi_agent.execution_strategy import (
 from modex_agent.multi_agent.execution_strategy import (
     PoolAssemblyContext,
     StrategyAssembly,
+    SubagentAssembly,
 )
 from modex_agent.multi_agent.factory import DefaultAgentFactory
-from modex_agent.multi_agent.pool_config import PoolStore
-from modex_agent.multi_agent.pool_config.specs import PoolSpec
+from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
+from modex_agent.plugins.assembly.context import AgentContext
+from modex_agent.scope.spec import PoolSpec
+from modex_agent.workspace.scope_path import resolve_scope_path
 
-from ._assembly_helpers import _PoolAssemblyMixin
+from .builders import _PoolAssemblyMixin
 
 logger = logging.getLogger(__name__)
 
@@ -125,8 +134,8 @@ def _build_child_discovery_collaborators(
     """Build child-session discovery sink + emitter factory.
 
     Shared by the main-agent path (``ExternalAwareFactory.create_agent``)
-    and the subagent path (``BotSubagentExternalBuilder.build``) so both
-    get identical child-capture wiring.
+    and the subagent path (``ExternalExecutionStrategy._assemble_subagent``)
+    so both get identical child-capture wiring.
 
     Returns ``(sink, emitter_factory)``. ``sink`` is ``None`` when
     ``session_registry`` is unavailable. ``emitter_factory`` is ``None`` —
@@ -213,6 +222,7 @@ class ExternalAwareFactory(DefaultAgentFactory):
         hooks: list[Any] | None = None,  # ignored — ExternalTurnRunner doesn't dispatch hooks
         output_adapter: Any | None = None,
         context_manager_factory: Any | None = None,  # ignored
+        llm_provider: LLMProvider | None = None,  # ignored — the external CLI owns model config
     ) -> AgentInstance:
         """Build an ExternalAgent + ExternalTurnRunner + minimal pipeline.
 
@@ -305,54 +315,50 @@ def _modexctl_bin_dir() -> Path:
     return resolve_modexctl_bin_dir()
 
 
-def _build_agent_pool_map(pool_name: str, pool_spec: PoolSpec, project_dir: Path) -> dict[str, str]:
-    pool_map: dict[str, str] = {pool_spec.main.agent_name: pool_name}
-    for sub in pool_spec.subagents:
-        pool_map[sub.agent_name] = pool_name
-    store = PoolStore(base_dir=project_dir)
-    for peer in pool_spec.peers:
-        try:
-            peer_spec = store.read_pool(peer)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Pool '%s': cannot read peer pool %r for agent_pool_map: %s",
-                pool_name,
-                peer,
-                exc,
-            )
-            continue
-        pool_map[peer_spec.main.agent_name] = peer
+def _build_agent_pool_map(
+    pool_name: str,
+    pool_spec: PoolSpec,
+    peer_links: Sequence[PeerLink],
+) -> dict[str, str]:
+    """The static agent→pool routing map over the DECLARED tree.
+
+    Own pool's agents + each peer link's declared root (the link face
+    carries the peer root's name — a declaration fact, so no pool.yml
+    read).
+    """
+    pool_map: dict[str, str] = {pool_spec.root_agent.name: pool_name}
+    for agent in pool_spec.agents:
+        pool_map[agent.name] = pool_name
+    for link in peer_links:
+        pool_map[link.peer_agent] = link.peer_pool
     return pool_map
 
 
-def _build_targets(pool_name: str, pool_spec: PoolSpec, project_dir: Path) -> list[tuple[str, str]]:
+def _build_targets(
+    pool_spec: PoolSpec,
+    peer_links: Sequence[PeerLink],
+) -> list[tuple[str, str]]:
+    """The routable targets (own non-root agents + peer roots)."""
     targets: list[tuple[str, str]] = []
-    for sub in pool_spec.subagents:
-        targets.append((sub.agent_name, sub.description or f"{sub.agent_name} subagent"))
-    store = PoolStore(base_dir=project_dir)
-    for peer in pool_spec.peers:
-        try:
-            peer_spec = store.read_pool(peer)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Pool '%s': cannot read peer pool %r for targets: %s",
-                pool_name,
-                peer,
-                exc,
-            )
+    root_name = pool_spec.root_agent.name
+    for agent in pool_spec.agents:
+        if agent.name == root_name:
             continue
-        desc = peer_spec.main.description or f"Peer pool {peer}'s main agent"
-        targets.append((peer_spec.main.agent_name, desc))
+        targets.append((agent.name, agent.description or f"{agent.name} subagent"))
+    for link in peer_links:
+        desc = link.peer_description or f"Peer pool {link.peer_pool}'s main agent"
+        targets.append((link.peer_agent, desc))
     return targets
 
 
 def build_external_env_spec(
     pool_name: str,
     pool_spec: PoolSpec,
+    peer_links: Sequence[PeerLink],
     project_dir: Path,
     inbox_dir: Path,
     workspace_dir: Path,
-    main_agent_name: str,
+    root_agent_name: str,
 ) -> ExternalEnvSpec:
     """Build the ``ExternalEnvSpec`` for an external pool.
 
@@ -366,26 +372,25 @@ def build_external_env_spec(
         targets are frozen for the agent's lifetime. (spec.md claims a
         per-turn refresh from CommunicationTargetStore — never implemented;
         known spec deviation.)
-      • runtime-config — STATIC. pool_spec.subagents/peers are read from
-        disk at bot boot; WebUI peer add/remove mutates only the native
-        CommunicationTargetStore, not this external snapshot. A pool
-        restart is required for changes to take effect here.
+      • runtime-config — STATIC. the declared agents/peer links are read
+        from the scope declaration at bot boot; a pool restart is required
+        for changes to take effect here.
 
     The ``targets`` ⊆ ``agent_pool_map.keys()`` invariant holds: every
-    name in targets (subagents + peers' mains) has a pool_map entry, so
-    ``modexctl send --to <any target>`` always resolves. The main agent's
-    own name is in pool_map but not in targets (main never self-sends;
-    modexctl rejects self-send explicitly).
+    name in targets (non-root agents + peer roots) has a pool_map entry,
+    so ``modexctl send --to <any target>`` always resolves. The main
+    agent's own name is in pool_map but not in targets (main never
+    self-sends; modexctl rejects self-send explicitly).
     """
     return ExternalEnvSpec(
         workspace_root=workspace_dir,
         inbox_root=inbox_dir.parent,
         workdir=workspace_dir,
-        session_id=f"__pending__.{main_agent_name}",
-        agent_name=main_agent_name,
+        session_id=f"__pending__.{root_agent_name}",
+        agent_name=root_agent_name,
         provider_session_id="",
-        agent_pool_map=_build_agent_pool_map(pool_name, pool_spec, project_dir),
-        targets=_build_targets(pool_name, pool_spec, project_dir),
+        agent_pool_map=_build_agent_pool_map(pool_name, pool_spec, peer_links),
+        targets=_build_targets(pool_spec, peer_links),
         modexctl_bin_dir=_modexctl_bin_dir(),
         control_origin=build_control_origin(project_dir / "config"),
     )
@@ -417,12 +422,15 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
     def requires_main_agent_tools(self) -> bool:
         return False
 
-    def validate_pool_spec(self, spec: PoolSpec) -> None:
+    @property
+    def requires_llm_provider(self) -> bool:
+        return False
+
+    def validate_pool_spec(self, pool: PoolSpec) -> None:
         """Reject pools incompatible with the external shape.
 
-        Two invariants (mirrors the validation branches that lived in
-        ``pool_config/store.py`` before ticket 6 - those branches are deleted
-        in ticket 6; this method is the single enforcement point):
+        Two invariants (this method is the single enforcement point — the
+        legacy store-side branches were deleted in ticket 6):
 
         * **No subagents** - external main agents have no tool surface
           and cannot dispatch subagent tasks. Subagent templates on an
@@ -431,32 +439,31 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
           must be set so the strategy knows which backend + parser to build.
 
         Raises :class:`ValueError` on violation. This runs at pool-assembly
-        time as defense-in-depth; ``pool_config/store.py`` no longer enforces
-        these (ticket 6 deleted those branches).
+        time as defense-in-depth on top of declaration validation.
         """
-        if spec.subagents:
+        if len(pool.agents) > 1:
             raise ValueError(
-                f"Pool {spec.name!r}: execution_strategy 'external' does not support subagents"
+                f"Pool {pool.name!r}: execution_strategy 'external' does not support subagents"
             )
-        if spec.main.provider_kind is None:
+        if pool.root_agent.provider_kind is None:
             raise ValueError(
-                f"Pool {spec.name!r}: execution_strategy 'external' requires a provider_kind"
+                f"Pool {pool.name!r}: execution_strategy 'external' requires a provider_kind"
             )
 
     # ── Provider-kind / backend / parser resolution ──────────────────────
     # (moved from _external_wiring.py as private methods)
 
-    def _read_provider_kind(self, pool_spec: PoolSpec, project_dir: Path) -> ProviderKind:
-        if pool_spec.main.provider_kind is not None:
-            return pool_spec.main.provider_kind
-        pool_yml = project_dir / "config" / "pools" / pool_spec.name / "pool.yml"
-        if not pool_yml.exists():
-            return ProviderKind.OPENCODE
-        data: Any = yaml.safe_load(pool_yml.read_text(encoding="utf-8")) or {}
-        kind = data.get("provider_kind", "opencode")
-        if not isinstance(kind, str):
-            return ProviderKind.OPENCODE
-        return self._provider_kind_from_str(kind)
+    def _read_provider_kind(self, pool_spec: PoolSpec) -> ProviderKind:
+        """The declared root's provider kind (spec validation guarantees it
+        is set for external pools; the historical pool.yml fallback died
+        with the legacy road)."""
+        provider_kind = pool_spec.root_agent.provider_kind
+        if provider_kind is None:
+            raise ValueError(
+                f"Pool {pool_spec.name!r}: execution_strategy 'external' "
+                "requires a provider_kind"
+            )
+        return provider_kind
 
     @staticmethod
     def _provider_kind_from_str(value: str) -> ProviderKind:
@@ -483,15 +490,16 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         *,
         pool_name: str,
         pool_spec: PoolSpec,
+        peer_links: Sequence[PeerLink],
         project_dir: Path,
         inbox_dir: Path,
         workspace_dir: Path,
-        main_agent_name: str,
+        root_agent_name: str,
         base_env: dict[str, str] | None = None,
         app_config: Any | None = None,
         persistence: Any | None = None,
     ) -> dict[str, Any]:
-        provider_kind = self._read_provider_kind(pool_spec, project_dir)
+        provider_kind = self._read_provider_kind(pool_spec)
         backend = self._build_external_backend(provider_kind)
         parser = self._build_external_parser(provider_kind)
         from bot.scope import BotRecordScope
@@ -504,7 +512,13 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
             BotRecordScope(pool=pool_name),
         )
         spec = build_external_env_spec(
-            pool_name, pool_spec, project_dir, inbox_dir, workspace_dir, main_agent_name
+            pool_name,
+            pool_spec,
+            peer_links,
+            project_dir,
+            inbox_dir,
+            workspace_dir,
+            root_agent_name,
         )
         return {
             "backend": backend,
@@ -517,7 +531,7 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
 
     # ── Assemble ─────────────────────────────────────────────────────────
 
-    async def assemble(self, ctx: PoolAssemblyContext) -> StrategyAssembly:
+    async def assemble_main(self, ctx: PoolAssemblyContext) -> StrategyAssembly:
         """Build external deps only; all react-only fields are ``None``.
 
         Performs the provider-availability gate (``shutil.which`` -> raises
@@ -535,12 +549,13 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         """
         pool_name = ctx.pool_name
         pool_spec = ctx.pool_spec
+        peer_links = ctx.peer_links
         project_dir: Path = ctx.project_dir
         data_dir: Path = ctx.data_dir
         workspace_handle = ctx.workspace_handle
 
         # 1. Provider availability gate.
-        provider_kind = self._read_provider_kind(pool_spec, project_dir)
+        provider_kind = self._read_provider_kind(pool_spec)
         executable = self._provider_executable_for(provider_kind)
         if shutil.which(executable) is None:
             raise ProviderUnavailableError(executable)
@@ -555,10 +570,11 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         external_deps = self._build_external_deps(
             pool_name=pool_name,
             pool_spec=pool_spec,
+            peer_links=peer_links,
             project_dir=project_dir,
             inbox_dir=inbox_dir,
             workspace_dir=workspace_dir,
-            main_agent_name=pool_spec.main.agent_name,
+            root_agent_name=pool_spec.root_agent.name,
             base_env=dict(os.environ),
             app_config=ctx.app_config,
             persistence=ctx.persistence,
@@ -573,3 +589,147 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
             external_deps=external_deps,
             extra_cleanup=(),
         )
+
+    async def assemble_sub(
+        self,
+        ctx: AgentContext,
+        deps: AgentMaterializeDeps,
+    ) -> SubagentAssembly:
+        """Assemble an external subagent — absorbs the 7-step logic from the
+        deleted ``BotSubagentExternalBuilder.build()`` (ADR-0027 convergence).
+
+        The 7 steps: (1) env_spec (2) session_store (3) parser (4) backend
+        (5) child_discovery (6) ExternalAgent (7) HookRunner carrying
+        SubagentAutoSendHook. Pipeline assembly (``assemble_pipeline``)
+        runs here too — the caller (``AgentTemplate.materialize``) only
+        injects the emitter + registers the returned pair into the pool.
+
+        Ticket 10: the per-invocation data (``parent_session``,
+        ``invocation_id``, agent identity, and the per-agent spec
+        reference) is read from the full-chain :class:`AgentContext`;
+        ``deps`` carries the per-pool materialize connections (tree,
+        broker, session registry, path resolver) the deleted
+        special-case context's ``factories`` field used to mirror.
+
+        Returns a :class:`SubagentAssembly` carrying the ``AgentDescriptor``
+        and the fully-built ``AgentInstance`` (external agent + minimal
+        pipeline + SubagentAutoSendHook on the pipeline's hook runner).
+        """
+        spec = ctx.spec
+        if spec is None:
+            raise ValueError(
+                "AgentContext.spec is None — cannot assemble external "
+                "subagent without the per-agent spec reference"
+            )
+
+        from bot.scope import BotRecordScope
+        from bot.service.builders import build_external_session_map_store
+
+        agent_name = ctx.agent_name
+        parent_session_str = str(ctx.parent_session) if ctx.parent_session else ""
+        parent_name = parent_session_str.split(".")[-1] if parent_session_str else ""
+        session_id = f"{ctx.invocation_id or ''}.{agent_name}"
+
+        scope_path = deps.scope_path
+        pool_name = scope_path.pool_name if scope_path is not None and scope_path.pool_name else "main"
+        project_dir = deps.project_dir or Path(".")
+        data_dir = deps.data_dir or project_dir / ".modex"
+        workspace_dir = project_dir
+        inbox_root = data_dir / "inbox"
+        pool_data = resolve_scope_path(deps.workspace_manager, scope_path)
+        runtime_dir = pool_data.runtime_dir if pool_data is not None else None
+
+        descriptor = AgentDescriptor(
+            address=AgentAddress(name=agent_name),
+            execution_strategy=ExecutionStrategyKind(spec.execution_strategy),
+            provider_kind=ProviderKind(spec.provider_kind) if spec.provider_kind else None,
+            comm_kind=AgentCommKind.SUBAGENT,
+            max_iterations=spec.max_iterations,
+            system_prompt_template="",
+            safety_policy=deps.safety,
+            roles=list(spec.roles),
+            role_description=spec.description,
+        )
+
+        agent_pool_map: dict[str, str] = {agent_name: pool_name}
+        if parent_name:
+            agent_pool_map[parent_name] = pool_name
+        env_spec = ExternalEnvSpec(
+            workspace_root=workspace_dir,
+            inbox_root=inbox_root,
+            workdir=workspace_dir,
+            session_id=session_id,
+            agent_name=agent_name,
+            provider_session_id="",
+            agent_pool_map=agent_pool_map,
+            targets=[(parent_name, "")] if parent_name else [],
+            comm_kind=AgentCommKind.SUBAGENT,
+            parent_session_id=parent_session_str or None,
+            modexctl_bin_dir=resolve_modexctl_bin_dir(),
+            control_origin=deps.control_origin
+            or build_control_origin(project_dir / "config"),
+        )
+
+        session_store = build_external_session_map_store(
+            deps.app_config,
+            deps.persistence,
+            workspace_dir,
+            BotRecordScope(pool=pool_name),
+        )
+
+        provider_kind = ProviderKind(spec.provider_kind) if spec.provider_kind else ProviderKind.OPENCODE
+        parser = self._build_external_parser(provider_kind)
+        backend_provider = PoolScopedBackendProvider(
+            self._build_external_backend(provider_kind)
+        )
+
+        child_sink, child_emitter_factory = _build_child_discovery_collaborators(
+            session_registry=deps.session_registry,
+            session_map_store=session_store,
+            provider_kind=provider_kind,
+            session_factory=deps.session_factory or SessionIdFactory(),
+        )
+
+        agent = ExternalAgentBuilder.build_agent(
+            descriptor,
+            provider=None,
+            backend_provider=backend_provider,
+            session_store=session_store,
+            parser=parser,
+            provider_kind=provider_kind,
+            spec=env_spec,
+            base_env=dict(os.environ),
+            child_discovery_sink=child_sink,
+            session_registry=deps.session_registry,
+            session_id_factory=deps.session_factory or SessionIdFactory(),
+            child_emitter_factory=child_emitter_factory,
+        )
+
+        hook_runner = HookRunner()
+        hook_runner.add(
+            HookSpec(
+                hook=SubagentAutoSendHook(
+                    tree=deps.tree,
+                    self_name=agent_name,
+                    parent_name=parent_name,
+                    runtime_dir=runtime_dir or Path("."),
+                    execution_strategy=ExecutionStrategyKind.EXTERNAL,
+                ),
+                on_error=HookErrorPolicy.LOG,
+            )
+        )
+
+        instance = ExternalAgentBuilder.assemble_pipeline(
+            descriptor,
+            agent,
+            broker=deps.broker,
+            safety=deps.safety or RuntimeSafetyPolicy(),
+            hook_runner=hook_runner,
+            session_registry=deps.session_registry,
+            control_channel=None,
+            output_adapter=None,
+            context_manager=None,
+            session_binding_store=None,
+        )
+
+        return SubagentAssembly(descriptor=descriptor, instance=instance)

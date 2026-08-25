@@ -11,7 +11,7 @@ from modex_agent.core.types import InputMessage
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.managers import RegistryPersistenceManager
-from modex_agent.workspace.registry import WorkspaceRegistryStore
+from modex_agent.workspace.registry import ScopeRegistryStore
 from modex_agent.workspace.store import GlobalWorkspaceStore
 
 
@@ -32,7 +32,7 @@ async def test_builder_selects_sqlite_registry_store(tmp_path: Path) -> None:
             _config(PersistenceBackend.SQLITE), persistence, tmp_path, ".modex"
         )
         assert store is persistence.store
-        assert isinstance(store, WorkspaceRegistryStore)
+        assert isinstance(store, ScopeRegistryStore)
     finally:
         await persistence.close()
 

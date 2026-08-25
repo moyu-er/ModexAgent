@@ -234,13 +234,14 @@ async def test_pool_switch_routes_to_qq(adapters) -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         session_store = PoolSessionStore(Path(tmp))
-        pool = {"coding": type("Pool", (), {"main_agent_name": "coding"})()}
+        pool = {"coding": type("Pool", (), {"root_agent_name": "coding"})()}
         pool_router = PoolRouter(
             input_adapter=None,  # type: ignore[arg-type]
             broker=None,  # type: ignore[arg-type]
             pools=pool,
             session_store=session_store,
             default_pool="main",
+            agent_pool_ownership={"coding": ("coding",)},
         )
 
         set_conv_channel("qq-user-2", "qq")
@@ -258,13 +259,14 @@ async def test_pool_switch_routes_to_websocket(adapters) -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         session_store = PoolSessionStore(Path(tmp))
-        pool = {"coding": type("Pool", (), {"main_agent_name": "coding"})()}
+        pool = {"coding": type("Pool", (), {"root_agent_name": "coding"})()}
         pool_router = PoolRouter(
             input_adapter=None,  # type: ignore[arg-type]
             broker=None,  # type: ignore[arg-type]
             pools=pool,
             session_store=session_store,
             default_pool="main",
+            agent_pool_ownership={"coding": ("coding",)},
         )
 
         set_conv_channel("ws-session-2", "websocket")

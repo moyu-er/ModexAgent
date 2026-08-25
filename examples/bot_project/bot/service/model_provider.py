@@ -23,7 +23,7 @@ from .model_config import BotModelConfig, ResolvedModel
 
 logger = logging.getLogger(__name__)
 
-# Sentinel provider key used by pool_builder._placeholder_model_config().
+# Sentinel provider key used by model_config._placeholder_model_config().
 # When the resolved model's provider key matches this, no real model is
 # configured — chat_stream fails fast instead of making a doomed network call.
 _PLACEHOLDER_PROVIDER_KEY = "_unconfigured"
@@ -78,7 +78,7 @@ class BotModelProvider(StreamingLLMProvider):
                 error=f"model provider unavailable: {exc}",
             )
         # Fail fast when no real model is configured (placeholder config from
-        # pool_builder._placeholder_model_config). Avoids a doomed network call
+        # model_config._placeholder_model_config). Avoids a doomed network call
         # to api.openai.com + the full retry/backoff loop before erroring.
         if resolved.provider.key == _PLACEHOLDER_PROVIDER_KEY:
             return LLMResponse(

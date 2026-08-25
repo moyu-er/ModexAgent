@@ -16,11 +16,16 @@ from bot.workspace.handle import PoolWorkspaceResources
 from modex_agent.commands.models import CommandContext
 from modex_agent.core.session_id import session_id_prefix_of
 from modex_agent.core.types import InputMessage
-from modex_agent.multi_agent.pool_config import PoolSpec
-from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
+from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
+from modex_agent.multi_agent.pool_config.experience import ExperienceConfig
+from modex_agent.scope.compiler import CompiledAgent
+from modex_agent.scope.defaults import (
+    PositionDefaults,
+    memory_config_for_position,
+)
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.control import WorkspaceController
-from modex_agent.workspace.registry import WorkspaceRegistry, WorkspaceRegistryStore
+from modex_agent.workspace.registry import ScopeRegistry, ScopeRegistryStore
 from modex_agent.workspace.routing import WorkspaceResolver
 
 logger = logging.getLogger(__name__)
@@ -34,50 +39,53 @@ class WorkspaceStack:
     materializes home via ``registry.materialize(home_context)``.
     """
 
-    registry: WorkspaceRegistry[PoolWorkspaceResources]
+    registry: ScopeRegistry[PoolWorkspaceResources]
     resolver: WorkspaceResolver[PoolWorkspaceResources]
     controller: WorkspaceController
     dispatcher: WorkspaceMessageDispatcher
     factory: PoolResourceFactory
-    store: WorkspaceRegistryStore
+    store: ScopeRegistryStore
 
 
-def build_single_workspace_stack(service: BotService, *, data_dir_name: str) -> WorkspaceStack:
-    """Wire a single-home (workspace disabled) stack against ``service``.
-
-    Uses a WorkspaceController that rejects /cd /exit.
-    """
-    return build_workspace_stack(service, data_dir_name=data_dir_name, enabled=False)
-
-
-def _build_assembly_deps_for_pools(
+def _position_deps(
+    defaults: PositionDefaults,
     *,
-    pool_specs: dict[str, PoolSpec],
-    max_context_tokens: int | None,
-) -> dict[str, PoolAssemblyDeps]:
-    """Build PoolAssemblyDeps for every pool from memory_defaults presets.
+    session_max_context_tokens: int | None,
+) -> PoolAssemblyDeps:
+    """PoolAssemblyDeps from position-derived defaults (SPEC §3.2 memory row).
 
-    Each native main agent gets the converged memory + experience preset with
-    its pool-specific long-term memory toggles (see
-    ``bot.config.memory_defaults``). External_coding pools receive the same
-    deps, but ``_wire_pool_to_resources`` skips them at wiring time
-    because their main agent has no ``AgentPipeline``
-    (``pipeline is None`` → early return).
+    Ticket 14: the SINGLE assembly-deps road — the memory config and the
+    experience flag derive from the resolved position defaults, never from
+    a caller-side two-preset branch.
     """
-    from bot.config.memory_defaults import main_agent_experience, main_agent_memory
+    return PoolAssemblyDeps(
+        memory=memory_config_for_position(
+            defaults,
+            session_max_context_tokens=session_max_context_tokens,
+        ),
+        experience=ExperienceConfig(enabled=defaults.experience_enabled),
+    )
 
-    experience = main_agent_experience()
-    return {
-        name: PoolAssemblyDeps(
-            memory=main_agent_memory(
-                max_context_tokens=max_context_tokens,
-                archive_enabled=spec.main.memory.archive_enabled,
-                core_enabled=spec.main.memory.core_enabled,
-            ),
-            experience=experience,
-        )
-        for name, spec in pool_specs.items()
-    }
+
+def declared_assembly_deps(
+    root: CompiledAgent,
+    *,
+    max_context_tokens: int | None,
+) -> PoolAssemblyDeps:
+    """Deps for a declaration-hosted pool's compiled root.
+
+    The memory config comes from the position-derived defaults + the
+    node's ``memory:`` override (the compiled ``MemoryOverrides`` session
+    face); the session threshold falls back to the boot-injected model
+    window when the node declares none.
+    """
+    session_max_context_tokens = root.spec.memory_overrides.max_context_tokens
+    if session_max_context_tokens is None:
+        session_max_context_tokens = max_context_tokens
+    return _position_deps(
+        root.defaults, session_max_context_tokens=session_max_context_tokens
+    )
+
 
 
 def build_workspace_stack(
@@ -109,7 +117,7 @@ def build_workspace_stack(
         service._project_dir,
         data_dir_name,
     )
-    registry: WorkspaceRegistry[PoolWorkspaceResources] = WorkspaceRegistry(
+    registry: ScopeRegistry[PoolWorkspaceResources] = ScopeRegistry(
         home=service._project_dir,
         data_dir_name=data_dir_name,
         factory=factory,

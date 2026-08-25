@@ -26,9 +26,13 @@ from modex_agent.persistence.adapters.session_store import SqliteSessionStore
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.managers import WorkspacePersistenceManager
 from modex_agent.workspace.paths import WorkspacePaths
-from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.registry import ScopeRegistry
 from modex_agent.workspace.routing import WorkspaceResolver
 from modex_agent.workspace.store import GlobalWorkspaceStore
+from tests.input_pipeline.assembly_support import (
+    TEST_ASSEMBLY_CTX,
+    TEST_COMPONENT_REGISTRY,
+)
 from tests.unit.workspace._stubs import StubFactory, StubResources
 from tests.webui._pipeline_fixture import _bot_model_config, _NoSkillRegistry
 
@@ -70,7 +74,9 @@ async def test_ws_sqlite_send_persists_user_before_enqueue(tmp_path: Path) -> No
     pool_store = MagicMock()
     pool_store.get.return_value = "main"
     server.set_input_pipeline(
-        build_webui_pipeline(
+        await build_webui_pipeline(
+            registry=TEST_COMPONENT_REGISTRY,
+            ctx=TEST_ASSEMBLY_CTX,
             skill_registry=_NoSkillRegistry(),
             bot_model_config=_bot_model_config(),
         )
@@ -159,7 +165,7 @@ async def test_ws_sqlite_send_reaches_workspace_dispatcher(tmp_path: Path) -> No
     websocket_input = WebSocketInputAdapter()
     fan_in = FanInInputAdapter()
     fan_in.add_source(websocket_input)
-    registry = WorkspaceRegistry(
+    registry = ScopeRegistry(
         home=workspace_root,
         data_dir_name=".modex",
         factory=StubFactory(),
@@ -195,7 +201,9 @@ async def test_ws_sqlite_send_reaches_workspace_dispatcher(tmp_path: Path) -> No
     pool_store = MagicMock()
     pool_store.get.return_value = "main"
     server.set_input_pipeline(
-        build_webui_pipeline(
+        await build_webui_pipeline(
+            registry=TEST_COMPONENT_REGISTRY,
+            ctx=TEST_ASSEMBLY_CTX,
             skill_registry=_NoSkillRegistry(),
             bot_model_config=_bot_model_config(),
         )

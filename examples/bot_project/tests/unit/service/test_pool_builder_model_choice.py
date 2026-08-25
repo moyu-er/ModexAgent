@@ -13,22 +13,28 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from bot.service.model_provider import BotModelProvider
+from bot.service.pool.factory import _resolve_llm_slot
 from bot.service.pool.pipeline_wiring import _wire_main_pipeline
-from bot.service.react_strategy import ReactExecutionStrategy
 
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook.runner import HookRunner
 from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.multi_agent import SessionRetentionPolicy
+from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
+from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.spec import AgentSpec, PoolSpec
+from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.workspace.paths import WorkspacePaths
 
 pytestmark = pytest.mark.skipif(
     shutil.which("modexctl") is None,
@@ -57,17 +63,53 @@ class _Agent:
         ...
 
 
-def test_build_llm_provider_returns_bot_model_provider(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_default_config_resolves_bot_model_provider(tmp_path: Path) -> None:
+    """W4.2 behavior preservation: with no roster override the pool's slot
+    name is ``bot_default`` and its resolved product is a BotModelProvider —
+    the same class the main agent has always run on."""
+    from plugins.bot_strategies import BotStrategiesPlugin
+
     cfg = _cfg(tmp_path)
-    strategy = ReactExecutionStrategy()
-    prov = strategy._build_llm_provider("main", cfg)
-    assert isinstance(prov, BotModelProvider)
+    registry = ComponentRegistry()
+    await ComponentRegistryLoader.load(
+        registry,
+        PluginDiscoveryConfig(
+            bundled_factories=(BotStrategiesPlugin(),),
+            project_plugin_paths=(),
+        ),
+    )
+    pool_spec = PoolSpec(name="main", agents=[AgentSpec(name="main")])
+    pool_assembly_ctx = PoolAssemblyContext(
+        pool_name="main",
+        pool_spec=pool_spec,
+        project_dir=tmp_path,
+        data_dir=tmp_path / ".modex",
+        broker=MagicMock(),
+        inbox_server=MagicMock(),
+        agent_bus=MagicMock(),
+        output_adapter=MagicMock(),
+        safety=RuntimeSafetyPolicy(),
+        retention=SessionRetentionPolicy(),
+        registry=TurnSessionRegistry(),
+        bot_model_config=cfg,
+        model_choice_registry=ModelChoiceRegistry(),
+    )
+    ws_ctx = WorkspaceContext(
+        target=tmp_path, paths=WorkspacePaths(root=tmp_path), is_home=False
+    )
+
+    provider = await _resolve_llm_slot(
+        registry, "bot_default", {}, pool_assembly_ctx, ws_ctx
+    )
+
+    assert isinstance(provider, BotModelProvider)
 
 
 def test_wire_main_pipeline_adds_model_choice_hook(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     reg = ModelChoiceRegistry()
-    main_spec = MainAgentSpec(agent_name="main", approval=ApprovalConfig(enabled=False))
+    main_spec = AgentSpec(name="main", approval=ApprovalConfig(enabled=False))
     assembly_deps = PoolAssemblyDeps(memory=MemoryConfig())
 
     agent = _Agent()
@@ -128,7 +170,7 @@ def test_wire_main_pipeline_adds_model_choice_hook(tmp_path: Path) -> None:
 
     _wire_main_pipeline(
         pool=pool,
-        main_agent_name="main",
+        root_agent_name="main",
         inbox_consumer=MagicMock(),
         notification_service=MagicMock(),
         shared_interceptor_chain=MagicMock(),
@@ -139,9 +181,10 @@ def test_wire_main_pipeline_adds_model_choice_hook(tmp_path: Path) -> None:
         command_processor=None,
         pool_name="main",
         tool_manager=InMemoryToolManager(),
-        pool_spec=PoolSpec(name="main", main_agent_name="main", main=main_spec),
+        pool_spec=PoolSpec(name="main", agents=[main_spec]),
         bot_model_config=cfg,
         model_choice_registry=reg,
+        roster_hook_names=frozenset(),
     )
     assert pipeline.hook_runner is not None
     hooks = [spec.hook for spec in pipeline.hook_runner.hook_specs]

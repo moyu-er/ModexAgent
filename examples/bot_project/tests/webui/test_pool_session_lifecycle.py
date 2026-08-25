@@ -26,18 +26,16 @@ def _real_pool_to_main_agent() -> dict[str, str]:
     """Build pool_name -> main_agent_name from the real project config.
 
     Mirrors WebUIService production wiring
-    (_agent_map = {name: pi.main_agent_name for ...}). The coder pool's
-    main agent is `orchestrator` (main_agent_name override in pool.yml);
-    the directory name `coder/` is the pool identity, not the agent name.
+    (_agent_map = {name: pi.root_agent_name for ...}). The coder pool's
+    root agent is `orchestrator` (a declared name that differs from the
+    pool key); the pool key is the pool identity, not the agent name.
     """
-    from modex_agent.multi_agent.pool_config import PoolStore
+    from modex_agent.scope.loader import load_scope_declaration
 
     project_dir = _real_project_dir()
-    pool_store = PoolStore(base_dir=project_dir)
-    return {
-        s.name: pool_store.read_pool(s.name).main.agent_name
-        for s in pool_store.list_pools()
-    }
+    spec = load_scope_declaration(project_dir / "config" / "scopes" / "bot.yml")
+    pools = spec.workspace.pools if spec.workspace is not None else []
+    return {pool.name: pool.root_agent.name for pool in pools}
 
 
 def _make_server(

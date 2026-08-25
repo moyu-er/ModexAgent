@@ -109,7 +109,7 @@ def _make_facade(
     target_not_found: bool = False,
     pool_not_materialized: bool = False,
     session_exists: bool = False,
-    main_agent_name: str = "main",
+    root_agent_name: str = "main",
 ) -> tuple[BotControlFacade, AsyncMock]:
     """Build a facade with mocked dependencies for send.
 
@@ -127,7 +127,7 @@ def _make_facade(
 
     mock_pool_instance = MagicMock()
     mock_pool_instance.target_store = mock_target_store
-    mock_pool_instance.main_agent_name = main_agent_name
+    mock_pool_instance.root_agent_name = root_agent_name
 
     mock_resources = MagicMock()
     mock_resources.target = _WORKSPACE
@@ -203,7 +203,7 @@ class TestSelfSendRejected:
 class TestTargetNotFound:
     @pytest.mark.asyncio
     async def test_missing_target_raises_404(self) -> None:
-        facade, _ = _make_facade(target_not_found=True, main_agent_name="main")
+        facade, _ = _make_facade(target_not_found=True, root_agent_name="main")
         with pytest.raises(ControlFacadeError) as exc_info:
             await facade.send(_make_request(target_agent="nonexistent"))
         assert exc_info.value.status == 404
@@ -216,7 +216,7 @@ class TestTargetNotFound:
         The main agent is intentionally excluded from the target store
         (it's the sender for send_to_agent). But subagents need to reply
         to their parent via modexctl send. When the target name matches
-        the pool's main_agent_name, the facade synthesizes a NORMAL
+        the pool's root_agent_name, the facade synthesizes a NORMAL
         same-pool target instead of returning 404.
         """
         send_result = _make_send_result(
@@ -225,7 +225,7 @@ class TestTargetNotFound:
         )
         facade, mock_service = _make_facade(
             target_not_found=True,
-            main_agent_name="main",
+            root_agent_name="main",
             send_result=send_result,
         )
         request = SendRequest(

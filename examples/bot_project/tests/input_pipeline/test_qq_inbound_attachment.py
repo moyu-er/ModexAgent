@@ -33,6 +33,10 @@ from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
 from modex_agent.media.models import AttachmentLocator, Kind
 from modex_agent.workspace.runtime import bind_workspace_root
+from tests.input_pipeline.assembly_support import (
+    TEST_ASSEMBLY_CTX,
+    TEST_COMPONENT_REGISTRY,
+)
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
@@ -154,7 +158,12 @@ async def test_qq_attachment_ref_flows_through_im_pipeline_to_persisted_record()
             current_ws_provider=(lambda r=root: r),
             media_store=media_store,
         )
-        pipeline = build_im_pipeline(skill_registry=_NoSkill(), known_pools={"main"})
+        pipeline = await build_im_pipeline(
+            registry=TEST_COMPONENT_REGISTRY,
+            ctx=TEST_ASSEMBLY_CTX,
+            skill_registry=_NoSkill(),
+            known_pools={"main"},
+        )
 
         # Exactly the AttachmentRef shape QQ's _on_message now produces.
         env = UserInputEnvelope(

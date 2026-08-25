@@ -107,4 +107,5 @@ packaging/ModexBot-Setup-*.exe
 
 # eval run archives (local evidence only)
 evals/runs/
+evals/evidence/
 

@@ -41,7 +41,9 @@ async def test_ws_send_message_threads_provider_model_into_metadata() -> None:
         server.set_workspace_index(store)
         from tests.webui._pipeline_fixture import attach_default_pipeline
 
-        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+        await attach_default_pipeline(
+            server, store, input_adapter, workspace_root=workspace_root
+        )
 
         # Wrap pipeline.handle to capture the result envelope.
         captured: list = []
@@ -98,7 +100,9 @@ async def test_ws_send_message_without_provider_model_leaves_metadata_unset() ->
         server.set_workspace_index(store)
         from tests.webui._pipeline_fixture import attach_default_pipeline
 
-        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+        await attach_default_pipeline(
+            server, store, input_adapter, workspace_root=workspace_root
+        )
 
         captured: list = []
         original_handle = server._input_pipeline.handle
