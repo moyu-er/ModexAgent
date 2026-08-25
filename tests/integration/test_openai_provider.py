@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from modex_agent.core.constants import InterfaceFormat
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.factories.llm import create_llm_provider
 
@@ -168,9 +169,11 @@ class TestOpenAIProviderStreaming:
 
 
 class TestFactoryRouting:
-    """Tests that the factory correctly routes model prefixes."""
+    """Factory routing is driven by ``interface_format``: the default
+    OPENAI_COMPATIBLE routes to OpenAIProvider; ANTHROPIC routes to
+    LiteLLMProvider (with the ``anthropic/`` prefix re-added)."""
 
-    def test_openai_prefix_routes_to_openai_provider(self):
+    def test_openai_compatible_format_routes_to_openai_provider(self):
         config = LLMConfig(
             model="openai/gpt-4o",
             api_key="sk-test",
@@ -182,13 +185,14 @@ class TestFactoryRouting:
         assert isinstance(provider, OpenAIProvider)
         assert provider.get_default_model() == "gpt-4o"
 
-    def test_no_prefix_routes_to_litellm(self):
+    def test_anthropic_format_routes_to_litellm(self):
         config = LLMConfig(
-            model="gpt-4o",
+            model="claude-sonnet-4-5",
             api_key="sk-test",
+            interface_format=InterfaceFormat.ANTHROPIC,
         )
         from modex_agent.providers.litellm_provider import LiteLLMProvider
 
         provider = create_llm_provider(config)
         assert isinstance(provider, LiteLLMProvider)
-        assert provider.get_default_model() == "gpt-4o"
+        assert provider.get_default_model() == "anthropic/claude-sonnet-4-5"

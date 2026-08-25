@@ -283,3 +283,23 @@ class TestLiteLLMProviderReasoningEffort:
             )
             params = p._build_request_params(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
             assert params.get(REASONING_EFFORT_PARAM) == ReasoningEffort.LOW.value
+
+
+class TestLiteLLMProviderTopP:
+    """LiteLLMProvider top_p sampling parameter tests."""
+
+    def test_top_p_default_in_request_params(self):
+        with patch.dict('os.environ', {'LITELLM_LOG': 'ERROR'}):
+            p = LiteLLMProvider(model="openai/o3-mini", api_key="test-key")
+            params = p._build_request_params(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
+            assert params["top_p"] == 0.95
+
+    def test_top_p_injected_via_constructor(self):
+        with patch.dict('os.environ', {'LITELLM_LOG': 'ERROR'}):
+            p = LiteLLMProvider(
+                model="openai/o3-mini",
+                api_key="test-key",
+                top_p=0.9,
+            )
+            params = p._build_request_params(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
+            assert params["top_p"] == 0.9

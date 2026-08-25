@@ -7,7 +7,7 @@
 - 配额/计费错误不应重试
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -377,3 +377,75 @@ class TestLiteLLMProviderRetryRouting:
         assert isinstance(result, LLMResponse)
         assert result.content == "Hello World"
         assert deltas == ["Hel", "Hello", " World"]
+
+
+class TestLiteLLMTemperatureConfigChain:
+    """chat_stream_with_retry must fall back to the ctor temperature when the call omits it.
+
+    Regression: chat_stream_with_retry defaulted ``temperature=0.7``, so the
+    LiteLLMProvider constructor value (e.g. model.yml ``temperature: 1.0``) was
+    unreachable on that path — the explicit 0.7 always won. The default is now
+    None: None falls back to the constructor value, an explicit value wins.
+    """
+
+    @staticmethod
+    def _fake_stream(content="ok"):
+        class FakeDelta:
+            def __init__(self):
+                self.content = content
+                self.reasoning_content = None
+                self.tool_calls = None
+
+        class FakeChoice:
+            def __init__(self):
+                self.delta = FakeDelta()
+                self.finish_reason = "stop"
+
+        class FakeChunk:
+            def __init__(self):
+                self.choices = [FakeChoice()]
+
+        class FakeIterator:
+            async def __aiter__(self):
+                yield FakeChunk()
+
+        return FakeIterator()
+
+    def _make_provider(self, temperature=None):
+        with patch.dict('os.environ', {'LITELLM_LOG': 'ERROR'}):
+            from modex_agent.providers.litellm_provider import LiteLLMProvider
+            if temperature is not None:
+                p = LiteLLMProvider(model="gpt-4", api_key="test-key", temperature=temperature)
+            else:
+                p = LiteLLMProvider(model="gpt-4", api_key="test-key")
+        mock = AsyncMock(return_value=self._fake_stream())
+        p._acompletion = mock
+        return p, mock
+
+    @pytest.mark.asyncio
+    async def test_ctor_temperature_reaches_api_when_call_omits_it(self):
+        provider, mock = self._make_provider(temperature=1.0)
+        await provider.chat_stream_with_retry(
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            max_retries=0,
+        )
+        assert mock.call_args.kwargs["temperature"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_explicit_temperature_overrides_ctor(self):
+        provider, mock = self._make_provider(temperature=1.0)
+        await provider.chat_stream_with_retry(
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            temperature=0.2,
+            max_retries=0,
+        )
+        assert mock.call_args.kwargs["temperature"] == 0.2
+
+    @pytest.mark.asyncio
+    async def test_ctor_default_temperature_preserved(self):
+        provider, mock = self._make_provider()  # ctor default DefaultValues.TEMPERATURE (0.7)
+        await provider.chat_stream_with_retry(
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            max_retries=0,
+        )
+        assert mock.call_args.kwargs["temperature"] == 0.7

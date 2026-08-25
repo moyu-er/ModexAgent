@@ -55,6 +55,7 @@ class OpenAIProvider(StreamingLLMProvider):
         api_key: str | None = None,
         base_url: str | None = None,
         temperature: float = 0.7,
+        top_p: float = 0.95,
         max_output_tokens: int | None = None,
         timeout: float | None = None,
         stream_idle_timeout: float | None = None,
@@ -65,6 +66,7 @@ class OpenAIProvider(StreamingLLMProvider):
     ) -> None:
         self._model = model
         self._temperature = temperature
+        self._top_p = top_p
         self._max_output_tokens = max_output_tokens
         self._reasoning_effort = reasoning_effort
         self._extra_headers = extra_headers
@@ -110,13 +112,14 @@ class OpenAIProvider(StreamingLLMProvider):
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         on_content_delta: Callable[[str], Any] | None = None,
         on_reasoning_delta: Callable[[str], Any] | None = None,
         **kwargs,
     ) -> LLMResponse:
+        """Stream a completion. temperature=None falls back to the constructor/config value."""
         return await self.chat_stream_with_retry(
             messages=messages,
             model=model,
@@ -132,7 +135,7 @@ class OpenAIProvider(StreamingLLMProvider):
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         max_retries: int = 0,
@@ -140,6 +143,7 @@ class OpenAIProvider(StreamingLLMProvider):
         on_reasoning_delta: Callable[[str], Any] | None = None,
         **kwargs,
     ) -> LLMResponse:
+        """Stream with retry. temperature=None falls back to the constructor/config value."""
         return await self._execute_with_retry(
             self._chat_stream_raw,
             messages,
@@ -157,7 +161,7 @@ class OpenAIProvider(StreamingLLMProvider):
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         on_content_delta: Callable[[str], Any] | None = None,
@@ -317,7 +321,15 @@ class OpenAIProvider(StreamingLLMProvider):
                 for tc_chunk in delta.tool_call_chunks:
                     accumulator.add_chunk(tc_chunk)
 
-        pending_tools = accumulator.flush_pending()
+        # finish_reason=length means the stream was cut at the max_tokens
+        # ceiling: pending tool calls are truncated mid-arguments, and
+        # repairing them into executable calls is unsafe (W0 audit P4).
+        # Drop them; every other ending keeps the partial flush.
+        pending_tools = (
+            []
+            if finish_reason == FinishReason.LENGTH.value
+            else accumulator.flush_pending()
+        )
         all_tool_calls = accumulator.get_completed() + pending_tools
 
         # Flush any remaining buffered content from think extractor
@@ -363,6 +375,9 @@ class OpenAIProvider(StreamingLLMProvider):
     # Everything else (content_format, truncatable_paths, metadata,
     # meta_context_lossy, etc.) is governance-internal and must not
     # reach external providers.
+    # reasoning_content is intentionally NOT listed: it is conditionally
+    # re-attached in _sanitize_api_messages per the DeepSeek thinking-mode
+    # passback rule (assistant tool-call turns only).
     _API_MSG_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "role",
@@ -388,29 +403,41 @@ class OpenAIProvider(StreamingLLMProvider):
         Coerces dict entries to ``ChatMessage`` at the trust boundary —
         callers may pass ``list[dict]`` (legacy tests, external callers),
         but the API serialization path requires ``ChatMessage.to_dict()``.
+
+        ``reasoning_content`` is re-attached on assistant tool-call turns
+        only, per the DeepSeek thinking-mode passback rule.
         """
         allowed = OpenAIProvider._API_MSG_FIELDS
         result: list[dict[str, Any]] = []
         for msg in messages:
             msg = ChatMessage.coerce(msg)
             raw = msg.to_dict()
-            result.append({k: v for k, v in raw.items() if k in allowed})
+            entry = {k: v for k, v in raw.items() if k in allowed}
+            # reasoning_content is filtered out by the allowed-fields whitelist
+            # above, so read it from the model extras; DeepSeek thinking-mode
+            # passback requires it only on tool-call turns — other turns drop it.
+            reasoning = msg.model_extra.get("reasoning_content") if msg.model_extra else None
+            if reasoning and entry.get("role") == "assistant" and entry.get("tool_calls"):
+                entry["reasoning_content"] = reasoning
+            result.append(entry)
         return result
 
     def _build_params(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         stream: bool = False,
         **kwargs,
     ) -> dict[str, Any]:
+        """Build API params. temperature=None falls back to the constructor/config value."""
         params: dict[str, Any] = {
             "model": model or self._model,
             "messages": self._sanitize_api_messages(messages),
             "temperature": temperature if temperature is not None else self._temperature,
+            "top_p": self._top_p,
             "max_tokens": max_output_tokens if max_output_tokens is not None else self._max_output_tokens,
             "stream": stream,
         }

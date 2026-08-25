@@ -8,6 +8,7 @@ import pytest
 
 pytest.importorskip("openai")  # skip if openai not installed (CI [dev] doesn't include [llm] deps)
 
+from modex_agent.agents.react.message_builder import build_assistant_message
 from modex_agent.core.constants import FinishReason, ReasoningEffort
 from modex_agent.core.llm_struct import (
     LLMErrorKind,
@@ -201,6 +202,7 @@ class TestOpenAIProviderChat:
         call_kwargs = provider._client.chat.completions.create.call_args.kwargs
         assert call_kwargs["model"] == "gpt-4o-mini"
         assert call_kwargs["temperature"] == 0.3
+        assert call_kwargs["top_p"] == 0.95
         assert call_kwargs["max_tokens"] == 500
         assert len(call_kwargs["tools"]) == 1
         # chat() now uses streaming internally for cache benefits
@@ -360,6 +362,121 @@ class TestBuildParamsStripsGovernanceFields:
             "function": {"name": "t", "arguments": "{}"},
         }
         assert api_msgs[2]["tool_call_id"] == "c1"
+
+
+class TestReasoningContentPassback:
+    """DeepSeek thinking-mode passback: assistant tool-call turns replay reasoning_content.
+
+    ``reasoning_content`` is stored on ChatMessage as a pydantic extra and
+    persisted through ``to_dict()``/``from_dicts()`` (it must survive
+    compaction / process restarts); ``_sanitize_api_messages`` must replay it
+    ONLY on assistant messages carrying ``tool_calls`` — the API ignores it
+    on tool-call-free turns, so dropping it there saves tokens.
+    """
+
+    @pytest.fixture
+    def provider(self):
+        safety = RuntimeSafetyPolicy(
+            llm=LLMTimeoutPolicy(request_timeout_seconds=10, stream_idle_timeout_seconds=30),
+            turn=TurnTimeoutPolicy(),
+        )
+        with patch("modex_agent.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+            p = OpenAIProvider(model="deepseek-reasoner", api_key="sk-test", safety=safety)
+            p._client = mock_client
+            yield p
+
+    def _tool_call(self):
+        return ToolCall(tool_name="search", arguments={"q": "x"}, call_id="c1")
+
+    def _make_chunk(self, content=None, finish_reason=None):
+        delta = MagicMock()
+        delta.content = content
+        delta.tool_calls = None
+        delta.model_extra = None
+
+        choice = MagicMock()
+        choice.delta = delta
+        choice.finish_reason = finish_reason
+
+        chunk = MagicMock()
+        chunk.choices = [choice]
+        chunk.usage = None
+        return chunk
+
+    async def _stream_chunks(self, chunks):
+        for c in chunks:
+            yield c
+
+    def test_reasoning_replayed_on_tool_call_turn(self, provider):
+        messages = [
+            build_assistant_message(None, [self._tool_call()], reasoning_content="thinking..."),
+        ]
+        params = provider._build_params(messages=messages)
+        assert params["messages"][0]["reasoning_content"] == "thinking..."
+
+    def test_reasoning_dropped_on_tool_call_free_turn(self, provider):
+        messages = [
+            build_assistant_message("answer", [], reasoning_content="thinking..."),
+        ]
+        params = provider._build_params(messages=messages)
+        assert "reasoning_content" not in params["messages"][0]
+
+    def test_no_reasoning_extra_leaves_payload_unchanged(self, provider):
+        messages = [
+            build_assistant_message(None, [self._tool_call()]),
+        ]
+        params = provider._build_params(messages=messages)
+        assert "reasoning_content" not in params["messages"][0]
+        assert params["messages"][0]["tool_calls"][0]["function"]["name"] == "search"
+
+    def test_persistence_round_trip_replays_reasoning_on_wire(self, provider):
+        """THE end-to-end persistence passback chain: build → to_dict →
+        from_dicts (storage round-trip) → _sanitize_api_messages replays
+        reasoning on the wire. This is the exact chain that previously
+        starved after compaction / process restarts."""
+        original = build_assistant_message(None, [self._tool_call()], reasoning_content="cot")
+        rehydrated = ChatMessage.from_dicts([original.to_dict()])
+        tool_msg = ChatMessage(
+            role=MessageRole.TOOL, tool_call_id="c1", name="search", content="result"
+        )
+        api_msgs = provider._sanitize_api_messages([*rehydrated, tool_msg])
+        assert api_msgs[0]["reasoning_content"] == "cot"
+        assert api_msgs[0]["tool_calls"][0]["id"] == "c1"
+        assert api_msgs[1]["role"] == "tool"
+        assert api_msgs[1]["tool_call_id"] == "c1"
+
+    def test_persistence_round_trip_plain_turn_omits_reasoning_on_wire(self, provider):
+        """Plain assistant turn (no tool_calls) round-trips through storage,
+        but the provider still omits reasoning on the wire (behavioral parity)."""
+        original = build_assistant_message("answer", [], reasoning_content="cot")
+        rehydrated = ChatMessage.from_dicts([original.to_dict()])
+        api_msgs = provider._sanitize_api_messages(rehydrated)
+        assert api_msgs[0]["content"] == "answer"
+        assert "reasoning_content" not in api_msgs[0]
+
+    @pytest.mark.asyncio
+    async def test_react_replay_shape_end_to_end(self, provider):
+        """[assistant(tool_calls+reasoning), tool(result)] history → the actual
+        API request carries reasoning_content on the assistant message."""
+        provider._client.chat.completions.create = AsyncMock(
+            return_value=self._stream_chunks([self._make_chunk(content="ok", finish_reason="stop")])
+        )
+        history = [
+            build_assistant_message(
+                None, [self._tool_call()], reasoning_content="chain of thought"
+            ),
+            ChatMessage(role=MessageRole.TOOL, tool_call_id="c1", name="search", content="result"),
+        ]
+
+        await provider.chat(messages=history)
+
+        request_messages = provider._client.chat.completions.create.call_args.kwargs["messages"]
+        assert request_messages[0]["reasoning_content"] == "chain of thought"
+        assert request_messages[0]["tool_calls"][0]["id"] == "c1"
+        assert request_messages[1]["role"] == "tool"
+        assert request_messages[1]["tool_call_id"] == "c1"
 
 
 class TestOpenAIProviderChatStream:
@@ -566,6 +683,136 @@ class TestOpenAIProviderChatStream:
         assert "new_sensitive" in (result.error or "")
 
 
+class TestLengthFinishDropsPendingToolCalls:
+    """finish_reason=length (max_tokens ceiling) must drop pending tool calls.
+
+    W0 audit P4: a stream cut at the token ceiling leaves tool calls truncated
+    mid-arguments; repairing them into valid-looking (or empty) arguments
+    produces calls the ReAct loop would execute unsafely. Only completed calls
+    may ride the response when the stream ended at the length ceiling. Any
+    other finish reason keeps the historical partial-flush behavior.
+    """
+
+    @pytest.fixture
+    def provider(self):
+        safety = RuntimeSafetyPolicy(
+            llm=LLMTimeoutPolicy(request_timeout_seconds=10, stream_idle_timeout_seconds=30),
+            turn=TurnTimeoutPolicy(),
+        )
+        with patch("modex_agent.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+            p = OpenAIProvider(model="gpt-4o", api_key="sk-test", safety=safety)
+            p._client = mock_client
+            yield p
+
+    @staticmethod
+    def _tool_call_delta(index, call_id, name, args):
+        func = MagicMock()
+        func.name = name
+        func.arguments = args
+
+        tc = MagicMock()
+        tc.index = index
+        tc.id = call_id
+        tc.function = func
+        return tc
+
+    def _tool_chunk(self, tool_calls, finish_reason=None):
+        delta = MagicMock()
+        delta.content = None
+        delta.tool_calls = tool_calls
+        delta.model_extra = None
+
+        choice = MagicMock()
+        choice.delta = delta
+        choice.finish_reason = finish_reason
+
+        chunk = MagicMock()
+        chunk.choices = [choice]
+        chunk.usage = None
+        return chunk
+
+    async def _stream_chunks(self, chunks):
+        for c in chunks:
+            yield c
+
+    @pytest.mark.asyncio
+    async def test_length_drop_keeps_only_completed_calls(self, provider):
+        """Stream ends mid-arguments at the token ceiling → only the completed
+        call rides the response; the truncated call is dropped."""
+        chunks = [
+            self._tool_chunk(
+                [self._tool_call_delta(0, "call_1", "search", '{"query": "test"}')]
+            ),
+            # Truncated mid-arguments: unparseable, but repairable into a
+            # valid-looking (wrong) payload — exactly the unsafe case.
+            self._tool_chunk(
+                [self._tool_call_delta(1, "call_2", "write_file", '{"path": "a.py", "content": "trunc')]
+            ),
+            self._tool_chunk([], finish_reason="length"),
+        ]
+        provider._client.chat.completions.create = AsyncMock(
+            return_value=self._stream_chunks(chunks)
+        )
+
+        result = await provider.chat_stream(
+            messages=[ChatMessage(role=MessageRole.USER, content="search")],
+        )
+
+        assert result.finish_reason == FinishReason.LENGTH.value
+        assert [tc.tool_name for tc in result.tool_calls] == ["search"]
+        assert result.tool_calls[0].arguments == {"query": "test"}
+
+    @pytest.mark.asyncio
+    async def test_length_drop_all_incomplete_leaves_tool_calls_empty(self, provider):
+        """Every call truncated at the ceiling → tool_calls empty (the empty
+        ending then flows into LengthGuard downstream)."""
+        chunks = [
+            self._tool_chunk(
+                [self._tool_call_delta(0, "call_9", "write_file", '{"path": "a.py", "content": "trunc')]
+            ),
+            self._tool_chunk([], finish_reason="length"),
+        ]
+        provider._client.chat.completions.create = AsyncMock(
+            return_value=self._stream_chunks(chunks)
+        )
+
+        result = await provider.chat_stream(
+            messages=[ChatMessage(role=MessageRole.USER, content="write")],
+        )
+
+        assert result.finish_reason == FinishReason.LENGTH.value
+        assert result.tool_calls == []
+        assert result.has_tool_calls is False
+
+    @pytest.mark.asyncio
+    async def test_stop_ending_still_flushes_pending_calls(self, provider):
+        """Clean stop ending → partial-flush behavior unchanged: the pending
+        (incomplete) call still rides the response with recovered arguments."""
+        chunks = [
+            self._tool_chunk(
+                [self._tool_call_delta(0, "call_1", "search", '{"query": "test"}')]
+            ),
+            # Unrepairably truncated → flushed as the call with empty args
+            self._tool_chunk(
+                [self._tool_call_delta(1, "call_2", "send_to_agent", '{"target_agent":"reviewer","content":"hel')]
+            ),
+            self._tool_chunk([], finish_reason="stop"),
+        ]
+        provider._client.chat.completions.create = AsyncMock(
+            return_value=self._stream_chunks(chunks)
+        )
+
+        result = await provider.chat_stream(
+            messages=[ChatMessage(role=MessageRole.USER, content="search")],
+        )
+
+        assert result.finish_reason == FinishReason.STOP.value
+        assert [tc.tool_name for tc in result.tool_calls] == ["search", "send_to_agent"]
+        assert isinstance(result.tool_calls[1].arguments, dict)
+
+
 class TestOpenAIProviderCacheControl:
     """OpenAIProvider prompt_cache_key parameter tests.
 
@@ -661,3 +908,99 @@ class TestOpenAIProviderCacheControl:
     async def _stream_chunks(self, chunks):
         for c in chunks:
             yield c
+
+
+class TestTemperatureConfigChain:
+    """Constructor temperature must reach the API when the call omits it.
+
+    Regression: chat/chat_stream defaulted ``temperature=0.7``, so the
+    provider-constructor value (e.g. model.yml ``temperature: 1.0``) never
+    reached the API — every call silently sent 0.7. Defaults are now None:
+    None falls back to the constructor value, an explicit per-call value wins.
+    """
+
+    @pytest.fixture
+    def make_provider(self):
+        def _make(temperature=None):
+            safety = RuntimeSafetyPolicy(
+                llm=LLMTimeoutPolicy(request_timeout_seconds=10, stream_idle_timeout_seconds=30),
+                turn=TurnTimeoutPolicy(),
+            )
+            with patch("modex_agent.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
+                mock_client = MagicMock()
+                mock_client_cls.return_value = mock_client
+                kwargs = {"model": "gpt-4o", "api_key": "sk-test", "safety": safety}
+                if temperature is not None:
+                    kwargs["temperature"] = temperature
+                p = OpenAIProvider(**kwargs)
+                p._client = mock_client
+            mock_client.chat.completions.create = AsyncMock(
+                return_value=self._stream_chunks(
+                    [self._make_chunk(content="ok", finish_reason="stop")]
+                )
+            )
+            return p
+
+        return _make
+
+    def _make_chunk(self, content=None, finish_reason=None, reasoning=None, usage=None):
+        """Build a mock ChatCompletionChunk."""
+        delta = MagicMock()
+        delta.content = content
+        delta.tool_calls = None
+        delta.model_extra = {"reasoning_content": reasoning} if reasoning else None
+
+        choice = MagicMock()
+        choice.delta = delta
+        choice.finish_reason = finish_reason
+
+        chunk = MagicMock()
+        chunk.choices = [choice]
+        chunk.usage = usage
+        return chunk
+
+    async def _stream_chunks(self, chunks):
+        for c in chunks:
+            yield c
+
+    @pytest.mark.asyncio
+    async def test_ctor_temperature_reaches_api_when_call_omits_it(self, make_provider):
+        provider = make_provider(temperature=1.0)
+        await provider.chat_stream(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
+        call_kwargs = provider._client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["temperature"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_explicit_temperature_overrides_ctor(self, make_provider):
+        provider = make_provider(temperature=1.0)
+        await provider.chat_stream(
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            temperature=0.2,
+        )
+        call_kwargs = provider._client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["temperature"] == 0.2
+
+    @pytest.mark.asyncio
+    async def test_ctor_default_temperature_preserved(self, make_provider):
+        provider = make_provider()  # ctor default 0.7
+        await provider.chat_stream(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
+        call_kwargs = provider._client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["temperature"] == 0.7
+
+    @pytest.mark.asyncio
+    async def test_chat_path_ctor_temperature_reaches_api(self, make_provider):
+        """chat() (ABC default None) must also fall back to the ctor value."""
+        provider = make_provider(temperature=1.0)
+        await provider.chat(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
+        call_kwargs = provider._client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["temperature"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_with_retry_ctor_temperature_reaches_api(self, make_provider):
+        provider = make_provider(temperature=1.0)
+        await provider.chat_stream_with_retry(
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            max_retries=0,
+        )
+        call_kwargs = provider._client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["temperature"] == 1.0

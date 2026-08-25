@@ -83,6 +83,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         api_key: str | None = None,
         base_url: str | None = None,
         temperature: float = DefaultValues.TEMPERATURE,
+        top_p: float = DefaultValues.TOP_P,
         max_output_tokens: int | None = None,
         timeout: float | None = None,
         stream_idle_timeout: float | None = None,
@@ -95,6 +96,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         self._api_key = api_key
         self._base_url = base_url
         self._temperature = temperature
+        self._top_p = top_p
         self._max_output_tokens = max_output_tokens
         self._extra_kwargs = kwargs
 
@@ -205,6 +207,7 @@ class LiteLLMProvider(StreamingLLMProvider):
             "api_key": self._api_key,
             "base_url": self._base_url,
             "temperature": temperature if temperature is not None else self._temperature,
+            "top_p": self._top_p,
             "max_tokens": max_output_tokens if max_output_tokens is not None else self._max_output_tokens,
             **self._extra_kwargs,
             **kwargs,
@@ -252,7 +255,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float | None = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         max_retries: int = 0,
@@ -260,6 +263,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         on_reasoning_delta: Callable[[str], Any] | None = None,
         **kwargs,
     ) -> LLMResponse:
+        """带重试的流式调用。temperature=None 时回退到构造函数/配置值。"""
         return await self._execute_with_retry(
             self._chat_stream_raw,
             messages,
@@ -438,9 +442,13 @@ class LiteLLMProvider(StreamingLLMProvider):
             if "finish_reason" in delta and delta["finish_reason"]:
                 finish_reason = delta["finish_reason"].lower()
 
-        pending_tools = accumulator.flush_pending()
-        for tool_call in pending_tools:
-            _add_tool_call(tool_call)
+        # finish_reason=length means the stream was cut at the max_tokens
+        # ceiling: pending tool calls are truncated mid-arguments, and
+        # repairing them into executable calls is unsafe (W0 audit P4).
+        # Drop them; every other ending keeps the partial flush.
+        if finish_reason != FinishReason.LENGTH.value:
+            for tool_call in accumulator.flush_pending():
+                _add_tool_call(tool_call)
 
         # Flush any remaining buffered content from think extractor
         if think_extractor:
