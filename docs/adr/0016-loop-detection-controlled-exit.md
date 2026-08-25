@@ -20,7 +20,7 @@
 
 项目已有一套统一的“受控退出”模型：
 
-- `AgentControlError` 是 `AgentCancelled` / `AgentTimeout` / `PolicyViolation` 的公共父类，语义为“受控退出，非普通失败”。
+- `AgentControlError` 是 `AgentCancelledError` / `AgentTimeoutError` / `PolicyViolationError` 的公共父类，语义为“受控退出，非普通失败”。
 - `ReActAgent.run()` 已统一 `except AgentControlError as e:` 处理这一族异常：持久化已收集内容、构造 `AgentResult`、`emit_complete`。
 - `InterceptorChain` 对 `AgentControlError` 一律透传，不做错误转换。
 - `HookRunner.dispatch()` 会吞掉普通 hook 异常（LOG 策略仅记录），但 `asyncio.CancelledError` 透传。
@@ -31,7 +31,7 @@
 
 ### 1. 把循环检测做成一种受控退出异常
 
-新增异常 `LoopDetectedError(AgentControlError)`，与 `AgentCancelled` 同族。让父类 `AgentControlError` 携带**两个可覆盖属性**，统一描述退出时给用户的反馈：
+新增异常 `LoopDetectedError(AgentControlError)`，与 `AgentCancelledError` 同族。让父类 `AgentControlError` 携带**两个可覆盖属性**，统一描述退出时给用户的反馈：
 
 ```python
 class AgentControlError(Exception):
@@ -46,7 +46,7 @@ class AgentControlError(Exception):
         super().__init__(reason)
 ```
 
-`AgentCancelled` / `AgentTimeout` / `PolicyViolation` 保持原 `__init__` 签名不变，仅继承默认属性（`user_content=""`、`stop_reason` 各自定义：`CANCELLED` / `TIMEOUT` / `ERROR`，**只补不破**）。
+`AgentCancelledError` / `AgentTimeoutError` / `PolicyViolationError` 保持原 `__init__` 签名不变，仅继承默认属性（`user_content=""`、`stop_reason` 各自定义：`CANCELLED` / `TIMEOUT` / `ERROR`，**只补不破**）。
 
 新增：
 
@@ -312,7 +312,7 @@ if stop_reason == "loop_detected":
 ## 实现变更清单（实现时核对）
 
 1. `src/modex_agent/core/constants.py` — `StopReason` 新增 `LOOP_DETECTED = "loop_detected"`。
-2. `src/modex_agent/control/exceptions.py` — `AgentControlError` 加 `user_content`/`stop_reason` 类属性默认值；`AgentCancelled`/`AgentTimeout`/`PolicyViolation` 各自 `stop_reason` 默认值；新增 `LoopDetectedError`。
+2. `src/modex_agent/control/exceptions.py` — `AgentControlError` 加 `user_content`/`stop_reason` 类属性默认值；`AgentCancelledError`/`AgentTimeoutError`/`PolicyViolationError` 各自 `stop_reason` 默认值；新增 `LoopDetectedError`。
 3. `src/modex_agent/hook/runner.py` — `dispatch()` 新增 `except AgentControlError: raise` 透传分支。
 4. `src/modex_agent/agents/react/agent.py` — `except AgentControlError` 块改用 `e.user_content` / `e.stop_reason` 构造 `AgentResult`。
 5. `src/modex_agent/hook/builtin/loop_detection.py` — 新增 `LoopDetectionHook` + 相似度/工具 fingerprint 与 count 辅助函数 + 合取判定 + XML 模板。

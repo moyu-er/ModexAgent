@@ -1,0 +1,20 @@
+# 15 — Addressing convergence (wide refactor, expand-contract)
+
+**What to build:** Three specialized addressing mechanisms converge into one scope-path resolution: `WorkspaceRegistry[R]`'s LRU machinery generalizes to `ScopeRegistry` (same machine, scope-generic), `PoolRouter`'s pool-segment addressing and `WorkspacePathResolver`'s two-level path resolution migrate to scope-path resolution along the parent chain. This is a wide refactor (PoolRouter has ~28 call sites): expand first (scope-path resolution exists beside the old three), then migrate call sites in batches (per package/directory) keeping CI green batch to batch, then contract (delete the old three) once no caller remains. The runtime reconciliation heuristic `_reconcile_pool_for_agent` migrates to a declaration lookup (agent→pool ownership is compile-time knowledge — one lookup, no all-pools scan) during the batch phase.
+
+**Blocked by:** 14 (workspace declarations define the scope tree the resolution walks).
+
+**Status:** closed (resolved 2026-08-22)
+
+- [x] Expand: scope-path resolution exists and is exercised by new code while the three legacy mechanisms still serve all existing call sites
+  - `689c719` — `ScopePath` (frozen `(workspace_root, pool_name | None)`) + `resolve_scope_path(manager, path)` land in `modex_agent.workspace.scope_path` with 10 tests (`tests/unit/workspace/test_scope_path.py`, TDD red-first); the legacy mechanisms still served every call site at that commit (full gates green).
+- [x] Migration batches (sized by blast radius, one batch = one green CI run) move call sites from PoolRouter / WorkspacePathResolver / workspace-specific registry access to scope-path resolution
+  - Call-site ledger fixed in evidence BEFORE migration (AC (b)); four batches, each a full green run: `3d676fb` (PoolRouter declaration lookup), `05d9d41` (every WorkspacePathResolver consumer → ScopePath + resolve_scope_path — the service/SendDeps/template/factory seam is atomic; splitting it would need transitional shims, N11-forbidden), `689fe4f` (registry rename sweep), contract batch. Ledger items A2–A13/C1–C4 checked off in evidence.
+- [x] `_reconcile_pool_for_agent` all-pools scan replaced by declaration lookup; the re-routing warning behavior for genuinely-unserved agent names is preserved (loud failure, per the addressing rule)
+  - `agent_pool_ownership(spec)` builds the compile-time agent→pool table (repeated cross-pool names keep every owner — the shipped `explore`/`general` in coder+review — so a routed owner pool keeps the message); re-route warning preserved; declaration-lookup miss now DROPS with an error log (Oracle#8: no orphan) — locked by `test_undeclared_agent_is_dropped_loudly` (single behavior test). `AgentPool.serves_agent` died with its only caller.
+- [x] Contract: PoolRouter's specialized addressing, WorkspacePathResolver's two-level resolution, and the workspace-only registry view are deleted (grep-clean)
+  - `grep -rn "_reconcile_pool_for_agent|WorkspacePathResolver|WorkspaceRegistry" src/ examples/bot_project/bot/ --include="*.py"` → **0 hits**; `multi_agent/workspace_paths.py` deleted; `ScopeRegistry`/`ScopeRegistryStore`/`SqliteScopeRegistryStore` exist; PoolRouter remains as the delivery shell. AGENTS.md prose references deferred to ticket 19 per plan MUST-NOT-DO.
+- [x] Multi-workspace routing tests (parallel workspaces, pool switching, /cd) green at every batch
+  - Explicit run of cd-register/switch-integration/pool-routing-workspace-stack/switching-disabled/ws-sqlite-input-regression/multilive-isolation/switch-inflight: 18 passed; also green inside every batch's full bot run (2060).
+- [x] Turn-protection and eviction semantics unchanged from today (capacity remains dormant; D1 TODO unchanged)
+  - `max_materialized` never activated (constructor arg still `None` in production wiring — `stack.py`); registry tests (test_registry/test_control/test_resolver/test_stages_ws: 32 passed) and the begin/end_turn bracket in `bot/workspace/dispatch.py` untouched (verified byte-identical).

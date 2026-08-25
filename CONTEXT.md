@@ -197,7 +197,7 @@ A typed entry in a pool's `CommunicationTargetStore` describing one reachable ag
 _Avoid_: contact, recipient, peer descriptor
 
 **Peer Pool**:
-A pool explicitly configured to exchange messages with another pool, at the business layer. Peer configuration is **bidirectional by invariant** (declaring B as a peer of A requires declaring A as a peer of B, enforced at registration). The framework itself has no "peer pool" concept — it only sees `CommunicationTarget` entries whose `bus_ref` points at another pool's bus. The business layer's assembly discovers configured peers, acquires bus references, and populates each pool's `CommunicationTargetStore` with peer main-agent entries. Defined in ADR-0019.
+A pool explicitly configured to exchange messages with another pool, at the business layer. Peer communication is **root-to-root** — the two trees' main agents are equals (the receiving peer session is a root session, `parent_session_id=null`); a relationship parallel to parent-child dispatch, not a flattening into generic node links. Peer configuration is **bidirectional by invariant** (declaring B as a peer of A requires declaring A as a peer of B, enforced at registration) and same-workspace in v1. The framework itself has no "peer pool" concept — it only sees `CommunicationTarget` entries whose `bus_ref` points at another pool's bus. The business layer's assembly discovers configured peers, acquires bus references, and populates each pool's `CommunicationTargetStore` with peer main-agent entries. Defined in ADR-0019; tree framing per ADR-0042.
 _Avoid_: linked pool, federated pool, neighbour pool
 
 **Session Group**:
@@ -379,6 +379,34 @@ _Avoid_: turn setup (too generic), context builder (collides with TurnContextBui
 **Graph-aware message**:
 An `AgentMessageEnvelope` carrying graph-scheduling metadata (`graph_instance_id`, `source_node_id`, `graph_spec_id`) in its `metadata` map, marking it as produced by a graph-scheduling turn rather than a normal inter-agent message. The consumer stamps the receiver's session with the graph context so the receiver's turn runs with graph-aware configuration (GraphDeliverTool, approval disabled, topology injection, MAX_TURNS). Without this metadata, the receiver runs as a normal-session turn. The metadata is the sole signal distinguishing a graph-scheduling subagent turn from a normal subagent turn — both use the same inbox mechanism.
 _Avoid_: graph message (too generic), graph envelope (collides with AgentMessageEnvelope the type)
+
+**Scope**:
+The sole structural primitive of assembly (ADR-0042): a node in the declared scope tree whose resources, paths, and config defaults resolve along its parent chain. Landed as the frozen `ScopeSpec` model (`modex_agent/scope/spec.py`) with exactly two v1 kinds; the production declaration is one YAML file (`config/scopes/bot.yml`) loaded by `load_scope_declaration` — the legacy `config/pools/` roster is deleted. Workspace and pool are preset scope *kinds* — machinery face is skeleton, data face is configuration — not architecture concepts.
+_Avoid_: layer, container, environment
+
+**Scope Kind**:
+The preset type of a scope (`ScopeKind.WORKSPACE` / `ScopeKind.POOL` in v1): its runtime-machinery binding is fixed skeleton; its contents (resources, nesting, defaults) are declared configuration. A workspace layer (`WorkspaceSpec`) selects the memory backend (`persistence`), path layout (`paths`), and shared MCP server set (`mcp`) and hosts the pool trees — every selection field is `None` = inherit the service-level domain config, so an undeclared deployment keeps today's data layout. A pool (`PoolSpec`) carries one flat agents tree plus peer links; a pool-as-root declaration (no workspace layer) boots the single-home stack.
+_Avoid_: scope type, scope class
+
+**Declaration Tree**:
+The compile-time, config-declared tree of scopes and agents stating who *can* dispatch whom — validated by the two-phase `ScopeTreeValidator` (declaration-shape rules V1-V5/V7/V10/V11 pre-derivation; effective-value rules V6/V9 on the compiler's output) and compiled by the pure `ScopeCompiler` (`compile_scope`) into per-agent `AssemblySpec`s, effective toolsets, and provenance records; never executed. Root-ness is derived (the sole in-degree-0 node), never declared. Counterpart to the runtime-emergent **Session Tree**; the two are never conflated.
+_Avoid_: scope graph, config tree
+
+**Session Tree**:
+The runtime record of who *actually* dispatched whom: SessionTreeManager + SessionTreeStore track parent-child sessions and invocation-id branches as `task` dispatches happen, at any depth. The machine is skeleton (always on, one per pool); only the storage backend is swappable (InMemory / LocalFile / Sqlite).
+_Avoid_: dispatch tree, conversation tree
+
+**Skeleton**:
+The fixed runtime machinery hosting assembled products: InboxPoller, AgentMessageBus, SessionTreeManager, ScopeRegistry (renamed from WorkspaceRegistry by the addressing convergence), PoolRouter (the session→pool dispatch shell; agent→pool ownership is a compile-time declaration lookup, not a runtime scan), state.db lifecycle. Always on, never slot-replaced, never config-swapped — behavior parameters flow through config; machines are architectural constants (ADR-0042). Contrast the 10 swappable component slots (ADR-0041).
+_Avoid_: runtime core, kernel, engine (collides with Graph Engine)
+
+**Context Chain**:
+The layered read-only data surface passed to component factories at assembly: `WorkspaceContext → PoolContext → AgentContext`, each a frozen typed carrier. Implemented as a diamond — `AgentContext(WorkspaceContext, PoolContext, AssemblyContext)` in `plugins/assembly/context.py`, built per assembly by `agent_context_chain`. A factory's signature declares which layers it may read — the type is the capability boundary (in contrast to the reference project's comment-convention host/agent planes). Generalizes `AssemblyContext`; the `SubagentInvocationContext` special case is absorbed and deleted.
+_Avoid_: DI container, factory context, assembly inputs
+
+**Profile**:
+A named defaults macro referenced by scopes and agents; resolution is inheritance + deep merge (framework defaults ← profile ← local declaration), single level (the `ProfileStore` refuses nested references), list fields replaced wholesale, effective-value provenance inspectable (per-field winning layer via `AgentProvenance`; the WebUI bill recomputes from YAML per request — no boot-time cache). Landed as `Profile`/`ProfileStore` with `STANDARD_PROFILES` — the five toolset presets as code-level frozen constants — bound by position-derived toolset selection (root → `full`, non-root → `read_write`). Generalized `tool_preset` (the field is dead; its values live on as position-derived defaults).
+_Avoid_: template (collides with AgentTemplate), preset (collides with tool_preset)
 
 ## Relationships
 

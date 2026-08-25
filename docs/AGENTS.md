@@ -10,11 +10,13 @@ Documentation index for the ModexAgent project — ADRs, design docs, and agent 
 ```
 docs/
 ├── AGENTS.md              ← this file (docs index)
-├── adr/                   ← Architecture Decision Records (ADR-0001 ~ 0036)
+├── adr/                   ← Architecture Decision Records (ADR-0001 ~ 0043)
 │   ├── history/            ← Historical/superseded ADRs
 │   └── AGENTS.md          ← ADR index + conventions
 ├── design/                ← Feature design docs (PRD per feature; completed tickets in _archive/)
 │   ├── _archive/                      ← Superseded PRDs + completed tickets
+│   ├── scope-converge/                (ADR-0041) plugin/assembly SPEC, errata, handoff
+│   ├── scope-assembly/                (ADR-0042/0043, implemented 2026-08-22) scope declaration tree + unified assembly SPEC, issues, closure matrix
 │   ├── graph-orchestration/           (ADR-0033/0034)
 │   ├── static-graph-scheduling/       (ADR-0036)
 │   ├── modexctl-control-plane/        (ADR-0035)
@@ -40,7 +42,7 @@ docs/
 
 | Document | Location | Description |
 |----------|----------|-------------|
-| ADR index | `adr/` | 36 Architecture Decision Records (ADR-0001~0036) — see `adr/AGENTS.md` for the full index |
+| ADR index | `adr/` | 43 Architecture Decision Records (ADR-0001~0043) — see `adr/AGENTS.md` for the full index |
 | Bot local setup | `bot-local-setup.md` | Step-by-step bot setup from source (prerequisites, venv, config, troubleshooting) |
 | Issue tracker | `agents/issue-tracker.md` | Issues live as local markdown under `docs/design/<feature>/` |
 | Triage labels | `agents/triage-labels.md` | Canonical triage label vocabulary |
@@ -55,6 +57,7 @@ Each feature has a directory under `design/<feature-slug>/` containing:
 
 | Feature | ADR | Key files |
 |---------|-----|-----------|
+| Scope unified assembly (declaration tree, context chain, convergence waves; implemented 2026-08-22, tickets 01-19 closed) | ADR-0042/0043 | SPEC.md (§13 errata + ADR anchor audit), issues/01-19, closure-matrix.md |
 | Graph orchestration (persistence, external control) | ADR-0033/0034 | distributed-persistence.md, external-control.md, backlog.md, future-capabilities.md, state-consistency.md |
 | Static graph scheduling | ADR-0036 | PRD.md, todo.md, closure-map.md |
 | modexctl Control Plane | ADR-0035 | PRD.md, contract.md, decisions.md, glossary.md, issues/ |

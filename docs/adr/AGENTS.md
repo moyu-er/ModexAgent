@@ -3,7 +3,7 @@
 
 # docs/adr
 
-Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0039; the historical ADR-0034 phase-c-preliminaries was merged into ADR-0033 and archived in `history/001-`; the original ADR-0035 direct-CLI design was superseded by the current ADR-0035 control-plane design and archived in `history/`).
+Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0043; the historical ADR-0034 phase-c-preliminaries was merged into ADR-0033 and archived in `history/001-`; the original ADR-0035 direct-CLI design was superseded by the current ADR-0035 control-plane design and archived in `history/`).
 
 ## Purpose
 
@@ -26,7 +26,7 @@ ADRs document significant architectural decisions, including the context driving
   existing ADR in place. New ADRs are for genuinely new decisions, not
   follow-up work on existing ones.
 
-### ADR Index (0001–0038, excluding archived)
+### ADR Index (0001–0043, excluding archived)
 
 | ADR  | Title |
 |------|-------|
@@ -69,5 +69,10 @@ ADRs document significant architectural decisions, including the context driving
 | 0037 | BeforeTurnNode and AfterTurnNode — graph-internal turn lifecycle |
 | 0038 | Graph node agent context injection |
 | 0039 | Turn context configuration pipeline |
+| 0040 | Graph instance re-invocation and IORecord version scoping |
+| 0041 | Plugin unified assembly system |
+| 0042 | Scope declaration tree — unified assembly base (implemented 2026-08-22; see `docs/design/scope-assembly/`) |
+| 0043 | Dual execution models — actor sessions and dataflow graphs (implemented 2026-08-22) |
+| 0045 | Kernel terminal-state detection for the persistent bash pair |
 
 <!-- MANUAL -->

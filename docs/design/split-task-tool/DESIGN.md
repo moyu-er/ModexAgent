@@ -1,5 +1,15 @@
 # Design: Split `task` Tool Out of `send_to_agent`
 
+> **Update (2026-08-20):** `task` gained an `invocation_id` continue-mode,
+> superseding decision #4 ("No `invocation_id` on task"). Continuation timing
+> is now notification-driven: every result notification from
+> `SubagentAutoSendHook` ends with a state-conditional guidance paragraph
+> (complete / deliverable-lost / judge / continue states) stating whether the
+> task is complete and what to do next. Send acks are plain prose (no
+> pseudo-structure lines), consultation messages (`ParentReplyStrategy`)
+> carry an explicit `task` answer contract, and `_SubagentDispatchSubProvider`
+> was deleted (its content was fully covered by `TaskDispatchTool.description`).
+
 > **Update (2026-08-13):** Peer communication has been split out of `task` into
 > a dedicated `send_to_peer` tool. `task` is now strictly subagent-scoped. See
 > ADR-0019 §4 for the tool-surface split design. The original design below is
