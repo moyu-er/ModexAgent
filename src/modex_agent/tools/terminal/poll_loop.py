@@ -20,6 +20,29 @@ from modex_agent.tools.terminal.prompt import (
     resolve_cursor_line,
 )
 from modex_agent.tools.terminal.session import TerminalSession
+from modex_agent.tools.terminal.types import ProcessStatus
+
+
+def mark_exited_if_finished(
+    registry: ProcessRegistry,
+    proc_id: str,
+    outcome: PollOutcome,
+) -> None:
+    """Mark a process COMPLETED in the registry when a drain outcome proves it.
+
+    Shared by ``CommandTool.execute`` and ``ProcessTool``'s post-write drain
+    so the outcome→registry mapping exists in exactly one place. Only
+    ``PROMPT_DETECTED`` and ``PROCESS_EXIT`` prove completion — every other
+    outcome (YIELDED, INPUT_WAIT, PAGINATED, …) means the interaction is
+    still live and the session stays RUNNING.
+    """
+    if outcome in (PollOutcome.PROMPT_DETECTED, PollOutcome.PROCESS_EXIT):
+        registry.mark_exited(
+            proc_id,
+            exit_code=None,
+            exit_signal=None,
+            status=ProcessStatus.COMPLETED,
+        )
 
 
 class PollOutcome(StrEnum):

@@ -20,6 +20,10 @@ from .conftest import output_of, run_command
 # (the framework still has full unit + architecture coverage there).
 pytestmark = [
     pytest.mark.skipif(sys.platform != "win32", reason="Windows-only real-PTY workflow"),
+    # Real-PTY e2e: timing-sensitive under full-suite load. Deselected by
+    # the default addopts (-m 'not integration'); run explicitly with
+    # `pytest -m integration tests/framework/tools/terminal/…`.
+    pytest.mark.integration,
 ]
 
 _VIS = [pytest.param(TerminalVisibility.HIDDEN, id="hidden")]

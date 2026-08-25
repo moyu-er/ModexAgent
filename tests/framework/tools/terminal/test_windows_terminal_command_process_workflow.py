@@ -38,7 +38,13 @@ from modex_agent.tools.terminal.process_tool import ProcessTool
 from modex_agent.tools.terminal.tool import TerminalTool
 from modex_agent.tools.terminal.types import Platform, ShellFamily, ShellInfo, TerminalVisibility
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows-only real PTY workflow")
+pytestmark = [
+    pytest.mark.skipif(sys.platform != "win32", reason="Windows-only real PTY workflow"),
+    # Real-PTY e2e: timing-sensitive under full-suite load. Deselected by
+    # the default addopts (-m 'not integration'); run explicitly with
+    # `pytest -m integration tests/framework/tools/terminal/…`.
+    pytest.mark.integration,
+]
 
 
 # Environment marker used to prove terminals inherit the parent env.

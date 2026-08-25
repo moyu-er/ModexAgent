@@ -18,6 +18,10 @@ from .conftest import drain_current, output_of, run_command, wait_for_status
 
 pytestmark = [
     pytest.mark.skipif(sys.platform != "win32", reason="Windows-only real-PTY workflow"),
+    # Real-PTY e2e: timing-sensitive under full-suite load. Deselected by
+    # the default addopts (-m 'not integration'); run explicitly with
+    # `pytest -m integration tests/framework/tools/terminal/…`.
+    pytest.mark.integration,
 ]
 
 _VIS = [pytest.param(TerminalVisibility.HIDDEN, id="hidden")]

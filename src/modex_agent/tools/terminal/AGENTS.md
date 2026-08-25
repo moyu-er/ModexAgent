@@ -39,18 +39,22 @@ The **agent-facing** shell execution tool for persistent terminal sessions.
 It delegates to `TerminalSession` and keeps state across calls.
 
 When terminal backends are unavailable, the application falls back to
-`SubprocessTool` (`modex_agent/tools/terminal/subprocess_tool.py`), which runs
-each command in a fresh process and does **not** preserve state.
+`PersistentBashTool` (`modex_agent/tools/terminal/persistent_bash.py`) —
+one persistent interactive bash per pool (stateful), with `BashInputTool`
+answering stdin-waiting commands. `SubprocessTool` (fresh process per
+call) remains in the framework for direct callers/tests but is no longer
+wired into any builder.
 
 Key features:
 - Supports `^C` / `ctrl+c` / `\x03` as an interrupt command
 - Timeout returns partial output + `<status>timeout</status>` XML
 - Returns statuses: completed, executing, timed_out, paginated, waiting_input, stuck
 
-### Layer 1b: SubprocessTool (fallback)
+### Layer 1b: PersistentBashTool (fallback)
 
 Registered when no terminal backend is available (e.g. subagents or when
-`use_terminal=false`). Each invocation is stateless.
+`use_terminal=false`). One stateful bash per pool; `bash_input` answers
+commands that block reading stdin. POSIX-only (pexpect).
 
 ### Layer 2: TerminalSession (`modex_agent/tools/terminal/session.py`)
 
@@ -140,13 +144,13 @@ CommandTool.execute("ls")
 ```
 ProcessTool._do_write(data)
   → check_process_writable(session)
-    → allowed: IDLE, UNKNOWN, WAITING_INPUT, PAGINATED, COMPLETED, TIMED_OUT
-    → rejected: EXECUTING, LONG_RUNNING, STUCK
+    → allowed: IDLE, UNKNOWN, WAITING_INPUT, PAGINATED, COMPLETED, TIMED_OUT, STUCK
+    → rejected: EXECUTING, LONG_RUNNING
   → None (ok) → write data
   → TerminalGuardResult → return diagnostic to LLM
 ```
 
-Key difference: ProcessTool allows `WAITING_INPUT` (for typing passwords) and `PAGINATED` (for sending 'q'/Space), while CommandTool rejects both (a new command would corrupt the interaction).
+Key difference: ProcessTool allows `WAITING_INPUT` (for typing passwords) and `PAGINATED` (for sending 'q'/Space), while CommandTool rejects both (a new command would corrupt the interaction). ProcessTool also allows `STUCK` — unrecognized silent prompts are its most common STUCK cause, and the STUCK suggestion text tells the agent to `process write`; CommandTool keeps rejecting it (a new command into a possibly-hung terminal is harmful).
 
 ---
 
@@ -339,10 +343,11 @@ avoid spawning `tmux ls` ~20×/s under the poll loop.
 Legacy aliases `VisibleWindowsPtyBackend` / `WindowsHiddenPtyBackend` are
 re-exported in `backends/__init__.py` for the migration window.
 
-### Fallback: SubprocessExecutor
+### Fallback: PersistentBashTool
 
 When bash is unavailable or `use_terminal=false`, the bot falls back to
-`SubprocessTool` — each command runs in a fresh process, no state persists.
+`PersistentBashTool` — one persistent interactive bash per pool (stateful
+cwd/env/backgrounds) plus its `bash_input` companion.
 
 ---
 
@@ -360,20 +365,20 @@ terminal:
 
 `examples/bot_project/bot/service/core.py`:
 - Detects bash via `detect_platform_shell()` — uses WSL bash on Windows,
-  falls back to `SubprocessTool` if bash unavailable
+  falls back to the persistent bash shell if bash unavailable
 - Creates a terminal manager with shell detection result
 - Registers `CommandTool` for persistent command execution
 - Registers `ProcessTool` for interacting with running commands
 - Registers `TerminalTool` when the terminal manager exists
 
 `examples/bot_project/bot/service/builders.py`:
-- `_make_shell_tool()` returns `SubprocessTool` for agents without terminal support
+- `_build_persistent_bash()` builds the fallback `PersistentBashTool` (+ `BashInputTool` companion) for pools without terminal support
 
 ---
 
 ## Key Behaviors and Constraints
 
-1. **Bash-only on Windows**: Bot project enforces WSL bash or Git Bash via `detect_platform_shell()`. CMD and PowerShell are not supported as terminal shells; if no bash is available the pool falls back to `SubprocessTool`.
+1. **Bash-only on Windows**: Bot project enforces WSL bash or Git Bash via `detect_platform_shell()`. CMD and PowerShell are not supported as terminal shells; if no bash is available the pool falls back to `PersistentBashTool` (POSIX pty — errors on Windows at first use).
 2. **Eager startup on open**: `TerminalTool.open` calls `ensure_started()` so visible windows appear immediately — no need to wait for first command.
 3. **Unstarted sessions survive `list`**: A tab created by `open` but not yet
    used will show in `list` — it is not purged just because `is_alive()` is
@@ -400,7 +405,10 @@ terminal:
 | `process_tool.py` | Process management tool — write/submit/send_keys/kill running commands |
 | `process_registry.py` | Process tracking and registry |
 | `command_tool.py` | Command execution tool — submits commands with input guard |
-| `subprocess_tool.py` | Stateless `bash` fallback — fresh process per call |
+| `persistent_bash.py` | `PersistentBashTool` + `BashInputTool` — stateless routing shells over the pool-level `PersistentShellManager` (one shell per conversation session_id, `_current_session_id` contextvar routing — the `BaseTerminalManager` shape applied to the pair; `__default__` shell when no routing context). `^C`/`ctrl+c`/`\x03` translate to the SIGINT byte (terminal-trio convention); under terminal takeover (ADR-0045) the `^C` byte is forwarded verbatim to the program that owns the terminal |
+| `_persistent_session.py` | `PersistentShellManager` (per-conversation shell registry: lazy materialization, LRU touch, over-limit reap, `close_all`) + `PersistentShellSession`: the pexpect driver behind the persistent bash tools, detecting interactive state from kernel terminal facts (ADR-0045). Paired START/END printf marker protocol (output sliced to the command's own pair; foreign marker lines stripped) with the END marker as the absolute first completion signal; per-session call lock (same-session serialization, cross-session parallelism); `_Phase{IDLE,RUNNING,WAITING}` guard with WAITING kind classified from the kernel signal after a Linux `/proc` probe hit (shell-kind passes bash through; prompt-kind keeps the guard; stale waits self-heal, misclassified ones reclassify). The single probe `_terminal_state()` reads the termios ICANON bit and the foreground process group (`tcgetpgrp` vs the shell's), classifying four states (`SHELL_READLINE`/`SHELL_CANONICAL`/`CHILD_RAW`/`CHILD_CANONICAL`): the PS1-token abnormal-completion layer fires only on `SHELL_READLINE` (or probe absence); `CHILD_RAW` opens the interactive-takeover exit (quiet 0.25s + two consecutive 25ms polls + non-empty buffer) returning partial output with an interactive-shell `[hint: ...]` advisory while keeping the transaction answerable (WAITING, pending preserved, process alive); keyword and weak prompt-shape layers stay as fallbacks for states the kernel matrix structurally cannot see (canonical prompts; builtin reads where the shell owns the foreground), quiet-window gated. Silence is never settlement: a silent foreground command waits for its marker or the deadline. Session-wide SIGKILL on timeout/cancel; deadline (480s) sits strictly below the executor default (540s) so the graceful timeout path is reachable first |
+| `subprocess_tool.py` | Stateless bash execution (fresh process per call) — retained for direct callers/tests, no longer wired into builders |
+| `_foreground_probe.py` | Linux `/proc` stdin-wait evidence (tpgid foreground group + per-thread syscall scan: read on a tty-backed fd — ANY fd, covering ssh/sudo `/dev/tty` password reads — / select / poll / epoll watching fd 0) — injectable internals for tests |
 | `guard.py` | `TerminalGuard` — pre-flight input validation. `check_command_writable()` (CommandTool) and `check_process_writable()` (ProcessTool) enforce status-based allowlists; returns `TerminalGuardResult` with diagnostic `TerminalSnapshot` |
 | `poll_loop.py` | Shared `poll_until_settled()` — reused by CommandTool and ProcessTool for post-write drain. `PollOutcome` enum (PROMPT_DETECTED / YIELDED / TIMED_OUT / INPUT_WAIT / STUCK / LONG_RUNNING / PROCESS_EXIT / PAGINATED) |
 | `env.py` | `build_full_env()` — complete environment dict for child processes. On Windows, merges missing HKLM/HKCU PATH entries from registry |
@@ -410,7 +418,6 @@ terminal:
 | `state_store.py` | Terminal state persistence |
 | `results.py` | Result types |
 | `pty_keys.py` | PTY key constants |
-| `subprocess_tool.py` | Subprocess-based execution fallback |
 | `backends/base.py` | `TerminalBackend` ABC |
 | `backends/factory.py` | `create_pty_backend()` — platform-auto backend selection |
 | `backends/visible_windows.py` | Visible Windows backend (winpty) — parent side |

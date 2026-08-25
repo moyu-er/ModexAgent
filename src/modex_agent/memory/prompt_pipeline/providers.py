@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import sys
 import time
 from abc import ABC, abstractmethod
@@ -330,6 +331,48 @@ class AgentCommunicationSystemPromptProvider(SystemPromptProvider):
         return "\n\n".join(s for s in sections if s)
 
 
+def _physical_memory_mib() -> int:
+    """Total physical RAM in MiB; 0 when it cannot be determined.
+
+    A machine-level constant — deliberately NOT part of
+    ``RuntimeProvider._fetch_version`` (more stable than the hourly
+    timestamp already there, so no cache churn).
+    """
+    if sys.platform == "win32":
+        import ctypes
+
+        class _MemoryStatusEx(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        status = _MemoryStatusEx()
+        status.dwLength = ctypes.sizeof(_MemoryStatusEx)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return int(status.ullTotalPhys) // (1024 * 1024)
+    else:
+        try:
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            page_count = os.sysconf("SC_PHYS_PAGES")
+        except (ValueError, OSError):
+            pass
+        else:
+            return (page_size * page_count) // (1024 * 1024)
+    try:
+        import psutil
+    except ImportError:
+        return 0
+    return int(psutil.virtual_memory().total) // (1024 * 1024)
+
+
 class RuntimeProvider(SystemPromptProvider):
     """Runtime metadata for the current turn — date/hour, platform, and working directory.
 
@@ -356,10 +399,21 @@ class RuntimeProvider(SystemPromptProvider):
             "darwin": "macOS",
             "linux": "Linux",
         }.get(platform_raw, platform_raw)
+        cpu = os.cpu_count() or 1
+        mem_mib = _physical_memory_mib()
         lines = [
             "## Runtime",
             f"Platform: {platform_name}",
+            f"CPU cores: {cpu}",
         ]
+        if mem_mib > 0:
+            lines.extend([
+                f"Memory: {mem_mib} MiB",
+                "Resource limits: never run more concurrent workers than CPU "
+                "cores and never allocate more memory than physical RAM — "
+                "exceeding either gets the whole process killed (OOM) with all "
+                "work lost.",
+            ])
         dir_line = format_working_directory_line(self._working_directory)
         if dir_line is not None:
             lines.append(dir_line)

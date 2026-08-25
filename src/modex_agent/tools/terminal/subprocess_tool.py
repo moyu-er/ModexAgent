@@ -83,7 +83,7 @@ class SubprocessExecutor(ShellExecutor):
         """Create the subprocess — family-specific exec-vs-shell choice."""
 
     async def execute(
-        self, command: str, working_dir: str | None = None, timeout: int = 300
+        self, command: str, working_dir: str | None = None, timeout: int | None = None
     ) -> str:
         from modex_agent.runtime.env_context import _modex_env
         from modex_agent.tools.terminal.env import build_full_env
@@ -219,7 +219,7 @@ class SubprocessTool(Tool):
     def __init__(
         self,
         executor: ShellExecutor | None = None,
-        timeout: int = 90,
+        timeout: int | None = None,
     ) -> None:
         """Initialize SubprocessTool.
 
@@ -264,6 +264,19 @@ class SubprocessTool(Tool):
             "Each invocation runs independently in a fresh process. "
             "Working directory, environment variables, and background "
             "processes do NOT persist between calls."
+        )
+
+        parts.append(
+            "A trailing `Exit code:` line with a non-zero code means the "
+            "command failed — investigate the cause before continuing."
+        )
+
+        parts.append(
+            "Very long output is returned as head + an "
+            "`[... OUTPUT ELIDED ...]` marker + tail, ending with a "
+            "`[Full output ... saved to: <path>/full.txt]` notice pointing "
+            "to the saved full output; read that file in segments "
+            "when you need the elided middle or the complete content."
         )
 
         return " ".join(parts)

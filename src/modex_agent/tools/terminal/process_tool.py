@@ -11,7 +11,7 @@ from modex_agent.core.tool_manager import Tool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.guard import TerminalGuardResult, check_process_writable
 from modex_agent.tools.terminal.managers import TerminalManagerBase
-from modex_agent.tools.terminal.poll_loop import PollResult
+from modex_agent.tools.terminal.poll_loop import PollResult, mark_exited_if_finished
 from modex_agent.tools.terminal.process_registry import (
     ProcessRegistry,
     ProcessSession,
@@ -24,6 +24,7 @@ from modex_agent.tools.terminal.pty_keys import (
     encode_key_sequence,
     encode_paste,
     needs_cursor_mode,
+    normalize_write_payload,
 )
 from modex_agent.tools.terminal.session import TerminalSession
 from modex_agent.tools.terminal.types import ProcessStatus
@@ -40,6 +41,12 @@ __all__ = [
 
 # Shorthand constants to avoid hardcoding action strings everywhere.
 _A = ProcessAction
+
+_NO_RUNNING_MSG = (
+    "[Error] No running process for this terminal — the previous command "
+    "already finished. Run a new command with bash, or use terminal current "
+    "to check state."
+)
 
 
 @dataclass(frozen=True)
@@ -331,9 +338,7 @@ class ProcessTool(Tool):
     async def _do_write(self, params: WriteParams, *, repeat: int = 1) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return _build_process_xml(
-                "[Error] No running process session found for default terminal"
-            )
+            return _build_process_xml(_NO_RUNNING_MSG)
 
         guard_result = await check_process_writable(
             terminal_session, config=self._config, registry=self._registry
@@ -341,10 +346,7 @@ class ProcessTool(Tool):
         if guard_result is not None:
             return self._format_write_rejected(guard_result)
 
-        # In raw mode (pager, password prompt, TUI), the process only
-        # recognises \r as the Enter key; \n is ignored.  See ENTER_KEY.
-        ending = ENTER_KEY if params.submit else ""
-        payload = params.data + ending
+        payload = normalize_write_payload(params.data, params.submit)
         raw_output, actual = await self._batch_write_with_early_stop(
             terminal_session,
             payload,
@@ -358,6 +360,7 @@ class ProcessTool(Tool):
             self._config,
             command=running.command,
         )
+        mark_exited_if_finished(self._registry, running.id, result.outcome)
         output = (raw_output + drained) if drained else raw_output
         output = output or "(no output)"
         terminal_session.apply_outcome(result)
@@ -369,14 +372,11 @@ class ProcessTool(Tool):
     async def _do_submit(self, *, repeat: int = 1) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return _build_process_xml(
-                "[Error] No running process session found for default terminal"
-            )
+            return _build_process_xml(_NO_RUNNING_MSG)
 
-        ending = ENTER_KEY
         raw_output, actual = await self._batch_write_with_early_stop(
             terminal_session,
-            ending,
+            ENTER_KEY,
             repeat,
         )
 
@@ -387,6 +387,7 @@ class ProcessTool(Tool):
             self._config,
             command=running.command,
         )
+        mark_exited_if_finished(self._registry, running.id, result.outcome)
         output = (raw_output + drained) if drained else raw_output
         output = output or "(no output)"
         terminal_session.apply_outcome(result)
@@ -398,9 +399,7 @@ class ProcessTool(Tool):
     async def _do_send_keys(self, params: SendKeysParams) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return _build_process_xml(
-                "[Error] No running process session found for default terminal"
-            )
+            return _build_process_xml(_NO_RUNNING_MSG)
 
         cursor_mode = running.cursor_key_mode
 
@@ -439,6 +438,7 @@ class ProcessTool(Tool):
             self._config,
             command=running.command,
         )
+        mark_exited_if_finished(self._registry, running.id, result.outcome)
         terminal_session.apply_outcome(result)
 
         return _build_process_xml(
@@ -448,9 +448,7 @@ class ProcessTool(Tool):
     async def _do_paste(self, params: PasteParams) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return _build_process_xml(
-                "[Error] No running process session found for default terminal"
-            )
+            return _build_process_xml(_NO_RUNNING_MSG)
 
         payload = encode_paste(params.text, bracketed=terminal_session.bracketed_paste_enabled)
         await terminal_session.write(payload.decode("utf-8", errors="surrogateescape"))
@@ -462,6 +460,7 @@ class ProcessTool(Tool):
             self._config,
             command=running.command,
         )
+        mark_exited_if_finished(self._registry, running.id, result.outcome)
         terminal_session.apply_outcome(result)
         return _build_process_xml(
             output or "(no output)",
@@ -470,9 +469,7 @@ class ProcessTool(Tool):
     async def _do_interrupt(self) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return _build_process_xml(
-                "[Error] No running process session found for default terminal"
-            )
+            return _build_process_xml(_NO_RUNNING_MSG)
 
         await terminal_session.interrupt()
         # Give the signal time to propagate through the PTY.
@@ -505,9 +502,7 @@ class ProcessTool(Tool):
     async def _do_kill(self) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return _build_process_xml(
-                "[Error] No running process session found for default terminal"
-            )
+            return _build_process_xml(_NO_RUNNING_MSG)
 
         await terminal_session.terminate()
         self._registry.mark_exited(

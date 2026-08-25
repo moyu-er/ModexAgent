@@ -83,6 +83,10 @@ _PROCESS_ALLOWED: frozenset[TerminalCommandStatus] = frozenset(
         TerminalCommandStatus.PAGINATED,
         TerminalCommandStatus.COMPLETED,
         TerminalCommandStatus.TIMED_OUT,
+        # STUCK allowed here (NOT in _COMMAND_ALLOWED): its usual causes are
+        # unrecognized prompts needing `process write`; bytes into a real
+        # hang are harmless, a new command is not.
+        TerminalCommandStatus.STUCK,
     }
 )
 

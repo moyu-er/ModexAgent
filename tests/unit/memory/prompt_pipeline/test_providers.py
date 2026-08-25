@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import re
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -93,6 +96,59 @@ async def test_runtime_without_working_directory_does_not_reuse_previous_value()
 
     assert "Working Directory:" in (await with_directory.get_or_refresh())
     assert "Working Directory:" not in result
+
+
+@pytest.mark.asyncio
+async def test_runtime_declares_cpu_memory_and_resource_limits():
+    """TB2.1: the agent must SEE the machine's real limits — 190 tesseract
+    workers on a 1-CPU/2GB container OOM-killed the whole process twice."""
+    provider = RuntimeProvider()
+    result = await provider.get_or_refresh()
+    assert f"CPU cores: {os.cpu_count() or 1}" in result
+    mem_line = re.search(r"^Memory: (\d+) MiB$", result, flags=re.MULTILINE)
+    assert mem_line is not None, "Memory line missing on a host with detectable RAM"
+    assert "Resource limits:" in result
+    assert "OOM" in result
+    assert result.index("Platform:") < result.index("CPU cores:")
+
+
+@pytest.mark.asyncio
+async def test_runtime_omits_memory_lines_when_ram_undetectable(monkeypatch):
+    """RAM undetectable (helper returns 0): Memory + limits lines drop, CPU
+    line still emits (cpu_count never fails)."""
+    import modex_agent.memory.prompt_pipeline.providers as providers_module
+
+    monkeypatch.setattr(providers_module, "_physical_memory_mib", lambda: 0)
+    provider = RuntimeProvider(working_directory=Path("D:/projects/demo"))
+    result = await provider.get_or_refresh()
+    assert f"CPU cores: {os.cpu_count() or 1}" in result
+    assert "Memory:" not in result
+    assert "Resource limits:" not in result
+    assert "Working Directory:" in result
+
+
+def test_physical_memory_mib_sysconf_math(monkeypatch):
+    """Linux path: page_size × pages converted to MiB (2 GiB → 2048)."""
+    from modex_agent.memory.prompt_pipeline.providers import _physical_memory_mib
+
+    page_size, pages = 4096, 524_288
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(
+        os,
+        "sysconf",
+        lambda name: {"SC_PAGE_SIZE": page_size, "SC_PHYS_PAGES": pages}[name],
+        raising=False,
+    )
+    assert _physical_memory_mib() == 2048
+
+
+def test_physical_memory_mib_returns_plain_int():
+    """The contract is a plain int (MiB) — never float — on every path."""
+    from modex_agent.memory.prompt_pipeline.providers import _physical_memory_mib
+
+    value = _physical_memory_mib()
+    assert isinstance(value, int)
+    assert value >= 0
 
 
 # -- SkillProvider --

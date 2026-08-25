@@ -113,6 +113,38 @@ ENTER_KEY: str = "\r"
 CTRL_C: str = "\x03"
 
 
+def normalize_write_payload(data: str, submit: bool) -> str:
+    """Normalize ProcessTool ``write`` input to a deterministic payload.
+
+    Agents habitually pass ``data="y\n"`` (their mental model of "I typed y
+    and pressed Enter"). In raw mode (sudo/pager/TUI) a bare ``\\n`` is
+    ignored by the PTY, and in line-buffered mode (``read``) it submits
+    early leaving the trailing ``\\r`` to submit an empty line — two-step
+    confirmations then answer the second prompt with an empty string.
+
+    Normalization (line-oriented semantics for ``write`` only):
+
+    1. Strip ALL trailing newline sequences (``\\r\\n``, ``\\n``, ``\\r``).
+    2. ``effective_submit = submit or had_newline`` — a trailing newline IS
+       submit intent.
+    3. Append ``ENTER_KEY`` (``\\r``) iff ``effective_submit``.
+
+    | agent input            | payload | meaning                    |
+    |------------------------|---------|----------------------------|
+    | ``"y\\n"`` + submit=true  | ``y\\r`` | single submit              |
+    | ``"y\\n"`` + submit=false | ``y\\r`` | trailing \\n = submit      |
+    | ``"y"``  + submit=true  | ``y\\r`` | explicit submit            |
+    | ``"y"``  + submit=false | ``y``    | pure typing (no Enter)     |
+
+    Scope: ``write`` only. ``submit`` (bare Enter), ``send_keys`` (byte
+    exact), and ``paste`` (multiline preserved) are untouched.
+    """
+    stripped = data.rstrip("\r\n")
+    had_newline = len(stripped) != len(data)
+    effective_submit = submit or had_newline
+    return stripped + (ENTER_KEY if effective_submit else "")
+
+
 class _StdinWriter(ABC):
     @abstractmethod
     def write(self, data: bytes) -> object: ...

@@ -20,6 +20,7 @@ from modex_agent.core.tool_manager import Tool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.guard import TerminalGuardResult, check_command_writable
 from modex_agent.tools.terminal.managers import TerminalManagerBase
+from modex_agent.tools.terminal.poll_loop import mark_exited_if_finished
 from modex_agent.tools.terminal.process_registry import ProcessRegistry, RunningSessionRuntime
 from modex_agent.tools.terminal.prompt import (
     resolve_cursor_line,
@@ -175,27 +176,8 @@ class CommandTool(Tool):
             return xml
 
         match result.outcome:
-            case PollOutcome.PROCESS_EXIT:
-                self._registry.mark_exited(
-                    proc.id,
-                    exit_code=None,
-                    exit_signal=None,
-                    status=ProcessStatus.COMPLETED,
-                )
-                session.set_expected_state(TerminalCommandStatus.IDLE)
-                session.apply_outcome(result)
-                return _inject_hint(
-                    self._format_completed(
-                        result.output_parts, result.elapsed_ms
-                    )
-                )
-            case PollOutcome.PROMPT_DETECTED:
-                self._registry.mark_exited(
-                    proc.id,
-                    exit_code=None,
-                    exit_signal=None,
-                    status=ProcessStatus.COMPLETED,
-                )
+            case PollOutcome.PROCESS_EXIT | PollOutcome.PROMPT_DETECTED:
+                mark_exited_if_finished(self._registry, proc.id, result.outcome)
                 session.set_expected_state(TerminalCommandStatus.IDLE)
                 session.apply_outcome(result)
                 return _inject_hint(

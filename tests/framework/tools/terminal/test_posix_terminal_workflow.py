@@ -42,9 +42,15 @@ from modex_agent.tools.terminal.types import (
     TerminalVisibility,
 )
 
-pytestmark = pytest.mark.skipif(
-    sys.platform == "win32", reason="POSIX-only (pexpect/tmux); Windows has its own suite"
-)
+pytestmark = [
+    pytest.mark.skipif(
+        sys.platform == "win32", reason="POSIX-only (pexpect/tmux); Windows has its own suite"
+    ),
+    # Real-PTY e2e: spawn shells + tmux; timing-sensitive under full-suite load.
+    # Deselected by the default addopts (-m 'not integration'); run explicitly
+    # with `pytest -m integration tests/framework/tools/terminal/…`.
+    pytest.mark.integration,
+]
 
 _ENV_MARKER = "MODEX_TERMINAL_TEST_VAR"
 _ENV_VALUE = "inherited-from-parent"
@@ -151,8 +157,11 @@ async def _wait_for_status(
         session = await manager.get_default_session()
         if session is not None:
             last = await session.command_status(config=cfg)
-            if last in targets:
-                return last
+        # When the session is gone (e.g. kill in tmux mode removes it),
+        # ``last`` stays UNKNOWN — a terminal condition for target sets
+        # that include UNKNOWN (i.e. _IDLE: no session == idle).
+        if last in targets:
+            return last
         await asyncio.sleep(interval)
     raise AssertionError(
         f"session did not reach {sorted(t.value for t in targets)} "
@@ -300,7 +309,7 @@ async def test_posix_terminal_workflow(
             await sleep_task
         with contextlib.suppress(Exception):
             await b.process.execute(action="interrupt")
-        await asyncio.sleep(1.0)
+        await _wait_idle(b.manager, b.cfg, timeout=15.0)
 
         result = await b.command.execute(command='echo "RECOVERED"')
         assert _output_line(result, "RECOVERED"), f"recovery failed:\n{result}"
@@ -469,7 +478,7 @@ async def test_posix_full_capability_sample(
             await sleep_task
         with contextlib.suppress(Exception):
             await b.process.execute(action="interrupt")
-        await asyncio.sleep(1.0)
+        await _wait_idle(b.manager, b.cfg, timeout=15.0)
 
         result = await b.command.execute(command='echo "RECOVERED_7b2c"')
         assert _output_line(result, "RECOVERED_7b2c"), f"interrupt recovery failed:\n{result}"
@@ -484,7 +493,7 @@ async def test_posix_full_capability_sample(
             await sleep_task2
         with contextlib.suppress(Exception):
             await b.process.execute(action="interrupt")
-        await asyncio.sleep(1.0)
+        await _wait_idle(b.manager, b.cfg, timeout=15.0)
 
         result = await b.command.execute(command='echo "RECOVERED_8c3d"')
         assert _output_line(result, "RECOVERED_8c3d"), (
@@ -549,7 +558,7 @@ async def test_posix_full_capability_sample(
         kill_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, BaseException):
             await kill_task
-        await asyncio.sleep(1.0)
+        await _wait_idle(b.manager, b.cfg, timeout=15.0)
         result = await b.command.execute(command='echo "AFTER_KILL"')
         assert _output_line(result, "AFTER_KILL"), f"recovery after kill failed:\n{result}"
 
