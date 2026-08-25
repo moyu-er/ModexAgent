@@ -8,9 +8,10 @@ import tempfile
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, TypedDict, Unpack
+from typing import Any, Literal, TypedDict, Unpack
 from unittest.mock import MagicMock
 
+import bot.eval.experiment_runner as experiment_runner
 import pytest
 from bot.eval.experiment_runner import EvalRunner, _span_tool_stats
 from bot.eval.task_output import EvalTaskOutput, ToolStats, TurnRecord
@@ -127,6 +128,33 @@ async def test_dict_with_turns_uses_v2_and_legacy_query_keeps_old_shape() -> Non
         "stop_reason": "completed",
         "error": None,
     }
+
+
+async def test_legacy_task_uses_clean_trace_services(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: the clean-mode services seam used by v2 returns a known runtime bundle.
+    services = AgentRuntimeServices()
+    trace_dirs: list[Path] = []
+
+    def build_services(trace_dir: Path, *, model: str | None = None) -> AgentRuntimeServices:
+        trace_dirs.append(trace_dir)
+        assert model == "openai/test-model"
+        return services
+
+    monkeypatch.setattr(experiment_runner, "build_trace_only_services", build_services)
+    provider = _ScriptedProvider([_response("legacy")])
+    runner = EvalRunner(provider=provider, system_prompt="eval", model="openai/test-model")
+
+    # When: a curated legacy item runs through the single-turn path.
+    await runner.task(item=_item({"query": "hello"}, item_id="legacy"))
+
+    # Then: its context owns the shared trace services and temporary trace directory lifecycle.
+    context = provider.contexts[0]
+    assert context.runtime is not None
+    assert context.runtime.services is services
+    assert len(trace_dirs) == 1
+    assert not trace_dirs[0].exists()
 
 
 async def test_multi_turn_uses_fresh_context_and_runtime_with_shared_history() -> None:
@@ -335,6 +363,60 @@ async def test_clean_tool_stats_count_error_tool_spans() -> None:
     }
 
 
+@pytest.mark.parametrize("mode", ["clean", "production"])
+async def test_runner_threads_explicit_model_to_mode_services(
+    mode: Literal["clean", "production"],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    captured_models: list[str | None] = []
+
+    def fake_build_trace_only_services(
+        trace_dir: Path,
+        *,
+        model: str | None = None,
+    ) -> AgentRuntimeServices:
+        _ = trace_dir
+        captured_models.append(model)
+        return AgentRuntimeServices()
+
+    def fake_build_runtime_services(
+        trace_dir: Path,
+        recorder: None = None,
+        *,
+        model: str | None = None,
+    ) -> AgentRuntimeServices:
+        _ = trace_dir, recorder
+        captured_models.append(model)
+        return AgentRuntimeServices()
+
+    monkeypatch.setattr(
+        experiment_runner,
+        "build_trace_only_services",
+        fake_build_trace_only_services,
+    )
+    monkeypatch.setattr(
+        experiment_runner,
+        "build_runtime_services",
+        fake_build_runtime_services,
+    )
+    runner = EvalRunner(
+        provider=_ScriptedProvider([_response("done")]),
+        system_prompt="eval",
+        mode=mode,
+        model="openai/step-3.7-flash",
+    )
+
+    # When
+    output = await runner.task(
+        item=_item({"id": "model", "turns": [{"user": "hello"}], "toolset": "none"})
+    )
+
+    # Then
+    assert output["output"] == "done"
+    assert captured_models == ["openai/step-3.7-flash"]
+
+
 def _turn_metrics(tool_calls: int, error_tools: int) -> TrajectoryMetrics:
     return TrajectoryMetrics(
         tool_success_rate=(tool_calls - error_tools) / tool_calls if tool_calls > 0 else 1.0,
@@ -448,3 +530,21 @@ def test_run_archives_teed_item_outputs(tmp_path: Path) -> None:
             "output": dataset.output,
         }
     ]
+
+
+def test_run_uses_exact_experiment_name_as_sdk_run_name() -> None:
+    # Given: a Langfuse dataset whose experiment call is recorded locally.
+    dataset = MagicMock()
+    client = MagicMock(spec=Langfuse)
+    client.get_dataset.return_value = dataset
+    runner = EvalRunner(
+        provider=_ScriptedProvider([]),
+        system_prompt="eval",
+        langfuse_client=client,
+    )
+
+    # When: an experiment is started with the clean CLI name.
+    runner.run(dataset_name="dataset-a", experiment_name="experiment-a")
+
+    # Then: the SDK receives the same explicit run name and cannot suffix it.
+    assert dataset.run_experiment.call_args.kwargs["run_name"] == "experiment-a"

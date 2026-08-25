@@ -1,0 +1,11 @@
+pool:
+  name: react-harness
+  agents:
+    react:
+      toolset: read_write
+      # Iteration budget sized so the 5400s wall (not the AgentSpec default
+      # 100) is the binding constraint — default exhausted winning-avg mid-search.
+      max_steps: 200
+      system_prompt_provider: file_prompt
+      system_prompt_provider_config:
+        path: agents/react-harness.md

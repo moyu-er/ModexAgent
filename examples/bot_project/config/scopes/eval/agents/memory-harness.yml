@@ -1,0 +1,10 @@
+pool:
+  name: memory-harness
+  agents:
+    react:
+      toolset: read_write
+      memory:
+        archive_enabled: true
+        core_enabled: true
+        session:
+          max_context_tokens: 32000

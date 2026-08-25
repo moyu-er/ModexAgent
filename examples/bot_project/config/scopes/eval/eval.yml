@@ -1,0 +1,20 @@
+arms:
+  default:
+    strip_peers: true
+    pools:
+      target_pool:
+        strip_mcp: true
+  benchmark:
+    strip_peers: true
+    pools:
+      target_pool:
+        single_agent: true
+        strip_mcp: true
+        tools_remove:
+          - process
+          - terminal
+        memory:
+          core_enabled: false
+        system_prompt:
+          provider: file_prompt
+          path: agents/benchmark.md

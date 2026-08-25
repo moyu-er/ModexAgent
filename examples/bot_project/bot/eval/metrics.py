@@ -1,4 +1,4 @@
-"""Offline capability metrics aggregated from a workspace's local data."""
+"""Capability metrics aggregated from Langfuse or dormant local trace data."""
 
 from __future__ import annotations
 
@@ -8,10 +8,21 @@ from pathlib import Path
 from typing import Final
 
 import anyio
-from pydantic import BaseModel, ConfigDict, ValidationError
+import httpx
+from pydantic import BaseModel, ConfigDict
 
+from bot.eval.memory_metric_reporting import (
+    publish_memory_scores,
+    render_memory_metrics,
+)
+from bot.eval.memory_metrics import reduce_memory_spans
 from modex_agent.core.constants import StopReason
-from modex_agent.memory.cleanup_hooks import CleanupMetricRecord
+from modex_agent.trace.langfuse_query import (
+    LangfuseClient,
+    LangfuseQueryError,
+    LangfuseTraceQuery,
+)
+from modex_agent.trace.score_injector import L2ScoreInjector
 from modex_agent.trace.scoring import (
     TrajectoryMetrics,
     compute_metrics,
@@ -21,15 +32,16 @@ from modex_agent.trace.semconv import GenAiAttr, SpanName
 from modex_agent.trace.store import JsonlSpanQuery, SpanModel
 
 STOP_REASON_ATTRIBUTE: Final = "stop_reason"
-_CLEANUP_RELATIVE_PATH: Final = Path(".modex/metrics/cleanup.jsonl")
 _SPAN_GLOB: Final = ".modex/runtime_state/*/trace/*/spans.jsonl"
+_SESSION_PAGE_SIZE: Final = 50
 
 
-class _CleanupData(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+class MetricsQueryError(RuntimeError):
+    """Failure to read the Langfuse data required by the metrics report."""
 
-    records: tuple[CleanupMetricRecord, ...]
-    malformed_records: int
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(f"Langfuse metrics query failed: {detail}")
 
 
 class _L2Averages(BaseModel):
@@ -51,38 +63,39 @@ class _L2Averages(BaseModel):
     has_reasoning_rate: float
 
 
-def _record_timestamp(record: CleanupMetricRecord) -> datetime:
-    timestamp = datetime.fromisoformat(record.ts)
-    return timestamp.replace(tzinfo=UTC) if timestamp.tzinfo is None else timestamp
-
-
-def _load_cleanup(path: Path, cutoff: datetime) -> _CleanupData:
-    if not path.exists():
-        return _CleanupData(records=(), malformed_records=0)
-
-    records: list[CleanupMetricRecord] = []
-    malformed_records = 0
-    with path.open(encoding="utf-8") as cleanup_file:
-        for line in cleanup_file:
-            if not line.strip():
-                continue
-            try:
-                record = CleanupMetricRecord.model_validate_json(line)
-                timestamp = _record_timestamp(record)
-            except (ValidationError, ValueError):
-                malformed_records += 1
-                continue
-            if timestamp >= cutoff:
-                records.append(record)
-    return _CleanupData(records=tuple(records), malformed_records=malformed_records)
-
-
-async def _load_spans(paths: tuple[Path, ...], cutoff_epoch: float) -> tuple[SpanModel, ...]:
+async def _load_file_spans(
+    paths: tuple[Path, ...],
+    cutoff_epoch: float,
+) -> tuple[SpanModel, ...]:
     spans: list[SpanModel] = []
     for path in paths:
         query = JsonlSpanQuery(path.parent.parent)
         session_spans = await query.list_by_session(path.parent.name)
         spans.extend(span for span in session_spans if span.start_time >= cutoff_epoch)
+    return tuple(spans)
+
+
+async def _load_langfuse_spans(
+    client: LangfuseClient,
+    cutoff: datetime,
+    now: datetime,
+) -> tuple[SpanModel, ...]:
+    query = LangfuseTraceQuery(client)
+    spans: list[SpanModel] = []
+    page = 1
+    while True:
+        sessions = await client.list_sessions(limit=_SESSION_PAGE_SIZE, page=page)
+        for session in sessions:
+            spans.extend(
+                await query.list_by_session(
+                    session.id,
+                    from_start_time=cutoff,
+                    to_start_time=now,
+                )
+            )
+        if len(sessions) < _SESSION_PAGE_SIZE:
+            break
+        page += 1
     return tuple(spans)
 
 
@@ -92,19 +105,12 @@ def _histogram_lines(counts: Counter[str]) -> list[str]:
     return [f"- {name}: {count}" for name, count in sorted(counts.items())]
 
 
-def _cleanup_thrash_events(records: tuple[CleanupMetricRecord, ...]) -> int:
-    previous_low_savings: dict[str, bool] = {}
-    events = 0
-    for record in records:
-        low_savings = record.tokens_before > 0 and record.tokens_saved < 0.1 * record.tokens_before
-        if low_savings and previous_low_savings.get(record.session_id, False):
-            events += 1
-        previous_low_savings[record.session_id] = low_savings
-    return events
-
-
 def _l2_averages(spans: tuple[SpanModel, ...]) -> _L2Averages | None:
-    root_spans = {span.span_id: span for span in spans if span.name == SpanName.INVOKE_AGENT.value}
+    root_spans = {
+        span.span_id: span
+        for span in spans
+        if span.name == SpanName.INVOKE_AGENT.value
+    }
     completed_subtrees = [
         subtree
         for root_span_id, subtree in compute_root_subtrees(list(spans)).items()
@@ -124,29 +130,66 @@ def _l2_averages(spans: tuple[SpanModel, ...]) -> _L2Averages | None:
             not any(span.name == SpanName.EXECUTE_TOOL.value for span in subtree)
             for subtree in completed_subtrees
         ),
-        tool_success_rate=sum(m.tool_success_rate for m in metrics_list) / trace_count,
-        tool_call_count=sum(m.tool_call_count for m in metrics_list) / trace_count,
-        error_tool_count=sum(m.error_tool_count for m in metrics_list) / trace_count,
-        iteration_count=sum(m.iteration_count for m in metrics_list) / trace_count,
-        llm_call_count=sum(m.llm_call_count for m in metrics_list) / trace_count,
-        total_input_tokens=sum(m.total_input_tokens for m in metrics_list) / trace_count,
-        total_output_tokens=sum(m.total_output_tokens for m in metrics_list) / trace_count,
-        total_reasoning_tokens=sum(m.total_reasoning_tokens for m in metrics_list) / trace_count,
-        api_latency_avg_s=sum(m.api_latency_avg_s for m in metrics_list) / trace_count,
-        cache_hit_rate=sum(m.cache_hit_rate for m in metrics_list) / trace_count,
-        response_token_ratio=sum(m.response_token_ratio for m in metrics_list) / trace_count,
-        has_reasoning_rate=sum(m.has_reasoning for m in metrics_list) / trace_count,
+        tool_success_rate=sum(metric.tool_success_rate for metric in metrics_list)
+        / trace_count,
+        tool_call_count=sum(metric.tool_call_count for metric in metrics_list)
+        / trace_count,
+        error_tool_count=sum(metric.error_tool_count for metric in metrics_list)
+        / trace_count,
+        iteration_count=sum(metric.iteration_count for metric in metrics_list)
+        / trace_count,
+        llm_call_count=sum(metric.llm_call_count for metric in metrics_list)
+        / trace_count,
+        total_input_tokens=sum(metric.total_input_tokens for metric in metrics_list)
+        / trace_count,
+        total_output_tokens=sum(metric.total_output_tokens for metric in metrics_list)
+        / trace_count,
+        total_reasoning_tokens=sum(
+            metric.total_reasoning_tokens for metric in metrics_list
+        )
+        / trace_count,
+        api_latency_avg_s=sum(metric.api_latency_avg_s for metric in metrics_list)
+        / trace_count,
+        cache_hit_rate=sum(metric.cache_hit_rate for metric in metrics_list)
+        / trace_count,
+        response_token_ratio=sum(
+            metric.response_token_ratio for metric in metrics_list
+        )
+        / trace_count,
+        has_reasoning_rate=sum(metric.has_reasoning for metric in metrics_list)
+        / trace_count,
     )
 
 
-def aggregate(workspace_root: Path, days: int) -> str:
-    """Return a markdown capability report from local cleanup and trace data."""
+def aggregate(
+    workspace_root: Path,
+    days: int,
+    *,
+    langfuse_client: LangfuseClient | None = None,
+    score_injector: L2ScoreInjector | None = None,
+) -> str:
+    """Return a markdown capability report and publish derived memory scores."""
     now = datetime.now(UTC)
     cutoff = now - timedelta(days=days)
-    cleanup = _load_cleanup(workspace_root / _CLEANUP_RELATIVE_PATH, cutoff)
-    span_paths = tuple(sorted(workspace_root.glob(_SPAN_GLOB)))
-    spans = anyio.run(_load_spans, span_paths, cutoff.timestamp())
+    async def collect() -> tuple[SpanModel, ...]:
+        try:
+            if langfuse_client is not None:
+                spans = await _load_langfuse_spans(langfuse_client, cutoff, now)
+            else:
+                span_paths = tuple(sorted(workspace_root.glob(_SPAN_GLOB)))
+                spans = await _load_file_spans(span_paths, cutoff.timestamp())
+            if score_injector is not None:
+                await publish_memory_scores(spans, score_injector)
+            return spans
+        except (LangfuseQueryError, httpx.HTTPError) as exc:
+            raise MetricsQueryError(str(exc)) from exc
+        finally:
+            if score_injector is not None:
+                await score_injector.aclose()
+            if langfuse_client is not None:
+                await langfuse_client.close()
 
+    spans = anyio.run(collect)
     stop_reasons = Counter(
         reason
         for span in spans
@@ -157,55 +200,24 @@ def aggregate(workspace_root: Path, days: int) -> str:
         decision
         for span in spans
         if span.name == SpanName.HUMAN_REVIEW.value
-        and isinstance((decision := span.attributes.get(GenAiAttr.APPROVAL_DECISION.value)), str)
+        and isinstance(
+            (decision := span.attributes.get(GenAiAttr.APPROVAL_DECISION.value)),
+            str,
+        )
     )
     handoff_count = sum(span.name == SpanName.AGENT_HANDOFF.value for span in spans)
+    memory_metrics = reduce_memory_spans(list(spans))
     l2_averages = _l2_averages(spans)
 
     lines = [
-        "# Local capability metrics",
+        "# Capability metrics",
         "",
         f"- Workspace: {workspace_root.resolve()}",
         f"- Window: last {days} days",
     ]
-    if not cleanup.records and cleanup.malformed_records == 0 and not spans:
-        lines.extend(["", "No local metrics data found for this period."])
-
-    lines.extend(
-        [
-            "",
-            "## Cleanup metrics",
-            f"- Triggers: {len(cleanup.records)}",
-            f"- Malformed records: {cleanup.malformed_records}",
-        ]
-    )
-    if cleanup.records:
-        trigger_count = len(cleanup.records)
-        total_tokens_before = sum(record.tokens_before for record in cleanup.records)
-        total_tokens_saved = sum(record.tokens_saved for record in cleanup.records)
-        token_savings_rate = (
-            total_tokens_saved / total_tokens_before if total_tokens_before > 0 else 0.0
-        )
-        lines.extend(
-            [
-                f"- Average prune ratio: {sum(record.prune_ratio for record in cleanup.records) / trigger_count:.1%}",
-                "- Compact generation rate: "
-                f"{sum(record.compact_generated for record in cleanup.records) / trigger_count:.1%}",
-                f"- Average char-estimated tokens saved: {total_tokens_saved / trigger_count:.1f}",
-                f"- Char-estimated token savings rate: {token_savings_rate:.1%}",
-                f"- Cleanup thrash events: {_cleanup_thrash_events(cleanup.records)}",
-                "- Reasons:",
-                *[
-                    f"  {line}"
-                    for line in _histogram_lines(
-                        Counter(record.reason for record in cleanup.records)
-                    )
-                ],
-            ]
-        )
-    else:
-        lines.append("- No valid cleanup records.")
-
+    if not spans:
+        lines.extend(["", "No metrics data found for this period."])
+    lines.extend(["", *render_memory_metrics(memory_metrics)])
     lines.extend(["", "## Stop reasons", *_histogram_lines(stop_reasons)])
     lines.extend(["", "## Approval decisions", *_histogram_lines(approval_decisions)])
     lines.extend(["", "## Handoffs", f"- Count: {handoff_count}"])
@@ -231,5 +243,4 @@ def aggregate(workspace_root: Path, days: int) -> str:
                 f"- Reasoning trace rate: {l2_averages.has_reasoning_rate:.1%}",
             ]
         )
-
     return "\n".join(lines)

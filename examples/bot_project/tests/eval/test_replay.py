@@ -42,7 +42,7 @@ class _OfflineProvider(StreamingLLMProvider):
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
         on_content_delta: Callable[[str], Any] | None = None,
@@ -97,7 +97,7 @@ def _write_cassette(directory: Path, entries: list[tuple[str, dict[str, Any]]]) 
 
 def _request_key(content: str) -> str:
     message = ChatMessage(role=MessageRole.USER, content=content)
-    return llm_call_key([message.to_dict()], None, 0.7, None, None, {})
+    return llm_call_key([message.to_dict()], None, None, None, None, {})
 
 
 def _write_case(directory: Path, *, baseline: bool, assertions: list[dict[str, str]]) -> GoldenCase:

@@ -1,9 +1,9 @@
 # noqa: C901  # noqa: SIZE_OK - W1-b requires one Langfuse orchestration boundary.
-"""Experiment runner — run ReActAgent against Langfuse datasets.
+"""Experiment runner — run declared agents against Langfuse datasets.
 
-Wraps ``ReActAgent(provider, mode='clean')`` as a Langfuse experiment task
-function. Each dataset item gets a fresh ``AgentContext`` (zero state leakage
-between items); the agent instance is reused (stateless in clean mode).
+Wraps a declared agent as a Langfuse experiment task. Each dataset item gets a
+fresh agent, per-turn execution context, and runtime services (zero state
+leakage between items).
 
 Layer 2 of the eval architecture (ADR-0024, IN15 step 6): dataset -> runner ->
 traces + scores. Runs as a separate process (opt-in via the ``[eval]`` extra)
@@ -42,9 +42,8 @@ if TYPE_CHECKING:
     from langfuse.experiment import ExperimentResult
 
 from bot.eval.agent_harness import (
-    _WorkspaceTokenNormalizer,
+    assemble_harness_agent,
     build_runtime_services,
-    build_tool_manager,
     build_trace_only_services,
     static_system_prompt,
     wrap_provider,
@@ -53,25 +52,27 @@ from bot.eval.task_output import EvalTaskOutput, ToolStats, TurnRecord, WorldRes
 from bot.eval.task_spec import (
     CommandExitAssertion,
     EvalItemSpec,
+    EvalToolset,
     FileAbsentAssertion,
     FileContainsAssertion,
     FileExistsAssertion,
     WorldAssertion,
 )
-from modex_agent.agents.react.agent import ReActAgent, ReActEvent
+from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.core.agent import AgentContext
+from modex_agent.core.agent import Agent, AgentContext
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult, ContentEmitter
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.core.tool_manager import ToolManager
 from modex_agent.core.types import MessageRole
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.plugins.assembly.single_agent import SingleAgentAssembled
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
-from modex_agent.runtime.services import AgentRuntime
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.trace.cassette import CassetteRecorder, CassetteReplayEngine
 from modex_agent.trace.scoring import TrajectoryMetrics
 
@@ -202,12 +203,11 @@ class _NoopEmitter(ContentEmitter[ReActEvent]):
 
 
 class EvalRunner:
-    """Run ReActAgent experiments against Langfuse datasets.
+    """Run declared-agent experiments against Langfuse datasets.
 
-    Wraps ``ReActAgent(provider, mode='clean')`` as a Langfuse experiment
-    task. Constructs a fresh ``AgentContext`` per item (zero state leakage
-    between items). The agent instance is reused -- in clean mode it is
-    stateless across turns.
+    Constructs a fresh mode-specific agent, per-turn execution context, and
+    runtime-services bundle per item. Multi-turn v2 items share those services
+    across their fresh per-turn contexts.
     """
 
     def __init__(
@@ -221,8 +221,9 @@ class EvalRunner:
         cassette: CassetteReplayEngine | None = None,
         recorder: CassetteRecorder | None = None,
         archive_root: Path | None = None,
+        model: str | None = None,
     ) -> None:
-        """Store config and build the clean-mode ReActAgent.
+        """Store config used to build the clean-mode declared agent.
 
         Args:
             provider: LLM provider for the agent.
@@ -232,7 +233,6 @@ class EvalRunner:
                 ``None``, ``Langfuse()`` is constructed from env vars
                 (``LANGFUSE_HOST`` etc.) at ``run`` time.
         """
-        self._agent = ReActAgent(provider, mode="clean")
         self._provider = provider
         self._system_prompt = system_prompt
         self._max_iterations = max_iterations
@@ -241,6 +241,45 @@ class EvalRunner:
         self._cassette = cassette
         self._recorder = recorder
         self._archive_root = archive_root
+        self._model = model
+
+    async def _build_agent_and_services(
+        self,
+        provider: LLMProvider,
+        trace_dir: Path,
+        workspace: Path,
+        toolset: EvalToolset,
+        deny_tools: list[str],
+    ) -> tuple[
+        Agent[ReActEvent],
+        AgentRuntimeServices,
+        ToolManager,
+        SingleAgentAssembled,
+    ]:
+        match self._mode:
+            case "clean":
+                services = build_trace_only_services(trace_dir, model=self._model)
+                governance_enabled = False
+            case "production":
+                services = build_runtime_services(
+                    trace_dir=trace_dir,
+                    recorder=None,
+                    model=self._model,
+                )
+                governance_enabled = True
+            case unreachable:
+                assert_never(unreachable)
+        assembled = await assemble_harness_agent(
+            workspace=workspace,
+            data_dir=trace_dir / "assembly",
+            provider=provider,
+            toolset=toolset,
+            deny_tools=deny_tools,
+            runtime_services=services,
+            governance_enabled=governance_enabled,
+        )
+        assert assembled.instance.pipeline is not None
+        return assembled.instance.pipeline.agent, services, assembled.tool_manager, assembled
 
     async def task(
         self,
@@ -277,39 +316,60 @@ class EvalRunner:
         else:
             query = ""
 
-        item_id = getattr(item, "id", "unknown")
-        ctx = AgentContext(
-            system_prompt=self._system_prompt,
-            history=ListMessageHistory(),
-            tool_manager=InMemoryToolManager(),
-            session=SessionInfo.from_str(f"eval.{item_id}.react"),
-            max_iterations=self._max_iterations,
-        )
-        await ctx.history.append(ChatMessage(role=MessageRole.USER, content=query))
-
-        emitter = _NoopEmitter()
+        trace_dir = Path(tempfile.mkdtemp(prefix="modex-eval-trace-legacy-"))
+        assembled: SingleAgentAssembled | None = None
         try:
-            result = await self._agent.run(ctx, emitter)
-        except Exception as exc:  # noqa: BLE001  # noqa: BROAD_EXCEPT_OK
-            logger.warning(
-                "EvalRunner: agent run failed for item %s",
-                item_id,
-                exc_info=True,
+            item_id = getattr(item, "id", "unknown")
+            session = SessionInfo.from_str(f"eval.{item_id}.react")
+            identity = TurnIdentity(agent_id="react", session=session, turn_id="turn-1")
+            state = ReActTurnState(
+                identity=identity,
+                agent_kind=AgentKind.REACT,
+                phase=TurnPhase.CREATED,
             )
+            agent, services, tool_manager, assembled = await self._build_agent_and_services(
+                self._provider, trace_dir, trace_dir, EvalToolset.NONE, []
+            )
+            ctx = AgentContext(
+                system_prompt=self._system_prompt,
+                history=ListMessageHistory(),
+                tool_manager=tool_manager,
+                session=session,
+                max_iterations=self._max_iterations,
+                runtime=AgentRuntime(services=services, state=state),
+                identity=identity,
+            )
+            await ctx.history.append(ChatMessage(role=MessageRole.USER, content=query))
+
+            emitter = _NoopEmitter()
+            try:
+                result = await agent.run(ctx, emitter)
+            except Exception as exc:  # noqa: BLE001  # noqa: BROAD_EXCEPT_OK
+                logger.warning(
+                    "EvalRunner: agent run failed for item %s",
+                    item_id,
+                    exc_info=True,
+                )
+                return {
+                    "output": "",
+                    "stop_reason": StopReason.ERROR.value,
+                    "error": str(exc),
+                }
             return {
-                "output": "",
-                "stop_reason": StopReason.ERROR.value,
-                "error": str(exc),
+                "output": result.content or "",
+                "stop_reason": result.stop_reason.value,
+                "error": result.error,
             }
-        return {
-            "output": result.content or "",
-            "stop_reason": result.stop_reason.value,
-            "error": result.error,
-        }
+        finally:
+            if assembled is not None:
+                await assembled.instance.stop()
+                await assembled.memory_system.close()
+            shutil.rmtree(trace_dir, ignore_errors=True)
 
     async def _v2_task(self, spec: EvalItemSpec) -> dict[str, Any]:
         workspace = Path(tempfile.mkdtemp(prefix=f"modex-eval-{spec.id}-"))
         trace_dir = Path(tempfile.mkdtemp(prefix=f"modex-eval-trace-{spec.id}-"))
+        assembled: SingleAgentAssembled | None = None
         try:
             for raw_path, content in spec.world_setup.items():
                 path = _workspace_path(workspace, raw_path)
@@ -318,24 +378,14 @@ class EvalRunner:
 
             history = ListMessageHistory()
             session = SessionInfo.from_str(f"eval.{spec.id}.react")
-            tool_manager = _WorkspaceTokenNormalizer(
-                build_tool_manager(workspace, spec.toolset, spec.deny_tools),
-                workspace,
-            )
             provider = self._provider
             cassette = self._cassette if self._cassette is not None else self._recorder
             if cassette is not None:
                 provider = wrap_provider(provider, cassette)
 
-            match self._mode:
-                case "clean":
-                    services = build_trace_only_services(trace_dir)
-                    agent = ReActAgent(provider, mode="clean")
-                case "production":
-                    services = build_runtime_services(trace_dir=trace_dir, recorder=None)
-                    agent = ReActAgent(provider, mode="full")
-                case unreachable:
-                    assert_never(unreachable)
+            agent, services, tool_manager, assembled = await self._build_agent_and_services(
+                provider, trace_dir, workspace, spec.toolset, spec.deny_tools
+            )
 
             turn_records: list[TurnRecord] = []
             turn_contexts: list[AgentContext] = []
@@ -395,6 +445,9 @@ class EvalRunner:
                 turn_records=turn_records,
             ).to_output_dict()
         finally:
+            if assembled is not None:
+                await assembled.instance.stop()
+                await assembled.memory_system.close()
             shutil.rmtree(workspace, ignore_errors=True)
             shutil.rmtree(trace_dir, ignore_errors=True)
 
@@ -458,6 +511,8 @@ class EvalRunner:
         dataset = lf.get_dataset(dataset_name)
         result = dataset.run_experiment(
             name=experiment_name,
+            # run_name= keeps the SDK from appending a timestamp suffix; judge/compare match the clean name exactly.
+            run_name=experiment_name,
             description=description,
             task=tee_task,
             evaluators=evaluators or [],

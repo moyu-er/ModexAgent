@@ -1,0 +1,13 @@
+pool:
+  name: sentinel-nomemory
+  agents:
+    react:
+      max_steps: 25
+      toolset: read_write
+      tools: [read, write, edit, ls, grep, glob]
+      system_prompt: Complete the task using the available workspace tools.
+      memory:
+        archive_enabled: false
+        core_enabled: false
+        session:
+          max_context_tokens: 32000

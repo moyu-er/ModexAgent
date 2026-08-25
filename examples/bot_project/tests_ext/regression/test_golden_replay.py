@@ -8,7 +8,8 @@ temporarily append one word (e.g. ``" EXTRA"``) to the prompt returned by
 fingerprint gate (``prompt_sha256`` mismatch ValueError). SECONDARY
 (conditional): a throwaway monkeypatch of
 ``bot.eval.agent_harness.main_agent_memory`` delegating to
-``bot.config.memory_defaults.main_agent_memory(max_context_tokens=500)`` only
+``modex_agent.memory.presets.main_agent_memory(max_context_tokens=500)``
+only
 turns red on long trajectories -- ``keep_recent=10`` tool results and
 ``min_gain_tokens=20000`` keep short goldens such as ``file-pipeline``
 (3 tool results) green, so use it only with a compaction-sensitive case.

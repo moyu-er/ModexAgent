@@ -7,8 +7,8 @@ bot's JSON-OTLP trace path.
 Langfuse credentials are read from the environment:
 
 - ``LANGFUSE_HOST`` (default: ``http://localhost:3000``)
-- ``LANGFUSE_PUBLIC_KEY`` (required)
-- ``LANGFUSE_SECRET_KEY`` (required)
+- Langfuse public key (required)
+- Langfuse secret key (required)
 
 Usage::
 
@@ -23,21 +23,27 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import os
+import sys
 from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
+from math import fsum
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, assert_never
 from unittest.mock import patch
 
 import httpx
 import typer
 from langfuse import Langfuse
 from langfuse.api.commons.errors.not_found_error import NotFoundError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from bot.eval.dataset_curator import DatasetCurator
+from bot.eval.evalenv import LangfuseCredentials
 from bot.eval.evaluators import (
     accuracy_evaluator,
     completion_evaluator,
@@ -46,11 +52,31 @@ from bot.eval.evaluators import (
     world_state_evaluator,
 )
 from bot.eval.experiment_runner import EvalRunner as _BaseEvalRunner
+from bot.eval.judge.calibration import JudgeScoreComment
+from bot.eval.judge_cli import judge as judge_command
 from bot.eval.task_spec import EvalItemSpec, EvalToolset
 from modex_agent.core.constants import ReasoningEffort
 from modex_agent.core.provider import LLMProvider
 from modex_agent.providers import LiteLLMProvider
 from modex_agent.trace.cassette import CassetteRecorder, CassetteReplayEngine
+from modex_agent.trace.langfuse_query import (
+    _MAX_PAGES,
+    LangfuseClient,
+    LangfuseQueryError,
+    ScoreReadData,
+)
+
+
+def _configure_console_stream(stream: io.TextIOWrapper) -> None:
+    if stream.encoding.lower() != "utf-8":
+        stream.reconfigure(errors="replace")
+
+
+if isinstance(sys.stdout, io.TextIOWrapper):
+    _configure_console_stream(sys.stdout)
+if isinstance(sys.stderr, io.TextIOWrapper):
+    _configure_console_stream(sys.stderr)
+
 
 app = typer.Typer(
     name="bot-eval",
@@ -59,9 +85,31 @@ app = typer.Typer(
     add_completion=False,
     pretty_exceptions_enable=False,
 )
+app.command(
+    name="judge",
+    help="Re-judge existing experiment traces without re-running them.",
+)(judge_command)
 
 _DEFAULT_LANGFUSE_HOST = "http://localhost:3000"
 _SCORES_TIMEOUT = httpx.Timeout(10.0)
+
+
+class CostSummary(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    total_usd: float
+    mean_usd: float
+    count: int
+
+
+class CompareExperimentWindow(BaseModel):
+    """Experiment bounds needed for trace-scoped judge score lookup."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore", populate_by_name=True)
+
+    start_time: datetime = Field(alias="startTime")
+    end_time: datetime = Field(alias="endTime")
+    item_count: int = Field(alias="itemCount", ge=0)
 
 
 class EvalRunner(_BaseEvalRunner):
@@ -79,6 +127,7 @@ class EvalRunner(_BaseEvalRunner):
         recorder: CassetteRecorder | None = None,
         archive_root: Path | None = None,
         toolset: EvalToolset | None = None,
+        model: str | None = None,
     ) -> None:
         super().__init__(
             provider=provider,
@@ -89,6 +138,7 @@ class EvalRunner(_BaseEvalRunner):
             cassette=cassette,
             recorder=recorder,
             archive_root=archive_root,
+            model=model,
         )
         self._toolset = toolset
 
@@ -116,19 +166,17 @@ def _load_langfuse_env() -> tuple[str, str, str]:
     """Read Langfuse credentials from the environment.
 
     Returns ``(host, public_key, secret_key)``. Exits with code 1 when
-    ``LANGFUSE_PUBLIC_KEY`` or ``LANGFUSE_SECRET_KEY`` is missing.
+    either Langfuse key is missing.
     """
-    host = os.environ.get("LANGFUSE_HOST", _DEFAULT_LANGFUSE_HOST)
-    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY")
-    secret_key = os.environ.get("LANGFUSE_SECRET_KEY")
-    if not public_key or not secret_key:
+    credentials = LangfuseCredentials.from_env()
+    if credentials is None:
         typer.echo(
-            "ERROR: LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY environment "
-            "variables are required.",
+            "ERROR: Langfuse public and secret key environment variables are required.",
             err=True,
         )
         raise typer.Exit(code=1)
-    return host, public_key, secret_key
+    host = credentials.host if credentials.host is not None else _DEFAULT_LANGFUSE_HOST
+    return host, credentials.public_key, credentials.secret_key
 
 
 def _basic_auth_header(public_key: str, secret_key: str) -> dict[str, str]:
@@ -146,11 +194,17 @@ def curate(
     max_items: Annotated[int, typer.Option("--max", help="Maximum items to curate.")] = 50,
     filter_errors: Annotated[
         bool,
-        typer.Option("--filter-errors", help="Include traces that errored."),
+        typer.Option(
+            "--filter-errors/--no-filter-errors",
+            help="Select error traces (interesting cases).",
+        ),
     ] = True,
     filter_high_latency: Annotated[
         bool,
-        typer.Option("--filter-high-latency", help="Include high-latency traces."),
+        typer.Option(
+            "--filter-high-latency/--no-filter-high-latency",
+            help="Select high-latency traces (interesting cases).",
+        ),
     ] = False,
     latency_threshold: Annotated[
         float,
@@ -213,18 +267,22 @@ def run(
 ) -> None:
     """Run an experiment against a Langfuse dataset.
 
-    The LLM API key is read from the standard environment variable for the
-    model's provider (``OPENAI_API_KEY``, ``ANTHROPIC_API_KEY``, etc.) -- set
-    it before invoking this command.
+    Credentials use ``TEST_LLM_API_KEY`` and ``TEST_LLM_BASE_URL`` when set;
+    otherwise LiteLLM resolves provider-standard environment variables such as
+    ``OPENAI_API_KEY`` and ``ANTHROPIC_API_KEY``.
     """
     # Lazy import: litellm is an optional dependency (the [llm] extra), not
     # required for curate/compare.
     from modex_agent.providers import LiteLLMProvider
 
     host, public_key, secret_key = _load_langfuse_env()
-    provider = LiteLLMProvider(model=model)
+    provider = LiteLLMProvider(
+        model=model,
+        api_key=os.environ.get("TEST_LLM_API_KEY") or None,
+        base_url=os.environ.get("TEST_LLM_BASE_URL") or None,
+    )
     langfuse_client = Langfuse(
-        host=host,
+        base_url=host,
         public_key=public_key,
         secret_key=secret_key,
     )
@@ -236,6 +294,7 @@ def run(
         mode=mode,
         archive_root=Path("evals/runs"),
         toolset=toolset,
+        model=model,
     )
     result = runner.run(
         dataset_name=dataset,
@@ -262,14 +321,14 @@ def compare(
     """List experiment runs for a dataset with their aggregated scores.
 
     Uses the Langfuse v4 ``experiments`` API (v3 dataset-runs endpoint is
-    disabled in events_only mode). Each experiment's scores are fetched via
-    ``v3/scores`` filtered by the experiment's time window.
+    disabled in events_only mode). Run-time scores use the experiment window;
+    post-hoc judge scores are read from the experiment's root traces.
     """
     host, public_key, secret_key = _load_langfuse_env()
     headers = _basic_auth_header(public_key, secret_key)
 
     # Resolve dataset ID from name (experiments API returns datasetId, not name).
-    lf = Langfuse(host=host, public_key=public_key, secret_key=secret_key)
+    lf = Langfuse(base_url=host, public_key=public_key, secret_key=secret_key)
     try:
         ds = lf.get_dataset(dataset)
     except NotFoundError:
@@ -287,26 +346,55 @@ def compare(
         typer.echo("(Tip: experiments are created by 'run' — check local archives in evals/runs/)")
         return
 
+    costs = asyncio.run(
+        _fetch_experiment_costs(
+            host,
+            (public_key, secret_key),
+            experiments,
+        )
+    )
+    judge_scores = asyncio.run(
+        _fetch_experiment_judge_scores(
+            host,
+            (public_key, secret_key),
+            experiments,
+        )
+    )
+
     typer.echo(f"Experiment runs for dataset '{dataset}':")
     typer.echo()
-    typer.echo(f"{'Run':<45} {'Items':<6} {'Scores'}")
-    typer.echo(f"{'---':<45} {'---':<6} {'---'}")
+    typer.echo(f"{'Run':<45} {'Items':<6} {'Cost':<35} {'Scores'}")
+    typer.echo(f"{'---':<45} {'---':<6} {'---':<35} {'---'}")
 
-    for exp in experiments:
+    for exp, cost, posthoc_judge_scores in zip(
+        experiments,
+        costs,
+        judge_scores,
+        strict=True,
+    ):
         scores = _fetch_experiment_scores(
             host=host,
             headers=headers,
             start_time=exp["startTime"],
             end_time=exp["endTime"],
+            judge_scores=posthoc_judge_scores,
         )
-        typer.echo(f"{exp['name'][:45]:<45} {exp.get('itemCount', '?'):<6} {scores}")
+        if cost is None:
+            cost_text = "(unavailable)"
+        elif cost.count == 0:
+            cost_text = "(no cost)"
+        else:
+            cost_text = f"sum=${cost.total_usd:.6f} mean=${cost.mean_usd:.6f}"
+        typer.echo(
+            f"{exp['name'][:45]:<45} {exp.get('itemCount', '?'):<6} {cost_text:<35} {scores}"
+        )
 
 
 def _fetch_experiments(
     *,
     host: str,
     headers: dict[str, str],
-    dataset_id: str,
+    dataset_id: str | None,
 ) -> list[dict[str, Any]]:
     """Fetch experiments for a dataset via the v4 ``experiments`` API."""
     url = f"{host.rstrip('/')}/api/public/experiments"
@@ -333,7 +421,10 @@ def _fetch_experiments(
     if not isinstance(data, list):
         return []
 
-    return [exp for exp in data if isinstance(exp, dict) and exp.get("datasetId") == dataset_id]
+    experiments = [exp for exp in data if isinstance(exp, dict)]
+    if dataset_id is None:
+        return experiments
+    return [exp for exp in experiments if exp.get("datasetId") == dataset_id]
 
 
 def _fetch_experiment_scores(
@@ -342,6 +433,7 @@ def _fetch_experiment_scores(
     headers: dict[str, str],
     start_time: str,
     end_time: str,
+    judge_scores: list[ScoreReadData] | None = None,
 ) -> str:
     """Fetch and aggregate scores for an experiment via ``v3/scores``.
 
@@ -352,17 +444,11 @@ def _fetch_experiment_scores(
     upper range. Returns a compact summary like ``accuracy=75%,
     completion=80%`` or ``"(no scores)"`` / ``"(unavailable)"`` on failure.
     """
-    from datetime import datetime, timedelta
-
     url = f"{host.rstrip('/')}/api/public/v3/scores"
-    try:
-        end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
-        end_buffered = (end_dt + timedelta(seconds=2)).isoformat().replace("+00:00", "Z")
-    except Exception:
-        end_buffered = end_time
-    params = {
+    params: dict[str, str | int] = {
+        "fields": "core,details,subject",
         "fromTimestamp": start_time,
-        "toTimestamp": end_buffered,
+        "toTimestamp": _buffer_end_time(end_time),
         "limit": 100,
     }
     try:
@@ -380,17 +466,46 @@ def _fetch_experiment_scores(
         return "(unavailable)"
 
     data = body.get("data") if isinstance(body, dict) else None
-    if not isinstance(data, list) or not data:
+    if not isinstance(data, list):
         return "(no scores)"
 
-    name_values: dict[str, list[float]] = defaultdict(list)
+    judge_score_keys = {
+        (score.name, score.subject.id if score.subject is not None else None)
+        for score in judge_scores or []
+        if score.name.startswith("judge_")
+    }
+    score_rows: list[tuple[str, float | bool, str | None]] = []
     for score in data:
         if not isinstance(score, dict):
             continue
         name = score.get("name")
         value = score.get("value")
-        if isinstance(name, str) and isinstance(value, int | float):
-            name_values[name].append(float(value))
+        if not isinstance(name, str) or not isinstance(value, int | float):
+            continue
+        subject = score.get("subject")
+        subject_id = subject.get("id") if isinstance(subject, dict) else None
+        if name.startswith("judge_") and (name, subject_id) in judge_score_keys:
+            continue
+        comment = score.get("comment")
+        score_rows.append((name, value, comment if isinstance(comment, str) else None))
+    if judge_scores is not None:
+        score_rows.extend(
+            (score.name, score.value, score.comment)
+            for score in judge_scores
+            if score.name.startswith("judge_")
+        )
+
+    name_values: dict[str, list[float]] = defaultdict(list)
+    uncalibrated_judge_names: set[str] = set()
+    for name, value, comment in score_rows:
+        name_values[name].append(float(value))
+        if name.startswith("judge_") and comment is not None:
+            try:
+                parsed_comment = JudgeScoreComment.model_validate_json(comment)
+            except ValidationError:
+                continue
+            if not parsed_comment.calibrated:
+                uncalibrated_judge_names.add(name)
 
     if not name_values:
         return "(no scores)"
@@ -398,11 +513,154 @@ def _fetch_experiment_scores(
     parts: list[str] = []
     for name, values in sorted(name_values.items()):
         avg = sum(values) / len(values)
-        if avg <= 1.0:
-            parts.append(f"{name}={avg:.0%}")
-        else:
-            parts.append(f"{name}={avg:.1f}")
+        rendered = f"{name}={avg:.0%}" if avg <= 1.0 else f"{name}={avg:.1f}"
+        marker = "*" if name in uncalibrated_judge_names else ""
+        parts.append(f"{rendered}{marker}")
     return ", ".join(parts)
+
+
+async def _fetch_posthoc_judge_scores(
+    client: LangfuseClient,
+    experiment: CompareExperimentWindow,
+) -> list[ScoreReadData]:
+    trace_ids: list[str] = []
+    seen: set[str] = set()
+    cursor: str | None = None
+    for _ in range(_MAX_PAGES):
+        observations, cursor = await client.get_observations(
+            from_start_time=experiment.start_time,
+            to_start_time=experiment.end_time,
+            cursor=cursor,
+        )
+        for observation in observations:
+            if observation.parent_observation_id is not None or observation.type != "AGENT":
+                continue
+            if observation.trace_id in seen:
+                continue
+            seen.add(observation.trace_id)
+            trace_ids.append(observation.trace_id)
+            if len(trace_ids) >= experiment.item_count:
+                break
+        if cursor is None or len(trace_ids) >= experiment.item_count:
+            break
+    else:
+        raise LangfuseQueryError(
+            0,
+            f"Observation pagination exceeded the {_MAX_PAGES}-page safety cap",
+        )
+
+    judge_scores: list[ScoreReadData] = []
+    for trace_id in trace_ids:
+        cursor = None
+        for _ in range(_MAX_PAGES):
+            scores, cursor = await client.get_scores(
+                fields="core,details,subject",
+                trace_id=trace_id,
+                limit=100,
+                cursor=cursor,
+            )
+            judge_scores.extend(score for score in scores if score.name.startswith("judge_"))
+            if cursor is None:
+                break
+        else:
+            raise LangfuseQueryError(
+                0,
+                f"Score pagination exceeded the {_MAX_PAGES}-page safety cap",
+            )
+    return judge_scores
+
+
+async def _fetch_experiment_judge_scores(
+    host: str,
+    credentials: tuple[str, str],
+    experiments: list[dict[str, Any]],
+) -> list[list[ScoreReadData] | None]:
+    public_key, secret_key = credentials
+    client = LangfuseClient(host, public_key, secret_key)
+    results: list[list[ScoreReadData] | None] = []
+    try:
+        for experiment_data in experiments:
+            try:
+                experiment = CompareExperimentWindow.model_validate(experiment_data)
+                scores = await _fetch_posthoc_judge_scores(client, experiment)
+            except (httpx.HTTPError, LangfuseQueryError, ValidationError):
+                scores = None
+            results.append(scores)
+    finally:
+        await client.close()
+    return results
+
+
+def _buffer_end_time(end_time: str) -> str:
+    from datetime import datetime, timedelta
+
+    try:
+        end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+    except ValueError:
+        return end_time
+    return (end_dt + timedelta(seconds=2)).isoformat().replace("+00:00", "Z")
+
+
+async def _fetch_experiment_cost(
+    client: LangfuseClient,
+    *,
+    start_time: str,
+    end_time: str,
+) -> CostSummary:
+    values: list[float] = []
+    cursor: str | None = None
+    for _ in range(_MAX_PAGES):
+        scores, cursor = await client.get_scores(
+            fields="core,details,subject",
+            name="cost_usd",
+            from_timestamp=start_time,
+            to_timestamp=_buffer_end_time(end_time),
+            limit=100,
+            cursor=cursor,
+        )
+        for score in scores:
+            match score.value:
+                case bool():
+                    continue
+                case int() as value:
+                    values.append(float(value))
+                case float() as value:
+                    values.append(value)
+                case unreachable:
+                    assert_never(unreachable)
+        if cursor is None:
+            break
+
+    total = fsum(values)
+    return CostSummary(
+        total_usd=total,
+        mean_usd=total / len(values) if values else 0.0,
+        count=len(values),
+    )
+
+
+async def _fetch_experiment_costs(
+    host: str,
+    credentials: tuple[str, str],
+    experiments: list[dict[str, Any]],
+) -> list[CostSummary | None]:
+    public_key, secret_key = credentials
+    client = LangfuseClient(host, public_key, secret_key)
+    summaries: list[CostSummary | None] = []
+    try:
+        for experiment in experiments:
+            try:
+                summary = await _fetch_experiment_cost(
+                    client,
+                    start_time=experiment["startTime"],
+                    end_time=experiment["endTime"],
+                )
+            except (httpx.HTTPError, LangfuseQueryError, ValidationError):
+                summary = None
+            summaries.append(summary)
+    finally:
+        await client.close()
+    return summaries
 
 
 # --- setup-judge -------------------------------------------------------------
@@ -590,7 +848,7 @@ def _post_json(
     return payload
 
 
-@app.command(name="metrics", help="Report local capability metrics from workspace data.")
+@app.command(name="metrics", help="Report capability metrics from Langfuse or FILE traces.")
 def metrics(
     workspace: Annotated[
         Path,
@@ -598,10 +856,29 @@ def metrics(
     ] = Path("."),
     days: Annotated[int, typer.Option("--days", help="Number of recent days to include.")] = 7,
 ) -> None:
-    """Render an offline markdown report from local cleanup and trace data."""
+    """Render a markdown report from Langfuse, with FILE traces as fallback."""
     from bot.eval.metrics import aggregate
+    from modex_agent.trace.langfuse_query import LangfuseClient
+    from modex_agent.trace.score_injector import L2ScoreInjector
 
-    typer.echo(aggregate(workspace, days))
+    credentials = LangfuseCredentials.from_env()
+    client: LangfuseClient | None = None
+    injector: L2ScoreInjector | None = None
+    if credentials is not None:
+        host = credentials.host if credentials.host is not None else _DEFAULT_LANGFUSE_HOST
+        client = LangfuseClient(host, credentials.public_key, credentials.secret_key)
+        injector = L2ScoreInjector(
+            ingestion_url=f"{host.rstrip('/')}/api/public/ingestion",
+            headers=_basic_auth_header(credentials.public_key, credentials.secret_key),
+        )
+    typer.echo(
+        aggregate(
+            workspace,
+            days,
+            langfuse_client=client,
+            score_injector=injector,
+        )
+    )
 
 
 _GOLDEN_SYSTEM_PROMPT = (
@@ -659,8 +936,9 @@ async def _record_golden_case(case_dir: Path) -> None:
 
     from bot.eval import experiment_runner as experiment_runner_module
     from bot.eval.agent_harness import (
+        assemble_harness_agent,
         build_runtime_services,
-        build_tool_manager,
+        build_trace_only_services,
         static_system_prompt,
     )
     from bot.eval.replay import GoldenMeta
@@ -686,9 +964,15 @@ async def _record_golden_case(case_dir: Path) -> None:
         def recording_runtime_services(
             trace_dir: Path,
             recorder: CassetteRecorder | None = None,
+            *,
+            model: str | None = None,
         ) -> AgentRuntimeServices:
             _ = recorder
-            return build_runtime_services(trace_dir=trace_dir, recorder=active_recorder)
+            return build_runtime_services(
+                trace_dir=trace_dir,
+                recorder=active_recorder,
+                model=model,
+            )
 
         active_recorder = recorder
         experiment_runner_module.build_runtime_services = recording_runtime_services
@@ -699,6 +983,7 @@ async def _record_golden_case(case_dir: Path) -> None:
                     system_prompt=_GOLDEN_SYSTEM_PROMPT,
                     mode="production",
                     recorder=recorder,
+                    model=model,
                 )
                 raw_output = await runner.task(
                     item=SimpleNamespace(id=spec.id, input=spec.model_dump(mode="json"))
@@ -746,7 +1031,20 @@ async def _record_golden_case(case_dir: Path) -> None:
             typer.echo("ERROR: recording produced no LLM request.", err=True)
             raise typer.Exit(code=1)
 
-        tool_manager = build_tool_manager(case_dir, spec.toolset, spec.deny_tools)
+        fingerprint_services = build_trace_only_services(
+            recording_root / "fingerprint-trace",
+            model=model,
+        )
+        fingerprint_assembly = await assemble_harness_agent(
+            workspace=case_dir,
+            data_dir=recording_root / "fingerprint-runtime",
+            provider=provider,
+            toolset=spec.toolset,
+            deny_tools=spec.deny_tools,
+            runtime_services=fingerprint_services,
+            governance_enabled=False,
+        )
+        tool_manager = fingerprint_assembly.tool_manager
         schemas = sorted(
             tool_manager.get_tool_descriptions(),
             key=lambda item: str(item["function"]["name"]),
@@ -768,6 +1066,8 @@ async def _record_golden_case(case_dir: Path) -> None:
             recorded_at=datetime.now(UTC).isoformat(),
             baseline=case_dir.name == "chat-notools",
         )
+        await fingerprint_assembly.instance.stop()
+        await fingerprint_assembly.memory_system.close()
 
         target_root = case_dir / "cassette"
         if target_root.exists():

@@ -14,8 +14,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from bot.eval.agent_harness import (
-    _WorkspaceTokenNormalizer,
-    build_tool_manager,
+    assemble_harness_agent,
+    build_trace_only_services,
     static_system_prompt,
 )
 from bot.eval.experiment_runner import EvalRunner
@@ -201,13 +201,25 @@ class GoldenReplayRunner:
 
         with tempfile.TemporaryDirectory(prefix=f"modex-golden-{case.name}-") as raw_workspace:
             workspace = Path(raw_workspace)
-            tool_manager = _WorkspaceTokenNormalizer(
-                build_tool_manager(workspace, spec.toolset, spec.deny_tools),
-                workspace,
+            fingerprint_services = build_trace_only_services(
+                workspace / ".fingerprint-trace",
+                model=self._config.model,
             )
+            assembled = await assemble_harness_agent(
+                workspace=workspace,
+                data_dir=workspace / ".fingerprint-runtime",
+                provider=_OfflineProvider(self._config.model),
+                toolset=spec.toolset,
+                deny_tools=spec.deny_tools,
+                runtime_services=fingerprint_services,
+                governance_enabled=False,
+            )
+            tool_manager = assembled.tool_manager
             system_prompt = static_system_prompt(self._config.system_prompt)
             constructed = _fingerprint(self._config, system_prompt, tool_manager)
             self.check_fingerprint(case, constructed)
+            await assembled.instance.stop()
+            await assembled.memory_system.close()
 
             engine = CassetteReplayEngine(cassette_dir)
             engine.load()

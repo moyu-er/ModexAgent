@@ -1,0 +1,26 @@
+# uv is seeded from the pypi index (astral.sh is blocked in this region);
+# general package traffic uses the official indexes (host TUN routes it).
+services:
+  uv-seed:
+    image: python:3.12-slim
+    entrypoint: ["/bin/sh", "-lc"]
+    command:
+      - |
+        pip download --no-deps -q -d /tmp/w uv==0.8.13
+        python -c "import glob, pathlib, shutil, zipfile; zipfile.ZipFile(glob.glob('/tmp/w/*.whl')[0]).extractall('/tmp/x'); [shutil.copy2(str(p), '/uv-bin/' + p.name) for p in pathlib.Path('/tmp/x').rglob('scripts/uv*')]"
+        chmod +x /uv-bin/uv /uv-bin/uvx
+    volumes:
+      - modex-uv-bin:/uv-bin
+    restart: "no"
+
+  main:
+    depends_on:
+      uv-seed:
+        condition: service_completed_successfully
+    environment:
+      PATH: /opt/modex-uv:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    volumes:
+      - modex-uv-bin:/opt/modex-uv:ro
+
+volumes:
+  modex-uv-bin:

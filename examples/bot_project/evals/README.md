@@ -177,9 +177,13 @@ no gate substitutes for another:
 
 ## Golden v2 (TODO — not scheduled)
 
-The v2 suite is deferred until the eval-integration effort
-(docs/design/eval-integration/MAP.md) lands its judge and benchmark pieces.
-When it is built, the standard is:
+**Deferral decision (owner ruling 2026-08-20, recorded in eval-integration
+ticket 07):** the v2 rebuild is shelved and remains unscheduled. The
+original trigger, the settling of the judge architecture (eval-integration
+ticket 03), is now satisfied, but no rebuild date follows from it. The v2
+authoring standard below is retained unchanged, and the CI regression
+workflow stays paused at manual dispatch. When it is built, the
+standard is:
 
 - **Assertion layering**: behavior assertions first — execute the artifact
   and compare stdout/exit (e.g. `command_exit` running a `python -c` wrapper

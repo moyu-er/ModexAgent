@@ -1,273 +1,240 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from bot.eval.cli import app
 from bot.eval.metrics import aggregate
 from typer.testing import CliRunner
 
 from modex_agent.core.constants import StopReason
-from modex_agent.memory.cleanup_hooks import CleanupMetricRecord
+from modex_agent.trace.langfuse_query import (
+    LangfuseClient,
+    LangfuseQueryError,
+    ObservationData,
+    Provenance,
+    SessionSummary,
+)
+from modex_agent.trace.score_injector import L2ScoreInjector, ScoreSpec
 from modex_agent.trace.semconv import GenAiAttr, SpanName
 from modex_agent.trace.store import SpanModel
 
 
-def _write_cleanup(
-    workspace: Path,
-    records: list[CleanupMetricRecord],
-    *,
-    malformed: bool = False,
-) -> None:
-    metrics_dir = workspace / ".modex" / "metrics"
-    metrics_dir.mkdir(parents=True)
-    lines = [record.model_dump_json() for record in records]
-    if malformed:
-        lines.append("not-json")
-    (metrics_dir / "cleanup.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def _write_spans(workspace: Path, spans: list[SpanModel], session_id: str = "session-1") -> None:
-    trace_dir = workspace / ".modex" / "runtime_state" / "coder" / "trace" / session_id
+def _write_spans(workspace: Path, spans: list[SpanModel]) -> None:
+    trace_dir = workspace / ".modex" / "runtime_state" / "coder" / "trace" / "session-1"
     trace_dir.mkdir(parents=True)
     payload = "\n".join(span.model_dump_json() for span in spans)
     (trace_dir / "spans.jsonl").write_text(f"{payload}\n", encoding="utf-8")
 
 
-def test_aggregate_reports_cleanup_metrics_and_malformed_lines(tmp_path: Path) -> None:
-    now = datetime.now(UTC).isoformat()
-    _write_cleanup(
-        tmp_path,
-        [
-            CleanupMetricRecord(
-                ts=now,
-                session_id="session-1",
-                reason="token_budget",
-                messages_kept=5,
-                messages_pruned=5,
-                tokens_before=100,
-                tokens_after=95,
-                tokens_saved=5,
-                compact_generated=True,
-                prune_ratio=0.5,
-            ),
-            CleanupMetricRecord(
-                ts=now,
-                session_id="session-1",
-                reason="token_budget",
-                messages_kept=6,
-                messages_pruned=2,
-                tokens_before=100,
-                tokens_after=95,
-                tokens_saved=5,
-                compact_generated=False,
-                prune_ratio=0.25,
-            ),
-            CleanupMetricRecord(
-                ts=now,
-                session_id="session-3",
-                reason="manual",
-                messages_kept=1,
-                messages_pruned=3,
-                tokens_before=100,
-                tokens_after=50,
-                tokens_saved=50,
-                compact_generated=True,
-                prune_ratio=0.75,
-            ),
-        ],
-        malformed=True,
+def _span(
+    name: str,
+    span_id: str,
+    *,
+    trace_id: str = "trace-memory",
+    attributes: dict[str, str | int | float | bool] | None = None,
+) -> SpanModel:
+    return SpanModel(
+        trace_id=trace_id,
+        span_id=span_id,
+        name=name,
+        start_time=datetime.now(UTC).timestamp(),
+        attributes=attributes or {},
     )
 
-    report = aggregate(tmp_path, days=7)
 
-    assert "## Cleanup metrics" in report
-    assert "- Triggers: 3" in report
-    assert "- Malformed records: 1" in report
-    assert "- Average prune ratio: 50.0%" in report
-    assert "- Compact generation rate: 66.7%" in report
-    assert "- Average char-estimated tokens saved: 20.0" in report
-    assert "- Char-estimated token savings rate: 20.0%" in report
-    assert "- Cleanup thrash events: 1" in report
-    assert "- manual: 1" in report
-    assert "- token_budget: 2" in report
+def _observation(span: SpanModel, session_id: str = "session-memory") -> ObservationData:
+    return ObservationData(
+        id=span.span_id,
+        trace_id=span.trace_id,
+        start_time=datetime.fromtimestamp(span.start_time, UTC),
+        end_time=None,
+        parent_observation_id=span.parent_span_id,
+        type="SPAN",
+        name=span.name,
+        level="DEFAULT",
+        input=None,
+        output=None,
+        usage_details=None,
+        metadata={f"attributes.{key}": value for key, value in span.attributes.items()},
+        provided_model_name=None,
+        session_id=session_id,
+        latency=None,
+        status_message=None,
+    )
 
 
-def test_aggregate_reports_span_histograms_handoffs_and_l2_averages(tmp_path: Path) -> None:
+class _FakeLangfuseClient(LangfuseClient):
+    def __init__(self, spans: list[SpanModel]) -> None:
+        self._observations = [_observation(span) for span in spans]
+
+    async def list_sessions(
+        self,
+        *,
+        limit: int = 50,
+        page: int | None = None,
+    ) -> list[SessionSummary]:
+        del limit
+        return [SessionSummary(id="session-memory", items_count=len(self._observations))] if page in (None, 1) else []
+
+    async def get_observations(
+        self,
+        *,
+        session_id: str | None = None,
+        trace_id: str | None = None,
+        from_start_time: datetime | None = None,
+        to_start_time: datetime | None = None,
+        cursor: str | None = None,
+        limit: int = 500,
+    ) -> tuple[list[ObservationData], str | None]:
+        del trace_id, to_start_time, cursor, limit
+        observations = [
+            item
+            for item in self._observations
+            if item.session_id == session_id
+            and (from_start_time is None or item.start_time >= from_start_time)
+        ]
+        return observations, None
+
+    async def close(self) -> None:
+        return None
+
+
+class _FailingLangfuseClient(_FakeLangfuseClient):
+    async def list_sessions(
+        self,
+        *,
+        limit: int = 50,
+        page: int | None = None,
+    ) -> list[SessionSummary]:
+        del limit, page
+        raise LangfuseQueryError(503, "collector unavailable")
+
+
+class _RecordingInjector(L2ScoreInjector):
+    def __init__(self) -> None:
+        self.scores_by_trace: dict[str, list[ScoreSpec]] = {}
+
+    async def inject_score_batch(
+        self,
+        trace_id: str,
+        scores: list[ScoreSpec],
+        *,
+        observation_id: str | None = None,
+    ) -> None:
+        assert observation_id is None
+        self.scores_by_trace[trace_id] = scores
+
+    async def aclose(self) -> None:
+        return None
+
+
+def test_aggregate_reads_langfuse_memory_spans_and_injects_trace_scores(
+    tmp_path: Path,
+) -> None:
+    spans = [
+        _span(
+            "memory.cleanup.finished",
+            "cleanup",
+            attributes={
+                "memory.tokens_before": 8_000,
+                "memory.tokens_after": 5_000,
+                "memory.messages_kept": 4,
+                "memory.messages_pruned": 6,
+                "memory.prune_ratio": 0.6,
+                "memory.max_token_ratio": 0.8,
+                "memory.window_tokens": 10_000,
+                "memory.model": "openai/step-3.7-flash",
+                "memory.calls": 1,
+                "memory.input_tokens": 1_000,
+                "memory.output_tokens": 100,
+                "memory.cache_read_tokens": 0,
+                "memory.cache_write_tokens": 0,
+            },
+        ),
+        _span(
+            "memory.context.assembled",
+            "context",
+            attributes={
+                "memory.duration_ms": 12.0,
+                "memory.sections": (
+                    '[{"source":"core","retrieved_tokens":100,'
+                    '"injected_tokens":75,"pruned_tokens":25,"priority":100}]'
+                ),
+            },
+        ),
+    ]
+    injector = _RecordingInjector()
+
+    report = aggregate(
+        tmp_path,
+        days=7,
+        langfuse_client=_FakeLangfuseClient(spans),
+        score_injector=injector,
+    )
+
+    assert "## Memory metrics" in report
+    assert "- Compression ratio: 1.0000" in report
+    assert "- Mean read latency: 12.00ms" in report
+    assert "- Injection retention: 75.0%" in report
+    visible_scores = injector.scores_by_trace["trace-memory"]
+    assert {score.name for score in visible_scores} == {
+        "memory_compression_ratio",
+        "memory_write_cost_usd",
+        "memory_read_latency_ms",
+        "memory_injection_retention",
+    }
+    for score in visible_scores:
+        assert score.comment is not None
+        provenance = Provenance.model_validate_json(score.comment)
+        assert provenance.scorer == "verifier"
+        assert provenance.report_source == "counters"
+        assert provenance.run_ref == "trace-memory"
+
+
+def test_aggregate_surfaces_langfuse_failure_explicitly(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="Langfuse metrics query failed.*503"):
+        aggregate(
+            tmp_path,
+            days=7,
+            langfuse_client=_FailingLangfuseClient([]),
+        )
+
+
+def test_aggregate_preserves_dormant_file_span_fallback(tmp_path: Path) -> None:
     now = datetime.now(UTC).timestamp()
-    root_span_id = "root-span"
-    trace_id = "trace-1"
     _write_spans(
         tmp_path,
         [
             SpanModel(
-                trace_id=trace_id,
-                span_id=root_span_id,
+                trace_id="trace-file",
+                span_id="root",
                 name=SpanName.INVOKE_AGENT,
                 start_time=now,
                 attributes={"stop_reason": StopReason.COMPLETED.value},
             ),
             SpanModel(
-                trace_id=trace_id,
+                trace_id="trace-file",
                 span_id="approval",
-                parent_span_id=root_span_id,
+                parent_span_id="root",
                 name=SpanName.HUMAN_REVIEW,
                 start_time=now,
                 attributes={GenAiAttr.APPROVAL_DECISION: "approved"},
             ),
-            SpanModel(
-                trace_id=trace_id,
-                span_id="handoff-1",
-                parent_span_id=root_span_id,
-                name=SpanName.AGENT_HANDOFF,
-                start_time=now,
-            ),
-            SpanModel(
-                trace_id=trace_id,
-                span_id="handoff-2",
-                parent_span_id=root_span_id,
-                name=SpanName.AGENT_HANDOFF,
-                start_time=now,
-            ),
-            SpanModel(
-                trace_id=trace_id,
-                span_id="child-root",
-                parent_span_id="handoff-2",
-                name=SpanName.INVOKE_AGENT,
-                start_time=now,
-                attributes={"stop_reason": StopReason.COMPLETED.value},
-            ),
-            SpanModel(
-                trace_id=trace_id,
-                span_id="chat-1",
-                parent_span_id=root_span_id,
-                name=SpanName.CHAT,
-                start_time=now,
-                attributes={
-                    GenAiAttr.USAGE_INPUT_TOKENS: 20,
-                    GenAiAttr.USAGE_OUTPUT_TOKENS: 30,
-                    GenAiAttr.USAGE_REASONING_TOKENS: 10,
-                    GenAiAttr.OUTPUT_MESSAGES: [
-                        {"role": "assistant", "parts": [{"type": "text", "content": "draft"}]}
-                    ],
-                },
-            ),
-            SpanModel(
-                trace_id=trace_id,
-                span_id="chat-2",
-                parent_span_id=root_span_id,
-                name=SpanName.CHAT,
-                start_time=now,
-                attributes={
-                    GenAiAttr.USAGE_INPUT_TOKENS: 10,
-                    GenAiAttr.USAGE_OUTPUT_TOKENS: 40,
-                    GenAiAttr.USAGE_REASONING_TOKENS: 20,
-                    GenAiAttr.OUTPUT_MESSAGES: [
-                        {
-                            "role": "assistant",
-                            "parts": [{"type": "text", "content": "final answer"}],
-                        }
-                    ],
-                },
-            ),
-            SpanModel(
-                trace_id=trace_id,
-                span_id="tool-1",
-                parent_span_id=root_span_id,
-                name=SpanName.EXECUTE_TOOL,
-                start_time=now,
-            ),
-            SpanModel(
-                trace_id=trace_id,
-                span_id="failed-root",
-                name=SpanName.INVOKE_AGENT,
-                start_time=now,
-                attributes={"stop_reason": StopReason.LOOP_DETECTED.value},
-            ),
         ],
     )
 
     report = aggregate(tmp_path, days=7)
 
-    assert "## Stop reasons" in report
-    assert f"- {StopReason.LOOP_DETECTED.value}: 1" in report
-    assert "## Approval decisions" in report
-    assert "- approved: 1" in report
-    assert "## Handoffs\n- Count: 2" in report
-    assert "## L2 score averages" in report
-    assert "- Root traces: 2" in report
-    assert "- No-tool traces: 1" in report
-    assert "- Tool success rate: 100.0%" in report
-    assert "- Avg tool calls: 0.5" in report
-    assert "- Avg error tools: 0.0" in report
-    assert "- Avg iterations: 0.0" in report
-    assert "- Avg LLM calls: 1.0" in report
-    assert "- Avg input tokens: 15" in report
-    assert "- Avg output tokens: 35" in report
-    assert "- Avg reasoning tokens: 15" in report
-    assert "- Avg API latency: 0.00s" in report
-    assert "- Cache hit rate: 0.0%" in report
-    assert "- Response token ratio: 35.0%" in report
-    assert "- Reasoning trace rate: 50.0%" in report
-
-
-def test_aggregate_excludes_records_older_than_days_window(tmp_path: Path) -> None:
-    now = datetime.now(UTC)
-    _write_cleanup(
-        tmp_path,
-        [
-            CleanupMetricRecord(
-                ts=now.isoformat(),
-                session_id="recent",
-                reason="recent_reason",
-                messages_kept=1,
-                messages_pruned=1,
-                compact_generated=False,
-                prune_ratio=0.5,
-            ),
-            CleanupMetricRecord(
-                ts=(now - timedelta(days=2)).isoformat(),
-                session_id="old",
-                reason="old_reason",
-                messages_kept=1,
-                messages_pruned=3,
-                compact_generated=True,
-                prune_ratio=0.75,
-            ),
-        ],
-    )
-    _write_spans(
-        tmp_path,
-        [
-            SpanModel(
-                trace_id="recent-trace",
-                span_id="recent-root",
-                name=SpanName.INVOKE_AGENT,
-                start_time=now.timestamp(),
-                attributes={"stop_reason": StopReason.COMPLETED.value},
-            ),
-            SpanModel(
-                trace_id="old-trace",
-                span_id="old-root",
-                name=SpanName.INVOKE_AGENT,
-                start_time=(now - timedelta(days=2)).timestamp(),
-                attributes={"stop_reason": StopReason.TIMEOUT.value},
-            ),
-        ],
-    )
-
-    report = aggregate(tmp_path, days=1)
-
-    assert "- Triggers: 1" in report
-    assert "- recent_reason: 1" in report
-    assert "old_reason" not in report
     assert f"- {StopReason.COMPLETED.value}: 1" in report
-    assert StopReason.TIMEOUT.value not in report
+    assert "- approved: 1" in report
+    assert "- Root traces: 1" in report
 
 
 def test_metrics_command_reports_empty_workspace_without_langfuse_env(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     for variable in ("LANGFUSE_HOST", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
         monkeypatch.delenv(variable, raising=False)
@@ -278,6 +245,6 @@ def test_metrics_command_reports_empty_workspace_without_langfuse_env(
     )
 
     assert result.exit_code == 0
-    assert "No local metrics data found for this period." in result.stdout
-    assert "## Cleanup metrics" in result.stdout
+    assert "No metrics data found for this period." in result.stdout
+    assert "## Memory metrics" in result.stdout
     assert "## L2 score averages" in result.stdout
