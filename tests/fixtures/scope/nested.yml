@@ -1,0 +1,14 @@
+workspace:
+  name: nested-ws
+  pools:
+    deep:
+      agents:
+        main:
+          description: root agent
+          agents:
+            sub:
+              description: middle agent
+              agents:
+                subsub:
+                  description: leaf agent
+                  toolset: read_only
