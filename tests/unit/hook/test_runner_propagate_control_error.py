@@ -1,7 +1,7 @@
 """HookRunner must propagate AgentControlError instead of swallowing it."""
 import pytest
 
-from modex_agent.control.exceptions import AgentCancelled, LoopDetectedError
+from modex_agent.control.exceptions import AgentCancelledError, LoopDetectedError
 from modex_agent.hook.abc import AfterLLMResponseHook, HookPoint, HookSpec
 from modex_agent.hook.runner import HookRunner
 
@@ -21,7 +21,7 @@ class _CancelledHook(AfterLLMResponseHook):
         return "cancel"
 
     async def after_llm_response(self, ctx, response) -> None:  # noqa: ANN001
-        raise AgentCancelled()
+        raise AgentCancelledError()
 
 
 @pytest.mark.asyncio
@@ -34,5 +34,5 @@ async def test_runner_propagates_loop_detected_error():
 @pytest.mark.asyncio
 async def test_runner_still_propagates_agent_cancelled():
     runner = HookRunner([HookSpec(hook=_CancelledHook())])
-    with pytest.raises(AgentCancelled):
+    with pytest.raises(AgentCancelledError):
         await runner.dispatch(HookPoint.AFTER_LLM_RESPONSE, ctx=None, payload=None)

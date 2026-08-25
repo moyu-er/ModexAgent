@@ -24,6 +24,12 @@ Native (react) subagent — includes the output path::
     Result:
     Exploration complete. Found 3 entry points...
 
+    The task is complete and its result is fully delivered — you don't
+    need to call task again to collect it. The Result text above is a
+    truncated summary; the Output file holds the complete deliverable.
+    To assign this subagent new follow-up work, call task with
+    invocation_id=638aaa67.
+
 External coding subagent — no file artifacts::
 
     Message from subagent 'coder':
@@ -34,16 +40,26 @@ External coding subagent — no file artifacts::
     Result:
     Task finished.
 
-On failure an ``Issue:`` line explains the problem and how to resume::
+    The task is complete and its result is fully delivered. To assign
+    this subagent new follow-up work, call task with
+    invocation_id=638aaa67.
+
+On failure an ``Issue:`` line explains the problem::
 
     Message from subagent 'office-expert':
     invocation_id: 638aaa67
     status: failed
     Stop reason: error
-    Issue: Subagent crashed with error: timeout. To continue, send a message with invocation_id=638aaa67.
+    Issue: Subagent crashed with error: timeout. Task is incomplete. Check the subagent's last output for details.
     Output: /path/to/OUTPUT_1.md
 
     Result:
+
+
+    The task is incomplete. To continue it, call task with
+    target_agent='office-expert', invocation_id='638aaa67', and
+    content=your follow-up instructions — the subagent resumes with its
+    prior context.
 
 Design rationale (ADR-0027 evolution):
 - ``status`` ("success"/"failed") replaces the old ``success`` boolean XML field.
@@ -52,8 +68,8 @@ Design rationale (ADR-0027 evolution):
   ``result.messages`` (not ``result.content``, which is a placeholder on
   non-normal exit paths).  Notifications are truncated to 300 characters;
   native deliverable files preserve the full content.
-- ``issue`` merges the old ``error`` + ``hint`` and appears **only** on
-  failure, keeping the success notification clean.
+- ``issue`` carries failure details and appears **only** on failure, keeping
+  the success notification clean.
 - Native subagents keep the ``Output:`` line so the parent can read the
   full deliverable.
 - External subagents omit file-based artifacts (no OUTPUT.md concept).  The
@@ -165,7 +181,7 @@ class SubagentAutoSendHook(OutcomeFinallyHook):
             output_path, write_error = None, str(exc)
 
         success, issue = self._classify(
-            stop_reason, error, invocation_id,
+            stop_reason, error,
             is_external=False,
         )
         if write_error is not None:
@@ -199,7 +215,7 @@ class SubagentAutoSendHook(OutcomeFinallyHook):
         # parent receives the complete deliverable.
         result_text = self._extract_full_result_text(result)
         success, issue = self._classify(
-            stop_reason, error, invocation_id,
+            stop_reason, error,
             is_external=True,
         )
         # replied is None — the Replied: line is omitted from the content.
@@ -339,11 +355,11 @@ class SubagentAutoSendHook(OutcomeFinallyHook):
     # -- success classification -----------------------------------------------
 
     #: Stop reasons that indicate the turn did NOT complete normally.
-    _NON_NORMAL_STOPS: frozenset[str] = frozenset({
-        "max_iterations",
-        "turn_cancelled",
-        "timeout",
-        "loop_detected",
+    _NON_NORMAL_STOPS: frozenset[StopReason] = frozenset({
+        StopReason.MAX_ITERATIONS,
+        StopReason.TURN_CANCELLED,
+        StopReason.TIMEOUT,
+        StopReason.LOOP_DETECTED,
     })
 
     @classmethod
@@ -351,7 +367,6 @@ class SubagentAutoSendHook(OutcomeFinallyHook):
         cls,
         stop_reason: str,
         error: str | None,
-        invocation_id: str,
         *,
         is_external: bool,
     ) -> tuple[bool, str]:
@@ -370,27 +385,18 @@ class SubagentAutoSendHook(OutcomeFinallyHook):
           other non-normal stops are left for the parent to judge based
           on the result text.
 
-        The resume hint does **not** depend on the subagent type — it is
-        advice to the **parent** (the agent receiving this notification).
-        The hook runs on the subagent side and does not know the parent's
-        type, so it uses the tool-agnostic wording "send a message with
-        invocation_id=xxx" (matching the original design).  The parent
-        already knows which communication tool it has.
         """
-        resume = cls._resume_hint(invocation_id)
-
         # --- Hard failures (both kinds) ---
         if error:
             detail = "Check the subagent's last output for details."
             return False, (
-                f"Subagent crashed with error: {error}. Task is incomplete. "
-                f"{detail}{resume}"
+                f"Subagent crashed with error: {error}. Task is incomplete. {detail}"
             )
 
-        if stop_reason == "loop_detected":
+        if stop_reason == StopReason.LOOP_DETECTED:
             return False, (
-                f"Subagent was stuck in a loop (repeating the same output or "
-                f"tool calls). Task is incomplete.{resume}"
+                "Subagent was stuck in a loop (repeating the same output or "
+                "tool calls). Task is incomplete."
             )
 
         # --- Native-only soft failures ---
@@ -399,25 +405,9 @@ class SubagentAutoSendHook(OutcomeFinallyHook):
         # its work without sending a reply.  Let the parent decide based on
         # the result text.
         if not is_external and stop_reason in cls._NON_NORMAL_STOPS:
-            return False, (
-                f"Subagent stopped with {stop_reason} — task is incomplete."
-                f"{resume}"
-            )
+            return False, f"Subagent stopped with {stop_reason} — task is incomplete."
 
         return True, ""
-
-    @staticmethod
-    def _resume_hint(invocation_id: str) -> str:
-        """Build a resume instruction for the parent agent.
-
-        Tool-agnostic: the hook runs on the subagent side and does not know
-        whether the parent is native (uses ``send_to_agent``) or external
-        (uses ``modexctl send``).  The parent already knows its own tools,
-        so we only state the invocation_id to resume with.
-        """
-        if not invocation_id:
-            return ""
-        return f" To continue, send a message with invocation_id={invocation_id}."
 
     # -- notification ---------------------------------------------------------
 

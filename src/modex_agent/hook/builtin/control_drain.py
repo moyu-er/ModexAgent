@@ -43,7 +43,7 @@ async def drain_control_channel(
 
     Drains ALL matching commands at once from the channel (atomic, destructive).
     For each command:
-    - If command's turn_uuid matches → execute action (e.g., raise AgentCancelled)
+    - If command's turn_uuid matches → execute action (e.g., raise AgentCancelledError)
     - If command's turn_uuid does NOT match → consume (discard) silently
     - If no turn_uuid in command payload → execute (backward-compatible defense)
 
@@ -58,7 +58,7 @@ async def drain_control_channel(
         False if no commands were found.
 
     Raises:
-        AgentCancelled: When a CANCEL_TURN command matches the current turn.
+        AgentCancelledError: When a CANCEL_TURN command matches the current turn.
     """
     if channel is None:
         return False
@@ -100,9 +100,9 @@ async def drain_control_channel(
                 str(ctx.session),
                 turn_uuid,
             )
-            from modex_agent.control.exceptions import AgentCancelled
+            from modex_agent.control.exceptions import AgentCancelledError
 
-            raise AgentCancelled("User requested /stop")
+            raise AgentCancelledError("User requested /stop")
 
     return True
 
@@ -110,7 +110,7 @@ async def drain_control_channel(
 class ControlDrainInterceptor(ToolCallInterceptor):
     """Drains control channel before each tool call.
 
-    If CANCEL_TURN matches, AgentCancelled propagates through the
+    If CANCEL_TURN matches, AgentCancelledError propagates through the
     interceptor chain, causing the ReAct graph to exit via AgentControlError
     propagation (InterceptorChain.around_tool_call re-raises AgentControlError).
     """
@@ -140,7 +140,7 @@ class LlmCancelInterceptor(LLMStreamInterceptor):
     """Drains control channel during LLM streaming.
 
     Checks for CANCEL_TURN before each chunk. If a matching CANCEL_TURN
-    is found, AgentCancelled propagates immediately — aborting the stream
+    is found, AgentCancelledError propagates immediately — aborting the stream
     and causing the ReAct graph to exit via AgentControlError propagation.
     This is a "hard cancel": the command is consumed destructively and the
     exception prevents any subsequent tool calls from executing.

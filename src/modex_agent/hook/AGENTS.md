@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-18 -->
+<!-- Updated: 2026-08-24 -->
 
 # hook
 
@@ -20,7 +20,7 @@ Lifecycle extension points — lightweight observation and context injection. Ho
 
 | Directory | Purpose |
 |-----------|---------|
-| `builtin/` | Built-in hook implementations — `logging.py`, `runtime_context.py`, `inbox_flush.py`, `subagent_auto_send.py`, `env_injection.py`, `loop_detection.py`, `deliver_retry.py` (`DeliverRetryHook` — `AfterTurnHook`, sets `CONTINUATION_REQUEST` when the agent stops without delivering; covers both normal stop and max-iteration exits), `current_time.py` (`CurrentTimeInjectionHook` — `StartNodeTurnHook`), `todo_continuation.py` (`TodoContinuationHook` — `AfterTurnHook`), `control_drain.py` (interceptors, not hooks), `experience_review.py`. See `hook/builtin/AGENTS.md`. |
+| `builtin/` | Built-in hook implementations — `logging.py`, `runtime_context.py`, `inbox_flush.py`, `subagent_auto_send.py`, `env_injection.py`, `loop_detection.py`, `deliver_retry.py` (`DeliverRetryHook` — `AfterTurnHook`, sets `CONTINUATION_REQUEST` when the agent stops without delivering; covers both normal stop and max-iteration exits), `current_time.py` (`CurrentTimeInjectionHook` — `StartNodeTurnHook`), `todo_continuation.py` (`TodoContinuationHook` — `AfterTurnHook`), `length_guard.py` (`LengthGuardHook` — `AfterLLMResponseHook` + `AfterTurnHook`, recovers degenerate length/empty endings and fails honestly after 10 nudges), `control_drain.py` (interceptors, not hooks), `experience_review.py`. See `hook/builtin/AGENTS.md`. |
 
 ## Four-Level Hook Hierarchy
 
@@ -119,11 +119,11 @@ Graph-level hooks (`BeforeGraphHook` / `AfterGraphHook` / `FinallyGraphHook`) fi
 
 - **Fresh turn**: 全新 user message，graph 从 START 正常走到 END。
 - **续作**: `AfterTurnNode` 的续作门控检测到 `CONTINUATION_REQUEST`，路由回 BEFORE 开始新一轮 turn attempt。Graph 级 hook 不重复触发，turn-attempt 级和 node 级的 END 重新触发。
-- **审批恢复**: `actual_turn()` 被重新调用（re-entry），BEFORE_GRAPH/AFTER_GRAPH/FINALLY_GRAPH 重复触发。StartNode 检测到 `resume_target` 后直接路由到 TOOL，跳过 START_NODE_TURN。Graph 拓扑天然路由 TOOL→LLM→AFTER，④AFTER_TURN 会触发——这是正确行为，AFTER_TURN 上的 hook（DeliverRetryHook/TodoContinuationHook）都是有状态检查的，触发安全。
+- **审批恢复**: `actual_turn()` 被重新调用（re-entry），BEFORE_GRAPH/AFTER_GRAPH/FINALLY_GRAPH 重复触发。StartNode 检测到 `resume_target` 后直接路由到 TOOL，跳过 START_NODE_TURN。Graph 拓扑天然路由 TOOL→LLM→AFTER，④AFTER_TURN 会触发——这是正确行为，AFTER_TURN 上的 hook（DeliverRetryHook/TodoContinuationHook/LengthGuardHook）都是有状态检查的，触发安全。
 
 ### Hook Inventory
 
-#### Built-in Hooks (13 implemented + 1 reserved)
+#### Built-in Hooks (14 implemented + 1 reserved)
 
 | # | Hook | ABC(s) | HookPoint(s) | Description |
 |---|------|--------|--------------|-------------|
@@ -134,12 +134,13 @@ Graph-level hooks (`BeforeGraphHook` / `AfterGraphHook` / `FinallyGraphHook`) fi
 | 5 | `ModelChoiceBindHook` | `StartNodeTurnHook` | ② start_node_turn | Binds per-turn model selection (contextvar + model_info override); moved from graph-level to avoid re-bind on resume |
 | 6 | `DeliverRetryHook` | `AfterTurnHook` | ④ after_turn | Injects a deliver-reminder and sets `CONTINUATION_REQUEST` (only when `turn_attempt < MAX_TURNS`) when the agent stops without calling `deliver`. Reminder is always injected so the agent understands why it stopped, even at the turn budget limit. Independent of other AfterTurnHook continuation sources — no OR/AND coordination. Does not set `CONTINUATION_RENEW_MAX_TURNS` (binary signal, no watchdog renewal). Moved from `AfterLLMResponseHook` to `AfterTurnHook` to cover the max-iteration blind spot |
 | 7 | `TodoContinuationHook` ⭐ | `AfterTurnHook` | ④ after_turn | The primary continuation driver — registered first among AfterTurnHook sources. Injects a system-reminder with the full active (pending + in_progress) todo list, sets `CONTINUATION_REQUEST`, and sets `CONTINUATION_RENEW_MAX_TURNS` (watchdog: authorizes the gate to extend `MAX_TURNS` by 1 when the agent is still making progress). Anti-deadlock: caches sha256 signature of active todo content+status in `state.custom[LAST_CONTINUATION_TODO_SIG]`; skips if unchanged since last check (agent made no progress). Clears the cached signature when no active todos remain. Independent of other hooks — no OR/AND coordination |
-| 8 | `ExperienceReviewHook` | `AfterGraphHook` | ⑥ after_graph | Spawns background conversation-review agent after graph execution; main agent only |
-| 9 | `SubagentAutoSendHook` | `OutcomeFinallyHook` | ⑦ finally_graph | On subagent turn completion, writes numbered OUTPUT\_\<n\>.md deliverable and notifies parent via bus (suspend leg skipped by template-method base) |
-| 10 | `TurnOutcomeNotifyHook` | `OutcomeFinallyHook` | ⑦ finally_graph | Sends user-facing notification on max_iterations/error turn outcomes |
-| 11 | `TrainingDataHook` | `OutcomeFinallyHook` | ⑦ finally_graph | Records training data at graph teardown (suspend leg skipped by template-method base) |
-| 12 | `CassetteFlushHook` | `FinallyGraphHook` | ⑦ finally_graph | Saves cassette recording at graph teardown |
-| 13 | `CheckpointHook` | `AfterIterationHook` | after_iteration | Captures per-iteration checkpoint snapshots |
+| 8 | `LengthGuardHook` | `AfterLLMResponseHook` + `AfterTurnHook` | AFTER_LLM_RESPONSE + ④ after_turn | Recovers degenerate turn endings (finish_reason=length/stop with empty content and zero tool calls, or length with truncated prose): injects a no-thinking nudge system-reminder and sets `CONTINUATION_REQUEST` + `CONTINUATION_RENEW_MAX_TURNS` so the gate re-enters the ReAct loop past `MAX_TURNS`. Counts consecutive degenerate endings in `state.custom[LENGTH_GUARD_NUDGES]` — reset to 0 by any productive LLM response (content or tool calls). After `MAX_NUDGES=10` consecutive degenerate endings with no progress, mutates the turn's `AgentResult` in place to `StopReason.ERROR` (honest failure instead of silent COMPLETED — the v5 harness gap). Tree-agnostic; registered via `register_tree_aware_hooks` with default priority |
+| 9 | `ExperienceReviewHook` | `AfterGraphHook` | ⑥ after_graph | Spawns background conversation-review agent after graph execution; main agent only |
+| 10 | `SubagentAutoSendHook` | `OutcomeFinallyHook` | ⑦ finally_graph | On subagent turn completion, writes numbered OUTPUT\_\<n\>.md deliverable and notifies parent via bus (suspend leg skipped by template-method base) |
+| 11 | `TurnOutcomeNotifyHook` | `OutcomeFinallyHook` | ⑦ finally_graph | Sends user-facing notification on max_iterations/error turn outcomes |
+| 12 | `TrainingDataHook` | `OutcomeFinallyHook` | ⑦ finally_graph | Records training data at graph teardown (suspend leg skipped by template-method base) |
+| 13 | `CassetteFlushHook` | `FinallyGraphHook` | ⑦ finally_graph | Saves cassette recording at graph teardown |
+| 14 | `CheckpointHook` | `AfterIterationHook` | after_iteration | Captures per-iteration checkpoint snapshots |
 | — | `EndNodeTurnHook` | (reserved) | ⑤ end_node_turn | ABC + dispatch entry exist for future extensibility; no concrete hook inherits it yet (by design) |
 
 ⭐ = newly added by hook-architecture-rebuild.
@@ -158,9 +159,10 @@ shared_hooks = [
 #   Called by _wire_main_pipeline (main agent) AND AgentTemplate.materialize (subagent)
 TodoContinuationHook(tree=tree_manager)    # ④ AFTER_TURN — priority=-1000, primary driver
 DeliverRetryHook(tree=tree_manager)        # ④ AFTER_TURN — independent, sets REQUEST (no RENEW)
+LengthGuardHook()                          # AFTER_LLM_RESPONSE + ④ AFTER_TURN — tree-agnostic degenerate-ending guard
 ```
 
-`TodoContinuationHook` gets `priority=-1000` because it is the only hook that sets `CONTINUATION_RENEW_MAX_TURNS` (watchdog renewal), and its reminder (including the active todo list) should land before other hooks' reminders so the agent sees the todo list first. Both hooks are registered via `register_tree_aware_hooks` — the single convergence function called from both `_wire_main_pipeline` (main agent) and `AgentTemplate.materialize` (subagent). They need `tree_manager` for the tree-aware subtree-active check; `tree_manager` is a per-pool resource created in `factory.create_pool`, not available at workspace-level `shared_hooks` build time. For subagents, the tree-aware check is safe: a subagent's subtree is empty (star topology), so `get_active_subtree_nodes` returns only the subagent itself (len=1), and the hook fires normally. `DeliverRetryHook` is a no-op for subagents (no `deliver` tool — the tool check gates it).
+`TodoContinuationHook` gets `priority=-1000` because it is the primary continuation driver and its reminder (including the active todo list) should land before other hooks' reminders so the agent sees the todo list first. The tree-aware hooks are registered via `register_tree_aware_hooks` — the single convergence function called from both `_wire_main_pipeline` (main agent) and `AgentTemplate.materialize` (subagent). They need `tree_manager` for the tree-aware subtree-active check; `tree_manager` is a per-pool resource created in `factory.create_pool`, not available at workspace-level `shared_hooks` build time. For subagents, the tree-aware check is safe: a subagent's subtree is empty (star topology), so `get_active_subtree_nodes` returns only the subagent itself (len=1), and the hook fires normally. `DeliverRetryHook` is a no-op for subagents (no `deliver` tool — the tool check gates it). `LengthGuardHook` needs no tree — it acts on per-turn LLM state (`custom[LAST_LLM_FINISH_REASON]` / `custom[LENGTH_GUARD_NUDGES]`) — so it is registered in the same convergence function with the default priority. Two hooks set `CONTINUATION_RENEW_MAX_TURNS` (watchdog renewal): `TodoContinuationHook` and `LengthGuardHook`.
 
 The gate in `AfterTurnNode` consumes two one-shot flags:
 - `CONTINUATION_REQUEST` — any hook wants another turn attempt.
@@ -202,7 +204,7 @@ Terminal legs always dispatch a concrete `AgentResult`.
 | `START_NODE_TURN` | `start_node_turn` | Node | `StartNode` entry (fresh turns only) | Current-time injection, per-turn model binding, inbox flush, runtime context tracking |
 | `END_NODE_TURN` | `end_node_turn` | Node | `EndNode` exit (terminal only) | Post-turn observation |
 | `BEFORE_TURN` | `before_turn` | TurnAttempt | `BeforeTurnNode` entry, per attempt | Turn-attempt initialization |
-| `AFTER_TURN` | `after_turn` | TurnAttempt | `AfterTurnNode` exit, per attempt | Deliver retry, todo continuation |
+| `AFTER_TURN` | `after_turn` | TurnAttempt | `AfterTurnNode` exit, per attempt | Deliver retry, todo continuation, length guard |
 | `BEFORE_ITERATION` | `before_iteration` | Iteration | Each ReAct loop iteration | Dynamic tool filtering |
 | `AFTER_ITERATION` | `after_iteration` | Iteration | After each iteration | Restore state, checkpoint |
 | `BEFORE_TOOL_EXECUTION` | `before_tool_execution` | Iteration | Before tool batch | Policy guard, logging |

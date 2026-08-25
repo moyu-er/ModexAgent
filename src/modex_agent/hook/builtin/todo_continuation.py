@@ -2,9 +2,10 @@
 
 Registered first among AfterTurnHook continuation sources so its reminder
 (including the active todo list) lands before other hooks' reminders.  It is
-the only hook that sets ``CONTINUATION_RENEW_MAX_TURNS`` — the watchdog
-signal that authorizes the gate to extend ``MAX_TURNS`` past the current
-upper bound when the agent is still making progress on its todos.
+one of the two hooks that set ``CONTINUATION_RENEW_MAX_TURNS`` (the other is
+``LengthGuardHook``) — the watchdog signal that authorizes the gate to
+extend ``MAX_TURNS`` past the current upper bound while the agent is still
+making progress (todos here, degenerate-ending recovery there).
 """
 
 from __future__ import annotations

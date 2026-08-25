@@ -34,15 +34,17 @@ class KnowledgeHook(BeforeTurnHook, AfterTurnHook):
          (GRAPH_KNOWLEDGE_HAS_READABLE is False) — the agent cannot read
          what no node has written.
 
-    Graph mode is the upper layer — only graph node main agents
-    (``is_node_execution``) receive knowledge lifecycle. Subagents are
-    atomic agents and never get knowledge config, even in graph mode.
+    Graph mode is the upper layer — only graph node executions
+    (``is_node_execution``, any agent kind per SPEC §4 axis 3) receive
+    knowledge lifecycle. Subagents dispatched from within a graph turn are
+    atomic agents and never get knowledge config; a subagent referenced
+    directly as a graph node does.
 
     Gate: ``_has_knowledge_config(ctx)`` checks ``graph_context`` is set
     AND ``GRAPH_KNOWLEDGE_DIR`` state key exists (set only by
-    ``GraphKnowledgeConfigurator`` whose gate is ``is_node_execution and
-    NORMAL``). This excludes subagents who have ``graph_context`` but no
-    knowledge dir key.
+    ``GraphKnowledgeConfigurator`` whose gate is ``is_node_execution``).
+    This excludes subagents who have ``graph_context`` but no knowledge
+    dir key.
 
     Configuration matrix (see ``docs/design/session-tree/layered-config-matrix.md``):
 
@@ -51,7 +53,8 @@ class KnowledgeHook(BeforeTurnHook, AfterTurnHook):
     | native main session   | no-op         |
     | native main graph     | active        |
     | native sub session    | no-op         |
-    | native sub graph      | no-op (excluded) |
+    | native sub, dispatched from graph node | no-op |
+    | native sub AS graph node (lazy leaf)    | active |
     | external (any)        | not registered |
 
     Per-node config is read from state.custom:
@@ -246,15 +249,16 @@ class KnowledgeHook(BeforeTurnHook, AfterTurnHook):
 
 
 def _has_knowledge_config(ctx: AgentContext) -> bool:
-    """True when this turn has graph knowledge config (graph node main agent only).
+    """True when this turn has graph knowledge config (graph node execution).
 
-    Graph mode is the upper layer — only graph node main agents receive
-    knowledge lifecycle. Subagents are atomic agents and never get
-    ``GRAPH_KNOWLEDGE_DIR``, even in graph mode. Checking for the dir key
-    (set by ``GraphKnowledgeConfigurator`` whose gate is
-    ``is_node_execution and agent_kind == NORMAL``) is the most precise gate:
-    it directly tests whether the configurator ran, regardless of how
-    ``graph_context`` was set.
+    Graph mode is the upper layer — only graph node executions receive
+    knowledge lifecycle. Subagents dispatched from within a graph turn are
+    atomic agents and never get ``GRAPH_KNOWLEDGE_DIR``; a subagent
+    referenced directly as a graph node does (SPEC §4 axis 3). Checking for
+    the dir key (set by ``GraphKnowledgeConfigurator`` whose gate is
+    ``is_node_execution``) is the most precise gate: it directly tests
+    whether the configurator ran, regardless of how ``graph_context`` was
+    set.
     """
     if ctx.graph_context is None:
         return False

@@ -329,9 +329,9 @@ class HookRunner:
             pass
         elif spec.on_error == HookErrorPolicy.ABORT:
             error_type = "timeout" if is_timeout else "error"
-            from modex_agent.control.exceptions import PolicyViolation
+            from modex_agent.control.exceptions import PolicyViolationError
 
-            raise PolicyViolation(
+            raise PolicyViolationError(
                 f"Hook {hook_name}.{hook_point.value} {error_type} (policy=abort)"
             )
 

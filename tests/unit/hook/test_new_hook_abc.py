@@ -7,7 +7,7 @@ from collections.abc import Sequence
 import pytest
 
 from modex_agent.approval.constants import ApprovalTier
-from modex_agent.control.exceptions import PolicyViolation
+from modex_agent.control.exceptions import PolicyViolationError
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
@@ -172,7 +172,7 @@ async def test_before_llm_error_abort_policy() -> None:
     runner = HookRunner([HookSpec(hook, on_error=HookErrorPolicy.ABORT)])
     ctx = _make_minimal_context()
 
-    with pytest.raises(PolicyViolation, match="failing_before_llm"):
+    with pytest.raises(PolicyViolationError, match="failing_before_llm"):
         await runner.dispatch(
             HookPoint.BEFORE_LLM,
             ctx,
@@ -285,7 +285,7 @@ async def test_after_approval_error_abort_policy() -> None:
     runner = HookRunner([HookSpec(hook, on_error=HookErrorPolicy.ABORT)])
     ctx = _make_minimal_context()
 
-    with pytest.raises(PolicyViolation, match="failing_after_approval"):
+    with pytest.raises(PolicyViolationError, match="failing_after_approval"):
         await runner.dispatch(
             HookPoint.AFTER_APPROVAL,
             ctx,
