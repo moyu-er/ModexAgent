@@ -448,6 +448,161 @@ class TestHeaderEdgeCases:
         )
 
 
+class TestReasoningBlock:
+    """``[reasoning]`` sub-block: verbatim reasoning chain in assistant blocks.
+
+    Pruned transcripts are the original conversation record — the reasoning
+    chain renders in full, never truncated (unlike the compaction serializer,
+    which truncates to tool_output_max_chars).
+    """
+
+    def test_reasoning_precedes_content_and_tool_calls(self) -> None:
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "assistant",
+                "content": "定位到了问题",
+                "reasoning_content": "TTL 是 3600 秒,报错在 auth.py 抛出",
+                "tool_calls": [
+                    {
+                        "id": "call_r1",
+                        "type": "function",
+                        "function": {
+                            "name": "read",
+                            "arguments": '{"path": "/src/middleware.py"}',
+                        },
+                    },
+                ],
+                "created_at": "2026-08-19 10:33:00",
+            },
+        ]
+        rendered = render_transcript(
+            1,
+            "with reasoning",
+            messages,
+            datetime(2026, 8, 19, 10, 33),
+            datetime(2026, 8, 19, 10, 33),
+        )
+        assert rendered == (
+            "# Transcript #1 · with reasoning\n"
+            "- range: 2026-08-19 10:33 ~ 2026-08-19 10:33\n"
+            "- messages: 1\n"
+            "\n"
+            "---\n"
+            "\n"
+            "## [001] assistant · 08-19 10:33\n"
+            "\n"
+            "[reasoning]\n"
+            "TTL 是 3600 秒,报错在 auth.py 抛出\n"
+            "\n"
+            "定位到了问题\n"
+            "\n"
+            '[tool_call read · call_r1] {"path": "/src/middleware.py"}\n'
+            "\n"
+            "---"
+        )
+
+    def test_reasoning_rendered_verbatim_without_truncation(self) -> None:
+        reasoning = "z" * 5000
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "assistant",
+                "content": None,
+                "reasoning_content": reasoning,
+                "created_at": "2026-08-19 10:33:00",
+            },
+        ]
+        rendered = render_transcript(
+            1,
+            "long reasoning",
+            messages,
+            datetime(2026, 8, 19, 10, 33),
+            datetime(2026, 8, 19, 10, 33),
+        )
+        assert f"[reasoning]\n{reasoning}\n" in rendered
+        assert "chars total" not in rendered
+        assert "..." not in rendered
+
+    def test_reasoning_only_body_renders_without_empty_marker(self) -> None:
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "assistant",
+                "content": None,
+                "reasoning_content": "只有思考链",
+                "created_at": "2026-08-19 10:33:00",
+            },
+        ]
+        rendered = render_transcript(
+            1,
+            "reasoning only",
+            messages,
+            datetime(2026, 8, 19, 10, 33),
+            datetime(2026, 8, 19, 10, 33),
+        )
+        assert rendered.endswith("## [001] assistant · 08-19 10:33\n\n[reasoning]\n只有思考链\n\n---")
+
+    def test_blank_reasoning_renders_empty_marker(self) -> None:
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "assistant",
+                "content": None,
+                "reasoning_content": "   ",
+                "created_at": "2026-08-19 10:33:00",
+            },
+        ]
+        rendered = render_transcript(
+            1,
+            "blank reasoning",
+            messages,
+            datetime(2026, 8, 19, 10, 33),
+            datetime(2026, 8, 19, 10, 33),
+        )
+        assert "[reasoning]" not in rendered
+        assert "(empty)" in rendered
+
+    def test_reasoning_on_non_assistant_role_not_rendered(self) -> None:
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "user",
+                "content": "用户消息",
+                "reasoning_content": "不该出现",
+                "created_at": "2026-08-19 10:31:00",
+            },
+        ]
+        rendered = render_transcript(
+            1,
+            "stray reasoning",
+            messages,
+            datetime(2026, 8, 19, 10, 31),
+            datetime(2026, 8, 19, 10, 31),
+        )
+        assert "[reasoning]" not in rendered
+        assert rendered.endswith("## [001] user · 08-19 10:31\n\n用户消息\n\n---")
+
+    def test_reasoning_does_not_break_toc_line_count(self) -> None:
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "assistant",
+                "content": "第一条",
+                "reasoning_content": "思考一",
+                "created_at": "2026-08-19 10:31:00",
+            },
+            {
+                "role": "assistant",
+                "content": "第二条",
+                "reasoning_content": "思考二",
+                "created_at": "2026-08-19 10:32:00",
+            },
+        ]
+        rendered = render_transcript(
+            1,
+            "toc intact",
+            messages,
+            datetime(2026, 8, 19, 10, 31),
+            datetime(2026, 8, 19, 10, 32),
+        )
+        assert rendered.count("\n## [") == 2
+
+
 class TestSequenceWidth:
     """Scenario (g): seq width adapts past 999 messages."""
 

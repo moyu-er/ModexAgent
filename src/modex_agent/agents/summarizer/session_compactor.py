@@ -139,6 +139,7 @@ class SessionCompactorAgent(ScopedFileAgent):
 
         Format:
             [User]: <content>
+            [Assistant reasoning]: <reasoning, truncated to tool_output_max_chars>
             [Assistant]: <content>
             [Assistant tool calls]: tool_name(key=value, ...)
             [Tool result]: <content, truncated to tool_output_max_chars>
@@ -169,6 +170,14 @@ class SessionCompactorAgent(ScopedFileAgent):
                 content = str(content) if content is not None else ""
 
             if role == str(MessageRole.ASSISTANT):
+                # reasoning_content persists on every assistant message but is
+                # replayed by providers only on tool-call turns; compaction
+                # summarizes the full persisted record.
+                reasoning = msg.get("reasoning_content")
+                if isinstance(reasoning, str) and reasoning.strip():
+                    if len(reasoning) > max_tool:
+                        reasoning = reasoning[:max_tool] + f"\n... ({len(reasoning)} chars total)"
+                    lines.append(f"[Assistant reasoning]: {reasoning}")
                 # Output tool calls if present.
                 tool_calls = msg.get("tool_calls")
                 if tool_calls and isinstance(tool_calls, Sequence):

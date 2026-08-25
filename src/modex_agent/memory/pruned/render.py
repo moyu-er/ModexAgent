@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import Any
 
 from modex_agent.core.message import ChatMessage, ImageUrlPart, TextPart
-from modex_agent.core.types import ToolCall
+from modex_agent.core.types import MessageRole, ToolCall
 
 __all__ = ["render_transcript"]
 
@@ -70,15 +70,40 @@ def _block_header(seq: str, msg: ChatMessage) -> str:
 
 
 def _body(msg: ChatMessage) -> str:
-    """Block body: content (verbatim or per-part), then tool_call lines."""
+    """Block body: optional ``[reasoning]`` block, content, then tool_call lines.
+
+    The reasoning chain renders verbatim — pruned transcripts are the original
+    conversation record, so unlike the compaction serializer nothing is
+    truncated here.
+    """
+    sections: list[str] = []
+    reasoning = _reasoning_text(msg)
+    if reasoning is not None:
+        sections.append(f"[reasoning]\n{reasoning}")
     tool_lines = "\n".join(_tool_call_line(tc) for tc in msg.tool_calls or [])
     content = msg.content
-    if content is None:
-        return tool_lines if tool_lines else "(empty)"
-    text = _content_text(content)
+    if content is not None:
+        sections.append(_content_text(content))
     if tool_lines:
-        return f"{text}\n\n{tool_lines}"
-    return text
+        sections.append(tool_lines)
+    if not sections:
+        return "(empty)"
+    return "\n\n".join(sections)
+
+
+def _reasoning_text(msg: ChatMessage) -> str | None:
+    """Return the assistant reasoning chain verbatim, or None.
+
+    ``reasoning_content`` rides on ``model_extra`` and is read via attribute
+    access (the ``after_turn`` precedent). Only assistant messages carry it;
+    blank values render nothing.
+    """
+    if str(msg.role) != str(MessageRole.ASSISTANT):
+        return None
+    reasoning = getattr(msg, "reasoning_content", None)
+    if isinstance(reasoning, str) and reasoning.strip():
+        return reasoning
+    return None
 
 
 def _content_text(content: str | list[TextPart | ImageUrlPart]) -> str:
