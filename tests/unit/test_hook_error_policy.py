@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.control.exceptions import PolicyViolation
+from modex_agent.control.exceptions import PolicyViolationError
 from modex_agent.hook import HookErrorPolicy, HookPoint, HookPayload, HookRunner, HookSpec
 from modex_agent.hook.abc import BeforeIterationHook, BeforeGraphHook
 
@@ -94,14 +94,14 @@ class TestHookErrorPolicyLog:
 
 
 class TestHookErrorPolicyAbort:
-    """ABORT: exception is converted to PolicyViolation and raised."""
+    """ABORT: exception is converted to PolicyViolationError and raised."""
 
     @pytest.mark.asyncio
     async def test_abort_raises_policy_violation(self):
         runner = HookRunner([
             HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.ABORT),
         ])
-        with pytest.raises(PolicyViolation):
+        with pytest.raises(PolicyViolationError):
             await runner.dispatch(HookPoint.BEFORE_GRAPH, None)
 
     @pytest.mark.asyncio
@@ -118,7 +118,7 @@ class TestHookErrorPolicyAbort:
             HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.ABORT),
             HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.ABORT),
         ])
-        with pytest.raises(PolicyViolation):
+        with pytest.raises(PolicyViolationError):
             await runner.dispatch(HookPoint.BEFORE_GRAPH, None)
         assert calls == []
 
@@ -135,7 +135,7 @@ class TestHookErrorPolicyAbort:
         runner = HookRunner([
             HookSpec(hook=SlowHook(), on_error=HookErrorPolicy.ABORT),
         ])
-        with pytest.raises(PolicyViolation) as exc_info:
+        with pytest.raises(PolicyViolationError) as exc_info:
             await runner.dispatch(
                 HookPoint.BEFORE_GRAPH, None, hook_timeout=0.01
             )

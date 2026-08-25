@@ -16,7 +16,6 @@ from pydantic import BaseModel, Field
 
 from modex_agent.ioc.configs.model import GlobalModelConfig
 from modex_agent.ioc.configs.observability import ObservabilityConfig
-from modex_agent.ioc.configs.plugins import PluginConfig
 from modex_agent.ioc.configs.safety import SafetyConfig
 from modex_agent.persistence.config import PersistenceConfig
 
@@ -67,40 +66,34 @@ class MultiAgentConfig(BaseModel):
     session_retention: SessionRetentionConfig = Field(default_factory=SessionRetentionConfig)
 
 
-class WorkspaceConfig(BaseModel):
-    """Workspace multi-live settings."""
-
-    enabled: bool = False
-
-
 class AppConfig(BaseModel):
     """Root configuration for a ModexAgent application.
 
-    Pool definitions are loaded by the business layer via ``PoolStore``;
-    ``AppConfig`` no longer carries pool configuration. The cross-cutting
-    fields below (safety, paths, multi_agent, workspace, plugins,
-    observability, model) come from the top-level YAML. Extra fields
-    (business-layer config like qq, bot tokens) are silently ignored by
-    the framework IOC layer.
+    Pool definitions live in the scope declaration (loaded by the
+    business layer); ``AppConfig`` carries no pool configuration. The cross-cutting
+    fields below (safety, paths, multi_agent, observability, model) come
+    from the top-level YAML; the workspace stack shape is selected by the
+    scope declaration's form (ticket 14 — the ``workspace.enabled`` flag is
+    dead). Extra fields (business-layer config like qq, bot tokens, and a
+    stale ``workspace:`` section from pre-deployment configs) are silently
+    ignored by the framework IOC layer.
     """
 
     model_config = {"extra": "ignore"}
 
     model: GlobalModelConfig | None = None
     safety: SafetyConfig | None = None
-    plugins: PluginConfig | None = None
     observability: ObservabilityConfig | None = None
     paths: PathsConfig = Field(default_factory=PathsConfig)
     multi_agent: MultiAgentConfig = Field(default_factory=MultiAgentConfig)
-    workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     persistence: PersistenceConfig = Field(default_factory=PersistenceConfig)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> AppConfig:
         """Load from YAML file, resolving ${ENV} references.
 
-        Pool definitions are loaded separately by the business layer via
-        ``PoolStore``; ``AppConfig`` no longer reads ``config/pools/``.
+        Pool definitions live in the scope declaration (loaded by the
+        business layer); ``AppConfig`` reads no pool configuration.
         """
         yaml_path = Path(path)
         with open(yaml_path, encoding="utf-8") as f:

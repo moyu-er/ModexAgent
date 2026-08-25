@@ -179,6 +179,14 @@ class TurnCustomKey(StrEnum):
     # current upper bound.  Gate pops this alongside CONTINUATION_REQUEST and
     # increments MAX_TURNS by 1 only once regardless of how many hooks set it.
     CONTINUATION_RENEW_MAX_TURNS = "_continuation_renew_max_turns"
+    # FinishReason of the last LLM response in this turn, recorded by
+    # LengthGuardHook.after_llm_response (StrEnum value — JSON-safe) and read
+    # by LengthGuardHook.after_turn to detect degenerate endings.
+    LAST_LLM_FINISH_REASON = "last_llm_finish_reason"
+    # Consecutive degenerate-ending counter maintained by LengthGuardHook.
+    # Incremented on each degenerate ending, reset to 0 by any productive
+    # LLM response (content or tool calls). Exhaustion at MAX_NUDGES.
+    LENGTH_GUARD_NUDGES = "length_guard_nudges"
     LAST_CONTINUATION_TODO_SIG = "_last_continuation_todo_sig"
     GRAPH_DELIVER_COUNT = "_graph_deliver_count"
     MAX_TURNS = "_max_turns"

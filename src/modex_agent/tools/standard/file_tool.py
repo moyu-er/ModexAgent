@@ -505,6 +505,8 @@ class ReadFileTool(Tool):
             "may have changed since your last read.\n"
             "- For large files, read in chunks (offset + limit) rather than tiny "
             "30-line slices. If you need more context, read a larger window.\n"
+            "- When another tool's result points to a saved full-output path, "
+            "read that file in segments for the complete content.\n"
             "- Prefer grep/glob when searching for content or files — read is for "
             "examining a specific known file.\n"
             "- Only accepts file paths — directories are not supported. "

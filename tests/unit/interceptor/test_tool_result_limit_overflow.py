@@ -59,7 +59,7 @@ class TestLongResultOverflows:
         handler = ToolResultOverflowHandler(store=store, cleaner=cleaner)
 
         interceptor = ToolResultLimitInterceptor(overflow_handler=handler, max_chars=50)
-        long_content = "a" * 100
+        long_content = "a" * 300
         result = ToolResult.from_text("read_file", long_content, call_id="tc_1")
         next_call = AsyncMock(return_value=result)
 
@@ -72,9 +72,12 @@ class TestLongResultOverflows:
             await cleaner.stop()
 
         assert out.overflow_processed is True
-        assert out.message_content().startswith("a" * 50)
-        assert "[Full output (100 chars total) saved to:" in out.message_content()
-        assert not out.message_content().startswith("<")
+        mc = out.message_content()
+        # max_chars=50 → head 20 / tail 30, 250 chars elided
+        assert mc.startswith("a" * 5)
+        assert "OUTPUT ELIDED: 288 chars" in mc
+        assert "[Full output (300 chars total) saved to:" in mc
+        assert not mc.startswith("<")
         assert out.content_format is None
         assert out.truncatable_paths is None
         message = out.to_message()
@@ -82,6 +85,60 @@ class TestLongResultOverflows:
         assert "truncatable_paths" not in message
         full_path = tmp_path / "tool_overflow" / "test.agent" / "tc_1" / "full.txt"
         assert full_path.read_text(encoding="utf-8") == long_content
+
+
+class TestErrorResultsAreBounded:
+    @pytest.mark.asyncio
+    async def test_oversized_error_result_truncated_without_handler(self) -> None:
+        interceptor = ToolResultLimitInterceptor(overflow_handler=None, max_chars=50)
+        result = ToolResult.from_text("bash", "E" * 300, call_id="tc_1", error="command failed")
+        next_call = AsyncMock(return_value=result)
+
+        out = await interceptor.around_tool_call(_make_ctx(), _make_call(), next_call)
+
+        assert out.overflow_processed is False
+        assert out.error == "command failed"
+        mc = out.message_content()
+        assert mc.startswith("E" * 5)
+        assert "OUTPUT ELIDED: 288 chars" in mc
+        assert "NOT saved" in mc
+
+    @pytest.mark.asyncio
+    async def test_oversized_error_result_overflows_through_handler(self, tmp_path: Path) -> None:
+        store = LocalFileToolOverflowStore(workspace=tmp_path)
+        await store.initialize()
+        cleaner = OverflowCleaner(store)
+        handler = ToolResultOverflowHandler(store=store, cleaner=cleaner)
+        interceptor = ToolResultLimitInterceptor(overflow_handler=handler, max_chars=50)
+
+        result = ToolResult.from_text("bash", "E" * 300, call_id="tc_1", error="command failed")
+        next_call = AsyncMock(return_value=result)
+
+        try:
+            out = await interceptor.around_tool_call(_make_ctx(), _make_call(), next_call)
+            await cleaner.flush()
+        finally:
+            await cleaner.stop()
+
+        assert out.overflow_processed is True
+        assert out.error == "command failed"
+        mc = out.message_content()
+        assert mc.startswith("E" * 5)
+        assert "OUTPUT ELIDED: 288 chars" in mc
+        assert "[Full output (300 chars total) saved to:" in mc
+        full_path = tmp_path / "tool_overflow" / "test.agent" / "tc_1" / "full.txt"
+        assert full_path.read_text(encoding="utf-8") == "E" * 300
+
+    @pytest.mark.asyncio
+    async def test_short_error_result_passes_through(self) -> None:
+        interceptor = ToolResultLimitInterceptor(overflow_handler=None, max_chars=100)
+        result = ToolResult.from_text("bash", "boom", call_id="tc_1", error="failed")
+        next_call = AsyncMock(return_value=result)
+
+        out = await interceptor.around_tool_call(_make_ctx(), _make_call(), next_call)
+
+        assert out is result
+        assert out.error == "failed"
 
 
 class TestAlreadyProcessedSkips:
@@ -112,7 +169,7 @@ class TestFallbackTruncationWhenNoHandler:
     @pytest.mark.asyncio
     async def test_fallback_truncation_when_no_handler(self) -> None:
         interceptor = ToolResultLimitInterceptor(overflow_handler=None, max_chars=50)
-        long_content = "a" * 100
+        long_content = "a" * 300
         result = ToolResult.from_text("read_file", long_content, call_id="tc_1")
         next_call = AsyncMock(return_value=result)
 
@@ -121,4 +178,34 @@ class TestFallbackTruncationWhenNoHandler:
         out = await interceptor.around_tool_call(ctx, call, next_call)
 
         assert out.overflow_processed is False
-        assert out.message_content() == "a" * 50 + "\n... (truncated, 100 chars total)"
+        mc = out.message_content()
+        # head 5 / tail 7 of max_chars=50, 288 chars elided, no path claim
+        lines = mc.split("\n")
+        assert len(lines) == 4
+        assert lines[0] == "a" * 5
+        assert lines[2] == "a" * 7
+        assert "OUTPUT ELIDED: 288 chars" in lines[1]
+        assert "NOT saved (overflow handler unavailable)" in lines[1]
+        assert lines[3].startswith("[Full output (300 chars total) NOT saved to disk")
+        assert "full.txt" not in mc
+
+
+class TestHandlerFailureFallback:
+    @pytest.mark.asyncio
+    async def test_store_failure_falls_back_to_unpersisted_truncation(self) -> None:
+        handler = MagicMock(spec=ToolResultOverflowHandler)
+        handler.store_overflow = AsyncMock(side_effect=RuntimeError("disk full"))
+        interceptor = ToolResultLimitInterceptor(overflow_handler=handler, max_chars=50)
+
+        result = ToolResult.from_text("read_file", "a" * 300, call_id="tc_1", error="boom")
+        next_call = AsyncMock(return_value=result)
+
+        out = await interceptor.around_tool_call(_make_ctx(), _make_call(), next_call)
+
+        assert out.overflow_processed is False
+        assert out.error == "boom"
+        mc = out.message_content()
+        assert mc.startswith("a" * 5)
+        assert "OUTPUT ELIDED: 288 chars" in mc
+        assert "NOT saved" in mc
+        assert "full.txt" not in mc

@@ -30,7 +30,7 @@ The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMP
 | `provider.py` | `LLMProvider` ABC — `complete()`, `complete_streaming()`. `StreamingLLMProvider` ABC — streaming-specific contract |
 | `runtime_context.py` | `ToolCallRecord` (dataclass), `RuntimeContext` ABC, `InMemoryRuntimeContext`, `RuntimeContextStore` ABC, `InMemoryRuntimeContextStore`, `RuntimeContextManager` |
 | `scope.py` | Scope-related type definitions |
-| `session_id.py` | `SessionInfo` (Pydantic BaseModel — the single identity object), `SessionIdFactory`, `DefaultSessionIdStrategy`, `now_ms()`, snowflake encoding (`encode_snowflake`/`session_id_prefix_of`/`agent_of`/`conv_id_of`) |
+| `session_id.py` | `SessionInfo` (Pydantic BaseModel — the single identity object), `SessionIdFactory`, `now_ms()`, snowflake encoding (`encode_snowflake`/`session_id_prefix_of`/`agent_of`) |
 | `session_registry.py` | `SessionRegistry` — async write-through cache over `SessionStore` for `SessionInfo` resolution (guarded by `asyncio.Lock`) |
 | `session_store.py` | `SessionStore` ABC + JSON-file `LocalFileSessionStore` — authoritative persistent session storage (one JSON per session_id, I/O via `asyncio.to_thread`) |
 | `tool.py` | `DynamicSchemaProvider` ABC — context-aware tool schema. **`Tool` class lives in `tool_manager.py`** |

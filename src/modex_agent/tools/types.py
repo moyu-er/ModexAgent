@@ -474,13 +474,13 @@ def _type_hint_to_param_type(type_hint: Any) -> ToolParameterType:
             return ToolParameterType.OBJECT
 
     # 基本类型
-    if base_type == str:
+    if base_type is str:
         return ToolParameterType.STRING
-    elif base_type == int:
+    elif base_type is int:
         return ToolParameterType.INTEGER
-    elif base_type == float:
+    elif base_type is float:
         return ToolParameterType.NUMBER
-    elif base_type == bool:
+    elif base_type is bool:
         return ToolParameterType.BOOLEAN
     elif base_type in (list, list):
         return ToolParameterType.ARRAY

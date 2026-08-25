@@ -191,7 +191,7 @@ class TurnTimeoutPolicy(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     agent_run_timeout_seconds: float = 600.0
-    dispatch_timeout_seconds: float = 300.0
+    dispatch_timeout_seconds: float = 600.0
     output_send_timeout_seconds: float = 20.0
     memory_flush_timeout_seconds: float = 30.0
     hook_timeout_seconds: float = 10.0

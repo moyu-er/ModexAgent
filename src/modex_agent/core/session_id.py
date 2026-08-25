@@ -105,7 +105,7 @@ class SessionInfo(BaseModel):
         Emits a UserWarning when the value has no separator or an empty
         agent_name suffix. A bare prefix (no separator) produces
         ``agent_name=""`` — the session genuinely has no bound agent, and
-        callers (PoolRouter reconciler, etc.) must treat empty agent_name
+        callers (PoolRouter's ownership lookup, etc.) must treat empty agent_name
         as "trust the routing store" rather than inventing a fake default.
         Callers that know the agent should construct SessionInfo directly.
         """

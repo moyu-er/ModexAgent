@@ -2,11 +2,11 @@
 import pytest
 
 from modex_agent.control.exceptions import (
-    AgentCancelled,
+    AgentCancelledError,
     AgentControlError,
-    AgentTimeout,
+    AgentTimeoutError,
     LoopDetectedError,
-    PolicyViolation,
+    PolicyViolationError,
 )
 from modex_agent.core.constants import StopReason
 
@@ -18,16 +18,16 @@ def test_base_defaults():
 
 
 def test_cancelled_defaults():
-    assert AgentCancelled().stop_reason == StopReason.CANCELLED
-    assert AgentCancelled().user_content == ""
+    assert AgentCancelledError().stop_reason == StopReason.CANCELLED
+    assert AgentCancelledError().user_content == ""
 
 
 def test_timeout_stop_reason():
-    assert AgentTimeout().stop_reason == StopReason.TIMEOUT
+    assert AgentTimeoutError().stop_reason == StopReason.TIMEOUT
 
 
 def test_policy_violation_stop_reason():
-    assert PolicyViolation().stop_reason == StopReason.ERROR
+    assert PolicyViolationError().stop_reason == StopReason.ERROR
 
 
 def test_loop_detected_carries_content_and_reason():

@@ -110,9 +110,9 @@ async def test_build_pool_skill_manager_finds_skills() -> None:
         skills_root = _setup_skill_dir(tmp_path)
 
         # Simulate _build_pool_skill_manager logic: agent name is now a string.
-        main_agent_name = "main"
+        root_agent_name = "main"
         pool_name = "main"
-        directories = [tmp_path / "skills" / pool_name / main_agent_name]
+        directories = [tmp_path / "skills" / pool_name / root_agent_name]
         found = [d for d in directories if d.exists()]
 
         assert len(found) > 0, "skills/main/main/ directory should exist"

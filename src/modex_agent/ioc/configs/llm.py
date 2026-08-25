@@ -23,6 +23,7 @@ class LLMConfig(BaseModel):
     api_key: str = ""
     base_url: str = ""
     temperature: float = 0.7
+    top_p: float = 0.95
     max_output_tokens: int = 80000
     capabilities: ModelCapabilities = Field(default_factory=ModelCapabilities)
     reasoning_effort: ReasoningEffort = ReasoningEffort.NONE

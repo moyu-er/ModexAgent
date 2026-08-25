@@ -19,11 +19,11 @@ from modex_agent.tools.terminal.subprocess_tool import SubprocessTool, create_su
 
 
 class TestSubprocessToolTimeoutDefaults:
-    def test_default_timeout_is_90(self) -> None:
-        """Default timeout is 90s — short enough for interactive use,
-        leaving ample margin under the 400s interceptor deadline."""
+    def test_default_timeout_is_none(self) -> None:
+        """Default timeout is None (no tool-level deadline) — the persistent
+        bash default contract; callers opt into per-command deadlines."""
         tool = SubprocessTool(executor=create_subprocess_executor())
-        assert tool.timeout == 90
+        assert tool.timeout is None
 
     def test_explicit_timeout_respected(self) -> None:
         """Explicit timeout override is honoured."""
@@ -32,30 +32,30 @@ class TestSubprocessToolTimeoutDefaults:
 
 
 class TestTimeoutInvariant:
-    """The outer interceptor deadline must exceed the inner tool timeout."""
+    """Interceptor deadline vs the persistent-bash timeout ladder.
 
-    def test_interceptor_exceeds_subprocess_default(self) -> None:
-        """``TurnTimeoutPolicy.tool_timeout_seconds`` (400s) >
-        ``SubprocessTool.timeout`` (90s) so the tool's own timeout fires
-        first and returns partial output."""
+    Default: ``tool_timeout_seconds`` (540s) > PersistentBashTool default
+    (480s), so the shell's own kill-and-reset timeout fires first and
+    returns partial output. ``SubprocessTool`` defaults to None (no
+    tool-level deadline) and is exempt from the ladder.
+    """
+
+    def test_interceptor_exceeds_persistent_bash_default(self) -> None:
+        """``TurnTimeoutPolicy.tool_timeout_seconds`` (540s) >
+        ``PersistentBashTool`` default (480s) so the shell's own timeout
+        fires first and returns partial output."""
+        from modex_agent.tools.terminal.persistent_bash import PersistentBashTool
+
         safety = RuntimeSafetyPolicy()
-        shell = SubprocessTool(executor=create_subprocess_executor())
-        assert safety.turn.tool_timeout_seconds > shell.timeout, (
+        safety = RuntimeSafetyPolicy()
+        bash = PersistentBashTool()
+        bash_timeout = bash.session.timeout_seconds
+        assert bash_timeout is not None, "persistent bash default must be a number (480s)"
+        assert safety.turn.tool_timeout_seconds > bash_timeout, (
             f"TurnTimeoutPolicy.tool_timeout_seconds ({safety.turn.tool_timeout_seconds}s) "
-            f"must be greater than SubprocessTool.timeout ({shell.timeout}s) or the "
-            f"interceptor cancels the tool before it can return partial output."
-        )
-
-    def test_interceptor_margin(self) -> None:
-        """At least 30s margin between interceptor and tool timeout to
-        account for scheduling jitter."""
-        safety = RuntimeSafetyPolicy()
-        shell = SubprocessTool(executor=create_subprocess_executor())
-        margin = safety.turn.tool_timeout_seconds - shell.timeout
-        assert margin >= 30, (
-            f"Expected at least 30s margin, got {margin}s — "
-            f"interceptor ({safety.turn.tool_timeout_seconds}s) too close to "
-            f"tool ({shell.timeout}s)."
+            f"must be greater than the persistent bash timeout "
+            f"({bash_timeout}s) or the interceptor cancels the tool "
+            f"before its own kill-and-reset contract can fire."
         )
 
     def test_default_tool_timeout_matches_constants(self) -> None:

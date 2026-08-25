@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.control.exceptions import AgentCancelled, AgentControlError, AgentTimeout
+from modex_agent.control.exceptions import AgentCancelledError, AgentControlError, AgentTimeoutError
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.tool_manager import ToolResult
@@ -136,27 +136,27 @@ class TestInterceptorChainToolFallback:
     @pytest.mark.asyncio
     async def test_cancelled_error_propagates(self, fake_ctx):
         """asyncio.CancelledError must propagate, not be swallowed."""
-        exc = AgentCancelled("user cancelled")
+        exc = AgentCancelledError("user cancelled")
         chain = InterceptorChain([ControlErrorInterceptor(exc)])
         call_ctx = _make_tool_call_ctx()
 
         async def actual() -> ToolResult:
             return ToolResult.from_text("test_tool", "ok")
 
-        with pytest.raises(AgentCancelled):
+        with pytest.raises(AgentCancelledError):
             await chain.around_tool_call(fake_ctx, call_ctx, actual)
 
     @pytest.mark.asyncio
     async def test_timeout_error_propagates(self, fake_ctx):
-        """AgentTimeout must propagate, not be swallowed."""
-        exc = AgentTimeout("turn timed out")
+        """AgentTimeoutError must propagate, not be swallowed."""
+        exc = AgentTimeoutError("turn timed out")
         chain = InterceptorChain([ControlErrorInterceptor(exc)])
         call_ctx = _make_tool_call_ctx()
 
         async def actual() -> ToolResult:
             return ToolResult.from_text("test_tool", "ok")
 
-        with pytest.raises(AgentTimeout):
+        with pytest.raises(AgentTimeoutError):
             await chain.around_tool_call(fake_ctx, call_ctx, actual)
 
     @pytest.mark.asyncio
@@ -241,14 +241,14 @@ class TestInterceptorChainTurn:
             scopes = frozenset([InterceptorScope.TURN])
 
             async def around_turn(self, ctx, next_call: TurnNext) -> AgentResult:
-                raise AgentCancelled("admin cancel")
+                raise AgentCancelledError("admin cancel")
 
         chain = InterceptorChain([CancelTurnInterceptor()])
 
         async def actual() -> AgentResult:
             return AgentResult(content="ok")
 
-        with pytest.raises(AgentCancelled):
+        with pytest.raises(AgentCancelledError):
             await chain.around_turn(fake_ctx, actual)
 
 
@@ -277,12 +277,12 @@ class TestInterceptorChainIteration:
             scopes = frozenset([InterceptorScope.ITERATION])
 
             async def around_iteration(self, ctx, call: IterationContext, next_call) -> None:
-                raise AgentCancelled("cancel")
+                raise AgentCancelledError("cancel")
 
         chain = InterceptorChain([CancelIterationInterceptor()])
 
         async def actual() -> None:
             pass
 
-        with pytest.raises(AgentCancelled):
+        with pytest.raises(AgentCancelledError):
             await chain.around_iteration(fake_ctx, IterationContext(1, "t1"), actual)

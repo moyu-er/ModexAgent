@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from modex_agent.agents.react.message_builder import build_assistant_message
 from modex_agent.core.message import (
     ChatMessage,
     ContentPartType,
@@ -17,7 +18,6 @@ from modex_agent.core.message import (
     TextPart,
 )
 from modex_agent.core.types import MessageRole, ToolCall
-
 
 # ---------------------------------------------------------------------------
 # #1 — ChatMessage.to_dict / from_dict tool_calls (OpenAI wire format)
@@ -123,8 +123,9 @@ def test_from_dict_tool_calls_empty_string_arguments():
     assert msg.tool_calls[0].arguments == {}
 
 
-def test_to_dict_excludes_reasoning_content():
-    """to_dict strips reasoning_content so chain-of-thought never reaches storage.
+def test_to_dict_persists_reasoning_content():
+    """to_dict keeps reasoning_content so the thinking-mode passback survives
+    persistence (compaction / process restarts).
 
     reasoning_content is an extra field (extra='allow'); inject it via
     __pydantic_extra__ to simulate a provider setting it post-construction.
@@ -132,8 +133,34 @@ def test_to_dict_excludes_reasoning_content():
     msg = ChatMessage(role=MessageRole.ASSISTANT, content="hi")
     msg.__pydantic_extra__ = {"reasoning_content": "thinking"}
     d = msg.to_dict()
-    assert "reasoning_content" not in d
+    assert d["reasoning_content"] == "thinking"
     assert d["content"] == "hi"
+
+
+class TestReasoningContentRoundTrip:
+    """to_dict/from_dicts must keep reasoning_content across the storage
+    round-trip so the DeepSeek thinking-mode passback survives compaction
+    and process restarts."""
+
+    def test_round_trip_tool_call_turn(self):
+        msg = build_assistant_message(
+            None,
+            [ToolCall(tool_name="search", arguments={"q": "x"}, call_id="c1")],
+            reasoning_content="cot",
+        )
+        rehydrated = ChatMessage.from_dicts([msg.to_dict()])[0]
+        assert rehydrated.model_extra is not None
+        assert rehydrated.model_extra.get("reasoning_content") == "cot"
+        assert rehydrated.tool_calls is not None
+        assert rehydrated.tool_calls[0].call_id == "c1"
+
+    def test_round_trip_plain_assistant_turn(self):
+        """Plain turn (no tool_calls) round-trips reasoning too — the
+        provider layer decides whether to replay it on the wire."""
+        msg = build_assistant_message("answer", [], reasoning_content="cot")
+        rehydrated = ChatMessage.from_dicts([msg.to_dict()])[0]
+        assert rehydrated.model_extra is not None
+        assert rehydrated.model_extra.get("reasoning_content") == "cot"
 
 
 # ---------------------------------------------------------------------------

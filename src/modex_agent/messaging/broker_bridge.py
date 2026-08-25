@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.media.models import Attachment
@@ -137,6 +137,23 @@ def approval_decision_from_payload(payload: dict[str, Any]) -> Any:
     from modex_agent.approval.views import ApprovalDecisionInput
 
     return ApprovalDecisionInput.from_dict(payload.get("approval_decision"))
+
+
+def metadata_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Rebuild free-form ``InputMessage.metadata`` from a broker payload.
+
+    ``submit_input`` serializes the full ``InputMessage`` via
+    :class:`BrokerInputPayload`; without parsing it back here the free-form
+    metadata (e.g. harness trace ids) is silently dropped in transit — the
+    same field-drift failure class as ``approval_decision``. Returns ``{}``
+    for payloads that do not carry a valid ``BrokerInputPayload`` metadata
+    mapping (inter-agent envelopes keep their metadata on the envelope, not
+    the payload).
+    """
+    try:
+        return dict(BrokerInputPayload.model_validate(payload).metadata)
+    except ValidationError:
+        return {}
 
 
 def attachments_resolved_from_payload(payload: dict[str, Any]) -> list[Attachment]:

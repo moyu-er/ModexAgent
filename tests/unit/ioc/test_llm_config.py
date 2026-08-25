@@ -15,6 +15,7 @@ class TestLLMConfig:
     def test_defaults(self) -> None:
         cfg = LLMConfig()
         assert cfg.temperature == 0.7
+        assert cfg.top_p == 0.95
         assert cfg.model == "gpt-4"
 
     def test_partial_override(self) -> None:
@@ -116,6 +117,30 @@ class TestCreateLLMProvider:
         provider = create_llm_provider(cfg)
         assert isinstance(provider, LiteLLMProvider)
         assert provider._model == "anthropic/claude-3-5-sonnet"
+
+    def test_passes_top_p_to_openai_provider(self) -> None:
+        cfg = LLMConfig(
+            model="gpt-4o",
+            api_key="sk-test",
+            base_url="https://api.example.com",
+            top_p=0.9,
+            interface_format=InterfaceFormat.OPENAI_COMPATIBLE,
+        )
+        provider = create_llm_provider(cfg)
+        assert isinstance(provider, OpenAIProvider)
+        assert provider._top_p == 0.9
+
+    def test_passes_top_p_to_litellm_provider(self) -> None:
+        cfg = LLMConfig(
+            model="claude-3-5-sonnet",
+            api_key="sk-test",
+            base_url="https://api.example.com",
+            top_p=0.9,
+            interface_format=InterfaceFormat.ANTHROPIC,
+        )
+        provider = create_llm_provider(cfg)
+        assert isinstance(provider, LiteLLMProvider)
+        assert provider._top_p == 0.9
 
 
 class TestModelCapabilities:

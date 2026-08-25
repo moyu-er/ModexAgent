@@ -170,7 +170,9 @@ class ChatMessage(BaseModel):
         """转换为 dict（包含未知字段，排除 None 值）。
 
         对无法 JSON 序列化的嵌套对象，递归转换为 dict 以确保兼容性。
-        自动排除 reasoning_content 字段，防止思维链内容泄漏到存储层。
+        reasoning_content 随消息持久化（thinking-mode passback 依赖它在
+        compaction / 进程重启后存活）；provider 层仅在 assistant tool-call
+        轮次把它条件性回放到请求上，训练导出读取 span 属性、不经过本方法。
         content_format 为 PLAIN 时自动省略，created_at 格式化为本地时间字符串。
         tool_calls 序列化为 OpenAI wire format（id/type/function）以保持存储兼容。
         """
@@ -178,7 +180,6 @@ class ChatMessage(BaseModel):
             result = self.model_dump(mode="json", exclude_none=True)
         except Exception:
             result = self._to_dict_fallback()
-        result.pop("reasoning_content", None)
         if "content_format" in result and self.content_format == ContentFormat.PLAIN:
             result.pop("content_format", None)
         if "created_at" in result and self.created_at is not None:

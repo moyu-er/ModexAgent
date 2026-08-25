@@ -16,6 +16,7 @@ Each subdirectory here corresponds to a `src/modex_agent/` module and contains u
 | `agents/` | `modex_agent/agents/` — ReAct agent, experience review, summarizer |
 | `approval/` | `modex_agent/approval/` — approval tiers, response parsing |
 | `commands/` | `modex_agent/commands/` — slash command parser, processor |
+| `config_roster/` | `modex_agent/config/` — roster loader, SpecBuilder |
 | `core/` | `modex_agent/core/` — agent ABC, session store, tool manager, emitter |
 | `hook/` | `modex_agent/hook/` — hook runner, builtin hooks |
 | `interceptor/` | `modex_agent/interceptor/` — interceptor chain, builtin interceptors |
@@ -24,7 +25,7 @@ Each subdirectory here corresponds to a `src/modex_agent/` module and contains u
 | `messaging/` | `modex_agent/messaging/` — broker, broker bridge |
 | `multi_agent/` | `modex_agent/multi_agent/` — pool, bus, communication tracker, inbox |
 | `pipeline/` | `modex_agent/pipeline/` — pipeline orchestration, adapters, snapshot |
-| `plugins/` | `modex_agent/plugins/` — plugin manager, loader |
+| `plugins/` | `modex_agent/plugins/` — component registry, loader, assembly pipeline, defaults |
 | `providers/` | `modex_agent/providers/` — LLM provider implementations |
 | `runtime/` | `modex_agent/runtime/` — runtime services, store, codec |
 | `sandbox/` | `modex_agent/sandbox/` — isolation, adapters, guards |

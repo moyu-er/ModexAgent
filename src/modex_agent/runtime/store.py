@@ -168,9 +168,9 @@ class JsonFileTurnStateStore(TurnStateStore):
         if not data:
             return None
         agent_kind_raw = data.get("agent_kind", "react")
-        from .enums import AgentKind as AK
+        from .enums import AgentKind
 
-        agent_kind = AK(agent_kind_raw)
+        agent_kind = AgentKind(agent_kind_raw)
         codec = self._codec_registry.get(agent_kind)
         return codec.decode_turn(data)
 
@@ -222,9 +222,9 @@ class JsonFileTurnStateStore(TurnStateStore):
             return None
         try:
             agent_kind_raw = data.get("agent_kind", "react")
-            from .enums import AgentKind as AK
+            from .enums import AgentKind
 
-            agent_kind = AK(agent_kind_raw)
+            agent_kind = AgentKind(agent_kind_raw)
             codec = self._codec_registry.get(agent_kind)
             return codec.decode_turn(data)
         except Exception:

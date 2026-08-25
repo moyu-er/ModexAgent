@@ -71,7 +71,7 @@ class LLMProvider(ABC):
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         **kwargs,
@@ -82,7 +82,7 @@ class LLMProvider(ABC):
         Args:
             messages: ChatMessage 列表（结构化消息，B6 收敛自 list[dict]）
             model: 模型名称，None则使用默认模型
-            temperature: 温度参数
+            temperature: 温度参数，None 时回退到构造函数/配置中的值
             max_output_tokens: 最大token数
             tools: 工具定义列表（可选）
             **kwargs: 其他提供商特定参数
@@ -118,13 +118,13 @@ class LLMProvider(ABC):
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         max_retries: int = 3,
         **kwargs,
     ) -> LLMResponse:
-        """调用 chat() 并在遇到临时错误时重试"""
+        """调用 chat() 并在遇到临时错误时重试。temperature=None 时回退到构造函数/配置值。"""
         return await self._execute_with_retry(
             self.chat,
             messages,
@@ -249,7 +249,7 @@ class StreamingLLMProvider(LLMProvider):
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         **kwargs,
@@ -259,7 +259,7 @@ class StreamingLLMProvider(LLMProvider):
         对外行为与 LLMProvider.chat() 完全一致：调用者拿到完整 LLMResponse，
         无任何 delta 回调。
         内部使用流式 API 实现（chat_stream_with_retry），以获得 prompt cache
-        等只有 streaming 模式才有的收益。
+        等只有 streaming 模式才有的收益。temperature=None 时回退到构造函数/配置值。
         """
         return await self.chat_stream_with_retry(
             messages=messages,
@@ -277,7 +277,7 @@ class StreamingLLMProvider(LLMProvider):
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         max_retries: int = 3,
@@ -288,7 +288,7 @@ class StreamingLLMProvider(LLMProvider):
         对外行为与 LLMProvider.chat_with_retry() 完全一致：调用者拿到完整
         LLMResponse，无任何 delta 回调，失败时按 max_retries 自动重试。
         内部使用流式 API 实现（chat_stream_with_retry），以获得 prompt cache
-        等只有 streaming 模式才有的收益。
+        等只有 streaming 模式才有的收益。temperature=None 时回退到构造函数/配置值。
         """
         return await self.chat_stream_with_retry(
             messages=messages,
@@ -307,7 +307,7 @@ class StreamingLLMProvider(LLMProvider):
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         on_content_delta: Callable[[str], Any] | None = None,
@@ -320,7 +320,7 @@ class StreamingLLMProvider(LLMProvider):
         Args:
             messages: ChatMessage 列表（结构化消息，B6 收敛自 list[dict]）
             model: 模型名称
-            temperature: 温度参数
+            temperature: 温度参数，None 时回退到构造函数/配置中的值
             max_output_tokens: 最大token数
             tools: 工具定义列表（可选）
             on_content_delta: 内容片段回调（支持 async）（支持 async）
@@ -336,7 +336,7 @@ class StreamingLLMProvider(LLMProvider):
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         max_retries: int = 0,
@@ -348,6 +348,7 @@ class StreamingLLMProvider(LLMProvider):
 
         流式路径默认不参与自动重试（max_retries=0）。partial content 可能
         已通过 on_content_delta 回调发送给用户，重试会造成重复 delta。
+        temperature=None 时回退到构造函数/配置值。
         """
         return await self._execute_with_retry(
             self.chat_stream,

@@ -353,8 +353,8 @@ class IsolationManager:
         else:
             providers = [BubblewrapProvider, SandboxExecProvider, WindowsIsolationProvider]
 
-        for ProviderCls in providers:
-            provider = ProviderCls(self.config)
+        for provider_cls in providers:
+            provider = provider_cls(self.config)
             if provider.is_available():
                 self._provider = provider
                 logger.info(f"Selected isolation provider: {provider.get_name()}")

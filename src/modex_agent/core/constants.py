@@ -86,11 +86,11 @@ class ProviderKind(StrEnum):
     new ``ProviderBackend`` subclass and a new ``ProviderEventParser``.
 
     Co-located with ``ExecutionStrategyKind`` because the two are paired in
-    pool-config validation (``_validate_execution_provider_pair`` in
-    ``multi_agent.pool_config.specs``): ``provider_kind`` must be set iff
+    declaration validation (``_validate_execution_provider_pair`` in
+    ``scope.spec``): ``provider_kind`` must be set iff
     ``execution_strategy`` is ``EXTERNAL``. Keeping them in the same leaf
-    module lets data-layer types (``AgentDescriptor``, ``MainAgentSpec``,
-    ``SubagentSpec``) depend on ``core.constants`` without pulling in
+    module lets data-layer types (``AgentDescriptor``, the scope
+    ``AgentSpec``) depend on ``core.constants`` without pulling in
     ``agents.external.paths`` (which would close a cycle through
     ``agents.external.__init__``).
     """
@@ -112,6 +112,7 @@ class ReasoningEffort(StrEnum):
     MEDIUM = "medium"
     HIGH = "high"
     XHIGH = "xhigh"
+    MAX = "max"
 
 
 class InterfaceFormat(StrEnum):
@@ -128,8 +129,8 @@ class AgentRole(StrEnum):
     """Preset agent role constants.
 
     Bots may extend with custom string roles outside this enum; the
-    ``roles`` field on ``MainAgentSpec`` / ``SubagentSpec`` /
-    ``AgentDescriptor`` is ``list[str]`` (not ``list[AgentRole]``) so custom
+    ``roles`` field on the scope ``AgentSpec`` / ``AgentDescriptor`` is
+    ``list[str]`` (not ``list[AgentRole]``) so custom
     values are preserved verbatim. The enum exists to centralize the seven
     canonical preset names (rule 1, rule 14) — string literals elsewhere
     should reference ``AgentRole.PLANNER.value`` etc. instead of bare
@@ -165,10 +166,11 @@ class DefaultValues:
 
     SYSTEM_PROMPT = "You are a helpful AI assistant. You have access to the conversation history and can remember previous messages in the current session."
     TEMPERATURE = 0.7
+    TOP_P = 0.95
     MAX_ITERATIONS = 10
     MAX_TOOL_CALLS = 10
     TIMEOUT_SECONDS = 60.0
-    TOOL_TIMEOUT_SECONDS = 400.0
+    TOOL_TIMEOUT_SECONDS = 540.0
     TOOL_VERSION = "1.0"
     TOOL_CATEGORY = "general"
     CALL_ID_PREFIX = "call_"
