@@ -124,7 +124,7 @@ class GraphRuntime(ABC):  # noqa: B024
         """Drain the control channel for cancellation / injection signals.
 
         Default: no-op. `ReactGraphRuntime` bridges to the control channel
-        and raises `AgentCancelled` if a `CANCEL_TURN` command is pending.
+        and raises `AgentCancelledError` if a `CANCEL_TURN` command is pending.
         """
         # noqa: B027
         # Default: no-op.

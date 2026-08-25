@@ -43,7 +43,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from modex_agent.control.graph_control import (
@@ -56,6 +56,7 @@ from modex_agent.runtime.constants import EXECUTOR_PROCESS_ID_KEY
 from modex_agent.runtime.process_identity import ProcessIdentity
 from modex_graph import (
     CoordinatorFactory,
+    FieldSpec,
     GraphContext,
     GraphDrained,
     GraphEngine,
@@ -147,6 +148,8 @@ class GraphOrchestrator:
         output_adapter: GraphOutputAdapter | None = None,
         io_store: GraphIORecordStore = _NULL_IO_STORE,
         process_identity: ProcessIdentity | None = None,
+        state_schema_compiler: Callable[[dict[str, FieldSpec]], type[GraphState]]
+        | None = None,
     ) -> None:
         """Initialize the orchestrator with the required registries + stores.
 
@@ -178,6 +181,14 @@ class GraphOrchestrator:
                 detect stale-RUNNING instances whose executor process has
                 died. ``None`` (default) disables tracking — backwards
                 compatible with callers that do not inject a identity.
+            state_schema_compiler: optional callable that resolves a
+                declarative ``state_schema`` into a dynamic ``GraphState``
+                subclass, built from a ``ComponentRegistry`` via
+                ``modex_agent.plugins.assembly.graph_schema``. Threaded into
+                the internal ``GraphSpecCompiler`` so plugin-registered
+                data-namespace types resolve at compile time. ``None``
+                (default) keeps the plain two-arg self-build — backwards
+                compatible with callers that do not inject.
         """
         self._node_registry = node_registry
         self._state_classes = state_classes
@@ -187,7 +198,9 @@ class GraphOrchestrator:
         self._output_adapter = output_adapter
         self._io_store = io_store
         self._process_identity = process_identity
-        self._compiler = GraphSpecCompiler(node_registry, state_classes)
+        self._compiler = GraphSpecCompiler(
+            node_registry, state_classes, state_schema_compiler=state_schema_compiler
+        )
         self._runtime = GraphRuntime()
         self._active_instances: dict[int, GraphInstance] = {}
         self._active_contexts: dict[int, GraphContext[Any]] = {}
@@ -763,8 +776,15 @@ class GraphOrchestrator:
         return spec
 
     def _create_state(self, spec: GraphSpec) -> GraphState:
-        """Create fresh state from the class selected by the serialized spec."""
-        return self._state_classes[spec.state_class]()
+        """Create fresh state via the compiler's state resolution.
+
+        Covers both declared paths (SPEC §8.2): ``state_class`` resolves
+        through the injected state-class mapping; ``state_schema`` resolves
+        through the injected ``state_schema_compiler``. Previously only
+        ``state_class`` was handled — a ``state_schema`` spec crashed with
+        ``KeyError: None`` after the run already returned HTTP 200.
+        """
+        return self._compiler.resolve_state(spec)()
 
     # ── Internal: control command construction ─────────────────────────
 

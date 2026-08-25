@@ -41,6 +41,7 @@ from modex_graph import (
     CoordinatorFactory,
     DefaultGraphState,
     EdgeSpec,
+    FieldSpec,
     FunctionNodeFactory,
     GraphContext,
     GraphInstance,
@@ -1806,3 +1807,60 @@ class TestProcessIdentityInjection:
         assert meta is not None
         assert meta.status is GraphInstanceStatus.COMPLETED
         assert meta.attrs.get(EXECUTOR_PROCESS_ID_KEY) == identity.process_id
+
+
+# -- state_schema_compiler injection (W6.1) ---------------------------------
+
+
+class TestStateSchemaCompilerInjection:
+    """Injected ``state_schema_compiler`` resolves ``state_schema`` specs.
+
+    When provided, the internal ``GraphSpecCompiler`` compiles declarative
+    ``state_schema`` specs through it (registry-assembled data-namespace
+    types reach compilation). ``None`` (default) keeps the two-arg
+    self-build — a ``state_schema`` spec raises the compiler's injection
+    error, unchanged from pre-injection behavior.
+    """
+
+    def _schema_spec(self) -> GraphSpec:
+        return GraphSpec(
+            name="schema_graph",
+            nodes=[
+                NodeSpec(name="entry", node_type="function", config={"function": "increment"}),
+            ],
+            edges=[
+                EdgeSpec(source=GraphNode.START, target="entry"),
+                EdgeSpec(source="entry", target=GraphNode.END),
+            ],
+            state_schema={"note": FieldSpec(type="probe_note")},
+        )
+
+    async def test_injected_compiler_resolves_state_schema_spec(self) -> None:
+        calls: list[dict[str, FieldSpec]] = []
+
+        def _probe_compiler(schema: dict[str, FieldSpec]) -> type[GraphState]:
+            calls.append(schema)
+            return CounterState
+
+        spec_store = InMemoryGraphSpecStore()
+        orch = GraphOrchestrator(
+            node_registry=_function_registry(),
+            state_classes=_state_classes(),
+            spec_store=spec_store,
+            instance_store=InMemoryGraphInstanceStore(),
+            state_schema_compiler=_probe_compiler,
+        )
+        spec = self._schema_spec()
+        spec_id = _save_spec(spec_store, spec)
+
+        gid = await orch.create_instance(spec_id)
+
+        assert gid > 0
+        assert calls == [spec.state_schema]
+
+    async def test_default_self_build_rejects_state_schema_spec(self) -> None:
+        orch, spec_store, _ = _make_orchestrator()
+        spec_id = _save_spec(spec_store, self._schema_spec())
+
+        with pytest.raises(ValueError, match="state_schema_compiler"):
+            await orch.create_instance(spec_id)
