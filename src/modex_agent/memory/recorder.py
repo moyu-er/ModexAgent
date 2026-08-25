@@ -17,13 +17,11 @@ import json
 import logging
 from collections.abc import Sequence
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.scope import MemoryAgentRole, MemoryContext
-
-if TYPE_CHECKING:
-    from modex_agent.plugins import MemoryProvider
+from modex_agent.memory.core.provider import MemoryProvider
 
 type QueuedAppend = tuple[list[ChatMessage | dict[str, Any]], MemoryContext] | None
 

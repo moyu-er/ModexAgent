@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -32,6 +33,7 @@ from modex_agent.memory.core.layers import (
 )
 from modex_agent.memory.core.models import CompressionReason
 from modex_agent.memory.hooks import (
+    LlmUsage,
     MemoryHookContext,
     MemoryHookPoint,
     MemoryHookRunner,
@@ -55,7 +57,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CleanupResult:
     """Result of a cleanup_session() call."""
 
@@ -67,12 +69,14 @@ class CleanupResult:
     archive_skipped: bool = False
     compact_generated: bool = False
     reason: CompressionReason | None = None
+    usage: LlmUsage | None = None
+    duration_ms: float = 0.0
 
 
 # ── Internal result types ──────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _CleanupPlan:
     """Result of the prepare phase: sanitized messages with keep/prune split."""
 
@@ -83,7 +87,7 @@ class _CleanupPlan:
     pruned_messages: list[dict[str, Any]]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _ArchiveOutcome:
     """Result of archive generation phase."""
 
@@ -93,13 +97,14 @@ class _ArchiveOutcome:
     generation: ArchiveGenerationResult | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _CompactOutcome:
     """Result of compact generation phase."""
 
     generated: bool
     summary: str = ""
     topic: str | None = None
+    usage: LlmUsage | None = None
 
 
 # ── Phase helpers ──────────────────────────────────────────────────────────────
@@ -231,10 +236,10 @@ async def _compact_generation_phase(
         return _CompactOutcome(generated=False)
 
     try:
-        summary = await compactor.compact(
+        compaction = await compactor.compact(
             messages=messages_for_compact,
             previous_summary=previous_summary,
-            session_id=context.session_id,
+            session_id=context.session_id or "session-compactor",
         )
     except Exception:
         logger.warning(
@@ -244,9 +249,10 @@ async def _compact_generation_phase(
         )
         return _CompactOutcome(generated=False)
 
+    summary = compaction.summary
     if not summary or not summary.strip():
         logger.warning("Compact generation returned empty summary: session=%s", context.session_id)
-        return _CompactOutcome(generated=False)
+        return _CompactOutcome(generated=False, usage=compaction.usage)
 
     topic = compactor.extract_topic(summary)
     logger.info(
@@ -255,7 +261,12 @@ async def _compact_generation_phase(
         topic or "(none)",
         len(summary),
     )
-    return _CompactOutcome(generated=True, summary=summary, topic=topic)
+    return _CompactOutcome(
+        generated=True,
+        summary=summary,
+        topic=topic,
+        usage=compaction.usage,
+    )
 
 
 async def _commit_session_phase(
@@ -505,6 +516,7 @@ async def cleanup_session(
     An unhandled cleanup exception does NOT synthesize a finished event —
     only the four explicit ``triggered=True`` returns dispatch FINISHED.
     """
+    started = time.monotonic()
     # Phase 1: prepare
     estimator = token_estimator or CharTokenEstimator()
     plan, tokens_before = await _prepare_cleanup_phase(
@@ -537,6 +549,7 @@ async def cleanup_session(
             tokens_after=0,
             archive_skipped=True,
             reason=plan.trigger_reason,
+            duration_ms=(time.monotonic() - started) * 1000,
         )
         await _dispatch_cleanup_finished(
             hook_runner,
@@ -559,6 +572,7 @@ async def cleanup_session(
             tokens_after=tokens_before,
             archive_skipped=True,
             reason=plan.trigger_reason,
+            duration_ms=(time.monotonic() - started) * 1000,
         )
         await _dispatch_cleanup_finished(
             hook_runner,
@@ -612,6 +626,8 @@ async def cleanup_session(
             archive_skipped=True,
             compact_generated=compact_outcome.generated,
             reason=plan.trigger_reason,
+            usage=compact_outcome.usage,
+            duration_ms=(time.monotonic() - started) * 1000,
         )
         await _dispatch_cleanup_finished(
             hook_runner,
@@ -652,6 +668,8 @@ async def cleanup_session(
         archive_skipped=archive_outcome.skipped,
         compact_generated=compact_outcome.generated,
         reason=plan.trigger_reason,
+        usage=compact_outcome.usage,
+        duration_ms=(time.monotonic() - started) * 1000,
     )
     await _dispatch_cleanup_finished(
         hook_runner,

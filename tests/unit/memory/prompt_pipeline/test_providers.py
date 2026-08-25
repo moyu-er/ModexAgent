@@ -7,10 +7,11 @@ import os
 import re
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from modex_agent.memory.hooks import MemoryHookRunner
 from modex_agent.memory.prompt_pipeline.providers import (
     BasePromptProvider,
     CoreMemoryProvider,
@@ -127,10 +128,11 @@ async def test_runtime_omits_memory_lines_when_ram_undetectable(monkeypatch):
     assert "Working Directory:" in result
 
 
-def test_physical_memory_mib_sysconf_math(monkeypatch):
+def test_physical_memory_mib_sysconf_math(monkeypatch, tmp_path):
     """Linux path: page_size × pages converted to MiB (2 GiB → 2048)."""
     from modex_agent.memory.prompt_pipeline.providers import _physical_memory_mib
 
+    _isolate_cgroup_roots(monkeypatch, tmp_path)
     page_size, pages = 4096, 524_288
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(
@@ -149,6 +151,175 @@ def test_physical_memory_mib_returns_plain_int():
     value = _physical_memory_mib()
     assert isinstance(value, int)
     assert value >= 0
+
+
+# -- cgroup-aware resource detection (containers must see their real limits) --
+
+
+def _isolate_cgroup_roots(monkeypatch, tmp_path) -> tuple[Path, Path]:
+    """Point both cgroup roots at empty tmp dirs; returns (v2_root, v1_root).
+
+    Hermetic regardless of host: no real /sys/fs/cgroup is ever read, and the
+    roots do not exist on disk until a test writes files into them.
+    """
+    import modex_agent.memory.prompt_pipeline.providers as providers_module
+
+    v2_root = tmp_path / "cgroup-v2"
+    v1_root = tmp_path / "cgroup-v1"
+    monkeypatch.setattr(providers_module, "_CGROUP_V2_ROOT", v2_root)
+    monkeypatch.setattr(providers_module, "_CGROUP_V1_ROOT", v1_root)
+    return v2_root, v1_root
+
+
+def test_cgroup_cpu_quota_v2_exact_cores(monkeypatch, tmp_path):
+    """v2 cpu.max "200000 100000" = 2 cores enforced by the kernel."""
+    from modex_agent.memory.prompt_pipeline.providers import _cgroup_cpu_quota
+
+    v2_root, _ = _isolate_cgroup_roots(monkeypatch, tmp_path)
+    v2_root.mkdir()
+    (v2_root / "cpu.max").write_text("200000 100000\n")
+
+    assert _cgroup_cpu_quota() == 2
+
+
+def test_cgroup_cpu_quota_v2_max_falls_to_cpu_count(monkeypatch, tmp_path):
+    """v2 cpu.max "max 100000" = unlimited → None → physical os.cpu_count()."""
+    from modex_agent.memory.prompt_pipeline.providers import (
+        _cgroup_cpu_quota,
+        _effective_cpu_count,
+    )
+
+    v2_root, _ = _isolate_cgroup_roots(monkeypatch, tmp_path)
+    v2_root.mkdir()
+    (v2_root / "cpu.max").write_text("max 100000\n")
+    monkeypatch.setattr(os, "cpu_count", lambda: 7)
+
+    assert _cgroup_cpu_quota() is None
+    assert _effective_cpu_count() == 7
+
+
+def test_cgroup_cpu_quota_v2_fractional_ceils_up(monkeypatch, tmp_path):
+    """v2 cpu.max "50000 100000" = 0.5 cores → ceil → 1 (never 0 workers)."""
+    from modex_agent.memory.prompt_pipeline.providers import _cgroup_cpu_quota
+
+    v2_root, _ = _isolate_cgroup_roots(monkeypatch, tmp_path)
+    v2_root.mkdir()
+    (v2_root / "cpu.max").write_text("50000 100000\n")
+
+    assert _cgroup_cpu_quota() == 1
+
+
+def test_cgroup_cpu_quota_v1_unlimited_quota_is_none(monkeypatch, tmp_path):
+    """v1 cpu.cfs_quota_us = -1 means unlimited → None."""
+    from modex_agent.memory.prompt_pipeline.providers import _cgroup_cpu_quota
+
+    _, v1_root = _isolate_cgroup_roots(monkeypatch, tmp_path)
+    cpu_dir = v1_root / "cpu"
+    cpu_dir.mkdir(parents=True)
+    (cpu_dir / "cpu.cfs_quota_us").write_text("-1\n")
+    (cpu_dir / "cpu.cfs_period_us").write_text("100000\n")
+
+    assert _cgroup_cpu_quota() is None
+
+
+def test_cgroup_cpu_quota_v1_fractional_ceils_up(monkeypatch, tmp_path):
+    """v1 quota 150000 / period 100000 = 1.5 cores → ceil → 2."""
+    from modex_agent.memory.prompt_pipeline.providers import _cgroup_cpu_quota
+
+    _, v1_root = _isolate_cgroup_roots(monkeypatch, tmp_path)
+    cpu_dir = v1_root / "cpu"
+    cpu_dir.mkdir(parents=True)
+    (cpu_dir / "cpu.cfs_quota_us").write_text("150000\n")
+    (cpu_dir / "cpu.cfs_period_us").write_text("100000\n")
+
+    assert _cgroup_cpu_quota() == 2
+
+
+def test_cgroup_memory_limit_v2_bytes_to_mib(monkeypatch, tmp_path):
+    """v2 memory.max 2147483648 bytes = 2048 MiB."""
+    from modex_agent.memory.prompt_pipeline.providers import _cgroup_memory_limit_mib
+
+    v2_root, _ = _isolate_cgroup_roots(monkeypatch, tmp_path)
+    v2_root.mkdir()
+    (v2_root / "memory.max").write_text("2147483648\n")
+
+    assert _cgroup_memory_limit_mib() == 2048
+
+
+def test_cgroup_memory_limit_v2_max_is_unlimited(monkeypatch, tmp_path):
+    """v2 memory.max "max" = no limit → None."""
+    from modex_agent.memory.prompt_pipeline.providers import _cgroup_memory_limit_mib
+
+    v2_root, _ = _isolate_cgroup_roots(monkeypatch, tmp_path)
+    v2_root.mkdir()
+    (v2_root / "memory.max").write_text("max\n")
+
+    assert _cgroup_memory_limit_mib() is None
+
+
+def test_cgroup_memory_limit_v1_unlimited_sentinel_is_none(monkeypatch, tmp_path):
+    """v1 memory.limit_in_bytes at the PAGE_COUNTER_MAX sentinel → None."""
+    from modex_agent.memory.prompt_pipeline.providers import _cgroup_memory_limit_mib
+
+    _, v1_root = _isolate_cgroup_roots(monkeypatch, tmp_path)
+    memory_dir = v1_root / "memory"
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "memory.limit_in_bytes").write_text("9223372036854771712\n")
+
+    assert _cgroup_memory_limit_mib() is None
+
+
+def test_cgroup_memory_limit_v1_bytes_to_mib(monkeypatch, tmp_path):
+    """v1 memory.limit_in_bytes 1073741824 bytes = 1024 MiB."""
+    from modex_agent.memory.prompt_pipeline.providers import _cgroup_memory_limit_mib
+
+    _, v1_root = _isolate_cgroup_roots(monkeypatch, tmp_path)
+    memory_dir = v1_root / "memory"
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "memory.limit_in_bytes").write_text("1073741824\n")
+
+    assert _cgroup_memory_limit_mib() == 1024
+
+
+@pytest.mark.asyncio
+async def test_runtime_uses_physical_view_when_cgroup_files_absent(monkeypatch, tmp_path):
+    """非容器正常场景: with no cgroup files at all, the Runtime section must
+    keep reporting the physical view (os.cpu_count + sysconf) — byte-identical
+    to the pre-cgroup behavior on bare metal."""
+    _isolate_cgroup_roots(monkeypatch, tmp_path)
+    monkeypatch.setattr(os, "cpu_count", lambda: 4)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(
+        os,
+        "sysconf",
+        lambda name: {"SC_PAGE_SIZE": 4096, "SC_PHYS_PAGES": 524_288}[name],
+        raising=False,
+    )
+    provider = RuntimeProvider()
+    result = await provider.get_or_refresh()
+    assert "CPU cores: 4" in result
+    assert "Memory: 2048 MiB" in result
+    assert "Resource limits:" in result
+
+
+@pytest.mark.asyncio
+async def test_runtime_section_reports_cgroup_limits_not_host_values(monkeypatch, tmp_path):
+    """End-to-end: a --cpus 2 --memory 2048m container must render
+    "CPU cores: 2" / "Memory: 2048 MiB" from cgroup files — not the host's
+    cpu_count/RAM (the 190-tesseract-worker OOM root cause)."""
+    v2_root, _ = _isolate_cgroup_roots(monkeypatch, tmp_path)
+    v2_root.mkdir()
+    (v2_root / "cpu.max").write_text("200000 100000\n")
+    (v2_root / "memory.max").write_text("2147483648\n")
+    # Host view would report 64 if the cgroup limit were ignored.
+    monkeypatch.setattr(os, "cpu_count", lambda: 64)
+
+    provider = RuntimeProvider()
+    result = await provider.get_or_refresh()
+    assert "CPU cores: 2" in result
+    assert "CPU cores: 64" not in result
+    assert "Memory: 2048 MiB" in result
+    assert "Resource limits:" in result
 
 
 # -- SkillProvider --
@@ -207,10 +378,9 @@ async def test_experience_empty_when_no_content():
 # -- AgentCommunicationSystemPromptProvider --
 
 
-def _make_tool_manager(targets: list, *, with_task: bool = True):
+def _make_tool_manager(targets: list, *, with_task_tool: bool = True):
     from modex_agent.core.tool_manager import InMemoryToolManager
     from modex_agent.multi_agent.address import AgentAddress
-    from modex_agent.multi_agent.bus import AgentMessageBus
     from modex_agent.multi_agent.tools import (
         CommunicationTargetStore,
         SendToAgentTool,
@@ -228,8 +398,9 @@ def _make_tool_manager(targets: list, *, with_task: bool = True):
     )
     mgr = InMemoryToolManager()
     mgr.register(tool)
-    if with_task:
-        # Shared store: both tools see the same targets, matching production wiring.
+    # Shared store: both tools see the same targets, matching production wiring.
+    # `task` registered by default — production registers it when subagents exist.
+    if with_task_tool:
         mgr.register(
             TaskDispatchTool(
                 store=store,
@@ -250,6 +421,9 @@ def _make_tool_manager(targets: list, *, with_task: bool = True):
 class _NoToolManager:
     def get_tool(self, name: str):
         return None
+
+    def is_registered(self, name: str) -> bool:
+        return False
 
 
 @pytest.mark.asyncio
@@ -303,9 +477,12 @@ async def test_comm_provider_peer_target_emits_peer_contract():
 
 
 @pytest.mark.asyncio
-async def test_comm_provider_subagent_target_does_not_emit_dispatch_contract():
-    """_SubagentDispatchSubProvider is deprecated (applies()→False). Subagent
-    targets alone do not produce any comm output without peer tree_ref targets."""
+async def test_comm_provider_subagent_only_targets_emit_only_delegation():
+    """Subagent targets produce neither the peer nor the consultation
+    contract — the peer contract fires only for remote targets with
+    ``tree_ref``, and the consultation contract requires SUBAGENT
+    comm_kind. With the ``task`` tool registered (the seam's default,
+    matching production wiring), only the delegation section fires."""
     from modex_agent.core.agent import AgentCommKind
     from modex_agent.memory.prompt_pipeline.providers import (
         AgentCommunicationSystemPromptProvider,
@@ -319,54 +496,11 @@ async def test_comm_provider_subagent_target_does_not_emit_dispatch_contract():
         _make_tool_manager(targets), AgentCommKind.NORMAL
     )
     result = await provider.get_or_refresh()
-    assert "Dispatching Subagents" not in result
-    assert "NEED_DECISION" not in result
-    assert "PROGRESS_UPDATE" not in result
-    assert provider.last_version == "comm:none"
-
-
-@pytest.mark.asyncio
-async def test_comm_provider_dispatch_does_not_fire_for_none_comm_kind():
-    """_SubagentDispatchSubProvider is deprecated (applies()→False). Even with
-    comm_kind=None (main agent) and subagent targets present, dispatch never fires."""
-    from modex_agent.core.agent import AgentCommKind
-    from modex_agent.memory.prompt_pipeline.providers import (
-        AgentCommunicationSystemPromptProvider,
-    )
-    from modex_agent.multi_agent.tools import CommunicationTarget
-
-    targets = [
-        CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT),
-    ]
-    provider = AgentCommunicationSystemPromptProvider(
-        _make_tool_manager(targets),
-        None,  # comm_kind=None = main agent
-    )
-    result = await provider.get_or_refresh()
-    assert "Dispatching Subagents" not in result
-    assert provider.last_version == "comm:none"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_provider_does_not_fire_without_task_tool():
-    """_SubagentDispatchSubProvider is deprecated (applies()→False). Dispatch
-    never fires regardless of tool availability."""
-    from modex_agent.core.agent import AgentCommKind
-    from modex_agent.memory.prompt_pipeline.providers import (
-        AgentCommunicationSystemPromptProvider,
-    )
-    from modex_agent.multi_agent.tools import CommunicationTarget
-
-    targets = [
-        CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT),
-    ]
-    provider = AgentCommunicationSystemPromptProvider(
-        _make_tool_manager(targets, with_task=False), AgentCommKind.NORMAL
-    )
-    result = await provider.get_or_refresh()
-    assert "Dispatching Subagents" not in result
-    assert provider.last_version is not None
-    assert "dispatch:" not in provider.last_version
+    assert "Remote Agents" not in result
+    assert "Consulting Your Parent" not in result
+    assert "## Delegating To Subagents" in result
+    assert "`task`" in result
+    assert provider.last_version == "comm:delegate"
 
 
 @pytest.mark.asyncio
@@ -389,9 +523,9 @@ async def test_comm_provider_subagent_kind_emits_consultation_contract():
 
 
 @pytest.mark.asyncio
-async def test_comm_provider_peer_emits_without_dispatch():
-    """_SubagentDispatchSubProvider is deprecated. Only peer contract fires
-    when both peer and subagent targets exist."""
+async def test_comm_provider_mixed_targets_emit_only_peer_contract():
+    """Only the peer contract fires when both peer and subagent targets
+    exist — subagent targets contribute nothing to the comm output."""
     from modex_agent.core.agent import AgentCommKind
     from modex_agent.memory.prompt_pipeline.providers import (
         AgentCommunicationSystemPromptProvider,
@@ -414,15 +548,15 @@ async def test_comm_provider_peer_emits_without_dispatch():
     )
     result = await provider.get_or_refresh()
     assert "Remote Agents" in result
-    assert "Dispatching Subagents" not in result
     assert provider.last_version is not None
     assert "peer:" in provider.last_version
-    assert "dispatch:" not in provider.last_version
 
 
 @pytest.mark.asyncio
 async def test_comm_provider_version_combines_sub_modules():
-    """With dispatch deprecated, only peer contributes to the version."""
+    """Peer and delegation sub-modules both contribute version fragments —
+    the seam registers the ``task`` tool alongside the send tools, matching
+    production wiring."""
     from modex_agent.core.agent import AgentCommKind
     from modex_agent.memory.prompt_pipeline.providers import (
         AgentCommunicationSystemPromptProvider,
@@ -444,7 +578,115 @@ async def test_comm_provider_version_combines_sub_modules():
         _make_tool_manager(targets), AgentCommKind.NORMAL
     )
     await provider.get_or_refresh()
+    assert provider.last_version == "comm:peer:alpha|delegate"
+
+
+@pytest.mark.asyncio
+async def test_comm_provider_without_task_tool_emits_no_delegation():
+    """Delegation guidance is gated on ``task`` tool presence — a manager
+    without it emits the peer contract but no delegation section or version
+    fragment."""
+    from modex_agent.core.agent import AgentCommKind
+    from modex_agent.memory.prompt_pipeline.providers import (
+        AgentCommunicationSystemPromptProvider,
+    )
+    from modex_agent.multi_agent.tools import CommunicationTarget
+
+    targets = [
+        CommunicationTarget(
+            name="alpha",
+            kind=AgentCommKind.NORMAL,
+            tree_ref=MagicMock(),
+        ),
+    ]
+    provider = AgentCommunicationSystemPromptProvider(
+        _make_tool_manager(targets, with_task_tool=False), AgentCommKind.NORMAL
+    )
+    result = await provider.get_or_refresh()
+    assert "Remote Agents" in result
+    assert "Delegating To Subagents" not in result
     assert provider.last_version == "comm:peer:alpha"
+
+
+def _mock_memory_system() -> MagicMock:
+    """Minimal MemorySystem double for MemorySystemContextManager.load().
+
+    Mirrors the fixture in tests/unit/memory/test_single_assemble.py: load()
+    drives the injection policy + provider prefetch, so the double covers
+    every async probe the real pipeline issues.
+    """
+    mock_system = MagicMock()
+    mock_system.ensure_within_budget = AsyncMock()
+    mock_system.retrieve_core_memory = AsyncMock(
+        return_value=MagicMock(soul="", user="", memory=""),
+    )
+    mock_system.get_core_memory_directory = AsyncMock(return_value=None)
+    mock_system.get_storage_path = AsyncMock(return_value=None)
+    mock_system.get_history_entries = AsyncMock(return_value=[])
+    mock_system.get_providers = MagicMock(return_value=[])
+    mock_system.prefetch_memories = AsyncMock(return_value=None)
+    mock_system.get_history = AsyncMock(return_value=[])
+    mock_system.create_message_history = MagicMock(return_value=MagicMock())
+    mock_system.hook_runner = MemoryHookRunner()
+    mock_system.pruned_manager = None
+    return mock_system
+
+
+@pytest.mark.asyncio
+async def test_delegation_guidance_welded_to_declaration_position(tmp_path):
+    """Convergence weld: the compiler-derived ``task`` entry (declaration
+    position — root with declared children) is what gates the delegation
+    guidance, through the REAL MemorySystemContextManager prompt pipeline,
+    not a hand-built provider.
+
+    Positive: a root with a declared child compiles a ``task`` entry; a
+    tool manager carrying that entry (what Stage 4 registers from the
+    derived spec) yields a system prompt containing the delegation section.
+    Negative: a childless root compiles no ``task`` entry; its prompt
+    lacks the section. This is the regression net for the system.py
+    wiring seam — dropping AgentCommunicationSystemPromptProvider from
+    the pipeline would pass the provider unit tests above while silently
+    stripping delegation guidance from every declaration-road pool.
+    """
+    from modex_agent.memory.system import MemorySystemContextManager
+    from modex_agent.scope.compiler import compile_scope
+    from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
+    from modex_agent.workspace.context import WorkspaceContext
+    from modex_agent.workspace.paths import WorkspacePaths
+
+    def _effective_tools(*, with_child: bool) -> list[str]:
+        agents = [AgentSpec(name="root")]
+        if with_child:
+            agents.append(AgentSpec(name="child", parent="root"))
+        compilation = compile_scope(
+            ScopeSpec(kind=ScopeKind.POOL, pool=PoolSpec(name="weld", agents=agents)),
+            workspace_ctx=WorkspaceContext(
+                target=tmp_path,
+                paths=WorkspacePaths(root=tmp_path),
+                is_home=False,
+            ),
+            default_llm_provider="default",
+        )
+        root = next(a for a in compilation.agents if a.effective.agent == "root")
+        return root.effective.tools
+
+    async def _pool_prompt(effective_tools: list[str]) -> str:
+        # Stage 4 equivalent: register the derived entries into the tool
+        # manager the agent will carry.
+        mgr = _make_tool_manager([], with_task_tool="task" in effective_tools)
+        ctx_mgr = MemorySystemContextManager(
+            memory_system=_mock_memory_system(),
+            base_system_prompt="base",
+        )
+        return await ctx_mgr.build_system_prompt(tool_manager=mgr)
+
+    with_child_tools = _effective_tools(with_child=True)
+    childless_tools = _effective_tools(with_child=False)
+    assert "task" in with_child_tools
+    assert "task" not in childless_tools
+
+    assert "## Delegating To Subagents" in await _pool_prompt(with_child_tools)
+    assert "## Delegating To Subagents" not in await _pool_prompt(childless_tools)
 
 
 @pytest.mark.asyncio

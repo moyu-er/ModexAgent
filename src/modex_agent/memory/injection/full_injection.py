@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
+from typing import Final
 
 from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.core.models import (
@@ -9,6 +11,13 @@ from modex_agent.memory.core.models import (
     MemoryBudget,
 )
 from modex_agent.memory.core.system import MemorySystem
+from modex_agent.memory.hooks import (
+    ContextAssembledPayload,
+    MemoryHookContext,
+    MemoryHookPoint,
+    MemoryHookRunner,
+    SectionProvenance,
+)
 from modex_agent.memory.injection.policy import MemoryInjectionPolicy
 from modex_agent.memory.tags import CoreMemoryTag
 from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
@@ -16,12 +25,16 @@ from modex_agent.utils.xml import xml_attr, xml_text
 
 logger = logging.getLogger(__name__)
 
+_DISCLAIMER_SOURCE: Final = "disclaimer"
+_CORE_MEMORY_SOURCE: Final = "core_memory"
+
 
 @dataclass(frozen=True)
 class _PromptSection:
     """Internal: section content with priority for sorting during assembly."""
 
     content: str
+    source: str
     priority: int = 0
 
 
@@ -38,9 +51,11 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         *,
         budget: MemoryBudget | None = None,
         token_estimator: TokenEstimator | None = None,
+        hook_runner: MemoryHookRunner | None = None,
     ) -> None:
         self._budget = budget or MemoryBudget()
         self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
+        self._hook_runner = hook_runner
 
     async def assemble(
         self,
@@ -49,6 +64,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         memory_system: MemorySystem,
         query: str = "",
     ) -> InjectionResult:
+        started = time.monotonic()
         core_sections: list[_PromptSection] = []
         await self._inject_core_memory(core_sections, context, memory_system, query)
 
@@ -57,15 +73,31 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             self._inject_disclaimer(sections)
             sections.extend(core_sections)
 
-        sections = self._trim_by_priority(sections)
+        sections, provenance = self._trim_by_priority(sections)
 
         session_msgs = await memory_system.get_history(context)
 
         system_prompt = "\n\n".join(s.content for s in sections) if sections else ""
-        return InjectionResult(
+        result = InjectionResult(
             system_prompt=system_prompt,
             messages=list(session_msgs),
+            provenance=provenance,
         )
+        if self._hook_runner is not None:
+            payload = ContextAssembledPayload(
+                session_id=context.session_id or "",
+                agent=context.agent_id or "",
+                duration_ms=(time.monotonic() - started) * 1000,
+                sections=provenance,
+            )
+            await self._hook_runner.dispatch(
+                MemoryHookPoint.CONTEXT_ASSEMBLED,
+                MemoryHookContext(
+                    memory_context=context,
+                    context_assembled=payload,
+                ),
+            )
+        return result
 
     # -- injection helpers ---------------------------------------------------
 
@@ -84,6 +116,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                     "conversation. When summaries and full transcripts differ, "
                     "transcripts are the authoritative source."
                 ),
+                source=_DISCLAIMER_SOURCE,
                 priority=110,
             )
         )
@@ -180,32 +213,45 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 sections.append(
                     _PromptSection(
                         content=heading + xml_content,
+                        source=_CORE_MEMORY_SOURCE,
                         priority=100,
                     )
                 )
         except Exception:
             logger.debug("Core memory injection skipped", exc_info=True)
 
-    def _trim_by_priority(self, sections: list[_PromptSection]) -> list[_PromptSection]:
+    def _trim_by_priority(
+        self,
+        sections: list[_PromptSection],
+    ) -> tuple[list[_PromptSection], list[SectionProvenance]]:
         """Sort by priority descending and optionally trim to token budget."""
         sorted_sections = sorted(sections, key=lambda s: s.priority, reverse=True)
         max_tokens = self._budget.max_system_prompt_tokens
-        if max_tokens is None or max_tokens <= 0:
-            return sorted_sections
-
         kept: list[_PromptSection] = []
+        provenance: list[SectionProvenance] = []
         running = 0
         for sec in sorted_sections:
-            tokens = self._token_estimator.estimate_text(sec.content)
-            if running + tokens <= max_tokens:
-                kept.append(sec)
-                running += tokens
+            retrieved_tokens = self._token_estimator.estimate_text(sec.content)
+            if max_tokens is None or max_tokens <= 0 or running + retrieved_tokens <= max_tokens:
+                injected_section = sec
             else:
-                trimmed = self._trim_section_by_paragraphs(sec, max_tokens - running)
-                if trimmed:
-                    kept.append(trimmed)
-                    running += self._token_estimator.estimate_text(trimmed.content)
-        return kept
+                injected_section = self._trim_section_by_paragraphs(sec, max_tokens - running)
+
+            injected_tokens = 0
+            if injected_section is not None:
+                kept.append(injected_section)
+                injected_tokens = self._token_estimator.estimate_text(injected_section.content)
+                running += injected_tokens
+            provenance.append(
+                SectionProvenance(
+                    source=sec.source,
+                    retrieved_tokens=retrieved_tokens,
+                    injected_tokens=injected_tokens,
+                    pruned_tokens=retrieved_tokens - injected_tokens,
+                    priority=sec.priority,
+                )
+            )
+        return kept, provenance
 
     @staticmethod
     def _trim_section_by_paragraphs(
@@ -231,5 +277,6 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             return section
         return _PromptSection(
             content=trimmed_content,
+            source=section.source,
             priority=section.priority,
         )

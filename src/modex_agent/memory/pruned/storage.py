@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 
 
 class PrunedStorage(ABC):
-    """Abstract interface for persisting pruned message batches and their index."""
+    """Abstract interface for persisting pruned transcripts and their index."""
 
     @abstractmethod
-    def write_pruned(self, filename: str, messages: list[dict]) -> None:
-        """Write a batch of messages to a JSONL file."""
+    def write_transcript(self, filename: str, text: str) -> None:
+        """写入已渲染的 Markdown 转写(原子)"""
         ...
 
     @abstractmethod
@@ -42,7 +42,7 @@ class PrunedStorage(ABC):
 
     @abstractmethod
     def has_content(self) -> bool:
-        """Return True if any content file (not the index) exists."""
+        """Return True if any Markdown transcript file exists."""
         ...
 
     @abstractmethod
@@ -57,7 +57,7 @@ class PrunedStorage(ABC):
 
 
 class FilePrunedStorage(PrunedStorage):
-    """File-system backed storage using JSONL for both content and index."""
+    """File-system backed storage: Markdown transcripts with a JSONL index."""
 
     def __init__(self, pruned_dir: Path, index_filename: str = "index.jsonl") -> None:
         self._dir = pruned_dir
@@ -65,13 +65,12 @@ class FilePrunedStorage(PrunedStorage):
 
     # -- PrunedStorage implementation ----------------------------------------
 
-    def write_pruned(self, filename: str, messages: list[dict]) -> None:
+    def write_transcript(self, filename: str, text: str) -> None:
         self._dir.mkdir(parents=True, exist_ok=True)
         target = self._dir / filename
         tmp = target.with_suffix(".tmp")
         with open(tmp, "w", encoding="utf-8") as fh:
-            for msg in messages:
-                fh.write(json.dumps(msg, ensure_ascii=False) + "\n")
+            fh.write(text)
         # os.replace is atomic on the same filesystem
         os.replace(str(tmp), str(target))
 
@@ -109,16 +108,7 @@ class FilePrunedStorage(PrunedStorage):
     def has_content(self) -> bool:
         if not self._dir.exists():
             return False
-        # Check for .jsonl content files (legacy path)
-        if any(
-            f.suffix == ".jsonl" and f.name != self._index_filename
-            for f in self._dir.iterdir()
-            if f.is_file()
-        ):
-            return True
-        # Index file existence is sufficient — get_injection_xml will
-        # handle the case where it exists but has no valid entries.
-        return (self._dir / self._index_filename).exists()
+        return any(f.suffix == ".md" and f.is_file() for f in self._dir.iterdir())
 
     def prune_oldest(self, keep_count: int) -> None:
         entries = self.read_index()

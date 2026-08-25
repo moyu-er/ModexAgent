@@ -103,17 +103,24 @@ class ScopedMessageHistory(MessageHistory):
             return False
         from modex_agent.memory.cleanup import cleanup_session
 
+        max_context_tokens = self._cleanup_config.get("max_context_tokens")
         result = await cleanup_session(
             session=self._manager,
             archive=self._archive_manager,
             context=self._context,
             compactor=self._compactor,
+            max_context_tokens=(
+                int(max_context_tokens) if max_context_tokens is not None else None
+            ),
+            max_token_ratio=float(self._cleanup_config.get("max_token_ratio", 0.85)),
+            max_output_tokens=int(self._cleanup_config.get("max_output_tokens", 0)),
+            keep_ratio=float(self._cleanup_config.get("keep_ratio", 0.3)),
+            max_backups=int(self._cleanup_config.get("max_backups", 10)),
             pruned_manager=self._pruned_manager,
             archive_agent=self._archive_agent,
             archive_storage=self._archive_storage,
             hook_runner=self._hook_runner,
             token_estimator=self._token_estimator,
-            **self._cleanup_config,
         )
         return result.triggered
 
@@ -123,12 +130,13 @@ class ScopedMessageHistory(MessageHistory):
             return True  # Conservative: cache unavailable → let cleanup_session decide
         from modex_agent.memory.cleanup import check_cleanup_trigger
 
+        max_context_tokens = self._cleanup_config.get("max_context_tokens")
         reason = check_cleanup_trigger(
             self._cache,
             self._token_estimator,
-            self._cleanup_config.get("max_context_tokens"),
-            self._cleanup_config.get("max_token_ratio", 0.85),
-            self._cleanup_config.get("max_output_tokens", 0),
+            int(max_context_tokens) if max_context_tokens is not None else None,
+            float(self._cleanup_config.get("max_token_ratio", 0.85)),
+            int(self._cleanup_config.get("max_output_tokens", 0)),
         )
         return reason is not None
 
@@ -247,6 +255,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         core_memory_consolidator: CoreMemoryConsolidatorBase | None = None,
         token_estimator: TokenEstimator | None = None,
         compactor: Any | None = None,
+        hook_runner: MemoryHookRunner | None = None,
     ) -> None:
         self._layers = layer_set
         self._registry = store_registry
@@ -257,7 +266,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         self._archive_storage = archive_storage
         self._core_memory_consolidator = core_memory_consolidator
         self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
-        self._hook_runner = MemoryHookRunner()
+        self._hook_runner = hook_runner or MemoryHookRunner()
         self._recorder = MemoryAppendRecorder()
         self._compactor = compactor
         if providers is not None:
@@ -284,6 +293,10 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         receives subsequent events because the runner is the same object.
         """
         self._hook_runner.add(hook)
+
+    @property
+    def hook_runner(self) -> MemoryHookRunner:
+        return self._hook_runner
 
     def create_message_history(
         self,

@@ -25,6 +25,7 @@ import pytest
 
 from modex_agent.core.experience.manager import ExperienceManager
 from modex_agent.core.experience.source import FileExperienceSource
+from modex_agent.memory.hooks import MemoryHookRunner
 from modex_agent.memory.system import MemorySystemContextManager
 
 _EXP_MD_TEMPLATE = (
@@ -59,6 +60,7 @@ def _make_mock_memory_system() -> MagicMock:
     mock_system.prefetch_memories = AsyncMock(return_value=None)
     mock_system.get_history = AsyncMock(return_value=[])
     mock_system.create_message_history = MagicMock(return_value=MagicMock())
+    mock_system.hook_runner = MemoryHookRunner()
     # Avoid fooling hasattr checks in load().
     mock_system.pruned_manager = None
     return mock_system
@@ -82,6 +84,7 @@ async def test_load_injects_experience_from_current_dir(tmp_path: Path) -> None:
     ctx_mgr = _ctx_mgr(exp_dir)
 
     state = await ctx_mgr.load("s1", tool_manager=MagicMock())
+    assert state.system_prompt_pipeline is not None
     prompt = await state.system_prompt_pipeline.get_or_refresh()
 
     assert "exp-alpha" in prompt, f"experience should be injected, got:\n{prompt}"
@@ -103,6 +106,7 @@ async def test_rebuilt_experience_manager_switches_injected_content(
 
     # Before switch: alpha injected.
     state_a = await ctx_mgr.load("s1", tool_manager=MagicMock())
+    assert state_a.system_prompt_pipeline is not None
     prompt_a = await state_a.system_prompt_pipeline.get_or_refresh()
     assert "exp-alpha" in prompt_a
 
@@ -113,6 +117,7 @@ async def test_rebuilt_experience_manager_switches_injected_content(
 
     # After switch: beta injected, alpha gone.
     state_b = await ctx_mgr.load("s2", tool_manager=MagicMock())
+    assert state_b.system_prompt_pipeline is not None
     prompt_b = await state_b.system_prompt_pipeline.get_or_refresh()
 
     assert "exp-beta" in prompt_b, (

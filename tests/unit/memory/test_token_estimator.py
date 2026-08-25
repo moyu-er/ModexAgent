@@ -5,12 +5,19 @@ from typing import Any
 
 import pytest
 
+from modex_agent.agents.react.message_builder import build_assistant_message
 from modex_agent.core.message import ChatMessage
+from modex_agent.core.types import ToolCall
 from modex_agent.memory.token_estimator import (
     CharTokenEstimator,
     TokenEstimator,
     message_payload,
 )
+
+
+def _wire_tool_calls() -> list[dict[str, Any]]:
+    """tool_calls in the persisted (OpenAI wire) dict form."""
+    return [{"id": "call_1", "type": "function", "function": {"name": "f", "arguments": "{}"}}]
 
 
 def test_message_payload_collects_all_fields() -> None:
@@ -26,6 +33,61 @@ def test_message_payload_collects_all_fields() -> None:
     assert "search" in payload
     assert "call_1" in payload
     assert "function" in payload  # tool_calls JSON
+
+
+def test_reasoning_counted_on_assistant_tool_call_turns() -> None:
+    """Assistant tool-call turns replay reasoning to the API (thinking-mode
+    passback), so the estimator must count it — the server bills it as input
+    on every subsequent request."""
+    est = CharTokenEstimator()
+    base: dict[str, Any] = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": _wire_tool_calls(),
+    }
+    without = est.estimate_message(dict(base))
+    with_reasoning = est.estimate_message(dict(base, reasoning_content="thinking hard about the tool call"))
+    assert with_reasoning > without
+    assert with_reasoning - without == est.estimate_text("thinking hard about the tool call")
+
+
+def test_reasoning_not_counted_on_plain_assistant_turns() -> None:
+    """Plain assistant turns never replay reasoning to the provider, so it
+    stays uncounted — mirrors the provider's conditional passback exactly."""
+    est = CharTokenEstimator()
+    base: dict[str, Any] = {"role": "assistant", "content": "final answer"}
+    without = est.estimate_message(dict(base))
+    with_reasoning = est.estimate_message(dict(base, reasoning_content="thinking hard"))
+    assert with_reasoning == without
+
+
+def test_reasoning_counted_via_build_assistant_message() -> None:
+    """End-to-end: message builder -> ChatMessage -> to_dict -> payload —
+    reasoning on a tool-call turn survives normalization and is counted."""
+    est = CharTokenEstimator()
+    call = ToolCall(tool_name="f", arguments={}, call_id="call_1")
+    msg = build_assistant_message(None, [call], reasoning_content="step by step reasoning")
+    counted = est.estimate_message(msg)
+    without = est.estimate_message(build_assistant_message(None, [call]))
+    assert counted > without
+    assert counted - without == est.estimate_text("step by step reasoning")
+
+
+def test_reasoning_not_counted_on_non_assistant_messages() -> None:
+    """Regression: tool/user messages carrying a stray reasoning_content key
+    are unaffected — the provider never replays reasoning for them."""
+    est = CharTokenEstimator()
+    tool_msg: dict[str, Any] = {
+        "role": "tool",
+        "content": "result",
+        "tool_call_id": "call_1",
+        "reasoning_content": "thinking",
+    }
+    assert est.estimate_message(tool_msg) == est.estimate_message(
+        {"role": "tool", "content": "result", "tool_call_id": "call_1"}
+    )
+    user_msg: dict[str, Any] = {"role": "user", "content": "hi", "reasoning_content": "thinking"}
+    assert est.estimate_message(user_msg) == est.estimate_message({"role": "user", "content": "hi"})
 
 
 def test_char_estimator_text_is_ascii_div4() -> None:

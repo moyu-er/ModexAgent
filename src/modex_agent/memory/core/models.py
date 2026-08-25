@@ -20,6 +20,7 @@ from modex_agent.memory.archive_models import (
     ArchiveState,
     ArchiveWrite,
 )
+from modex_agent.memory.hooks import SectionProvenance
 from modex_agent.memory.sanitizer import ToolChainSanitizationIssue
 
 
@@ -125,6 +126,7 @@ class InjectionResult:
 
     system_prompt: str
     messages: list[ChatMessage]
+    provenance: list[SectionProvenance] = field(default_factory=list)
 
 
 @dataclass

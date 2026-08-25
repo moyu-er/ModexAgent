@@ -27,7 +27,6 @@ from modex_agent.memory.hooks import MemoryHookContext
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.recorder import MemoryAppendRecorder
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
-from modex_agent.plugins.abc import MemoryProvider
 from modex_agent.runtime.store import TodoItem, TodoStore
 
 # ---------------------------------------------------------------------------
@@ -51,8 +50,14 @@ class _FakeTodoStore(TodoStore):
         self._data.pop(session_id, None)
 
 
-class _RecordingProvider(MemoryProvider):
-    """Records every ``add()`` call — verifies no provider fan-out."""
+class _RecordingProvider:
+    """Records every ``add()`` call — verifies no provider fan-out.
+
+    Standalone mock (no MemoryProvider ABC — that ABC was removed in task 1's
+    plugins/abc.py rewrite). The recorder only requires ``name`` and ``add()``;
+    this class provides both plus ``search()``/``initialize()``/``shutdown()``
+    for completeness.
+    """
 
     def __init__(self) -> None:
         self.add_calls: list[tuple[list[ChatMessage], MemoryContext]] = []

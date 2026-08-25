@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from modex_agent.agents.summarizer.outcomes import ConsolidationOutcome
 from modex_agent.ioc.configs.memory import DreamEngineConfig
 from modex_agent.memory.consolidation.dream_engine import DreamEngine
 from modex_agent.memory.core.models import ArchiveEntry, UnprocessedResult
@@ -92,7 +93,7 @@ class TestDreamEngineRun:
     async def test_run_processes_with_consolidator(self):
         """With a consolidator, run() processes entries and advances cursor."""
         mock_consolidator = AsyncMock()
-        mock_consolidator.consolidate.return_value = True
+        mock_consolidator.consolidate.return_value = ConsolidationOutcome(changed=True)
         engine = _make_engine()
         engine._consolidator = mock_consolidator
 
@@ -117,7 +118,7 @@ class TestDreamEngineRun:
     async def test_run_respects_max_consume_per_run(self):
         """Only max_consume_per_run entries are processed per invocation."""
         mock_consolidator = AsyncMock()
-        mock_consolidator.consolidate.return_value = True
+        mock_consolidator.consolidate.return_value = ConsolidationOutcome(changed=True)
         engine = _make_engine(max_consume_per_run=2)
         engine._consolidator = mock_consolidator
 
@@ -133,7 +134,7 @@ class TestDreamEngineRun:
         engine.history_manager.get_storage_path.return_value = MagicMock()
 
         context = MagicMock()
-        result = await engine.run(context)
+        await engine.run(context)
 
         mock_consolidator.consolidate.assert_awaited_once()
         archive_ids_arg = mock_consolidator.consolidate.call_args[1]["archive_ids"]

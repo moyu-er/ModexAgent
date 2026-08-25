@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 
@@ -14,6 +16,14 @@ from modex_agent.memory.core.store_metadata import StoreMetadata
 from modex_agent.memory.core_memory_search import (
     CoreMemorySearchStrategy,
     FullDumpCoreMemoryStrategy,
+)
+from modex_agent.memory.hooks import (
+    ConsolidationFinishedPayload,
+    CoreMemoryUpdatedPayload,
+    MemoryHookContext,
+    MemoryHookPoint,
+    MemoryHookRunner,
+    MemoryUpdateRef,
 )
 from modex_agent.memory.layers.config import CoreMemoryConfig, StorageFactory
 from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
@@ -36,6 +46,7 @@ class ScopedCoreMemoryManager(CoreMemoryManager):
         consolidation_fn: Callable[[str, str], Awaitable[str]] | None = None,
         consolidation_threshold_tokens: int = 2000,
         token_estimator: TokenEstimator | None = None,
+        hook_runner: MemoryHookRunner | None = None,
     ) -> None:
         self._storage_factory = storage_factory
         self._config = config or CoreMemoryConfig()
@@ -43,6 +54,7 @@ class ScopedCoreMemoryManager(CoreMemoryManager):
         self._consolidation_fn = consolidation_fn
         self._consolidation_threshold = consolidation_threshold_tokens
         self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
+        self._hook_runner = hook_runner
 
     def get_scope(self) -> Scope:
         return self._config.scope
@@ -134,6 +146,7 @@ class ScopedCoreMemoryManager(CoreMemoryManager):
         return None
 
     async def apply_update(self, context: MemoryContext, update: MemoryUpdate) -> str:
+        started = time.monotonic()
         bundle = await self._storage_factory(context)
         file_name = self._config.default_files.get(update.file_name, update.file_name)
         existing = await self.get_file(context, file_name) or ""
@@ -179,6 +192,30 @@ class ScopedCoreMemoryManager(CoreMemoryManager):
             )
         await self._maybe_prune_changelog(context)
 
+        if self._hook_runner is not None:
+            digest = hashlib.sha256(update.content.encode()).hexdigest()[:12]
+            payload = CoreMemoryUpdatedPayload(
+                session_id=context.session_id or "",
+                file=file_name,
+                update=MemoryUpdateRef(
+                    mode=update.mode,
+                    target=update.file_name,
+                    content_digest=f"sha256:{digest}",
+                ),
+                idempotent=result == existing,
+                source_tag=update.reason,
+                before_tokens=self._token_estimator.estimate_text(existing),
+                after_tokens=self._token_estimator.estimate_text(result),
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+            await self._hook_runner.dispatch(
+                MemoryHookPoint.CORE_MEMORY_UPDATED,
+                MemoryHookContext(
+                    memory_context=context,
+                    core_memory_updated=payload,
+                ),
+            )
+
         # Auto-consolidate if file exceeds threshold
         await self._maybe_consolidate(context, file_name, result)
         return result
@@ -216,6 +253,7 @@ class ScopedCoreMemoryManager(CoreMemoryManager):
         self, context: MemoryContext, file_name: str, content: str
     ) -> str | None:
         """Run consolidation on a file and persist the result."""
+        started = time.monotonic()
         try:
             if self._consolidation_fn is None:
                 return None
@@ -243,6 +281,27 @@ class ScopedCoreMemoryManager(CoreMemoryManager):
                 self._token_estimator.estimate_text(content),
                 self._token_estimator.estimate_text(consolidated),
             )
+            if self._hook_runner is not None:
+                before_tokens = self._token_estimator.estimate_text(content)
+                after_tokens = self._token_estimator.estimate_text(consolidated)
+                payload = ConsolidationFinishedPayload(
+                    session_id=context.session_id or "",
+                    trigger="core",
+                    changed=consolidated != content,
+                    consumed_count=1,
+                    before_tokens=before_tokens,
+                    after_tokens=after_tokens,
+                    compression_ratio=(after_tokens / before_tokens if before_tokens else 1.0),
+                    usage=None,
+                    duration_ms=(time.monotonic() - started) * 1000,
+                )
+                await self._hook_runner.dispatch(
+                    MemoryHookPoint.CONSOLIDATION_FINISHED,
+                    MemoryHookContext(
+                        memory_context=context,
+                        consolidation_finished=payload,
+                    ),
+                )
             return consolidated
         except Exception:
             logger.exception("Consolidation failed for %s", file_name)

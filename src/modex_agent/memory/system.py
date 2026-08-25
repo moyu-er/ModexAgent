@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, assert_never
 
 from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.constants import RuntimeInfoKey, format_working_directory_line
@@ -18,6 +18,7 @@ from modex_agent.memory.core.system import (
     MemorySystem,  # noqa: F401 — re-export
 )
 from modex_agent.memory.default_system import DefaultMemorySystem
+from modex_agent.memory.hooks import MemoryHookRunner
 from modex_agent.memory.injection.archive import ArchiveInjectionConfig
 from modex_agent.memory.injection.policy import MemoryInjectionPolicy
 from modex_agent.memory.layers.config import MemoryLayerConfigSet
@@ -67,6 +68,7 @@ def create_memory_system(
 ) -> DefaultMemorySystem:
     """Create a production-ready memory system."""
     registry = store_registry or DefaultMemoryStoreRegistry(workspace)
+    hook_runner = MemoryHookRunner()
     if session_only:
         session_config = config.session if config else None
         layer_set = MemoryLayerFactory.session_only(
@@ -78,6 +80,8 @@ def create_memory_system(
             registry=registry,
             config=config,
             llm_provider=llm_provider,
+            hook_runner=hook_runner,
+            token_estimator=token_estimator,
         )
 
     return DefaultMemorySystem(
@@ -90,6 +94,7 @@ def create_memory_system(
         core_memory_consolidator=core_memory_consolidator,
         token_estimator=token_estimator,
         compactor=compactor,
+        hook_runner=hook_runner,
     )
 
 
@@ -128,12 +133,15 @@ class MemorySystemContextManager(ContextManager):
     ) -> None:
         from modex_agent.memory.injection import FullInjectionPolicy
 
-        self.memory_system: DefaultMemorySystem = memory_system
+        self._memory_system = memory_system
+        self.memory_system = memory_system
         self.default_user_id = default_user_id
         self.default_agent_id = default_agent_id
         self.default_agent_role = default_agent_role
         self.base_system_prompt = base_system_prompt
-        self.injection_policy: MemoryInjectionPolicy = injection_policy or FullInjectionPolicy()
+        self.injection_policy: MemoryInjectionPolicy = injection_policy or FullInjectionPolicy(
+            hook_runner=memory_system.hook_runner,
+        )
         self._archive_injection_config = archive_injection_config
         self._last_session_id: str | None = None
         self._context_cache: dict[str, MemoryContext] = {}
@@ -183,7 +191,7 @@ class MemorySystemContextManager(ContextManager):
                 ctx = cached_ctx
         # Budget enforcement before every LLM request
         try:
-            await self.memory_system.ensure_within_budget(ctx)
+            await self._memory_system.ensure_within_budget(ctx)
         except Exception:
             logger.warning("Pre-load budget check failed", exc_info=True)
 
@@ -217,7 +225,7 @@ class MemorySystemContextManager(ContextManager):
 
         result = await self.injection_policy.assemble(
             context=ctx,
-            memory_system=self.memory_system,
+            memory_system=self._memory_system,
             query=query,
         )
 
@@ -248,7 +256,7 @@ class MemorySystemContextManager(ContextManager):
 
             providers.append(
                 ForkContextProvider(
-                    self._fork_context_spec, session_id, self.memory_system, parent_sid
+                self._fork_context_spec, session_id, self._memory_system, parent_sid
                 )
             )
 
@@ -266,16 +274,16 @@ class MemorySystemContextManager(ContextManager):
         # 4. Archive summaries (must refresh on cleanup)
         archive_config = self._archive_injection_config
         if archive_config is not None and archive_config.count > 0:
-            providers.append(ArchiveProvider(self.memory_system, ctx, archive_config))
+            providers.append(ArchiveProvider(self._memory_system, ctx, archive_config))
 
         # 5. Pruned catalog (must refresh on cleanup)
-        pruned_mgr = self.memory_system.pruned_manager
+        pruned_mgr = self._memory_system.pruned_manager
         if pruned_mgr is not None:
             providers.append(PrunedProvider(pruned_mgr, session_id=session_id))
 
         # 6. Provider blocks (hash-based versioning)
         provider_blocks: list[str] = []
-        for prov in self.memory_system.get_providers():
+        for prov in self._memory_system.get_providers():
             try:
                 block = prov.system_prompt_block()
                 if block:
@@ -288,7 +296,7 @@ class MemorySystemContextManager(ContextManager):
         # 7. Provider prefetch (query-based versioning)
         if query:
             try:
-                prefetch = await self.memory_system.prefetch_memories(query, ctx)
+                prefetch = await self._memory_system.prefetch_memories(query, ctx)
                 if prefetch:
                     providers.append(ProviderPrefetchProvider(query, prefetch))
             except Exception:
@@ -343,7 +351,7 @@ class MemorySystemContextManager(ContextManager):
         if not system_prompt:
             system_prompt = _DEFAULT_SYSTEM_PROMPT
 
-        history = self.memory_system.create_message_history(
+        history = self._memory_system.create_message_history(
             context=ctx,
             initial_messages=result.messages,
         )
@@ -374,7 +382,7 @@ class MemorySystemContextManager(ContextManager):
                 agent_id=self.default_agent_id,
                 agent_role=self.default_agent_role,
             )
-        await self.memory_system.clear(ctx)
+        await self._memory_system.clear(ctx)
 
     # -- System prompt composition ----------------------------------------
 
@@ -463,10 +471,13 @@ class MemorySystemContextManager(ContextManager):
         if not runtime_lines:
             return user_message
 
-        try:
-            msg_dict = user_message.to_dict()
-        except AttributeError:
-            msg_dict = dict(user_message)
+        match user_message:
+            case ChatMessage():
+                msg_dict = user_message.to_dict()
+            case dict():
+                msg_dict = dict(user_message)
+            case unreachable:
+                assert_never(unreachable)
         original_content = msg_dict.get("content", "")
         prefix = "[Runtime Context]\n" + "\n".join(runtime_lines) + "\n\n"
 

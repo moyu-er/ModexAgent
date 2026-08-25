@@ -41,7 +41,7 @@ The `memory/` module provides a comprehensive memory system for agents. It manag
 | `layers/` | 5 py | Concrete layer managers — `SessionMemoryManager`, `ArchiveMemoryManager`, `CoreMemoryManager` + `MemoryLayerConfigSet` + `MemoryLayerFactory`. `MemoryLayerConfigSet` and all layer configs are frozen Pydantic `BaseModel` (B4) |
 | `consolidation/` | 1 py | `DreamEngine` — offline background consolidation of session → archive → core memory |
 | `injection/` | 3 py | `MemoryInjectionPolicy` → core memory bundle assembly: `FullInjectionPolicy` (core memory, budget-trimmed; no disclaimer when core memory empty → empty system_prompt → CoreMemoryProvider not added), `RestrictedInjectionPolicy` (session-only, empty prompt). Archive/pruned/blocks/prefetch handled by pipeline providers |
-| `pruned/` | 3 py | `PrunedManager` + `PrunedStorage` (ABC + `FilePrunedStorage`) + `PrunedIndexEntry` — catalog of cleaned-up session messages, session-scoped |
+| `pruned/` | 4 py | `PrunedManager` + `PrunedStorage` (ABC + `FilePrunedStorage`) + `PrunedIndexEntry` — catalog of cleaned-up session messages, session-scoped |
 | `registry/` | 3 py | `MemoryStoreRegistry` — storage provider registry. `resolve()` returns a `MemoryStoreBundle`. `BaseMemoryStoreRegistry` ABC + `DefaultMemoryStoreRegistry` (file-backed). The in-memory registry was removed in T03 |
 | `pipeline/` | 3 py | `SystemPromptPipeline` — ordered collection of versioned `SystemPromptProvider` (ABC + pipeline orchestrator + provider implementations) |
 | `prompts/` | 8 files | Prompt templates: `archive/` (agent_system.md, agent_user.md), `experience/` (review_system.md, review_user.md), `core_memory/` (consolidator_system.md, consolidator_user.md — renamed from `knowledge/` per ADR-0035), `compact/` (agent_system.md, agent_user.md — session compact summary prompts) |
@@ -151,7 +151,7 @@ the shared runner. The bot registers two hooks in deterministic order:
 | Session | `SessionMemoryManager` | `MemoryStoreBundle` | Short-term conversation messages |
 | Archive | `ArchiveMemoryManager` | `ArchiveStore` (file or SQLite), with optional markdown path capability | Historical context, automatically generated |
 | Core | `CoreMemoryManager` | File-based (markdown) | Core memory (SOUL.md, USER.md, MEMORY.md) |
-| Pruned | `PrunedManager` + `PrunedStorage` | File-based (JSON) | Catalog of cleaned-up messages |
+| Pruned | `PrunedManager` + `PrunedStorage` | File-based (Markdown transcripts + JSONL index) | Catalog of cleaned-up messages |
 
 ## For AI Agents
 

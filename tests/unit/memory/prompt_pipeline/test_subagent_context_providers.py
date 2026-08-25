@@ -8,11 +8,11 @@ Written test-first: these fail until the providers exist.
 """
 from __future__ import annotations
 
-import pytest
-
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from modex_agent.core.history import ListMessageHistory
 from modex_agent.core.message import ChatMessage
@@ -20,11 +20,11 @@ from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.archive_models import ArchiveChannel
 from modex_agent.memory.core.models import CoreMemoryContents
 from modex_agent.memory.core.system import MemorySystem
+from modex_agent.memory.hooks import MemoryHook
 from modex_agent.memory.prompt_pipeline.providers import (
     ForkContextProvider,
     ForkContextSpec,
 )
-
 
 # ── ForkContextProvider ──────────────────────────────────────────────────
 
@@ -38,6 +38,9 @@ class _MockMemory(MemorySystem):
 
     async def initialize(self) -> None: ...
     async def close(self) -> None: ...
+
+    def add_cleanup_hook(self, hook: MemoryHook) -> None:
+        pass
 
     def create_message_history(
         self,
@@ -258,24 +261,6 @@ def test_h7_consult_content_has_ask_parent_question():
 
     provider = _SubagentConsultationSubProvider(None, AgentCommKind.SUBAGENT)
     assert "ask your parent a question" in provider.content()
-
-
-def test_h8_dispatch_applies_returns_false():
-    from modex_agent.core.agent import AgentCommKind
-    from modex_agent.memory.prompt_pipeline.providers import (
-        _SubagentDispatchSubProvider,
-    )
-
-    provider = _SubagentDispatchSubProvider(None, AgentCommKind.NORMAL)
-    assert provider.applies() is False
-
-
-def test_h9_dispatch_provider_class_deprecated():
-    from modex_agent.memory.prompt_pipeline.providers import (
-        _SubagentDispatchSubProvider,
-    )
-
-    assert "[DEPRECATED]" in (_SubagentDispatchSubProvider.__doc__ or "")
 
 
 @pytest.mark.asyncio
