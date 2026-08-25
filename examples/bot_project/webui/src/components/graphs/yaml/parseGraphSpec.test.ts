@@ -234,6 +234,58 @@ default_trigger: on_all_preds
     });
   });
 
+  it("后端 _yaml() 往返输出含 state_schema: null 时解析成功(scope-converge GraphSpec 新增字段)", () => {
+    // bot/webui/routes/graph_routes.py `_yaml()` 的原样输出内联拷贝 ——
+    // yaml.dump(GraphSpec(..., state_schema=None, ...).model_dump(mode="json"))。
+    // state_schema 对渲染无意义,允许存在但不读取(与 version/state_class 同款)。
+    const BACKEND_STATE_SCHEMA_NULL_YML = `name: state_schema_null
+nodes:
+- name: a
+  node_type: agent
+  config:
+    agent: designer
+    pool: review
+  trigger: null
+edges:
+- source: __start__
+  target: a
+- source: a
+  target: __end__
+state_class: default
+state_schema: null
+scheduler: linear
+version: '1.0'
+metadata: {}
+max_iterations: 25
+default_trigger: on_all_preds
+`;
+
+    const topo = parseGraphSpecYaml(BACKEND_STATE_SCHEMA_NULL_YML);
+
+    expect(topo.name).toBe("state_schema_null");
+    expect(topo.nodes.map((n) => n.name)).toEqual(["__start__", "a", "__end__"]);
+  });
+
+  it("声明式 state_schema(非 null)也允许存在且不被读取", () => {
+    const src = `name: t
+state_schema:
+  research_notes:
+    type: string
+    initial: ""
+  tool_results:
+    type: list
+    item_type: string
+nodes:
+  - name: a
+    node_type: agent
+edges:
+  - source: __start__
+    target: a
+`;
+    const topo = parseGraphSpecYaml(src);
+    expect(topo.nodes.map((n) => n.name)).toEqual(["__start__", "a"]);
+  });
+
   it.each([
     { label: "boolean", triggerYaml: "trigger: true" },
     { label: "number", triggerYaml: "trigger: 1" },

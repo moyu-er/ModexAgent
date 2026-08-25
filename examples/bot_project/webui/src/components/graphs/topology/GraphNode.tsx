@@ -14,7 +14,7 @@
  * - **agent 节点单击即跳转会话**(onOpen);非 agent 功能节点单击选中(onSelect)。
  */
 import { useState, type FC, type KeyboardEvent, type MouseEvent } from "react";
-import { Bot, Braces, Timer, User, Workflow, type LucideIcon } from "lucide-react";
+import { Bot, Boxes, Braces, Layers, Timer, User, Workflow, type LucideIcon } from "lucide-react";
 import {
   GRAPH_NODE_END,
   GRAPH_NODE_START,
@@ -44,6 +44,9 @@ export const NODE_TYPE_ICONS: Readonly<Record<string, LucideIcon>> = {
   delay: Timer,
   human_input: User,
   graph: Workflow,
+  // Scope 声明层级(票据16):workspace=层叠容器,pool=池(与设置导航同图标)。
+  workspace: Layers,
+  pool: Boxes,
 };
 
 /** 判断是否为结构性端点(START/END) — 小药丸,无图标/sub/dot。 */

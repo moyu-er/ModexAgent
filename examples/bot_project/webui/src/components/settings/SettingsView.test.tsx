@@ -81,7 +81,7 @@ describe("SettingsModal", () => {
   });
 
   it("renders settings navigation beside content in the modal", async () => {
-    window.history.replaceState(null, "", "/?tab=pools");
+    window.history.replaceState(null, "", "/?tab=scope");
     vi.stubGlobal("fetch", routeFetch());
 
     render(
@@ -96,7 +96,8 @@ describe("SettingsModal", () => {
     });
     expect(shell.className).toContain("flex-row");
     expect(navigation.className).toContain("w-52");
-    expect(screen.getByLabelText("Add pool")).toBeTruthy();
+    // The scope declaration editor is the pool-tree surface (ticket 11).
+    expect(screen.getAllByText("Scope").length).toBeGreaterThan(0);
   });
 
   it("loads config and renders a field", async () => {
@@ -179,7 +180,7 @@ describe("SettingsModal", () => {
 
 
   // The IM view must load first so the persisted-domain gate is satisfied; then
-  // we click into Pools / MCP / Skills and assert each child's distinctive copy
+  // we click into MCP / Skills and assert each child's distinctive copy
   // appears. Guards against the regression where a placeholder was rendered
   // instead of the real view.
   function routeFetch(): ReturnType<typeof vi.fn> {
@@ -188,30 +189,22 @@ describe("SettingsModal", () => {
       const body =
         url.endsWith("/api/pools")
           ? []
-          : url.endsWith("/api/mcp")
-            ? {}
-            : url.endsWith("/api/skills")
-              ? []
-              : url.endsWith("/api/config/im")
-                ? imPayload
-                : {};
+          : url.endsWith("/api/scope/declaration")
+            ? { yaml: "workspace:\n  name: bot\n  pools: {}\n" }
+            : url.endsWith("/api/scope/topology")
+              ? { kind: "workspace", workspace: "bot", pools: [] }
+              : url.endsWith("/api/scope/bill")
+                ? { agents: [] }
+              : url.endsWith("/api/mcp")
+                ? {}
+                : url.endsWith("/api/skills")
+                  ? []
+                  : url.endsWith("/api/config/im")
+                    ? imPayload
+                    : {};
       return Promise.resolve(makeResponse(200, JSON.stringify(body)));
     });
   }
-
-  it("Pools sidebar route renders PoolsView", async () => {
-    vi.stubGlobal("fetch", routeFetch());
-    render(
-      <ToastProvider>
-        <SettingsModal open={true} onClose={() => {}} />
-      </ToastProvider>,
-    );
-    // IM loads by default; wait for it to settle before switching.
-    await waitFor(() => expect(screen.getByText("App ID")).toBeTruthy());
-    fireEvent.click(screen.getByText("Pools"));
-    // PoolsView renders an "Add pool" icon button — absent from every other route.
-    await waitFor(() => expect(screen.getByLabelText("Add pool")).toBeTruthy());
-  });
 
   it("MCP sidebar route renders GlobalMcpView", async () => {
     vi.stubGlobal("fetch", routeFetch());

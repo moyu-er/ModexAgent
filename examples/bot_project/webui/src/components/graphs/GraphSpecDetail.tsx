@@ -19,6 +19,7 @@ import { ArrowLeft, Code2, Play, Plus, X } from "lucide-react";
 import {
   getInstance,
   getSpec,
+  getTopology,
   listInstances,
   runGraph,
   type GraphInstance,
@@ -31,10 +32,8 @@ import { SectionLabel } from "../ui/SectionLabel";
 import { formatGraphApiError } from "./shared";
 import { GraphSpecInstanceRow } from "./GraphSpecInstanceRow";
 import { TopologyCanvas } from "./topology/TopologyCanvas";
-import {
-  parseGraphSpecYaml,
-  type ParsedGraphTopology,
-} from "./yaml/parseGraphSpec";
+import { topologyFromApi } from "./topologyFromApi";
+import type { ParsedGraphTopology } from "./yaml/parseGraphSpec";
 
 export interface GraphSpecDetailProps {
   workspaceId: string;
@@ -76,16 +75,13 @@ export const GraphSpecDetail: FC<GraphSpecDetailProps> = ({
     setNodeStatuses({});
     Promise.all([
       getSpec(workspaceId, specId),
+      getTopology(workspaceId, specId),
       listInstances(workspaceId, undefined, specId),
     ])
-      .then(([spec, loadedInstances]) => {
+      .then(([spec, topo, loadedInstances]) => {
         if (cancelled) return;
         setSpecInfo({ name: spec.name, version: spec.version });
-        try {
-          setTopology(parseGraphSpecYaml(spec.yaml_content));
-        } catch {
-          setTopology(null);
-        }
+        setTopology(topologyFromApi(topo));
         setInstances(loadedInstances);
         // Per-instance detail fetch for progress (completed/total nodes).
         loadedInstances.forEach((inst) => {

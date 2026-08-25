@@ -107,6 +107,7 @@
   --color-cat-models: #C5377A;  /* magenta */
   --color-cat-im: #6B9F2E;      /* olive — green family, distinct from brand */
   --color-cat-prompts: #0D9488; /* brand teal — prompts are the "home" domain */
+  --color-cat-scope: #B45309;   /* ember-deep — the declaration source domain */
 
   /* Session-row brand tints (§8) — solid tokens because /alpha modifiers on
      var()-token colors generate NO CSS in this Tailwind setup. Hover = brand
@@ -302,6 +303,7 @@
   --color-cat-models: #F472B6;  /* magenta, lifted */
   --color-cat-im: #A3D94C;      /* lime, lifted */
   --color-cat-prompts: #2DD4BF; /* brand teal — prompts are the "home" domain */
+  --color-cat-scope: #F59E0B;   /* ember — the declaration source domain */
 
   /* Session-row brand tints (§8) — solid tokens (see :root note). */
   --color-session-hover: color-mix(in oklab, var(--color-brand) 8%, var(--color-canvas-sidebar));

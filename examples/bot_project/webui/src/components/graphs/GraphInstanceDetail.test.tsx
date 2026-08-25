@@ -4,6 +4,7 @@ import { GraphInstanceDetail } from "./GraphInstanceDetail";
 import { useGraphExecution } from "../../hooks/useGraphExecution";
 import {
   getSpec,
+  getTopology,
   getInvocations,
   invokeInstance,
   deliverToNode,
@@ -13,6 +14,7 @@ import {
   type GraphInstance,
   type GraphInvocationRecord,
   type GraphSpecResponse,
+  type GraphTopology,
 } from "../../lib/graphsApi";
 import { ToastProvider } from "../ToastContext";
 
@@ -22,6 +24,7 @@ vi.mock("../../hooks/useGraphExecution", () => ({
 
 vi.mock("../../lib/graphsApi", () => ({
   getSpec: vi.fn(),
+  getTopology: vi.fn(),
   getInvocations: vi.fn(),
   invokeInstance: vi.fn(),
   deliverToNode: vi.fn(),
@@ -32,6 +35,7 @@ vi.mock("../../lib/graphsApi", () => ({
 
 const mockUseGraphExecution = vi.mocked(useGraphExecution);
 const mockGetSpec = vi.mocked(getSpec);
+const mockGetTopology = vi.mocked(getTopology);
 const mockGetInvocations = vi.mocked(getInvocations);
 const mockInvokeInstance = vi.mocked(invokeInstance);
 const mockDeliverToNode = vi.mocked(deliverToNode);
@@ -68,6 +72,33 @@ const SPEC_RESPONSE: GraphSpecResponse = {
   name: "review_workflow",
   version: "1.0",
   yaml_content: SPEC_YAML,
+};
+
+const TOPOLOGY_DTO: GraphTopology = {
+  spec_id: "spec_1",
+  name: "review_workflow",
+  scheduler: "parallel",
+  default_trigger: "on_all_preds",
+  nodes: [
+    {
+      name: "designer",
+      node_type: "agent",
+      config: { agent: "designer", pool: "review" },
+      trigger: null,
+    },
+    {
+      name: "reviewer",
+      node_type: "agent",
+      config: { agent: "review" },
+      trigger: null,
+    },
+  ],
+  edges: [
+    { source: "__start__", target: "designer" },
+    { source: "designer", target: "reviewer" },
+    { source: "reviewer", target: "__end__" },
+  ],
+  entry_node: "__start__",
 };
 
 function makeInstance(overrides: Partial<GraphInstance> = {}): GraphInstance {
@@ -141,6 +172,7 @@ async function waitForDetail(): Promise<void> {
 beforeEach(() => {
   mockUseGraphExecution.mockReset();
   mockGetSpec.mockReset();
+  mockGetTopology.mockReset();
   mockGetInvocations.mockReset();
   mockInvokeInstance.mockReset();
   mockDeliverToNode.mockReset();
@@ -150,6 +182,7 @@ beforeEach(() => {
 
   mockHook();
   mockGetSpec.mockResolvedValue(SPEC_RESPONSE);
+  mockGetTopology.mockResolvedValue(TOPOLOGY_DTO);
   mockGetInvocations.mockResolvedValue([makeInvocation()]);
   mockInvokeInstance.mockResolvedValue({
     graph_instance_id: "12345",

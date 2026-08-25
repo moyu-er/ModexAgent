@@ -28,8 +28,13 @@ export const FUNCTIONAL_NODE_TYPES = [
   "graph",
 ] as const;
 
+/** Scope 声明层级(票据16)— 仅供画布渲染的节点种类;图 YAML 校验仍只
+ * 接受 FUNCTIONAL_NODE_TYPES(parseGraphSpecYaml 的成员检查不变)。 */
+export const SCOPE_NODE_TYPES = ["workspace", "pool"] as const;
+
 export type ParsedNodeType =
   | (typeof FUNCTIONAL_NODE_TYPES)[number]
+  | (typeof SCOPE_NODE_TYPES)[number]
   | typeof GRAPH_NODE_START
   | typeof GRAPH_NODE_END;
 
@@ -83,11 +88,12 @@ export class GraphSpecParseError extends Error {
 }
 
 // GraphSpec 的合法字段(后端 GraphSpec,extra="forbid")。version/state_class/
-// metadata/max_iterations 对拓扑渲染无意义,允许存在但不读取。
+// state_schema/metadata/max_iterations 对拓扑渲染无意义,允许存在但不读取。
 const TOP_LEVEL_KEYS = [
   "name",
   "version",
   "state_class",
+  "state_schema",
   "scheduler",
   "max_iterations",
   "default_trigger",
@@ -241,6 +247,30 @@ function parseEdge(ctx: Ctx, raw: unknown, index: number): ParsedEdge {
   };
 }
 
+/** 按边引用合成虚拟端点节点并拼接最终节点列表(PRD 附录 B):
+ * `__start__` 置顶、`__end__` 置尾,仅在被某条边引用时合成。
+ * YAML 解析(parseGraphSpecYaml)与拓扑端点适配(topologyFromApi)
+ * 两条入口共用。 */
+export function withBoundaryNodes(
+  declaredNodes: ParsedNode[],
+  edges: ParsedEdge[],
+): ParsedNode[] {
+  const referenced = new Set<string>();
+  for (const edge of edges) {
+    referenced.add(edge.source);
+    referenced.add(edge.target);
+  }
+  const nodes: ParsedNode[] = [];
+  if (referenced.has(GRAPH_NODE_START)) {
+    nodes.push({ name: GRAPH_NODE_START, nodeType: GRAPH_NODE_START, config: {} });
+  }
+  nodes.push(...declaredNodes);
+  if (referenced.has(GRAPH_NODE_END)) {
+    nodes.push({ name: GRAPH_NODE_END, nodeType: GRAPH_NODE_END, config: {} });
+  }
+  return nodes;
+}
+
 /** 解析 GraphSpec YAML 文本为结构化拓扑。失败抛 `GraphSpecParseError`。 */
 export function parseGraphSpecYaml(source: string): ParsedGraphTopology {
   const lineCounter = new LineCounter();
@@ -321,21 +351,7 @@ export function parseGraphSpecYaml(source: string): ParsedGraphTopology {
     });
   }
 
-  // 合成虚拟端点节点(PRD 附录 B):__start__ 置顶、__end__ 置尾,
-  // 仅在被 edges 引用时合成。
-  const referenced = new Set<string>();
-  for (const edge of edges) {
-    referenced.add(edge.source);
-    referenced.add(edge.target);
-  }
-  const nodes: ParsedNode[] = [];
-  if (referenced.has(GRAPH_NODE_START)) {
-    nodes.push({ name: GRAPH_NODE_START, nodeType: GRAPH_NODE_START, config: {} });
-  }
-  nodes.push(...declaredNodes);
-  if (referenced.has(GRAPH_NODE_END)) {
-    nodes.push({ name: GRAPH_NODE_END, nodeType: GRAPH_NODE_END, config: {} });
-  }
+  const nodes = withBoundaryNodes(declaredNodes, edges);
 
   return { name, scheduler, defaultTrigger, nodes, edges, entryNode: GRAPH_NODE_START };
 }
