@@ -12,13 +12,17 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import pytest
+from pydantic import ValidationError
 
+from modex_agent.trace import score_injector
 from modex_agent.trace.score_injector import L2ScoreInjector, _build_score_batch
 from modex_agent.trace.scoring import TrajectoryMetrics
 
@@ -28,6 +32,7 @@ _URL = "https://ingest.example.invalid/api/public/ingestion"
 _HEADERS = {"Authorization": "Basic xyz"}
 _TRACE_ID = "trace-abc-123"
 _OBS_ID = "obs-456"
+_SESSION_ID = "session-789"
 
 _LOGGER_NAME = "modex_agent.trace.score_injector"
 
@@ -143,6 +148,55 @@ def test_build_score_batch_creates_12_events():
         assert event["body"]["observationId"] == _OBS_ID
 
 
+def test_build_score_batch_characterizes_current_metric_bodies():
+    metrics = _make_metrics()
+    expected_values = {
+        "tool_success_rate": metrics.tool_success_rate,
+        "tool_call_count": float(metrics.tool_call_count),
+        "error_tool_count": float(metrics.error_tool_count),
+        "iteration_count": float(metrics.iteration_count),
+        "llm_call_count": float(metrics.llm_call_count),
+        "total_input_tokens": float(metrics.total_input_tokens),
+        "total_output_tokens": float(metrics.total_output_tokens),
+        "total_reasoning_tokens": float(metrics.total_reasoning_tokens),
+        "api_latency_avg_s": metrics.api_latency_avg_s,
+        "cache_hit_rate": metrics.cache_hit_rate,
+        "response_token_ratio": metrics.response_token_ratio,
+        "has_reasoning": float(metrics.has_reasoning),
+    }
+
+    batch = _build_score_batch(
+        trace_id=_TRACE_ID,
+        metrics=metrics,
+        observation_id=_OBS_ID,
+        session_id=_SESSION_ID,
+    )
+
+    assert len(batch) == 12
+    for event in batch:
+        body = event["body"]
+        assert set(body) == {
+            "id",
+            "traceId",
+            "name",
+            "value",
+            "dataType",
+            "observationId",
+            "comment",
+        }
+        assert body["traceId"] == _TRACE_ID
+        assert body["value"] == expected_values[body["name"]]
+        assert body["dataType"] == "NUMERIC"
+        assert body["observationId"] == _OBS_ID
+        assert "\n" not in body["comment"]
+        assert json.loads(body["comment"]) == {
+            "scorer": "trajectory",
+            "version": score_injector.INJECTOR_VERSION,
+            "report_source": "counters",
+            "run_ref": _SESSION_ID,
+        }
+
+
 def test_build_score_batch_values_come_from_metrics():
     """Every event value mirrors the passed metrics field verbatim."""
     metrics = _make_metrics()
@@ -214,7 +268,7 @@ async def test_inject_scores_success(mock_client_cls):
     metrics = _make_metrics()
 
     # Must not raise.
-    await injector.inject_scores(_TRACE_ID, metrics)
+    await injector.inject_scores(_TRACE_ID, metrics, session_id=_SESSION_ID)
 
     mock_client.post.assert_awaited_once()
     call_args = mock_client.post.call_args
@@ -223,6 +277,8 @@ async def test_inject_scores_success(mock_client_cls):
     body = call_args.kwargs["json"]
     assert "batch" in body
     assert len(body["batch"]) == 12
+    for event in body["batch"]:
+        assert json.loads(event["body"]["comment"])["run_ref"] == _SESSION_ID
 
 
 @patch("modex_agent.trace.score_injector.httpx.AsyncClient")
@@ -241,6 +297,174 @@ async def test_inject_scores_success_passes_observation_id(mock_client_cls):
 
     body = mock_client.post.call_args.kwargs["json"]
     assert all(event["body"]["observationId"] == _OBS_ID for event in body["batch"])
+
+
+@patch("modex_agent.trace.score_injector.httpx.AsyncClient")
+async def test_inject_scores_merges_extra_score_into_single_post(mock_client_cls):
+    # Given
+    mock_client = _patch_async_client(
+        MagicMock(status_code=207, json=lambda: {"successes": [], "errors": []})
+    )
+    mock_client_cls.return_value = mock_client
+    injector = L2ScoreInjector(ingestion_url=_URL, headers=_HEADERS)
+    cost_score = score_injector.ScoreSpec(
+        name="cost_usd",
+        value=0.125,
+        data_type="NUMERIC",
+        comment='{"scorer":"pricing"}',
+    )
+
+    # When
+    await injector.inject_scores(
+        _TRACE_ID,
+        _make_metrics(),
+        observation_id=_OBS_ID,
+        session_id=_SESSION_ID,
+        extra_scores=[cost_score],
+    )
+
+    # Then
+    mock_client.post.assert_awaited_once()
+    batch = mock_client.post.call_args.kwargs["json"]["batch"]
+    assert len(batch) == 13
+    assert [event["body"]["name"] for event in batch][-1] == "cost_usd"
+    assert batch[-1]["body"]["comment"] == cost_score.comment
+
+
+@patch("modex_agent.trace.score_injector.httpx.AsyncClient")
+async def test_inject_score_batch_posts_arbitrary_named_scores_with_comments(
+    mock_client_cls,
+):
+    mock_client = _patch_async_client(
+        MagicMock(status_code=207, json=lambda: {"successes": [], "errors": []})
+    )
+    mock_client_cls.return_value = mock_client
+    injector = L2ScoreInjector(ingestion_url=_URL, headers=_HEADERS)
+    numeric_comment = json.dumps(
+        {
+            "scorer": "pricing",
+            "version": "prices-v2",
+            "report_source": "local_pricebook",
+            "run_ref": _SESSION_ID,
+        },
+        separators=(",", ":"),
+    )
+    specs = [
+        score_injector.ScoreSpec(
+            name="cost_usd",
+            value=0.125,
+            data_type="NUMERIC",
+            comment=numeric_comment,
+        ),
+        score_injector.ScoreSpec(
+            name="verified",
+            value=True,
+            data_type="BOOLEAN",
+            comment='{"scorer":"verifier"}',
+        ),
+        score_injector.ScoreSpec(
+            name="rejected",
+            value=False,
+            data_type="BOOLEAN",
+        ),
+    ]
+
+    await injector.inject_score_batch(
+        _TRACE_ID,
+        specs,
+        observation_id=_OBS_ID,
+    )
+
+    payload = mock_client.post.call_args.kwargs["json"]
+    bodies = {event["body"]["name"]: event["body"] for event in payload["batch"]}
+    assert set(bodies) == {"cost_usd", "verified", "rejected"}
+    assert bodies["cost_usd"]["value"] == 0.125
+    assert bodies["cost_usd"]["dataType"] == "NUMERIC"
+    assert bodies["cost_usd"]["traceId"] == _TRACE_ID
+    assert bodies["cost_usd"]["observationId"] == _OBS_ID
+    assert json.loads(bodies["cost_usd"]["comment"]) == json.loads(numeric_comment)
+    assert bodies["verified"]["value"] == 1
+    assert type(bodies["verified"]["value"]) is int
+    assert bodies["verified"]["value"] is not True
+    assert bodies["verified"]["dataType"] == "BOOLEAN"
+    assert bodies["rejected"]["value"] == 0
+    assert type(bodies["rejected"]["value"]) is int
+
+
+@patch("modex_agent.trace.score_injector.httpx.AsyncClient")
+async def test_inject_score_batch_omits_none_comment(mock_client_cls):
+    mock_client = _patch_async_client(MagicMock(status_code=207, json=lambda: {}))
+    mock_client_cls.return_value = mock_client
+    injector = L2ScoreInjector(ingestion_url=_URL, headers=_HEADERS)
+    specs = [
+        score_injector.ScoreSpec(
+            name="score_without_provenance",
+            value=1.0,
+            data_type="NUMERIC",
+            comment=None,
+        )
+    ]
+
+    await injector.inject_score_batch(_TRACE_ID, specs)
+
+    body = mock_client.post.call_args.kwargs["json"]["batch"][0]["body"]
+    assert "comment" not in body
+
+
+@patch("modex_agent.trace.score_injector.httpx.AsyncClient")
+async def test_inject_score_batch_truncates_long_comment_and_warns(
+    mock_client_cls,
+    caplog,
+):
+    mock_client = _patch_async_client(MagicMock(status_code=207, json=lambda: {}))
+    mock_client_cls.return_value = mock_client
+    injector = L2ScoreInjector(ingestion_url=_URL, headers=_HEADERS)
+    long_comment = "x" * 4001
+    specs = [
+        score_injector.ScoreSpec(
+            name="oversized_comment",
+            value=1.0,
+            data_type="NUMERIC",
+            comment=long_comment,
+        )
+    ]
+
+    with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
+        await injector.inject_score_batch(_TRACE_ID, specs)
+
+    body = mock_client.post.call_args.kwargs["json"]["batch"][0]["body"]
+    assert body["comment"] == long_comment[:4000]
+    assert any("truncated score comment" in record.message for record in caplog.records)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "name": "cost_usd",
+            "value": 1.0,
+            "data_type": "NUMERIC",
+            "comment": None,
+            "unexpected": "field",
+        },
+        {
+            "name": "cost_usd",
+            "value": "1.0",
+            "data_type": "NUMERIC",
+            "comment": None,
+        },
+        {
+            "name": "",
+            "value": 1.0,
+            "data_type": "NUMERIC",
+            "comment": None,
+        },
+    ],
+    ids=["extra-field", "wrong-value-type", "empty-name"],
+)
+def test_score_spec_rejects_malformed_input(payload):
+    with pytest.raises(ValidationError):
+        score_injector.ScoreSpec.model_validate(payload)
 
 
 @patch("modex_agent.trace.score_injector.httpx.AsyncClient")

@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Final, assert_never
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from modex_agent.trace.semconv import (
     GenAiAttr,
@@ -21,6 +21,7 @@ from modex_agent.trace.semconv import (
 from modex_agent.trace.store import SpanModel, SpanStatus, TraceQuery
 
 _OBSERVATION_FIELDS: Final = "core,basic,io,usage,metadata,model"
+_SCORE_FIELDS: Final = "core,details,subject"
 _MAX_PAGES: Final = 100
 _ATTRIBUTE_PREFIX: Final = "attributes."
 # Langfuse strips the "langfuse.observation.metadata." prefix and surfaces the
@@ -90,6 +91,44 @@ class _SessionPage(BaseModel):
     data: list[_SessionApi]
 
 
+class ScoreSubject(BaseModel):
+    """Langfuse entity that a score evaluates."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    kind: str
+    id: str
+
+
+class _ScoreApi(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    name: str
+    value: float | bool
+    data_type: str = Field(alias="dataType")
+    comment: str | None = None
+    subject: ScoreSubject | None = None
+
+
+class _ScorePageCursor(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    next_cursor: str | None = Field(default=None, alias="nextCursor")
+
+
+class _ScorePageMeta(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    page: _ScorePageCursor = Field(default_factory=_ScorePageCursor)
+
+
+class _ScorePage(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    data: list[_ScoreApi]
+    meta: _ScorePageMeta = Field(default_factory=_ScorePageMeta)
+
+
 class ObservationData(BaseModel):
     """Langfuse observation fields needed to reconstruct an OTel span."""
 
@@ -153,6 +192,49 @@ class SessionSummary(BaseModel):
     @classmethod
     def _from_api(cls, data: _SessionApi) -> SessionSummary:
         return cls(id=data.id, items_count=data.items_count)
+
+
+class ScoreReadData(BaseModel):
+    """Stable score fields projected from the Langfuse v3 API."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    value: float | bool
+    data_type: str
+    comment: str | None = None
+    subject: ScoreSubject | None = None
+
+    @classmethod
+    def _from_api(cls, data: _ScoreApi) -> ScoreReadData:
+        return cls(
+            name=data.name,
+            value=data.value,
+            data_type=data.data_type,
+            comment=data.comment,
+            subject=data.subject,
+        )
+
+
+class Provenance(BaseModel):
+    """Machine-readable scorer provenance stored in a score comment."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scorer: str
+    version: str
+    report_source: str
+    run_ref: str
+
+
+def parse_provenance(comment: str | None) -> Provenance | None:
+    """Parse scorer provenance from a JSON comment without surfacing malformed input."""
+    if not comment:
+        return None
+    try:
+        return Provenance.model_validate_json(comment)
+    except ValidationError:
+        return None
 
 
 class LangfuseClient:
@@ -222,6 +304,41 @@ class LangfuseClient:
         self._raise_for_error(response)
         payload = _SessionPage.model_validate(response.json())
         return [SessionSummary._from_api(item) for item in payload.data]
+
+    async def get_scores(
+        self,
+        *,
+        fields: str = _SCORE_FIELDS,
+        trace_id: str | None = None,
+        name: str | None = None,
+        from_timestamp: str | None = None,
+        to_timestamp: str | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> tuple[list[ScoreReadData], str | None]:
+        """Return one projected score page and its continuation cursor."""
+        params: dict[str, str | int] = {
+            "fields": fields or _SCORE_FIELDS,
+            "limit": limit,
+        }
+        if trace_id is not None:
+            params["traceId"] = trace_id
+        if name is not None:
+            params["name"] = name
+        if from_timestamp is not None:
+            params["fromTimestamp"] = from_timestamp
+        if to_timestamp is not None:
+            params["toTimestamp"] = to_timestamp
+        if cursor is not None:
+            params["cursor"] = cursor
+
+        response = await self._client.get(
+            f"{self._host}/api/public/v3/scores",
+            params=params,
+        )
+        self._raise_for_error(response)
+        page = _ScorePage.model_validate(response.json())
+        return [ScoreReadData._from_api(item) for item in page.data], page.meta.page.next_cursor
 
     async def close(self) -> None:
         await self._client.aclose()

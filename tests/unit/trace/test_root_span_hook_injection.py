@@ -12,9 +12,11 @@ spans the store saw) and the stash lifecycle.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -29,8 +31,9 @@ from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.trace.otel_store import OtelSpanTraceStore
+from modex_agent.trace.pricing import PriceBook, PriceEntry
 from modex_agent.trace.root_span_hook import RootSpanHook
-from modex_agent.trace.score_injector import L2ScoreInjector
+from modex_agent.trace.score_injector import INJECTOR_VERSION, L2ScoreInjector, ScoreSpec
 from modex_agent.trace.scoring import TrajectoryMetrics, compute_metrics
 from modex_agent.trace.semconv import GenAiAttr, SpanKind, SpanName, SpanStatusCode
 from modex_agent.trace.session_state import TraceSessionState
@@ -39,6 +42,22 @@ from modex_agent.trace.store import SpanModel, SpanStatus
 _TRACE_ID = "shared-trace"
 
 _LOGGER_NAME = "modex_agent.trace.root_span_hook"
+_TRAJECTORY_SCORE_NAMES = frozenset(
+    {
+        "tool_success_rate",
+        "tool_call_count",
+        "error_tool_count",
+        "iteration_count",
+        "llm_call_count",
+        "total_input_tokens",
+        "total_output_tokens",
+        "total_reasoning_tokens",
+        "api_latency_avg_s",
+        "cache_hit_rate",
+        "response_token_ratio",
+        "has_reasoning",
+    }
+)
 
 
 async def _drain_pending(hook: RootSpanHook) -> None:
@@ -72,6 +91,23 @@ def _make_context(
         session=session,
         runtime=AgentRuntime(services=AgentRuntimeServices(), state=state),
     )
+
+
+def _assert_default_cost_kwargs(kwargs: dict[str, Any], root_span_id: str) -> None:
+    assert kwargs["observation_id"] == root_span_id
+    assert kwargs["session_id"] == f"session.{root_span_id}"
+    extra_scores: list[ScoreSpec] = kwargs["extra_scores"]
+    assert len(extra_scores) == 1
+    assert extra_scores[0].name == "cost_usd"
+    assert extra_scores[0].value == 0.0
+    assert json.loads(extra_scores[0].comment or "") == {
+        "scorer": "pricing",
+        "version": INJECTOR_VERSION,
+        "report_source": "local_pricebook",
+        "run_ref": f"session.{root_span_id}",
+        "unpriced": [],
+        "price_source": "prices_json",
+    }
 
 
 def _span(
@@ -131,12 +167,133 @@ async def test_single_root_injects_score_for_only_its_metrics() -> None:
     )
     await _drain_pending(hook)
 
-    injector.inject_scores.assert_awaited_once_with(
-        _TRACE_ID,
-        compute_metrics(spans),
-        observation_id=root_id,
-    )
+    injector.inject_scores.assert_awaited_once()
+    await_args = injector.inject_scores.await_args
+    assert await_args.args == (_TRACE_ID, compute_metrics(spans))
+    _assert_default_cost_kwargs(await_args.kwargs, root_id)
     store.list_by_trace_id.assert_not_awaited()
+
+
+async def test_completed_turn_injects_cost_with_session_provenance_and_lazy_pricebook() -> None:
+    # Given
+    root_id = "priced-root"
+    spans = [
+        _span(
+            "chat",
+            root_id,
+            SpanName.CHAT,
+            attributes={
+                GenAiAttr.RESPONSE_MODEL.value: "priced-model",
+                GenAiAttr.USAGE_INPUT_TOKENS.value: 1_000_000,
+                GenAiAttr.USAGE_OUTPUT_TOKENS.value: 500_000,
+            },
+        )
+    ]
+    store = AsyncMock(spec=OtelSpanTraceStore)
+    injector = AsyncMock(spec=L2ScoreInjector)
+    session = TraceSessionState()
+    session.root_span_info[_TRACE_ID] = (root_id, 1.0)
+    _seed_turn_spans(session, root_id, spans)
+    pricebook = PriceBook(
+        models={
+            "priced-model": PriceEntry(
+                input=1.0,
+                output=2.0,
+                cache_read=0.1,
+                cache_write=1.25,
+            )
+        }
+    )
+    override_path = Path("model_prices.yml")
+
+    with patch(
+        "modex_agent.trace.root_span_hook.load_pricebook",
+        return_value=pricebook,
+    ) as load_pricebook:
+        hook = RootSpanHook(
+            session=session,
+            store=store,
+            score_injector=injector,
+            pricebook_yml_path=override_path,
+        )
+
+        # When
+        await hook.finally_graph(
+            _make_context(_TRACE_ID, root_id),
+            result=AgentResult(content="done"),
+        )
+        await _drain_pending(hook)
+
+    # Then
+    load_pricebook.assert_called_once_with(yml_path=override_path)
+    await_args = injector.inject_scores.await_args
+    assert await_args.kwargs["session_id"] == f"session.{root_id}"
+    extra_scores = await_args.kwargs["extra_scores"]
+    assert extra_scores == [
+        ScoreSpec(
+            name="cost_usd",
+            value=2.0,
+            data_type="NUMERIC",
+            comment=extra_scores[0].comment,
+        )
+    ]
+    assert json.loads(extra_scores[0].comment or "") == {
+        "scorer": "pricing",
+        "version": INJECTOR_VERSION,
+        "report_source": "local_pricebook",
+        "run_ref": f"session.{root_id}",
+        "unpriced": [],
+        "price_source": "model_prices_yml",
+    }
+
+
+@patch("modex_agent.trace.score_injector.httpx.AsyncClient")
+async def test_pricebook_failure_injects_trajectory_scores_without_breaking_turn(
+    mock_client_cls: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Given
+    root_id = "corrupt-pricebook-root"
+    store = AsyncMock(spec=OtelSpanTraceStore)
+    mock_client = AsyncMock()
+    mock_client.is_closed = False
+    mock_client.aclose = AsyncMock()
+    mock_client.post = AsyncMock(
+        return_value=MagicMock(
+            status_code=207,
+            json=lambda: {"successes": [], "errors": []},
+        )
+    )
+    mock_client_cls.return_value = mock_client
+    injector = L2ScoreInjector(
+        ingestion_url="https://ingest.example.invalid/api/public/ingestion",
+        headers={"Authorization": "Basic test"},
+    )
+    session = TraceSessionState()
+    session.root_span_info[_TRACE_ID] = (root_id, 1.0)
+    hook = RootSpanHook(session=session, store=store, score_injector=injector)
+
+    # When
+    with (
+        patch(
+            "modex_agent.trace.root_span_hook.load_pricebook",
+            side_effect=RuntimeError("corrupted builtin prices.json"),
+        ),
+        caplog.at_level(logging.WARNING, logger=_LOGGER_NAME),
+    ):
+        await hook.finally_graph(
+            _make_context(_TRACE_ID, root_id),
+            result=AgentResult(content="done"),
+        )
+        await _drain_pending(hook)
+
+    # Then
+    mock_client.post.assert_awaited_once()
+    batch = mock_client.post.await_args.kwargs["json"]["batch"]
+    score_names = {event["body"]["name"] for event in batch}
+    assert len(batch) == 12
+    assert score_names == _TRAJECTORY_SCORE_NAMES
+    assert "Root trace cost score computation failed" in caplog.text
 
 
 async def test_shared_trace_injects_each_root_without_cross_contamination() -> None:
@@ -201,9 +358,9 @@ async def test_shared_trace_injects_each_root_without_cross_contamination() -> N
     first = injector.inject_scores.await_args_list[0]
     second = injector.inject_scores.await_args_list[1]
     assert first.args == (_TRACE_ID, compute_metrics(parent_spans))
-    assert first.kwargs == {"observation_id": parent_root}
+    _assert_default_cost_kwargs(first.kwargs, parent_root)
     assert second.args == (_TRACE_ID, compute_metrics(child_spans))
-    assert second.kwargs == {"observation_id": child_root}
+    _assert_default_cost_kwargs(second.kwargs, child_root)
 
 
 async def test_turn_without_accumulated_spans_injects_zero_metrics() -> None:
@@ -221,11 +378,10 @@ async def test_turn_without_accumulated_spans_injects_zero_metrics() -> None:
     )
     await _drain_pending(hook)
 
-    injector.inject_scores.assert_awaited_once_with(
-        _TRACE_ID,
-        compute_metrics([]),
-        observation_id=root_id,
-    )
+    injector.inject_scores.assert_awaited_once()
+    await_args = injector.inject_scores.await_args
+    assert await_args.args == (_TRACE_ID, compute_metrics([]))
+    _assert_default_cost_kwargs(await_args.kwargs, root_id)
 
 
 async def test_injector_failure_does_not_escape_finally_graph() -> None:
@@ -359,7 +515,7 @@ async def test_injected_metrics_equal_compute_metrics_over_saved_spans() -> None
     injected = await_args.args[1]
     assert isinstance(injected, TrajectoryMetrics)
     assert await_args.args[0] == _TRACE_ID
-    assert await_args.kwargs == {"observation_id": root_id}
+    _assert_default_cost_kwargs(await_args.kwargs, root_id)
     expected = compute_metrics(saved_spans)
     for field in TrajectoryMetrics.model_fields:
         assert getattr(injected, field) == getattr(expected, field), (
@@ -544,11 +700,10 @@ async def test_resumed_turn_emits_root_span_stash_and_injection() -> None:
     assert root_span.span_id == root_id
     assert root_span.name == SpanName.INVOKE_AGENT.value
     assert root_span.start_time == 1000.5
-    injector.inject_scores.assert_awaited_once_with(
-        _TRACE_ID,
-        compute_metrics(spans),
-        observation_id=root_id,
-    )
+    injector.inject_scores.assert_awaited_once()
+    await_args = injector.inject_scores.await_args
+    assert await_args.args == (_TRACE_ID, compute_metrics(spans))
+    _assert_default_cost_kwargs(await_args.kwargs, root_id)
     stashed = ctx.runtime.state.custom[TurnCustomKey.TRAJECTORY_METRICS]
     assert stashed == compute_metrics(spans)
     assert _TRACE_ID not in session._metric_counters
@@ -670,9 +825,10 @@ async def test_suspend_resume_real_sequence_accumulates_whole_turn_metrics() -> 
     stashed = ctx2.runtime.state.custom[TurnCustomKey.TRAJECTORY_METRICS]
     assert stashed.total_input_tokens == 350  # 100 pre-suspend + 250 resumed
     assert stashed.llm_call_count == 2
-    injector.inject_scores.assert_awaited_once_with(
-        _TRACE_ID, stashed, observation_id=root_id
-    )
+    injector.inject_scores.assert_awaited_once()
+    await_args = injector.inject_scores.await_args
+    assert await_args.args == (_TRACE_ID, stashed)
+    _assert_default_cost_kwargs(await_args.kwargs, root_id)
     assert _TRACE_ID not in session._metric_counters
 
 

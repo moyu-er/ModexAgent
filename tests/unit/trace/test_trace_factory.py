@@ -154,3 +154,25 @@ def test_environment_version_tags_default_when_unset(tmp_path: Path) -> None:
     assert hook._environment == "default"  # type: ignore[attr-defined]
     assert hook._version is None  # type: ignore[attr-defined]
     assert hook._tags == []  # type: ignore[attr-defined]
+
+
+def test_pricebook_override_path_threads_only_to_root_hook(tmp_path: Path) -> None:
+    # Given
+    store = OtelSpanTraceStore(base_dir=tmp_path / "traces")
+    override_path = tmp_path / "model_prices.yml"
+
+    # When
+    specs = build_trace_hooks(
+        _config(TraceSpanMode.FULL),
+        model=None,
+        provider_name=None,
+        request_params=None,
+        score_injector=None,
+        store=store,
+        pricebook_yml_path=override_path,
+    )
+
+    # Then
+    root = specs[0].hook
+    assert isinstance(root, RootSpanHook)
+    assert root._pricebook_yml_path == override_path

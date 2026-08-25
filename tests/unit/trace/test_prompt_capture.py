@@ -6,8 +6,9 @@ from typing import Any
 
 import pytest
 
+from modex_agent.agents.react.message_builder import build_assistant_message
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.types import MessageRole
+from modex_agent.core.types import MessageRole, ToolCall
 from modex_agent.ioc.configs.observability import PromptCaptureMode
 from modex_agent.trace.prompt_capture import (
     FullPromptCapture,
@@ -20,6 +21,8 @@ from modex_agent.trace.semconv import GenAiAttr
 
 _SYSTEM_PROMPT = "You are a helpful assistant."
 
+_REASONING = "The user asks 2+2; I should call the calculator tool."
+
 
 def _make_messages() -> list[ChatMessage]:
     return [
@@ -27,6 +30,23 @@ def _make_messages() -> list[ChatMessage]:
         ChatMessage(role=MessageRole.USER, content="Hello"),
         ChatMessage(role=MessageRole.ASSISTANT, content="Hi there!"),
         ChatMessage(role=MessageRole.USER, content="What is 2+2?"),
+    ]
+
+
+def _make_reasoning_tool_call_messages() -> list[ChatMessage]:
+    return [
+        ChatMessage(role=MessageRole.USER, content="What is 2+2?"),
+        build_assistant_message(
+            "Let me compute that.",
+            [
+                ToolCall(
+                    call_id="call-1",
+                    tool_name="calculator",
+                    arguments={"expr": "2+2"},
+                )
+            ],
+            reasoning_content=_REASONING,
+        ),
     ]
 
 
@@ -155,3 +175,77 @@ def test_build_prompt_capture_routes_correctly() -> None:
 def test_build_prompt_capture_unknown_raises() -> None:
     with pytest.raises(ValueError, match="Unknown prompt_capture"):
         build_prompt_capture("nonexistent")
+
+
+# ── reasoning_content passback capture ────────────────────────────────
+
+
+def _captured_parts(result: dict[str, object]) -> list[dict[str, object]]:
+    captured = result[GenAiAttr.INPUT_MESSAGES]
+    assert isinstance(captured, list)
+    return captured[-1]["parts"]
+
+
+def test_summary_captures_reasoning_on_tool_call_turn() -> None:
+    strategy = SummaryPromptCapture()
+    result = strategy.capture(_make_reasoning_tool_call_messages(), model=None)
+    parts = _captured_parts(result)
+    assert parts[0] == {"type": "reasoning", "content": _REASONING}
+    assert parts[1] == {"type": "text", "content": "Let me compute that."}
+    assert parts[2]["type"] == "tool_call"
+
+
+def test_full_captures_reasoning_on_tool_call_turn() -> None:
+    strategy = FullPromptCapture()
+    result = strategy.capture(_make_reasoning_tool_call_messages(), model=None)
+    parts = _captured_parts(result)
+    assert parts[0] == {"type": "reasoning", "content": _REASONING}
+    assert parts[1] == {"type": "text", "content": "Let me compute that."}
+
+
+def test_plain_assistant_reasoning_not_captured() -> None:
+    msgs = [
+        ChatMessage(role=MessageRole.USER, content="Hi"),
+        build_assistant_message("Hello!", [], reasoning_content="private thought"),
+    ]
+    strategy = SummaryPromptCapture()
+    result = strategy.capture(msgs, model=None)
+    parts = _captured_parts(result)
+    assert parts == [{"type": "text", "content": "Hello!"}]
+
+
+def test_summary_truncates_reasoning() -> None:
+    strategy = SummaryPromptCapture(max_text_chars=10)
+    msgs = [
+        ChatMessage(role=MessageRole.USER, content="Hi"),
+        build_assistant_message(
+            None,
+            [ToolCall(call_id="call-1", tool_name="calculator", arguments={"expr": "2+2"})],
+            reasoning_content=_REASONING,
+        ),
+    ]
+    result = strategy.capture(msgs, model=None)
+    parts = _captured_parts(result)
+    reasoning_part = parts[0]
+    assert reasoning_part["type"] == "reasoning"
+    content = reasoning_part["content"]
+    assert isinstance(content, str)
+    assert content.startswith(_REASONING[:10])
+    assert "[...truncated" in content
+
+
+def test_include_reasoning_false_suppresses_reasoning_part() -> None:
+    for strategy in (
+        SummaryPromptCapture(include_reasoning=False),
+        FullPromptCapture(include_reasoning=False),
+    ):
+        result = strategy.capture(_make_reasoning_tool_call_messages(), model=None)
+        parts = _captured_parts(result)
+        assert all(p["type"] != "reasoning" for p in parts)
+
+
+def test_build_prompt_capture_wires_include_reasoning() -> None:
+    strategy = build_prompt_capture(PromptCaptureMode.SUMMARY, include_reasoning=False)
+    result = strategy.capture(_make_reasoning_tool_call_messages(), model=None)
+    parts = _captured_parts(result)
+    assert all(p["type"] != "reasoning" for p in parts)

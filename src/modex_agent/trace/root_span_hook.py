@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
+import asyncio  # noqa: F401  # noqa: ANYIO_OK
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING, overload
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal, overload
+
+from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.constants import StopReason
 from modex_agent.hook.abc import (
@@ -17,6 +20,8 @@ from modex_agent.hook.abc import (
 )
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.trace.base_hook import BaseTraceHook
+from modex_agent.trace.pricing import PriceBook, compute_turn_cost, load_pricebook
+from modex_agent.trace.score_injector import INJECTOR_VERSION, L2ScoreInjector, ScoreSpec
 from modex_agent.trace.scoring import TrajectoryMetrics
 from modex_agent.trace.semconv import (
     GenAiAttr,
@@ -33,8 +38,18 @@ if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.emitter import AgentResult
     from modex_agent.trace.otel_store import OtelSpanTraceStore
-    from modex_agent.trace.score_injector import L2ScoreInjector
     from modex_agent.trace.session_state import TraceSessionState
+
+
+class _CostProvenance(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scorer: Literal["pricing"] = "pricing"
+    version: str = INJECTOR_VERSION
+    report_source: Literal["local_pricebook"] = "local_pricebook"
+    run_ref: str
+    unpriced: list[str]
+    price_source: Literal["prices_json", "model_prices_yml"]
 
 
 class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook, ClosableHook):
@@ -52,6 +67,7 @@ class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook, ClosableH
         environment: str = "default",
         version: str | None = None,
         tags: list[str] | None = None,
+        pricebook_yml_path: Path | None = None,
     ) -> None:
         super().__init__(
             session=session,
@@ -71,6 +87,12 @@ class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook, ClosableH
         # never keyed by session.
         self._pending_injections: set[asyncio.Task[None]] = set()
         self._closing = False
+        self._pricebook_yml_path = pricebook_yml_path
+        self._pricebook: PriceBook | None = None
+
+    @property
+    def score_injector(self) -> L2ScoreInjector | None:
+        return self._score_injector
 
     async def aclose(self) -> None:
         """Drain scheduled score injections and close their HTTP client."""
@@ -205,12 +227,14 @@ class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook, ClosableH
             return
         metrics = self._stash_turn_metrics(ctx, trace_id, root_span_id)
         if self._score_injector is not None and not self._closing:
+            session_id = ctx.session.session_id
             injection_task = asyncio.create_task(
                 self._inject_scores_async(
                     self._score_injector,
                     trace_id,
                     metrics,
                     root_span_id,
+                    session_id,
                 )
             )
             self._pending_injections.add(injection_task)
@@ -242,7 +266,7 @@ class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook, ClosableH
         trace_id: str,
         root_span_id: str,
     ) -> TrajectoryMetrics:
-        """Derive the turn's metrics from the counters and stash them.
+        """Derive the turn's metrics and per-model usage, then stash them.
 
         Reads ``read_metrics(trace_id, root_span_id)`` — the same
         ``(trace_id, root_span_id)`` bucket every ``_save_span`` call of this
@@ -251,12 +275,31 @@ class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook, ClosableH
         so eval-side turn aggregation can read it without touching the trace
         store. MUST run before ``clear_trace`` pops the counters bucket;
         ``read_metrics`` returns the zero shape for a missing bucket, so a
-        turn with no accumulating spans stashes zeros.
+        turn with no accumulating spans stashes zeros and empty model usage.
         """
         assert ctx.runtime is not None
         metrics = self._session.read_metrics(trace_id, root_span_id)
         ctx.runtime.state.custom[TurnCustomKey.TRAJECTORY_METRICS] = metrics
         return metrics
+
+    def _cost_score(self, metrics: TrajectoryMetrics, session_id: str) -> ScoreSpec:
+        if self._pricebook is None:
+            self._pricebook = load_pricebook(yml_path=self._pricebook_yml_path)
+        cost = compute_turn_cost(metrics.per_model_usage, self._pricebook)
+        price_source: Literal["prices_json", "model_prices_yml"] = (
+            "model_prices_yml" if self._pricebook_yml_path is not None else "prices_json"
+        )
+        comment = _CostProvenance(
+            run_ref=session_id,
+            unpriced=sorted(cost.unpriced_models),
+            price_source=price_source,
+        ).model_dump_json()
+        return ScoreSpec(
+            name="cost_usd",
+            value=cost.total_usd,
+            data_type="NUMERIC",
+            comment=comment,
+        )
 
     async def _inject_scores_async(
         self,
@@ -264,13 +307,26 @@ class RootSpanHook(BaseTraceHook, StartNodeTurnHook, FinallyGraphHook, ClosableH
         trace_id: str,
         metrics: TrajectoryMetrics,
         observation_id: str,
+        session_id: str,
     ) -> None:
         """Inject L2 scores off the turn's critical path; never raises."""
+        try:
+            cost_score = self._cost_score(metrics, session_id)
+        except Exception:
+            logger.warning(
+                "Root trace cost score computation failed "
+                "(trace_id=%s, observation_id=%s)",
+                trace_id,
+                observation_id,
+            )
+            cost_score = None
         try:
             await injector.inject_scores(
                 trace_id,
                 metrics,
                 observation_id=observation_id,
+                session_id=session_id,
+                extra_scores=[cost_score] if cost_score is not None else None,
             )
         except Exception:
             logger.warning(

@@ -10,8 +10,9 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.trace.pricing import PerModelUsage
 from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
 from modex_agent.trace.store import SpanModel
 
@@ -51,6 +52,8 @@ class TrajectoryMetrics(BaseModel):
             0.0 when total is 0. neutral.
         has_reasoning: total_reasoning_tokens > 0. neutral (model
             capability indicator).
+        per_model_usage: additive four-bucket usage grouped by chat-span
+            response model for local turn-cost reduction.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -67,6 +70,7 @@ class TrajectoryMetrics(BaseModel):
     cache_hit_rate: float
     response_token_ratio: float
     has_reasoning: bool
+    per_model_usage: PerModelUsage = Field(default_factory=PerModelUsage)
 
 
 # ── Scalar helpers (internal) ──────────────────────────────────────────

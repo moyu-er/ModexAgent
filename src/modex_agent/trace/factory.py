@@ -18,6 +18,7 @@ returns ``[]`` regardless of tier.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
 from modex_agent.hook.abc import Hook, HookErrorPolicy, HookSpec
@@ -63,6 +64,7 @@ def build_trace_hooks(
     request_params: Mapping[str, object] | None,
     score_injector: L2ScoreInjector | None,
     store: OtelSpanTraceStore | None,
+    pricebook_yml_path: Path | None = None,
 ) -> list[HookSpec]:
     """Assemble the trace span hook list for an agent from observability config.
 
@@ -88,7 +90,10 @@ def build_trace_hooks(
         return []
 
     session = TraceSessionState()
-    prompt_capture = build_prompt_capture(config.prompt_capture)
+    prompt_capture = build_prompt_capture(
+        config.prompt_capture,
+        include_reasoning=config.retain_reasoning_content,
+    )
 
     base: _BaseHookArgs = {
         "session": session,
@@ -101,15 +106,16 @@ def build_trace_hooks(
         "version": config.version,
         "tags": config.tags,
     }
+    root_hook = RootSpanHook(**base, pricebook_yml_path=pricebook_yml_path)
 
     # ``Hook`` is the widest common type: every concrete trace hook inherits
     # it via its per-point ABC(s), and HookSpec.hook is typed ``Hook``.
     hooks: list[Hook]
     if config.trace_spans == TraceSpanMode.MINIMAL:
-        hooks = [RootSpanHook(**base)]
+        hooks = [root_hook]
     elif config.trace_spans == TraceSpanMode.STANDARD:
         hooks = [
-            RootSpanHook(**base),
+            root_hook,
             ChatSpanHook(**base, prompt_capture=prompt_capture),
             ToolSpanHook(**base),
             HandoffSpanHook(**base),
@@ -117,7 +123,7 @@ def build_trace_hooks(
         ]
     else:  # TraceSpanMode.FULL
         hooks = [
-            RootSpanHook(**base),
+            root_hook,
             ChatSpanHook(**base, prompt_capture=prompt_capture),
             ToolSpanHook(**base),
             HandoffSpanHook(**base),

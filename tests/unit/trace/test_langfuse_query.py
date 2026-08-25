@@ -13,7 +13,9 @@ from typing import Any
 
 import httpx
 import pytest
+from dotenv import load_dotenv
 
+from modex_agent.trace import langfuse_query
 from modex_agent.trace.langfuse_query import (
     LangfuseClient,
     LangfuseQueryError,
@@ -128,6 +130,260 @@ async def test_get_observations_sends_projection_auth_and_filters(
 
     assert [observation.id for observation in observations] == ["obs-chat"]
     assert cursor == "next"
+
+
+async def test_get_scores_sends_projection_auth_filters_and_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    expected_auth = base64.b64encode(b"public:secret").decode("ascii")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/api/public/v3/scores"
+        assert request.headers["Authorization"] == f"Basic {expected_auth}"
+        assert dict(request.url.params) == {
+            "fields": "core,details,subject",
+            "limit": "25",
+            "traceId": TRACE_ID,
+            "name": "trajectory_quality",
+            "fromTimestamp": "2026-08-17T09:00:00Z",
+            "toTimestamp": "2026-08-17T11:00:00Z",
+            "cursor": "cursor-1",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "score-1",
+                        "name": "trajectory_quality",
+                        "value": 0.75,
+                        "dataType": "NUMERIC",
+                        "comment": '{"scorer":"trajectory"}',
+                        "subject": {"kind": "TRACE", "id": TRACE_ID},
+                    }
+                ],
+                "meta": {"page": {"nextCursor": "cursor-2"}},
+            },
+        )
+
+    _install_transport(monkeypatch, handler)
+    client = LangfuseClient("http://langfuse", "public", "secret")
+
+    # When
+    try:
+        scores, cursor = await client.get_scores(
+            trace_id=TRACE_ID,
+            name="trajectory_quality",
+            from_timestamp="2026-08-17T09:00:00Z",
+            to_timestamp="2026-08-17T11:00:00Z",
+            limit=25,
+            cursor="cursor-1",
+        )
+    finally:
+        await client.close()
+
+    # Then
+    assert [(score.name, score.value, score.data_type) for score in scores] == [
+        ("trajectory_quality", 0.75, "NUMERIC")
+    ]
+    assert scores[0].comment == '{"scorer":"trajectory"}'
+    assert scores[0].subject == langfuse_query.ScoreSubject(kind="TRACE", id=TRACE_ID)
+    assert cursor == "cursor-2"
+
+
+async def test_get_scores_parses_live_subject_shape_with_extra_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "name": "closure_probe_test",
+                        "value": 1.0,
+                        "dataType": "NUMERIC",
+                        "subject": {
+                            "kind": "trace",
+                            "id": TRACE_ID,
+                            "traceId": TRACE_ID,
+                            "serverAdded": "ignored",
+                        },
+                    }
+                ],
+                "meta": {"page": {}},
+            },
+        )
+
+    _install_transport(monkeypatch, handler)
+    client = LangfuseClient("http://langfuse", "public", "secret")
+
+    # When
+    try:
+        scores, _ = await client.get_scores(name="closure_probe_test")
+    finally:
+        await client.close()
+
+    # Then
+    assert scores[0].subject is not None
+    assert scores[0].subject.kind == "trace"
+    assert scores[0].subject.id == TRACE_ID
+    assert scores[0].subject.model_dump() == {"kind": "trace", "id": TRACE_ID}
+
+
+async def test_get_scores_preserves_boolean_value_and_unknown_data_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "name": "verified",
+                        "value": True,
+                        "dataType": "CUSTOM_BOOLEAN",
+                    }
+                ],
+                "meta": {"page": {}},
+            },
+        )
+
+    _install_transport(monkeypatch, handler)
+    client = LangfuseClient("http://langfuse", "public", "secret")
+
+    # When
+    try:
+        scores, cursor = await client.get_scores()
+    finally:
+        await client.close()
+
+    # Then
+    assert scores == [
+        langfuse_query.ScoreReadData(
+            name="verified",
+            value=True,
+            data_type="CUSTOM_BOOLEAN",
+            comment=None,
+            subject=None,
+        )
+    ]
+    assert cursor is None
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+async def test_get_scores_defaults_empty_fields_and_forwards_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    limit: int,
+) -> None:
+    # Given
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["fields"] == "core,details,subject"
+        assert request.url.params["limit"] == str(limit)
+        return httpx.Response(200, json={"data": [], "meta": {"page": {}}})
+
+    _install_transport(monkeypatch, handler)
+    client = LangfuseClient("http://langfuse", "public", "secret")
+
+    # When
+    try:
+        scores, cursor = await client.get_scores(fields="", limit=limit)
+    finally:
+        await client.close()
+
+    # Then
+    assert scores == []
+    assert cursor is None
+
+
+async def test_get_scores_raises_existing_query_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text="fields must contain projection groups")
+
+    _install_transport(monkeypatch, handler)
+    client = LangfuseClient("http://langfuse", "public", "secret")
+
+    # When
+    try:
+        with pytest.raises(LangfuseQueryError) as error:
+            await client.get_scores()
+    finally:
+        await client.close()
+
+    # Then
+    assert error.value.status_code == 400
+    assert "projection groups" in error.value.body_snippet
+
+
+def test_scores_parse_provenance_round_trip() -> None:
+    # Given
+    comment = (
+        '{"scorer":"trajectory","version":"closure-test-v1",'
+        '"report_source":"counters","run_ref":"closure-probe"}'
+    )
+
+    # When
+    provenance = langfuse_query.parse_provenance(comment)
+
+    # Then
+    assert provenance == langfuse_query.Provenance(
+        scorer="trajectory",
+        version="closure-test-v1",
+        report_source="counters",
+        run_ref="closure-probe",
+    )
+
+
+@pytest.mark.parametrize(
+    "comment",
+    [None, "", "not-json", "[]", '{"scorer":"trajectory"}'],
+)
+def test_scores_parse_provenance_returns_none_for_invalid_comment(
+    comment: str | None,
+) -> None:
+    # When
+    provenance = langfuse_query.parse_provenance(comment)
+
+    # Then
+    assert provenance is None
+
+
+@pytest.mark.live
+class TestLiveScoresReadBack:
+    async def test_live_scores_closure_probe_comment_round_trip(self) -> None:
+        # Given
+        load_dotenv(
+            Path(__file__).resolve().parents[3] / "examples" / "bot_project" / ".env"
+        )
+        host = os.environ.get("LANGFUSE_HOST")
+        public_key = os.environ.get("LANGFUSE_PUBLIC_KEY")
+        secret_key = os.environ.get("LANGFUSE_SECRET_KEY")
+        if not host or not public_key or not secret_key:
+            pytest.skip("examples/bot_project/.env has no Langfuse credentials")
+        client = LangfuseClient(host, public_key, secret_key)
+
+        # When
+        try:
+            scores, _ = await client.get_scores(name="closure_probe_test")
+        finally:
+            await client.close()
+
+        # Then
+        score = next(score for score in scores if score.name == "closure_probe_test")
+        assert score.name == "closure_probe_test"
+        assert langfuse_query.parse_provenance(score.comment) == langfuse_query.Provenance(
+            scorer="trajectory",
+            version="closure-test-v1",
+            report_source="counters",
+            run_ref="closure-probe",
+        )
 
 
 async def test_trace_query_paginates_and_sorts_by_start_time(
@@ -449,6 +705,7 @@ async def _await_live_ingest(client: LangfuseClient, trace_id: str, expected: in
     not _LIVE_LANGFUSE_CONFIGURED,
     reason="Langfuse credentials are not configured",
 )
+@pytest.mark.live
 async def test_live_langfuse_trace_round_trip() -> None:
     trace_id = _seed_live_trace()
     client = _live_client()
@@ -543,6 +800,7 @@ def _seed_fidelity_mapping_session() -> tuple[str, str]:
     not _LIVE_LANGFUSE_CONFIGURED,
     reason="Langfuse credentials are not configured",
 )
+@pytest.mark.live
 async def test_live_fidelity_session_reverse_normalizes_exporter_fields() -> None:
     session_id, trace_id = _seed_fidelity_mapping_session()
     client = _live_client()
@@ -658,6 +916,7 @@ def _seed_fidelity_export_session() -> tuple[str, str]:
     not _LIVE_LANGFUSE_CONFIGURED,
     reason="Langfuse credentials are not configured",
 )
+@pytest.mark.live
 async def test_live_training_exporter_over_langfuse(
     tmp_path: Path,
 ) -> None:

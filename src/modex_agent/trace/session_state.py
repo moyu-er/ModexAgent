@@ -16,13 +16,22 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from typing import Final
 
 from modex_agent.core.types import ToolCall
+from modex_agent.trace.pricing import PerModelUsage, UsageBuckets
 from modex_agent.trace.scoring import TrajectoryMetrics, _as_int
 from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
 from modex_agent.trace.store import SpanModel
 
 logger = logging.getLogger(__name__)
+
+_COST_USAGE_ATTRIBUTES: Final[tuple[GenAiAttr, GenAiAttr, GenAiAttr, GenAiAttr]] = (
+    GenAiAttr.USAGE_INPUT_TOKENS,
+    GenAiAttr.USAGE_OUTPUT_TOKENS,
+    GenAiAttr.USAGE_CACHE_READ_INPUT_TOKENS,
+    GenAiAttr.USAGE_CACHE_CREATION_INPUT_TOKENS,
+)
 
 
 def _usage_attr(attrs: dict[str, object], attr: GenAiAttr) -> int:
@@ -35,7 +44,7 @@ def _usage_attr(attrs: dict[str, object], attr: GenAiAttr) -> int:
     values are logged at debug; missing attributes are skipped silently.
     """
     value = attrs.get(attr.value)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         if value is not None:
             logger.debug("Ignoring malformed usage attribute %s=%r", attr.value, value)
         return 0
@@ -45,8 +54,8 @@ def _usage_attr(attrs: dict[str, object], attr: GenAiAttr) -> int:
 class MetricCounters:
     """Scalar incremental accumulator for one ``(trace_id, root_span_id)``.
 
-    Backing store of the write-only refactor: int/float counters ONLY
-    (~80 bytes per trajectory), never span objects, messages, or prompts.
+    Backing store of the write-only refactor: scalar metric counters plus
+    bounded per-model usage buckets, never span objects, messages, or prompts.
     Every :class:`~modex_agent.trace.scoring.TrajectoryMetrics` field is
     derivable from these counters — the derivation in :meth:`to_metrics`
     mirrors :func:`modex_agent.trace.scoring.compute_metrics` exactly
@@ -86,6 +95,7 @@ class MetricCounters:
         "output_tokens",
         "reasoning_tokens",
         "cache_read_tokens",
+        "per_model_usage",
         "llm_count",
         "chat_latency_sum",
         "chat_timed_count",
@@ -99,6 +109,7 @@ class MetricCounters:
         self.output_tokens = 0
         self.reasoning_tokens = 0
         self.cache_read_tokens = 0
+        self.per_model_usage: dict[str, UsageBuckets] = {}
         self.llm_count = 0
         self.chat_latency_sum = 0.0
         self.chat_timed_count = 0
@@ -117,6 +128,31 @@ class MetricCounters:
                 self.cache_read_tokens += _usage_attr(
                     attrs, GenAiAttr.USAGE_CACHE_READ_INPUT_TOKENS
                 )
+                # Cost usage comes directly from chat-span attributes; flat
+                # TrajectoryMetrics lacks model splits and cache-write usage.
+                model_value = attrs.get(GenAiAttr.RESPONSE_MODEL.value)
+                raw_bucket_values = tuple(
+                    attrs.get(attribute.value) for attribute in _COST_USAGE_ATTRIBUTES
+                )
+                has_valid_usage = any(
+                    not isinstance(value, bool)
+                    and isinstance(value, int | float)
+                    and value >= 0
+                    for value in raw_bucket_values
+                )
+                if isinstance(model_value, str) and model_value and has_valid_usage:
+                    input_tokens, output_tokens, cache_read_tokens, cache_write_tokens = (
+                        max(0, _as_int(value)) for value in raw_bucket_values
+                    )
+                    previous = self.per_model_usage.get(model_value)
+                    if previous is None:
+                        previous = UsageBuckets()
+                    self.per_model_usage[model_value] = UsageBuckets(
+                        input_tokens=previous.input_tokens + input_tokens,
+                        output_tokens=previous.output_tokens + output_tokens,
+                        cache_read_tokens=previous.cache_read_tokens + cache_read_tokens,
+                        cache_write_tokens=previous.cache_write_tokens + cache_write_tokens,
+                    )
                 self.llm_count += 1
                 if span.end_time is not None:
                     self.chat_latency_sum += span.end_time - span.start_time
@@ -156,6 +192,7 @@ class MetricCounters:
             cache_hit_rate=cache_hit_rate,
             response_token_ratio=response_token_ratio,
             has_reasoning=self.reasoning_tokens > 0,
+            per_model_usage=PerModelUsage(by_model=dict(self.per_model_usage)),
         )
 
 
