@@ -31,7 +31,7 @@ from bot.eval.harbor.host_cli import (
     install_host,
     run_trial,
 )
-from bot.eval.harbor.host_runtime import _agent_timeout_multiplier
+from bot.eval.harbor.host_runtime import DEFAULT_COMPOSE_OVERLAY, _agent_timeout_multiplier
 from bot.eval.harbor.smoke_gate import (
     REQUIRED_LANGFUSE_CONTAINERS,
     SmokeCommandResult,
@@ -131,7 +131,7 @@ async def test_run_mints_stable_id_and_injects_container_contract(
         model="openai/step-3.7-flash",
         memory_namespace="terminalbench.b6-smoke",
         timeout_multiplier=6.0,
-        compose_overlay=Path("bot/eval/harbor/docker-compose.uv.yml"),
+        compose_overlay=DEFAULT_COMPOSE_OVERLAY,
     )
 
     result = await run_trial(request, plane, lambda _request: "stable-exp-1")

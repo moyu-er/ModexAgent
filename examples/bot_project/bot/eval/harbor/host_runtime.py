@@ -33,6 +33,9 @@ from modex_agent.trace.experiment_attrs import stable_experiment_id
 
 _REPO_ROOT: Final = Path(__file__).resolve().parents[5]
 _BOT_PROJECT: Final = _REPO_ROOT / "examples" / "bot_project"
+# Anchored to __file__, never CWD-relative: trial launch must work from any
+# working directory (CI pytest runs from the repo root).
+DEFAULT_COMPOSE_OVERLAY: Final = Path(__file__).resolve().parent / "docker-compose.uv.yml"
 
 
 class HostCommand(BaseModel):
@@ -159,6 +162,40 @@ def _agent_timeout_multiplier(task_path: Path) -> float:
     return round(5400.0 / max(nominal, 1.0), 4)
 
 
+def _materialize_overlay(overlay: Path, jobs_dir: Path, job_name: str) -> Path:
+    """Render the compose overlay with bind-mount sources anchored to the
+    overlay's own directory.
+
+    Harbor runs compose with ``--project-directory <task environment dir>``,
+    so relative bind mounts in the overlay resolve against the TASK directory,
+    not the overlay's location — the python-runtimes/ mount would point at a
+    nonexistent path and the seed container would find an empty /runtimes.
+    Rendering a per-trial copy with absolute sources (resolved from the
+    overlay's real parent, so nothing is hard-coded) keeps the overlay
+    portable across checkouts. The copy is per-job: jobs_dir is shared by
+    all concurrent trials, and a fixed name let 8 trials rewrite one file
+    mid-flight — a compose read during a rewrite saw config-hash drift for
+    the running main service and recreated the container, wiping the
+    agent's /app writes before the verifier ran (six "does not exist"
+    false failures in tb21-all-v7).
+    """
+    overlay_path = overlay.resolve()
+    rendered = overlay_path.read_text(encoding="utf-8").replace(
+        "./python-runtimes",
+        (overlay_path.parent / "python-runtimes").as_posix(),
+    )
+    # Per-trial filename: jobs_dir is SHARED by all concurrent trials — one
+    # fixed name meant 8 trials rewrote the same file mid-flight, and any
+    # compose invocation that read it during (or after) a rewrite saw a
+    # config-hash drift for the running main service, recreating the
+    # container and wiping the agent's /app writes before the verifier ran
+    # (observed: six "does not exist" false failures in tb21-all-v7).
+    target = jobs_dir / f"{job_name}__docker-compose.uv.rendered.yml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(rendered, encoding="utf-8")
+    return target
+
+
 async def run_trial(
     request: RunTrialRequest,
     execution: HostExecutionPlane,
@@ -196,7 +233,12 @@ async def run_trial(
         "--yes",
     ]
     if request.compose_overlay is not None:
-        argv.extend(("--extra-docker-compose", str(request.compose_overlay)))
+        argv.extend(
+            (
+                "--extra-docker-compose",
+                str(_materialize_overlay(request.compose_overlay, request.jobs_dir, request.job_name)),
+            )
+        )
     for name, value in sorted(environment.items()):
         argv.extend(("--agent-env", f"{name}={value}"))
     command = HostCommand(argv=tuple(argv), environment=environment)

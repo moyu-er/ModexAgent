@@ -18,6 +18,7 @@ from bot.eval.evalenv import LangfuseCredentials
 from bot.eval.harbor.agent import InstallExecutionResult
 from bot.eval.harbor.host_cli import collect_job
 from bot.eval.harbor.host_runtime import (
+    DEFAULT_COMPOSE_OVERLAY,
     RunTrialRequest,
     SubprocessExecutionPlane,
     mint_stable_experiment_id,
@@ -33,7 +34,6 @@ from modex_agent.trace.experiment_attrs import ExperimentLinkageError
 from modex_agent.trace.langfuse_query import LangfuseClient, LangfuseQueryError
 
 _DATASET_NAME: Final = "terminalbench-b6-smoke-v1"
-_OVERLAY_PATH: Final = Path("bot/eval/harbor/docker-compose.uv.yml")
 
 
 class SmokeGateError(RuntimeError):
@@ -198,7 +198,7 @@ async def run_smoke(request: SmokeRunRequest) -> SmokeRunResult:
                     model=request.model,
                     memory_namespace=experiment_name,
                     timeout_multiplier=request.timeout_multiplier,
-                    compose_overlay=_OVERLAY_PATH,
+                    compose_overlay=DEFAULT_COMPOSE_OVERLAY,
                 ),
                 SubprocessExecutionPlane(),
                 mint_stable_experiment_id,

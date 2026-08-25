@@ -37,11 +37,11 @@ import typer
 from bot.eval.evalenv import LangfuseCredentials
 from bot.eval.harbor.host_cli import SubprocessExecutionPlane
 from bot.eval.harbor.host_runtime import (
+    DEFAULT_COMPOSE_OVERLAY,
     RunTrialRequest,
     mint_stable_experiment_id,
     run_trial,
 )
-from bot.eval.harbor.smoke_runtime import _OVERLAY_PATH
 from modex_agent.trace.semconv import GenAiAttr, SpanName
 
 
@@ -479,7 +479,7 @@ async def _run_batch(
                     model=model,
                     memory_namespace=experiment_name,
                     timeout_multiplier=timeout_multiplier,
-                    compose_overlay=_OVERLAY_PATH,
+                    compose_overlay=DEFAULT_COMPOSE_OVERLAY,
                 ),
                 plane,
                 mint_stable_experiment_id,

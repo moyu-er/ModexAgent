@@ -13,6 +13,7 @@ import typer
 from bot.eval.evalenv import LangfuseCredentials
 from bot.eval.harbor.agent import InstallSettings
 from bot.eval.harbor.host_runtime import (
+    DEFAULT_COMPOSE_OVERLAY,
     HostCommand,
     HostCommandResult,
     HostExecutionPlane,
@@ -39,7 +40,6 @@ app.command("judge")(judge)
 
 _REPO_ROOT: Final = Path(__file__).resolve().parents[5]
 _DEFAULT_ARCHIVE: Final = Path("evals/runs/harbor/modex-src.tar.gz")
-_DEFAULT_OVERLAY: Final = Path("bot/eval/harbor/docker-compose.uv.yml")
 
 
 @app.command("install")
@@ -81,7 +81,7 @@ def run_command(
     compose_overlay: Annotated[
         Path | None,
         typer.Option("--compose-overlay"),
-    ] = _DEFAULT_OVERLAY,
+    ] = DEFAULT_COMPOSE_OVERLAY,
 ) -> None:
     """Launch one local Harbor task with T14/T27 experiment environment."""
     request = RunTrialRequest(
