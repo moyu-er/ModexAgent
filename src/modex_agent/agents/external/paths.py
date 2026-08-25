@@ -4,7 +4,7 @@
 (``.modex/`` layout, provider session files, outbox / inbox / result /
 env-snapshot files, AGENTS.md marker). It is **not** a Pydantic model — it is
 a process-local path accessor receiving an already-validated workdir from
-``WorkspacePathResolver.external_workdir()``.
+its callers (the external assembly's workspace resolution).
 
 ``ProviderKind`` is re-exported from ``modex_agent.core.constants`` for
 backward compatibility — it was moved there to break the
@@ -34,7 +34,7 @@ class ExternalPaths:
     """Workdir-relative path accessor for the ``.modex/`` layout.
 
     Constructor argument is an **already-validated** absolute workdir
-    produced by ``WorkspacePathResolver.external_workdir()``. The workdir
+    produced by the caller's workspace resolution. The workdir
     is ``Path.resolve()``-ed once in ``__init__`` so every accessor returns
     a path anchored to the same canonical root.
 

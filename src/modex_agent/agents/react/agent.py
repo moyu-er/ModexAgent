@@ -11,11 +11,11 @@ from typing import Any, Literal
 from modex_agent.agents.react.constants import InterruptReason
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.control.exceptions import (
-    AgentCancelled,
+    AgentCancelledError,
     AgentControlError,
-    AgentTimeout,
+    AgentTimeoutError,
     LoopDetectedError,
-    PolicyViolation,
+    PolicyViolationError,
 )
 from modex_agent.hook import HookPayload, HookPoint
 from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
@@ -82,11 +82,11 @@ def _get_turn_messages(ctx: AgentContext) -> list[dict[str, Any]]:
 
 def _interrupt_reason_from(exc: BaseException) -> InterruptReason:
     """Map a cancel/error exception to a short, non-leaky interrupt category."""
-    if isinstance(exc, AgentCancelled):
+    if isinstance(exc, AgentCancelledError):
         return InterruptReason.USER_STOP
-    if isinstance(exc, AgentTimeout):
+    if isinstance(exc, AgentTimeoutError):
         return InterruptReason.TIMEOUT
-    if isinstance(exc, PolicyViolation):
+    if isinstance(exc, PolicyViolationError):
         return InterruptReason.POLICY
     if isinstance(exc, LoopDetectedError):
         return InterruptReason.LOOP_DETECTED

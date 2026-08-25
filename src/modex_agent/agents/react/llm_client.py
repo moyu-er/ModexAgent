@@ -139,7 +139,7 @@ class ReactLlmClient:
             response = await self._provider.chat_stream(
                 messages=messages,
                 tools=context.get_tool_descriptions() if context.tool_manager else None,
-                temperature=context.temperature or 0.7,
+                temperature=context.temperature,
                 max_output_tokens=context.max_output_tokens,
                 on_content_delta=_on_content_delta,
                 on_reasoning_delta=_on_reasoning_delta,
@@ -264,6 +264,8 @@ class ReactLlmClient:
         messages: list[ChatMessage],
         ctx: AgentContext,
     ) -> LLMResponse:
+        assert isinstance(self._provider, StreamingLLMProvider)
+
         async def _on_content(delta: str) -> None:
             renew_dispatch_deadline()
             if delta and ctx.emitter is not None:
@@ -282,7 +284,7 @@ class ReactLlmClient:
         response = await self._provider.chat_stream(
             messages=messages,
             tools=ctx.get_tool_descriptions() if ctx.tool_manager else None,
-            temperature=ctx.temperature or 0.7,
+            temperature=ctx.temperature,
             max_output_tokens=ctx.max_output_tokens,
             on_content_delta=_on_content,
             on_reasoning_delta=_on_reasoning,
@@ -305,7 +307,7 @@ class ReactLlmClient:
         response = await self._provider.chat(
             messages=messages,
             tools=ctx.get_tool_descriptions() if ctx.tool_manager else None,
-            temperature=ctx.temperature or 0.7,
+            temperature=ctx.temperature,
             max_output_tokens=ctx.max_output_tokens,
             prompt_cache_key=str(ctx.session),
         )

@@ -19,7 +19,7 @@ import pytest
 from modex_agent.agents.external.cli_resolver import (
     ModexctlResolutionError,
     _has_modexctl,
-    _sibling_bin_dir,
+    _sibling_bin_dirs,
     resolve_modexctl_bin_dir,
 )
 
@@ -42,11 +42,11 @@ class TestHasModexctl:
 
 
 # ---------------------------------------------------------------------------
-# _sibling_bin_dir — sys.executable-derived candidate
+# _sibling_bin_dirs — sys.executable-derived candidates
 # ---------------------------------------------------------------------------
 
 
-class TestSiblingBinDir:
+class TestSiblingBinDirs:
     def test_returns_scripts_on_windows_layout(self, tmp_path: Path) -> None:
         """When python.exe sits in a venv-style dir, return its Scripts/ subdir."""
         # Build a fake venv layout: <tmp>/python.exe + <tmp>/Scripts/
@@ -56,9 +56,9 @@ class TestSiblingBinDir:
 
         with mock.patch.object(sys, "executable", str(fake_python)):
             with mock.patch("modex_agent.agents.external.cli_resolver.sys.platform", "win32"):
-                result = _sibling_bin_dir()
+                result = _sibling_bin_dirs()
 
-        assert result == tmp_path / "Scripts"
+        assert result == (tmp_path / "Scripts",)
 
     def test_returns_executable_parent_when_no_scripts_subdir_on_windows(
         self, tmp_path: Path
@@ -70,9 +70,9 @@ class TestSiblingBinDir:
 
         with mock.patch.object(sys, "executable", str(fake_python)):
             with mock.patch("modex_agent.agents.external.cli_resolver.sys.platform", "win32"):
-                result = _sibling_bin_dir()
+                result = _sibling_bin_dirs()
 
-        assert result == tmp_path
+        assert result == (tmp_path,)
 
     def test_returns_executable_parent_on_posix(self, tmp_path: Path) -> None:
         fake_python = tmp_path / "python"
@@ -80,9 +80,45 @@ class TestSiblingBinDir:
 
         with mock.patch.object(sys, "executable", str(fake_python)):
             with mock.patch("modex_agent.agents.external.cli_resolver.sys.platform", "linux"):
-                result = _sibling_bin_dir()
+                result = _sibling_bin_dirs()
 
-        assert result == tmp_path
+        assert result == (tmp_path,)
+
+    def test_literal_parent_probed_before_resolved_for_symlinked_executable(
+        self, tmp_path: Path
+    ) -> None:
+        """Debian/Ubuntu venv: ``bin/python`` is a symlink to the system
+        interpreter. The LITERAL parent (the venv ``bin/``) must come before
+        the resolved parent. Symlink simulated by stubbing ``Path.resolve``
+        — real symlinks need privileges on Windows.
+        """
+        venv_bin = tmp_path / "venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        fake_python = venv_bin / "python"
+
+        system_bin = tmp_path / "usr" / "bin"
+        system_bin.mkdir(parents=True)
+
+        def fake_resolve(self: Path, strict: bool = False) -> Path:
+            return system_bin / "python3" if self == fake_python else self
+
+        with mock.patch.object(sys, "executable", str(fake_python)):
+            with mock.patch("modex_agent.agents.external.cli_resolver.sys.platform", "linux"):
+                with mock.patch.object(Path, "resolve", fake_resolve):
+                    result = _sibling_bin_dirs()
+
+        assert result == (venv_bin, system_bin)
+
+    def test_duplicates_removed_when_executable_not_symlinked(self, tmp_path: Path) -> None:
+        """A plain (non-symlinked) executable yields a single candidate."""
+        fake_python = tmp_path / "python"
+        fake_python.touch()
+
+        with mock.patch.object(sys, "executable", str(fake_python)):
+            with mock.patch("modex_agent.agents.external.cli_resolver.sys.platform", "linux"):
+                result = _sibling_bin_dirs()
+
+        assert result == (tmp_path,)
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +206,63 @@ class TestResolveModexctlBinDir:
                     result = resolve_modexctl_bin_dir()
 
         assert result == sibling_dir
+
+    def test_strategy_2_resolves_via_literal_parent_for_symlinked_venv(
+        self, tmp_path: Path
+    ) -> None:
+        """Red case from live container dispatch (ubuntu:24.04):
+        ``/opt/modex/venv/bin/python`` is a symlink to ``/usr/bin/python3``
+        and the venv ``bin/`` is not on PATH. Resolution must succeed via
+        the LITERAL parent (``venv/bin``, which holds modexctl) instead of
+        the resolved parent (``/usr/bin``, which does not).
+        """
+        venv_bin = tmp_path / "venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        (venv_bin / "modexctl").touch()
+        fake_python = venv_bin / "python"
+
+        system_bin = tmp_path / "usr" / "bin"
+        system_bin.mkdir(parents=True)
+        # No modexctl in system_bin — the resolved parent is a dead end.
+
+        def fake_resolve(self: Path, strict: bool = False) -> Path:
+            return system_bin / "python3" if self == fake_python else self
+
+        env_without_override = {k: v for k, v in os.environ.items() if k != "MODEXBOT_BIN_DIR"}
+        with mock.patch.dict(os.environ, env_without_override, clear=True):
+            with mock.patch.object(sys, "executable", str(fake_python)):
+                with mock.patch("modex_agent.agents.external.cli_resolver.sys.platform", "linux"):
+                    with mock.patch.object(Path, "resolve", fake_resolve):
+                        with mock.patch.object(shutil, "which", return_value=None):
+                            result = resolve_modexctl_bin_dir()
+
+        assert result == venv_bin
+
+    def test_strategy_2_resolved_parent_serves_as_secondary_candidate(
+        self, tmp_path: Path
+    ) -> None:
+        """Exotic layout: the literal parent holds no modexctl but the
+        resolved parent does (literal path is only a redirect).
+        """
+        literal_bin = tmp_path / "redirect"
+        literal_bin.mkdir(parents=True)
+        fake_python = literal_bin / "python"
+
+        real_bin = tmp_path / "real" / "bin"
+        real_bin.mkdir(parents=True)
+        (real_bin / "modexctl").touch()
+
+        def fake_resolve(self: Path, strict: bool = False) -> Path:
+            return real_bin / "python" if self == fake_python else self
+
+        env_without_override = {k: v for k, v in os.environ.items() if k != "MODEXBOT_BIN_DIR"}
+        with mock.patch.dict(os.environ, env_without_override, clear=True):
+            with mock.patch.object(sys, "executable", str(fake_python)):
+                with mock.patch("modex_agent.agents.external.cli_resolver.sys.platform", "linux"):
+                    with mock.patch.object(Path, "resolve", fake_resolve):
+                        result = resolve_modexctl_bin_dir()
+
+        assert result == real_bin
 
     def test_strategy_3_shutil_which_fallback(self, tmp_path: Path) -> None:
         """No env override, no modexctl next to sys.executable → shutil.which."""

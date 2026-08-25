@@ -249,7 +249,7 @@ class TestMidTurnCancelViaInterceptor:
                                   on_reasoning_delta=None, **kwargs):
                 if on_content_delta:
                     # This callback drain will find and consume CANCEL_TURN,
-                    # raising AgentCancelled which propagates through the
+                    # raising AgentCancelledError which propagates through the
                     # provider back to _stream_with_control.
                     await on_content_delta("shall be cancelled")
                 # Should never reach here.
@@ -271,7 +271,7 @@ class TestMidTurnCancelViaInterceptor:
         result = await agent.run(ctx, emitter)
 
         assert emitter.completed is not None, (
-            "Drain inside _on_content_delta must raise AgentCancelled "
+            "Drain inside _on_content_delta must raise AgentCancelledError "
             "immediately, and ReActAgent must emit turn_end."
         )
         assert result.stop_reason == "cancelled"
@@ -342,7 +342,7 @@ class TestMidTurnCancelViaInterceptor:
         result = await asyncio.wait_for(turn_task, timeout=10.0)
 
         assert emitter.completed is not None, (
-            "LlmCancelInterceptor must raise AgentCancelled after draining the "
+            "LlmCancelInterceptor must raise AgentCancelledError after draining the "
             "channel, and ReActAgent must emit turn_end (emit_complete). "
             "Currently the CANCEL_TURN is silently consumed OR the turn "
             "completes normally — the pause button has no effect."

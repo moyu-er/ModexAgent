@@ -26,8 +26,9 @@ def build_assistant_message(
     APIs require ``content`` to be ``null`` rather than an empty string.
 
     *reasoning_content* is stored as a pydantic-extra field so that it travels
-    with the message (e.g. EndNode can read it for AgentResult) while
-    :meth:`ChatMessage.to_dict` automatically strips it before storage.
+    with the message (e.g. EndNode can read it for AgentResult) and survives
+    persistence via :meth:`ChatMessage.to_dict` — the provider layer replays
+    it conditionally on assistant tool-call turns (thinking-mode passback).
 
     Args:
         content:           Message text from the LLM.

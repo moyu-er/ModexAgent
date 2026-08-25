@@ -244,7 +244,7 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
             trace_path = archive_dir / "trace.jsonl"
 
             for attempt in range(2):
-                ok = await self._run_agent(
+                content = await self._run_agent(
                     system_prompt=system_prompt,
                     user_msg=user_msg,
                     allowed_dirs=[archive_dir],
@@ -253,7 +253,7 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
                     trace_path=trace_path,
                     max_iterations=self._config.max_iterations,
                 )
-                if ok and all(
+                if content is not None and all(
                     (archive_dir / filename).exists()
                     and (archive_dir / filename).stat().st_size > 0
                     for filename in _ARCHIVE_FILES

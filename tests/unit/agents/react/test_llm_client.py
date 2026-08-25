@@ -14,14 +14,14 @@ client) and persists an XML-marked interrupted message in the agent's
 cancel/error handlers.
 """
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 from unittest.mock import MagicMock
 
 import pytest
 
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.control.exceptions import AgentCancelled
+from modex_agent.control.exceptions import AgentCancelledError
 from modex_agent.core.provider import StreamingLLMProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import LLMResponse, ToolCall
@@ -178,10 +178,10 @@ class TestReactLlmClientStreamCaptureStashesPartial:
         accumulated_content) holds the partial and must be stashed."""
         ctx = _make_ctx()
         ctx.emitter = _FakeEmitter()
-        provider = _FakeStreamProvider(["partial ", "content"], exc=AgentCancelled())
+        provider = _FakeStreamProvider(["partial ", "content"], exc=AgentCancelledError())
         ctx.runtime.services.interceptors = _PassthroughInterceptorChain()
 
-        with pytest.raises(AgentCancelled):
+        with pytest.raises(AgentCancelledError):
             await ReactLlmClient(provider).call([], ctx)
 
         partial = ctx.runtime.state.custom.get(TurnCustomKey.INTERRUPTED_PARTIAL)
@@ -201,9 +201,9 @@ class TestReactLlmClientStreamCaptureStashesPartial:
                 tool_calls=[ToolCall(tool_name="read_file", arguments={}, call_id="c1")],
             ),
         )
-        ctx.runtime.services.interceptors = _CancelBeforeYieldChain(AgentCancelled())
+        ctx.runtime.services.interceptors = _CancelBeforeYieldChain(AgentCancelledError())
 
-        with pytest.raises(AgentCancelled):
+        with pytest.raises(AgentCancelledError):
             await ReactLlmClient(provider).call([], ctx)
 
         partial = ctx.runtime.state.custom.get(TurnCustomKey.INTERRUPTED_PARTIAL)
@@ -219,12 +219,12 @@ class TestReactLlmClientStreamCaptureStashesPartial:
                 return scope == InterceptorScope.LLM_STREAM
 
             async def around_llm_stream(self, ctx, call, next_stream):
-                raise AgentCancelled()
+                raise AgentCancelledError()
                 yield  # pragma: no cover - makes this an async generator
 
         ctx.runtime.services.interceptors = _EmptyRaising()
 
-        with pytest.raises(AgentCancelled):
+        with pytest.raises(AgentCancelledError):
             await ReactLlmClient(MagicMock(spec=StreamingLLMProvider)).call([], ctx)
 
         assert TurnCustomKey.INTERRUPTED_PARTIAL not in ctx.runtime.state.custom
@@ -339,3 +339,73 @@ class TestCompletionStartTimePropagation:
         result = await ReactLlmClient(provider).call([], ctx)
 
         assert result.completion_start_time is None
+
+
+class _RecordingProvider(StreamingLLMProvider):
+    """Records the temperature kwarg received on each call path."""
+
+    def __init__(self):
+        self.stream_temperatures: list[float | None] = []
+        self.chat_temperatures: list[float | None] = []
+
+    def get_default_model(self) -> str:
+        return "mock"
+
+    async def chat(self, messages, **kw):
+        self.chat_temperatures.append(kw.get("temperature"))
+        return LLMResponse(content="ok")
+
+    async def chat_stream(self, messages, **kw):
+        self.stream_temperatures.append(kw.get("temperature"))
+        return LLMResponse(content="ok")
+
+
+class TestTemperaturePassThrough:
+    """ctx.temperature must reach the provider verbatim.
+
+    Regression: the call sites sent ``ctx.temperature or 0.7`` — with
+    ctx.temperature None in practice, every ReAct call hardcoded 0.7 and the
+    provider-constructor value (model.yml temperature) never reached the API.
+    None must now flow through so the provider falls back to its ctor value;
+    a per-turn override still wins.
+    """
+
+    async def test_plain_stream_path_passes_none(self):
+        ctx = _make_ctx()
+        ctx.emitter = _FakeEmitter()
+        ctx.runtime.services.interceptors = None
+        provider = _RecordingProvider()
+
+        await ReactLlmClient(provider).call([], ctx)
+
+        assert provider.stream_temperatures == [None]
+
+    async def test_control_drain_path_passes_none(self):
+        ctx = _make_ctx()
+        ctx.emitter = _FakeEmitter()
+        ctx.runtime.services.interceptors = _PassthroughInterceptorChain()
+        provider = _RecordingProvider()
+
+        await ReactLlmClient(provider).call([], ctx)
+
+        assert provider.stream_temperatures == [None]
+
+    async def test_non_streaming_path_passes_none(self):
+        ctx = _make_ctx()
+        ctx.emitter = _FakeNonStreamEmitter()
+        provider = _RecordingProvider()
+
+        await ReactLlmClient(provider).call([], ctx)
+
+        assert provider.chat_temperatures == [None]
+
+    async def test_per_turn_override_passes_through(self):
+        ctx = _make_ctx()
+        ctx.emitter = _FakeEmitter()
+        ctx.runtime.services.interceptors = None
+        ctx.temperature = 0.3
+        provider = _RecordingProvider()
+
+        await ReactLlmClient(provider).call([], ctx)
+
+        assert provider.stream_temperatures == [0.3]

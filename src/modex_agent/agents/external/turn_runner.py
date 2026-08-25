@@ -114,6 +114,13 @@ class ExternalTurnRunner(TurnRunner):
         self._workspace_manager: WorkspaceManager | None = None
         self._session_binding_store = session_binding_store
 
+    @property
+    def hook_runner(self) -> HookRunner | None:
+        """The hook runner — overrides the ABC's None default so the
+        pipeline facade (``AgentPipeline.hook_runner``) exposes the
+        externally-registered hooks (e.g. ``SubagentAutoSendHook``)."""
+        return self._hook_runner
+
     def set_pool_context(
         self,
         *,
