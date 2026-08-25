@@ -13,6 +13,7 @@ from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.workspace.scope_path import resolve_scope_path
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -20,7 +21,8 @@ if TYPE_CHECKING:
     from modex_agent.core.session_registry import SessionRegistry
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
     from modex_agent.multi_agent.tools import CommunicationTarget
-    from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
+    from modex_agent.workspace.resources import WorkspaceManager
+    from modex_agent.workspace.scope_path import ScopePath
 
 
 class SendStrategyKind(StrEnum):
@@ -43,7 +45,8 @@ class SendDeps:
     session_factory: SessionIdFactory
     tree: SessionTreeManager
     session_registry: SessionRegistry | None = None
-    workspace_path_resolver: WorkspacePathResolver | None = None
+    scope_path: ScopePath | None = None
+    workspace_manager: WorkspaceManager | None = None
     trace_enabled: bool = True
 
 
@@ -204,9 +207,12 @@ class SendStrategy(ABC):
         """Resolved runtime_dir for SUBAGENT targets, else None."""
         if target_kind != AgentCommKind.SUBAGENT:
             return None
-        if self._deps.workspace_path_resolver is None:
+        pool_data = resolve_scope_path(
+            self._deps.workspace_manager, self._deps.scope_path
+        )
+        if pool_data is None:
             return None
-        return self._deps.workspace_path_resolver.runtime_dir()
+        return pool_data.runtime_dir
 
     def _subagent_trace_dir(
         self, target_kind: AgentCommKind | None, session_id: str

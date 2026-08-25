@@ -34,9 +34,9 @@ from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.inbox_poller import InboxPoller
-from modex_agent.multi_agent.pool_config.specs import SubagentSpec
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.state import AgentState
+from modex_agent.scope.spec import AgentSpec
 
 # ── Test helpers ──────────────────────────────────────────────────────────
 
@@ -284,7 +284,7 @@ async def test_poller_lazy_materializes_missing_subagent():
 
     pool.template_registry = MagicMock()
     pool.template_registry.get_template = MagicMock(
-        return_value=_FakeTemplate(spec=SubagentSpec(agent_name="scout"))
+        return_value=_FakeTemplate(spec=AgentSpec(name="scout"))
     )
     pool.materialize_deps = MagicMock()
     pool.pool_name = "main"
@@ -319,7 +319,7 @@ async def test_poller_materialize_failure_leaves_message_in_inbox():
 
     pool.template_registry = MagicMock()
     pool.template_registry.get_template = MagicMock(
-        return_value=_FailingTemplate(spec=SubagentSpec(agent_name="scout"))
+        return_value=_FailingTemplate(spec=AgentSpec(name="scout"))
     )
     pool.materialize_deps = MagicMock()
     pool.pool_name = "main"
@@ -347,7 +347,6 @@ async def test_dispatch_stamps_parent_from_envelope_without_registry():
     Must fail on the pre-convergence code, which read the parent from
     ``_resolve_session_info`` (registry/store) and got ``None`` here.
     """
-    from modex_agent.core.session_id import SessionInfo
     from modex_agent.multi_agent.message_type import AgentMessageType
 
     pool, _bus, poller = await _make_poller_pool()  # no session_registry / no store

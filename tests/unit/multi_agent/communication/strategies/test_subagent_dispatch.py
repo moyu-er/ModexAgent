@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -22,6 +24,21 @@ from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import CommunicationTarget
+from modex_agent.pipeline.snapshot import PoolDataSnapshot
+from modex_agent.workspace.scope_path import ScopePath
+
+
+@dataclass(frozen=True)
+class _FakePoolData(PoolDataSnapshot):
+    """Minimal concrete PoolDataSnapshot for scope-path resolution tests."""
+
+    context_manager: Any
+    turn_store: Any
+    trace_store: Any | None = None
+    memory_dir: Path | None = None
+    runtime_dir: Path | None = None
+    pruned_manager: Any | None = None
+    experience_dir: Path | None = None
 
 
 class _FakeBroker(MessageBroker):
@@ -254,12 +271,9 @@ class TestBuildResultExecutionStrategyBranch:
         The strategy owns routing (trace_dir); the hook (T2) owns file
         writes. The output dir is NOT pre-created at dispatch time.
         """
-        from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
-
-        resolver = WorkspacePathResolver(
-            workspace_manager=None,
-            pool_name="main",
-            fallback_runtime_dir=tmp_path,
+        manager = MagicMock()
+        manager.resolve_workspace.return_value.pool_data.get.return_value = _FakePoolData(
+            context_manager=MagicMock(), turn_store=MagicMock(), runtime_dir=tmp_path
         )
         mock_tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
         mock_tree.deliver = AsyncMock()
@@ -267,7 +281,8 @@ class TestBuildResultExecutionStrategyBranch:
             source=AgentAddress(name="main"),
             session_factory=SessionIdFactory(),
             tree=mock_tree,
-            workspace_path_resolver=resolver,
+            scope_path=ScopePath(workspace_root=Path("/ws"), pool_name="main"),
+            workspace_manager=manager,
         )
         strategy = SubagentDispatchStrategy(deps)
         req = _make_request(invocation_id="task-1")
@@ -283,12 +298,9 @@ class TestBuildResultExecutionStrategyBranch:
         """T4: native ack omits Trace and Output — unified subagent ack."""
         from modex_agent.core.constants import ExecutionStrategyKind
         from modex_agent.multi_agent.communication.result import format_send_ack
-        from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
-
-        resolver = WorkspacePathResolver(
-            workspace_manager=None,
-            pool_name="main",
-            fallback_runtime_dir=tmp_path,
+        manager = MagicMock()
+        manager.resolve_workspace.return_value.pool_data.get.return_value = _FakePoolData(
+            context_manager=MagicMock(), turn_store=MagicMock(), runtime_dir=tmp_path
         )
         mock_tree2: SessionTreeManager = MagicMock(spec=SessionTreeManager)
         mock_tree2.deliver = AsyncMock()
@@ -296,7 +308,8 @@ class TestBuildResultExecutionStrategyBranch:
             source=AgentAddress(name="main"),
             session_factory=SessionIdFactory(),
             tree=mock_tree2,
-            workspace_path_resolver=resolver,
+            scope_path=ScopePath(workspace_root=Path("/ws"), pool_name="main"),
+            workspace_manager=manager,
         )
         strategy = SubagentDispatchStrategy(deps)
         req = SendRequest(
@@ -341,8 +354,8 @@ class TestBuildResultExecutionStrategyBranch:
         assert "modexctl send" not in ack
         assert "Trace" not in ack
         assert "Output" not in ack
-        assert "automatic_notification: true" in ack
-        assert "next_step:" in ack
+        assert "running in background" in ack
+        assert "Avoid calling task with this invocation_id" in ack
         assert "notification" in ack  # the result arrives as a notification
 
     def test_default_execution_strategy_is_react(self) -> None:

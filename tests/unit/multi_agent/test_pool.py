@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modex_graph.exceptions import GraphInterrupt
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.state import AgentState
+from modex_graph.exceptions import GraphInterrupt
 
 
 class _FakeBroker:
@@ -132,8 +132,9 @@ class TestRegisterResidentTakesInstance:
         external_id=session_id (a full '{prefix}.{agent}' string), causing
         encode_snowflake to double-encode the prefix and produce a different
         session_id — so two session records appeared for one subagent."""
-        from modex_agent.core.session_id import SessionIdFactory, encode_snowflake
         from unittest.mock import MagicMock
+
+        from modex_agent.core.session_id import SessionIdFactory
 
         factory = SessionIdFactory()
         registry = MagicMock()
@@ -478,6 +479,26 @@ class TestSubmitInputAndPollerHelpers:
         assert env.agent_session_id == sid
         # session_id prefix segment carries the conversation routing
         assert env.session_id == msg.session.session_id_prefix
+
+    @pytest.mark.asyncio
+    async def test_submit_input_round_trip_preserves_free_form_metadata(self, pool_with_bus):
+        """Free-form InputMessage.metadata survives the broker round trip.
+
+        ``submit_input`` serializes metadata into the C2 payload; the dispatch
+        side must parse it back so per-turn keys (e.g. ``trace_id``) reach
+        ``TurnContextBuilder`` instead of being dropped in transit.
+        """
+        pool = pool_with_bus
+        msg, sid = self._build_input_message()
+        msg = msg.model_copy(update={"metadata": {"trace_id": "trace-abc", "k": "v"}})
+
+        await pool.submit_input(sid, msg)
+
+        envs = await pool._agent_bus.consume(sid, limit=10)
+        input_msg = envs[0].to_input_message(session=msg.session)
+        assert input_msg.metadata["trace_id"] == "trace-abc"
+        assert input_msg.metadata["k"] == "v"
+        assert input_msg.metadata["agent_session_id"] == sid
 
     @pytest.mark.asyncio
     async def test_sessions_with_pending_lists_pool_sessions(self, pool_with_bus):

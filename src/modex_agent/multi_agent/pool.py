@@ -137,7 +137,9 @@ class AgentPool(AgentRegistry):
             AgentState.WORKING: {AgentState.IDLE, AgentState.ERROR, AgentState.SHUTTING_DOWN},
             AgentState.ERROR: {AgentState.IDLE, AgentState.SHUTTING_DOWN},
             AgentState.SHUTTING_DOWN: {AgentState.SHUTDOWN},
-            AgentState.SHUTDOWN: set(),
+            # Unseen agents default to SHUTDOWN in ``_transition``, and a
+            # shut-down agent may be re-registered — both enter via INITIALIZING.
+            AgentState.SHUTDOWN: {AgentState.INITIALIZING},
         }
         self._cleanup_task = asyncio.create_task(self._cleanup_stale_sessions())
 
@@ -563,14 +565,6 @@ class AgentPool(AgentRegistry):
 
     def get(self, name: str) -> AgentInstance | None:
         return self._agents.get(name)
-
-    def serves_agent(self, name: str) -> bool:
-        """True if ``name`` is a registered main agent or a subagent template."""
-        if self._agents.get(name) is not None:
-            return True
-        if self._template_registry is not None and self._pool_name is not None:
-            return self._template_registry.get_template(self._pool_name, name) is not None
-        return False
 
     def get_descriptor(self, name: str) -> AgentDescriptor | None:
         instance = self._agents.get(name)

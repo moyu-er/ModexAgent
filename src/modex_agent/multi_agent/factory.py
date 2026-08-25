@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from modex_agent.control.channel import InMemoryControlChannel
+    from modex_agent.core.provider import LLMProvider
     from modex_agent.trace.otel_store import OtelSpanTraceStore
 
 logger = logging.getLogger(__name__)
@@ -61,8 +62,14 @@ class AgentFactory(ABC):
         hooks: list[Any] | None = None,
         output_adapter: Any | None = None,
         context_manager_factory: Callable[[str], ContextManager] | None = None,
+        llm_provider: LLMProvider | None = None,
     ) -> AgentInstance:
-        """根据描述符创建 AgentInstance。"""
+        """根据描述符创建 AgentInstance。
+
+        ``llm_provider`` is the per-agent LLM provider resolved by the
+        caller's assembly (the LLM_PROVIDER slot product). When ``None`` the
+        factory falls back to its own default, then to LiteLLM construction.
+        """
         ...
 
 
@@ -109,7 +116,13 @@ class DefaultAgentFactory(AgentFactory):
         # Per-session isolation is handled internally via SessionScope.
         self._runtime_context_manager = RuntimeContextManager()
 
-    def _resolve_llm_provider(self, descriptor: AgentDescriptor) -> Any:
+    def _resolve_llm_provider(
+        self,
+        descriptor: AgentDescriptor,
+        llm_provider: LLMProvider | None = None,
+    ) -> Any:
+        if llm_provider is not None:
+            return llm_provider
         if self._default_llm_provider is not None:
             return self._default_llm_provider
         if LiteLLMProvider is None:
@@ -258,8 +271,9 @@ class DefaultAgentFactory(AgentFactory):
         hooks: list[Any] | None = None,
         output_adapter: Any | None = None,
         context_manager_factory: Callable[[str], ContextManager] | None = None,
+        llm_provider: LLMProvider | None = None,
     ) -> AgentInstance:
-        provider = self._resolve_llm_provider(descriptor)
+        provider = self._resolve_llm_provider(descriptor, llm_provider)
         agent = self._build_agent(descriptor, provider)
 
         ctx_mgr = self._resolve_context_manager(descriptor, session_id, context_manager)

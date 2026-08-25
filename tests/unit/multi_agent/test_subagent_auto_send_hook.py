@@ -74,10 +74,6 @@ async def _consume_content(bus: LocalAgentMessageBus) -> str:
     return messages[0].payload["content"]
 
 
-def _result_body(notification: str) -> str:
-    return notification.split("Result:\n", maxsplit=1)[1]
-
-
 class TestSubagentAutoSendHookFinallyTurn:
     async def test_completed_writes_output_1_and_sends_truncated_notification(
         self,
@@ -98,8 +94,8 @@ class TestSubagentAutoSendHookFinallyTurn:
         notification = await _consume_content(bus)
         assert output_path.read_text() == content
         assert f"Output: {output_path}" in notification
-        assert len(_result_body(notification)) <= 300
         assert "[...truncated," in notification
+        assert "x" * 200 in notification
 
     async def test_same_session_second_turn_writes_output_2(self, tmp_path: Path) -> None:
         runtime_dir = tmp_path / "runtime"
@@ -154,6 +150,8 @@ class TestSubagentAutoSendHookFinallyTurn:
         assert "status: failed" in notification
         assert "Issue:" in notification
         assert "Division by zero" in notification
+        assert "The task is incomplete. To continue it, call task with" in notification
+        assert "invocation_id='" in notification
 
     async def test_max_iterations_still_writes_output_1(self, tmp_path: Path) -> None:
         runtime_dir = tmp_path / "runtime"
@@ -268,7 +266,9 @@ class TestSubagentAutoSendHookFinallyTurn:
         assert (
             runtime_dir / "output" / session_id / "OUTPUT_1.md"
         ).read_text() == content
-        assert len(_result_body(await _consume_content(bus))) <= 300
+        notification = await _consume_content(bus)
+        assert "[...truncated," in notification
+        assert "0123456789" * 20 in notification
 
     async def test_no_tree_raises_without_writing(self, tmp_path: Path) -> None:
         runtime_dir = tmp_path / "runtime"
@@ -286,54 +286,54 @@ class TestSubagentAutoSendHookFinallyTurn:
 class TestSubagentAutoSendHookClassify:
     def test_native_error_returns_failure(self) -> None:
         success, issue = SubagentAutoSendHook._classify(
-            "completed", "Division by zero", "abc", is_external=False
+            "completed", "Division by zero", is_external=False
         )
         assert success is False
         assert "Division by zero" in issue
         assert "last output" in issue.lower()
-        assert "invocation_id=abc" in issue
+        assert "invocation_id" not in issue
 
     def test_native_max_iterations_returns_failure(self) -> None:
         success, issue = SubagentAutoSendHook._classify(
-            "max_iterations", None, "", is_external=False
+            "max_iterations", None, is_external=False
         )
         assert success is False
         assert "max_iterations" in issue
 
     def test_native_loop_detected_returns_failure(self) -> None:
         success, issue = SubagentAutoSendHook._classify(
-            "loop_detected", None, "", is_external=False
+            "loop_detected", None, is_external=False
         )
         assert success is False
         assert "loop" in issue.lower()
 
     def test_native_timeout_returns_failure(self) -> None:
         success, issue = SubagentAutoSendHook._classify(
-            "timeout", None, "", is_external=False
+            "timeout", None, is_external=False
         )
         assert success is False
         assert "timeout" in issue
 
     def test_native_turn_cancelled_returns_failure(self) -> None:
         success, issue = SubagentAutoSendHook._classify(
-            "turn_cancelled", None, "", is_external=False
+            "turn_cancelled", None, is_external=False
         )
         assert success is False
         assert "turn_cancelled" in issue
 
     def test_native_completed_returns_success(self) -> None:
         assert SubagentAutoSendHook._classify(
-            "completed", None, "", is_external=False
+            "completed", None, is_external=False
         ) == (True, "")
 
     def test_native_cancelled_returns_success(self) -> None:
         assert SubagentAutoSendHook._classify(
-            "cancelled", None, "", is_external=False
+            "cancelled", None, is_external=False
         ) == (True, "")
 
     def test_external_error_returns_failure(self) -> None:
         success, issue = SubagentAutoSendHook._classify(
-            "completed", "provider crashed", "ext", is_external=True
+            "completed", "provider crashed", is_external=True
         )
         assert success is False
         assert "last output" in issue.lower()
@@ -341,17 +341,17 @@ class TestSubagentAutoSendHookClassify:
 
     def test_external_completed_returns_success(self) -> None:
         assert SubagentAutoSendHook._classify(
-            "completed", None, "", is_external=True
+            "completed", None, is_external=True
         ) == (True, "")
 
     def test_external_max_iterations_returns_success(self) -> None:
         assert SubagentAutoSendHook._classify(
-            "max_iterations", None, "", is_external=True
+            "max_iterations", None, is_external=True
         ) == (True, "")
 
     def test_external_loop_detected_returns_failure(self) -> None:
         success, issue = SubagentAutoSendHook._classify(
-            "loop_detected", None, "ext", is_external=True
+            "loop_detected", None, is_external=True
         )
         assert success is False
         assert "loop" in issue.lower()
@@ -361,7 +361,6 @@ class TestSubagentAutoSendHookClassify:
             SubagentAutoSendHook._classify(
                 "completed",
                 None,
-                "",
                 is_external=False,
                 output_status="written",
             )
@@ -423,9 +422,9 @@ class TestSubagentAutoSendHookWriteFail:
                 AgentResult(content="x" * 500),
             )
 
-        body = _result_body(await _consume_content(bus))
-        assert len(body) <= 300
-        assert "[...truncated," in body
+        notification = await _consume_content(bus)
+        assert "[...truncated," in notification
+        assert "x" * 200 in notification
 
 
 class TestSubagentAutoSendHookNotifyTruncate:
@@ -439,9 +438,9 @@ class TestSubagentAutoSendHookNotifyTruncate:
             AgentResult(content="short result"),
         )
 
-        body = _result_body(await _consume_content(bus))
-        assert body == "short result"
-        assert "truncated" not in body
+        notification = await _consume_content(bus)
+        assert "Result:\nshort result\n\n" in notification
+        assert "[...truncated," not in notification
 
     async def test_long_content_is_bounded_and_header_has_output(
         self,
@@ -458,7 +457,8 @@ class TestSubagentAutoSendHookNotifyTruncate:
         )
 
         notification = await _consume_content(bus)
-        assert len(_result_body(notification)) <= 300
+        assert "[...truncated," in notification
+        assert "x" * 200 in notification
         assert (
             f"Output: {runtime_dir / 'output' / session_id / 'OUTPUT_1.md'}"
             in notification
@@ -488,6 +488,11 @@ class TestSubagentAutoSendHookExternalBranch:
         assert "Output:" not in notification
         assert "Trace:" not in notification
         assert "Replied:" not in notification
+        assert (
+            "The task is complete and its result is fully delivered. To assign"
+            in notification
+        )
+        assert "truncated summary" not in notification
 
     async def test_external_completed_is_success_without_ack(self, tmp_path: Path) -> None:
         runtime_dir = tmp_path / "runtime"
@@ -509,6 +514,11 @@ class TestSubagentAutoSendHookExternalBranch:
         assert "Final answer" in notification
         assert "Issue:" not in notification
         assert "Replied:" not in notification
+        assert (
+            "The task is complete and its result is fully delivered. To assign"
+            in notification
+        )
+        assert "truncated summary" not in notification
 
     async def test_external_error_uses_external_classification(self, tmp_path: Path) -> None:
         runtime_dir = tmp_path / "runtime"
@@ -533,6 +543,7 @@ class TestSubagentAutoSendHookExternalBranch:
         assert "provider crashed" in notification
         assert "last output" in notification.lower()
         assert "trace" not in notification.lower()
+        assert "The task is incomplete. To continue it, call task with" in notification
 
 
 class TestSubagentAutoSendHookTruncateContent:

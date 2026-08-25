@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 
 from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy,
@@ -15,7 +16,16 @@ from modex_agent.multi_agent.execution_strategy import (
     StrategyAssembly,
     default_strategy_registry,
 )
-from modex_agent.multi_agent.pool_config.specs import PoolSpec
+from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
+from modex_agent.plugins.registry import (
+    ComponentRegistry,
+    strategy_registry_from_components,
+)
+from modex_agent.scope.spec import PoolSpec
+
+
+class _EmptyConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
 
 class _StubStrategy(ExecutionStrategy):
@@ -25,7 +35,7 @@ class _StubStrategy(ExecutionStrategy):
     def name(self) -> str:
         return "stub"
 
-    async def assemble(self, ctx: PoolAssemblyContext) -> StrategyAssembly:
+    async def assemble_main(self, ctx: PoolAssemblyContext) -> StrategyAssembly:
         raise NotImplementedError
 
     def validate_pool_spec(self, spec: PoolSpec) -> None:
@@ -44,6 +54,34 @@ def test_register_then_resolve_returns_same_instance() -> None:
     strategy = _StubStrategy()
     reg.register(strategy)
     assert reg.resolve("stub") is strategy
+
+
+def test_component_registry_derives_same_strategy_instance() -> None:
+    component_registry = ComponentRegistry()
+    strategy = _StubStrategy()
+    component_registry.register(
+        ComponentSlot.EXECUTION_STRATEGY,
+        strategy.name,
+        SimpleFactory(strategy, _EmptyConfig),
+    )
+
+    registry = strategy_registry_from_components(component_registry)
+
+    assert registry.resolve(strategy.name) is strategy
+
+
+def test_component_registry_skips_simple_factory_with_non_strategy(caplog: pytest.LogCaptureFixture) -> None:
+    component_registry = ComponentRegistry()
+    component_registry.register(
+        ComponentSlot.EXECUTION_STRATEGY,
+        "invalid",
+        SimpleFactory("not-a-strategy", _EmptyConfig),
+    )
+
+    registry = strategy_registry_from_components(component_registry)
+
+    assert registry.names() == []
+    assert "SimpleFactory wraps str" in caplog.text
 
 
 def test_register_duplicate_name_raises_value_error() -> None:
@@ -163,7 +201,6 @@ def test_strategy_assembly_optional_defaults() -> None:
         target_store=MagicMock(),
     )
     # React-only (None for external)
-    assert assembly.provider is None
     assert assembly.tool_manager is None
     assert assembly.skill_manager is None
     assert assembly.mcp_manager is None

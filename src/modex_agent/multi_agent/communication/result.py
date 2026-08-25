@@ -63,12 +63,10 @@ def format_send_ack(result: AgentSendResult) -> str:
 def _format_peer_ack(result: AgentSendResult) -> str:
     return "\n".join(
         [
-            f"Message sent to peer agent '{result.target_agent}'.",
-            "",
-            "next_step: The peer agent will process your message asynchronously"
-            " and may or may not reply — peer replies are not automatic."
-            " Do NOT call task again for this agent — continue with your"
-            " own work or end your turn.",
+            f"Message sent to peer agent '{result.target_agent}'. This tool is a",
+            "communication channel — the peer receives your message, but whether",
+            "it replies is up to it. Continue with your own work or end your",
+            "turn; do not call task again for this agent.",
         ]
     )
 
@@ -76,32 +74,31 @@ def _format_peer_ack(result: AgentSendResult) -> str:
 def _format_parent_reply_ack(result: AgentSendResult) -> str:
     return "\n".join(
         [
-            f"Reply delivered to '{result.target_agent}'.",
-            "",
-            "automatic_notification: true",
-            "",
-            "next_step: The parent agent will process your reply asynchronously."
-            " Do NOT call send_to_agent again — end your turn or continue with"
-            " non-overlapping work.",
+            f"Reply delivered to '{result.target_agent}'. The parent agent will process",
+            "your reply asynchronously — do not call send_to_agent again for this",
+            "reply; end your turn or continue with non-overlapping work.",
         ]
     )
 
 
 def _format_subagent_ack(result: AgentSendResult) -> str:
     lines = [
-        f"Task dispatched to '{result.target_agent}' - running in background.",
-        "",
-        "automatic_notification: true",
-        "",
-        "next_step: The result will be delivered to you automatically as a"
-        " notification when the subagent finishes. Do NOT call task again"
-        " for this agent — end your turn or continue with non-overlapping work.",
+        f"Task dispatched to '{result.target_agent}' — running in background.",
         "",
     ]
     if result.invocation_id:
         lines.append(f"invocation_id: {result.invocation_id}")
-        lines.append(
-            "If the result says the task is incomplete, pass this invocation_id"
-            " to continue the session in a later turn."
-        )
+        lines.append("")
+    lines.extend(
+        [
+            "The result will be delivered to you automatically as a notification",
+            "when the subagent finishes. The preferred action is to end your turn",
+            "and wait for it; if you continue, choose work that does not overlap",
+            "with the subagent's task.",
+            "",
+            "Avoid calling task with this invocation_id again until the",
+            "notification arrives — the subagent is still working on the current",
+            "task.",
+        ]
+    )
     return "\n".join(lines)

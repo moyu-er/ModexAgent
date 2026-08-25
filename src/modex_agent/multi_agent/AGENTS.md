@@ -20,8 +20,9 @@ the **poll-driven redesign** (InboxPoller replaced the per-session Drainer /
 `Fold-in`, and `Materialize` entries in `CONTEXT.md` for the current design).
 The revised model collapses ADR-0015's Drainer / `SessionInputQueue` /
 `_session_gates` layers to one poller + one inflight dict; ADR-0015's D4/D5/D7/D8
-decisions (pure-router service, `WorkspacePathResolver`, `ContextForkBuilder`,
-ack paths, subagent→parent via the same bus) stand.
+decisions (pure-router service, path resolution — now
+`modex_agent/workspace/scope_path.py` after the addressing convergence —
+`ContextForkBuilder`, ack paths, subagent→parent via the same bus) stand.
 
 ## How a message reaches a turn
 
@@ -63,8 +64,8 @@ InboxPoller (event-driven: Event.wait with ~interval tick fallback)
 
 | | normal (main) | subagent |
 |---|---|---|
-| built by | business `_register_main_agent` (`pool_builder`) | framework `AgentTemplate.materialize` (called by the poller) |
-| tools | factory defaults (`create_pool`'s `_build_tools` + `send_to_agent` + terminal + `extra_tools`) | template-built (preset + per-agent MCP) |
+| built by | native Stage 4 / external strategy-aware registration | framework `AgentTemplate.materialize` (called by the poller) |
+| tools | compiled spec tools (preset expansion + derived `task`/`send_to_peer` + supplements) | compiled spec tools (preset + derived `send_to_agent` + supplements + per-agent MCP) |
 | memory | workspace memory (pool default context manager) | session-only (`build_session_only_memory`) |
 | timing | eager at boot | lazy, on first turn |
 | `comm_kind` | `NORMAL` (set explicitly by business) | `SUBAGENT` (set inside `materialize`) |
@@ -87,16 +88,17 @@ by pipeline providers, so reuse is safe.)
 | `comm_kind.py` | `AgentCommKind` — `NORMAL` / `SUBAGENT` topology kind. |
 | `tools.py` | `TaskDispatchTool` (main agent's subagent dispatch tool — strictly subagent-scoped: new task dispatch + session continuation) + `SendToPeerTool` (main agent's peer communication tool — cross-agent messaging, never task delegation; session-mode only, excluded from graph turns via `GraphToolPreset.excluded_base_tools`) + `SendToAgentTool` (subagent→parent consultation only) + `CommunicationTargetStore` (with `list_subagents()`/`list_peers()` views) + `CommunicationTarget` (carries `pool_name` + `tree_ref` for cross-pool routing per ADR-0019). All three tools converge on `AgentCommunicationService.send_async()`. |
 | `template.py` | `AgentTemplate` — subagent preset + the **only** construction path (`materialize`). Builds the tool manager, session-only memory, subagent hooks; wires per-invocation FORK prompt provider. |
-| `template_registry.py` | `AgentTemplateRegistry` — scans/loads per-pool subagent templates (`config/pools/<pool>/templates/*.yml`). |
-| `materialize_deps.py` | `AgentMaterializeDeps` — frozen value object of construction deps (factory, broker, pool, path resolver, fork builder, …); replaces ~30 scattered ctor params. |
+| `template_registry.py` | `AgentTemplateRegistry` — seeded per-pool subagent templates from the compiled scope declaration. |
+| `materialize_deps.py` | `AgentMaterializeDeps` — regular runtime object bundling construction connections (factory, broker, pool, path resolver, fork builder, …); replaces ~30 scattered ctor params. |
 | `context_fork.py` | `ContextForkBuilder` — builds the FORK context XML from parent message history (pure computation, T18). `build()` queries the parent session's messages via `MemorySystem.get_full_history(limit=)`, returns the XML string. No fork files written to disk; no cleanup methods (file I/O removed in T17/T18). |
-| `workspace_paths.py` | `WorkspacePathResolver` — resolves `runtime_dir` / `memory_dir` / `output_path(session_id)` / `trace_dir(session_id)` / `pruned_manager` from the active workspace's pool_data. |
+| `pool_router.py` | `PoolRouter` — session→pool dispatch shell (framework-level). Routes every message to the pool recorded in a `PoolRoutingStore`; agent→pool ownership is a compile-time declaration lookup (`agent_pool_ownership(spec)` — agent name → declaring pools in declaration order; a miss is an error log + drop, never a silent fallback or an all-pools scan). The path resolution half of addressing lives in `modex_agent/workspace/scope_path.py`. |
 | `router.py` | `DefaultMeshRouter` — session identity resolved via `InputMessage.session` (no string parsing). |
 | `envelope.py` | `AgentMessageEnvelope` — source, target, session id, agent_session_id, invocation id, message_type, payload. |
 | `descriptor.py` | `AgentDescriptor`, `AgentInstance`, `AgentLLMConfig`, `ContextGovernanceConfig` — agent metadata + `comm_kind`. All are frozen Pydantic `BaseModel` (B5B). |
-| `factory.py` | Agent instance factory — assembles `AgentInstance` via `create_agent()`. `DefaultAgentFactory` builds react agents (provider + tools + skill + TurnContextBuilder + ApprovalResumer/ApprovalRenderer + ReActTurnRunner + hooks + pipeline). `ExternalAwareFactory` (in `examples/bot_project/bot/service/external_strategy.py`) overrides `create_agent` to build only 6 objects (ExternalAgent + broker I/O + emitter + ExternalTurnRunner + pipeline, no hooks/provider/tools) — external pools boot without `model.yml`. `_get_builder` dispatch (runtime agent-construction, not assembly branching) is retained per ADR-0025 D5 deviations. |
+| `factory.py` | Agent instance factory — assembles `AgentInstance` via `create_agent()`. `DefaultAgentFactory` builds react agents (provider + tools + skill + TurnContextBuilder + ApprovalResumer/ApprovalRenderer + ReActTurnRunner + hooks + pipeline). `ExternalAwareFactory` (in `examples/bot_project/bot/service/external_strategy.py`) overrides `create_agent` to build only 6 objects (ExternalAgent + broker I/O + emitter + ExternalTurnRunner + pipeline, no hooks/provider/tools) — external pools boot without `model.yml`. |
+| `execution_strategy.py` | Stateless pool-shape strategies. `ComponentRegistry`'s `EXECUTION_STRATEGY` slot is the sole registration source; service boot derives `ExecutionStrategyRegistry` from `SimpleFactory` instances. |
 | `subagent_validator.py` | Framework-layer star-topology enforcement at registration. |
-| `message_format.py` | Unified markdown message builder — `build_agent_comm_message` (single builder for all agent-facing message markdown, selected by `source_label` + optional `result` + optional `reply_contract`), `build_dispatch_message` (convergence wrapper for subagent/parent dispatch that never injects a reply contract — replies are auto-delivered by `SubagentAutoSendHook`, delegated to by `SubagentDispatchStrategy` and `ParentReplyStrategy`), `ResultMeta` (frozen Pydantic model for hook-generated result metadata; carries `output_path` from the hook (the status enum was removed)), and `SourceLabel`/`ResultStatus` StrEnums. |
+| `message_format.py` | Unified markdown message builder — `build_agent_comm_message` (single builder for all agent-facing message markdown, selected by `source_label` + optional `result` + optional `reply_contract`; renders the state-conditional result guidance paragraph (complete / deliverable-lost / judge / continue) after the result body), `build_dispatch_message` (convergence wrapper for subagent dispatch that never injects a reply contract — replies are auto-delivered by `SubagentAutoSendHook`; delegated to by `SubagentDispatchStrategy` only), `build_parent_reply_message` (appends the parent-reply `task` answer contract when the invocation_id is known; delegated to by `ParentReplyStrategy`), `ResultMeta` (frozen Pydantic model for hook-generated result metadata; carries `output_path` from the hook (the status enum was removed)), and `SourceLabel`/`ResultStatus` StrEnums. |
 | `address.py` / `state.py` / `registry.py` | Agent addressing types (`AgentAddress` is a Pydantic `BaseModel` subclass of `Address`, B5B), state enums, registry ABC. |
 
 ## Subdirectories
@@ -142,23 +144,29 @@ by pipeline providers, so reuse is safe.)
     an agent instance — the poller materializes lazily.
   - `invocation_id` omitted → mint a new subagent task session (cold-start; the
     poller materializes on first turn).
-  - `invocation_id` concrete → continue that subagent session verbatim.
+  - `invocation_id` concrete → continue that subagent session verbatim;
+    continuation timing is notification-driven (the notification's guidance
+    paragraph states whether the task is complete and what to do).
   - `target.tree_ref` set → cross-pool peer send (ADR-0019): delivers directly to
     the peer pool's tree via `target.tree_ref`; `invocation_id` is hidden from the
     sender's ack and the receiver's XML.
   - Star topology is enforced in `TopologyPolicy.check`: a subagent sender may
-    only target its own parent; subagent→subagent is rejected.
-  - Tool registration is converged in a single function
-    `register_communication_tools(instance)` (in
-    `examples/bot_project/bot/service/pool/communication.py`), called once per
-    pool after Phase 2 peer wiring. It registers `task` when
-    `store.list_subagents()` is non-empty, `send_to_peer` when
-    `store.list_peers()` is non-empty, and skips external main agents entirely.
+    only target its own parent or one of its own declared children (scope
+    declaration tree edges, ticket 12); subagent→non-declared-child is rejected.
+  - Tool registration is declaration-derived (SPEC §5.2): the ScopeCompiler
+    injects `task` / `send_to_agent` / `send_to_peer` entries into each
+    agent's compiled spec, and the TOOL-slot FW factories
+    (`plugins/defaults/communication.py`) resolve them at assembly time
+    reading the pool-layer `CommunicationFacilities` from the context chain.
+    The legacy business-side `register_communication_tools()` call
+    (`examples/bot_project/bot/service/pool/communication.py`) is gated off —
+    it served the deleted roster road only.
 - **The subagent reply path converges on the same tree.** `SubagentAutoSendHook`
   (`hook/builtin/`) fires on `FINALLY_GRAPH` and calls `tree.deliver(parent_sid,
   agent_result envelope)` — the same carrier as `task`/`send_to_agent`. It does not
   hand-build envelopes or call a parallel mechanism. The notification carries
-  the absolute, workspace-rooted output path. **Note**: this hook fires ONLY for subagent turns — peer (NORMAL) agents
+  the absolute, workspace-rooted output path and ends with state-conditional
+  guidance stating whether the task is complete. **Note**: this hook fires ONLY for subagent turns — peer (NORMAL) agents
   do NOT auto-notify; they must explicitly call `send_to_peer` to reply
   (ADR-0019 deferred #1). Peer agents reply via `send_to_peer`, not `task`.
 - Human DM / WebUI / approval decisions enter via `pool.submit_input(session_id,
@@ -182,18 +190,21 @@ poller, signalled from `LocalAgentMessageBus.send`.
 `session_id`; `(workspace, pool)` isolation is structural (a pool belongs to
 exactly one workspace).
 
-**Cross-pool exception (ADR-0019):** the framework gains an *optional* routing
+**Cross-pool exception (ADR-0019):** the framework has an *optional* routing
 primitive — `CommunicationTarget.tree_ref` (a `SessionTreeManager | None` field).
-When the business layer wires peer pools, it populates each pool's
-`CommunicationTargetStore` with peer main-agent entries whose `tree_ref` points
-at the peer pool's tree. `PeerNormalStrategy.deliver` reads `tree_ref` and calls
-`tree.deliver()` on it directly — this is the ONLY cross-pool messaging path. The
-framework itself has no "peer pool" concept; it only sees "the target carries an
-optional tree reference; deliver there if set, else local tree". With no peer
-wiring configured, behaviour is byte-for-byte identical to single-pool
-operation. Peer wiring is performed in a post-assembly phase (Phase 2) by the
-business layer (`examples/bot_project/bot/workspace/wiring.py`), after all pools
-are built.
+Peer links are declared in the scope declaration (a pool's `peers` list) and
+resolved by the framework at workspace materialize time
+(`communication/peer_resolution.py`: `peer_links_from_declaration` extracts
+the links, `resolve_peer_targets` reads the peer pool's tree reference from
+the same workspace resource bundle and populates each root's per-agent
+`CommunicationTargetStore`). `PeerNormalStrategy.deliver` reads `tree_ref` and
+calls `tree.deliver()` on it directly — this is the ONLY cross-pool messaging
+path. The framework itself has no "peer pool" concept; it only sees "the target
+carries an optional tree reference; deliver there if set, else local tree".
+With no peer links declared, behaviour is byte-for-byte identical to
+single-pool operation. v1 restricts links to the same workspace (V5) — both
+endpoints evict with the bundle as one unit, so a dangling cross-workspace
+reference is not constructible.
 
 ## For AI Agents
 

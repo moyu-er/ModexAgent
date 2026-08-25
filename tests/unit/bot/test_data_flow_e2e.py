@@ -69,7 +69,7 @@ class _CaptureOutput(OutputAdapter):
 @dataclass
 class _FakePool:
     name: str
-    main_agent_name: str
+    root_agent_name: str
     submitted: list = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -86,7 +86,7 @@ class _FakePool:
 
     @property
     def main_address(self):
-        return AgentAddress(kind="agent", name=self.main_agent_name)
+        return AgentAddress(kind="agent", name=self.root_agent_name)
 
 
 def _msg(content: str, session_id: str = "sess-1") -> InputMessage:
@@ -104,8 +104,8 @@ class TestNormalMessageRouting:
         await broker.start()
 
         pools = {
-            "main": _FakePool(name="main", main_agent_name="main"),
-            "coding": _FakePool(name="coding", main_agent_name="coding"),
+            "main": _FakePool(name="main", root_agent_name="main"),
+            "coding": _FakePool(name="coding", root_agent_name="coding"),
         }
 
         main_addr = pools["main"].main_address
@@ -124,6 +124,7 @@ class TestNormalMessageRouting:
             pools=pools,
             session_store=PoolSessionStore(tmp_path),
             default_pool="main",
+            agent_pool_ownership={"main": ("main",), "coding": ("coding",)},
         )
 
         router_task = asyncio.create_task(router.run())
@@ -147,8 +148,8 @@ class TestNormalMessageRouting:
         await broker.start()
 
         pools = {
-            "main": _FakePool(name="main", main_agent_name="main"),
-            "coding": _FakePool(name="coding", main_agent_name="coding"),
+            "main": _FakePool(name="main", root_agent_name="main"),
+            "coding": _FakePool(name="coding", root_agent_name="coding"),
         }
 
         coding_addr = pools["coding"].main_address
@@ -169,6 +170,7 @@ class TestNormalMessageRouting:
             pools=pools,
             session_store=store,
             default_pool="main",
+            agent_pool_ownership={"main": ("main",), "coding": ("coding",)},
         )
 
         router_task = asyncio.create_task(router.run())
@@ -203,6 +205,7 @@ class TestPoolSwitchFlow:
             pools=pools,
             session_store=store,
             default_pool="main",
+            agent_pool_ownership={"main": ("main",), "coding": ("coding",)},
         )
 
         router.set_pool("sess-xyz", "coding")
@@ -225,6 +228,7 @@ class TestPoolSwitchFlow:
             pools=pools,
             session_store=store,
             default_pool="main",
+            agent_pool_ownership={"main": ("main",), "coding": ("coding",)},
         )
 
         router.set_pool("sess-1", "coding")

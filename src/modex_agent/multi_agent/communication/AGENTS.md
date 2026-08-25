@@ -50,7 +50,8 @@ routing path, not a topology role.
 | `__init__.py` | Re-exports `AgentCommunicationService` + `AgentSendResult` so existing imports (`from modex_agent.multi_agent.communication import AgentCommunicationService`) resolve unchanged |
 | `service.py` | `AgentCommunicationService` — thin orchestrator. `send_async(target, content, invocation_id, context)` → `_send` → `TopologyPolicy.check` → strategy dispatch → `format_send_ack`. Owns the `_strategies: dict[SendStrategyKind, SendStrategy]` map. Never creates agent instances. |
 | `topology.py` | `TopologyPolicy.check(sender_kind, target, sender_context) -> str | None` — single star-topology enforcement point. Returns error string if forbidden, `None` if allowed. Only constrains SUBAGENT senders. |
-| `result.py` | `AgentSendResult` (frozen dataclass) + `format_send_ack(result) -> str`. The ack text differs for peer sends (`is_peer_send=True`) vs subagent dispatches (includes trace path + invocation_id). |
+| `result.py` | `AgentSendResult` (frozen dataclass) + `format_send_ack(result) -> str`. Acks are plain prose (no pseudo-structure lines) and differ per path: the task ack carries the wait-and-avoid guidance with `invocation_id`, the peer ack frames messaging as a communication channel (whether the peer replies is up to it), and the parent-reply ack notes the parent processes the reply asynchronously. |
+| `peer_resolution.py` | FW peer-link resolution (ticket 13, SG1 closure): `peer_links_from_declaration(spec)` extracts each pool's declared links; `resolve_peer_targets(pools, links)` runs at workspace materialize time — the peer's tree reference is read from the peer pool's `PoolInstance` in the SAME resource bundle (same-workspace invariant makes dangling cross-workspace references unconstructible) and the peer NORMAL target joins the root's per-agent `CommunicationTargetStore`. Declaration-side facts (`PeerLink`) travel with the link; runtime facts (booted root name, `tree_ref`) come from the bundle instances. |
 
 ## Subdirectories
 
@@ -69,7 +70,7 @@ if target.tree_ref is not None:
 elif target.kind == SUBAGENT:
     strategy = SUBAGENT_DISPATCH   # parent→child task dispatch
 else:
-    strategy = PARENT_REPLY        # subagent→parent reply (fallback for in-pool NORMAL→NORMAL)
+    strategy = PARENT_REPLY        # subagent→parent reply (NORMAL without tree_ref = the parent)
 ```
 
 Adding a future strategy = adding a `SendStrategyKind` enum value + a
@@ -80,7 +81,7 @@ Adding a future strategy = adding a `SendStrategyKind` enum value + a
 | Strategy | Session construction | invocation_id in ack | invocation_id in message | parent_session_id | message_type |
 |---|---|---|---|---|---|
 | SubagentDispatch | `create_with_prefix(prefix=invocation_id, parent=sender)` | surfaced | surfaced | set (sender) | `TASK_REQUEST` |
-| ParentReply | reuse `parent_session_id` | hidden (None) | hidden | n/a (reuse) | `AGENT_MESSAGE` |
+| ParentReply | reuse `parent_session_id` | hidden (None) | surfaced (parent-bound answer contract) | n/a (reuse) | `AGENT_MESSAGE` |
 | PeerNormal | `create_with_prefix(prefix=sender_prefix, parent=None)` — root session | hidden (None) | hidden | not set (root) | `AGENT_MESSAGE` |
 
 **Session Group** (ADR-0019): peer sends reuse the sender's session prefix
@@ -105,7 +106,8 @@ Context propagates within the session group as designed behaviour.
 
 ### Common Patterns
 - Strategies receive a frozen `SendDeps` bundle (source,
-  session_factory, tree, session_registry, workspace_path_resolver).
+  session_factory, tree, session_registry, scope_path + workspace_manager —
+  the addressing-convergence pair).
 - `SendStrategy.execute` is a template method: normalize → session →
   (register) → envelope → deliver → build_result. Concrete strategies
   override individual hooks.

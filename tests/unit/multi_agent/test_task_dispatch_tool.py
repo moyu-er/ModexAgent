@@ -97,6 +97,13 @@ class TestTaskDispatchToolParams:
         assert "content" in required
         assert "invocation_id" not in required
 
+    def test_invocation_id_description_is_continue_mode_only(self) -> None:
+        tool = _task_tool(CommunicationTargetStore())
+        desc = tool.parameters["properties"]["invocation_id"]["description"]
+        assert desc.startswith("Continue-mode only:")
+        assert "notification or consultation message" in desc
+        assert "Used ONLY to continue" not in desc
+
 
 # -- 3, 4, 12. dynamic schema ------------------------------------------------
 
@@ -349,3 +356,20 @@ class TestTaskDispatchToolDescription:
         assert "system-reminder" not in lowered
         assert "normal agent" not in lowered
         assert "pass null" not in lowered
+
+    def test_description_documents_dispatch_modes(self) -> None:
+        tool = _task_tool(_store_with_subagent_target())
+        desc = tool.description
+        expected_dispatch_modes = (
+            "Dispatch modes:\n"
+            "1. New task (default) — omit `invocation_id`.\n"
+            "2. Continue a session — pass that subagent's `invocation_id` (from\n"
+            "   its result notification or consultation message) together with\n"
+            "   your follow-up instructions in `content`. The subagent resumes\n"
+            "   with its prior context.\n\n"
+            "Each subagent's result notification states whether its task is\n"
+            "complete and what to do — follow it. Never re-dispatch just to\n"
+            "collect an already-delivered result."
+        )
+
+        assert expected_dispatch_modes in desc

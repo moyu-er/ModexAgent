@@ -594,8 +594,9 @@ class TestSendToAgentToolDynamicSchema:
         assert "exact name" in desc.lower()
         assert "available targets" in desc.lower()
 
-    def test_invocation_id_description_mentions_returned_id(self) -> None:
-        """invocation_id description must mention the returned id and continuation semantics."""
+    def test_invocation_id_description_mentions_notification_source(self) -> None:
+        """invocation_id description must point at the subagent's notification
+        or consultation message as the continuation source."""
         store = _store_with_target()
         tool = SendToAgentTool(
             store=store,
@@ -604,9 +605,8 @@ class TestSendToAgentToolDynamicSchema:
         )
         schema = tool.get_dynamic_schema()
         desc = schema["function"]["parameters"]["properties"]["invocation_id"]["description"]
-        assert "tool result" in desc.lower()
-        assert "invocation_id" in desc.lower()
-        assert "follow-up" in desc.lower() or "continue" in desc.lower()
+        assert "notification or\nconsultation message" in desc
+        assert "continue" in desc.lower()
         assert "{invocation_id}.{target_agent}" in desc
 
     def test_description_documents_continuation_and_peer_guidance(self) -> None:
@@ -729,52 +729,6 @@ class TestSubagentDescriptionContent:
         desc = tool.description
         assert "No parent" in desc
         assert "system-reminder" in desc  # description template still shown
-
-
-class TestSubagentWiringSelectsSubagentMode:
-    """The template wiring must register send_to_agent in subagent mode
-    (for_subagent=True) — proven by the registered tool's parameters lacking
-    invocation_id. Drives the real _register_send_to_agent wiring."""
-
-    def test_wiring_produces_subagent_mode_tool(self) -> None:
-        import dataclasses
-        from unittest.mock import MagicMock
-
-        from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-        from modex_agent.core.session_id import SessionIdFactory
-        from modex_agent.core.tool_manager import InMemoryToolManager
-        from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
-        from modex_agent.multi_agent.template import AgentTemplate
-
-        pool = MagicMock()
-        pool.list_profiles.return_value = []
-        deps = AgentMaterializeDeps(
-            agent_factory=MagicMock(),
-            pool=pool,
-            session_factory=SessionIdFactory(),
-            broker=MagicMock(),
-            tree=MagicMock(spec=SessionTreeManager),
-            safety=RuntimeSafetyPolicy(),
-            llm_model="gpt-4o",
-            project_dir=None,
-        )
-        # Wire only what _register_send_to_agent reads.
-        deps = dataclasses.replace(
-            deps,
-            agent_bus=MagicMock(),
-            session_registry=None,
-            workspace_path_resolver=None,
-        )
-
-        tm = InMemoryToolManager()
-        AgentTemplate._register_send_to_agent(tm, deps, name="worker")
-
-        descriptions = tm.get_tool_descriptions()
-        send_tools = [d for d in descriptions if d["function"]["name"] == "send_to_agent"]
-        assert len(send_tools) == 1
-        params = send_tools[0]["function"]["parameters"]
-        assert "invocation_id" not in params.get("properties", {})
-        assert "invocation_id" not in params.get("required", [])
 
 
 # -- Empty-store gating (pool_builder.create_pool skip condition) --

@@ -92,8 +92,9 @@ async def test_loop_detected_sends_incomplete_notification(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_loop_detected_includes_invocation_id_in_hint(tmp_path: Path):
-    """The loop hint must include the invocation_id so the parent can resume."""
+async def test_loop_detected_includes_invocation_id_in_guidance(tmp_path: Path):
+    """The loop-detected notification must include the invocation_id in the
+    continuation guidance so the parent can resume."""
     runtime_dir = tmp_path / "runtime"
     session_id = "a1b2c3d4.worker"
 
@@ -114,7 +115,8 @@ async def test_loop_detected_includes_invocation_id_in_hint(tmp_path: Path):
 
     xml = (await bus.consume("conv123.main"))[0].payload["content"]
     invocation_id = SessionInfo.from_str(session_id).session_id_prefix
-    assert f"invocation_id={invocation_id}" in xml
+    assert f"invocation_id='{invocation_id}'" in xml
+    assert "The task is incomplete. To continue it, call task with" in xml
 
 
 @pytest.mark.asyncio

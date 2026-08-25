@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -60,6 +61,12 @@ class ContextGovernanceConfig(BaseModel):
     max_message_chars: int | None = None
 
 
+class ContextStrategy(StrEnum):
+    PERSISTENT = "persistent"
+    EPHEMERAL = "ephemeral"
+    SHARED = "shared"
+
+
 class AgentDescriptor(BaseModel):
     """Agent 的完整身份与能力描述符。"""
 
@@ -83,11 +90,10 @@ class AgentDescriptor(BaseModel):
     """External-coding provider discriminator — symmetric with
     ``execution_strategy``. Set iff ``execution_strategy`` is
     ``EXTERNAL``; ``None`` for every react/pipeline/single-turn agent.
-    Mirrors :attr:`modex_agent.multi_agent.pool_config.specs.SubagentSpec.provider_kind`
-    and :attr:`MainAgentSpec.provider_kind`; the spec's value is forwarded
-    verbatim by ``AgentTemplate.materialize``."""
+    Mirrors the scope ``AgentSpec.provider_kind`` declaration; the spec's
+    value is forwarded verbatim by ``AgentTemplate.materialize``."""
     context_manager: ContextManager | None = None
-    context_strategy: str = "persistent"  # "persistent" | "ephemeral" | "shared"
+    context_strategy: ContextStrategy = ContextStrategy.PERSISTENT
     inbox_strategy: str = "drain_all"  # "drain_all" | "drain_limit" | "peek_latest"
     allowed_callers: list[str] | None = None
     role_description: str = ""
@@ -135,6 +141,3 @@ class AgentInstance:
             await self.pipeline.stop()
         finally:
             await self.pipeline.agent.stop()
-
-
-

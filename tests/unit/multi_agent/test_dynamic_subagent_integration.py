@@ -1,7 +1,6 @@
 """Integration test: template → registry → system prompt resolution → XML messages."""
 
 import tempfile
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from modex_agent.core.agent import AgentContext
@@ -15,9 +14,6 @@ from modex_agent.multi_agent.message_format import (
     build_agent_comm_message,
 )
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
-from modex_agent.multi_agent.pool_config import PoolStore
-from modex_agent.multi_agent.template import AgentTemplate
-from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import CommunicationTarget
 
 
@@ -34,44 +30,6 @@ def _mock_tree(bus: object) -> SessionTreeManager:
 
 def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
     return CommunicationTarget(name=name, kind=kind)
-
-
-def _write_files(base: Path, pool: str, agent_type: str, yml_content: str, md_content: str):
-    pool_dir = base / "config" / "pools" / pool
-    tpl_dir = pool_dir / "templates"
-    tpl_dir.mkdir(parents=True, exist_ok=True)
-    (tpl_dir / f"{agent_type}.yml").write_text(yml_content, encoding="utf-8")
-    if not (pool_dir / "pool.yml").exists():
-        (pool_dir / "pool.yml").write_text(f"main_agent_name: {pool}\n", encoding="utf-8")
-    agents_dir = base / "agents" / pool
-    agents_dir.mkdir(parents=True, exist_ok=True)
-    (agents_dir / f"{agent_type}.md").write_text(md_content, encoding="utf-8")
-
-
-def test_template_to_descriptor_pipeline():
-    """Full pipeline: YAML template → AgentTemplate → system prompt resolution."""
-    with tempfile.TemporaryDirectory() as tmp:
-        project = Path(tmp)
-        _write_files(
-            project,
-            "main",
-            "helper",
-            "agent_name: helper\ndescription: Test helper\nmax_steps: 15\n",
-            "You are a helpful assistant.",
-        )
-
-        registry = AgentTemplateRegistry(PoolStore(base_dir=project))
-        templates = registry.list_templates("main")
-        assert len(templates) == 1
-
-        t = templates[0]
-        assert t.spec.agent_name == "helper"
-        assert t.spec.max_steps == 15
-
-        # System prompt resolution (same convention as resolve_system_prompt)
-        md_path = project / "agents" / "main" / "helper.md"
-        assert md_path.exists()
-        assert md_path.read_text(encoding="utf-8") == "You are a helpful assistant."
 
 
 def test_xml_message_round_trip():
@@ -103,64 +61,6 @@ def test_xml_message_round_trip():
     assert "任务完成" in result
 
 
-def test_multiple_templates_per_pool():
-    """Multiple templates in one pool are all loaded."""
-    with tempfile.TemporaryDirectory() as tmp:
-        project = Path(tmp)
-        _write_files(project, "main", "a", "agent_name: a\ndescription: ''\n", "A")
-        _write_files(project, "main", "b", "agent_name: b\ndescription: ''\n", "B")
-
-        registry = AgentTemplateRegistry(PoolStore(base_dir=project))
-        templates = registry.list_templates("main")
-        assert len(templates) == 2
-        types = {t.spec.agent_name for t in templates}
-        assert types == {"a", "b"}
-
-
-def test_subagent_memory_is_baked_not_from_yaml():
-    """A ``memory:`` block on disk is ignored by PoolStore; subagent memory is
-    baked from the caller's default (sub-minimal, immutable, spec §9). The
-    factory's default is the sole source of truth; a stale/hand-edited rich
-    block can never override it."""
-    with tempfile.TemporaryDirectory() as tmp:
-        project = Path(tmp)
-        yml = """\
-agent_name: heavy
-description: Heavy task agent
-max_steps: 50
-memory:
-  short_term: {max_context_tokens: 50000}
-"""
-        _write_files(project, "main", "heavy", yml, "Heavy agent.")
-        registry = AgentTemplateRegistry(PoolStore(base_dir=project))
-        t = registry.get_template("main", "heavy")
-        assert t is not None
-        assert t.memory is None  # on-disk memory ignored; caller's default wins
-
-
-def test_subagent_memory_baked_from_factory_default():
-    """A template WITHOUT a memory block gets the factory's baked preset,
-    identity-equal (the loader stores it directly, never re-validates)."""
-    from modex_agent.ioc.configs.memory import MemoryConfig
-
-    baked = MemoryConfig()
-    with tempfile.TemporaryDirectory() as tmp:
-        project = Path(tmp)
-        yml = "agent_name: light\ndescription: light\n"
-        _write_files(project, "main", "light", yml, "Light agent.")
-        registry = AgentTemplateRegistry(PoolStore(base_dir=project), default_subagent_memory=baked)
-        t = registry.get_template("main", "light")
-        assert t is not None
-        assert t.memory is baked
-
-
-def test_template_not_found_returns_none():
-    """get_template returns None for missing agent types."""
-    with tempfile.TemporaryDirectory() as tmp:
-        registry = AgentTemplateRegistry(PoolStore(base_dir=Path(tmp)))
-        assert registry.get_template("main", "nonexistent") is None
-
-
 def _make_mock_pool():
     """Create a mock AgentPool that supports register_resident (async) + get (sync)."""
     pool = MagicMock()
@@ -188,11 +88,9 @@ class TestInvocationIdNullCreatesNewSubagent:
 
     async def test_null_invocation_id_normal_agent(self):
         """send_to_agent(target='normal-agent', invocation_id=null) sends normally."""
-        from modex_agent.core.agent import AgentContext
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.communication import AgentCommunicationService
 
-        mock_broker = AsyncMock()
         mock_registry = MagicMock()
         mock_registry.get_descriptor.return_value = None
         mock_profile = MagicMock()
@@ -225,11 +123,9 @@ class TestInvocationIdNullCreatesNewSubagent:
 
     async def test_concrete_invocation_id_continues_session(self):
         """send_to_agent(target='helper', invocation_id='abc123') continues existing session."""
-        from modex_agent.core.agent import AgentContext
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.communication import AgentCommunicationService
 
-        mock_broker = AsyncMock()
         mock_registry = MagicMock()
         mock_descriptor = MagicMock()
         mock_descriptor.comm_kind = AgentCommKind.SUBAGENT
@@ -262,14 +158,15 @@ class TestInvocationIdNullCreatesNewSubagent:
 
 
 class TestInvocationIdDescriptionHidesCommKind:
-    """The invocation_id parameter description must NOT mention NORMAL/SUBAGENT."""
+    """The invocation_id parameter description points to the notification/consultation source; it must not mention the NORMAL kind."""
 
-    def test_param_description_no_kind_mention(self):
+    def test_param_description_points_to_notification_source(self):
         from modex_agent.multi_agent.tools import _NORMAL_PARAMS
 
         desc = _NORMAL_PARAMS["properties"]["invocation_id"]["description"].lower()
+        assert "notification or" in desc
+        assert "consultation message" in desc
         assert "normal" not in desc
-        assert "subagent" not in desc
 
     def test_tool_description_no_kind_mention(self):
         from modex_agent.multi_agent.tools import CommunicationTargetStore, SendToAgentTool
@@ -295,12 +192,11 @@ class TestSubagentIdentityResolution:
 
     async def test_subagent_send_has_correct_source(self):
         """When subagent sends via send_to_agent, envelope source must be subagent name."""
-        from modex_agent.core.agent import AgentContext, current_agent_context
+        from modex_agent.core.agent import current_agent_context
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.communication import AgentCommunicationService
 
         sent_envelopes: list = []
-        mock_broker = AsyncMock()
 
         capture_tree = MagicMock(spec=SessionTreeManager)
 
@@ -382,13 +278,11 @@ class TestAgentMessageXmlWrapping:
 
     async def test_agent_message_wraps_content_in_xml(self):
         """Normal agent_message must also be XML-wrapped."""
-        from modex_agent.core.agent import AgentContext
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.communication import AgentCommunicationService
         from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         sent_payloads: list = []
-        mock_broker = AsyncMock()
 
         capture_tree = MagicMock(spec=SessionTreeManager)
 

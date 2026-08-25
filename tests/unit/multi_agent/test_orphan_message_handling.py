@@ -15,7 +15,6 @@ Two root causes, two fixes, two test classes:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,7 +33,11 @@ from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.types import InboxMessage
 from modex_agent.multi_agent.inbox_poller import InboxPoller
 from modex_agent.multi_agent.pool_instance import PoolInstance
-from modex_agent.multi_agent.pool_router import LocalFilePoolRoutingStore, PoolRouter
+from modex_agent.multi_agent.pool_router import (
+    LocalFilePoolRoutingStore,
+    PoolRouter,
+    agent_pool_ownership,
+)
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.inbox_mq import SqliteInboxMQ
 
@@ -239,18 +242,41 @@ class TestInboxPollerHandlesOrphanWithoutDataLoss:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Fix 1: PoolRouter self-heals stale pool routing
+# Fix 1: PoolRouter reconciles stale routing via the declaration lookup
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _pool_instance(name: str, root_agent_name: str) -> PoolInstance:
+    return PoolInstance(
+        name=name,
+        media=MagicMock(),
+        subagent_count=0,
+        pool=MagicMock(),
+        broker_bridge=MagicMock(),
+        tool_manager=MagicMock(),
+        skill_manager=None,
+        mcp_manager=None,
+        terminal_manager=None,
+        root_agent_name=root_agent_name,
+        main_execution_strategy=ExecutionStrategyKind.REACT,
+        provider=MagicMock(),
+        notification_service=MagicMock(),
+        communication_service=MagicMock(),
+        tree_manager=MagicMock(),
+        target_store=MagicMock(),
+    )
+
+
 class TestPoolRouterSelfHealsStaleRouting:
-    """When a message's session carries an agent_name the routed pool doesn't
-    serve, the router finds the owning pool and re-routes + self-heals."""
+    """When a message's session carries an agent_name the routed pool does
+    not own, the declaration lookup re-routes to the owning pool; an agent
+    no pool declares is dropped loudly (ticket 15, SPEC §5.3 addressing
+    constitution — never routed on to produce an orphan)."""
 
     @pytest.mark.asyncio
     async def test_message_for_coder_agent_rerouted_from_default(self, tmp_path: Path) -> None:
         """A message with session_id='conv1.orchestrator' (agent_name=orchestrator)
-        routed to default pool → re-routed to coder pool (which serves orchestrator).
+        routed to default pool → re-routed to coder pool (which declares orchestrator).
 
         The routing store is NOT self-healed — per ADR-0019 the store is the
         routing authority, maintained by the pool-switch write path. The router
@@ -260,49 +286,9 @@ class TestPoolRouterSelfHealsStaleRouting:
         routing_store = LocalFilePoolRoutingStore(tmp_path)
         routing_store.set_pool("conv1", "default")
 
-        coder_pool = MagicMock()
-        coder_pool.serves_agent = MagicMock(side_effect=lambda n: n == "orchestrator")
-
-        default_pool = MagicMock()
-        default_pool.serves_agent = MagicMock(side_effect=lambda n: n == "default")
-
         pools = {
-            "default": PoolInstance(
-                name="default",
-                media=MagicMock(),
-                subagent_count=0,
-                pool=default_pool,
-                broker_bridge=MagicMock(),
-                tool_manager=MagicMock(),
-                skill_manager=None,
-                mcp_manager=None,
-                terminal_manager=None,
-                main_agent_name="default",
-                main_execution_strategy=ExecutionStrategyKind.REACT,
-                provider=MagicMock(),
-                notification_service=MagicMock(),
-                communication_service=MagicMock(),
-                tree_manager=MagicMock(),
-                target_store=MagicMock(),
-            ),
-            "coder": PoolInstance(
-                name="coder",
-                media=MagicMock(),
-                subagent_count=0,
-                pool=coder_pool,
-                broker_bridge=MagicMock(),
-                tool_manager=MagicMock(),
-                skill_manager=None,
-                mcp_manager=None,
-                terminal_manager=None,
-                main_agent_name="orchestrator",
-                main_execution_strategy=ExecutionStrategyKind.REACT,
-                provider=MagicMock(),
-                notification_service=MagicMock(),
-                communication_service=MagicMock(),
-                tree_manager=MagicMock(),
-                target_store=MagicMock(),
-            ),
+            "default": _pool_instance("default", "default"),
+            "coder": _pool_instance("coder", "orchestrator"),
         }
 
         router = PoolRouter(
@@ -311,6 +297,7 @@ class TestPoolRouterSelfHealsStaleRouting:
             pools=pools,
             session_store=routing_store,
             default_pool="default",
+            agent_pool_ownership={"default": ("default",), "orchestrator": ("coder",)},
         )
 
         routed_to: list[str] = []
@@ -334,33 +321,11 @@ class TestPoolRouterSelfHealsStaleRouting:
 
     @pytest.mark.asyncio
     async def test_message_for_default_agent_stays_on_default(self, tmp_path: Path) -> None:
-        """No mismatch → no re-routing, no self-healing."""
+        """Routed pool declares the agent → no re-routing, no self-healing."""
         routing_store = LocalFilePoolRoutingStore(tmp_path)
         routing_store.set_pool("conv1", "default")
 
-        default_pool = MagicMock()
-        default_pool.serves_agent = MagicMock(side_effect=lambda n: n == "default")
-
-        pools = {
-            "default": PoolInstance(
-                name="default",
-                media=MagicMock(),
-                subagent_count=0,
-                pool=default_pool,
-                broker_bridge=MagicMock(),
-                tool_manager=MagicMock(),
-                skill_manager=None,
-                mcp_manager=None,
-                terminal_manager=None,
-                main_agent_name="default",
-                main_execution_strategy=ExecutionStrategyKind.REACT,
-                provider=MagicMock(),
-                notification_service=MagicMock(),
-                communication_service=MagicMock(),
-                tree_manager=MagicMock(),
-                target_store=MagicMock(),
-            ),
-        }
+        pools = {"default": _pool_instance("default", "default")}
 
         router = PoolRouter(
             input_adapter=MagicMock(),
@@ -368,6 +333,7 @@ class TestPoolRouterSelfHealsStaleRouting:
             pools=pools,
             session_store=routing_store,
             default_pool="default",
+            agent_pool_ownership={"default": ("default",)},
         )
 
         routed_to: list[str] = []
@@ -388,37 +354,20 @@ class TestPoolRouterSelfHealsStaleRouting:
         assert routing_store.get_pool("conv1") == "default"
 
     @pytest.mark.asyncio
-    async def test_bare_prefix_session_trusts_routing_store(self, tmp_path: Path) -> None:
-        """A session with no agent_name (bare prefix → agent_name='')
-        routes to the stored pool without re-routing — empty agent_name
-        matches no pool's agents so the reconciler leaves it on the
-        stored pool."""
+    async def test_undeclared_agent_is_dropped_loudly(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Declaration lookup miss → error log + message dropped.
+
+        The single behavior lock for the miss path (Oracle#8): the router
+        must NOT route the message to the original pool — that produces an
+        orphan the poller can never consume ("no template for X; skipping"
+        forever). Loud failure, no exception, no silent fallback.
+        """
         routing_store = LocalFilePoolRoutingStore(tmp_path)
         routing_store.set_pool("conv1", "default")
 
-        default_pool = MagicMock()
-        default_pool.serves_agent = MagicMock(return_value=False)
-
-        pools = {
-            "default": PoolInstance(
-                name="default",
-                media=MagicMock(),
-                subagent_count=0,
-                pool=default_pool,
-                broker_bridge=MagicMock(),
-                tool_manager=MagicMock(),
-                skill_manager=None,
-                mcp_manager=None,
-                terminal_manager=None,
-                main_agent_name="default",
-                main_execution_strategy=ExecutionStrategyKind.REACT,
-                provider=MagicMock(),
-                notification_service=MagicMock(),
-                communication_service=MagicMock(),
-                tree_manager=MagicMock(),
-                target_store=MagicMock(),
-            ),
-        }
+        pools = {"default": _pool_instance("default", "default")}
 
         router = PoolRouter(
             input_adapter=MagicMock(),
@@ -426,6 +375,89 @@ class TestPoolRouterSelfHealsStaleRouting:
             pools=pools,
             session_store=routing_store,
             default_pool="default",
+            agent_pool_ownership={"default": ("default",)},
+        )
+
+        routed_to: list[str] = []
+
+        async def _fake_route_to_pool(msg, pool):
+            routed_to.append(pool.name)
+
+        router._route_to_pool = _fake_route_to_pool  # type: ignore[method-assign]
+        msg = InputMessage(
+            content="hello",
+            session=SessionInfo(session_id="conv1.ghost", agent_name="ghost"),
+            sender_id="user",
+            chat_id="c",
+        )
+        with caplog.at_level(logging.ERROR, logger="modex_agent.multi_agent.pool_router"):
+            await router.route_message(msg)
+
+        assert routed_to == [], "miss must DROP the message — never route to the original pool"
+        assert routing_store.get_pool("conv1") == "default", "miss must not mutate the store"
+        assert any(
+            "No pool serves agent 'ghost'" in r.message for r in caplog.records
+        ), "miss must log an error"
+
+    @pytest.mark.asyncio
+    async def test_repeated_agent_name_stays_on_routed_pool(self, tmp_path: Path) -> None:
+        """A name declared by TWO pools (e.g. a shared subagent name): the
+        routed pool owning the agent keeps the message — only a routed pool
+        that does NOT declare the agent re-routes (to the first owner)."""
+        routing_store = LocalFilePoolRoutingStore(tmp_path)
+        routing_store.set_pool("conv-inv", "review")
+
+        pools = {
+            "coder": _pool_instance("coder", "orchestrator"),
+            "review": _pool_instance("review", "reviewer"),
+        }
+
+        router = PoolRouter(
+            input_adapter=MagicMock(),
+            broker=MagicMock(),
+            pools=pools,
+            session_store=routing_store,
+            default_pool="coder",
+            agent_pool_ownership={
+                "orchestrator": ("coder",),
+                "reviewer": ("review",),
+                "explore": ("coder", "review"),
+            },
+        )
+
+        routed_to: list[str] = []
+
+        async def _fake_route_to_pool(msg, pool):
+            routed_to.append(pool.name)
+
+        router._route_to_pool = _fake_route_to_pool  # type: ignore[method-assign]
+        msg = InputMessage(
+            content="hello",
+            session=SessionInfo(session_id="conv-inv.explore", agent_name="explore"),
+            sender_id="user",
+            chat_id="c",
+        )
+        await router.route_message(msg)
+
+        assert routed_to == ["review"], "an owner pool must keep the message"
+
+    @pytest.mark.asyncio
+    async def test_bare_prefix_session_trusts_routing_store(self, tmp_path: Path) -> None:
+        """A session with no agent_name (bare prefix → agent_name='')
+        routes to the stored pool without a lookup — empty agent_name
+        means "trust the routing store"."""
+        routing_store = LocalFilePoolRoutingStore(tmp_path)
+        routing_store.set_pool("conv1", "default")
+
+        pools = {"default": _pool_instance("default", "default")}
+
+        router = PoolRouter(
+            input_adapter=MagicMock(),
+            broker=MagicMock(),
+            pools=pools,
+            session_store=routing_store,
+            default_pool="default",
+            agent_pool_ownership={},
         )
 
         routed_to: list[str] = []
@@ -445,5 +477,55 @@ class TestPoolRouterSelfHealsStaleRouting:
         assert routed_to == ["default"]
 
 
-async def _route_to_pool(self, msg, pool):  # helper for the patched method above
-    pass
+class TestAgentPoolOwnership:
+    """The declaration lookup table behind the router's reconciliation."""
+
+    def test_workspace_form_maps_every_declared_agent(self) -> None:
+        from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec, WorkspaceSpec
+
+        spec = ScopeSpec(
+            kind=ScopeKind.WORKSPACE,
+            workspace=WorkspaceSpec(
+                name="ws",
+                pools=[
+                    PoolSpec(
+                        name="coder",
+                        agents=[
+                            AgentSpec(name="orchestrator"),
+                            AgentSpec(name="explore", parent="orchestrator"),
+                        ],
+                    ),
+                    PoolSpec(
+                        name="review",
+                        agents=[
+                            AgentSpec(name="reviewer"),
+                            AgentSpec(name="explore", parent="reviewer"),
+                        ],
+                    ),
+                ],
+            ),
+        )
+
+        ownership = agent_pool_ownership(spec)
+
+        assert ownership["orchestrator"] == ("coder",)
+        assert ownership["reviewer"] == ("review",)
+        assert ownership["explore"] == ("coder", "review"), (
+            "a repeated name keeps every declaring pool, declaration order"
+        )
+
+    def test_pool_as_root_form_maps_the_single_pool(self) -> None:
+        from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
+
+        spec = ScopeSpec(
+            kind=ScopeKind.POOL,
+            pool=PoolSpec(
+                name="solo",
+                agents=[AgentSpec(name="root"), AgentSpec(name="leaf", parent="root")],
+            ),
+        )
+
+        assert agent_pool_ownership(spec) == {
+            "root": ("solo",),
+            "leaf": ("solo",),
+        }

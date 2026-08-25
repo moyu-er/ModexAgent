@@ -6,10 +6,13 @@ markdown. The ``source_label`` (agent / peer agent / subagent), optional
 no separate builders per message kind.
 
 :func:`build_dispatch_message` is the convergence wrapper that
-``SubagentDispatchStrategy`` and ``ParentReplyStrategy`` delegate to. It never
-injects a reply contract: both are subagent/parent paths whose replies are
-auto-delivered by ``SubagentAutoSendHook``, so the WARNING + reply
-instructions are unnecessary. Peer sends (which DO need the contract) call
+``SubagentDispatchStrategy`` delegates to. It never injects a reply
+contract: the dispatch path's replies are auto-delivered by
+``SubagentAutoSendHook``, so the WARNING + reply instructions are
+unnecessary. ``ParentReplyStrategy`` instead delegates to
+:func:`build_parent_reply_message`, which likewise never injects a reply
+contract and appends the parent-reply answer block when the invocation_id
+is known. Peer sends (which DO need the contract) call
 :func:`build_agent_comm_message` directly with ``reply_contract`` set.
 
 The agent-facing builders produce PURE markdown — no ``<system-reminder>``
@@ -30,6 +33,12 @@ Unified layout (field-absent => line omitted, no empty labels)::
 
     Content:                                     # "Result:" when result set
     {content}
+
+    {result guidance paragraph}                  # result only
+
+    ---
+
+    {parent-reply answer block}                  # parent reply, id set
 
     ---
     {reply contract block}                       # peer / external only
@@ -158,6 +167,79 @@ def _build_contract_block(
     return [warning, *method_lines, *behavior_lines]
 
 
+def _continue_recipe(source: str, invocation_id: str, content: str) -> str:
+    return (
+        f"call task with\ntarget_agent='{source}', "
+        f"invocation_id='{invocation_id}', and\ncontent={content}"
+    )
+
+
+def _build_result_guidance(
+    result: ResultMeta,
+    source: str,
+    invocation_id: str | None,
+) -> str:
+    match result.status:
+        case ResultStatus.FAILED:
+            if not invocation_id:
+                return "The task is incomplete."
+            return (
+                "The task is incomplete. To continue it, "
+                + _continue_recipe(source, invocation_id, "your follow-up instructions")
+                + " — the subagent resumes with its\nprior context."
+            )
+        case ResultStatus.SUCCESS:
+            if result.issue:
+                guidance = (
+                    "The task is complete, but the deliverable file could not be written\n"
+                    "(see Issue above) — the Result text is truncated."
+                )
+                if not invocation_id:
+                    return guidance
+                return (
+                    f"{guidance} To retrieve the\n"
+                    "subagent's full output, continue the session: call task with\n"
+                    f"invocation_id={invocation_id}."
+                )
+
+            if result.stop_reason is None or result.stop_reason == StopReason.COMPLETED:
+                if result.output_path:
+                    guidance = (
+                        "The task is complete and its result is fully delivered — you don't\n"
+                        "need to call task again to collect it. The Result text above is a\n"
+                        "truncated summary; the Output file holds the complete deliverable."
+                    )
+                else:
+                    guidance = "The task is complete and its result is fully delivered."
+                if not invocation_id:
+                    return guidance
+                if result.output_path:
+                    return (
+                        f"{guidance}\n"
+                        "To assign this subagent new follow-up work, call task with\n"
+                        f"invocation_id={invocation_id}."
+                    )
+                return (
+                    f"{guidance} To assign\n"
+                    "this subagent new follow-up work, call task with\n"
+                    f"invocation_id={invocation_id}."
+                )
+
+            guidance = (
+                f"The subagent ended with stop reason '{result.stop_reason}' and did not\n"
+                "report clean completion. Judge from the Result above: if the goal\n"
+                "was met, treat it as final"
+            )
+            if not invocation_id:
+                return f"{guidance}."
+            return (
+                f"{guidance}; otherwise continue by calling task with "
+                f"invocation_id={invocation_id} and refined instructions."
+            )
+        case unreachable:
+            assert_never(unreachable)
+
+
 def build_agent_comm_message(
     *,
     source_label: SourceLabel,
@@ -211,12 +293,39 @@ def build_agent_comm_message(
     lines.append(heading)
     lines.append(content)
 
+    if result is not None:
+        lines.append("")
+        lines.append(_build_result_guidance(result, source, invocation_id))
+
     if reply_contract is not None:
         lines.append("")
         lines.append("---")
         lines.extend(_build_contract_block(reply_contract, source))
 
     return "\n".join(lines)
+
+
+def build_parent_reply_message(
+    *,
+    source: str,
+    invocation_id: str | None,
+    content: str,
+) -> str:
+    """Build a parent-bound message with its session-answer contract."""
+    message = build_agent_comm_message(
+        source_label=SourceLabel.AGENT,
+        source=source,
+        content=content,
+        invocation_id=invocation_id,
+    )
+    if not invocation_id:
+        return message
+    return (
+        f"{message}\n\n---\n\n"
+        "To answer this subagent, continue its session: "
+        + _continue_recipe(source, invocation_id, "your answer")
+        + "."
+    )
 
 
 def build_dispatch_message(
@@ -227,14 +336,17 @@ def build_dispatch_message(
 ) -> str:
     """Build the markdown content for task dispatch.
 
-    Used by ``SubagentDispatchStrategy`` and ``ParentReplyStrategy``. Both are
-    subagent/parent paths: the reply is auto-delivered by
-    ``SubagentAutoSendHook`` (native subagents via the hook's native content
-    path; external subagents via the hook's EXTERNAL content path that
-    notifies the parent on ``FINALLY_GRAPH``), so no reply-contract block is
-    injected. Injecting the WARNING + ``modexctl send`` instructions here
-    would cause a double reply -- the subagent would manually send AND the
-    hook would auto-forward.
+    Used by ``SubagentDispatchStrategy``. It is a subagent/parent path: the
+    reply is auto-delivered by ``SubagentAutoSendHook`` (native subagents via
+    the hook's native content path; external subagents via the hook's
+    EXTERNAL content path that notifies the parent on ``FINALLY_GRAPH``), so
+    no reply-contract block is injected. Injecting the WARNING +
+    ``modexctl send`` instructions here would cause a double reply -- the
+    subagent would manually send AND the hook would auto-forward.
+
+    Parent-bound consultation replies use :func:`build_parent_reply_message`
+    instead, which appends the session-answer block when the invocation_id is
+    known.
 
     Peer sends, which DO need the reply-contract block, call
     :func:`build_agent_comm_message` directly with ``reply_contract`` set,

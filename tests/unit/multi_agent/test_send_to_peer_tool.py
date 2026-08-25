@@ -175,6 +175,10 @@ class TestSendToPeerToolDescription:
         desc = _tool(CommunicationTargetStore()).description
         assert "No peers currently available" in desc
 
+    def test_description_frames_async_as_communication_channel(self) -> None:
+        desc = _tool(_store_with_peer()).description
+        assert "communication channel" in desc
+
 
 class TestSendToPeerToolGraphMode:
     def test_list_targets_empty_in_graph_mode(self) -> None:

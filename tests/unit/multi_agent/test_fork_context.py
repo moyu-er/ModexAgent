@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modex_agent.multi_agent.pool_config.specs import SubagentSpec
 from modex_agent.multi_agent.template import AgentTemplate
+from modex_agent.scope.spec import AgentSpec
 from modex_agent.tools.presets import ContextMode
 
 
@@ -67,13 +67,13 @@ class TestForkContextTemplateFields:
     """Template fork fields are parsed correctly."""
 
     def test_fork_max_messages_default(self) -> None:
-        t = AgentTemplate(spec=SubagentSpec(agent_name="test", context_mode=ContextMode.FORK))
+        t = AgentTemplate(spec=AgentSpec(name="test", context_mode=ContextMode.FORK))
         assert t.spec.fork_max_messages == 80
 
     def test_fork_max_messages_custom(self) -> None:
         t = AgentTemplate(
-            spec=SubagentSpec(
-                agent_name="test",
+            spec=AgentSpec(
+                name="test",
                 context_mode=ContextMode.FORK,
                 fork_max_messages=50,
             )

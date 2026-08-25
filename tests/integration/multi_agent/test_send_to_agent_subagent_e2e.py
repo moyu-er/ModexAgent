@@ -57,7 +57,6 @@ from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.pool import AgentPool
-from modex_agent.multi_agent.pool_config import PoolStore
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import CommunicationTarget
 
@@ -177,7 +176,7 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     (fake_bin_dir / "modexctl").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     monkeypatch.setenv("MODEXBOT_BIN_DIR", str(fake_bin_dir))
 
-    # --- project skeleton: agents/<type>.md + template yml ---
+    # --- project skeleton: agents/<type>.md + declaration-compiled template ---
     project = tmp_path / "project"
     (project / "agents").mkdir(parents=True)
     (project / "agents" / "helper.md").write_text(
@@ -185,14 +184,45 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         "your result in your final reply.\n",
         encoding="utf-8",
     )
-    tpl_dir = project / "config" / "pools" / "main" / "templates"
-    tpl_dir.mkdir(parents=True)
-    (tpl_dir / "helper.yml").write_text(
-        "agent_name: helper\ndescription: Test helper\ntool_preset: read_write\nmax_steps: 5\n",
-        encoding="utf-8",
+    # Ticket 11: the declaration is the single template source — the template
+    # is compiled from a two-agent scope declaration and seeded into the
+    # registry exactly as the declaration road does.
+    from modex_agent.multi_agent.template import AgentTemplate
+    from modex_agent.scope.compiler import compile_scope
+    from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
+    from modex_agent.workspace.context import WorkspaceContext
+    from modex_agent.workspace.paths import WorkspacePaths
+
+    declared_helper = AgentSpec(
+        name="helper", parent="main", description="Test helper", max_steps=5
     )
-    (tpl_dir.parent / "pool.yml").write_text("main_agent_name: main\n", encoding="utf-8")
-    template_registry = AgentTemplateRegistry(PoolStore(base_dir=project))
+    compilation = compile_scope(
+        ScopeSpec(
+            kind=ScopeKind.POOL,
+            pool=PoolSpec(
+                name="main", agents=[AgentSpec(name="main"), declared_helper]
+            ),
+        ),
+        workspace_ctx=WorkspaceContext(
+            target=project,
+            paths=WorkspacePaths(root=project / ".modex"),
+            is_home=False,
+        ),
+    )
+    compiled_helper = next(
+        agent for agent in compilation.agents if agent.provenance.agent == "helper"
+    )
+    template_registry = AgentTemplateRegistry(
+        seeded={
+            "main": {
+                "helper": AgentTemplate(
+                    spec=declared_helper,
+                    toolset_profile=compiled_helper.defaults.toolset_profile,
+                    compiled_spec=compiled_helper.spec,
+                )
+            }
+        }
+    )
 
     # --- workspace (fake) ---
     runtime_dir = tmp_path / "workspace" / "runtime_state" / "main"
@@ -262,17 +292,15 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
 
     # --- materialize deps + template registry (mirrors bot pool_builder) ---
     # ADR-0015 D5: subagent construction moved into AgentTemplate.materialize,
-    # driven by a bundled AgentMaterializeDeps + WorkspacePathResolver. The
+    # driven by a bundled AgentMaterializeDeps + scope path. The
     # service is now a pure router; send_async enqueues and the Drainer-spawner
     # materializes on first drain.
     from modex_agent.multi_agent.context_fork import ContextForkBuilder
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
-    from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
+    from modex_agent.workspace.scope_path import ScopePath
 
-    path_resolver = WorkspacePathResolver(
-        workspace_manager=workspace_manager,
-        pool_name="main",
-        fallback_runtime_dir=runtime_dir,
+    scope_path = ScopePath(
+        workspace_root=tmp_path / "workspace", pool_name="main"
     )
     context_fork_builder = ContextForkBuilder()
 
@@ -297,6 +325,18 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     consumer.set_on_consumed(tree_manager.on_consumed)
     poller.attach_tree_manager(tree_manager)
 
+    from modex_agent.plugins.defaults import DefaultPlugin
+    from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
+    from modex_agent.plugins.registry import ComponentRegistry
+
+    component_registry = ComponentRegistry()
+    await ComponentRegistryLoader.load(
+        component_registry,
+        PluginDiscoveryConfig(
+            bundled_factories=(DefaultPlugin(),),
+            project_plugin_paths=(),
+        ),
+    )
     deps = AgentMaterializeDeps(
         agent_factory=factory,
         pool=pool,
@@ -305,10 +345,13 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         tree=tree_manager,
         # Must mirror production wiring (bot resources.py) — TurnRunner reads safety.turn.
         safety=RuntimeSafetyPolicy(),
+        llm_provider=provider,
         project_dir=project,
         agent_bus=bus,
         context_fork_builder=context_fork_builder,
-        workspace_path_resolver=path_resolver,
+        scope_path=scope_path,
+        workspace_manager=workspace_manager,
+        component_registry=component_registry,
     )
     pool.materialize_deps = deps
     pool.template_registry = template_registry
