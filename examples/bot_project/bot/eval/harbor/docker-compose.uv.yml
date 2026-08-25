@@ -1,16 +1,41 @@
-# uv is seeded from the pypi index (astral.sh is blocked in this region);
-# general package traffic uses the official indexes (host TUN routes it).
+# uv + managed Python runtimes are pre-seeded from LOCAL tarballs under
+# .data/python-runtimes/ (host) — no container-side python-toolchain download
+# ever happens. Rationale: astral.sh is blocked in this region; pypi.org via
+# the docker proxy bridge breaks TLS in rule mode; and uv's rustls stack
+# fails against the proxy chain even when curl succeeds (observed: 6/6 uv
+# download failures vs curl 10MB OK on the same URL — torch-pipeline-parallelism
+# verifiers died three times on exactly this path). Packages still come from
+# the aliyun mirror (reachable both directly and through the proxy chain).
 services:
   uv-seed:
     image: python:3.12-slim
     entrypoint: ["/bin/sh", "-lc"]
     command:
       - |
-        pip download --no-deps -q -d /tmp/w uv==0.8.13
+        set -e
+        pip download --no-deps -q -i https://mirrors.aliyun.com/pypi/simple/ -d /tmp/w uv==0.8.13
         python -c "import glob, pathlib, shutil, zipfile; zipfile.ZipFile(glob.glob('/tmp/w/*.whl')[0]).extractall('/tmp/x'); [shutil.copy2(str(p), '/uv-bin/' + p.name) for p in pathlib.Path('/tmp/x').rglob('scripts/uv*')]"
         chmod +x /uv-bin/uv /uv-bin/uvx
+        # Bake managed-python runtimes from the local tarballs into the
+        # uv-managed layout: dir name cpython-<ver>-linux-x86_64-gnu with the
+        # install_only payload's inner python/ hoisted to the top.
+        for f in /runtimes/*.tar.gz; do
+          base="$$(basename "$$f" .tar.gz)"
+          ver="$${base%%+*}"; ver="$${ver#cpython-}"
+          dir="/uv-py/cpython-$$ver-linux-x86_64-gnu"
+          mkdir -p "$$dir"
+          tar -xzf "$$f" -C "$$dir"
+          if [ -d "$$dir/python" ]; then mv "$$dir"/python/* "$$dir"/ && rmdir "$$dir/python"; fi
+        done
+        /uv-py/cpython-3.13.7-linux-x86_64-gnu/bin/python3.13 --version
+        /uv-py/cpython-3.12.7-linux-x86_64-gnu/bin/python3.12 --version
     volumes:
       - modex-uv-bin:/uv-bin
+      - modex-uv-py:/uv-py
+      # Committed cpython tarballs (uv's 3.12/3.13 resolution targets) —
+      # committed deliberately: container-side python downloads are
+      # unavailable in this network region.
+      - ./python-runtimes:/runtimes:ro
     restart: "no"
 
   main:
@@ -19,8 +44,15 @@ services:
         condition: service_completed_successfully
     environment:
       PATH: /opt/modex-uv:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
+      UV_DEFAULT_INDEX: https://mirrors.aliyun.com/pypi/simple/
+      # Both agent (uv venv --python 3.12 waterfall) and verifier (uvx -p 3.13)
+      # resolve interpreters from the pre-seeded volume — zero downloads.
+      UV_PYTHON_INSTALL_DIR: /opt/modex-uv-py
     volumes:
       - modex-uv-bin:/opt/modex-uv:ro
+      - modex-uv-py:/opt/modex-uv-py:rw
 
 volumes:
   modex-uv-bin:
+  modex-uv-py:
