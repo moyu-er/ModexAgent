@@ -1,98 +1,237 @@
-"""Tests for plugin ABCs (MemoryProvider)."""
+"""TDD tests for the new plugin-unified agent assembly type hierarchy.
+
+These tests are written FIRST and drive the implementation of
+``src/modex_agent/plugins/abc.py`` (task 1 of the scope-converge
+implementation plan). They assert the exact type contract: 10 ComponentSlot members,
+4 AgentType members, the ComponentFactory/SimpleFactory/HookFactory
+hierarchy, and the two HookRunnerKind values.
+
+Rule 7 (no structural interfaces) is enforced by asserting the source
+contains no ``Protocol`` substring.
+"""
+from __future__ import annotations
+
+import inspect
+from abc import ABC
+from enum import StrEnum
+from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.types import MessageRole
-from modex_agent.plugins.abc import MemoryProvider
-
-
-class DummyProvider(MemoryProvider):
-    """Concrete implementation for testing."""
-
-    def __init__(self, name: str = "dummy"):
-        self._name = name
-        self.initialized = False
-        self.shut_down = False
-        self.added_memories: list[dict] = []
-        self.searched_queries: list[tuple] = []
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    def is_available(self) -> bool:
-        return True
-
-    async def initialize(self, **kwargs):
-        self.initialized = True
-
-    async def shutdown(self):
-        self.shut_down = True
-
-    async def add(self, messages, context):
-        self.added_memories.append({"messages": messages, "context": context})
-        return {"status": "ok"}
-
-    async def search(self, query, context, limit=5, filters=None):
-        self.searched_queries.append((query, limit, filters))
-        return [{"memory": "result", "score": 0.9}]
+from modex_agent.plugins.abc import (
+    AgentType,
+    ComponentFactory,
+    ComponentSlot,
+    HookFactory,
+    HookRunnerKind,
+    MemoryHookFactory,
+    ReactHookFactory,
+    SimpleFactory,
+)
 
 
-class TestMemoryProvider:
-    """MemoryProvider ABC tests."""
+# ---- ComponentSlot (10 members) ----
 
-    def test_name_property(self):
-        provider = DummyProvider(name="test")
-        assert provider.name == "test"
 
-    def test_is_available_default(self):
-        provider = DummyProvider()
-        assert provider.is_available() is True
+class TestComponentSlot:
+    def test_is_strenum(self) -> None:
+        assert issubclass(ComponentSlot, StrEnum)
 
-    @pytest.mark.asyncio
-    async def test_initialize_and_shutdown(self):
-        provider = DummyProvider()
-        await provider.initialize()
-        assert provider.initialized is True
-        await provider.shutdown()
-        assert provider.shut_down is True
+    def test_has_exactly_10_members(self) -> None:
+        members = list(ComponentSlot)
+        assert len(members) == 10
 
-    @pytest.mark.asyncio
-    async def test_add_memory(self):
-        provider = DummyProvider()
-        messages = [ChatMessage(role=MessageRole.USER, content="hello")]
-        result = await provider.add(messages, None)  # type: ignore[arg-type]
-        assert len(provider.added_memories) == 1
-        assert provider.added_memories[0]["messages"] == messages
-        assert result["status"] == "ok"
+    def test_member_names_exact(self) -> None:
+        expected = {
+            "TOOL",
+            "HOOK",
+            "MEMORY_SYSTEM",
+            "LLM_PROVIDER",
+            "SYSTEM_PROMPT_PROVIDER",
+            "INTERCEPTOR",
+            "COMMAND_HANDLER",
+            "EXECUTION_STRATEGY",
+            "INPUT_STAGE",
+            "DATA_NAMESPACE",
+        }
+        actual = {m.name for m in ComponentSlot}
+        assert actual == expected
 
-    @pytest.mark.asyncio
-    async def test_search_memory(self):
-        provider = DummyProvider()
-        results = await provider.search("hello", None, limit=3)  # type: ignore[arg-type]
-        assert len(provider.searched_queries) == 1
-        assert provider.searched_queries[0][0] == "hello"
-        assert provider.searched_queries[0][1] == 3
-        assert len(results) == 1
-        assert results[0]["score"] == 0.9
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "TOOL",
+            "HOOK",
+            "MEMORY_SYSTEM",
+            "LLM_PROVIDER",
+            "SYSTEM_PROMPT_PROVIDER",
+            "INTERCEPTOR",
+            "COMMAND_HANDLER",
+            "EXECUTION_STRATEGY",
+            "INPUT_STAGE",
+            "DATA_NAMESPACE",
+        ],
+    )
+    def test_each_member_accessible_by_name(self, name: str) -> None:
+        assert hasattr(ComponentSlot, name)
+        member = getattr(ComponentSlot, name)
+        assert isinstance(member, ComponentSlot)
 
-    def test_system_prompt_block_default(self):
-        provider = DummyProvider()
-        block = provider.system_prompt_block()
-        assert block == ""
 
-    def test_get_tool_schemas_default(self):
-        provider = DummyProvider()
-        schemas = provider.get_tool_schemas()
-        assert schemas == []
+# ---- AgentType (4 members) ----
 
-    @pytest.mark.asyncio
-    async def test_handle_tool_call_default(self):
-        provider = DummyProvider()
-        with pytest.raises(NotImplementedError):
-            await provider.handle_tool_call("some_tool", {})
 
-    def test_abstract_class_cannot_instantiate(self):
+class TestAgentType:
+    def test_is_strenum(self) -> None:
+        assert issubclass(AgentType, StrEnum)
+
+    def test_has_exactly_4_members(self) -> None:
+        members = list(AgentType)
+        assert len(members) == 4
+
+    def test_member_names_exact(self) -> None:
+        expected = {"native_main", "native_sub", "external_main", "external_sub"}
+        actual = {m.name for m in AgentType}
+        assert actual == expected
+
+
+# ---- HookRunnerKind (2 members) ----
+
+
+class TestHookRunnerKind:
+    def test_is_strenum(self) -> None:
+        assert issubclass(HookRunnerKind, StrEnum)
+
+    def test_has_exactly_2_members(self) -> None:
+        members = list(HookRunnerKind)
+        assert len(members) == 2
+
+    def test_member_names_exact(self) -> None:
+        expected = {"react", "memory"}
+        actual = {m.name for m in HookRunnerKind}
+        assert actual == expected
+
+    def test_no_third_value(self) -> None:
+        # Hard guard against adding a third HookRunnerKind.
+        assert HookRunnerKind.react.value == "react"
+        assert HookRunnerKind.memory.value == "memory"
+
+
+# ---- ComponentFactory (abstract ABC) ----
+
+
+class TestComponentFactory:
+    def test_is_abc(self) -> None:
+        assert issubclass(ComponentFactory, ABC)
+
+    def test_config_model_classvar_declared(self) -> None:
+        assert "config_model" in ComponentFactory.__annotations__
+
+    def test_create_is_abstract(self) -> None:
+        create = ComponentFactory.create
+        assert getattr(create, "__isabstractmethod__", False) is True
+
+    def test_create_is_async(self) -> None:
+        assert inspect.iscoroutinefunction(ComponentFactory.create)
+
+    def test_cannot_instantiate_directly(self) -> None:
         with pytest.raises(TypeError):
-            MemoryProvider()  # type: ignore[abstract]
+            ComponentFactory()  # type: ignore[abstract]
+
+
+# ---- SimpleFactory ----
+
+
+class _DummyConfig(BaseModel):
+    """Minimal frozen config model for SimpleFactory tests."""
+
+    model_config = {"frozen": True, "extra": "forbid"}
+
+
+class TestSimpleFactory:
+    def test_is_component_factory_subclass(self) -> None:
+        assert issubclass(SimpleFactory, ComponentFactory)
+
+    def test_create_is_async(self) -> None:
+        assert inspect.iscoroutinefunction(SimpleFactory.create)
+
+    async def test_create_returns_wrapped_instance(self) -> None:
+        marker = object()
+        factory = SimpleFactory(instance=marker, config_model=_DummyConfig)
+        result = await factory.create(_DummyConfig(), ctx=None)  # type: ignore[arg-type]
+        assert result is marker
+
+    async def test_create_ignores_config_and_ctx(self) -> None:
+        marker = object()
+        factory = SimpleFactory(instance=marker, config_model=_DummyConfig)
+        # Pass None for both — SimpleFactory must not depend on them.
+        result = await factory.create(None, None)  # type: ignore[arg-type]
+        assert result is marker
+
+    def test_config_model_accessible(self) -> None:
+        factory = SimpleFactory(instance=object(), config_model=_DummyConfig)
+        assert factory.config_model is _DummyConfig
+
+
+# ---- HookFactory (abstract, extends ComponentFactory) ----
+
+
+class TestHookFactory:
+    def test_is_component_factory_subclass(self) -> None:
+        assert issubclass(HookFactory, ComponentFactory)
+
+    def test_applies_to_classvar_default_none(self) -> None:
+        assert "applies_to" in HookFactory.__annotations__
+        assert HookFactory.applies_to is None
+
+    def test_hook_runner_classvar_declared(self) -> None:
+        assert "hook_runner" in HookFactory.__annotations__
+
+    def test_cannot_instantiate_directly(self) -> None:
+        with pytest.raises(TypeError):
+            HookFactory()  # type: ignore[abstract]
+
+
+# ---- ReactHookFactory ----
+
+
+class TestReactHookFactory:
+    def test_is_hook_factory_subclass(self) -> None:
+        assert issubclass(ReactHookFactory, HookFactory)
+
+    def test_hook_runner_is_react(self) -> None:
+        assert ReactHookFactory.hook_runner == HookRunnerKind.react
+
+
+# ---- MemoryHookFactory ----
+
+
+class TestMemoryHookFactory:
+    def test_is_hook_factory_subclass(self) -> None:
+        assert issubclass(MemoryHookFactory, HookFactory)
+
+    def test_hook_runner_is_memory(self) -> None:
+        assert MemoryHookFactory.hook_runner == HookRunnerKind.memory
+
+
+# ---- No structural-interface keyword (rule 7) ----
+
+
+class TestNoProtocolKeyword:
+    """Assert the implementation file contains no ``Protocol`` substring.
+
+    Equivalent to ``grep -c "Protocol" abc.py`` returning 0.
+    """
+
+    def test_abc_py_has_no_protocol_substring(self) -> None:
+        abc_path = (
+            Path(__file__).resolve()
+            .parents[3]
+            / "src"
+            / "modex_agent"
+            / "plugins"
+            / "abc.py"
+        )
+        source = abc_path.read_text(encoding="utf-8")
+        assert "Protocol" not in source

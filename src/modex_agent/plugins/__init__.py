@@ -1,35 +1,89 @@
-"""Agent Framework Plugin System.
+"""Plugin-unified agent assembly system — public API.
 
-Convention-based plugin extension mechanism for the agent framework.
+Converged package exports for the component-factory-based plugin
+system (SPEC §4-§6). Submodules:
 
-Plugins are discovered from three sources (in priority order):
-1. Bundled plugins: `plugins/bundled/`
-2. User plugins: `~/.af/plugins/`
-3. PyPI entry_points: `framework.plugins` group
-
-Each plugin is a directory with `__init__.py` containing:
-    def register(ctx: PluginContext) -> None:
-        ctx.register_tool(MyTool())
-        ctx.register_memory_provider(MyProvider())
-
-Usage:
-    pm = PluginManager()
-    pm.discover_and_load(plugin_configs)
-
-    loader = PluginLoader(pm)
-    loader.inject_tools(tool_manager)
-    loader.inject_hooks(hooks)
-    await loader.inject_memory_providers(memory_system, init_kwargs={...})
+- ``abc`` — ``ComponentSlot``, ``AgentType``, ``HookRunnerKind``,
+  ``PluginSource`` and the factory hierarchy (``ComponentFactory``,
+  ``SimpleFactory``, ``HookFactory``, ``ReactHookFactory``,
+  ``MemoryHookFactory``).
+- ``registry`` — ``ComponentRegistry``, ``ComponentNotFoundError``,
+  ``TypedBundle``.
+- ``loader`` — ``Plugin``, ``PluginRegistrationContext``,
+  ``PluginDiscoveryConfig``, ``ComponentRegistryLoader``.
+- ``assembly.context`` — ``AssemblyContext``, ``PoolRuntimeDeps``,
+  the context-chain carriers (``WorkspaceContext``/``PoolContext``/
+  ``AgentContext``).
+- ``assembly.builder`` — ``AssembledAgent``, ``AssemblyBuilder``.
+- ``assembly.pipeline`` — ``AssemblyPipeline``, ``AssemblyStage``.
+- ``assembly.spec`` — ``AssemblySpec``, ``MemoryOverrides``.
 """
 
-from modex_agent.plugins.abc import MemoryProvider
-from modex_agent.plugins.context import PluginContext
-from modex_agent.plugins.loader import PluginLoader
-from modex_agent.plugins.manager import PluginManager
+from __future__ import annotations
+
+from modex_agent.plugins.abc import (
+    AgentType,
+    ComponentFactory,
+    ComponentSlot,
+    HookFactory,
+    HookRunnerKind,
+    MemoryHookFactory,
+    PluginSource,
+    ReactHookFactory,
+    SimpleFactory,
+)
+from modex_agent.plugins.assembly.builder import AssembledAgent, AssemblyBuilder
+from modex_agent.plugins.assembly.context import (
+    AgentContext,
+    AssemblyContext,
+    PoolContext,
+    PoolRuntimeDeps,
+    WorkspaceContext,
+    agent_context_chain,
+)
+from modex_agent.plugins.assembly.native_core import LlmDefaults
+from modex_agent.plugins.assembly.pipeline import AssemblyPipeline, AssemblyStage
+from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
+from modex_agent.plugins.loader import (
+    ComponentRegistryLoader,
+    Plugin,
+    PluginDiscoveryConfig,
+    PluginRegistrationContext,
+)
+from modex_agent.plugins.registry import (
+    ComponentNotFoundError,
+    ComponentRegistry,
+    TypedBundle,
+)
 
 __all__ = [
-    "MemoryProvider",
-    "PluginContext",
-    "PluginLoader",
-    "PluginManager",
+    "AgentContext",
+    "AgentType",
+    "AssembledAgent",
+    "AssemblyBuilder",
+    "AssemblyContext",
+    "AssemblyPipeline",
+    "AssemblySpec",
+    "AssemblyStage",
+    "ComponentFactory",
+    "ComponentNotFoundError",
+    "ComponentRegistry",
+    "ComponentRegistryLoader",
+    "ComponentSlot",
+    "HookFactory",
+    "HookRunnerKind",
+    "LlmDefaults",
+    "MemoryHookFactory",
+    "MemoryOverrides",
+    "Plugin",
+    "PluginDiscoveryConfig",
+    "PluginRegistrationContext",
+    "PluginSource",
+    "PoolContext",
+    "PoolRuntimeDeps",
+    "ReactHookFactory",
+    "SimpleFactory",
+    "TypedBundle",
+    "WorkspaceContext",
+    "agent_context_chain",
 ]
