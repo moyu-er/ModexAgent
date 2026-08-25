@@ -1,4 +1,4 @@
-"""T23 tests for SqliteWorkspaceRegistryStore — registry-DB-backed adapter.
+"""T23 tests for SqliteScopeRegistryStore — registry-DB-backed adapter.
 
 Covers:
 - Workspace CRUD: upsert / get / get_workspace_by_id / delete / list.
@@ -20,7 +20,7 @@ import pytest
 
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.workspace_registry_store import (
-    SqliteWorkspaceRegistryStore,
+    SqliteScopeRegistryStore,
 )
 from modex_agent.workspace.record import WorkspaceRecord
 
@@ -55,11 +55,11 @@ def _record(
     )
 
 
-async def _open_store(tmp_path: Path) -> tuple[ConnectionManager, SqliteWorkspaceRegistryStore]:
+async def _open_store(tmp_path: Path) -> tuple[ConnectionManager, SqliteScopeRegistryStore]:
     """Open a registry DB and return (manager, store) ready for use."""
     manager = ConnectionManager(tmp_path / "registry.db", DatabaseKind.REGISTRY)
     await manager.open()
-    store = SqliteWorkspaceRegistryStore(manager)
+    store = SqliteScopeRegistryStore(manager)
     return manager, store
 
 

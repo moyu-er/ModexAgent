@@ -6,14 +6,12 @@ The :class:`WorkspaceResolver` resolves a workspace path to its
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Generic
 
 from modex_agent.workspace.context import WorkspaceContext
-from modex_agent.workspace.factory import R
-from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.registry import ScopeRegistry
 
 
-class WorkspaceResolver(Generic[R]):
+class WorkspaceResolver[R]:
     """Resolve a workspace path to its (WorkspaceContext, materialized R).
 
     Opens/registers the workspace context in the registry for the given
@@ -24,9 +22,9 @@ class WorkspaceResolver(Generic[R]):
     def __init__(
         self,
         *,
-        registry: WorkspaceRegistry[R],
+        registry: ScopeRegistry[R],
     ) -> None:
-        self._registry: WorkspaceRegistry[R] = registry
+        self._registry: ScopeRegistry[R] = registry
 
     async def resolve(self, ws: Path) -> tuple[WorkspaceContext, R]:
         ctx = await self._registry.get_or_open(ws)

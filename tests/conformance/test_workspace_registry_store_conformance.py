@@ -9,10 +9,10 @@ import pytest
 
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.workspace_registry_store import (
-    SqliteWorkspaceRegistryStore,
+    SqliteScopeRegistryStore,
 )
 from modex_agent.workspace.record import WorkspaceRecord
-from modex_agent.workspace.registry import WorkspaceRegistryStore
+from modex_agent.workspace.registry import ScopeRegistryStore
 from modex_agent.workspace.store import GlobalWorkspaceStore
 
 
@@ -41,25 +41,25 @@ def _record(
 async def registry_store(
     request: pytest.FixtureRequest,
     tmp_path: Path,
-) -> AsyncGenerator[WorkspaceRegistryStore]:
+) -> AsyncGenerator[ScopeRegistryStore]:
     """Yield each production adapter through the shared async interface."""
     if request.param == "file":
         yield GlobalWorkspaceStore(home=tmp_path, data_dir_name=".modex")
     else:
         mgr = ConnectionManager(tmp_path / "registry.db", DatabaseKind.REGISTRY)
         await mgr.open()
-        yield SqliteWorkspaceRegistryStore(mgr)
+        yield SqliteScopeRegistryStore(mgr)
         await mgr.close()
 
 
-class TestWorkspaceRegistryStoreConformance:
+class TestScopeRegistryStoreConformance:
     """Same behavior on both backends."""
 
-    async def test_list_empty_returns_empty(self, registry_store: WorkspaceRegistryStore) -> None:
+    async def test_list_empty_returns_empty(self, registry_store: ScopeRegistryStore) -> None:
         assert await registry_store.list_workspaces() == []
 
     async def test_upsert_then_get(
-        self, registry_store: WorkspaceRegistryStore, tmp_path: Path
+        self, registry_store: ScopeRegistryStore, tmp_path: Path
     ) -> None:
         target = str(tmp_path / "proj-a")
         record = _record(target, display_name="Proj A")
@@ -70,7 +70,7 @@ class TestWorkspaceRegistryStoreConformance:
         assert got.display_name == "Proj A"
 
     async def test_upsert_replaces_existing(
-        self, registry_store: WorkspaceRegistryStore, tmp_path: Path
+        self, registry_store: ScopeRegistryStore, tmp_path: Path
     ) -> None:
         target = str(tmp_path / "proj-a")
         await registry_store.upsert_workspace(_record(target, display_name="Old"))
@@ -81,7 +81,7 @@ class TestWorkspaceRegistryStoreConformance:
         assert got.is_home is True
 
     async def test_delete_removes_workspace(
-        self, registry_store: WorkspaceRegistryStore, tmp_path: Path
+        self, registry_store: ScopeRegistryStore, tmp_path: Path
     ) -> None:
         target = str(tmp_path / "proj-a")
         await registry_store.upsert_workspace(_record(target))
@@ -89,12 +89,12 @@ class TestWorkspaceRegistryStoreConformance:
         assert await registry_store.get_workspace(target) is None
 
     async def test_delete_missing_is_noop(
-        self, registry_store: WorkspaceRegistryStore, tmp_path: Path
+        self, registry_store: ScopeRegistryStore, tmp_path: Path
     ) -> None:
         await registry_store.delete_workspace(str(tmp_path / "nope"))  # must not raise
 
     async def test_list_returns_all(
-        self, registry_store: WorkspaceRegistryStore, tmp_path: Path
+        self, registry_store: ScopeRegistryStore, tmp_path: Path
     ) -> None:
         await registry_store.upsert_workspace(_record(str(tmp_path / "a")))
         await registry_store.upsert_workspace(_record(str(tmp_path / "b")))
@@ -102,6 +102,6 @@ class TestWorkspaceRegistryStoreConformance:
         assert len(records) == 2
 
     async def test_get_missing_returns_none(
-        self, registry_store: WorkspaceRegistryStore, tmp_path: Path
+        self, registry_store: ScopeRegistryStore, tmp_path: Path
     ) -> None:
         assert await registry_store.get_workspace(str(tmp_path / "nope")) is None

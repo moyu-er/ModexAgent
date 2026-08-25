@@ -25,11 +25,12 @@ from modex_agent.workspace.port import WorkspaceControlPort
 from modex_agent.workspace.record import WorkspaceRecord
 from modex_agent.workspace.registry import (
     RegistryStore,
-    WorkspaceRegistry,
-    WorkspaceRegistryStore,
+    ScopeRegistry,
+    ScopeRegistryStore,
 )
 from modex_agent.workspace.resources import WorkspaceManager
 from modex_agent.workspace.routing import WorkspaceResolver
+from modex_agent.workspace.scope_path import ScopePath, resolve_scope_path
 from modex_agent.workspace.store import GlobalWorkspaceStore
 
 __all__ = [
@@ -41,11 +42,13 @@ __all__ = [
     "WorkspaceController",
     "WorkspacePaths",
     "WorkspaceRecord",
-    "WorkspaceRegistry",
-    "WorkspaceRegistryStore",
+    "ScopeRegistry",
+    "ScopeRegistryStore",
     "WorkspaceResolver",
     "WorkspaceControlPort",
     "WorkspaceManager",
+    "ScopePath",
+    "resolve_scope_path",
     "CdError",
     "CdResult",
     "is_reserved_segment",

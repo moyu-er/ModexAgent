@@ -9,7 +9,7 @@ open/close lifecycle:
   (called at ``BotService.stop()`` after all workspaces are evicted).
 - Both are idempotent.
 - ``open() -> close() -> open()`` preserves committed data (WAL replay).
-- ``store`` exposes a ``SqliteWorkspaceRegistryStore`` bound to the
+- ``store`` exposes a ``SqliteScopeRegistryStore`` bound to the
   manager's connection.
 """
 

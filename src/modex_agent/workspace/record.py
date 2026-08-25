@@ -1,7 +1,7 @@
 """WorkspaceRecord — persisted metadata for a known workspace (T14).
 
 Frozen Pydantic model carrying the identity + metadata the
-:class:`modex_agent.workspace.registry.WorkspaceRegistryStore` persists for each
+:class:`modex_agent.workspace.registry.ScopeRegistryStore` persists for each
 known workspace.  Replaces the bare ``list[Path]`` of the legacy
 ``RegistryStore`` interface with a structured record that carries
 ``workspace_id``, ``display_name``, timestamps, ``is_home``, and arbitrary

@@ -25,7 +25,7 @@ from modex_agent.persistence.adapters.session_store import SqliteSessionStore
 from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
 from modex_agent.persistence.adapters.turn_state_store import SqliteTurnStateStore
 from modex_agent.persistence.adapters.workspace_registry_store import (
-    SqliteWorkspaceRegistryStore,
+    SqliteScopeRegistryStore,
 )
 from modex_agent.runtime.approval_decision import ApprovalAuditEntry
 
@@ -43,5 +43,5 @@ __all__ = [
     "SqliteSessionStore",
     "SqliteTodoStore",
     "SqliteTurnStateStore",
-    "SqliteWorkspaceRegistryStore",
+    "SqliteScopeRegistryStore",
 ]

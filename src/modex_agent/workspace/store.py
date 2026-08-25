@@ -19,13 +19,13 @@ from typing import Any
 from modex_agent.utils.time import now_ms
 from modex_agent.workspace.paths import RESERVED_GLOBAL_DIR
 from modex_agent.workspace.record import WorkspaceRecord
-from modex_agent.workspace.registry import WorkspaceRegistryStore
+from modex_agent.workspace.registry import ScopeRegistryStore
 
 _VALID_ORDER_BY: frozenset[str] = frozenset({"last_active", "created_at"})
 
 
-class GlobalWorkspaceStore(WorkspaceRegistryStore):
-    """File-backed WorkspaceRegistryStore: known workspaces on disk."""
+class GlobalWorkspaceStore(ScopeRegistryStore):
+    """File-backed ScopeRegistryStore: known workspaces on disk."""
 
     def __init__(self, *, home: Path, data_dir_name: str) -> None:
         self._dir: Path = Path(home).resolve() / data_dir_name / RESERVED_GLOBAL_DIR

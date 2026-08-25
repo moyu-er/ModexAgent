@@ -26,7 +26,7 @@ from typing import Final
 
 from modex_agent.persistence.connection import ConnectionManager
 from modex_agent.workspace.record import WorkspaceRecord
-from modex_agent.workspace.registry import WorkspaceRegistryStore
+from modex_agent.workspace.registry import ScopeRegistryStore
 
 #: Whitelist of valid ``order_by`` values mapped to their column names.
 #: Interpolated into SQL only after whitelist lookup (never user input
@@ -63,7 +63,7 @@ def _row_to_record(row: Row) -> WorkspaceRecord:
     )
 
 
-class SqliteWorkspaceRegistryStore(WorkspaceRegistryStore):
+class SqliteScopeRegistryStore(ScopeRegistryStore):
     """Registry-DB-backed workspace registry + session->workspace map.
 
     Constructed with an already-open :class:`ConnectionManager` (owned by a
