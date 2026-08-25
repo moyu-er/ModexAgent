@@ -32,8 +32,8 @@ jobs:
       # tree-sitter (ast), pexpect/libtmux (terminal). It also imports bot
       # modules that need aiohttp, provided by the bot_project install.
       # Mirrors the local dev install (.[all,dev] + bot_project).
-      - run: uv pip install -e ".[dev,llm,ast,terminal]"
-      - run: uv pip install -e "examples/bot_project"
+      - run: bash scripts/ci_install.sh -e ".[dev,llm,ast,terminal]"
+      - run: bash scripts/ci_install.sh -e "examples/bot_project"
       - run: |
           uv run pytest tests/unit/ \
             --ignore=tests/unit/modex_graph \
@@ -57,7 +57,7 @@ jobs:
           version: "latest"
       - run: uv python install ${{ matrix.python-version }}
       - run: uv venv --python ${{ matrix.python-version }}
-      - run: uv pip install -e ".[dev]"
+      - run: bash scripts/ci_install.sh -e ".[dev]"
       - run: uv run pytest tests/unit/modex_graph/ -q --tb=short -m "not integration"
 
   bot-project:
@@ -77,8 +77,8 @@ jobs:
           version: "latest"
       - run: uv python install ${{ matrix.python-version }}
       - run: uv venv --python ${{ matrix.python-version }}
-      - run: uv pip install -e ".[dev,llm,ast,terminal]"
-      - run: uv pip install -e "examples/bot_project[eval]"
+      - run: bash scripts/ci_install.sh -e ".[dev,llm,ast,terminal]"
+      - run: bash scripts/ci_install.sh -e "examples/bot_project[eval]"
       - run: |
           uv run pytest examples/bot_project/tests/ \
             --ignore=examples/bot_project/tests/integration \
@@ -101,5 +101,5 @@ jobs:
           version: "latest"
       - run: uv python install ${{ matrix.python-version }}
       - run: uv venv --python ${{ matrix.python-version }}
-      - run: uv pip install -e ".[dev]"
+      - run: bash scripts/ci_install.sh -e ".[dev]"
       - run: uv run pytest tests/conformance/ -q --tb=short -m "not integration"
