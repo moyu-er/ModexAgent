@@ -265,15 +265,16 @@ def test_description_teaches_takeover_semantics() -> None:
     assert "for a full-screen program (a pager or editor)" in desc
 
 
-def test_description_declares_strict_resource_limits() -> None:
-    """TB2.1: the parallelism bullet is a STRICT limit statement, not an
-    advisory note — overcommit's tool result is a silent OOM kill (exit
-    137), so the warning must be unambiguous."""
+def test_description_declares_memory_hard_limit_and_cpu_guidance() -> None:
+    """TB2.1: memory is a hard limit (overcommit's tool result is a silent
+    OOM kill — exit 137), CPU parallelism is guidance with the bounded-batch
+    pattern; IO-bound tasks may exceed the core count."""
     tool = PersistentBashTool()
     desc = tool.description
-    assert "STRICT resource limits" in desc
+    assert "Memory is a hard limit" in desc
     assert "OOM-killed" in desc
     assert "$(nproc)" in desc
+    assert "IO-bound" in desc
 
 
 def test_bash_input_description_documents_ctrl_c_forwarding() -> None:

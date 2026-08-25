@@ -442,10 +442,11 @@ class RuntimeProvider(SystemPromptProvider):
         if mem_mib > 0:
             lines.extend([
                 f"Memory: {mem_mib} MiB",
-                "Resource limits: never run more concurrent workers than CPU "
-                "cores and never allocate more memory than physical RAM — "
-                "exceeding either gets the whole process killed (OOM) with all "
-                "work lost.",
+                "Memory is a hard limit: never let combined allocations of "
+                "concurrent commands approach it — exceeding it gets the "
+                "whole process killed (OOM) with all work lost. CPU cores "
+                "are a guide: matching worker count to cores suits CPU-bound "
+                "work, but IO-bound tasks may sensibly run more.",
             ])
         dir_line = format_working_directory_line(self._working_directory)
         if dir_line is not None:

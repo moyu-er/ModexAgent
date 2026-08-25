@@ -108,8 +108,10 @@ async def test_runtime_declares_cpu_memory_and_resource_limits():
     assert f"CPU cores: {os.cpu_count() or 1}" in result
     mem_line = re.search(r"^Memory: (\d+) MiB$", result, flags=re.MULTILINE)
     assert mem_line is not None, "Memory line missing on a host with detectable RAM"
-    assert "Resource limits:" in result
+    assert "Memory is a hard limit:" in result
     assert "OOM" in result
+    # CPU is advisory (IO-bound tasks may exceed cores), memory is not.
+    assert "CPU cores are a guide" in result
     assert result.index("Platform:") < result.index("CPU cores:")
 
 
@@ -124,7 +126,7 @@ async def test_runtime_omits_memory_lines_when_ram_undetectable(monkeypatch):
     result = await provider.get_or_refresh()
     assert f"CPU cores: {os.cpu_count() or 1}" in result
     assert "Memory:" not in result
-    assert "Resource limits:" not in result
+    assert "Memory is a hard limit:" not in result
     assert "Working Directory:" in result
 
 
@@ -299,7 +301,7 @@ async def test_runtime_uses_physical_view_when_cgroup_files_absent(monkeypatch, 
     result = await provider.get_or_refresh()
     assert "CPU cores: 4" in result
     assert "Memory: 2048 MiB" in result
-    assert "Resource limits:" in result
+    assert "Memory is a hard limit:" in result
 
 
 @pytest.mark.asyncio
@@ -319,7 +321,7 @@ async def test_runtime_section_reports_cgroup_limits_not_host_values(monkeypatch
     assert "CPU cores: 2" in result
     assert "CPU cores: 64" not in result
     assert "Memory: 2048 MiB" in result
-    assert "Resource limits:" in result
+    assert "Memory is a hard limit:" in result
 
 
 # -- SkillProvider --

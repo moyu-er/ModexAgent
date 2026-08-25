@@ -58,15 +58,17 @@ def test_description_contains_background_service_examples() -> None:
         assert keyword in desc, f"description lost the {keyword!r} background example"
 
 
-def test_description_declares_strict_resource_limits() -> None:
-    """TB2.1 contract (190 tesseract workers vs 1 CPU / 2 GB → exit 137
-    OOM-kill, twice): the parallelism guidance is a STRICT resource-limit
-    statement — the exact numbers live in the system prompt's ``## Runtime``
-    section; the rule + bounded-batch pattern live here."""
+def test_description_declares_memory_hard_limit_and_cpu_guidance() -> None:
+    """TB2.1 contract (190 tesseract workers vs 1 CPU / 2 GB — exit 137
+    OOM-kill, twice): memory is a HARD limit statement (unambiguous,
+    overcommit's tool result is a silent kill); CPU is guidance with a
+    bounded-batch pattern — the exact numbers live in the system prompt's
+    ``## Runtime`` section."""
     tool = PersistentBashTool(timeout_seconds=480, max_output_chars=16_000)
     desc = tool.description
-    for keyword in ("STRICT resource limits", "OOM-killed", "$(nproc)"):
+    for keyword in ("Memory is a hard limit", "OOM-killed", "$(nproc)"):
         assert keyword in desc, f"description lost the {keyword!r} resource-limit marker"
+    assert "IO-bound" in desc
 
 
 # ── kill-semantics contract (real session; Linux only) ────────────────
