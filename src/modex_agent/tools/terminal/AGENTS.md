@@ -40,7 +40,8 @@ It delegates to `TerminalSession` and keeps state across calls.
 
 When terminal backends are unavailable, the application falls back to
 `PersistentBashTool` (`modex_agent/tools/terminal/persistent_bash.py`) —
-one persistent interactive bash per pool (stateful), with `BashInputTool`
+one persistent interactive bash per conversation (stateful cwd/env,
+routed by the caller's session_id), with `BashInputTool`
 answering stdin-waiting commands. `SubprocessTool` (fresh process per
 call) remains in the framework for direct callers/tests but is no longer
 wired into any builder.
@@ -53,8 +54,10 @@ Key features:
 ### Layer 1b: PersistentBashTool (fallback)
 
 Registered when no terminal backend is available (e.g. subagents or when
-`use_terminal=false`). One stateful bash per pool; `bash_input` answers
-commands that block reading stdin. POSIX-only (pexpect).
+`use_terminal=false`). One stateful bash per conversation (per-session_id
+routing via `_current_session_id`; `__default__` shell without a routing
+context); `bash_input` answers commands that block reading stdin.
+POSIX-only (pexpect).
 
 ### Layer 2: TerminalSession (`modex_agent/tools/terminal/session.py`)
 
@@ -346,8 +349,9 @@ re-exported in `backends/__init__.py` for the migration window.
 ### Fallback: PersistentBashTool
 
 When bash is unavailable or `use_terminal=false`, the bot falls back to
-`PersistentBashTool` — one persistent interactive bash per pool (stateful
-cwd/env/backgrounds) plus its `bash_input` companion.
+`PersistentBashTool` — one persistent interactive bash per conversation
+(stateful cwd/env/backgrounds, routed by session_id) plus its `bash_input`
+companion.
 
 ---
 
@@ -363,16 +367,19 @@ terminal:
   close_on_exit: false  # Keep tabs open after bot shutdown
 ```
 
-`examples/bot_project/bot/service/core.py`:
-- Detects bash via `detect_platform_shell()` — uses WSL bash on Windows,
-  falls back to the persistent bash shell if bash unavailable
-- Creates a terminal manager with shell detection result
-- Registers `CommandTool` for persistent command execution
-- Registers `ProcessTool` for interacting with running commands
-- Registers `TerminalTool` when the terminal manager exists
+`examples/bot_project/bot/service/react_strategy.py` (`ReactExecutionStrategy.assemble_main`):
+- Creates the pool's terminal manager via the framework factory
+  `create_terminal_manager_or_none()` (shell detection is framework
+  ladder logic; returns `None` when `use_terminal=false` or no backend
+  is available)
 
-`examples/bot_project/bot/service/builders.py`:
-- `_build_persistent_bash()` builds the fallback `PersistentBashTool` (+ `BashInputTool` companion) for pools without terminal support
+Bash/process/terminal tools are not hand-registered in bot code: the
+compiled roster's `bash` / `process` / `terminal` entries resolve through
+the FW TOOL-slot factories (`modex_agent/plugins/defaults/tools.py`) —
+`CommandTool` bound to the pool terminal manager when one exists, else the
+pool's `PersistentBashTool` fallback (with the `bash_input` companion
+ensured by `native_core.assemble_native_agent`) — the same single road for
+main agents and subagents.
 
 ---
 

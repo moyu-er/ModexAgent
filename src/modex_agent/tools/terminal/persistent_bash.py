@@ -9,8 +9,9 @@ interrupts them with the ``^C`` convention.
 Session ownership lives in :class:`PersistentShellManager`
 (``_persistent_session.py``) — the terminal-trio ``BaseTerminalManager``
 shape applied to the persistent pair: ONE shell PER CONVERSATION keyed
-by the routing session_id (``_current_session_id``, the same contextvar
-``CommandTool`` routes by), lazily materialized, LRU-bounded.  The tools
+by the routing session_id (``_current_session_id`` — note ``CommandTool``
+does NOT route by it: the terminal trio always targets the manager's
+shared default tab), lazily materialized, LRU-bounded.  The tools
 are stateless routing shells: ``execute`` resolves the caller's shell
 from the manager and delegates.  With no routing context (benchmark /
 direct construction) every call shares the ``__default__`` shell — the

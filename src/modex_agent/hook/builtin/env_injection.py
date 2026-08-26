@@ -1,8 +1,10 @@
 """NativeEnvInjectionHook — populate ``_modex_env`` / ``_current_session_id``.
 
-Sets the two per-task ContextVars that native agent bash/terminal subprocess
-tools (``SubprocessExecutor``, ``CommandTool``) read to inject ``MODEX_*``
-env vars into spawned processes.
+Sets two per-task ContextVars: ``_modex_env``, which native agent
+bash/terminal subprocess tools (``SubprocessExecutor``, ``CommandTool``)
+read to inject ``MODEX_*`` env vars into spawned processes; and
+``_current_session_id``, the conversation routing key the persistent
+bash pair uses to select its per-conversation shell.
 
 External coding agents get their env via ``ExternalEnvBuilder.build()`` at
 spawn time; native agents (ReAct) have no spawn boundary, so this hook sets

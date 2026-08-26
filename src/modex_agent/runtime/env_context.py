@@ -10,9 +10,12 @@ Invariants:
    ``asyncio.Task``. Readers MUST treat it as immutable.
    ``build_full_env``'s ``env.update(overrides)`` already complies — it copies
    the dict rather than mutating ``overrides`` in place.
-2. ``_modex_env.get()`` / ``_current_session_id.get()`` are read ONLY at the
-   tool layer (``CommandTool.execute`` / ``SubprocessExecutor.execute``). They
-   MUST NOT be read inside backend / executor lambda / session internals.
+2. ``_modex_env.get()`` is read at the tool layer (``CommandTool.execute`` /
+   ``SubprocessExecutor.execute``) plus once at persistent-shell spawn
+   (``PersistentShellSession._ensure_started``). ``_current_session_id.get()``
+   is read only by the persistent pair's routing helper
+   (``persistent_bash._routed_session``) — ``CommandTool`` does NOT read it.
+   Neither may be read inside terminal backends or executor lambdas.
 
 Both ContextVars default to ``None``: with no hook installed, ``get()`` returns
 ``None`` and the tool layer falls back to its pre-hook behaviour — zero
