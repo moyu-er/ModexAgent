@@ -42,13 +42,10 @@ services:
     depends_on:
       uv-seed:
         condition: service_completed_successfully
-    environment:
-      PATH: /opt/modex-uv:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-      PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
-      UV_DEFAULT_INDEX: https://mirrors.aliyun.com/pypi/simple/
-      # Both agent (uv venv --python 3.12 waterfall) and verifier (uvx -p 3.13)
-      # resolve interpreters from the pre-seeded volume — zero downloads.
-      UV_PYTHON_INSTALL_DIR: /opt/modex-uv-py
+    # No container-wide env here on purpose: PATH/UV_PYTHON_INSTALL_DIR are
+    # injected per-exec by ModexHarborAgent (install + entry only) — a
+    # container-wide UV_PYTHON_INSTALL_DIR makes uv resolve our pre-seeded
+    # interpreter instead of the task image's python (tb21-all-v7 regression).
     volumes:
       - modex-uv-bin:/opt/modex-uv:ro
       - modex-uv-py:/opt/modex-uv-py:rw

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     import harbor.models.agent.context as harbor_agent_context
 
 from bot.eval.harbor.agent import (
+    MODECTL_BIN_DIR,
     MODEX_PIP_INDEX,
     POOL_MODE_ENV_VARS,
     SOURCE_TAR_CONTAINER_PATH,
@@ -127,6 +128,12 @@ class ModexHarborAgent(BaseInstalledAgent):
             "MODEX_TASK_INPUT_DIR": "/tmp/modex-task",
             "MODEX_TASK_INSTRUCTION_PATH": instruction_path,
             "MODEX_AGENT_OUTPUT_DIR": "/logs/agent",
+            # Points the modexctl resolver at the dedicated bin dir (install
+            # stage populates it). Without this, the resolver falls back to
+            # the venv's bin dir, whose python3/python symlinks + closure
+            # packages (e.g. cryptography) leak onto the agent shell's PATH
+            # and corrupt the task image's environment.
+            "MODEXBOT_BIN_DIR": MODECTL_BIN_DIR,
         }
         for name in POOL_MODE_ENV_VARS:
             if value := self._get_env(name):

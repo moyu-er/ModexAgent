@@ -12,6 +12,7 @@ from bot.eval.harbor.agent import (
     APT_PROBE_COMMAND,
     DEFAULT_PIP_INDEX,
     MANAGED_PYTHON_REQUEST,
+    MODECTL_BIN_DIR,
     MODEX_PIP_INDEX,
     POOL_MODE_ENV_VARS,
     PYTHON_INSTALL_ROOT,
@@ -448,7 +449,7 @@ def test_build_install_plan_pool_tier_materializes_modexctl_after_pip() -> None:
     command_index, command = next(
         (index, command)
         for index, command in enumerate(commands)
-        if f"{VENV_ROOT}/bin/modexctl" in " ".join(command.argv)
+        if f"{MODECTL_BIN_DIR}/modexctl" in " ".join(command.argv)
     )
     pip_index = next(
         index for index, command in enumerate(commands) if command.argv[:2] == (UV_BIN, "pip")
@@ -457,14 +458,17 @@ def test_build_install_plan_pool_tier_materializes_modexctl_after_pip() -> None:
     assert command_index > pip_index
     assert command.argv[:2] == ("sh", "-lc")
     assert "from bot.cli.modexctl import main" in command.argv[2]
-    assert f"chmod +x {VENV_ROOT}/bin/modexctl" in command.argv[2]
+    assert f"chmod +x {MODECTL_BIN_DIR}/modexctl" in command.argv[2]
+    # The shebang still points into the venv; only the binary lives in the
+    # dedicated dir so the venv bin never lands on the agent shell's PATH.
+    assert f"'#!{VENV_ROOT}/bin/python'" in command.argv[2]
 
 
 def test_build_install_plan_bare_tier_does_not_materialize_modexctl() -> None:
     plan = build_install_plan(_modern_python_probe(), InstallSettings())
 
     assert not any(
-        f"{VENV_ROOT}/bin/modexctl" in " ".join(command.argv)
+        f"{MODECTL_BIN_DIR}/modexctl" in " ".join(command.argv)
         for stage in plan.stages
         for command in stage
     )
@@ -667,6 +671,7 @@ async def test_agent_run_without_pool_mode_env_keeps_bare_entry_env_unchanged(
             "MODEX_TASK_INPUT_DIR": "/tmp/modex-task",
             "MODEX_TASK_INSTRUCTION_PATH": "/tmp/modex-task/instruction.txt",
             "MODEX_AGENT_OUTPUT_DIR": "/logs/agent",
+            "MODEXBOT_BIN_DIR": MODECTL_BIN_DIR,
         }
     ]
 

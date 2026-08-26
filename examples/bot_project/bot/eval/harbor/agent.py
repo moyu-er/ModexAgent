@@ -13,6 +13,15 @@ DEFAULT_PIP_INDEX: Final = "https://pypi.org/simple"
 SOURCE_TAR_CONTAINER_PATH: Final = "/tmp/modex-src.tar.gz"
 INSTALL_ROOT: Final = "/opt/modex"
 VENV_ROOT: Final = f"{INSTALL_ROOT}/venv"
+# Dedicated modexctl bin dir: must NOT be the venv's bin dir. The venv bin
+# carries python3/python symlinks and the closure's site-packages, and the
+# modexctl PATH prepend would leak them onto the agent shell's PATH —
+# shadowing the task image's own python (tb21-all-v7: agent resolved
+# cryptography + OpenSSL 3.0.16 from our venv instead of the image's python).
+MODECTL_BIN_DIR: Final = f"{INSTALL_ROOT}/bin"
+# Matches the pre-seeded managed-runtime volume mount in docker-compose.uv.yml
+# so the uv waterfall resolves the seeded interpreters instead of downloading.
+PYTHON_INSTALL_ROOT: Final = "/opt/modex-uv-py"
 # uv lands at this absolute path via the docker-compose.uv.yml overlay (the
 # modex-uv-bin volume is seeded at /uv-bin and mounted at /opt/modex-uv in the
 # main service); commands reference it absolutely instead of trusting PATH.
@@ -20,7 +29,6 @@ UV_BIN: Final = "/opt/modex-uv/uv"
 # Managed-python target of the waterfall's uv step. uv nests each build under
 # <install-dir>/cpython-…, so later commands rediscover it through
 # UV_PYTHON_INSTALL_DIR instead of a hard-coded interpreter path.
-PYTHON_INSTALL_ROOT: Final = f"{INSTALL_ROOT}/python"
 MANAGED_PYTHON_REQUEST: Final = "3.12"
 UV_PYTHON_INSTALL_MIRROR_ENV: Final = "UV_PYTHON_INSTALL_MIRROR"
 UV_PYTHON_INSTALL_DIR_ENV: Final = "UV_PYTHON_INSTALL_DIR"
@@ -96,11 +104,11 @@ _PTH_SCRIPT: Final = (
     "'/opt/modex/src\\n/opt/modex/examples/bot_project\\n', encoding='utf-8')"
 )
 _MODEXCTL_SCRIPT: Final = (
-    "printf '%s\\n' "
+    f"mkdir -p {MODECTL_BIN_DIR} && printf '%s\\n' "
     f"'#!{VENV_ROOT}/bin/python' "
     "'import sys' 'from bot.cli.modexctl import main' "
-    f"'sys.exit(main())' > {VENV_ROOT}/bin/modexctl && "
-    f"chmod +x {VENV_ROOT}/bin/modexctl"
+    f"'sys.exit(main())' > {MODECTL_BIN_DIR}/modexctl && "
+    f"chmod +x {MODECTL_BIN_DIR}/modexctl"
 )
 
 
