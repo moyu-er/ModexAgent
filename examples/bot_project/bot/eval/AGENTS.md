@@ -23,7 +23,7 @@ Opt-in evaluation harness — runs as a **separate process** (CLI), never import
 | `judge/` + `judge_cli.py` | Rubric runner, memory judge, annotation, calibration, and judge CLI |
 | `sentinel/` | Declared memory/no-memory arms, orchestration, execution, observation, results, report, and gate CLI |
 | `live_gates/` | B1 cost and B3 experiment-linkage live gates; B1 assembles through the declared seam |
-| `config/scopes/eval/eval.yml` | Pool-mode default/benchmark arm overlays; both strip peers and declare `strip_mcp`, while benchmark declares single-agent topology, tool removals, core-memory off, and benchmark prompt |
+| `config/scopes/eval/eval.yml` | Pool-mode default/benchmark arm overlays; both strip peers and declare `strip_mcp`; benchmark additionally declares tool removals, core-memory off, and the benchmark prompt — both arms inherit the target pool's subagent topology (single_agent sugar remains available for a dedicated ablation arm) |
 | `config/scopes/eval/agents/*.yml` | Pool-as-root declarations for react harness, 32K memory harness, and the two sentinel arms |
 | `agents/benchmark.md` / `agents/react-harness.md` | File-backed benchmark persona and standalone harness default prompt |
 | `src/modex_agent/plugins/assembly/single_agent.py` | FW `assemble_declared_single_agent` seam and typed `SingleAgentInfra` substitution surface used by standalone eval paths |
@@ -65,7 +65,7 @@ Query traces, scores, datasets, and observations via `langfuse-cli` (npx, no ins
 | interceptor 链无 control-drain/llm-cancel | typed pool infra kwarg | Harbor 没有 control channel；公共 `build_tool_overflow_interceptor_chain(control_channel=None)` 构造恰含 tool-result limit 的链，再以 `shared_interceptor_chain=` 传入。 |
 | register_pool_budget LLM 工厂包装 | 注册表装饰器 | 预算必须包裹声明解析到的同一 LLM provider factory，而非另建 provider 路；`harbor/pool_budget.py:register_pool_budget` 覆盖注册 `bot_default` 并共享 ledger。 |
 | trace_store 调用方持有 + persistence 随生产 wiring | typed pool infra kwarg | `harbor/pool_mode.py:execute_pool_entry` 持有并关闭 `PoolTraceStore`；assembly 按生产 backend 构造 persistence，再将两者传入 pool data / `create_pool`。 |
-| converged (todo 6): benchmark arm fully declarative — overlay only | pre-compile overlay | `eval.yml` 声明单代理拓扑、工具删减、memory core 关闭与 `benchmark.md` prompt；approval-off 叠加 `strip_approval`，两臂均剥 peers。 |
+| converged (todo 6): benchmark arm fully declarative — overlay only | pre-compile overlay | `eval.yml` 声明工具删减、memory core 关闭与 `benchmark.md` prompt；approval-off 叠加 `strip_approval`，两臂均剥 peers；subagent 拓扑从目标池声明继承（task 工具 + 委派 provider 照常生效），`single_agent` 糖保留给专门的单代理消融臂 |
 | standalone harness / experiment / replay / record-golden | 声明 + typed infra kwarg (`SingleAgentInfra`) | `react-harness.yml` 决定默认 prompt/tool family；provider、safety、workspace root、hooks 与 wrapper 是显式 infra 替换。Cassette 只包 provider，per-turn case prompt 仍由 runner 数据面注入。 |
 | memory harness | 声明 + typed infra kwarg (`SingleAgentInfra`) | `memory-harness.yml` 声明 root memory family 与 32K session budget；trace/score cleanup hooks 和 Dream 操作使用装配返回的 memory handle。 |
 | sentinel memory / no-memory arms | 声明 + typed infra kwarg (`SingleAgentInfra`) | 两份声明固定 memory 开关、32K、25 steps 与 roster；facts 播种和 span 观测是运行数据，不是装配突变。 |

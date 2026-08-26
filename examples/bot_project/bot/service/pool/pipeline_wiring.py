@@ -34,6 +34,7 @@ from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication.peer_resolution import PeerLink
 from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
 from modex_agent.pipeline.turn_context_config import wire_graph_turn_config
+from modex_agent.runtime.store import TodoStore
 from modex_agent.scope.spec import AgentSpec, PoolSpec
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_agent.trace.cassette import (
@@ -83,6 +84,7 @@ def _wire_main_pipeline(
     session_binding_store: SessionBindingStore | None = None,
     tree_manager: SessionTreeManager | None = None,
     component_hook_specs: tuple[HookSpec, ...] = (),
+    todo_store: TodoStore | None = None,
 ) -> None:
     """Wire hooks, interceptors, governance, and command processor on main pipeline.
 
@@ -126,7 +128,10 @@ def _wire_main_pipeline(
     # register_tree_aware_hooks (also called by AgentTemplate.materialize).
     if tree_manager is not None:
         register_tree_aware_hooks(
-            pipeline.hook_runner, tree_manager, roster_hook_names=roster_hook_names
+            pipeline.hook_runner,
+            tree_manager,
+            roster_hook_names=roster_hook_names,
+            todo_store=todo_store,
         )
     # Roster name of ModelChoiceBindHook's factory (plugins/bot_hooks.py) —
     # Stage 4 already dispatched it onto this hook_runner.

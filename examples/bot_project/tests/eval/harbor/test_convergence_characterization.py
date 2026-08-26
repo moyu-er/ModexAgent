@@ -124,6 +124,7 @@ BENCHMARK_ORDERED_TOOLS_CORRECTED: Final = (
     "grep",
     "glob",
     "bash",
+    "task",
     "edit",
     "bash_input",
 )
@@ -134,8 +135,11 @@ BENCHMARK_BASH_IDENTITY: Final = BashIdentity(
     initial_cwd_is_task_workspace=True,
     bash_input_shares_manager=True,
 )
-TEMPLATE_COUNT: Final = 0
-ROOT_CHILD_COUNT: Final = 0
+# The benchmark arm inherits the target pool's subagent topology (only its
+# own deviations — prompt / core memory / tool removals — stay), so the
+# default pool's single subagent template and child target survive.
+TEMPLATE_COUNT: Final = 1
+ROOT_CHILD_COUNT: Final = 1
 DEFAULT_ARM_ORDERED_TOOLS: Final = (
     "send_file_to_user",
     "experience",

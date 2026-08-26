@@ -15,8 +15,8 @@ from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.core.types import MessageRole
 from modex_agent.hook import (
     AfterApprovalHook,
-    BeforeLLMHook,
     BeforeGraphHook,
+    BeforeLLMHook,
     HookErrorPolicy,
     HookPayload,
     HookPoint,

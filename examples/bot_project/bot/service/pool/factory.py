@@ -877,6 +877,7 @@ async def create_pool(
             session_binding_store=session_binding_store,
             tree_manager=tree_manager,
             component_hook_specs=component_hook_specs,
+            todo_store=todo_store,
         )
     else:
         # external path: the external agent has no tool surface (it

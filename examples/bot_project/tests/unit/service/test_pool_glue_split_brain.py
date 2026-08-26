@@ -298,10 +298,16 @@ async def test_split_brain_glue_manifest_field_by_field(tmp_path: Path) -> None:
     # dispatch); only the POSITION differs (Stage-4 dispatch lands the hook
     # earlier). The LengthGuardHook wave (register_tree_aware_hooks — the
     # shared seam on BOTH roads) postdates the frozen golden: tolerated as
-    # the single live extra, presence-derived. Stale-guard both orders.
+    # a live extra, presence-derived. The nudge wave (bot.yml roster
+    # reference for task_delegation_nudge — declaration-road-only by
+    # design, self-gating at runtime) likewise postdates the golden.
+    # Stale-guard both orders.
     new_hook_names = [h.name for h in new_main.hooks]
     golden_hook_names = [h["name"] for h in golden_main["hooks"]]
-    assert set(new_hook_names) - set(golden_hook_names) == {"length_guard"}
+    assert set(new_hook_names) - set(golden_hook_names) == {
+        "length_guard",
+        "task_delegation_nudge",
+    }
     assert set(golden_hook_names) <= set(new_hook_names)
     assert new_hook_names.index("experience_review_hook") < new_hook_names.index(
         "turn_outcome_notify"

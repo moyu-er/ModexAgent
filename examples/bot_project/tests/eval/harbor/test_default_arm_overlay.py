@@ -90,7 +90,9 @@ def test_checked_in_arms_keep_default_and_benchmark_semantics_separate() -> None
     )
     assert benchmark.strip_peers is True
     benchmark_pool = benchmark.pools["default"]
-    assert benchmark_pool.keep_agents == ["default"]
+    # No single_agent sugar: the benchmark arm inherits the target pool's
+    # subagent topology and keeps only its own deviations.
+    assert benchmark_pool.keep_agents is None
     benchmark_root = benchmark_pool.agents["default"]
     assert benchmark_root.tools == ["-process", "-terminal"]
     assert benchmark_root.memory == MemoryDeclaration(core_enabled=False)

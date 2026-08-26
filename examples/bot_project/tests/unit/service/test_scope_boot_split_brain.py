@@ -371,8 +371,10 @@ async def test_split_brain_manifest_field_by_field(tmp_path: Path) -> None:
     # registers the same hook classes in production (see the ticket-09
     # split-brain suite, which drives both roads WITH pool_data). The
     # LengthGuardHook wave (register_tree_aware_hooks — the shared seam on
-    # BOTH roads) postdates the frozen golden: tolerated as the single
-    # extra, presence-derived.
+    # BOTH roads) postdates the frozen golden: tolerated as a live extra,
+    # presence-derived. The nudge wave (bot.yml roster reference for
+    # task_delegation_nudge — declaration-road-only by design, self-gating
+    # at runtime) likewise postdates the golden.
     new_hook_names = [h.name for h in new_main.hooks]
     golden_hook_names = [h.name for h in golden_main.hooks]
     assert set(new_hook_names) - set(golden_hook_names) == {
@@ -383,6 +385,7 @@ async def test_split_brain_manifest_field_by_field(tmp_path: Path) -> None:
         "HandoffSpanHook",
         "ApprovalSpanHook",
         "length_guard",
+        "task_delegation_nudge",
     }
     assert set(golden_hook_names) <= set(new_hook_names)
 

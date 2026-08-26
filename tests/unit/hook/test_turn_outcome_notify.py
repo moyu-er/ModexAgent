@@ -18,7 +18,6 @@ from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.hook.notification import TurnOutcomeNotifyHook
 from modex_agent.memory.history import ListMessageHistory
 
-
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------

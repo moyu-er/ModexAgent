@@ -208,6 +208,147 @@ def _benchmark_dependencies(provider: _BenchmarkProvider) -> PoolModeDependencie
     )
 
 
+class _DefaultArmRecordingProvider(LLMProvider):
+    """Immediate final answer; records the LLM-bound system prompt and tools.
+
+    Captures what the default-arm root actually sees at its first LLM call:
+    the resolved system prompt (with the gated provider sections) and the
+    tool schemas (with the `task` tool's dynamic roster enum).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(retry_backoff_seconds=())
+        self.system_prompts: list[str] = []
+        self.tools: list[list[dict[str, Any]]] = []
+
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        model: str | None = None,
+        temperature: float | None = 0.7,
+        max_output_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        **kwargs: JsonValue,
+    ) -> LLMResponse:
+        _ = model, temperature, max_output_tokens, kwargs
+        system = next(
+            (str(m.content or "") for m in messages if m.role == MessageRole.SYSTEM),
+            "",
+        )
+        self.system_prompts.append(system)
+        self.tools.append(tools or [])
+        return LLMResponse(
+            content="default arm answer",
+            finish_reason=FinishReason.STOP,
+            usage={"prompt_tokens": 11, "completion_tokens": 3},
+        )
+
+    def get_default_model(self) -> str:
+        return "scripted-model"
+
+
+class _EndTurnDelegatingProvider(LLMProvider):
+    """Root ends its turn after dispatch; the notification wakes turn 2.
+
+    Characterizes the async delegation contract: root turn 1 issues the
+    `task` call, then — dispatch ack in history — ends the turn with a
+    waiting message; the subagent turn answers; the result notification
+    wakes root turn 2, which produces the final answer. If the entry
+    quiesced at turn-1 end, the outcome would carry the waiting message
+    instead of the final answer.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(retry_backoff_seconds=())
+
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        model: str | None = None,
+        temperature: float | None = 0.7,
+        max_output_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        **kwargs: JsonValue,
+    ) -> LLMResponse:
+        _ = model, temperature, max_output_tokens, tools, kwargs
+        system = next(
+            (str(m.content or "") for m in messages if m.role == MessageRole.SYSTEM),
+            "",
+        )
+        if "## Consulting Your Parent" in system:
+            return LLMResponse(
+                content="child answer",
+                finish_reason=FinishReason.STOP,
+                usage={"prompt_tokens": 7, "completion_tokens": 3},
+            )
+        has_task_result = any(
+            m.role == MessageRole.TOOL and m.name == "task" for m in messages
+        )
+        if not has_task_result:
+            return LLMResponse(
+                content=None,
+                finish_reason=FinishReason.TOOL_CALLS,
+                tool_calls=[
+                    ToolCall(
+                        tool_name="task",
+                        arguments={
+                            "target_agent": "explore",
+                            "content": "Investigate the input handling.",
+                        },
+                        call_id="end-turn-dispatch-1",
+                    )
+                ],
+                usage={"prompt_tokens": 11, "completion_tokens": 2},
+            )
+        joined = "\n".join(str(m.content or "") for m in messages)
+        if "child answer" in joined:
+            return LLMResponse(
+                content="final answer after notification",
+                finish_reason=FinishReason.STOP,
+                usage={"prompt_tokens": 13, "completion_tokens": 4},
+            )
+        return LLMResponse(
+            content="Dispatched; waiting for the subagent result.",
+            finish_reason=FinishReason.STOP,
+            usage={"prompt_tokens": 12, "completion_tokens": 4},
+        )
+
+    def get_default_model(self) -> str:
+        return "scripted-model"
+
+
+def _recording_dependencies(provider: _DefaultArmRecordingProvider) -> PoolModeDependencies:
+    return PoolModeDependencies(
+        provider_factory=_ProviderFactory(provider),
+        pricebook=PriceBook(
+            models={
+                "scripted-model": PriceEntry(
+                    input=1.0,
+                    output=1.0,
+                    cache_read=1.0,
+                    cache_write=1.0,
+                )
+            }
+        ),
+    )
+
+
+def _end_turn_dependencies() -> PoolModeDependencies:
+    return PoolModeDependencies(
+        provider_factory=_ProviderFactory(_EndTurnDelegatingProvider()),
+        pricebook=PriceBook(
+            models={
+                "scripted-model": PriceEntry(
+                    input=1.0,
+                    output=1.0,
+                    cache_read=1.0,
+                    cache_write=1.0,
+                )
+            }
+        ),
+    )
+
+
 async def _execute_and_capture_assembly(
     config: PoolModeConfig,
     dependencies: PoolModeDependencies | None = None,
@@ -470,7 +611,11 @@ async def test_benchmark_arm_derives_forbidden_tools_out_of_roster(tmp_path: Pat
     )
 
     manager = instance.tool_manager
-    assert {"task", "process", "terminal", "send_to_peer"}.isdisjoint(manager.list_tools())
+    # The benchmark arm inherits the coder pool's subagent topology, so the
+    # `task` delegation tool stays; only its own removals (process/terminal)
+    # and the peer strip apply.
+    assert {"process", "terminal", "send_to_peer"}.isdisjoint(manager.list_tools())
+    assert manager.is_registered("task")
     bash = manager.get_tool("bash")
     if sys.platform == "win32":
         assert type(bash) is WorkspaceScopedShellTool
@@ -524,7 +669,10 @@ async def test_benchmark_arm_uses_file_prompt_as_single_source(tmp_path: Path) -
     assert provider.system_prompts, "benchmark turn never reached the LLM"
     prompt = provider.system_prompts[0]
     assert benchmark_prompt in prompt
-    assert "## Delegating To Subagents" not in prompt
+    # The benchmark persona is the single prompt source, but delegation
+    # guidance still applies — the arm keeps the subagent topology, so the
+    # tool-presence-gated provider emits its section alongside the persona.
+    assert "## Delegating To Subagents" in prompt
     for marker in ("SOUL", "your_identity", "user_profile", "known_facts"):
         assert marker not in prompt
     assert "## Task Tracking" in prompt
@@ -551,6 +699,70 @@ async def test_default_roster_without_env_is_unchanged(tmp_path: Path) -> None:
     else:
         assert not isinstance(bash, PersistentBashTool)
         assert not manager.is_registered("bash_input")
+
+
+@pytest.mark.asyncio
+async def test_default_arm_live_prompt_carries_delegation_guidance_and_roster(
+    tmp_path: Path,
+) -> None:
+    """The default arm's live prompt carries the full delegation contract.
+
+    Guards the three-layer injection on the production-equivalent arm: the
+    tool-presence-gated provider sections in the live system prompt (todo
+    discipline + delegation guidance with the six-element brief spec) and
+    the `task` tool's dynamic schema binding `target_agent` to the declared
+    subagent roster.
+    """
+    config = PoolModeConfig.from_environment(_environment(tmp_path))
+    provider = _DefaultArmRecordingProvider()
+
+    _pool_kwargs, _build_call, outcome, _instance = await _execute_and_capture_assembly(
+        config, _recording_dependencies(provider)
+    )
+
+    assert provider.system_prompts, "default-arm turn never reached the LLM"
+    prompt = provider.system_prompts[0]
+    assert "## Task Tracking" in prompt
+    assert "## Delegating To Subagents" in prompt
+    assert "all six elements" in prompt
+    assert provider.tools, "no tool schemas reached the LLM"
+    task_schema = next(
+        (
+            t
+            for t in provider.tools[0]
+            if (t.get("function") or {}).get("name") == "task"
+        ),
+        None,
+    )
+    assert task_schema is not None, "task tool missing from the LLM tool list"
+    function = task_schema.get("function") or {}
+    target = ((function.get("parameters") or {}).get("properties") or {}).get(
+        "target_agent"
+    ) or {}
+    assert target.get("enum") == ["explore", "general"]
+    assert outcome.child_sessions == ()
+    assert outcome.output == "default arm answer"
+
+
+@pytest.mark.asyncio
+async def test_benchmark_arm_end_turn_wait_wakes_second_turn(tmp_path: Path) -> None:
+    """End-turn-and-wait: tree quiesce spans the subagent round trip.
+
+    The benchmark arm keeps the subagent topology, so its root can end the
+    turn right after dispatching. The entry must NOT treat that turn end
+    as task completion — the dispatched track holds the tree open until
+    the subagent answers and the notification wakes root turn 2, whose
+    final answer is the artifact under test.
+    """
+    config = PoolModeConfig.from_environment(_benchmark_environment(tmp_path))
+
+    _pool_kwargs, _build_call, outcome, _instance = await _execute_and_capture_assembly(
+        config, _end_turn_dependencies()
+    )
+
+    assert outcome.child_sessions, "benchmark arm never dispatched a subagent"
+    assert outcome.output == "final answer after notification"
+    assert outcome.error is None
 
 
 def test_pool_mode_env_vars_forward_benchmark_roster_switch() -> None:

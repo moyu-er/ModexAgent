@@ -101,18 +101,35 @@ class TestShippedFieldGoldens:
     def test_native_root_hook_rosters_golden(self) -> None:
         # Ticket 09: every native root references the notification +
         # experience-review HOOK-slot components (the migrated glue);
-        # default additionally collects references.
+        # default additionally collects references. Every subagent-owning
+        # root additionally references the self-gating behavior nudges.
         pools = _scope_pools()
         assert _root_of(pools["default"]).hooks == [
             "+reference_collector",
             "+user_notice_cleanup",
             "+experience_review",
+            "+task_delegation_nudge",
         ]
         for name in ("coder", "review"):
             assert _root_of(pools[name]).hooks == [
                 "+user_notice_cleanup",
                 "+experience_review",
+                "+task_delegation_nudge",
+                "+todo_planning_nudge",
             ]
+
+    def test_subagent_hook_rosters_golden(self) -> None:
+        # Nested agents carry todo supplements, so they reference the
+        # self-gating todo planning nudge; they never own the `task` tool
+        # (no declared children), so no delegation nudge.
+        pools = _scope_pools()
+        for pool_name in ("coder", "review"):
+            for child in _children_of(pools[pool_name], _root_of(pools[pool_name]).name):
+                assert child.hooks == ["+todo_planning_nudge"], (
+                    f"{pool_name}.{child.name}: {child.hooks}"
+                )
+        office = _children_of(pools["default"], "default")
+        assert [a.hooks for a in office] == [["+todo_planning_nudge"]]
 
     def test_native_roots_carry_descriptions(self) -> None:
         pools = _scope_pools()
@@ -128,6 +145,7 @@ class TestShippedFieldGoldens:
             "+reference_collector",
             "+user_notice_cleanup",
             "+experience_review",
+            "+task_delegation_nudge",
         ]
         assert root.hook_configs == {"reference_collector": {"max_sources": 20}}
         assert root.approval is not None

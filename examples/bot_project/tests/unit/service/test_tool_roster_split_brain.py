@@ -408,6 +408,10 @@ async def test_production_manifest_matches_golden(tmp_path: Path) -> None:
         # The LengthGuardHook wave (register_tree_aware_hooks — the shared
         # seam on BOTH roads) postdates the frozen 05 baseline.
         "length_guard",
+        # The nudge wave (bot.yml roster reference for
+        # task_delegation_nudge — declaration-road-only by design,
+        # self-gating at runtime) likewise postdates the 05 baseline.
+        "task_delegation_nudge",
     }
 
     new_tools = {t.name: t for t in new_main.tools}

@@ -48,6 +48,9 @@ workspace:
           # create_pool / pool_wiring until ticket 17).
           - +user_notice_cleanup
           - +experience_review
+          # Behavior nudges (self-gating by tool presence) — this root carries
+          # no todo supplement, so todo_planning_nudge would self-skip anyway.
+          - +task_delegation_nudge
           hook_configs:
             reference_collector:
               max_sources: 20
@@ -73,6 +76,9 @@ workspace:
               tool_supplements:
               - todo
               - aci
+              # Behavior nudge (self-gating by tool presence).
+              hooks:
+              - +todo_planning_nudge
               context_mode: fresh
     coder:
       agents:
@@ -95,6 +101,9 @@ workspace:
           hooks:
           - +user_notice_cleanup
           - +experience_review
+          # Behavior nudges (self-gating by tool presence).
+          - +task_delegation_nudge
+          - +todo_planning_nudge
           approval:
             enabled: true
             tools:
@@ -112,11 +121,14 @@ workspace:
                 with exact file paths and line numbers. Cannot modify files. Use for
                 any read-only investigation requiring more than a few searches, or
                 when parallel analysis of independent questions is valuable.
-              max_steps: 100
+              max_steps: 200
               toolset: read_only
               tool_supplements:
               - ast_grep
               - todo
+              # Behavior nudge (self-gating by tool presence).
+              hooks:
+              - +todo_planning_nudge
               context_mode: fresh
             general:
               description: >-
@@ -124,12 +136,15 @@ workspace:
                 planning, task decomposition, documentation, and implementation when
                 the task doesn't warrant dedicated exploration or is cross-domain.
                 Use for any task that needs a fresh, isolated context.
-              max_steps: 100
+              max_steps: 200
               toolset: full
               tool_supplements:
               - aci
               - ast_grep
               - todo
+              # Behavior nudge (self-gating by tool presence).
+              hooks:
+              - +todo_planning_nudge
               context_mode: fresh
     review:
       peers:
@@ -153,17 +168,25 @@ workspace:
           hooks:
           - +user_notice_cleanup
           - +experience_review
+          # Behavior nudges (self-gating by tool presence).
+          - +task_delegation_nudge
+          - +todo_planning_nudge
           agents:
             explore:
               description: >-
                 Read-only codebase search and analysis agent. Searches, reads, and
                 analyzes code, tracing dependencies and returning structured findings
-                with exact file paths and line numbers. Cannot modify files.
+                with exact file paths and line numbers. Cannot modify files. Use for
+                any read-only investigation requiring more than a few searches, or
+                when parallel analysis of independent questions is valuable.
               max_steps: 60
               toolset: read_only
               tool_supplements:
               - ast_grep
               - todo
+              # Behavior nudge (self-gating by tool presence).
+              hooks:
+              - +todo_planning_nudge
               context_mode: fresh
             general:
               description: >-
@@ -176,6 +199,9 @@ workspace:
               tool_supplements:
               - ast_grep
               - todo
+              # Behavior nudge (self-gating by tool presence).
+              hooks:
+              - +todo_planning_nudge
               context_mode: fresh
     opencode:
       peers:
