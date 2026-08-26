@@ -21,8 +21,7 @@ from modex_agent.core.message_utils import wrap_system_reminder
 from modex_agent.core.types import MessageRole, TodoStatus
 from modex_agent.hook.abc import AfterTurnHook
 from modex_agent.runtime.enums import TurnCustomKey
-from modex_agent.runtime.store import TodoItem
-from modex_agent.tools.standard.todo_tool import TodoReadTool
+from modex_agent.runtime.store import TodoItem, TodoStore
 
 if TYPE_CHECKING:
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
@@ -36,6 +35,10 @@ def _active_todo_hash(active: list[TodoItem]) -> str:
 class TodoContinuationHook(AfterTurnHook):
     """Request continuation when active todo tasks remain after a turn attempt.
 
+    Gates on the agent owning the ``todo_write`` tool (the canonical todo
+    signal) and on being constructed with a ``todo_store``; the todo list
+    itself is read from the injected store, never from a tool.
+
     Each hook acts independently — no OR/AND coordination with other
     AfterTurnHook continuation sources.  This hook:
       1. Reads active (pending + in_progress) todos.
@@ -45,11 +48,16 @@ class TodoContinuationHook(AfterTurnHook):
       4. Otherwise — injects a ``<system-reminder>`` with the full active
           todo list, sets ``CONTINUATION_REQUEST``, and sets
          ``CONTINUATION_RENEW_MAX_TURNS`` (watchdog: authorizes the gate to
-         extend MAX_TURNS by 1 when the agent is still making progress).
+          extend MAX_TURNS by 1 when the agent is still making progress).
     """
 
-    def __init__(self, tree: SessionTreeManager | None = None) -> None:
+    def __init__(
+        self,
+        tree: SessionTreeManager | None = None,
+        todo_store: TodoStore | None = None,
+    ) -> None:
         self._tree = tree
+        self._todo_store = todo_store
 
     @property
     def name(self) -> str:
@@ -60,13 +68,10 @@ class TodoContinuationHook(AfterTurnHook):
             return
 
         tool_manager = ctx.tool_manager
-        if tool_manager is None:
+        if tool_manager is None or not tool_manager.is_registered("todo_write"):
             return
-        read_tool = tool_manager.get_tool("todo_read")
-        if not isinstance(read_tool, TodoReadTool):
+        if self._todo_store is None:
             return
-        # Tech debt: private attr. Future: add todo_store to AgentRuntimeServices.
-        todo_store = read_tool._store
 
         react_state = get_react_state(ctx)
         if react_state is None:
@@ -81,7 +86,7 @@ class TodoContinuationHook(AfterTurnHook):
                 if len(active_subtree) > 1:
                     return
 
-        todos = await todo_store.get(str(ctx.session))
+        todos = await self._todo_store.get(str(ctx.session))
         active = [
             todo
             for todo in todos

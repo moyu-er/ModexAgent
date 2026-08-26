@@ -16,13 +16,13 @@ from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.runtime.store import JsonFileTodoStore, TodoItem
-from modex_agent.tools.standard.todo_tool import TodoReadTool
+from modex_agent.tools.standard.todo_tool import TodoWriteTool
 
 
 def _make_context(
     root: Path,
     *,
-    register_todo_read: bool = True,
+    register_todo_write: bool = True,
 ) -> tuple[AgentContext, ReActTurnState, JsonFileTodoStore]:
     identity = TurnIdentity(
         agent_id="test",
@@ -39,8 +39,8 @@ def _make_context(
     runtime = AgentRuntime(services=AgentRuntimeServices(), state=state)
     store = JsonFileTodoStore(root)
     tool_manager = InMemoryToolManager()
-    if register_todo_read:
-        tool_manager.register(TodoReadTool(store))
+    if register_todo_write:
+        tool_manager.register(TodoWriteTool(store))
     context = AgentContext(
         system_prompt="test",
         history=ListMessageHistory(),
@@ -77,7 +77,7 @@ async def test_first_active_todo_requests_continuation_and_caches_signature(
         [TodoItem(content="implement hook", status=TodoStatus.IN_PROGRESS)],
     )
 
-    await TodoContinuationHook().after_turn(
+    await TodoContinuationHook(todo_store=store).after_turn(
         context,
         AgentResult(content="working", stop_reason=StopReason.COMPLETED),
     )
@@ -99,7 +99,7 @@ async def test_max_iterations_with_active_todo_requests_continuation(
         [TodoItem(content="continue work", status=TodoStatus.PENDING)],
     )
 
-    await TodoContinuationHook().after_turn(
+    await TodoContinuationHook(todo_store=store).after_turn(
         context,
         AgentResult(content="limit", stop_reason=StopReason.MAX_ITERATIONS),
     )
@@ -115,7 +115,7 @@ async def test_cancelled_result_does_nothing(tmp_path: Path) -> None:
         [TodoItem(content="remaining", status=TodoStatus.PENDING)],
     )
 
-    await TodoContinuationHook().after_turn(
+    await TodoContinuationHook(todo_store=store).after_turn(
         context,
         AgentResult(content="cancelled", stop_reason=StopReason.TURN_CANCELLED),
     )
@@ -124,14 +124,14 @@ async def test_cancelled_result_does_nothing(tmp_path: Path) -> None:
 
 
 async def test_missing_tool_manager_skips_silently(tmp_path: Path) -> None:
-    context, state, _store = _make_context(tmp_path)
+    context, state, store = _make_context(tmp_path)
     context_without_manager = MagicMock(spec=AgentContext)
     context_without_manager.tool_manager = None
     context_without_manager.runtime = context.runtime
     context_without_manager.history = context.history
     context_without_manager.session = context.session
 
-    await TodoContinuationHook().after_turn(
+    await TodoContinuationHook(todo_store=store).after_turn(
         context_without_manager,
         AgentResult(content="done", stop_reason=StopReason.COMPLETED),
     )
@@ -139,10 +139,21 @@ async def test_missing_tool_manager_skips_silently(tmp_path: Path) -> None:
     await _assert_no_action(context, state)
 
 
-async def test_unregistered_todo_read_skips_silently(tmp_path: Path) -> None:
-    context, state, _store = _make_context(tmp_path, register_todo_read=False)
+async def test_unregistered_todo_write_skips_silently(tmp_path: Path) -> None:
+    context, state, store = _make_context(tmp_path, register_todo_write=False)
 
-    await TodoContinuationHook().after_turn(
+    await TodoContinuationHook(todo_store=store).after_turn(
+        context,
+        AgentResult(content="done", stop_reason=StopReason.COMPLETED),
+    )
+
+    await _assert_no_action(context, state)
+
+
+async def test_none_todo_store_skips_silently(tmp_path: Path) -> None:
+    context, state, _store = _make_context(tmp_path)
+
+    await TodoContinuationHook(todo_store=None).after_turn(
         context,
         AgentResult(content="done", stop_reason=StopReason.COMPLETED),
     )
@@ -153,7 +164,7 @@ async def test_unregistered_todo_read_skips_silently(tmp_path: Path) -> None:
 async def test_empty_todos_skip_continuation(tmp_path: Path) -> None:
     context, state, _store = _make_context(tmp_path)
 
-    await TodoContinuationHook().after_turn(
+    await TodoContinuationHook(todo_store=_store).after_turn(
         context,
         AgentResult(content="done", stop_reason=StopReason.COMPLETED),
     )
@@ -168,7 +179,7 @@ async def test_unchanged_cached_signature_skips_continuation(tmp_path: Path) -> 
         store,
         [TodoItem(content="same work", status=TodoStatus.IN_PROGRESS)],
     )
-    hook = TodoContinuationHook()
+    hook = TodoContinuationHook(todo_store=store)
     result = AgentResult(content="working", stop_reason=StopReason.COMPLETED)
     await hook.after_turn(context, result)
     cached_signature = state.custom[TurnCustomKey.LAST_CONTINUATION_TODO_SIG]
@@ -183,7 +194,7 @@ async def test_unchanged_cached_signature_skips_continuation(tmp_path: Path) -> 
 
 async def test_completed_item_changes_signature_and_retriggers(tmp_path: Path) -> None:
     context, state, store = _make_context(tmp_path)
-    hook = TodoContinuationHook()
+    hook = TodoContinuationHook(todo_store=store)
     result = AgentResult(content="working", stop_reason=StopReason.COMPLETED)
     await _save_todos(
         context,
@@ -213,7 +224,7 @@ async def test_completed_item_changes_signature_and_retriggers(tmp_path: Path) -
 
 async def test_added_todo_changes_signature_and_retriggers(tmp_path: Path) -> None:
     context, state, store = _make_context(tmp_path)
-    hook = TodoContinuationHook()
+    hook = TodoContinuationHook(todo_store=store)
     result = AgentResult(content="working", stop_reason=StopReason.COMPLETED)
     await _save_todos(
         context,
@@ -249,7 +260,7 @@ async def test_max_turns_boundary_renews_and_requests_continuation(
         [TodoItem(content="remaining", status=TodoStatus.PENDING)],
     )
 
-    await TodoContinuationHook().after_turn(
+    await TodoContinuationHook(todo_store=store).after_turn(
         context,
         AgentResult(content="done", stop_reason=StopReason.COMPLETED),
     )
@@ -273,7 +284,7 @@ async def test_existing_continuation_request_still_injects_reminder(
         [TodoItem(content="remaining", status=TodoStatus.PENDING)],
     )
 
-    await TodoContinuationHook().after_turn(
+    await TodoContinuationHook(todo_store=store).after_turn(
         context,
         AgentResult(content="done", stop_reason=StopReason.COMPLETED),
     )
@@ -304,7 +315,7 @@ async def test_tree_aware_skips_when_subtree_has_active_nodes(
     )
     tree = _make_tree_mock("tree-1", ["session.agent", "child.session"])
 
-    await TodoContinuationHook(tree=tree).after_turn(
+    await TodoContinuationHook(tree=tree, todo_store=store).after_turn(
         context,
         AgentResult(content="working", stop_reason=StopReason.COMPLETED),
     )
@@ -323,7 +334,7 @@ async def test_tree_aware_triggers_when_subtree_has_only_self(
     )
     tree = _make_tree_mock("tree-1", ["session.agent"])
 
-    await TodoContinuationHook(tree=tree).after_turn(
+    await TodoContinuationHook(tree=tree, todo_store=store).after_turn(
         context,
         AgentResult(content="working", stop_reason=StopReason.COMPLETED),
     )
@@ -343,7 +354,7 @@ async def test_tree_none_falls_through(tmp_path: Path) -> None:
         [TodoItem(content="implement hook", status=TodoStatus.IN_PROGRESS)],
     )
 
-    await TodoContinuationHook().after_turn(
+    await TodoContinuationHook(todo_store=store).after_turn(
         context,
         AgentResult(content="working", stop_reason=StopReason.COMPLETED),
     )
@@ -365,7 +376,7 @@ async def test_tree_aware_falls_through_when_tree_id_is_none(
     )
     tree = _make_tree_mock(None, [])
 
-    await TodoContinuationHook(tree=tree).after_turn(
+    await TodoContinuationHook(tree=tree, todo_store=store).after_turn(
         context,
         AgentResult(content="working", stop_reason=StopReason.COMPLETED),
     )

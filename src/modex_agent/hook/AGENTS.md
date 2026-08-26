@@ -123,7 +123,7 @@ Graph-level hooks (`BeforeGraphHook` / `AfterGraphHook` / `FinallyGraphHook`) fi
 
 ### Hook Inventory
 
-#### Built-in Hooks (14 implemented + 1 reserved)
+#### Built-in Hooks (16 implemented + 1 reserved)
 
 | # | Hook | ABC(s) | HookPoint(s) | Description |
 |---|------|--------|--------------|-------------|
@@ -141,6 +141,8 @@ Graph-level hooks (`BeforeGraphHook` / `AfterGraphHook` / `FinallyGraphHook`) fi
 | 12 | `TrainingDataHook` | `OutcomeFinallyHook` | ⑦ finally_graph | Records training data at graph teardown (suspend leg skipped by template-method base) |
 | 13 | `CassetteFlushHook` | `FinallyGraphHook` | ⑦ finally_graph | Saves cassette recording at graph teardown |
 | 14 | `CheckpointHook` | `AfterIterationHook` | after_iteration | Captures per-iteration checkpoint snapshots |
+| 15 | `TaskDelegationNudgeHook` | `BeforeTurnHook` + `BeforeIterationHook` | ③ before_turn + before_iteration | Behavior nudge for delegation: when the agent owns the `task` tool with at least one available subagent and has not used it in the recent history of the turn, injects a one-shot `system-reminder` pointing at the "Delegating To Subagents" prompt section. State machine: before_turn sets `TASK_NUDGE_PENDING`; before_iteration pops it on first evaluation (no repeated injection within an attempt; approval resume never re-fires). Self-gating (tool presence + non-empty roster); never touches the continuation flags |
+| 16 | `TodoPlanningNudgeHook` | `BeforeTurnHook` + `BeforeIterationHook` | ③ before_turn + before_iteration | Behavior nudge for planning: when the agent owns `todo_write`, the pool todo store is completely empty for the session, and no todo tool was used recently, injects a one-shot `system-reminder` pointing at "## Task Tracking". Same pop-on-evaluate state machine via `TODO_NUDGE_PENDING`; `todo_store=None` (poolless harness) skips silently |
 | — | `EndNodeTurnHook` | (reserved) | ⑤ end_node_turn | ABC + dispatch entry exist for future extensibility; no concrete hook inherits it yet (by design) |
 
 ⭐ = newly added by hook-architecture-rebuild.

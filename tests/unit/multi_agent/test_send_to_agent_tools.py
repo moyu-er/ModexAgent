@@ -8,11 +8,11 @@ from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
-from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
     SendToAgentTool,
+    TaskDispatchTool,
 )
 
 
@@ -397,6 +397,30 @@ class TestSendToAgentToolDescription:
         assert "scout" not in tool.description
         assert "worker" in tool.description
 
+
+class TestTaskDispatchToolDescription:
+    """The task tool description carries the live roster and points at the
+    system-prompt delegation section for the brief spec — the cross-reference
+    half of the prompt/tool linkage contract."""
+
+    def _tool(self) -> TaskDispatchTool:
+        store = CommunicationTargetStore()
+        store.add(CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT))
+        return TaskDispatchTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+
+    def test_description_lists_roster_targets(self) -> None:
+        assert "scout" in self._tool().description
+
+    def test_description_points_at_system_prompt_delegation_section(self) -> None:
+        description = self._tool().description
+        assert '"Delegating To Subagents"' in description
+        assert "six elements" in description
+        assert "verify" in description
+
     def test_duplicate_add_raises_value_error(self) -> None:
         """Duplicate target name must surface ValueError through add_target too."""
         store = _store_with_target()
@@ -659,7 +683,7 @@ def _subagent_context(parent_name: str = "main") -> AgentContext:
         history=object(),  # type: ignore[arg-type]
         tool_manager=object(),  # type: ignore[arg-type]
         session=SessionInfo(
-            session_id=f"conv-1.worker",
+            session_id="conv-1.worker",
             agent_name="worker",
             parent_session_id=f"conv-1.{parent_name}",
         ),

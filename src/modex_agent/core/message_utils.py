@@ -59,6 +59,41 @@ def sanitize_reminder_content(content: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", sanitized).strip()
 
 
+def recent_tool_usage(
+    messages: Sequence[ChatMessage],
+    tool_names: frozenset[str],
+    window: int = 3,
+) -> bool:
+    """Check whether any of ``tool_names`` was used in the recent history.
+
+    Scans backwards over ``messages`` and stops after seeing ``window``
+    assistant messages (an incomplete traversal — history older than the
+    window is irrelevant for recency nudges). A tool call counts when a
+    TOOL-role message carrying the tool's ``name`` appears inside the
+    window; tool results always sit between the assistant message that
+    issued the call and the next one, so the backward scan covers calls
+    interleaved among the windowed assistant messages.
+
+    Args:
+        messages: Full message history (latest last).
+        tool_names: Tool names to look for.
+        window: Number of recent assistant messages defining the scan
+            boundary. Defaults to 3; callers do not override it.
+
+    Returns:
+        True when one of ``tool_names`` was used within the window.
+    """
+    seen_assistant = 0
+    for msg in reversed(messages):
+        if msg.role == MessageRole.TOOL and msg.name in tool_names:
+            return True
+        if msg.role == MessageRole.ASSISTANT:
+            seen_assistant += 1
+            if seen_assistant >= window:
+                return False
+    return False
+
+
 def normalize_agent_messages_for_llm(
     messages: Sequence[ChatMessage | dict[str, Any]],
 ) -> list[dict[str, Any]]:

@@ -230,3 +230,11 @@ class TurnCustomKey(StrEnum):
     # read by GraphWorkflowProvider to conditionally render the Final
     # Reply deliver pattern.
     GRAPH_DOWNSTREAM_HAS_END = "_graph_downstream_has_end"
+    # One-shot per-turn flags for the behavior nudge hooks. Set (unconditionally)
+    # by the hook's before_turn leg; popped by the before_iteration leg on its
+    # first — and only — evaluation of the turn attempt. Popping on evaluation
+    # (regardless of whether a reminder was injected) prevents repeated
+    # injection within the same attempt. Approval resume does not re-fire
+    # BEFORE_TURN, so a resumed turn never re-evaluates. Value: bool.
+    TASK_NUDGE_PENDING = "_task_nudge_pending"
+    TODO_NUDGE_PENDING = "_todo_nudge_pending"

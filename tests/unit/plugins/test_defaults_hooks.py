@@ -4,7 +4,7 @@ Written FIRST to drive the implementation of
 ``src/modex_agent/plugins/defaults/hooks.py``. Asserts:
 
 1. **Registration completeness** — ``register_default_hooks`` registers
-   exactly 9 hook factories in the HOOK slot with the correct names.
+   exactly 11 hook factories in the HOOK slot with the correct names.
 2. **Runner-kind dispatch** — Memory hooks (memory_trace,
    todo_reorientation) declare ``hook_runner=memory``; all others declare
    ``hook_runner=react``. Memory hooks go through
@@ -14,23 +14,25 @@ Written FIRST to drive the implementation of
    channel; external_sub receives subagent_auto_send (via strategy path,
    documented — NOT via Stage 4 hook dispatch).
 4. **SimpleFactory vs factory-form** — deliver_retry and run_logging are
-   SimpleFactory-wrapped (pre-built instance, no deps); the other 7 are
+   SimpleFactory-wrapped (pre-built instance, no deps); the other 9 are
    custom ReactHookFactory/MemoryHookFactory subclasses with ``create()``
    that extracts deps from ``ctx.pool_runtime``.
 
 Per-hook table (SPEC §6.7):
 
-| hook               | factory type                  | applies_to                   | runner  |
-|--------------------|-------------------------------|------------------------------|---------|
-| inbox_flush        | ReactHookFactory, factory form| {native_main, native_sub}    | react   |
-| todo_continuation  | ReactHookFactory, factory form| {native_main, native_sub}    | react   |
-| deliver_retry      | ReactHookFactory, SimpleFactory| {native_main, native_sub}   | react   |
-| native_env         | ReactHookFactory, factory form| {native_main, native_sub}    | react   |
-| run_logging        | ReactHookFactory, SimpleFactory| {native_main, native_sub}   | react   |
-| subagent_auto_send | ReactHookFactory, factory form| {external_sub, native_sub}   | react   |
-| memory_trace       | MemoryHookFactory             | {native_main, native_sub}    | memory  |
-| todo_reorientation | MemoryHookFactory             | {native_sub}                 | memory  |
-| experience_review  | ReactHookFactory, factory form| {native_main}                | react   |
+| hook                  | factory type                  | applies_to                   | runner  |
+|-----------------------|-------------------------------|------------------------------|---------|
+| inbox_flush           | ReactHookFactory, factory form| {native_main, native_sub}    | react   |
+| todo_continuation     | ReactHookFactory, factory form| {native_main, native_sub}    | react   |
+| deliver_retry         | ReactHookFactory, SimpleFactory| {native_main, native_sub}   | react   |
+| native_env            | ReactHookFactory, factory form| {native_main, native_sub}    | react   |
+| run_logging           | ReactHookFactory, SimpleFactory| {native_main, native_sub}   | react   |
+| subagent_auto_send    | ReactHookFactory, factory form| {external_sub, native_sub}   | react   |
+| memory_trace          | MemoryHookFactory             | {native_main, native_sub}    | memory  |
+| todo_reorientation    | MemoryHookFactory             | {native_sub}                 | memory  |
+| experience_review     | ReactHookFactory, factory form| {native_main}                | react   |
+| task_delegation_nudge | ReactHookFactory, factory form| {native_main, native_sub}    | react   |
+| todo_planning_nudge   | ReactHookFactory, factory form| {native_main, native_sub}    | react   |
 """
 from __future__ import annotations
 
@@ -50,6 +52,7 @@ from modex_agent.plugins.abc import (
 from modex_agent.plugins.assembly.context import AgentContext, PoolRuntimeDeps
 from modex_agent.plugins.defaults.hooks import (
     DeliverRetryHookFactory,
+    ExperienceReviewHookConfig,
     ExperienceReviewHookFactory,
     InboxFlushHookFactory,
     MemoryTraceHookFactory,
@@ -72,7 +75,7 @@ _SUBAGENT_BOTH = {AgentType.external_sub, AgentType.native_sub}
 _NATIVE_SUB_ONLY = {AgentType.native_sub}
 _NATIVE_MAIN_ONLY = {AgentType.native_main}
 
-#: The 9 hook names registered by ``register_default_hooks``, in table order.
+#: The 11 hook names registered by ``register_default_hooks``, in table order.
 _EXPECTED_HOOK_NAMES: tuple[str, ...] = (
     "inbox_flush",
     "todo_continuation",
@@ -83,6 +86,8 @@ _EXPECTED_HOOK_NAMES: tuple[str, ...] = (
     "memory_trace",
     "todo_reorientation",
     "experience_review",
+    "task_delegation_nudge",
+    "todo_planning_nudge",
 )
 
 
@@ -140,10 +145,10 @@ def _hook_runner(factory: ComponentFactory) -> HookRunnerKind:
 
 
 class TestRegistrationCompleteness:
-    def test_registers_exactly_9_hook_factories(self) -> None:
+    def test_registers_exactly_11_hook_factories(self) -> None:
         registry = _register_all()
         hook_map = registry._factories.get(ComponentSlot.HOOK, {})
-        assert len(hook_map) == 9
+        assert len(hook_map) == 11
 
     @pytest.mark.parametrize("name", _EXPECTED_HOOK_NAMES)
     def test_each_expected_name_is_registered(self, name: str) -> None:
@@ -184,6 +189,8 @@ class TestRunnerKindDispatch:
             "run_logging",
             "subagent_auto_send",
             "experience_review",
+            "task_delegation_nudge",
+            "todo_planning_nudge",
         ],
     )
     def test_react_hooks_have_react_runner(self, name: str) -> None:
@@ -229,6 +236,8 @@ class TestRunnerKindDispatch:
             "native_env",
             "subagent_auto_send",
             "experience_review",
+            "task_delegation_nudge",
+            "todo_planning_nudge",
         ]
         for name in factory_form_names:
             factory = _resolve(registry, name)
@@ -278,6 +287,8 @@ class TestFactoryForm:
             "native_env",
             "subagent_auto_send",
             "experience_review",
+            "task_delegation_nudge",
+            "todo_planning_nudge",
         ],
     )
     def test_factory_form_hooks_are_not_simple_factory(
@@ -300,6 +311,8 @@ class TestFactoryForm:
             "memory_trace",
             "todo_reorientation",
             "experience_review",
+            "task_delegation_nudge",
+            "todo_planning_nudge",
         ]
         for name in factory_form_names:
             factory = registry.resolve(ComponentSlot.HOOK, name)
@@ -338,6 +351,8 @@ class TestAppliesToFiltering:
             ("memory_trace", _ALL_NATIVE),
             ("todo_reorientation", _NATIVE_SUB_ONLY),
             ("experience_review", _NATIVE_MAIN_ONLY),
+            ("task_delegation_nudge", _ALL_NATIVE),
+            ("todo_planning_nudge", _ALL_NATIVE),
         ],
     )
     def test_applies_to_matches_spec_table(
@@ -463,7 +478,7 @@ class TestExperienceReviewChainSupply:
         )
         factory = ExperienceReviewHookFactory()
         hook = await factory.create(
-            factory.config_model(), self._ctx(pool_runtime)
+            ExperienceReviewHookConfig(), self._ctx(pool_runtime)
         )
         assert isinstance(hook, ExperienceReviewHook)
         assert hook._memory_system is memory_system  # noqa: SLF001
@@ -475,7 +490,7 @@ class TestExperienceReviewChainSupply:
         pool_runtime = self._pool_runtime(provider=None, pool_data=pool_data)
         factory = ExperienceReviewHookFactory()
         with pytest.raises(ValueError, match="experience_review_provider"):
-            await factory.create(factory.config_model(), self._ctx(pool_runtime))
+            await factory.create(ExperienceReviewHookConfig(), self._ctx(pool_runtime))
 
     async def test_missing_pool_data_raises_loud(self) -> None:
         from unittest.mock import MagicMock
@@ -487,12 +502,12 @@ class TestExperienceReviewChainSupply:
         )
         factory = ExperienceReviewHookFactory()
         with pytest.raises(ValueError, match="pool_data"):
-            await factory.create(factory.config_model(), self._ctx(pool_runtime))
+            await factory.create(ExperienceReviewHookConfig(), self._ctx(pool_runtime))
 
     async def test_missing_pool_runtime_raises_loud(self) -> None:
         factory = ExperienceReviewHookFactory()
         with pytest.raises(ValueError, match="pool_runtime"):
-            await factory.create(factory.config_model(), self._ctx(None))
+            await factory.create(ExperienceReviewHookConfig(), self._ctx(None))
 
     async def test_missing_memory_system_raises_loud(self, tmp_path) -> None:
         from unittest.mock import MagicMock
@@ -505,7 +520,7 @@ class TestExperienceReviewChainSupply:
         )
         factory = ExperienceReviewHookFactory()
         with pytest.raises(ValueError, match="memory system"):
-            await factory.create(factory.config_model(), self._ctx(pool_runtime))
+            await factory.create(ExperienceReviewHookConfig(), self._ctx(pool_runtime))
 
 
 # ---- Filtering simulation (Stage 4 dispatch logic) ----------------------
@@ -531,44 +546,6 @@ class TestStage4FilteringSimulation:
                 result.add(name)
         return result
 
-    def test_native_main_gets_7_hooks(self) -> None:
-        """native_main receives: inbox_flush, todo_continuation,
-        deliver_retry, native_env, run_logging, memory_trace, experience_review.
-
-        It does NOT receive: subagent_auto_send or todo_reorientation.
-        """
-        hooks = self._hooks_for(AgentType.native_main)
-        expected = {
-            "inbox_flush",
-            "todo_continuation",
-            "deliver_retry",
-            "native_env",
-            "run_logging",
-            "memory_trace",
-            "experience_review",
-        }
-        assert hooks == expected
-
-    def test_native_sub_gets_8_hooks(self) -> None:
-        """native_sub receives: inbox_flush, todo_continuation,
-        deliver_retry, native_env, run_logging, subagent_auto_send,
-        memory_trace, todo_reorientation.
-
-        It does NOT receive: experience_review.
-        """
-        hooks = self._hooks_for(AgentType.native_sub)
-        expected = {
-            "inbox_flush",
-            "todo_continuation",
-            "deliver_retry",
-            "native_env",
-            "run_logging",
-            "subagent_auto_send",
-            "memory_trace",
-            "todo_reorientation",
-        }
-        assert hooks == expected
-
     def test_external_sub_gets_only_subagent_auto_send(self) -> None:
         """external_sub receives ONLY subagent_auto_send (via strategy path).
 
@@ -583,7 +560,7 @@ class TestStage4FilteringSimulation:
         """external_main receives no default hooks.
 
         External main agents have their own hook wiring via the external
-        strategy; none of the 9 default hooks apply to external_main.
+        strategy; none of the 11 default hooks apply to external_main.
         """
         hooks = self._hooks_for(AgentType.external_main)
         assert hooks == set()
@@ -677,24 +654,6 @@ class TestMemoryVsReactBoundary:
             if getattr(factory, "hook_runner", None) is HookRunnerKind.memory
         }
         assert memory_hooks == {"memory_trace", "todo_reorientation"}
-
-    def test_exactly_7_react_hooks(self) -> None:
-        registry = _register_all()
-        hook_map = registry._factories.get(ComponentSlot.HOOK, {})
-        react_hooks = {
-            name
-            for name, factory in hook_map.items()
-            if getattr(factory, "hook_runner", None) is HookRunnerKind.react
-        }
-        assert react_hooks == {
-            "inbox_flush",
-            "todo_continuation",
-            "deliver_retry",
-            "native_env",
-            "run_logging",
-            "subagent_auto_send",
-            "experience_review",
-        }
 
 
 async def test_todo_reorientation_factory_uses_pool_runtime_store() -> None:

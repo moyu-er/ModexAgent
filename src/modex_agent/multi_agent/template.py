@@ -425,6 +425,7 @@ class AgentTemplate:
                 instance.pipeline.hook_runner,
                 deps.tree,
                 roster_hook_names=frozenset(assembly_spec.hooks),
+                todo_store=deps.todo_store,
             )
 
         # Graph turn-config trio — converge with the main-agent path

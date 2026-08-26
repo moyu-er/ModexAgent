@@ -205,12 +205,69 @@ class _SubagentConsultationSubProvider(_CommSubProvider):
         )
 
 
+_TASK_DELEGATION_PROMPT = """\
+## Delegating To Subagents
+
+You own the `task` tool. Its description lists the available subagents and
+what each is for — check it before starting non-trivial work, and pick the
+subagent whose strengths match the job.
+
+When to delegate:
+- Bulk or parallelizable investigation ("find all X", "map how Y works") — a
+  fresh context does it cheaper and without polluting yours.
+- An independent implementation piece that would otherwise crowd your context.
+- Verification of a deliverable before you report it — fresh eyes, no
+  anchoring on your own assumptions.
+
+When NOT to delegate:
+- Needle queries: a specific file, symbol, or 2-3 known files — read/grep
+  directly, it is faster.
+- Tightly coupled edits that depend on your accumulated context — do them
+  yourself.
+- Trivial one-step actions.
+
+Writing the task brief. The subagent sees ONLY the `content` you pass — never
+your conversation, reasoning, or tool results. Output quality is directly
+proportional to brief quality. Structure every brief with all six elements:
+
+- TASK: the concrete objective — what exactly to do, not a topic.
+- CONTEXT: relevant file paths, symbols, patterns, and constraints it must
+  know to work autonomously.
+- SCOPE: research-only (search/read/analyze) or implementation (write/edit).
+- OUTPUT: exactly what to return in its final reply.
+- VERIFICATION: how to verify success (e.g., the test command to run).
+- BOUNDARIES: what NOT to do, out-of-scope items, files it must not touch.
+
+A one-line brief like "fix the bug" is insufficient. If your brief is only a
+few lines, it is probably too thin.
+
+Discipline:
+- Dispatch independent tasks in parallel — multiple `task` calls in a single
+  message — but no more than 3 is suggested, and give parallel subagents
+  disjoint files and resources so they cannot conflict.
+- After dispatching, end your turn and wait for the result notification. You
+  may continue only with non-overlapping work.
+- Do not duplicate delegated work yourself — integrate the result instead.
+- Verify implementation results before relying on them — run the brief's
+  VERIFICATION step or spot-check the change. A success claim is a report,
+  not proof.
+- Synthesize research results before answering — each subagent saw only its
+  slice. Merge findings into one whole picture, reconcile conflicts, and
+  never forward a single narrow result as the complete answer.
+- To continue a subagent session (follow-up, corrections), pass its
+  `invocation_id` instead of re-dispatching from scratch.
+"""
+
+
 class _TaskDelegationSubProvider(_CommSubProvider):
     """Delegation guidance — fires when the agent owns the ``task`` tool.
 
     Tool-presence gated like ``TodoAwareSystemPromptProvider``: any agent
     that can dispatch subagents gets the delegation contract structurally,
-    instead of each persona MD hardcoding it.
+    instead of each persona MD hardcoding it. The prompt carries the full
+    when/how policy and the six-element brief spec; the tool's dynamic
+    description carries the live subagent roster — the two reference each
+    other by section name.
     """
 
     def __init__(self, tool_manager: ToolManager | None) -> None:
@@ -223,15 +280,7 @@ class _TaskDelegationSubProvider(_CommSubProvider):
         return "delegate"
 
     def content(self) -> str:
-        return (
-            "## Delegating To Subagents\n\n"
-            "You own the `task` tool. Delegate a subtask when it benefits from a "
-            "fresh, isolated context — bulk investigation, an independent "
-            "implementation piece, or verifying a deliverable before you report it. "
-            "The subagent cannot see your conversation: write a self-contained brief "
-            "(goal, relevant paths, constraints, expected output). Do not duplicate "
-            "delegated work yourself — wait for the result and integrate it."
-        )
+        return _TASK_DELEGATION_PROMPT
 
 
 class AgentCommunicationSystemPromptProvider(SystemPromptProvider):

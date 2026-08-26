@@ -44,7 +44,7 @@ from modex_agent.tools.presets import (
 
 # ---- Expected name sets --------------------------------------------------
 
-#: HOOK slot — 9 default hooks (SPEC §6.7, task 12).
+#: HOOK slot — 11 default hooks (SPEC §6.7, task 12).
 _EXPECTED_HOOK_NAMES: frozenset[str] = frozenset(
     {
         "inbox_flush",
@@ -56,6 +56,8 @@ _EXPECTED_HOOK_NAMES: frozenset[str] = frozenset(
         "memory_trace",
         "todo_reorientation",
         "experience_review",
+        "task_delegation_nudge",
+        "todo_planning_nudge",
     }
 )
 

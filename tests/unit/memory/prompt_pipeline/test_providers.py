@@ -506,6 +506,43 @@ async def test_comm_provider_subagent_only_targets_emit_only_delegation():
 
 
 @pytest.mark.asyncio
+async def test_comm_provider_delegation_section_carries_six_element_spec():
+    """The delegation section is the single authority for the brief spec:
+    all six elements plus the tool-description cross-reference (the other
+    half of the linkage lives in the task tool's description tests)."""
+    from modex_agent.core.agent import AgentCommKind
+    from modex_agent.memory.prompt_pipeline.providers import (
+        AgentCommunicationSystemPromptProvider,
+    )
+    from modex_agent.multi_agent.tools import CommunicationTarget
+
+    provider = AgentCommunicationSystemPromptProvider(
+        _make_tool_manager(
+            [CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT)]
+        ),
+        AgentCommKind.NORMAL,
+    )
+    result = await provider.get_or_refresh()
+    assert "## Delegating To Subagents" in result
+    for element in (
+        "TASK:",
+        "CONTEXT:",
+        "SCOPE:",
+        "OUTPUT:",
+        "VERIFICATION:",
+        "BOUNDARIES:",
+    ):
+        assert element in result
+    assert "Its description lists the available subagents" in result
+    # Result-handling discipline: parallel soft cap + sibling isolation,
+    # verify-by-task-type, research synthesis.
+    assert "no more than 3 is suggested" in result
+    assert "disjoint files and resources" in result
+    assert "A success claim is a report" in result
+    assert "Synthesize research results" in result
+
+
+@pytest.mark.asyncio
 async def test_comm_provider_subagent_kind_emits_consultation_contract():
     from modex_agent.core.agent import AgentCommKind
     from modex_agent.memory.prompt_pipeline.providers import (

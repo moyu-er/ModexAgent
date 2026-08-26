@@ -3,17 +3,16 @@ import json
 
 import pytest
 
+from modex_agent.control.exceptions import LoopDetectedError
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.hook.builtin.loop_detection import (
     LoopDetectionHook,
     _collect_recent_assistants,
     _similarity,
-    _tool_calls_fingerprint,
     _tool_calls_count,
-    _AssistantView,
+    _tool_calls_fingerprint,
 )
-from modex_agent.control.exceptions import LoopDetectedError
 
 
 class TestSimilarity:
@@ -163,9 +162,9 @@ class TestCollectRecentAssistants:
 def _ctx_with_history(messages):
     """Build an AgentContext whose history returns the given messages."""
     from modex_agent.core.agent import AgentContext
-    from modex_agent.memory.history import ListMessageHistory
-    from modex_agent.core.tool_manager import InMemoryToolManager
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.memory.history import ListMessageHistory
 
     hist = ListMessageHistory(messages)
     return AgentContext(
@@ -258,7 +257,8 @@ class TestLoopDetectionHookTool:
     async def test_same_tool_but_different_content_no_raise(self):
         # Same tool/args repeated, but each step says something different —
         # the AND conjunction (content similarity) is unsatisfied.
-        tc = lambda i: [ToolCall(tool_name="read", arguments={"path": "/a"}, call_id="c")]
+        def tc(_i: int) -> list[ToolCall]:
+            return [ToolCall(tool_name="read", arguments={"path": "/a"}, call_id="c")]
         msgs = [
             ChatMessage(role="assistant", content="looking at part one", tool_calls=tc(1)),
             ChatMessage(role="assistant", content="now checking section two", tool_calls=tc(2)),

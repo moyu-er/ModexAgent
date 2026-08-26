@@ -19,7 +19,9 @@ from modex_agent.hook.builtin.logging import RunLoggingHook
 from modex_agent.hook.builtin.loop_detection import LoopDetectionHook
 from modex_agent.hook.builtin.runtime_context import RuntimeContextHook
 from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
+from modex_agent.hook.builtin.task_delegation_nudge import TaskDelegationNudgeHook
 from modex_agent.hook.builtin.todo_continuation import TodoContinuationHook
+from modex_agent.hook.builtin.todo_planning_nudge import TodoPlanningNudgeHook
 
 __all__ = [
     "CurrentTimeInjectionHook",
@@ -32,5 +34,7 @@ __all__ = [
     "RunLoggingHook",
     "RuntimeContextHook",
     "SubagentAutoSendHook",
+    "TaskDelegationNudgeHook",
     "TodoContinuationHook",
+    "TodoPlanningNudgeHook",
 ]

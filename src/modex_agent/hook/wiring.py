@@ -24,6 +24,7 @@ from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
 from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
 from modex_agent.hook.builtin.length_guard import LengthGuardHook
 from modex_agent.hook.builtin.todo_continuation import TodoContinuationHook
+from modex_agent.runtime.store import TodoStore
 
 if TYPE_CHECKING:
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
@@ -36,6 +37,7 @@ def register_tree_aware_hooks(
     tree: SessionTreeManager,
     *,
     roster_hook_names: frozenset[str] = frozenset(),
+    todo_store: TodoStore | None = None,
 ) -> None:
     """Register TodoContinuationHook + DeliverRetryHook + LengthGuardHook.
 
@@ -45,6 +47,10 @@ def register_tree_aware_hooks(
     ``LengthGuardHook`` get the default priority (0); the deliver hook is a
     no-op for agents without a ``deliver`` tool (subagents in star topology),
     and the length guard needs no tree — it acts on per-turn LLM state alone.
+
+    ``todo_store`` is the pool-level store injected into
+    ``TodoContinuationHook`` (same seam as the todo tool factory); ``None``
+    yields a silently skipping hook.
 
     No-op when ``hook_runner`` is ``None`` (mirrors the ``_add_hook`` guard
     pattern — the runner is always present for react agents but defensive
@@ -58,7 +64,7 @@ def register_tree_aware_hooks(
     """
     if hook_runner is None:
         return
-    todo_hook = TodoContinuationHook(tree=tree)
+    todo_hook = TodoContinuationHook(tree=tree, todo_store=todo_store)
     if todo_hook.name not in roster_hook_names:
         hook_runner.add(
             HookSpec(

@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from modex_agent.control.channel import InMemoryControlChannel
-from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
 from modex_agent.control.exceptions import AgentCancelledError
+from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.hook.builtin.control_drain import (
     ControlDrainInterceptor,
@@ -143,7 +143,7 @@ class TestControlDrainInterceptor:
         interceptor = ControlDrainInterceptor(channel=channel)
         ctx = _FakeContext(session_id="sess-clean:main", turn_uuid="turn-1")
 
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import AsyncMock, MagicMock
         mock_call = MagicMock()
         mock_call.tool_call = MagicMock()
         mock_call.tool_call.call_id = "call-1"
@@ -308,8 +308,11 @@ class TestAllConsumersIndependentlyStop:
         await channel.send(cmd)
         interceptor = ControlDrainInterceptor(channel=channel)
         ctx = _FakeContext(session_id="s:main", turn_uuid="t1")
-        from unittest.mock import MagicMock, AsyncMock
-        call = MagicMock(); call.tool_call = MagicMock(); call.tool_call.call_id = "c1"
+        from unittest.mock import AsyncMock, MagicMock
+
+        call = MagicMock()
+        call.tool_call = MagicMock()
+        call.tool_call.call_id = "c1"
         next_call = AsyncMock()
         with pytest.raises(AgentCancelledError):
             await interceptor.around_tool_call(ctx, call, next_call)

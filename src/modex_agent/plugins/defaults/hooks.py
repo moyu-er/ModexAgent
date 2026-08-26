@@ -1,4 +1,4 @@
-r"""ComponentFactory wrappers for 9 standard hooks (SPEC §6.7, plan task 12).
+r"""ComponentFactory wrappers for 11 standard hooks (SPEC §6.7, plan task 12).
 
 Each hook gets a factory that the future ``HookDispatchStage`` (Stage 4)
 resolves from the ``ComponentRegistry`` and dispatches based on two
@@ -10,23 +10,28 @@ resolves from the ``ComponentRegistry`` and dispatches based on two
 
 Two hooks (``deliver_retry``, ``run_logging``) have no construction deps
 and are wrapped as ``SimpleFactory`` instances (pre-built hook). The
-    other seven are factory-form: ``create(config, ctx)`` extracts runtime
-deps from ``ctx.pool_runtime`` and combines them with serializable
-settings from ``config``.
+    other nine are factory-form: ``create(config, ctx)`` extracts runtime
+    deps from ``ctx.pool_runtime`` and combines them with serializable
+    settings from ``config``.
 
 Per-hook table:
 
-| hook               | factory type                   | applies_to                 | runner  |
-|--------------------|--------------------------------|----------------------------|---------|
-| inbox_flush        | ReactHookFactory, factory form | {native_main, native_sub}  | react   |
-| todo_continuation  | ReactHookFactory, factory form | {native_main, native_sub}  | react   |
-| deliver_retry      | SimpleFactory (pre-built)      | {native_main, native_sub}  | react   |
-| native_env         | ReactHookFactory, factory form | {native_main, native_sub}  | react   |
-| run_logging        | SimpleFactory (pre-built)      | {native_main, native_sub}  | react   |
-| subagent_auto_send | ReactHookFactory, factory form | {external_sub, native_sub} | react   |
-| memory_trace       | MemoryHookFactory              | {native_main, native_sub}  | memory  |
-| todo_reorientation | MemoryHookFactory              | {native_sub}               | memory  |
-| experience_review  | ReactHookFactory, factory form | {native_main}              | react   |
+| hook                   | factory type                   | applies_to                 | runner  |
+|------------------------|--------------------------------|----------------------------|---------|
+| inbox_flush            | ReactHookFactory, factory form | {native_main, native_sub}  | react   |
+| todo_continuation      | ReactHookFactory, factory form | {native_main, native_sub}  | react   |
+| deliver_retry          | SimpleFactory (pre-built)      | {native_main, native_sub}  | react   |
+| native_env             | ReactHookFactory, factory form | {native_main, native_sub}  | react   |
+| run_logging            | SimpleFactory (pre-built)      | {native_main, native_sub}  | react   |
+| subagent_auto_send     | ReactHookFactory, factory form | {external_sub, native_sub} | react   |
+| memory_trace           | MemoryHookFactory              | {native_main, native_sub}  | memory  |
+| todo_reorientation     | MemoryHookFactory              | {native_sub}               | memory  |
+| experience_review      | ReactHookFactory, factory form | {native_main}              | react   |
+| task_delegation_nudge  | ReactHookFactory, factory form | {native_main, native_sub}  | react   |
+| todo_planning_nudge    | ReactHookFactory, factory form | {native_main, native_sub}  | react   |
+
+The two nudge hooks are self-gating (tool presence checked at runtime), so
+roster references on agents without the relevant tools are silent no-ops.
 
 ``subagent_auto_send`` applies to ``external_sub`` via the **strategy
 path** (``ExternalExecutionStrategy.assemble``), NOT via Stage 4 hook
@@ -50,7 +55,9 @@ from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
 from modex_agent.hook.builtin.inbox_flush import InboxFlushHook
 from modex_agent.hook.builtin.logging import RunLoggingHook
 from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
+from modex_agent.hook.builtin.task_delegation_nudge import TaskDelegationNudgeHook
 from modex_agent.hook.builtin.todo_continuation import TodoContinuationHook
+from modex_agent.hook.builtin.todo_planning_nudge import TodoPlanningNudgeHook
 from modex_agent.memory.cleanup_hooks import TodoReorientationHook
 from modex_agent.memory.snapshot import (
     DEFAULT_SNAPSHOT_MAX_CONTENT_LEN,
@@ -83,7 +90,9 @@ __all__ = [
     "RunLoggingHookFactory",
     "SubagentAutoSendHookConfig",
     "SubagentAutoSendHookFactory",
+    "TaskDelegationNudgeHookFactory",
     "TodoContinuationHookFactory",
+    "TodoPlanningNudgeHookFactory",
     "TodoReorientationHookConfig",
     "TodoReorientationHookFactory",
     "register_default_hooks",
@@ -180,8 +189,10 @@ class TodoReorientationHookConfig(BaseModel):
     """Config for ``TodoReorientationHookFactory``.
 
     ``has_archive`` controls the archive-summaries paragraph in the
-    reminder wording. ``todo_store`` is not yet on ``PoolRuntimeDeps``
-    — the hook accepts ``None`` (skips the todo section gracefully).
+    reminder wording. The todo store itself is supplied infrastructure —
+    ``create()`` reads ``pool_runtime.todo_store`` (``None`` on harnesses
+    without pool-level todo infra; the hook skips the todo section
+    gracefully).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -247,7 +258,8 @@ class TodoContinuationHookFactory(ReactHookFactory):
     """Factory for ``TodoContinuationHook`` — todo-driven continuation.
 
     ``create()`` extracts ``tree`` from
-    ``ctx.pool_runtime.session_tree_manager``.
+    ``ctx.pool_runtime.session_tree_manager`` and the pool-level
+    ``todo_store`` from ``ctx.pool_runtime`` (the supplied-infra seam).
     """
 
     config_model: ClassVar[type[BaseModel]] = TodoContinuationHookConfig
@@ -259,7 +271,48 @@ class TodoContinuationHookFactory(ReactHookFactory):
         pool_runtime = ctx.pool_runtime
         if pool_runtime is None:
             raise ValueError("pool_runtime must be filled by PoolAssembleStage")
-        return TodoContinuationHook(tree=pool_runtime.session_tree_manager)
+        return TodoContinuationHook(
+            tree=pool_runtime.session_tree_manager,
+            todo_store=pool_runtime.todo_store,
+        )
+
+
+class TaskDelegationNudgeHookFactory(ReactHookFactory):
+    """Factory for ``TaskDelegationNudgeHook`` — idle-subagent dispatch nudge.
+
+    Zero construction deps: the hook queries the tool manager and the
+    dispatch tool's live roster at runtime (targets change as the store
+    mutates). Self-gating — registering it on an agent without the ``task``
+    tool is a silent no-op.
+    """
+
+    config_model: ClassVar[type[BaseModel]] = _EmptyHookConfig
+    applies_to: ClassVar[set[AgentType] | None] = set(_ALL_NATIVE)
+
+    async def create(  # type: ignore[override]
+        self, config: BaseModel, ctx: PoolContext  # noqa: ARG002
+    ) -> TaskDelegationNudgeHook:
+        return TaskDelegationNudgeHook()
+
+
+class TodoPlanningNudgeHookFactory(ReactHookFactory):
+    """Factory for ``TodoPlanningNudgeHook`` — empty-todo planning nudge.
+
+    ``create()`` reads the pool-level ``todo_store`` from
+    ``ctx.pool_runtime`` (the supplied-infra seam). ``None`` is acceptable —
+    harnesses without a pool todo store get a silently skipping hook.
+    Self-gating via ``todo_write`` tool presence.
+    """
+
+    config_model: ClassVar[type[BaseModel]] = _EmptyHookConfig
+    applies_to: ClassVar[set[AgentType] | None] = set(_ALL_NATIVE)
+
+    async def create(  # type: ignore[override]
+        self, config: BaseModel, ctx: PoolContext  # noqa: ARG002
+    ) -> TodoPlanningNudgeHook:
+        pool_runtime = ctx.pool_runtime
+        todo_store = pool_runtime.todo_store if pool_runtime is not None else None
+        return TodoPlanningNudgeHook(todo_store=todo_store)
 
 
 class NativeEnvInjectionHookFactory(ReactHookFactory):
@@ -476,7 +529,7 @@ RunLoggingHookFactory: SimpleFactory = _make_simple_hook_factory(
 
 
 def register_default_hooks(ctx: PluginRegistrationContext) -> None:
-    """Register all 9 default hook factories into *ctx*.
+    """Register all 11 default hook factories into *ctx*.
 
     Called by ``DefaultPlugin.register()`` (task 14) or directly by the
     test harness. Each factory is registered under the HOOK slot with a
@@ -493,3 +546,5 @@ def register_default_hooks(ctx: PluginRegistrationContext) -> None:
     ctx.register_hook("memory_trace", MemoryTraceHookFactory())
     ctx.register_hook("todo_reorientation", TodoReorientationHookFactory())
     ctx.register_hook("experience_review", ExperienceReviewHookFactory())
+    ctx.register_hook("task_delegation_nudge", TaskDelegationNudgeHookFactory())
+    ctx.register_hook("todo_planning_nudge", TodoPlanningNudgeHookFactory())
