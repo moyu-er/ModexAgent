@@ -531,7 +531,7 @@ config/pools/
 | `none` | — | — | — | — | — | — | — | — |
 | `web` | ✅† | — | — | — | — | — | — | — |
 
-`*` 终端工具需 `use_terminal: true`。subagent 的 bash 一律走 `SubprocessTool`（无状态）。
+`*` 终端工具需 `use_terminal: true`。无 terminal manager 时，bash 回落到 `PersistentBashTool`（每会话一个有状态 shell + `bash_input`；仅 POSIX）。
 `†` `web` preset 仅通过 `web_search` / `web_reader` 读取。
 
 ### 手动（YAML）

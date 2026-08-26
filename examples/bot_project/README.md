@@ -535,7 +535,7 @@ A subagent's tool set is summarized by a **preset** (what it's allowed to do):
 | `none` | — | — | — | — | — | — | — | — |
 | `web` | ✅† | — | — | — | — | — | — | — |
 
-`*` Terminal tools require `use_terminal: true`. Without a terminal manager, bash falls back to `PersistentBashTool` (one stateful shell per pool + `bash_input`; POSIX-only).
+`*` Terminal tools require `use_terminal: true`. Without a terminal manager, bash falls back to `PersistentBashTool` (one stateful shell per conversation + `bash_input`; POSIX-only).
 `†` The `web` preset reads via `web_search` / `web_reader` only.
 
 ### By hand (YAML)
