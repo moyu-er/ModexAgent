@@ -561,3 +561,13 @@ prompt 单源收敛发生在 bot 层：`resolve_declared_root_prompt` 从编译�
 架构守卫采用两区精度：装配区禁止直接构造 `ReActAgent`/`AgentContext`，runner/data-injection 区保留计划明确要求的 per-turn `AgentContext` 数据注入；该放行不提供第二条装配路。
 
 **锚点审计**：`src/modex_agent/scope/overlay.py` 与 `src/modex_agent/plugins/assembly/single_agent.py` 均存在；对应 `tests/unit/scope/test_overlay.py` 与 `tests/unit/plugins/test_single_agent.py` 已绿，既有校验/装配回归亦绿。
+
+### Errata-10: EXPERIENCE 补充剂名-合并语义与 overlay tools 追加语义（2026-08-27，glue-tool-roster-convergence 收官同步）
+
+补充剂的贡献集语义按类型分岔：TODO/ACI 保持合并后追加（append-after-merge，实例由 preset 投影预建）；EXPERIENCE 是**名-合并**（name-merge）型——编译器把投影名（`get_supplement_tool_names([ToolSupplement.EXPERIENCE])` → `experience`）注入 `_merge_tools` 的基列表，`+/-` 条目与无前缀整体替换像控制 preset 名一样控制它（整体替换会连带剥除绑定），工具实体由 FW 工厂在装配期从 pool 数据构建（`plugins/defaults/tools.py` `ExperienceToolFactory`，`PoolContext` 能力面，缺供即响亮失败）。补充剂同时贡献 hook：最终工具名册含 experience 且原始声明 hooks 未含 `-experience_review` 时，编译器将 `EXPERIENCE_REVIEW_HOOK_NAME`（`tools/presets.py` 单一权威）后注入 hooks 合并结果（保序去重；minus-wins）。**绑定的后置条件 = 最终工具列表**——`tools: [+experience]` 与补充剂声明等价，overlay 负号条目可在编译期一并剥除工具与注入的 hook。工具溯源按来源分类：补充剂名-合并进入名册的条目记 SUPPLEMENT origin（`ToolEntryProvenance`）；hook 溯源刻意不做（`AgentProvenance.fields` 无 hooks 面，属账单 schema 变更，超出本轮）。
+
+`apply_scope_overlay` 的 agent-tools 应用收敛为**统一追加语义**：声明列表与 overlay 条目直接拼接（声明为 None 时 overlay 条目原样通过），`_merge_tools` 的单次合并拥有全部基名（preset、派生条目、补充剂名）——顺带修复了负号条目对带前缀声明条目静默失效的潜在缺陷（`-x` 匹配不上基列表里的 `+x`，静默丢弃）。无前缀 overlay 条目追加到带前缀声明列表时按混合列表规则作基线注解忽略；无前缀-对-无前缀为字面拼接、允许重复（仓库内 overlay 构造全部为负号条目，无消费者命中）。带前缀 `+/-` overlay 条目作用于无前缀整体（wholesale）声明名册时被显式拒绝（`ValueError`，含空列表 `[]` 的 wholesale"无工具"形态）——拼接会产生混合列表、把整体语义静默翻转为增量并重新引入全部 preset 工具（F2 终审修订：静默能力扩张是最恶劣的失败类，响亮拒绝优于任何静默处置）。
+
+业务侧收口：`send_file_to_user` 成为 bot 插件的 TOOL 槽工厂（`plugins/bot_hooks.py` `SendFileToUserToolFactory`，`SEND_FILE_TO_USER_TOOL_NAME` 常量），按 agent 声明 `tools: [+send_file_to_user]` 启用；`builders.py` 的两条硬编码注册段与 experience 的位置默认面（`PositionDefaults.experience_enabled` 字段 + `pool_config/experience.py` 的 main-agent preset 函数）删除，`ExperienceConfig.enabled` 深绑定到编译名册（`bot/workspace/wiring/stack.py` `declared_assembly_deps`：`EXPERIENCE_TOOL_NAME in root.spec.tools`）。
+
+**锚点审计**：`ToolSupplement.EXPERIENCE` + `EXPERIENCE_REVIEW_HOOK_NAME`（`tools/presets.py`）、FW `ExperienceToolFactory`（`plugins/defaults/tools.py`）、bot `SendFileToUserToolFactory`（`plugins/bot_hooks.py`）、`scope/overlay.py` 追加分支、`scope/compiler.py` 名-合并/后注入段均存在；`tests/unit/scope/test_experience_supplement_binding.py`（8 语义行 + SUPPLEMENT 溯源断言）与 overlay 追加语义回归行已绿；`examples/bot_project/bot/service/builders.py` `_build_tools` 仅剩 KB opt-in 与空基座管理器（Stage 4 在其上注册名册）。

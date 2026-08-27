@@ -232,6 +232,17 @@ async def _new_road_manifest(pool_name: str, tmp_path: Path):
 _COMM_SOURCE_OLD = "glue"
 _COMM_SOURCE_NEW = "roster:bundled"
 
+# Task 7 (2a/2): the glue tools are roster-declared on the shipped roots,
+# so the manifest provenance flips from hardcoded glue ("glue") to
+# roster-derived — send_file_to_user resolves through the bot project
+# plugin, experience through the FW bundled factory. Dual registration
+# keeps every other observable (class, params, position) byte-identical;
+# only the provenance label follows the declaration.
+_GLUE_ROSTER_SOURCES = {
+    "send_file_to_user": "roster:project",
+    "experience": "roster:bundled",
+}
+
 
 @pytest.mark.parametrize("pool_name", LEGACY_POOLS)
 async def test_split_brain_manifest_field_by_field(pool_name: str, tmp_path: Path) -> None:
@@ -309,6 +320,9 @@ async def test_split_brain_manifest_field_by_field(pool_name: str, tmp_path: Pat
         if name in ("task", "send_to_peer"):
             assert golden_tools[name]["source"] == _COMM_SOURCE_OLD
             assert new_tools[name].source == _COMM_SOURCE_NEW
+        elif name in _GLUE_ROSTER_SOURCES:
+            assert golden_tools[name]["source"] == "glue"
+            assert new_tools[name].source == _GLUE_ROSTER_SOURCES[name]
         else:
             assert new_tools[name].source == golden_tools[name]["source"], (
                 f"{pool_name}.{name}.source diverged"

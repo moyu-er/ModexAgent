@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-20 -->
+<!-- Updated: 2026-08-27 -->
 
 # plugins
 
@@ -30,7 +30,7 @@ construction time. Replaces the legacy ``PluginContext``/
 | ``AssemblySpec`` / ``MemoryOverrides`` | ``assembly/spec.py`` | Assembly input spec (per-agent and pool-level component-name references) + per-agent memory config override |
 | ``AssemblyContext`` / ``PoolRuntimeDeps`` / ``AgentContext`` | ``assembly/context.py`` | Layered assembly context + pool runtime deps; ``AgentContext`` (the ``WorkspaceContext``/``PoolContext``/``AssemblyContext`` diamond, ticket 04) carries per-invocation data (parent session, invocation id, agent identity, per-agent spec) to factories and to ``ExecutionStrategy.assemble_sub`` (ticket 10) |
 | ``AssembledAgent`` / ``AssemblyBuilder`` | ``assembly/builder.py`` | Output container + mutable accumulator with cleanup-on-failure |
-| ``DefaultPlugin`` | ``defaults/__init__.py`` | Bundled FW-default plugin — 7 ``register_default_*`` groups populating 6 of the 10 slots (tools incl. the derived communication entries ``task``/``send_to_agent``/``send_to_peer``, hooks, LLM provider, prompts, interceptors, commands). Leaves ``EXECUTION_STRATEGY``/``INPUT_STAGE`` to bot plugins (Errata-3) and ``MEMORY_SYSTEM``/``DATA_NAMESPACE`` to on-demand plugins |
+| ``DefaultPlugin`` | ``defaults/__init__.py`` | Bundled FW-default plugin — 7 ``register_default_*`` groups populating 6 of the 10 slots (tools incl. the derived communication entries ``task``/``send_to_agent``/``send_to_peer`` and the EXPERIENCE supplement's assembly-time ``experience`` tool factory in ``defaults/tools.py``, hooks, LLM provider, prompts, interceptors, commands). Leaves ``EXECUTION_STRATEGY``/``INPUT_STAGE`` to bot plugins (Errata-3) and ``MEMORY_SYSTEM``/``DATA_NAMESPACE`` to on-demand plugins |
 | ``NativeAssemblyInputs`` / ``NativeAssemblyResult`` / ``assemble_native_agent`` | ``assembly/native_core.py`` | Unified native-agent core — resolves the 5 per-agent slots (TOOL/LLM_PROVIDER/SYSTEM_PROMPT_PROVIDER/MEMORY_SYSTEM/HOOK), merges memory, dispatches hooks (react/memory dual runner), constructs the descriptor, and calls ``agent_factory.create_agent``. ``NativeAssemblyInputs``/``NativeAssemblyResult`` are regular classes (``__init__`` assignment, not ``@dataclass``). Called by both Stage 4 (main) and ``AgentTemplate.materialize`` (sub). See SPEC Errata-6 (unified core) and Errata-7 (MEMORY_SYSTEM slot). |
 | ``assemble_declared_single_agent`` | ``assembly/single_agent.py`` | Poolless root-agent assembly from a compiled declaration, reusing the native core and exposing memory/runtime handles for standalone harnesses. |
 | ``LlmDefaults`` | ``assembly/native_core.py`` | Frozen Pydantic ``BaseModel`` (``extra="forbid"``) value object carrying default LLM configuration values (model/temperature/max_output_tokens/reasoning_effort/model_info). |

@@ -55,7 +55,6 @@ from modex_agent.ioc.configs.memory import (  # noqa: E402
     SessionConfig,
 )
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps  # noqa: E402
-from modex_agent.multi_agent.pool_config.experience import ExperienceConfig  # noqa: E402
 
 from ...declaration_driver import boot_from_yaml
 
@@ -67,18 +66,34 @@ pool:
   agents:
     main:
       description: synthesized root
+      tool_supplements:
+      - experience
+"""
+
+_NO_SUPPLEMENT_DECLARATION = """\
+pool:
+  name: p
+  agents:
+    main:
+      description: synthesized root
 """
 
 
 def _position_deps(
-    tmp_path: Path, *, max_context_tokens: int | None
+    tmp_path: Path,
+    *,
+    max_context_tokens: int | None,
+    declaration: str = _ONE_POOL_DECLARATION,
 ) -> PoolAssemblyDeps:
-    """Deps through the SINGLE position-derived road (stack.py): boot a
-    one-root declaration and derive the root's assembly deps."""
+    """Deps through the SINGLE declaration road (stack.py): boot a
+    one-root declaration and derive the root's assembly deps. The default
+    fixture declares the EXPERIENCE supplement (the declared-driven
+    enable signal); pass ``declaration=_NO_SUPPLEMENT_DECLARATION`` for
+    the off-signal shape."""
     from bot.workspace.wiring.stack import declared_assembly_deps
 
     boot = boot_from_yaml(
-        _ONE_POOL_DECLARATION, project_dir=tmp_path, data_dir=tmp_path / ".modex"
+        declaration, project_dir=tmp_path, data_dir=tmp_path / ".modex"
     )
     root = next(iter(boot.compilation.agents))
     return declared_assembly_deps(root, max_context_tokens=max_context_tokens)
@@ -147,16 +162,20 @@ class TestMemoryDefaultsContract:
         m = main_agent_memory(max_context_tokens=128000)
         assert m.session.max_context_tokens == 128000
 
-    def test_main_agent_experience_enabled_by_default(self) -> None:
-        """Main agent experience MUST be enabled.
+    def test_main_agent_experience_enabled_by_declared_supplement(
+        self, tmp_path: Path
+    ) -> None:
+        """A root declaring the EXPERIENCE supplement MUST get experience
+        enabled on the deps road (declared-driven: the compiled tool
+        roster is the signal).
 
         Without this, ExperienceReviewHook never fires, no EXPERIENCE.md
         is ever created, and the ExperienceProvider injection is empty.
         """
-        from modex_agent.multi_agent.pool_config.experience import main_agent_experience
+        deps = _position_deps(tmp_path, max_context_tokens=None)
 
-        e = main_agent_experience()
-        assert isinstance(e, ExperienceConfig)
+        e = deps.experience
+        assert e is not None
         assert e.enabled is True
         # Reviewer parameters must have sensible defaults
         assert e.min_messages > 0
@@ -237,14 +256,12 @@ class TestAssemblyDepsUniformInjection:
             assert m.session.max_context_tokens == 50000
 
     def test_all_pools_get_same_experience_preset(self, tmp_path: Path) -> None:
-        """Every declared root — native or external — gets experience
-        enabled (position-derived root default)."""
-        from modex_agent.multi_agent.pool_config.experience import main_agent_experience
-
+        """Every supplement-declaring root gets experience enabled
+        (declared-driven: the compiled tool roster is the signal)."""
         deps = _position_deps(tmp_path, max_context_tokens=None)
 
         assert deps.experience is not None
-        assert deps.experience == main_agent_experience()
+        assert deps.experience.enabled is True
 
     def test_works_with_empty_pool_list(self, tmp_path: Path) -> None:
         """Empty pool list must not crash (defensive)."""
@@ -275,15 +292,19 @@ class TestExperienceThreeComponentPackaging:
     "Experience review mechanism" section).
     """
 
-    def test_experience_config_carries_all_reviewer_params(self) -> None:
-        """ExperienceConfig must carry ALL parameters needed by:
+    def test_experience_config_carries_all_reviewer_params(
+        self, tmp_path: Path
+    ) -> None:
+        """The deps road's ExperienceConfig must carry ALL parameters
+        needed by:
         - ExperienceReviewAgent (max_iterations)
         - ExperienceReviewHook (min_messages, exp_cooldown_turns)
         - ExperienceCurator (max_experiences, curator_interval)
         """
-        from modex_agent.multi_agent.pool_config.experience import main_agent_experience
+        deps = _position_deps(tmp_path, max_context_tokens=None)
 
-        e = main_agent_experience()
+        e = deps.experience
+        assert e is not None
         # ExperienceReviewAgent params
         assert e.max_iterations > 0, "max_iterations must be set for ExperienceReviewAgent"
         # ExperienceReviewHook params
@@ -333,6 +354,32 @@ class TestExperienceThreeComponentPackaging:
         exp_dir = tmp_path / "experiences" / "test"
         manager = _build_experience_manager(deps, exp_dir)
         assert manager is None
+
+    def test_experience_manager_absent_without_supplement(
+        self, tmp_path: Path
+    ) -> None:
+        """Deep-binding off-signal proof: a root WITHOUT the experience
+        supplement gets a DISABLED ExperienceConfig and NO
+        ExperienceManager — the compiled tool roster is the ONLY enable
+        signal (the position default is gone)."""
+        from bot.workspace.pool_data import _build_experience_manager
+
+        deps = _position_deps(
+            tmp_path,
+            max_context_tokens=None,
+            declaration=_NO_SUPPLEMENT_DECLARATION,
+        )
+
+        assert deps.experience is not None
+        assert deps.experience.enabled is False
+        exp_dir = tmp_path / "experiences" / "off" / "main"
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        manager = _build_experience_manager(deps, exp_dir)
+        assert manager is None, (
+            "ExperienceManager must NOT be built when the root declares "
+            "no EXPERIENCE supplement — the deep binding must follow the "
+            "compiled tool roster, not the root position"
+        )
 
     def test_experience_curator_built_when_experience_enabled(
         self, tmp_path: Path

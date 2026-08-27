@@ -420,6 +420,15 @@ async def test_production_manifest_matches_golden(tmp_path: Path) -> None:
         new_tools, golden_tools, allowed_extra=frozenset({"task", "send_to_peer", "bash_input"})
     )
     assert set(new_tools) - set(golden_tools) <= {"task", "send_to_peer", "bash_input"}
+    # Task 7 (2a/2): the glue tools are roster-declared on the shipped
+    # roots, so their manifest provenance flips from hardcoded glue
+    # ("glue") to roster-derived (send_file_to_user: bot project plugin;
+    # experience: FW bundled factory). Dual registration keeps class,
+    # params, and position byte-identical.
+    glue_roster_sources = {
+        "send_file_to_user": "roster:project",
+        "experience": "roster:bundled",
+    }
     wave_replaced = "bash_input" in new_tools
     for name in sorted(golden_tools):
         if name == "bash" and wave_replaced:
@@ -427,6 +436,10 @@ async def test_production_manifest_matches_golden(tmp_path: Path) -> None:
         assert new_tools[name].tool_class == golden_tools[name].tool_class
         assert new_tools[name].params == golden_tools[name].params
         if name in ("task", "send_to_peer"):
+            continue
+        if name in glue_roster_sources:
+            assert golden_tools[name].source == "glue"
+            assert new_tools[name].source == glue_roster_sources[name]
             continue
         assert new_tools[name].source == golden_tools[name].source, (
             f"{name}.source diverged"

@@ -22,7 +22,7 @@ from modex_agent.scope import (
     effective_defaults,
     load_scope_declaration,
 )
-from modex_agent.tools.presets import ToolPreset
+from modex_agent.tools.presets import ToolPreset, ToolSupplement
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BOT_BASE = REPO_ROOT / "examples" / "bot_project"
@@ -99,21 +99,21 @@ class TestShippedTopology:
 
 class TestShippedFieldGoldens:
     def test_native_root_hook_rosters_golden(self) -> None:
-        # Ticket 09: every native root references the notification +
-        # experience-review HOOK-slot components (the migrated glue);
-        # default additionally collects references. Every subagent-owning
-        # root additionally references the self-gating behavior nudges.
+        # Ticket 09: every native root references the notification
+        # HOOK-slot component (the migrated glue); default additionally
+        # collects references. Every subagent-owning root additionally
+        # references the self-gating behavior nudges. experience_review
+        # is NOT a roster entry (task 7): the EXPERIENCE supplement
+        # injects it at compile time, bound to the compiled tool roster.
         pools = _scope_pools()
         assert _root_of(pools["default"]).hooks == [
             "+reference_collector",
             "+user_notice_cleanup",
-            "+experience_review",
             "+task_delegation_nudge",
         ]
         for name in ("coder", "review"):
             assert _root_of(pools[name]).hooks == [
                 "+user_notice_cleanup",
-                "+experience_review",
                 "+task_delegation_nudge",
                 "+todo_planning_nudge",
             ]
@@ -138,16 +138,18 @@ class TestShippedFieldGoldens:
 
     def test_default_pool_roster_details(self) -> None:
         # The richest shipped pool: hook roster + hook config + approval +
-        # mcp + one subagent — golden, field-for-field.
+        # mcp + supplement/tool declarations + one subagent — golden,
+        # field-for-field.
         pools = _scope_pools()
         root = _root_of(pools["default"])
         assert root.hooks == [
             "+reference_collector",
             "+user_notice_cleanup",
-            "+experience_review",
             "+task_delegation_nudge",
         ]
         assert root.hook_configs == {"reference_collector": {"max_sources": 20}}
+        assert root.tool_supplements == [ToolSupplement.ACI, ToolSupplement.EXPERIENCE]
+        assert root.tools == ["+send_file_to_user"]
         assert root.approval is not None
         assert root.approval.enabled is True
         assert root.approval.tools["write"].allowed_paths == ["./*"]
@@ -201,11 +203,13 @@ class TestShippedToolsetProfiles:
 
 class TestShippedMemoryEligibility:
     def test_native_roots_archive_core_experience_eligible(self) -> None:
+        # Task 7: experience eligibility is DECLARED (the EXPERIENCE
+        # supplement on the shipped roots), not a position default.
         pools = _scope_pools()
         for name in NATIVE_POOLS:
             d = effective_defaults(_root_of(pools[name]))
             assert d.memory_preset is MemoryPreset.ARCHIVE_CORE_EXPERIENCE
-            assert d.experience_enabled is True
+            assert ToolSupplement.EXPERIENCE in _root_of(pools[name]).tool_supplements
 
     def test_subagents_session_only(self) -> None:
         pools = _scope_pools()
@@ -215,7 +219,7 @@ class TestShippedMemoryEligibility:
             for child in _children_of(pool, root.name):
                 d = effective_defaults(child)
                 assert d.memory_preset is MemoryPreset.SESSION_ONLY
-                assert d.experience_enabled is False
+                assert ToolSupplement.EXPERIENCE not in child.tool_supplements
 
     def test_memory_toggles_default_off(self) -> None:
         # No shipped pool carries a memory block → position defaults with

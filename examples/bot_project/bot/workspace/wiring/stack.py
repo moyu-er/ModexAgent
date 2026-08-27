@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
     from bot.service.core import BotService
@@ -20,15 +20,18 @@ from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_config.experience import ExperienceConfig
 from modex_agent.scope.compiler import CompiledAgent
 from modex_agent.scope.defaults import (
-    PositionDefaults,
     memory_config_for_position,
 )
+from modex_agent.tools.presets import ToolSupplement, get_supplement_tool_names
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.control import WorkspaceController
 from modex_agent.workspace.registry import ScopeRegistry, ScopeRegistryStore
 from modex_agent.workspace.routing import WorkspaceResolver
 
 logger = logging.getLogger(__name__)
+
+#: EXPERIENCE supplement tool name (FW projection — the deep-binding signal).
+EXPERIENCE_TOOL_NAME: Final = get_supplement_tool_names([ToolSupplement.EXPERIENCE])[0]
 
 
 @dataclass(frozen=True)
@@ -47,46 +50,34 @@ class WorkspaceStack:
     store: ScopeRegistryStore
 
 
-def _position_deps(
-    defaults: PositionDefaults,
-    *,
-    session_max_context_tokens: int | None,
-) -> PoolAssemblyDeps:
-    """PoolAssemblyDeps from position-derived defaults (SPEC §3.2 memory row).
-
-    Ticket 14: the SINGLE assembly-deps road — the memory config and the
-    experience flag derive from the resolved position defaults, never from
-    a caller-side two-preset branch.
-    """
-    return PoolAssemblyDeps(
-        memory=memory_config_for_position(
-            defaults,
-            session_max_context_tokens=session_max_context_tokens,
-        ),
-        experience=ExperienceConfig(enabled=defaults.experience_enabled),
-    )
-
-
 def declared_assembly_deps(
     root: CompiledAgent,
     *,
     max_context_tokens: int | None,
 ) -> PoolAssemblyDeps:
-    """Deps for a declaration-hosted pool's compiled root.
+    """Deps for a declaration-hosted pool's compiled root (SPEC §3.2).
 
-    The memory config comes from the position-derived defaults + the
-    node's ``memory:`` override (the compiled ``MemoryOverrides`` session
-    face); the session threshold falls back to the boot-injected model
-    window when the node declares none.
+    The SINGLE assembly-deps road: the memory config comes from the
+    position-derived defaults + the node's ``memory:`` override (the
+    compiled ``MemoryOverrides`` session face), the session threshold
+    falls back to the boot-injected model window when the node declares
+    none, and experience is deep-bound to the compiled tool roster —
+    enabled iff the root's final tools carry the experience name, so
+    the EXPERIENCE supplement declaration is the one switch that turns
+    on the tool, the review hook, the manager, and the curator together.
     """
     session_max_context_tokens = root.spec.memory_overrides.max_context_tokens
     if session_max_context_tokens is None:
         session_max_context_tokens = max_context_tokens
-    return _position_deps(
-        root.defaults, session_max_context_tokens=session_max_context_tokens
+    return PoolAssemblyDeps(
+        memory=memory_config_for_position(
+            root.defaults,
+            session_max_context_tokens=session_max_context_tokens,
+        ),
+        experience=ExperienceConfig(
+            enabled=EXPERIENCE_TOOL_NAME in root.spec.tools
+        ),
     )
-
-
 
 def build_workspace_stack(
     service: BotService, *, data_dir_name: str, enabled: bool = True

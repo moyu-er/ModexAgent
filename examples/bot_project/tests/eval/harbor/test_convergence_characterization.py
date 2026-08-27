@@ -116,8 +116,6 @@ BENCHMARK_MEMORY_DUMP: Final = (
 )
 DEFAULT_MEMORY_DUMP: Final = BENCHMARK_MEMORY_DUMP
 BENCHMARK_ORDERED_TOOLS_CORRECTED: Final = (
-    "send_file_to_user",
-    "experience",
     "read",
     "write",
     "ls",
@@ -141,8 +139,6 @@ BENCHMARK_BASH_IDENTITY: Final = BashIdentity(
 TEMPLATE_COUNT: Final = 1
 ROOT_CHILD_COUNT: Final = 1
 DEFAULT_ARM_ORDERED_TOOLS: Final = (
-    "send_file_to_user",
-    "experience",
     "read",
     "write",
     "ls",
@@ -195,6 +191,14 @@ STANDALONE_SERVICES_GOVERNANCE: Final = (
 )
 STANDALONE_STATIC_PROMPT: Final = "You are a helpful assistant."
 PRODUCTION_POOL_PROMPT: Final = _REGULAR_FILE_PROMPT
+# The compiled roster of the default root (task 7 / 2a: the root declares
+# the EXPERIENCE supplement — name-merged after the derived entries — and
+# `tools: [+send_file_to_user]`, merged after that). Task 8 / 2b: the
+# builders.py hardcode is gone, so the FINAL tool-manager rosters above
+# ARE the compiled roster order (each name registered by its tool's
+# LLM-facing name, `aci_edit` → `edit`) minus the eval arms'
+# `tools_remove` entries; the two glue names appear only here, in the
+# production compiled spec.
 PRODUCTION_ORDERED_TOOLS: Final = (
     "read",
     "write",
@@ -204,6 +208,8 @@ PRODUCTION_ORDERED_TOOLS: Final = (
     "bash",
     "task",
     "send_to_peer",
+    "experience",
+    "send_file_to_user",
     "aci_edit",
 )
 
@@ -366,6 +372,12 @@ async def test_benchmark_arm_pins_single_source_prompt_memory_and_roster(tmp_pat
         # the live context and descriptor now resolve the same file_prompt.
         assert root.descriptor.system_prompt_template == live_prompt == _BENCHMARK_FILE_PROMPT
         assert _memory_dump(assembly) == BENCHMARK_MEMORY_DUMP
+        # Deep binding: tools_remove strips the DECLARED supplement name
+        # pre-compile, so the experience deps follow the compiled roster —
+        # disabled config, no ExperienceManager.
+        assert assembly.assembly_deps.experience is not None
+        assert assembly.assembly_deps.experience.enabled is False
+        assert assembly.pool_data.context_manager._experience_manager is None  # noqa: SLF001
         expected_tools = list(BENCHMARK_ORDERED_TOOLS_CORRECTED)
         if sys.platform == "win32":
             expected_tools.remove("bash_input")
@@ -415,6 +427,11 @@ async def test_default_arm_pins_prompt_memory_roster_and_approval_states(tmp_pat
             )
         assert tuple(instance.tool_manager.list_tools()) == expected_default
         assert _memory_dump(assembly) == DEFAULT_MEMORY_DUMP
+        # Deep binding: same contract as the benchmark arm — the default
+        # arm's tools_remove disables the experience deps end to end.
+        assert assembly.assembly_deps.experience is not None
+        assert assembly.assembly_deps.experience.enabled is False
+        assert assembly.pool_data.context_manager._experience_manager is None  # noqa: SLF001
         assert assembly.pool_data.context_manager.base_system_prompt == DEFAULT_ARM_LIVE_PROMPT
 
 

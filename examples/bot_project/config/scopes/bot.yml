@@ -40,14 +40,18 @@ workspace:
           terminal_visibility: false
           tool_supplements:
           - aci
+          - experience
+          tools:
+          - +send_file_to_user
           hooks:
           - +reference_collector
-          # Ticket 09: notification + experience-review hooks are HOOK-slot
-          # components referenced from the declaration — the declaration road
-          # dispatches them at Stage 4 (the legacy road code-wires them in
-          # create_pool / pool_wiring until ticket 17).
+          # Ticket 09: the notification hook is a HOOK-slot component
+          # referenced from the declaration — the declaration road
+          # dispatches it at Stage 4 (the legacy road code-wires it in
+          # create_pool / pool_wiring until ticket 17). experience_review
+          # needs no roster entry: the EXPERIENCE supplement injects it,
+          # bound to the compiled tool roster.
           - +user_notice_cleanup
-          - +experience_review
           # Behavior nudges (self-gating by tool presence) — this root carries
           # no todo supplement, so todo_planning_nudge would self-skip anyway.
           - +task_delegation_nudge
@@ -95,12 +99,16 @@ workspace:
           tool_supplements:
           - aci
           - todo
-          # Ticket 11: notification + experience-review are HOOK-slot
-          # roster references (Stage 4 dispatch) — config evolution only
-          # walks the declaration (09 precedent).
+          - experience
+          tools:
+          - +send_file_to_user
+          # Ticket 11: the notification hook is a HOOK-slot roster
+          # reference (Stage 4 dispatch) — config evolution only
+          # walks the declaration (09 precedent). experience_review
+          # needs no roster entry: the EXPERIENCE supplement injects it,
+          # bound to the compiled tool roster.
           hooks:
           - +user_notice_cleanup
-          - +experience_review
           # Behavior nudges (self-gating by tool presence).
           - +task_delegation_nudge
           - +todo_planning_nudge
@@ -162,12 +170,16 @@ workspace:
           tool_supplements:
           - ast_grep
           - todo
-          # Ticket 11: notification + experience-review are HOOK-slot
-          # roster references (Stage 4 dispatch) — config evolution only
-          # walks the declaration (09 precedent).
+          - experience
+          tools:
+          - +send_file_to_user
+          # Ticket 11: the notification hook is a HOOK-slot roster
+          # reference (Stage 4 dispatch) — config evolution only
+          # walks the declaration (09 precedent). experience_review
+          # needs no roster entry: the EXPERIENCE supplement injects it,
+          # bound to the compiled tool roster.
           hooks:
           - +user_notice_cleanup
-          - +experience_review
           # Behavior nudges (self-gating by tool presence).
           - +task_delegation_nudge
           - +todo_planning_nudge

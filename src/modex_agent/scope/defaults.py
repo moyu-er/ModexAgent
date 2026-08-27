@@ -61,8 +61,6 @@ class PositionDefaults(BaseModel):
     """Archive layer state — off by default; root may toggle via ``memory:``."""
     core_enabled: bool
     """Core layer state — off by default; root may toggle via ``memory:``."""
-    experience_enabled: bool
-    """Experience review — on for the root preset family, off for non-roots."""
     approval_eligible: bool
     """Root may enable approval; non-root may not (V9 guards declarations)."""
     registration: RegistrationTiming
@@ -76,7 +74,6 @@ def defaults_for_position(*, is_root: bool) -> PositionDefaults:
             memory_preset=MemoryPreset.ARCHIVE_CORE_EXPERIENCE,
             archive_enabled=False,
             core_enabled=False,
-            experience_enabled=True,
             approval_eligible=True,
             registration=RegistrationTiming.EAGER,
             toolset_profile=ToolPreset.FULL,
@@ -85,7 +82,6 @@ def defaults_for_position(*, is_root: bool) -> PositionDefaults:
         memory_preset=MemoryPreset.SESSION_ONLY,
         archive_enabled=False,
         core_enabled=False,
-        experience_enabled=False,
         approval_eligible=False,
         registration=RegistrationTiming.LAZY,
         toolset_profile=ToolPreset.READ_WRITE,
@@ -123,7 +119,6 @@ def effective_defaults(agent: AgentSpec) -> PositionDefaults:
         memory_preset=base.memory_preset,
         archive_enabled=archive_enabled,
         core_enabled=core_enabled,
-        experience_enabled=base.experience_enabled,
         approval_eligible=base.approval_eligible,
         registration=registration,
         toolset_profile=toolset_profile,

@@ -45,7 +45,7 @@
 ### 3.1 preset 搬家（MODIFIER 移除的前置）
 
 - `main_agent_memory()` / `subagent_memory()` → 新模块 `modex_agent/memory/presets.py`（memory 包拥有 memory 预设; 只依赖 ioc.configs.memory, 不引入 memory→multi_agent 依赖环）。
-- `main_agent_experience()` → 与 `ExperienceConfig` 同址（`multi_agent/pool_config/experience.py`）, 消除跨包倒挂。
+- main-agent experience preset → 原迁至与 `ExperienceConfig` 同址（`multi_agent/pool_config/experience.py`）以消除跨包倒挂；该 preset 函数现已删除（2026-08-27）——experience 改为 `tool_supplements: [experience]` 声明驱动，`ExperienceConfig.enabled` 跟随编译后的最终工具名册（`ExperienceConfig` 仍在原址）。
 - 消费者切换（完整清单, Momus 核验）: BIZ wiring（`_build_assembly_deps_for_pools`, stack.py）、`AgentTemplateRegistry(default_subagent_memory=...)`（factory.py:536）、native_core `_merge_memory` fallback、`bot/eval/agent_harness.py:35`（import `main_agent_memory`）、`examples/bot_project/tests_ext/regression/test_golden_replay.py:10-11`。
 - native_core 的 lazy `subagent_memory` 导入（原自已删除的默认 memory 工厂模块）改为顶层 `from modex_agent.memory.presets import subagent_memory`（循环根源消除）。
 - `plugins/defaults/memory.py` 整文件删除（工厂随 MODIFIER 槽死亡; `register_default_memory` 调用点从 defaults bundle 移除）。

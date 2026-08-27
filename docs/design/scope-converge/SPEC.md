@@ -640,7 +640,7 @@ subagent 与 main agent 的配置差异：
 | 维度 | main agent | subagent | 差异来源 |
 |---|---|---|---|
 | memory 默认 | `main_agent_memory()`（session+pruned+governance，archive/core 可开） | `subagent_memory()`（session+pruned+governance only） | `memory_defaults.py` 不同函数 |
-| experience | 有（`ExperienceReviewHook`） | 无 | `main_agent_experience()` main-only |
+| experience | 有（`ExperienceReviewHook`，声明 `tool_supplements: [experience]`） | 无（机制上可选，未声明） | 声明驱动——main-only 位置默认已删除（绑定跟随编译后的最终工具名册） |
 | approval | 有（`ApprovalConfig`） | 无 | `MainAgentSpec` 有 approval 字段，`SubagentSpec` 无 |
 | max_steps | 100 | 80 | `specs.py:71,112` 不同默认值 |
 | tool_preset 默认 | `FULL` | `READ_WRITE` | `specs.py:74,113` 不同默认值 |
@@ -702,7 +702,7 @@ class SpecBuilder:
 | tools | ToolPreset.FULL 展开（fs/search/read/write/bash/lsp） | `specs.py:74` MainAgentSpec.tool_preset=FULL |
 | hooks | inbox_flush + todo_continuation + deliver_retry + native_env + experience_review + cleanup_metrics + todo_reorientation | `register_tree_aware_hooks` + `pipeline_wiring.py` + `template.py` |
 | memory | session(0.85/0.3) + pruned(enabled,50,200) + governance(tool_chain_repair+budget) | `main_agent_memory()` |
-| experience | ExperienceConfig(enabled=True) + ExperienceReviewHook | `main_agent_experience()` |
+| experience | ExperienceConfig(enabled=最终工具名册含 experience 名) + 编译器注入 ExperienceReviewHook | 声明 `tool_supplements: [experience]`（等价 `tools: [+experience]`；原 main-agent experience preset 已删除） |
 | approval | None（可选开启） | `specs.py:76` MainAgentSpec.approval=None |
 | max_steps | 100 | `specs.py:71` |
 | llm_provider | "default"（从 model.yml） | §5.7 |

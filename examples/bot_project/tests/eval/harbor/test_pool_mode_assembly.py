@@ -447,8 +447,10 @@ async def test_pool_assembly_mirrors_production_values(tmp_path: Path) -> None:
     assert pool_kwargs["assembly_deps"] is assembly_deps_arg
     assert pool_kwargs["bot_model_config"] is not None
     assert assembly_deps_arg.memory is not None
+    # Deep binding: the default arm's tools_remove strips the DECLARED
+    # experience name pre-compile, so the compiled roster drives the deps.
     assert assembly_deps_arg.experience is not None
-    assert assembly_deps_arg.experience.enabled is True
+    assert assembly_deps_arg.experience.enabled is False
     assert [type(hook) for hook in pool_kwargs["shared_hooks"]] == [
         CurrentTimeInjectionHook,
         KnowledgeHook,

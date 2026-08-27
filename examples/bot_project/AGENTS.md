@@ -1,4 +1,4 @@
-<!-- Updated: 2026-08-22 | scope-assembly doc sync -->
+<!-- Updated: 2026-08-27 | glue-tool roster convergence doc sync -->
 
 # bot_project
 
@@ -181,28 +181,46 @@ See ADR-0022 and `docs/design/external-agent-integration/` for the full design.
 
 ## Memory + Experience Presets (Target State)
 
-All native agents receive memory + experience configuration from the single
-converged source `modex_agent/scope/defaults.py` (position-derived memory
-families backed by `modex_agent/memory/presets.py` + `modex_agent/multi_agent/pool_config/experience.py`).
+All native agents receive memory configuration from the single converged
+source `modex_agent/scope/defaults.py` (position-derived memory families
+backed by `modex_agent/memory/presets.py`); experience is declaration-driven
+— an agent opts in via `tool_supplements: [experience]` (equivalently
+`tools: [+experience]`), and `ExperienceConfig` (`modex_agent/multi_agent/pool_config/experience.py`)
+derives its `enabled` flag from the compiled tool roster
+(`bot/workspace/wiring/stack.py` `declared_assembly_deps`).
 A root agent's archive/core toggle is user-editable per pool through the WebUI
 or the `memory:` block on the agent in `config/scopes/bot.yml`. The schema
 enforces the AND relationship: core memory can be enabled only when archive
 memory is enabled.
 
 Detailed configuration remains baked: `ArchiveConfig`/`CoreMemoryConfig`
-internals, dream-engine derivation, session, governance, pruned, and experience
-settings are not per-pool overrides. Non-root agents stay session-only by
-position default (the non-root memory family); a nested agent's `memory:`
-block carries only the session token-budget override, and there is no
-user-editable experience block.
+internals, dream-engine derivation, session, governance, and pruned settings
+are not per-pool overrides; experience's enable is the one declaration-driven
+switch (its reviewer/curator settings stay preset-baked). Non-root agents
+stay session-only by position default (the non-root memory family); a nested
+agent's `memory:` block carries only the session token-budget override, and
+there is no user-editable experience block.
 
 ### Preset surface (`modex_agent/memory/presets.py` + `modex_agent/multi_agent/pool_config/experience.py`)
 
 | Preset | Used by | Contents |
 |---|---|---|
 | `main_agent_memory(max_context_tokens, archive_enabled, core_enabled)` | every native main agent | session (token-budget compression, `max_context_tokens` from `model.yml`) + governance (tool_chain_repair + lossy_compaction) + pruned. archive/core follow the per-pool `MemoryToggle`; dream is enabled only when both are on. |
-| `main_agent_experience()` | every native main agent | `ExperienceConfig(enabled=True)` — fires `ExperienceReviewHook` |
-| `subagent_memory()` | every native subagent | session + governance (tool_chain_repair only, NO lossy_compaction) + pruned. archive/core/dream = None. No experience preset — review is main-agent-only. |
+| experience — declaration, not a preset | any agent via `tool_supplements: [experience]` (shipped: the 3 native main agents in `bot.yml`; equivalently `tools: [+experience]`) | compiles the `experience` tool name into the roster + injects `ExperienceReviewHook` (single switch); `ExperienceConfig(enabled=…)` follows the final compiled tool list (`declared_assembly_deps`) — tool, hook, manager, injection, and curator bind together |
+| `subagent_memory()` | every native subagent | session + governance (tool_chain_repair only, NO lossy_compaction) + pruned. archive/core/dream = None. No experience preset — experience is opt-in per declaration; shipped declarations enable it on native main agents only. |
+
+### Migration note (roster-driven experience + `send_file_to_user`)
+
+Experience used to be unconditional on every native main agent (a position
+default plus hardcoded tool registration in `builders.py`). Both paths are
+deleted: **custom scope declarations must add `tool_supplements: [experience]`
+to keep experience after upgrading** — the shipped `config/scopes/bot.yml`
+already carries it on the three native main agents. The same applies to the
+IM file-send tool: declare `tools: [+send_file_to_user]` (the shipped
+declaration does). An agent that declares the experience supplement on an
+assembly path supplying no experience directory (missing pool data) now
+fails loudly at the factory — the old silent scratch-directory fallback is
+gone.
 
 ### Wiring chain (consumers perform NO additional config construction)
 
@@ -212,7 +230,8 @@ family; the deps channel threads it to every consumer:
 ```
 pool/declaration.py (boot): load bot.yml → validate → compile_scope
   └─ declared_pool_build (per pool): root PositionDefaults + overrides
-       └─ wiring._position_deps → PoolAssemblyDeps(memory=…, experience=…)
+       └─ wiring.declared_assembly_deps → PoolAssemblyDeps(memory=…, experience=…)
+          (experience.enabled = the compiled tool roster carries the experience name)
             │
             ├─ pool_data.build_pool_data()
             │    ├─ create_memory_system(memory_cfg)        → MemorySystem (archive/core/dream/pruned layers)
@@ -222,7 +241,8 @@ pool/declaration.py (boot): load bot.yml → validate → compile_scope
             ├─ pool/pipeline_wiring.py
             │    └─ builder.governance = create_governance(memory)  → CompositeGovernance (lossy + tool_chain_repair)
             │
-            ├─ bot.yml `hooks: [+experience_review, +user_notice_cleanup]`
+            ├─ compiler-injected `experience_review` hook (EXPERIENCE supplement;
+            │  the bot.yml `hooks:` list carries `+user_notice_cleanup`)
             │    └─ HOOK-slot factories resolve at Stage 4 (ExperienceReviewHook via
             │       PoolRuntimeDeps.experience_review_provider — the bot-global default LLM
             │       from model.yml, running ReAct with forked parent history)
@@ -294,14 +314,19 @@ points, so the presets never reach them regardless of config:
 The experience system is **reviewer + hook + injection** working together.
 All three must be active for experience to function:
 
-1. **ExperienceManager** (`pool_data.py:151`): built when `assembly_deps.experience`
-   is enabled. Held by `MemorySystemContextManager`. At turn load
+1. **ExperienceManager** (`pool_data.py` `_build_experience_manager`): built when `assembly_deps.experience`
+   is enabled — the flag follows the compiled tool roster, so declaring (or removing)
+   the experience tool turns the manager on (or off) with it. Held by
+   `MemorySystemContextManager`. At turn load
    (`system.py:366-377`), `build_prompt()` renders saved experiences as XML
    metadata → `ExperienceProvider` injects into the main agent's system prompt
    so the LLM sees `<available_experiences>` and can call the `experience` tool.
 
-2. **ExperienceReviewHook** (a HOOK-slot roster reference `+experience_review`
-   in `bot.yml`, resolved at Stage 4): registered on the main
+2. **ExperienceReviewHook** (compiler-injected when the EXPERIENCE supplement's
+   tool name survives into the agent's final compiled tool list — name authority
+   `EXPERIENCE_REVIEW_HOOK_NAME` in `modex_agent/tools/presets.py`; a handwritten
+   `+experience_review` entry coexists via dedup, and `hooks: [-experience_review]`
+   vetoes the injection; resolved at Stage 4): registered on the main
    agent's `pipeline.hook_runner`. Fires `after_graph` when
    `stop_reason == completed` and history ≥ `min_messages`. Spawns a
    background task that runs `ExperienceReviewAgent.review()` — a ReAct loop
@@ -319,7 +344,19 @@ warning; the bot itself boots and runs normally.
    Pinned experiences are immune; the least-recently-used unpinned ones are
    deleted permanently.
 
-If any of these three is missing, experience degrades silently:
+The three components are bound by one declaration switch: `tool_supplements:
+[experience]` (equivalently `tools: [+experience]`). The binding signal is the
+agent's final compiled tool list — the name surviving the merge injects the
+hook, and `declared_assembly_deps` reads the same list to enable the
+ExperienceManager (and with it the injection and the curator). Explicit
+removal (`tools: [-experience]` or an unprefixed wholesale `tools:` list)
+drops the whole package together; `hooks: [-experience_review]` alone removes
+the reviewer while keeping the tool (minus-wins). A supplement-declared agent
+whose assembly path supplies no experience directory fails loudly at factory
+resolution — there is no silent scratch-directory fallback.
+
+The degradation modes above describe what is missing when the package is
+partially dismantled by explicit removal:
 - No `ExperienceManager` → no `<available_experiences>` in system prompt →
   LLM never learns from past sessions.
 - No `ExperienceReviewHook` → no review after turns → EXPERIENCE.md files

@@ -4,6 +4,9 @@ arms:
     pools:
       target_pool:
         strip_mcp: true
+        tools_remove:
+          - send_file_to_user
+          - experience
   benchmark:
     strip_peers: true
     pools:
@@ -16,6 +19,8 @@ arms:
         tools_remove:
           - process
           - terminal
+          - send_file_to_user
+          - experience
         memory:
           core_enabled: false
         system_prompt:

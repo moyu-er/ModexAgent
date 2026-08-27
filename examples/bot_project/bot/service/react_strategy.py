@@ -83,15 +83,8 @@ class ReactExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategy):
         project_dir: Path = ctx.project_dir
         data_dir: Path = ctx.data_dir
         workspace_handle = ctx.workspace_handle
-        workspace_resolver = ctx.workspace_resolver
         app_config = ctx.app_config
         pool_data = ctx.pool_data
-        assembly_deps = ctx.assembly_deps
-        if assembly_deps is None:
-            raise RuntimeError(
-                "ReactExecutionStrategy.assemble: ctx.assembly_deps must be set "
-                "by pool_builder.create_pool before calling strategy.assemble()."
-            )
 
         terminal_manager = create_terminal_manager_or_none(
             use_terminal=main_spec.use_terminal,
@@ -125,21 +118,8 @@ class ReactExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategy):
 
             root_provider = WorkspaceHandleRootProvider(workspace_handle)
 
-        def sessions_dir_provider() -> Path | None:
-            if workspace_resolver is not None:
-                return self._cell_sessions_dir(workspace_resolver)
-            return None
-
         tool_manager: ToolManager = await self._build_tools(
-            main_spec,
-            assembly_deps,
-            project_dir,
-            ctx.output_adapter,
             pool_name,
-            data_dir,
-            pool_data,
-            transcript_store=ctx.transcript_store,
-            sessions_dir_provider=sessions_dir_provider,
             kb_provider=ctx.kb_provider,
         )
         # The bash slot is NOT built or registered here: the roster owns it.

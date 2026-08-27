@@ -51,7 +51,11 @@ from .test_convergence_characterization import (
 )
 
 _BOT_PROJECT: Final = Path(__file__).resolve().parents[3]
-_REGISTERED_TOOL_NAMES: Final = frozenset({"process", "terminal"})
+# Both glue names are TOOL-slot registered (bot plugin send_file_to_user +
+# FW experience), so the eval validation gate accepts their removal.
+_REGISTERED_TOOL_NAMES: Final = frozenset(
+    {"process", "terminal", "send_file_to_user", "experience"}
+)
 
 
 def test_eval_overlay_loader_and_arm_file_exist() -> None:
@@ -84,7 +88,12 @@ def test_checked_in_arms_keep_default_and_benchmark_semantics_separate() -> None
         strip_peers=True,
         pools={
             "default": PoolOverlay(
-                agents={"default": AgentOverlay(strip_mcp=True)}
+                agents={
+                    "default": AgentOverlay(
+                        tools=["-send_file_to_user", "-experience"],
+                        strip_mcp=True,
+                    )
+                }
             )
         },
     )
@@ -94,7 +103,12 @@ def test_checked_in_arms_keep_default_and_benchmark_semantics_separate() -> None
     # subagent topology and keeps only its own deviations.
     assert benchmark_pool.keep_agents is None
     benchmark_root = benchmark_pool.agents["default"]
-    assert benchmark_root.tools == ["-process", "-terminal"]
+    assert benchmark_root.tools == [
+        "-process",
+        "-terminal",
+        "-send_file_to_user",
+        "-experience",
+    ]
     assert benchmark_root.memory == MemoryDeclaration(core_enabled=False)
     assert benchmark_root.system_prompt_provider == "file_prompt"
     assert benchmark_root.system_prompt_provider_config == {"path": "agents/benchmark.md"}

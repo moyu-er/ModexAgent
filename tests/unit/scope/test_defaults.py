@@ -39,17 +39,15 @@ class TestDefaultsForPosition:
 
     def test_root_memory_layers_default(self) -> None:
         # Eligible family, layers off by default (legacy MemoryToggle()
-        # default), experience on (main_agent_experience preset).
+        # default).
         d = defaults_for_position(is_root=True)
         assert d.archive_enabled is False
         assert d.core_enabled is False
-        assert d.experience_enabled is True
 
     def test_non_root_memory_layers_default(self) -> None:
         d = defaults_for_position(is_root=False)
         assert d.archive_enabled is False
         assert d.core_enabled is False
-        assert d.experience_enabled is False
 
     def test_intermediate_node_follows_non_root_position(self) -> None:
         # Defaults derive from POSITION (parent or not), not depth — a

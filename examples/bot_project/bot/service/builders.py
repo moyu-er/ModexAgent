@@ -35,7 +35,6 @@ from modex_agent.memory.injection import FullInjectionPolicy
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import AgentMessageBus
-from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_router import PoolRoutingStore
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.pipeline.adapters import OutputAdapter
@@ -49,7 +48,6 @@ from modex_agent.workspace.registry import ScopeRegistryStore
 if TYPE_CHECKING:
     from bot.kb.provider import KbProvider
     from bot.service.pool.declaration import DeclaredPoolBuild
-    from bot.webui.transcript_store import TranscriptStore
     from bot.workspace.handle import WorkspaceResolverCell
     from modex_agent.commands.processor import SlashCommandProcessor
     from modex_agent.core.session_id import SessionInfo
@@ -186,68 +184,22 @@ class _PoolAssemblyMixin:
 
     async def _build_tools(
         self,
-        main_spec: AgentSpec,
-        assembly_deps: PoolAssemblyDeps,
-        project_dir: Path,
-        output_adapter: Any,
         pool_name: str,
-        data_dir: Path,
-        pool_data: PoolDataSnapshot | None,
         *,
-        transcript_store: TranscriptStore | None = None,
-        sessions_dir_provider: Callable[[], Path | None] | None = None,
         kb_provider: KbProvider | None = None,
         register_kb_tool: bool = False,
     ) -> InMemoryToolManager:
-        """Build the main agent's tool manager from config.
+        """Build the main agent's base tool manager.
 
-        Tool assembly (scope-assembly ticket 05 + ticket 10): every
-        roster-resolvable tool — preset tools, supplements (bash/edit/aci/
-        todo), the terminal trio, and per-agent MCP tools — is assembled by
-        Stage 4 through the TOOL-slot factories / the FW MCP loader reading
-        the context chain; this builder registers only the BIZ glue tools
-        that have no roster factory: the custom send_file_to_user tool, the
-        experience tool, and the opt-in KB tool. ``task`` is registered
-        separately in Phase 2 communication wiring. The fallback persistent
-        bash pair is registered by the react strategy seam (see
-        ``react_strategy.py``) so the strategy owns the shell lifecycle.
+        Tool assembly is fully roster-driven (scope-assembly ticket 05 +
+        ticket 10): every tool — preset tools, supplements (bash/edit/aci/
+        todo/experience), the communication entries, the terminal trio,
+        and per-agent MCP tools — is registered by Stage 4 through the
+        TOOL-slot factories / the FW MCP loader reading the context chain,
+        on top of the empty base manager this builder returns. The only
+        builder-registered tool is the opt-in KB tool.
         """
         tm = InMemoryToolManager(config=ToolManagerConfig())
-
-        # Custom tools
-        from bot.tools.custom import SendFileToUserTool
-
-        tm.register(
-            SendFileToUserTool(
-                output_adapter=output_adapter,
-                transcript_store=transcript_store,
-                media_config=assembly_deps.media,
-                sessions_dir_provider=sessions_dir_provider,
-            )
-        )
-
-        # Experience tool - always enabled for main agents (baked; not configurable).
-        # The experience dir comes from the workspace's pool_data (fixed per
-        # workspace); fallback to a data_dir relative path for non-workspace (test).
-        from modex_agent.core.experience import PerFileExperienceMetaStore
-        from modex_agent.memory.tools.experience import ExperienceTool
-
-        if pool_data is not None:
-            assert pool_data.experience_dir is not None
-            base_exp_dir: Path = pool_data.experience_dir
-
-            def _exp_path() -> Path:
-                return base_exp_dir
-        else:
-            fallback = data_dir / "experiences" / pool_name / main_spec.name
-
-            def _exp_path() -> Path:
-                return fallback
-
-        _exp_path().mkdir(parents=True, exist_ok=True)
-        exp_meta = PerFileExperienceMetaStore(_exp_path)
-        tm.register(ExperienceTool(_exp_path, exp_meta))
-        logger.info("Pool '%s': experience tool registered", pool_name)
 
         # KB tool — KbProvider is built but KbTool is NOT registered to any
         # agent yet.  The tool implementation, CLI command, and REST route are

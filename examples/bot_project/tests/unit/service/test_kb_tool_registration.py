@@ -18,7 +18,6 @@ from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.persistence.managers import WorkspacePersistenceManager
-from modex_agent.scope.spec import AgentSpec
 
 from ...declaration_driver import build_declared
 
@@ -106,7 +105,6 @@ async def test_kb_tool_not_registered_by_default_through_create_pool(
 async def test_kb_tool_registered_when_register_flag_is_true(
     tmp_path: Path,
 ) -> None:
-    data_dir = tmp_path / ".modex"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "modexctl.bat").write_text("@exit /b 0\n", encoding="ascii")
@@ -121,13 +119,7 @@ async def test_kb_tool_registered_when_register_flag_is_true(
     try:
         with patch.dict("os.environ", {"MODEXBOT_BIN_DIR": str(bin_dir)}):
             tm = await helper._build_tools(
-                AgentSpec(name="main", toolset="none"),
-                PoolAssemblyDeps(),
-                tmp_path,
-                MagicMock(),
                 "test-pool",
-                data_dir,
-                None,
                 kb_provider=kb_provider,
                 register_kb_tool=True,
             )
