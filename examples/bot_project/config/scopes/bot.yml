@@ -42,7 +42,6 @@ workspace:
           - aci
           - experience
           tools:
-          - +send_file_to_user
           hooks:
           - +reference_collector
           # Ticket 09: the notification hook is a HOOK-slot component
@@ -94,9 +93,7 @@ workspace:
           tool_supplements:
           - aci
           - todo
-          - experience
           tools:
-          - +send_file_to_user
           # Ticket 11: the notification hook is a HOOK-slot roster
           # reference (Stage 4 dispatch) — config evolution only
           # walks the declaration (09 precedent). experience_review
@@ -159,7 +156,6 @@ workspace:
           - todo
           - experience
           tools:
-          - +send_file_to_user
           # Ticket 11: the notification hook is a HOOK-slot roster
           # reference (Stage 4 dispatch) — config evolution only
           # walks the declaration (09 precedent). experience_review

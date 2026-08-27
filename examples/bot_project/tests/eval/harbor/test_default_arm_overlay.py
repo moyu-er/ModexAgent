@@ -51,10 +51,11 @@ from .test_convergence_characterization import (
 )
 
 _BOT_PROJECT: Final = Path(__file__).resolve().parents[3]
-# Both glue names are TOOL-slot registered (bot plugin send_file_to_user +
-# FW experience), so the eval validation gate accepts their removal.
+# process/terminal/experience stay TOOL-slot registered; send_file_to_user
+# left the shipped declaration roster (baf4ad5f) so eval arms no longer
+# remove it — tools_remove must reference registered tools only.
 _REGISTERED_TOOL_NAMES: Final = frozenset(
-    {"process", "terminal", "send_file_to_user", "experience"}
+    {"process", "terminal", "experience"}
 )
 
 
@@ -90,7 +91,7 @@ def test_checked_in_arms_keep_default_and_benchmark_semantics_separate() -> None
             "default": PoolOverlay(
                 agents={
                     "default": AgentOverlay(
-                        tools=["-send_file_to_user", "-experience"],
+                        tools=["-experience"],
                         strip_mcp=True,
                     )
                 }
@@ -106,7 +107,6 @@ def test_checked_in_arms_keep_default_and_benchmark_semantics_separate() -> None
     assert benchmark_root.tools == [
         "-process",
         "-terminal",
-        "-send_file_to_user",
         "-experience",
     ]
     assert benchmark_root.memory == MemoryDeclaration(core_enabled=False)
