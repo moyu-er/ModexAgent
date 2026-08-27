@@ -30,6 +30,12 @@ EXPECTED_OFFENDERS: set[str] = {
     "modex_agent.memory.stores.utils",
     "modex_agent.runtime.store",
     "modex_agent.workspace.paths",
+    # ADR-0046 todo 13: LLMProvider.chat_stream (core) folds its event
+    # stream through EventAssembler (providers/http). Function-body import —
+    # module-level would cycle (providers/__init__ -> legacy providers ->
+    # core.provider). Resolution direction: EventAssembler is core-pure (only
+    # depends on core.*), so relocating it into core/ drops this entry.
+    "modex_agent.providers.http.assembler",
 }
 
 

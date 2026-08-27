@@ -1,33 +1,39 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-22 -->
+<!-- Updated: 2026-08-26 -->
 
 # providers
 
 ## Purpose
-LLM provider implementations — abstracts model invocation behind a common interface. Supports LiteLLM (100+ models) and native OpenAI SDK, with shared streaming delta types and error handling.
+LLM provider subsystem — a single system: the direct-HTTP event-stream subsystem `http/` (ADR-0046 — `HTTPStreamProvider` + three protocol engines), the ONLY provider implementation. The provider ABC lives in `core/provider.py` (`LLMProvider` event-stream ABC + `CallbackStreamProvider` callback adapter base); `create_llm_provider` routes every `InterfaceFormat` here. The legacy SDK providers and their `shared/` streaming utilities were removed (2026-08-26 cleanup).
 
 ## Key Files
 | File | Description |
 |------|-------------|
-| `litellm_provider.py` | `LiteLLMProvider` — unified provider for 100+ models via LiteLLM |
-| `openai_provider.py` | `OpenAIProvider` — native OpenAI SDK provider |
+| `__init__.py` | Re-exports `HTTPStreamProvider` — the public provider class |
 
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `shared/` | Shared provider utilities |
-| `shared/delta.py` | Streaming delta types for chunk-based responses |
-| `shared/errors.py` | Shared error handling and retry logic |
+| `http/` | Direct-HTTP event-stream subsystem (ADR-0046) — `HTTPStreamProvider` + three protocol engines; the default provider path via `create_llm_provider` |
+| `http/sse.py` | SSE frame parsing (`SseFrame`) — data-only (OpenAI chat) and event+data (Responses, Anthropic) frame shapes; `[DONE]` sentinel passed through for the engine to own |
+| `http/errors.py` | Default HTTP error classification (`classify_http_error`) — raw status + body → `LLMErrorInfo`, no SDK dependency |
+| `http/tool_stream.py` | Generic streamed tool-call accumulator — keys accumulation on the stream key (block `index` / `item_id`), never on `call_id` |
+| `http/assembler.py` | `EventAssembler` — folds an `LLMStreamEvent` sequence into one `LLMResponse`; enforces the terminal-event invariant (exactly one `Finish`/`StreamFailure`) |
+| `http/protocol.py` | `LLMProtocol` ABC + `WireRequest`/`ProtocolConfig` envelopes — the contract between provider (transport) and engines (translation) |
+| `http/provider.py` | `HTTPStreamProvider` — the one concrete direct-HTTP provider: owns the `httpx` client, request/response lifecycle, stream idle watchdog; takes the factory-resolved `url` and requests it verbatim; zero wire-format knowledge |
+| `http/formats/` | Protocol engines — one module per wire format (ADR-0046) |
+| `http/formats/openai_compat.py` | OpenAI Chat Completions compatible engine — data-only SSE, think-tag extraction, DeepSeek `reasoning_content` replay; tool media folds text into `tool` messages and flushes ONE attributed follow-up user message per contiguous tool run; unresolved `media://` refs ERROR+skip (permanent wire guard) |
+| `http/formats/openai_responses.py` | OpenAI Responses API engine — event+data SSE, `item_id` stream key, `item_reference`(store=true opt-in)/`encrypted_content`(store=false default) reasoning replay, bare-replay-without-encrypted dropped; tool media embeds NATIVELY as `[input_text, input_image]` arrays inside `function_call_output.output` (no flush); unresolved `media://` refs ERROR+skip (permanent wire guard) |
+| `http/formats/anthropic.py` | Anthropic Messages API engine — event+data SSE, thinking-block replay with signature, `x-api-key` auth; tool media embeds natively as image blocks inside the `tool_result` block; unresolved `media://` refs ERROR+skip (permanent wire guard) |
 
 ## For AI Agents
-- Both providers expose a common LLM call interface; consumers should not depend on provider-specific types
-- Both providers accept `list[ChatMessage]` (not `list[dict]`) per B6 LLM-message convergence — providers convert `ChatMessage` to provider-native dicts internally via `to_dict()`
-- `shared/delta.py` normalizes streaming chunks across providers
-- `shared/errors.py` provides unified error classification and retry strategies
+- `http/` (ADR-0046) is the sole provider subsystem: `create_llm_provider` routes all three `interface_format` values to `HTTPStreamProvider` wired with the matching protocol engine — there is no other provider implementation
+- Consumers depend only on the `LLMProvider` ABC (`core/provider.py`) — event-stream implementations subclass `LLMProvider` (abstract `stream()`); response-level implementations (cassette record/replay, delegation proxies, scripted test providers) subclass `CallbackStreamProvider`
+- `HTTPStreamProvider` accepts `list[ChatMessage]` (not `list[dict]`) per B6 LLM-message convergence — engines lower `ChatMessage` to wire dicts by explicit construction in `build_body`
+- `HTTPStreamProvider` carries zero wire-format knowledge — provider owns transport, `LLMProtocol` engine owns translation; new wire formats are new engine files, never edits to the provider
 
 ## Dependencies
-- `litellm` (optional) — for LiteLLMProvider
-- `openai` (optional) — for OpenAIProvider
+- `httpx` — for `HTTPStreamProvider` (direct-HTTP transport in `http/`)
 - Consumed by `modex_agent/core/` (LLM abstraction layer) and `modex_agent/pipeline/`
 
 <!-- MANUAL: -->

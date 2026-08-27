@@ -1,14 +1,12 @@
 import pytest
-
-pytest.importorskip("openai")  # skip if openai not installed (CI [dev] doesn't include [llm] deps)
-
 from pydantic import ValidationError
 
 from modex_agent.core.constants import InterfaceFormat, ReasoningEffort
 from modex_agent.ioc.configs.llm import LLMConfig, Modality, ModelCapabilities
 from modex_agent.ioc.factories.llm import create_llm_provider
-from modex_agent.providers.litellm_provider import LiteLLMProvider
-from modex_agent.providers.openai_provider import OpenAIProvider
+from modex_agent.providers.http.formats.anthropic import AnthropicProtocol
+from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
+from modex_agent.providers.http.provider import HTTPStreamProvider
 
 
 class TestLLMConfig:
@@ -70,7 +68,7 @@ class TestLLMConfig:
 
 
 class TestCreateLLMProvider:
-    def test_passes_reasoning_effort_to_openai_provider(self) -> None:
+    def test_passes_reasoning_effort_to_openai_compat_engine(self) -> None:
         cfg = LLMConfig(
             model="gpt-4o",
             api_key="sk-test",
@@ -79,11 +77,12 @@ class TestCreateLLMProvider:
             interface_format=InterfaceFormat.OPENAI_COMPATIBLE,
         )
         provider = create_llm_provider(cfg)
-        assert isinstance(provider, OpenAIProvider)
-        assert provider._reasoning_effort == ReasoningEffort.HIGH
+        assert isinstance(provider, HTTPStreamProvider)
+        assert isinstance(provider._protocol, OpenAICompatProtocol)
+        assert provider._cfg.reasoning_effort == ReasoningEffort.HIGH
         assert provider._model == "gpt-4o"
 
-    def test_passes_reasoning_effort_to_litellm_provider(self) -> None:
+    def test_passes_reasoning_effort_to_anthropic_engine(self) -> None:
         cfg = LLMConfig(
             model="claude-3-5-sonnet",
             api_key="sk-test",
@@ -92,11 +91,14 @@ class TestCreateLLMProvider:
             interface_format=InterfaceFormat.ANTHROPIC,
         )
         provider = create_llm_provider(cfg)
-        assert isinstance(provider, LiteLLMProvider)
-        assert provider._reasoning_effort == ReasoningEffort.MEDIUM
-        assert provider._model == "anthropic/claude-3-5-sonnet"
+        assert isinstance(provider, HTTPStreamProvider)
+        assert isinstance(provider._protocol, AnthropicProtocol)
+        assert provider._cfg.reasoning_effort == ReasoningEffort.MEDIUM
+        # Native anthropic wire dispatch: dispatch is interface_format-driven;
+        # model names are never rewritten (no LiteLLM model-name routing).
+        assert provider._model == "claude-3-5-sonnet"
 
-    def test_openai_compatible_strips_openai_prefix(self) -> None:
+    def test_openai_compatible_keeps_model_name_verbatim(self) -> None:
         cfg = LLMConfig(
             model="openai/gpt-4o",
             api_key="sk-test",
@@ -104,10 +106,13 @@ class TestCreateLLMProvider:
             interface_format=InterfaceFormat.OPENAI_COMPATIBLE,
         )
         provider = create_llm_provider(cfg)
-        assert isinstance(provider, OpenAIProvider)
-        assert provider._model == "gpt-4o"
+        assert isinstance(provider, HTTPStreamProvider)
+        assert isinstance(provider._protocol, OpenAICompatProtocol)
+        # Verbatim passthrough (user ruling 2026-08-26): a stale prefix
+        # reaches the API as part of the model name.
+        assert provider._model == "openai/gpt-4o"
 
-    def test_anthropic_strips_anthropic_prefix_then_re_adds(self) -> None:
+    def test_anthropic_keeps_model_name_verbatim(self) -> None:
         cfg = LLMConfig(
             model="anthropic/claude-3-5-sonnet",
             api_key="sk-test",
@@ -115,10 +120,11 @@ class TestCreateLLMProvider:
             interface_format=InterfaceFormat.ANTHROPIC,
         )
         provider = create_llm_provider(cfg)
-        assert isinstance(provider, LiteLLMProvider)
+        assert isinstance(provider, HTTPStreamProvider)
+        assert isinstance(provider._protocol, AnthropicProtocol)
         assert provider._model == "anthropic/claude-3-5-sonnet"
 
-    def test_passes_top_p_to_openai_provider(self) -> None:
+    def test_passes_top_p_to_openai_compat_engine(self) -> None:
         cfg = LLMConfig(
             model="gpt-4o",
             api_key="sk-test",
@@ -127,10 +133,10 @@ class TestCreateLLMProvider:
             interface_format=InterfaceFormat.OPENAI_COMPATIBLE,
         )
         provider = create_llm_provider(cfg)
-        assert isinstance(provider, OpenAIProvider)
+        assert isinstance(provider, HTTPStreamProvider)
         assert provider._top_p == 0.9
 
-    def test_passes_top_p_to_litellm_provider(self) -> None:
+    def test_passes_top_p_to_anthropic_engine(self) -> None:
         cfg = LLMConfig(
             model="claude-3-5-sonnet",
             api_key="sk-test",
@@ -139,7 +145,7 @@ class TestCreateLLMProvider:
             interface_format=InterfaceFormat.ANTHROPIC,
         )
         provider = create_llm_provider(cfg)
-        assert isinstance(provider, LiteLLMProvider)
+        assert isinstance(provider, HTTPStreamProvider)
         assert provider._top_p == 0.9
 
 

@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-22 | Updated: 2026-06-22 -->
+<!-- Generated: 2026-06-22 | Updated: 2026-08-26 -->
 
 # factories
 
@@ -11,7 +11,7 @@ Pure factory functions that consume Pydantic config objects from `modex_agent/io
 
 | File | Description |
 |------|-------------|
-| `llm.py` | `create_llm_provider(config, safety)` — creates `LiteLLMProvider` or `OpenAIProvider` based on model name prefix; wraps safety config into `RuntimeSafetyPolicy` |
+| `llm.py` | `create_llm_provider(config, safety)` — routes all three `InterfaceFormat` values (OPENAI_COMPATIBLE / OPENAI_RESPONSE / ANTHROPIC) to `HTTPStreamProvider` wired with the matching protocol engine (openai_compat / openai_responses / anthropic, ADR-0046); resolves the endpoint URL (`endpoint_url` verbatim, else the engine's `url()` join on the normalized `base_url`); wraps safety config into `RuntimeSafetyPolicy` |
 | `memory.py` | `create_memory(cfg, llm_provider, workspace)` — creates `DefaultMemorySystem` from `MemoryConfig`, converting Pydantic config to `MemoryLayerConfigSet` |
 | `tools.py` | `connect_mcp(mcp_config, *, registry=None)` — connects to MCP servers (optional `registry` = ADR-0017 shared-connection overlay; when set, wraps a `SharedMcpBackend` from `registry.acquire` instead of a private `MCPClientManager`); `register_mcp_tools(adapter, tool_manager)` — registers MCP tools; `create_tool_manager(tools)` — creates pre-populated `InMemoryToolManager` |
 | `governance.py` | `create_governance(cfg, ...)` — builds `CompositeGovernance` chain (lossy compaction → tool chain repair → final legality); `create_subagent_governance(cfg, ...)` — lightweight governance (no compaction) |
@@ -24,7 +24,7 @@ Pure factory functions that consume Pydantic config objects from `modex_agent/io
 - Factories are stateless pure functions — no caching, no singletons, no shared mutable state
 - Factory signatures follow the pattern: `create_*(config, *optional_overrides) -> Object | None`
 - All factories return `None` when config is `None` (disabled feature)
-- `create_llm_provider` routes by model name prefix: `openai/` → native OpenAI SDK, otherwise → LiteLLM
+- `create_llm_provider` routes on `interface_format` (ADR-0046): OPENAI_COMPATIBLE / OPENAI_RESPONSE / ANTHROPIC all construct `HTTPStreamProvider` wired with the matching protocol engine. Model names are NOT processed at all — `config.model` passes verbatim (user ruling 2026-08-26: a stale `openai/`/`anthropic/` prefix simply reaches the API as part of the model name; the API's "model not found" is the correct error). The factory resolves the endpoint URL (endpoint_url override verbatim, else the engine `url()` join) and passes one resolved `url` into the provider
 - `descriptors.py` is the largest factory — it handles tool building, memory creation, and full descriptor assembly for subagents
 - The `tools.py` factories are async (`connect_mcp`) because MCP server initialization requires network calls
 
@@ -36,7 +36,7 @@ Pure factory functions that consume Pydantic config objects from `modex_agent/io
 
 ### Internal
 - `modex_agent/ioc/configs/` — all Pydantic config models consumed here
-- `modex_agent/providers/` — `LiteLLMProvider`, `OpenAIProvider` created by LLM factory
+- `modex_agent/providers/http/` — `HTTPStreamProvider` + protocol engines consumed by the LLM factory (ADR-0046); the only provider implementation — the legacy SDK providers were removed (2026-08-26 cleanup)
 - `modex_agent/memory/` — `DefaultMemorySystem`, `MemoryLayerConfigSet`, governance classes
 - `modex_agent/tools/` — `MCPClientManager`, `MCPToolAdapter`, `ToolRegistry`, standard tools
 - `modex_agent/multi_agent/` — `AgentDescriptor`, `AgentAddress`, `AgentCommKind`
