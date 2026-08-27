@@ -18,6 +18,8 @@ Layout::
 
 from __future__ import annotations
 
+import base64
+import copy
 import hashlib
 import json
 import logging
@@ -30,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from modex_agent.core.message import ChatMessage, ContentPart, TextPart
-from modex_agent.core.provider import LLMProvider, StreamingLLMProvider
+from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.tool_manager import (
     Tool,
     ToolConfig,
@@ -38,7 +40,7 @@ from modex_agent.core.tool_manager import (
     ToolManager,
     ToolResult,
 )
-from modex_agent.core.types import LLMResponse, ToolCall
+from modex_agent.core.types import LLMResponse, TokenUsage, ToolCall
 from modex_agent.hook.abc import FinallyGraphHook
 from modex_agent.ioc.configs.observability import CassetteScope
 from modex_agent.runtime.enums import TurnCustomKey
@@ -121,7 +123,7 @@ def _llm_response_to_dict(resp: LLMResponse) -> dict[str, Any]:
         ],
         "reasoning_content": resp.reasoning_content,
         "finish_reason": resp.finish_reason,
-        "usage": dict(resp.usage),
+        "usage": resp.usage.model_dump(),
         "error": resp.error,
     }
 
@@ -139,7 +141,7 @@ def _llm_response_from_dict(d: dict[str, Any]) -> LLMResponse:
         ],
         reasoning_content=d.get("reasoning_content"),
         finish_reason=d.get("finish_reason", "stop"),
-        usage=dict(d.get("usage") or {}),
+        usage=TokenUsage.model_validate(d.get("usage") or {}),
         error=d.get("error"),
     )
 
@@ -352,13 +354,45 @@ class CassetteRecorder:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class _RecordingProvider(StreamingLLMProvider):
+def _sanitize_data_url_part(part: dict[str, Any]) -> dict[str, Any]:
+    """Replace one data-URL image part with a byte-free digest placeholder.
+
+    ``[media sha256=<first 16 hex of sha256(url)>, data:<mime>, <n> bytes]``
+    keeps the record self-describing (size + digest, replay-comparable)
+    while never carrying base64 payload bytes. Non-data-URL parts (incl.
+    ``media://`` references) pass through unchanged.
+    """
+    url = part.get("image_url", {}).get("url", "")
+    if not isinstance(url, str) or not url.startswith("data:"):
+        return part
+    mime, marker, payload = url[5:].partition(";base64,")
+    try:
+        size = len(base64.b64decode(payload if marker else "%", validate=True))
+    except ValueError:
+        size = -1
+    digest = hashlib.sha256(url.encode()).hexdigest()[:16]
+    return {"type": "text", "text": f"[media sha256={digest}, data:{mime}, {size} bytes]"}
+
+
+def _sanitize_recorded_messages(messages: list[dict[str, Any]]) -> None:
+    """Strip data-URL image payloads from a recorded message copy (in place)."""
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        message["content"] = [
+            _sanitize_data_url_part(part) if isinstance(part, dict) else part
+            for part in content
+        ]
+
+
+class _RecordingProvider(CallbackStreamProvider):
     """Wraps an LLMProvider, recording every chat/chat_stream call.
 
-    Extends :class:`StreamingLLMProvider` so framework calls to both ``chat()``
-    (which StreamingLLMProvider routes through ``chat_stream_with_retry`` →
-    ``chat_stream``) and direct ``chat_stream()`` are captured by the single
-    ``chat_stream`` override.
+    Extends :class:`CallbackStreamProvider` so framework calls to both
+    ``chat()`` (which LLMProvider routes through the internal chat_stream
+    retry → ``chat_stream``) and direct ``chat_stream()`` are captured by
+    the single ``chat_stream`` override.
     """
 
     def __init__(self, wrapped: LLMProvider, recorder: CassetteRecorder) -> None:
@@ -383,14 +417,23 @@ class _RecordingProvider(StreamingLLMProvider):
         # B6: messages are ChatMessage; serialize to dicts for content-
         # addressing (llm_call_key / _record_llm json-serialize them).
         dict_messages = [m.to_dict() for m in messages]
+        # The key MUST hash the ORIGINAL messages — the recording's identity
+        # is the request that was served, and replay computes the same key
+        # from the same (unsanitized) input. Only the stored payload is
+        # sanitized: data-URL image parts are replaced by digest placeholders
+        # so cassettes never freeze base64 bytes (media:// references pass
+        # through untouched).
         key = llm_call_key(
             dict_messages, model, temperature, max_output_tokens, tools, kwargs
         )
+        recorded = copy.deepcopy(dict_messages)
+        _sanitize_recorded_messages(recorded)
         start = time.perf_counter()
-        # Delegation: StreamingLLMProvider → chat_stream; plain LLMProvider →
-        # chat. isinstance here is a real extension boundary — adapting an
-        # unknown concrete provider to a streaming surface.
-        if isinstance(self._wrapped, StreamingLLMProvider):
+        # Delegation: callback-style → chat_stream; stream-native → chat
+        # (concrete on the ABC). isinstance here is a real extension
+        # boundary — adapting an unknown concrete provider to the callback
+        # recording surface.
+        if isinstance(self._wrapped, CallbackStreamProvider):
             response = await self._wrapped.chat_stream(
                 messages=messages,
                 model=model,
@@ -413,7 +456,7 @@ class _RecordingProvider(StreamingLLMProvider):
         latency = time.perf_counter() - start
         self._recorder._record_llm(
             key,
-            dict_messages,
+            recorded,
             model,
             temperature,
             max_output_tokens,
@@ -541,7 +584,7 @@ class CassetteReplayEngine:
         return _tool_result_from_dict(data["result"])
 
 
-class _ReplayProvider(StreamingLLMProvider):
+class _ReplayProvider(CallbackStreamProvider):
     """Replay wrapper — returns recorded responses, never calls the wrapped provider."""
 
     def __init__(self, wrapped: LLMProvider, engine: CassetteReplayEngine) -> None:

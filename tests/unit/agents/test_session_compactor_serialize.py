@@ -15,27 +15,29 @@ from modex_agent.agents.summarizer.session_compactor import (
     SessionCompactorConfig,
 )
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.types import LLMResponse, MessageRole
 
 
-class _UnusedProvider(LLMProvider):
+class _UnusedProvider(CallbackStreamProvider):
     """The serializer is pure — the provider is never called."""
 
     def __init__(self) -> None:
         super().__init__()
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: Any,
     ) -> LLMResponse:
         del messages, model, temperature, max_output_tokens, tools, kwargs
-        raise AssertionError("chat must not be called by _serialize_messages")
+        raise AssertionError("chat_stream must not be called by _serialize_messages")
 
     def get_default_model(self) -> str:
         return "unused-model"

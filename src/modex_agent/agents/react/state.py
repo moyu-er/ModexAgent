@@ -28,7 +28,7 @@ from pydantic import Field
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.llm_struct import LLMErrorInfo  # noqa: F401 — needed for model_rebuild()
-from modex_agent.core.message import ChatMessage  # noqa: F401 — needed for model_rebuild()
+from modex_agent.core.message import ChatMessage, ContentPart  # noqa: F401 — needed for model_rebuild()
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import LLMResponse, MessageRole
 from modex_agent.runtime.codec import RuntimeStateCodec, RuntimeStateCodecConfig
@@ -276,6 +276,20 @@ class ReActSnapshotPolicy(SnapshotPolicy):
 # =========================================================================
 
 
+def _encode_content(
+    content: str | list[ContentPart] | None,
+) -> str | list[dict[str, Any]] | None:
+    """JSON-ready form of ``ChatMessage.content``.
+
+    Parts lists must be dumped here: the sqlite turn-state adapter serializes
+    the codec payload with ``json.dumps(..., default=str)``, which would
+    stringify raw pydantic part objects into Python reprs (poison data).
+    """
+    if content is None or isinstance(content, str):
+        return content
+    return [part.model_dump(mode="json") for part in content]
+
+
 class ReActRuntimeStateCodec(RuntimeStateCodec):
     """Codec that round-trips ReAct snapshot payloads.
 
@@ -343,7 +357,7 @@ class ReActRuntimeStateCodec(RuntimeStateCodec):
         msg = md.message
         return {
             "role": msg.role,
-            "content": msg.content,
+            "content": _encode_content(msg.content),
             "source": md.source.value,
             "provider_payload": dict(md.provider_payload) if md.provider_payload else None,
             "tool_calls": [tc.model_dump(mode="json") for tc in msg.tool_calls]

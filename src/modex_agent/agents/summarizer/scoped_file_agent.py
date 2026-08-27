@@ -11,6 +11,7 @@ execution to :meth:`_run_agent`.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -18,11 +19,12 @@ from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.agents.summarizer.emitter import SummarizerTrajectoryEmitter
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import StopReason
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.stream_events import Finish, LLMStreamEvent, StreamFailure, UsageSnapshot
 from modex_agent.core.tool_manager import InMemoryToolManager
-from modex_agent.core.types import LLMResponse, MessageRole
+from modex_agent.core.types import MessageRole, TokenUsage
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.memory.hooks import LlmUsage
 from modex_agent.memory.tools import (
@@ -36,47 +38,51 @@ logger = logging.getLogger(__name__)
 
 
 class UsageCollectingProvider(LLMProvider):
+    """Wraps a delegate provider, accumulating per-model LLM usage.
+
+    Stream-native: intercepts ``UsageSnapshot`` events and counts one call
+    per stream that terminates with ``Finish``. Streams ending in
+    ``StreamFailure`` (the bridge's translation of a delegate exception or
+    ERROR response) record nothing — matching the legacy ``chat()`` override,
+    which counted a call only when the delegate returned a response (a
+    raised error recorded nothing).
+    """
+
     def __init__(self, delegate: LLMProvider) -> None:
         super().__init__()
         self._delegate = delegate
         self._usage_by_model: dict[str, LlmUsage] = {}
 
-    async def chat(
-        self,
-        messages: list[ChatMessage],
-        model: str | None = None,
-        temperature: float = 0.7,
-        max_output_tokens: int | None = None,
-        tools: list[dict] | None = None,
-        **kwargs: Any,
-    ) -> LLMResponse:
-        response = await self._delegate.chat(
-            messages=messages,
-            model=model,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            tools=tools,
-            **kwargs,
-        )
-        usage = response.usage
-        model_name = model or self._delegate.get_default_model()
+    async def stream(self, request: LLMRequest) -> AsyncIterator[LLMStreamEvent]:
+        model_name = request.model or self._delegate.get_default_model()
+        usage = TokenUsage()
+        async for event in self._delegate.stream(request):
+            match event:
+                case UsageSnapshot(usage=snapshot):
+                    usage = snapshot
+                case StreamFailure():
+                    yield event
+                    return
+                case Finish():
+                    self._record(model_name, usage)
+                    yield event
+                    return
+            yield event
+
+    def _record(self, model_name: str, usage: TokenUsage) -> None:
         previous = self._usage_by_model.get(model_name)
         self._usage_by_model[model_name] = LlmUsage(
             model=model_name,
             calls=(previous.calls if previous is not None else 0) + 1,
             input_tokens=(previous.input_tokens if previous is not None else 0)
-            + usage.get("prompt_tokens", usage.get("input_tokens", 0)),
+            + usage.input_tokens,
             output_tokens=(previous.output_tokens if previous is not None else 0)
-            + usage.get("completion_tokens", usage.get("output_tokens", 0)),
+            + usage.output_tokens,
             cache_read_tokens=(previous.cache_read_tokens if previous is not None else 0)
-            + usage.get(
-                "cache_read_input_tokens",
-                usage.get("cache_read_tokens", usage.get("prompt_cache_hit_tokens", 0)),
-            ),
+            + usage.cache_read_input_tokens,
             cache_write_tokens=(previous.cache_write_tokens if previous is not None else 0)
-            + usage.get("cache_creation_input_tokens", usage.get("cache_write_tokens", 0)),
+            + usage.cache_creation_input_tokens,
         )
-        return response
 
     def get_default_model(self) -> str:
         return self._delegate.get_default_model()

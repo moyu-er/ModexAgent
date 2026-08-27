@@ -171,7 +171,7 @@ class TestLlmCancelInterceptor:
             yield MagicMock(content_delta=" world")
 
         chunks = []
-        async for chunk in interceptor.around_llm_stream(ctx, mock_call, _stream):
+        async for chunk in interceptor.around_llm_stream(ctx, mock_call, _stream()):
             chunks.append(chunk)
 
         assert len(chunks) == 2
@@ -203,7 +203,7 @@ class TestLlmCancelInterceptor:
 
         chunks = []
         with pytest.raises(AgentCancelledError) as exc:
-            async for chunk in interceptor.around_llm_stream(ctx, mock_call, _stream):
+            async for chunk in interceptor.around_llm_stream(ctx, mock_call, _stream()):
                 chunks.append(chunk)
 
         assert "/stop" in str(exc.value)
@@ -338,7 +338,7 @@ class TestAllConsumersIndependentlyStop:
 
         chunks = []
         with pytest.raises(AgentCancelledError):
-            async for chunk in interceptor.around_llm_stream(ctx, call, _stream):
+            async for chunk in interceptor.around_llm_stream(ctx, call, _stream()):
                 chunks.append(chunk)
         assert len(chunks) == 0
 

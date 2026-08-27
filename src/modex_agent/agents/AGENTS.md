@@ -152,7 +152,7 @@ class MyAgent(Agent[MyEvent]):
 - `modex_agent.core.agent` — `Agent[E]`, `AgentContext`
 - `modex_graph` — `Graph[S]`, `Node[S]`, `GraphEngine`, `GraphInterrupt`, `GraphContext`, `GraphRuntime` (ADR-0033)
 - `modex_agent.core.tool_manager` — `InMemoryToolManager`, `Tool`, `ToolResult`
-- `modex_agent.core.provider` — `LLMProvider`, `StreamingLLMProvider`
+- `modex_agent.core.provider` — `LLMProvider`, `CallbackStreamProvider`
 - `modex_agent.core.emitter` — `ContentEmitter`, `AgentResult`
 - `modex_agent.core.types` — `MessageRole`, `MessageType`, `ToolCall`
 - `modex_agent.core.session_id` — `SessionInfo`

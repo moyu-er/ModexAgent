@@ -98,9 +98,10 @@ def _interrupt_reason_from(exc: BaseException) -> InterruptReason:
 async def _persist_interrupted_partial(ctx: AgentContext, reason: str) -> None:
     """Persist a partially-produced assistant response as an XML-marked message.
 
-    Reads (and clears) the partial content stashed by ``_stream_with_control``
-    when an LLM stream was interrupted mid-flight. Appends an interrupted
-    assistant message to both ``ctx.history`` (memory) and ``message_delta``
+    Reads (and clears) the partial content stashed by the ReactLlmClient
+    event loop when an LLM stream was interrupted mid-flight. Appends an
+    interrupted assistant message to both ``ctx.history`` (memory) and
+    ``message_delta``
     (so ``_get_turn_messages`` mirrors it), keeping memory aligned with the
     transcript. No-op when no partial was captured (normal completion, or an
     interrupt that produced nothing).

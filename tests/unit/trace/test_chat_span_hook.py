@@ -124,7 +124,8 @@ async def test_chat_span_captures_response_details(tmp_path: Path) -> None:
         {"tool_name": "search", "arguments": '{"query": "trace"}'},
     ]
     assert attributes[GenAiAttr.OUTPUT_REASONING_CONTENT] == "Need current data"
-    assert attributes[GenAiAttr.USAGE_INPUT_TOKENS] == 10
+    # prompt_tokens(10) includes cached tokens: uncached input = 10 - 4.
+    assert attributes[GenAiAttr.USAGE_INPUT_TOKENS] == 6
     assert attributes[GenAiAttr.USAGE_OUTPUT_TOKENS] == 5
     assert attributes[GenAiAttr.USAGE_CACHE_READ_INPUT_TOKENS] == 4
     assert attributes[GenAiAttr.USAGE_CACHE_CREATION_INPUT_TOKENS] == 2
@@ -175,6 +176,35 @@ async def test_chat_span_accumulates_usage(tmp_path: Path) -> None:
     }
     assert "trace-1" not in session.llm_start_times
     assert "trace-1" not in session.llm_request_attrs
+
+
+async def test_chat_span_captures_replayed_reasoning_in_input(tmp_path: Path) -> None:
+    """Assistant reasoning_content rides prompt capture into input messages (smoke)."""
+    session = TraceSessionState()
+    hook, store = _make_hook(tmp_path, session)
+    context = _make_context()
+    request = [
+        ChatMessage(role=MessageRole.USER, content="Search the docs"),
+        ChatMessage(
+            role=MessageRole.ASSISTANT,
+            content="",
+            tool_calls=[
+                ToolCall(call_id="call-1", tool_name="search", arguments={"query": "docs"})
+            ],
+            reasoning_content="User needs docs; call search",
+        ),
+    ]
+
+    await hook.before_llm(context, request)
+    await hook.after_llm_response(context, LLMResponse(content="Done"))
+
+    spans = await store.list_by_session("session.worker")
+    attributes = spans[0].attributes
+    assistant_parts = attributes[GenAiAttr.INPUT_MESSAGES][1]["parts"]
+    assert assistant_parts[0] == {
+        "type": "reasoning",
+        "content": "User needs docs; call search",
+    }
 
 
 async def test_chat_span_without_prompt_capture(tmp_path: Path) -> None:

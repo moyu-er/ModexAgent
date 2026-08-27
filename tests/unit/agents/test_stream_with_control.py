@@ -1,7 +1,7 @@
 """End-to-end regression for the LLM_STREAM control-drain path (now in ReactLlmClient).
 
 Drives agent.run() through the streaming interceptor path (ReactLlmClient.call →
-_stream_with_control) and asserts tool_calls are preserved and that a mid-turn
+the LLMStreamEvent loop) and asserts tool_calls are preserved and that a mid-turn
 CANCEL_TURN is consumed by the LlmCancelInterceptor and aborts the turn. The
 unit-level WRITE of INTERRUPTED_PARTIAL is covered by
 tests/unit/agents/react/test_llm_client.py; this file covers full-turn behavior.
@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.agents.react.agent import ReActEvent, ReActAgent
-from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.interceptor.abc import InterceptorScope
 
@@ -82,18 +82,16 @@ def _make_fake_ctx(*, interceptor_chain=None, control_channel=None):
 
 
 class TestStreamWithControlPreservesToolCalls:
-    """P0-1r2: _stream_with_control MUST preserve tool_calls from LLM response."""
+    """P0-1r2: the event loop MUST preserve tool_calls from the LLM response."""
 
     async def test_preserves_tool_calls_when_llm_returns_them(self):
-        """When LLM returns tool_calls via chat_stream, _stream_with_control
+        """When LLM returns tool_calls via chat_stream, the event loop
         must include them in the returned LLMResponse."""
         # Arrange: mock interceptor_chain with has_scope(LLM_STREAM)=True
-        from modex_agent.interceptor.abc import LLMStreamChunk, LLMStreamContext
-
-        async def _fake_llm_stream(ctx, call, actual_stream):
-            """Mirror the actual stream, passing chunks through."""
-            async for chunk in actual_stream():
-                yield chunk
+        async def _fake_llm_stream(ctx, call, events):
+            """Mirror the actual event stream, passing events through."""
+            async for event in events:
+                yield event
 
         fake_chain = MagicMock()
 
@@ -115,7 +113,7 @@ class TestStreamWithControlPreservesToolCalls:
         # Arrange: mock streaming provider that returns tool_calls
         tool_call = ToolCall(tool_name="bash", arguments={"cmd": "ls"}, call_id="call_1")
 
-        class StreamingProvider(StreamingLLMProvider):
+        class StreamingProvider(CallbackStreamProvider):
             async def chat_stream(self, messages, tools=None, temperature=0.7,
                                   max_output_tokens=None, on_content_delta=None,
                                   on_reasoning_delta=None, **kwargs):
@@ -157,12 +155,10 @@ class TestStreamWithControlPreservesToolCalls:
         )
 
     async def test_no_tool_calls_when_llm_returns_none(self):
-        """When LLM returns NO tool_calls, _stream_with_control must work correctly."""
-        from modex_agent.interceptor.abc import LLMStreamChunk, LLMStreamContext
-
-        async def _fake_llm_stream(ctx, call, actual_stream):
-            async for chunk in actual_stream():
-                yield chunk
+        """When LLM returns NO tool_calls, the event loop must work correctly."""
+        async def _fake_llm_stream(ctx, call, events):
+            async for event in events:
+                yield event
 
         fake_chain = MagicMock()
 
@@ -181,7 +177,7 @@ class TestStreamWithControlPreservesToolCalls:
         fake_chain.around_tool_call = _fake_around_tool_call
         fake_chain.around_llm_stream = _fake_llm_stream
 
-        class StreamingProviderNoTools(StreamingLLMProvider):
+        class StreamingProviderNoTools(CallbackStreamProvider):
             async def chat_stream(self, messages, tools=None, temperature=0.7,
                                   max_output_tokens=None, on_content_delta=None,
                                   on_reasoning_delta=None, **kwargs):
@@ -243,14 +239,14 @@ class TestMidTurnCancelViaInterceptor:
             scope=ControlScope(session_id="test.agent"),
         ))
 
-        class CancellableStreamProvider(StreamingLLMProvider):
+        class CancellableStreamProvider(CallbackStreamProvider):
             async def chat_stream(self, messages, tools=None, temperature=0.7,
                                   max_output_tokens=None, on_content_delta=None,
                                   on_reasoning_delta=None, **kwargs):
                 if on_content_delta:
                     # This callback drain will find and consume CANCEL_TURN,
                     # raising AgentCancelledError which propagates through the
-                    # provider back to _stream_with_control.
+                    # provider back to the client's event loop.
                     await on_content_delta("shall be cancelled")
                 # Should never reach here.
                 return LLMResponse(
@@ -295,7 +291,7 @@ class TestMidTurnCancelViaInterceptor:
         # The test body injects CANCEL_TURN while chat_stream is "in-flight".
         chunk_gate = asyncio.Event()
 
-        class SlowStreamingProvider(StreamingLLMProvider):
+        class SlowStreamingProvider(CallbackStreamProvider):
             async def chat_stream(self, messages, tools=None, temperature=0.7,
                                   max_output_tokens=None, on_content_delta=None,
                                   on_reasoning_delta=None, **kwargs):

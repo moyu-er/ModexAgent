@@ -1,17 +1,21 @@
 """Tests for ReactLlmClient.call's control-drain path.
 
 Migrated from tests/unit/agents/test_react_agent_interrupted_partial.py —
-the partial-stash WRITE belongs to ReactLlmClient._stream_with_control (the
-client). The agent-level READ/persist (_persist_interrupted_partial) and the
-interrupt-reason mapping remain tested at the agent level (see
+the partial-stash WRITE belongs to ReactLlmClient's event loop (the
+client). The agent-level READ/persist (_persist_interrupted_partial) and
+the interrupt-reason mapping remain tested at the agent level (see
 test_react_agent_interrupted_partial.py).
 
 Regression: on mid-stream cancel/pause, the assistant message append at the LLM
 node (ctx.history.append) never ran, so memory lost the partial content while the
 transcript kept it. The fix stashes the partial content in
-``TurnCustomKey.INTERRUPTED_PARTIAL`` from ``_stream_with_control`` (now in the
-client) and persists an XML-marked interrupted message in the agent's
+``TurnCustomKey.INTERRUPTED_PARTIAL`` from the event loop's except block (now in
+the client) and persists an XML-marked interrupted message in the agent's
 cancel/error handlers.
+
+ADR-0046: the interceptor protocol is event-based — the chain receives and
+returns an ``AsyncIterator[LLMStreamEvent]`` (no next-callable), and
+callback-style providers surface through the CallbackStreamProvider bridge.
 """
 
 from collections.abc import AsyncIterator
@@ -22,10 +26,11 @@ import pytest
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.control.exceptions import AgentCancelledError
-from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import LLMResponse, ToolCall
-from modex_agent.interceptor.abc import InterceptorScope, LLMStreamChunk
+from modex_agent.core.stream_events import Finish, LLMStreamEvent
+from modex_agent.core.types import LLMResponse, TokenUsage, ToolCall
+from modex_agent.interceptor.abc import InterceptorScope
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
@@ -56,30 +61,28 @@ def _make_ctx():
 
 
 class _PassthroughInterceptorChain:
-    """Pass-through chain: iterates the wrapped stream without draining.
+    """Pass-through chain: iterates the wrapped event stream without draining.
 
-    The cancel is simulated by the fake provider raising mid-stream (equivalent
-    to the real control-channel drain raising inside _on_content_delta).
-    has_scope(LLM_STREAM)=True so ReactLlmClient.call() routes here (the
-    original tests called _stream_with_control directly; routing through call()
-    requires the scope gate).
+    has_scope(LLM_STREAM)=True so ReactLlmClient.call() routes here.
     """
 
     def has_scope(self, scope: InterceptorScope) -> bool:
         return scope == InterceptorScope.LLM_STREAM
 
-    async def around_llm_stream(self, ctx, call, next_stream) -> AsyncIterator[LLMStreamChunk]:
-        async for chunk in next_stream():
-            yield chunk
+    async def around_llm_stream(
+        self, ctx, call, events: AsyncIterator[LLMStreamEvent]
+    ) -> AsyncIterator[LLMStreamEvent]:
+        async for event in events:
+            yield event
 
 
-class _CancelBeforeYieldChain:
-    """Simulates the real LlmCancelInterceptor post-stream cancel.
+class _CancelAfterTwoEventsChain:
+    """Simulates the real LlmCancelInterceptor mid-stream cancel.
 
-    The provider streams fully via callbacks (populating ``streamed_content``)
-    and returns; the interceptor then drains and raises *before* re-yielding
-    the end-of-stream chunk — so the for-loop never fills ``accumulated_content``
-    yet ``streamed_content`` holds the content.
+    The provider streams via callbacks; the bridge turns them into
+    TextDelta events which flow through to the client (populating
+    ``streamed_content``), then the interceptor's drain finds CANCEL_TURN on
+    the third pull — before any terminal event.
     """
 
     def __init__(self, exc: BaseException):
@@ -88,30 +91,57 @@ class _CancelBeforeYieldChain:
     def has_scope(self, scope: InterceptorScope) -> bool:
         return scope == InterceptorScope.LLM_STREAM
 
-    async def around_llm_stream(self, ctx, call, next_stream) -> AsyncIterator[LLMStreamChunk]:
-        async for _chunk in next_stream():
-            raise self._exc
-        yield  # pragma: no cover - keeps this an async generator
+    async def around_llm_stream(
+        self, ctx, call, events: AsyncIterator[LLMStreamEvent]
+    ) -> AsyncIterator[LLMStreamEvent]:
+        yielded = 0
+        async for _event in events:
+            if yielded >= 2:
+                raise self._exc
+            yielded += 1
+            yield _event
 
 
-class _FakeStreamProvider(StreamingLLMProvider):
-    """Streams content via on_content_delta callbacks (the real path).
+class _CancelBeforeFinishChain:
+    """Simulates the real LlmCancelInterceptor post-stream cancel.
+
+    The provider streams fully and returns; the bridge emits the
+    re-translated payload (ToolCallComplete for tool calls) and the terminal
+    Finish. The interceptor cancels before yielding the Finish event — so
+    the loop has accumulated streamed_content and tool_names but never
+    reaches the terminal state.
+    """
+
+    def __init__(self, exc: BaseException):
+        self._exc = exc
+
+    def has_scope(self, scope: InterceptorScope) -> bool:
+        return scope == InterceptorScope.LLM_STREAM
+
+    async def around_llm_stream(
+        self, ctx, call, events: AsyncIterator[LLMStreamEvent]
+    ) -> AsyncIterator[LLMStreamEvent]:
+        async for event in events:
+            if isinstance(event, Finish):
+                raise self._exc
+            yield event
+
+
+class _FakeStreamProvider(CallbackStreamProvider):
+    """Streams content via on_content_delta callbacks (the bridge path).
 
     Mirrors how a real provider streams: content deltas flow through the
-    ``on_content_delta`` callback (which feeds ``streamed_content``), NOT through
-    the end-of-stream chunk. Either raises mid-stream (``exc``) or returns
-    ``response`` after streaming completes.
+    ``on_content_delta`` callback, NOT through the end-of-stream chunk;
+    ``response`` is returned after streaming completes.
     """
 
     def __init__(
         self,
         deltas: list[str],
         *,
-        exc: BaseException | None = None,
         response: LLMResponse | None = None,
     ):
         self._deltas = deltas
-        self._exc = exc
         self._response = response
 
     def get_default_model(self) -> str:
@@ -123,8 +153,6 @@ class _FakeStreamProvider(StreamingLLMProvider):
     async def chat_stream(self, messages, *, on_content_delta, on_reasoning_delta, **kw):
         for delta in self._deltas:
             await on_content_delta(delta)
-        if self._exc is not None:
-            raise self._exc
         return self._response
 
 
@@ -150,14 +178,17 @@ class _FakeNonStreamEmitter(_FakeEmitter):
         pass
 
 
-class _FakeNonStreamProvider:
+class _FakeNonStreamProvider(CallbackStreamProvider):
+    """chat-only scripted provider — the bridge folds its chat_stream response
+    into the event loop (single-path convergence)."""
+
     def __init__(self, *, response: LLMResponse):
         self._response = response
 
     def get_default_model(self) -> str:
         return "mock"
 
-    async def chat(self, messages, **kw):
+    async def chat_stream(self, messages, *, on_content_delta=None, on_reasoning_delta=None, **kw):
         return self._response
 
 
@@ -173,13 +204,14 @@ class TestReactLlmClientStreamCaptureStashesPartial:
 
     @pytest.mark.asyncio
     async def test_streamed_content_stashed_on_midstream_cancel(self):
-        """Real flow: content streams via on_content_delta, cancel raises
-        mid-stream before chat_stream returns. streamed_content (not
-        accumulated_content) holds the partial and must be stashed."""
+        """Real flow: content streams via callbacks (bridge re-emits them as
+        TextDelta events), then the interceptor's drain finds CANCEL_TURN
+        mid-stream. streamed_content (accumulated per-event in the loop)
+        holds the partial and must be stashed."""
         ctx = _make_ctx()
         ctx.emitter = _FakeEmitter()
-        provider = _FakeStreamProvider(["partial ", "content"], exc=AgentCancelledError())
-        ctx.runtime.services.interceptors = _PassthroughInterceptorChain()
+        provider = _FakeStreamProvider(["partial ", "content"])
+        ctx.runtime.services.interceptors = _CancelAfterTwoEventsChain(AgentCancelledError())
 
         with pytest.raises(AgentCancelledError):
             await ReactLlmClient(provider).call([], ctx)
@@ -190,8 +222,9 @@ class TestReactLlmClientStreamCaptureStashesPartial:
     @pytest.mark.asyncio
     async def test_streamed_content_and_tools_stashed_on_poststream_cancel(self):
         """Provider streams fully and returns; the interceptor cancels before
-        re-yielding the chunk (real LlmCancelInterceptor post-stream drain).
-        streamed_content holds the content, tool_calls_list holds tool names."""
+        the terminal Finish event (real LlmCancelInterceptor post-stream
+        drain). streamed_content holds the content, the loop's tool_names
+        hold the re-translated ToolCallComplete names."""
         ctx = _make_ctx()
         ctx.emitter = _FakeEmitter()
         provider = _FakeStreamProvider(
@@ -201,7 +234,7 @@ class TestReactLlmClientStreamCaptureStashesPartial:
                 tool_calls=[ToolCall(tool_name="read_file", arguments={}, call_id="c1")],
             ),
         )
-        ctx.runtime.services.interceptors = _CancelBeforeYieldChain(AgentCancelledError())
+        ctx.runtime.services.interceptors = _CancelBeforeFinishChain(AgentCancelledError())
 
         with pytest.raises(AgentCancelledError):
             await ReactLlmClient(provider).call([], ctx)
@@ -218,24 +251,30 @@ class TestReactLlmClientStreamCaptureStashesPartial:
             def has_scope(self, scope: InterceptorScope) -> bool:
                 return scope == InterceptorScope.LLM_STREAM
 
-            async def around_llm_stream(self, ctx, call, next_stream):
+            async def around_llm_stream(self, ctx, call, events):
                 raise AgentCancelledError()
                 yield  # pragma: no cover - makes this an async generator
 
         ctx.runtime.services.interceptors = _EmptyRaising()
 
+        # The chain raises on the first pull, so the provider's event stream
+        # is never started — but the request envelope is still built eagerly,
+        # so the mock must return a real model string.
+        provider = MagicMock(spec=CallbackStreamProvider)
+        provider.get_default_model.return_value = "mock"
+
         with pytest.raises(AgentCancelledError):
-            await ReactLlmClient(MagicMock(spec=StreamingLLMProvider)).call([], ctx)
+            await ReactLlmClient(provider).call([], ctx)
 
         assert TurnCustomKey.INTERRUPTED_PARTIAL not in ctx.runtime.state.custom
 
 
 class TestStreamWithControlPreservesUsage:
-    """_stream_with_control must propagate usage from the provider response.
+    """The event loop must propagate usage from the provider response.
 
-    Regression: the control-drain path reconstructed LLMResponse with only
-    content/reasoning/finish_reason/tool_calls — dropping ``response.usage``,
-    so the trace hook never saw token counts.
+    Regression: the legacy control-drain path reconstructed LLMResponse with
+    only content/reasoning/finish_reason/tool_calls — dropping
+    ``response.usage``, so the trace hook never saw token counts.
     """
 
     async def test_usage_propagated_through_control_drain_path(self):
@@ -252,7 +291,7 @@ class TestStreamWithControlPreservesUsage:
 
         result = await ReactLlmClient(provider).call([], ctx)
 
-        assert result.usage == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        assert result.usage == TokenUsage(input_tokens=10, output_tokens=5)
 
     async def test_usage_propagated_through_plain_stream_path(self):
         ctx = _make_ctx()
@@ -264,12 +303,12 @@ class TestStreamWithControlPreservesUsage:
                 usage={"prompt_tokens": 20, "completion_tokens": 8, "total_tokens": 28},
             ),
         )
-        # No interceptor chain → routes through _stream_with_recovery → _stream_plain
+        # No interceptor chain → the event loop runs without the chain wrapper
         ctx.runtime.services.interceptors = None
 
         result = await ReactLlmClient(provider).call([], ctx)
 
-        assert result.usage == {"prompt_tokens": 20, "completion_tokens": 8, "total_tokens": 28}
+        assert result.usage == TokenUsage(input_tokens=20, output_tokens=8)
 
     async def test_usage_propagated_through_non_streaming_path(self):
         ctx = _make_ctx()
@@ -284,15 +323,17 @@ class TestStreamWithControlPreservesUsage:
 
         result = await ReactLlmClient(provider).call([], ctx)
 
-        assert result.usage == {"prompt_tokens": 30, "completion_tokens": 12, "total_tokens": 42}
+        assert result.usage == TokenUsage(input_tokens=30, output_tokens=12)
 
 
 class TestCompletionStartTimePropagation:
     """completion_start_time (TTFT) must flow from provider → LLMResponse → hook.
 
     Langfuse maps ``langfuse.observation.completion_start_time`` to its
-    ``completionStartTime`` field — the only direct TTFT path. The provider
-    captures it at first content delta; _stream_with_control must not drop it.
+    ``completionStartTime`` field — the only direct TTFT path. ADR-0046: the
+    event loop assembles it from the FIRST event's arrival time
+    (EventAssembler semantics), replacing the legacy provider-captured TTFT
+    field on bridged paths.
     """
 
     async def test_completion_start_time_through_control_drain_path(self):
@@ -309,7 +350,7 @@ class TestCompletionStartTimePropagation:
 
         result = await ReactLlmClient(provider).call([], ctx)
 
-        assert result.completion_start_time == "2025-01-01T00:00:00.123456+00:00"
+        assert result.completion_start_time is not None
 
     async def test_completion_start_time_through_plain_stream_path(self):
         ctx = _make_ctx()
@@ -325,9 +366,12 @@ class TestCompletionStartTimePropagation:
 
         result = await ReactLlmClient(provider).call([], ctx)
 
-        assert result.completion_start_time == "2025-01-01T00:00:00.654321+00:00"
+        assert result.completion_start_time is not None
 
-    async def test_completion_start_time_none_when_not_provided(self):
+    async def test_completion_start_time_first_event_semantics(self):
+        """The assembler stamps the first event's arrival time — set even
+        when the provider response itself carries no completion_start_time
+        (the legacy None case is gone: any event flow yields a timestamp)."""
         ctx = _make_ctx()
         ctx.emitter = _FakeEmitter()
         provider = _FakeStreamProvider(
@@ -338,10 +382,10 @@ class TestCompletionStartTimePropagation:
 
         result = await ReactLlmClient(provider).call([], ctx)
 
-        assert result.completion_start_time is None
+        assert result.completion_start_time is not None
 
 
-class _RecordingProvider(StreamingLLMProvider):
+class _RecordingProvider(CallbackStreamProvider):
     """Records the temperature kwarg received on each call path."""
 
     def __init__(self):
@@ -391,13 +435,16 @@ class TestTemperaturePassThrough:
         assert provider.stream_temperatures == [None]
 
     async def test_non_streaming_path_passes_none(self):
+        """ADR-0046 convergence: a non-streaming emitter with a streaming
+        provider rides the same event loop (via the bridge) — temperature
+        reaches chat_stream verbatim instead of chat()."""
         ctx = _make_ctx()
         ctx.emitter = _FakeNonStreamEmitter()
         provider = _RecordingProvider()
 
         await ReactLlmClient(provider).call([], ctx)
 
-        assert provider.chat_temperatures == [None]
+        assert provider.stream_temperatures == [None]
 
     async def test_per_turn_override_passes_through(self):
         ctx = _make_ctx()

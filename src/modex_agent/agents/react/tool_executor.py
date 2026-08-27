@@ -41,6 +41,7 @@ class ToolExecutor:
             workspace_root=ws_root,
             tool_call_id=tool_call.call_id,
             session_id=str(ctx.session),
+            media_store=(ctx.runtime.services.media_store if ctx.runtime is not None else None),
         )
 
         async def _actual() -> ToolResult:

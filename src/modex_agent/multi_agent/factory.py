@@ -16,18 +16,14 @@ from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.context import ContextManager, InMemoryContextManager
 from modex_agent.core.runtime_context import RuntimeContextManager
 from modex_agent.core.session_registry import SessionRegistry
-from modex_agent.core.tool_manager import InMemoryToolManager
-from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
-
-try:
-    from modex_agent.providers import LiteLLMProvider
-except ImportError:
-    LiteLLMProvider = None  # type: ignore[misc,assignment]
-
 from modex_agent.core.skills.filter import AllowListFilter
 from modex_agent.core.skills.manager import SkillManager
+from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook import HookRunner
 from modex_agent.hook.builtin import InboxFlushHook
+from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
+from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.tools.filter import FilteredToolManager
 
 from .comm_kind import AgentCommKind
@@ -68,7 +64,8 @@ class AgentFactory(ABC):
 
         ``llm_provider`` is the per-agent LLM provider resolved by the
         caller's assembly (the LLM_PROVIDER slot product). When ``None`` the
-        factory falls back to its own default, then to LiteLLM construction.
+        factory falls back to its own default, then to
+        ``create_llm_provider`` construction.
         """
         ...
 
@@ -121,20 +118,31 @@ class DefaultAgentFactory(AgentFactory):
         descriptor: AgentDescriptor,
         llm_provider: LLMProvider | None = None,
     ) -> Any:
+        """Resolve the per-agent LLM provider.
+
+        Priority: per-agent override → factory default → last-resort
+        ``create_llm_provider`` construction (OPENAI_COMPATIBLE, per
+        ``LLMConfig`` default). The fallback semantics are unchanged from
+        the legacy SDK provider path: the final resort when no provider was
+        injected anywhere; the empty ``api_key`` defers to the
+        ``OPENAI_API_KEY`` environment variable (T18 env fallback), matching
+        the old SDK-path behaviour.
+        """
         if llm_provider is not None:
             return llm_provider
         if self._default_llm_provider is not None:
             return self._default_llm_provider
-        if LiteLLMProvider is None:
-            raise ImportError("LiteLLMProvider is not available. Install with: pip install litellm")
         cfg = descriptor.llm_config
-        return LiteLLMProvider(
-            model=cfg.model or "gpt-4o",
-            api_key=None,
-            base_url=None,
-            temperature=cfg.temperature if cfg.temperature is not None else 0.7,
-            max_output_tokens=cfg.max_output_tokens,
-            reasoning_effort=cfg.reasoning_effort,
+        # AgentLLMConfig.max_output_tokens is optional; LLMConfig requires an int.
+        return create_llm_provider(
+            LLMConfig(
+                model=cfg.model or "gpt-4o",
+                temperature=cfg.temperature,
+                max_output_tokens=(
+                    cfg.max_output_tokens if cfg.max_output_tokens is not None else 80000
+                ),
+                reasoning_effort=cfg.reasoning_effort,
+            )
         )
 
     def _get_builder(self, execution_strategy: ExecutionStrategyKind) -> type[Any] | None:

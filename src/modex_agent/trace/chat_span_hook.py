@@ -162,23 +162,15 @@ class ChatSpanHook(BaseTraceHook, BeforeLLMHook, AfterLLMResponseHook):
             ]
 
         usage = response.usage
-        input_tokens = usage.get("input_tokens", usage.get("prompt_tokens"))
-        output_tokens = usage.get("output_tokens", usage.get("completion_tokens"))
-        usage_attributes = (
-            ("reasoning_tokens", GenAiAttr.USAGE_REASONING_TOKENS),
-            ("cache_read_input_tokens", GenAiAttr.USAGE_CACHE_READ_INPUT_TOKENS),
-            (
-                "cache_creation_input_tokens",
-                GenAiAttr.USAGE_CACHE_CREATION_INPUT_TOKENS,
-            ),
-        )
-        if input_tokens is not None:
-            attributes[GenAiAttr.USAGE_INPUT_TOKENS] = input_tokens
-        if output_tokens is not None:
-            attributes[GenAiAttr.USAGE_OUTPUT_TOKENS] = output_tokens
-        for usage_key, attribute in usage_attributes:
-            if usage_key in usage:
-                attributes[attribute] = usage[usage_key]
+        for value, attribute in (
+            (usage.input_tokens, GenAiAttr.USAGE_INPUT_TOKENS),
+            (usage.output_tokens, GenAiAttr.USAGE_OUTPUT_TOKENS),
+            (usage.reasoning_tokens, GenAiAttr.USAGE_REASONING_TOKENS),
+            (usage.cache_read_input_tokens, GenAiAttr.USAGE_CACHE_READ_INPUT_TOKENS),
+            (usage.cache_creation_input_tokens, GenAiAttr.USAGE_CACHE_CREATION_INPUT_TOKENS),
+        ):
+            if value:
+                attributes[attribute] = value
 
         turn_usage = self._session.turn_usage.setdefault(
             trace_id,
@@ -190,13 +182,11 @@ class ChatSpanHook(BaseTraceHook, BeforeLLMHook, AfterLLMResponseHook):
                 "reasoning_tokens": 0,
             },
         )
-        if input_tokens is not None:
-            turn_usage["input_tokens"] += input_tokens
-        if output_tokens is not None:
-            turn_usage["output_tokens"] += output_tokens
-        for usage_key, _ in usage_attributes:
-            if usage_key in usage:
-                turn_usage[usage_key] += usage[usage_key]
+        turn_usage["input_tokens"] += usage.input_tokens
+        turn_usage["output_tokens"] += usage.output_tokens
+        turn_usage["cache_read_input_tokens"] += usage.cache_read_input_tokens
+        turn_usage["cache_creation_input_tokens"] += usage.cache_creation_input_tokens
+        turn_usage["reasoning_tokens"] += usage.reasoning_tokens
 
         failed = response.error is not None
         await self._save_span(

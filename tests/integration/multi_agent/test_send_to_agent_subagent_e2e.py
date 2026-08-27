@@ -42,7 +42,7 @@ import pytest
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.context import InMemoryContextManager
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.session_registry import InMemorySessionRegistry
 from modex_agent.core.types import LLMResponse
@@ -127,7 +127,7 @@ class _FakeWorkspaceManager:
 # ---------------------------------------------------------------------------
 
 
-class _ScriptedProvider(StreamingLLMProvider):
+class _ScriptedProvider(CallbackStreamProvider):
     """Mock LLM that behaves like a well-behaved subagent.
 
     On the single call it returns a final text reply that IS the deliverable.

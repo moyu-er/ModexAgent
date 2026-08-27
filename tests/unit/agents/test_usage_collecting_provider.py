@@ -4,23 +4,25 @@ import logging
 from collections.abc import Sequence
 
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.types import LLMResponse
 from modex_agent.memory.hooks import LlmUsage
 
 
-class _ResponseProvider(LLMProvider):
+class _ResponseProvider(CallbackStreamProvider):
     def __init__(self, responses: Sequence[LLMResponse]) -> None:
         super().__init__()
         self._responses = iter(responses)
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs,
     ) -> LLMResponse:
         del messages, model, temperature, max_output_tokens, tools, kwargs

@@ -2,9 +2,9 @@
 
 ``create_agent(llm_provider=...)`` is the single per-agent provider seam: the
 assembly-resolved LLM_PROVIDER slot instance overrides the factory default,
-which in turn overrides LiteLLM construction. The agent's actual provider is
-read from ``pipeline.agent._llm_client._provider`` — the same surface the T-P2
-E2E anchor asserts on.
+which in turn overrides the ``create_llm_provider`` fallback. The agent's
+actual provider is read from ``pipeline.agent._llm_client._provider`` — the
+same surface the T-P2 E2E anchor asserts on.
 """
 
 from __future__ import annotations
@@ -13,28 +13,32 @@ from unittest.mock import MagicMock
 
 from modex_agent.core.constants import ExecutionStrategyKind, FinishReason
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.types import LLMResponse
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import AgentDescriptor, DefaultAgentFactory
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentLLMConfig
+from modex_agent.providers.http.provider import HTTPStreamProvider
 
 
-class _ProbeProvider(LLMProvider):
+class _ProbeProvider(CallbackStreamProvider):
     def __init__(self, marker: str) -> None:
         super().__init__()
         self.marker = marker
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: object,
     ) -> LLMResponse:
+        del messages, model, temperature, max_output_tokens, tools, kwargs
         return LLMResponse(content=self.marker, finish_reason=FinishReason.STOP)
 
     def get_default_model(self) -> str:
@@ -91,5 +95,17 @@ async def test_override_replaces_stale_factory_default() -> None:
         instance = await factory.create_agent(_descriptor(), broker=broker, llm_provider=fresh)
         assert _agent_provider(instance) is fresh
         assert _agent_provider(instance) is not stale
+    finally:
+        await broker.stop()
+
+
+async def test_fallback_without_provider_is_http_stream_provider() -> None:
+    """No override and no factory default → create_llm_provider fallback (HTTPStreamProvider)."""
+    factory = DefaultAgentFactory()
+    broker = InMemoryMessageBroker()
+    await broker.start()
+    try:
+        instance = await factory.create_agent(_descriptor(), broker=broker)
+        assert isinstance(_agent_provider(instance), HTTPStreamProvider)
     finally:
         await broker.stop()

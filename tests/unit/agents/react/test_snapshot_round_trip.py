@@ -978,3 +978,91 @@ class TestResultField:
         assert "result" in payload
         assert payload["result"] is not None
         assert isinstance(payload["result"], dict)
+
+
+# ---------------------------------------------------------------------------
+# Tests: parts-bearing message_delta through the codec + store JSON boundary
+# ---------------------------------------------------------------------------
+
+
+class TestMessageDeltaPartsContentCodec:
+    """``ChatMessage.content`` parts lists must survive the store boundary.
+
+    The sqlite turn-state adapter serializes the codec payload with
+    ``json.dumps(..., default=str)`` — a parts list emitted as raw pydantic
+    objects is stringified into Python reprs there (the poison data observed
+    in ``turn_snapshots``: ``content[0]`` became ``str(TextPart(...))``). The
+    codec must therefore emit JSON-ready part dicts itself.
+    """
+
+    def _snapshot_with_parts_delta(self) -> TurnSnapshot:
+        from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, TextPart
+        from modex_agent.runtime.enums import MessageDeltaSource
+        from modex_agent.runtime.models import MessageDelta, ResumePoint
+
+        message = ChatMessage(
+            role="tool",
+            tool_call_id="call-1",
+            content=[
+                TextPart(text="[Image read: /tmp/cat.png (image/png)]"),
+                ImageUrlPart(image_url=ImageUrl(url="media://deadbeef")),
+            ],
+        )
+        return TurnSnapshot(
+            identity=TurnIdentity(
+                agent_id="a1",
+                session=SessionInfo.from_str("ws1.main"),
+                turn_id="t1",
+            ),
+            agent_kind=AgentKind.REACT,
+            phase=TurnPhase.RUNNING,
+            reason=SnapshotReason.TOOL_BATCH_PROGRESS,
+            resume_point=ResumePoint(agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING),
+            message_delta=[
+                MessageDelta(message=message, source=MessageDeltaSource.TOOL)
+            ],
+            state_payload={},
+        )
+
+    def test_parts_content_survives_store_json_boundary(self) -> None:
+        codec = ReActRuntimeStateCodec()
+        snapshot = self._snapshot_with_parts_delta()
+
+        payload = codec.encode_turn(snapshot)
+        # The sqlite adapter's serialization boundary: default=str.
+        through_store = json.loads(json.dumps(payload, default=str))
+
+        restored = codec.decode_turn(through_store)
+        content = restored.message_delta[0].message.content
+        assert isinstance(content, list)
+        assert content[0].text == "[Image read: /tmp/cat.png (image/png)]"
+        assert content[1].image_url.url == "media://deadbeef"
+
+    def test_string_content_round_trips_unchanged(self) -> None:
+        from modex_agent.core.message import ChatMessage
+        from modex_agent.runtime.enums import MessageDeltaSource
+        from modex_agent.runtime.models import MessageDelta, ResumePoint
+
+        codec = ReActRuntimeStateCodec()
+        snapshot = TurnSnapshot(
+            identity=TurnIdentity(
+                agent_id="a1",
+                session=SessionInfo.from_str("ws1.main"),
+                turn_id="t1",
+            ),
+            agent_kind=AgentKind.REACT,
+            phase=TurnPhase.RUNNING,
+            reason=SnapshotReason.TOOL_BATCH_PROGRESS,
+            resume_point=ResumePoint(agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING),
+            message_delta=[
+                MessageDelta(
+                    message=ChatMessage(role="user", content="plain"),
+                    source=MessageDeltaSource.USER,
+                )
+            ],
+            state_payload={},
+        )
+        payload = codec.encode_turn(snapshot)
+        through_store = json.loads(json.dumps(payload, default=str))
+        restored = codec.decode_turn(through_store)
+        assert restored.message_delta[0].message.content == "plain"

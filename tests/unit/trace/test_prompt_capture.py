@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 
 import pytest
 
 from modex_agent.agents.react.message_builder import build_assistant_message
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, TextPart
 from modex_agent.core.types import MessageRole, ToolCall
 from modex_agent.ioc.configs.observability import PromptCaptureMode
 from modex_agent.trace.prompt_capture import (
@@ -184,6 +185,63 @@ def _captured_parts(result: dict[str, object]) -> list[dict[str, object]]:
     captured = result[GenAiAttr.INPUT_MESSAGES]
     assert isinstance(captured, list)
     return captured[-1]["parts"]
+
+
+def test_full_data_url_capture_omits_base64_payload() -> None:
+    # Given
+    image_bytes = b"binary-image-15"
+    payload = base64.b64encode(image_bytes).decode("ascii")
+    message = ChatMessage(
+        role=MessageRole.USER,
+        content=[ImageUrlPart(image_url=ImageUrl(url=f"data:image/png;base64,{payload}"))],
+    )
+
+    # When
+    result = FullPromptCapture().capture([message], model=None)
+
+    # Then
+    captured_text = _captured_parts(result)[0]["content"]
+    assert isinstance(captured_text, str)
+    assert payload not in captured_text
+    assert captured_text == "[image: data:image/png, 15 bytes]"
+
+
+def test_full_media_ref_capture_renders_exact_reference() -> None:
+    # Given
+    message = ChatMessage(
+        role=MessageRole.USER,
+        content=[ImageUrlPart(image_url=ImageUrl(url="media://asset-123"))],
+    )
+
+    # When
+    result = FullPromptCapture().capture([message], model=None)
+
+    # Then
+    assert _captured_parts(result) == [
+        {"type": "text", "content": "[image: media://asset-123]"}
+    ]
+
+
+def test_summary_mixed_parts_capture_renders_one_line_per_part() -> None:
+    # Given
+    message = ChatMessage(
+        role=MessageRole.USER,
+        content=[
+            TextPart(text="Inspect this image"),
+            ImageUrlPart(image_url=ImageUrl(url="media://asset-123")),
+        ],
+    )
+
+    # When
+    result = SummaryPromptCapture().capture([message], model=None)
+
+    # Then
+    assert _captured_parts(result) == [
+        {
+            "type": "text",
+            "content": "Inspect this image\n[image: media://asset-123]",
+        }
+    ]
 
 
 def test_summary_captures_reasoning_on_tool_call_turn() -> None:

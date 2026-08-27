@@ -64,7 +64,7 @@ from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.prompt import SystemPromptProvider
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.types import LLMResponse
 from modex_agent.hook import HookRunner
 from modex_agent.interceptor.chain import InterceptorChain
@@ -135,20 +135,23 @@ class _ProbePromptProvider(SystemPromptProvider):
         return _TP1_SENTINEL
 
 
-class _ProbeLLMProvider(LLMProvider):
+class _ProbeLLMProvider(CallbackStreamProvider):
     """T-P2 probe — identity is asserted on the materialized subagent."""
 
     probe_marker = _TP2_LLM_NAME
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: Any,
     ) -> LLMResponse:
+        del messages, model, temperature, max_output_tokens, tools, kwargs
         return LLMResponse(content=_TP2_LLM_NAME, finish_reason=FinishReason.STOP)
 
     def get_default_model(self) -> str:

@@ -152,6 +152,9 @@ def make_response() -> ResponseFactory:
         tool_calls: list[ToolCall] | None = None,
         finish_reason: str = "stop",
         error: str | None = None,
+        reasoning_signature: str | None = None,
+        reasoning_item_id: str | None = None,
+        reasoning_encrypted_content: str | None = None,
     ) -> Any:
         return type(
             "_MockResponse",
@@ -162,6 +165,9 @@ def make_response() -> ResponseFactory:
                 "tool_calls": tool_calls if tool_calls is not None else [],
                 "finish_reason": finish_reason,
                 "error": error,
+                "reasoning_signature": reasoning_signature,
+                "reasoning_item_id": reasoning_item_id,
+                "reasoning_encrypted_content": reasoning_encrypted_content,
             },
         )()
 

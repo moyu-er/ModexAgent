@@ -8,24 +8,25 @@ interceptor composition and the timeout interceptor's behaviour.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy, TurnTimeoutPolicy
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.tool_manager import InMemoryToolManager, ToolExecutionContext, ToolResult
 from modex_agent.core.types import ToolCall
 from modex_agent.interceptor.abc import ToolCallContext
+from modex_agent.media.store import LocalFileMediaStore
+from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-from modex_agent.memory.history import ListMessageHistory
-from modex_agent.core.tool_manager import InMemoryToolManager
 
 if TYPE_CHECKING:
     from modex_agent.core.capabilities import ModelCapabilities
@@ -55,13 +56,15 @@ def _make_ctx(*, tool_manager=None, **kw) -> AgentContext:
 class _RecordingToolManager:
     def __init__(self, tool_coro) -> None:
         self._tool_coro = tool_coro
+        self.last_context: ToolExecutionContext | None = None
 
     async def execute(
         self,
         tool_name: str,
         arguments: dict[str, Any],
-        ctx: Any = None,
+        ctx: ToolExecutionContext | None = None,
     ) -> ToolResult:
+        self.last_context = ctx
         return await self._tool_coro(tool_name, arguments)
 
     def get_tool_descriptions(self, caps: ModelCapabilities | None = None) -> list[str]:
@@ -114,6 +117,41 @@ class TestToolExecutorRawExecution:
         result = await executor.execute(tc, ctx)
         assert result.message_content() == "ok"
         assert result.error is None
+
+    @pytest.mark.asyncio
+    async def test_runtime_media_store_reaches_tool_execution_context(
+        self, tmp_path: Path
+    ) -> None:
+        async def real_tool(tool_name, arguments):
+            return ToolResult.from_text(tool_name, "ok")
+
+        manager = _RecordingToolManager(real_tool)
+        ctx = _make_ctx(tool_manager=manager)
+        store = LocalFileMediaStore(tmp_path / "media")
+        assert ctx.runtime is not None
+        ctx.runtime.services.media_store = store
+
+        await ToolExecutor().execute(
+            ToolCall(tool_name="echo", arguments={}, call_id="c1"), ctx
+        )
+
+        assert manager.last_context is not None
+        assert manager.last_context.media_store is store
+
+    @pytest.mark.asyncio
+    async def test_missing_runtime_media_store_yields_none_in_tool_context(self) -> None:
+        async def real_tool(tool_name, arguments):
+            return ToolResult.from_text(tool_name, "ok")
+
+        manager = _RecordingToolManager(real_tool)
+        ctx = _make_ctx(tool_manager=manager)
+
+        await ToolExecutor().execute(
+            ToolCall(tool_name="echo", arguments={}, call_id="c1"), ctx
+        )
+
+        assert manager.last_context is not None
+        assert manager.last_context.media_store is None
 
 
 class TestToolExecutorTimeout:

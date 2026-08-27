@@ -338,16 +338,6 @@ class ToolNode(Node[ReActTurnState]):
                 MessageDelta(message=tool_msg, source=MessageDeltaSource.TOOL)
             )
 
-            if result.content_blocks and agent_ctx.runtime is not None:
-                from modex_agent.media.tool_media import ToolMediaEntry
-
-                media_cache = state.custom.setdefault(TurnCustomKey.TOOL_MEDIA_CACHE, {})
-                media_cache[tc.call_id or ""] = ToolMediaEntry(
-                    call_id=tc.call_id or "",
-                    tool_name=tc.tool_name,
-                    image_blocks=result.content_blocks,
-                )
-
             if batch is not None:
                 for call_state in batch.calls:
                     if call_state.call_id == tc.call_id:

@@ -18,24 +18,17 @@ from modex_agent.agents.react.constants import (
 from modex_agent.agents.react.context import ReActGraphContext, get_agent_ctx
 from modex_agent.agents.react.injection_drainer import InjectionDrainer
 from modex_agent.agents.react.llm_client import ReactLlmClient
+from modex_agent.agents.react.media_injection import inject_multimodal
 from modex_agent.agents.react.message_builder import build_assistant_message
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.capabilities import Modality
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.types import LLMResponse, MessageRole
-from modex_agent.media.media_utils import build_inline_image_block
-from modex_agent.media.tool_media import (
-    SyntheticUserMessageStrategy,
-    ToolMediaEntry,
-    ToolResultMediaStrategy,
-)
+from modex_agent.core.types import LLMResponse
 from modex_agent.runtime.dispatch import renew_dispatch_deadline
 from modex_agent.runtime.enums import (
     MessageDeltaSource,
     OperationKind,
-    TurnCustomKey,
     TurnPhase,
 )
 from modex_agent.runtime.models import MessageDelta
@@ -44,98 +37,6 @@ from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node
 from modex_graph.runtime import GraphRuntime
-
-_default_tool_media_strategy = SyntheticUserMessageStrategy()
-
-
-def enrich_inline_media(
-    messages: list[dict[str, object]],
-    ctx: AgentContext,
-    strategy: ToolResultMediaStrategy | None = None,
-) -> list[dict[str, object]]:
-    """Inject this turn's image blocks into the LLM call's message stream.
-
-    Two sources, two injection paths, one shared gate:
-
-    - **User attachments** (``INLINE_ATTACHMENTS`` → ``build_inline_image_block``
-      → ``INLINE_IMAGE_CACHE[att_id]``): injected INTO the last user message's
-      content.  The user sent these images; they belong on the user's message.
-
-    - **Tool-produced images** (``TOOL_MEDIA_CACHE[call_id]`` →
-      :class:`ToolMediaEntry`): injected via ``strategy`` (default
-      :class:`SyntheticUserMessageStrategy` — Path B) as a *new* user message
-      appended after tool results, with per-call attribution.  This is
-      separate from user attachments because the image originates from a
-      tool call, not the user, and must be attributed to the tool call.
-
-    Both sources are gated on ``Modality.IMAGE``; both use the same
-    ``image_url`` wire format; both are transient (only the LLM call copy is
-    mutated — persisted history keeps text-only tool results / path
-    references).  Runs AFTER governance so governance only sees text.
-    """
-    runtime = ctx.runtime
-    caps = (
-        runtime.model_info.capabilities
-        if runtime is not None and runtime.model_info is not None
-        else None
-    )
-    if caps is None or not caps.supports(Modality.IMAGE):
-        return messages
-
-    from modex_agent.agents.react.state import get_react_state
-
-    state = get_react_state(ctx)
-    if state is None:
-        return messages
-
-    # --- Path 1: user attachments → inject into last user message ---
-    attachment_blocks: list[dict[str, object]] = []
-
-    attachments = state.custom.get(TurnCustomKey.INLINE_ATTACHMENTS)
-    if attachments:
-        cache = state.custom.setdefault(TurnCustomKey.INLINE_IMAGE_CACHE, {})
-        for att in attachments:
-            blocks = cache.get(att.id)
-            if blocks is None:
-                blocks = build_inline_image_block(att)
-                cache[att.id] = blocks
-            attachment_blocks.extend(blocks)
-
-    result = messages
-    if attachment_blocks:
-        result = _inject_into_last_user_message(result, attachment_blocks)
-
-    # --- Path 2: tool media → strategy (default: synthetic user message) ---
-    tool_cache = state.custom.get(TurnCustomKey.TOOL_MEDIA_CACHE)
-    if tool_cache:
-        entries: list[ToolMediaEntry] = list(tool_cache.values())
-        strat = strategy or _default_tool_media_strategy
-        result = strat.inject_tool_media(result, entries)
-
-    return result
-
-
-def _inject_into_last_user_message(
-    messages: list[dict[str, object]],
-    image_blocks: list[dict[str, object]],
-) -> list[dict[str, object]]:
-    """Inject image blocks into the last user message's content (user attachments)."""
-    if not image_blocks:
-        return messages
-
-    user_idx = -1
-    for i in range(len(messages) - 1, -1, -1):
-        if messages[i].get("role") == str(MessageRole.USER):
-            user_idx = i
-            break
-    if user_idx < 0:
-        return [*messages, {"role": str(MessageRole.USER), "content": image_blocks}]
-
-    target = messages[user_idx]
-    text = target.get("content") or ""
-    new_content: list[dict[str, object]] = [{"type": "text", "text": text}, *image_blocks]
-    enriched = {**target, "content": new_content}
-    return [*messages[:user_idx], enriched, *messages[user_idx + 1 :]]
 
 
 class LLMNode(Node[ReActTurnState]):
@@ -225,18 +126,17 @@ class LLMNode(Node[ReActTurnState]):
             if response.finish_reason == FinishReason.ERROR.value:
                 return
 
-            from modex_agent.utils.helpers import strip_think
-
-            # If the provider did NOT separate reasoning_content (non-standard API),
-            # sanitize possible <think> tags embedded in content.
+            # <think>-tag stripping is owned by the openai_compat engine
+            # (parse_think_tags, ADR-0046); the node no longer re-sanitizes.
             content = response.content or ""
-            if response.reasoning_content is None:
-                content = strip_think(content) or ""
 
             assistant_msg = build_assistant_message(
                 content,
                 response.tool_calls,
                 response.reasoning_content,
+                reasoning_signature=response.reasoning_signature,
+                reasoning_item_id=response.reasoning_item_id,
+                reasoning_encrypted_content=response.reasoning_encrypted_content,
             )
             await agent_ctx.history.append(assistant_msg)
             state.add_operation(OperationKind.LLM_CALL, None)
@@ -284,7 +184,7 @@ class LLMNode(Node[ReActTurnState]):
         ctx: AgentContext,
         graph_runtime: GraphRuntime,
         coordinator: GraphPersistenceCoordinator,
-    ) -> list[dict[str, object]]:
+    ) -> list[ChatMessage]:
         messages: list[dict[str, object]] = []
 
         system_content = await ctx.get_resolved_system_prompt()
@@ -305,11 +205,8 @@ class LLMNode(Node[ReActTurnState]):
             )
             messages = await graph_runtime.apply_governance(messages, graph_ctx)
 
-        return enrich_inline_media(messages, ctx)
+        typed = [ChatMessage.coerce(m) for m in messages]
+        return inject_multimodal(typed, ctx)
 
 
-# Deprecated alias — use enrich_inline_media. Retained for callers that have
-# not migrated; remove once all imports switch to the new name.
-enrich_inline_attachments = enrich_inline_media
-
-__all__ = ["LLMNode", "enrich_inline_media", "enrich_inline_attachments"]
+__all__ = ["LLMNode"]

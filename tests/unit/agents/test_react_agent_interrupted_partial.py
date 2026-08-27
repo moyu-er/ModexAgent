@@ -1,6 +1,6 @@
 """Tests for persisting partial assistant content when an LLM stream is interrupted.
 
-The partial-stash WRITE (in ReactLlmClient._stream_with_control) is tested at
+The partial-stash WRITE (in ReactLlmClient's event loop) is tested at
 tests/unit/agents/react/test_llm_client.py. This file keeps the agent-level
 concerns: the interrupt-reason mapping and the run()-level READ/persist
 (_persist_interrupted_partial) that consumes the stashed partial.

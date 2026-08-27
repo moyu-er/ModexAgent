@@ -30,7 +30,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any
 
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage, render_content_part_ref
 from modex_agent.core.types import MessageRole
 from modex_agent.ioc.configs.observability import PromptCaptureMode
 from modex_agent.trace.semconv import GenAiAttr
@@ -305,8 +305,8 @@ def _capture_message_parts(
         include_system: If ``True``, system-role messages are included in
             the output. If ``False``, they are filtered out (system prompt
             is captured separately via hash/instructions).
-        include_reasoning: If ``True``, assistant tool-call turns with a
-            ``reasoning_content`` extra capture it as a ``reasoning`` part
+        include_reasoning: If ``True``, assistant tool-call turns carrying
+            ``reasoning_content`` capture it as a ``reasoning`` part
             (mirroring the DeepSeek thinking-mode passback on the wire);
             ``False`` suppresses the part entirely.
     """
@@ -329,11 +329,11 @@ def _capture_message_parts(
             parts.append(part)
             captured.append({"role": str(msg.role), "parts": parts})
             continue
-        # Mirrors the provider replay condition (openai_provider
-        # _sanitize_api_messages): reasoning_content rides the wire only on
+        # Mirrors the provider replay condition (openai_compat
+        # _assistant_message): reasoning_content rides the wire only on
         # assistant tool-call turns, and precedes text there.
         if include_reasoning and msg.role == MessageRole.ASSISTANT and msg.tool_calls:
-            reasoning = msg.model_extra.get("reasoning_content") if msg.model_extra else None
+            reasoning = msg.reasoning_content
             if reasoning:
                 parts.append({"type": "reasoning", "content": _truncate(reasoning, max_text_chars)})
         text = _content_to_text(msg, max_text_chars)
@@ -372,14 +372,11 @@ def _content_to_text(msg: ChatMessage, max_chars: int) -> str:
 
     Returns ``""`` for ``None`` content so callers can decide whether to emit
     a part (empty text is skipped). Multimodal ``list[ContentPart]`` content
-    is JSON-serialized then truncated, preserving the prior capture behavior.
+    is rendered one reference-only line per part before truncation.
     """
     content = msg.content
     if isinstance(content, str):
         return _truncate(content, max_chars)
     if content is None:
         return ""
-    return _truncate(
-        json.dumps([p.model_dump(mode="json") for p in content], ensure_ascii=False),
-        max_chars,
-    )
+    return _truncate("\n".join(render_content_part_ref(part) for part in content), max_chars)

@@ -6,16 +6,17 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from typing_extensions import TypeVar
 
+from modex_agent.core.stream_events import LLMStreamEvent
+
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
-    from modex_agent.core.constants import FinishReason, StreamControlAction
     from modex_agent.core.emitter import AgentResult
     from modex_agent.core.message import ChatMessage
     from modex_agent.core.tool_manager import ToolResult
@@ -107,18 +108,23 @@ class LLMStreamContext:
     request: LLMRequest | None = None
 
 
-@dataclass
-class LLMStreamChunk:
-    """LLM 流式输出的单个 chunk。"""
-
-    content_delta: str | None = None
-    reasoning_delta: str | None = None
-    finish_reason: FinishReason | None = None
-    control_action: StreamControlAction | None = None
+LLMStreamEvents = AsyncIterator[LLMStreamEvent]
+"""LLM 事件流迭代器 —— ``around_llm_stream`` 的事件化签名（第三参与返回值同型）。"""
 
 
-LLMStreamNext = Callable[[], AsyncIterator[LLMStreamChunk]]
-"""LLM 流式 next 函数：返回异步迭代器。"""
+async def aclose_llm_stream(events: LLMStreamEvents) -> None:
+    """Close an LLM event stream (no-op on an exhausted generator).
+
+    Every producer in the event-stream tree is an async generator (callback
+    bridge, chain wrapper, interceptors); the ``LLMStreamEvents`` alias is
+    pinned to ``AsyncIterator`` (ADR-0046), so the aclose narrowing happens
+    once here — the single place that knows all implementations are
+    generators. Closing forwards GeneratorExit down the chain so the
+    innermost producer (e.g. the bridge's background task) is released
+    deterministically instead of via GC finalization.
+    """
+    await cast("AsyncGenerator[LLMStreamEvent, None]", events).aclose()
+
 
 # ---------------------------------------------------------------------------
 # Next-call 协议
@@ -234,9 +240,20 @@ class LLMStreamInterceptor(Interceptor):
         self,
         ctx: AgentContext,
         call: LLMStreamContext,
-        next_stream: LLMStreamNext,
-    ) -> AsyncIterator[LLMStreamChunk]:
-        """Wrap LLM streaming response. Default: pass-through."""
-        async for chunk in next_stream():
-            yield chunk
-        return
+        events: LLMStreamEvents,
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """Wrap the LLM event stream. Default: pass-through.
+
+        拦截器逐层包裹事件流： 接收内层 ``AsyncIterator[LLMStreamEvent]``，
+        返回同型迭代器。控制异常（``AgentControlError``，含硬取消）与
+        ``CancelledError`` 必须原样传播；其他异常由 ``InterceptorChain``
+        统一转译为 ``StreamFailure`` 终结事件。
+        """
+        try:
+            async for event in events:
+                yield event
+        finally:
+            # Forward close into the inner stream (GeneratorExit 传播) so the
+            # innermost producer (e.g. the callback-bridge background task)
+            # is released deterministically rather than via GC finalization.
+            await aclose_llm_stream(events)

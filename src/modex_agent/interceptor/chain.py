@@ -6,23 +6,25 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.control.exceptions import AgentControlError
-from modex_agent.core.constants import FinishReason, StreamControlAction
+from modex_agent.core.llm_struct import LLMErrorInfo, LLMErrorKind
+from modex_agent.core.stream_events import LLMStreamEvent, StreamFailure
 from modex_agent.interceptor.abc import (
     Interceptor,
     InterceptorScope,
     IterationContext,
     IterationNext,
-    LLMStreamChunk,
     LLMStreamContext,
-    LLMStreamNext,
+    LLMStreamEvents,
     ToolCallContext,
     ToolCallNext,
     TurnNext,
+    aclose_llm_stream,
 )
 
 if TYPE_CHECKING:
@@ -125,21 +127,37 @@ class InterceptorChain:
         self,
         ctx: AgentContext,
         call: LLMStreamContext,
-        actual_stream: LLMStreamNext,
-    ) -> AsyncIterator[LLMStreamChunk]:
-        """包裹 LLM 流式调用。
+        actual_stream: LLMStreamEvents,
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """包裹 LLM 事件流（ADR-0046 事件化签名： 事件进，事件出）。
 
-        按洋葱链顺序 yield chunk。控制异常透传。
+        拦截器逐层包裹事件流（索引 0 最外层），逐事件 yield。
+        控制异常（``AgentControlError`` —— 含 ``AgentCancelledError`` 的硬取消
+        语义）与 ``CancelledError`` 原样传播；其他异常转译为一个合成的
+        ``StreamFailure`` 终结事件后终止。
         """
-        chain = self._build_llm_stream_chain(call, actual_stream)
+        resolved = self._resolved(InterceptorScope.LLM_STREAM)
+        events = actual_stream
+        for interceptor in reversed(resolved):
+            events = interceptor.around_llm_stream(ctx, call, events)
         try:
-            async for chunk in chain(ctx, call):
-                yield chunk
-        except AgentControlError:
+            async for event in events:
+                yield event
+        except (asyncio.CancelledError, AgentControlError):
             raise
         except Exception as e:
             logger.exception("InterceptorChain llm_stream error: %s", e)
-            yield LLMStreamChunk(finish_reason=FinishReason.ERROR, control_action=StreamControlAction.CANCEL)
+            yield StreamFailure(
+                error_info=LLMErrorInfo(
+                    kind=LLMErrorKind.UNKNOWN,
+                    message=f"LLM stream interceptor error: {e}"[:500],
+                )
+            )
+        finally:
+            # Forward close into the wrapped chain so the innermost producer
+            # (e.g. the callback-bridge background task) is released
+            # deterministically on consumer abort.
+            await aclose_llm_stream(events)
 
     # -------------------------------------------------------------------
     # 链构建
@@ -211,38 +229,5 @@ class InterceptorChain:
                 )
 
             await _next(0)
-
-        return _dispatch
-
-    def _build_llm_stream_chain(
-        self,
-        call: LLMStreamContext,
-        actual: LLMStreamNext,
-    ) -> Any:  # noqa: ANN401
-        resolved = self._resolved(InterceptorScope.LLM_STREAM)
-
-        async def _dispatch(
-            ctx: AgentContext,
-            c: LLMStreamContext,
-        ) -> AsyncIterator[LLMStreamChunk]:
-            if not resolved:
-                async for chunk in actual():
-                    yield chunk
-                return
-
-            async def _next(index: int) -> AsyncIterator[LLMStreamChunk]:
-                if index >= len(resolved):
-                    async for chunk in actual():
-                        yield chunk
-                    return
-                async for chunk in resolved[index].around_llm_stream(
-                    ctx,
-                    c,
-                    lambda: _next(index + 1),
-                ):
-                    yield chunk
-
-            async for chunk in _next(0):
-                yield chunk
 
         return _dispatch

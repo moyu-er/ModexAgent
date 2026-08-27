@@ -202,14 +202,22 @@ class TestQQBotServiceIntegration:
 
     @pytest.mark.asyncio
     async def test_react_agent_streaming_vs_non_streaming(self):
-        """Test ReActAgent correctly switches between streaming and non-streaming based on emitter."""
+        """Emitter streaming preference changes emitter delivery, not the provider call path.
+
+        Since the single event loop converged (commit 49860c84), every provider
+        call goes through chat_stream regardless of the emitter's streaming
+        preference; emitter driving is gated at the event dispatch point. What
+        differs is what the emitter receives: per-delta emits during the call
+        (streaming emitter) vs the folded content once at end-of-call
+        (non-streaming emitter).
+        """
         from modex_agent.agents.react import ReActAgent, ReActEvent
         from modex_agent.core.agent import AgentContext
-        from modex_agent.core.provider import StreamingLLMProvider
+        from modex_agent.core.provider import CallbackStreamProvider
         from modex_agent.core.types import LLMResponse
 
         # Create mock provider that tracks which API is called
-        class MockProvider(StreamingLLMProvider):
+        class MockProvider(CallbackStreamProvider):
             def __init__(self):
                 self.chat_stream_called = False
                 self.chat_called = False
@@ -229,6 +237,21 @@ class TestQQBotServiceIntegration:
             def get_default_model(self):
                 return "mock-model"
 
+        # Records HOW content reached the emitter: per-delta or end-of-call.
+        class DeliveryRecorder(_BufferingEmitter[ReActEvent]):
+            def __init__(self):
+                super().__init__()
+                self.deltas: list[str] = []
+                self.full_contents: list[str] = []
+
+            async def emit_delta(self, delta: str) -> None:
+                self.deltas.append(delta)
+                await super().emit_delta(delta)
+
+            async def emit_content(self, full_content: str) -> None:
+                self.full_contents.append(full_content)
+                await super().emit_content(full_content)
+
         provider = MockProvider()
         agent = ReActAgent(provider=provider)
 
@@ -241,8 +264,9 @@ class TestQQBotServiceIntegration:
             session=SessionInfo.from_str("test.agent"),
         )
 
-        # Test streaming mode (emitter wants streaming)
-        class StreamingEmitter(_BufferingEmitter[ReActEvent]):
+        # Test streaming mode (emitter wants streaming): deltas are driven
+        # into the emitter during the event loop.
+        class StreamingEmitter(DeliveryRecorder):
             def wants_streaming(self):
                 return True
 
@@ -250,16 +274,24 @@ class TestQQBotServiceIntegration:
         await agent.run(context, emitter)
         assert provider.chat_stream_called is True
         assert provider.chat_called is False
+        assert emitter.deltas == ["Hello"]
+        assert emitter.full_contents == []
+        assert emitter.get_content() == "Hello"
 
         # Reset
         provider.chat_stream_called = False
         provider.chat_called = False
 
-        # Test non-streaming mode (emitter doesn't want streaming)
-        emitter2 = _BufferingEmitter[ReActEvent]()
+        # Test non-streaming mode (emitter doesn't want streaming): the same
+        # chat_stream call happens, but no per-delta emits — the folded
+        # response is delivered once at end-of-call via emit_content.
+        emitter2 = DeliveryRecorder()
         await agent.run(context, emitter2)
-        assert provider.chat_stream_called is False
-        assert provider.chat_called is True
+        assert provider.chat_stream_called is True
+        assert provider.chat_called is False
+        assert emitter2.deltas == []
+        assert emitter2.full_contents == ["Hello"]
+        assert emitter2.get_content() == "Hello"
 
     def test_output_adapter_send_delta_interface(self):
         """Test that OutputAdapter has the send_delta interface."""
@@ -309,10 +341,21 @@ class TestQQBotServiceIntegration:
         emitter = TestEmitter(adapter, "test_session")
 
         # Create mock provider
+        from modex_agent.core.provider import CallbackStreamProvider
         from modex_agent.core.types import LLMResponse
 
-        class MockProvider:
-            async def chat(self, **kwargs):
+        class MockProvider(CallbackStreamProvider):
+            async def chat_stream(
+                self,
+                messages=None,
+                model=None,
+                temperature=None,
+                max_output_tokens=None,
+                tools=None,
+                on_content_delta=None,
+                on_reasoning_delta=None,
+                **kwargs,
+            ):
                 return LLMResponse(
                     content="Final answer",
                     reasoning_content="My reasoning",

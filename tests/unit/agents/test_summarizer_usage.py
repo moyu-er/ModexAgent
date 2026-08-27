@@ -7,7 +7,7 @@ from typing import Final, assert_never
 from modex_agent.agents.summarizer.consolidator import CoreMemoryConsolidator
 from modex_agent.agents.summarizer.session_compactor import SessionCompactorAgent
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.types import LLMResponse, MessageRole, ToolCall
 from modex_agent.memory.hooks import LlmUsage
 
@@ -18,18 +18,20 @@ class _ProviderError(RuntimeError):
     pass
 
 
-class _ScriptedProvider(LLMProvider):
+class _ScriptedProvider(CallbackStreamProvider):
     def __init__(self, responses: Sequence[LLMResponse | _ProviderError]) -> None:
         super().__init__()
         self._responses = iter(responses)
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs,
     ) -> LLMResponse:
         del messages, model, temperature, max_output_tokens, tools, kwargs
@@ -96,7 +98,7 @@ async def test_consolidate_accumulates_usage_across_retry_runs(tmp_path: Path) -
                 content="",
                 tool_calls=[ToolCall(tool_name="missing_tool", arguments={}, call_id="one")],
                 usage={
-                    "prompt_tokens": 10,
+                    "prompt_tokens": 40,
                     "completion_tokens": 20,
                     "cache_read_input_tokens": 30,
                     "cache_creation_input_tokens": 40,
@@ -108,8 +110,8 @@ async def test_consolidate_accumulates_usage_across_retry_runs(tmp_path: Path) -
                 usage={
                     "input_tokens": 1,
                     "output_tokens": 2,
-                    "cache_read_tokens": 3,
-                    "cache_write_tokens": 4,
+                    "cache_read_input_tokens": 3,
+                    "cache_creation_input_tokens": 4,
                 },
             ),
         ]
