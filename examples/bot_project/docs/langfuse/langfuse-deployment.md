@@ -21,7 +21,7 @@ survive `down` (only `down -v` deletes them).
 | Redis | `7` | `docker-compose.langfuse.yml` |
 | MinIO | `RELEASE.2025-09-07T16-13-09Z` | `docker-compose.langfuse.yml` |
 | OTel Collector (contrib) | `0.158.0` | `docker-compose.langfuse.yml` |
-| LiteLLM | `1.90.1` | framework dependency |
+| httpx | `0.28.1` | framework dependency (`HTTPStreamProvider` transport) |
 | OpenTelemetry SDK + OTLP exporter | `1.44.0` | `[observability]` extra; range `>=1.33.1,<2` required by Langfuse SDK |
 
 Langfuse v4 runs in **events_only mode** by default. This means writes
@@ -195,17 +195,19 @@ LANGFUSE_SECRET_KEY=sk-lf-...
 the same key pair in two encodings — both are required because OTLP export
 uses the Basic header while the Langfuse SDK uses separate pk/sk fields.
 
-**LLM provider for eval CLI.** The `run` command constructs a
-`LiteLLMProvider(model=...)` and LiteLLM reads provider keys from standard
-env vars (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.), not from the bot's
-`LLM_API_KEY`/`LLM_BASE_URL`. If your provider is behind a custom base URL
-(StepFun, DeepSeek, GLM, etc.), map it:
+**LLM provider for eval CLI.** The `run` command builds the provider through
+`create_llm_provider` — an `HTTPStreamProvider` wired with the protocol
+engine for the configured `interface_format` (ADR-0046). It reads
+`TEST_LLM_API_KEY`/`TEST_LLM_BASE_URL`; when the key is unset, the engine's
+`api_key_env` fallback applies (`OPENAI_API_KEY` for both OpenAI formats,
+`ANTHROPIC_API_KEY` for anthropic) — never the bot's `LLM_API_KEY`. If your
+provider is behind a custom base URL (StepFun, DeepSeek, GLM, etc.), map it:
 
 ```bash
-# StepFun example — adapt the provider prefix for yours
-export OPENAI_API_KEY="$LLM_API_KEY"
-export OPENAI_API_BASE="$LLM_BASE_URL"
-# then: --model openai/step-3.7-flash
+# StepFun example
+export TEST_LLM_API_KEY="$LLM_API_KEY"
+export TEST_LLM_BASE_URL="$LLM_BASE_URL"
+# then: --model step-3.7-flash   (model names reach the API verbatim — no routing prefix)
 ```
 
 The `metrics`, `replay-golden`, and `compare` commands do not need an LLM
@@ -282,8 +284,8 @@ Langfuse project as production traces.
 cd examples/bot_project
 set -a && . ./.env && set +a          # load .env into shell
 # For `run` only — map LLM provider (see §2):
-export OPENAI_API_KEY="$LLM_API_KEY"
-export OPENAI_API_BASE="$LLM_BASE_URL"
+export TEST_LLM_API_KEY="$LLM_API_KEY"
+export TEST_LLM_BASE_URL="$LLM_BASE_URL"
 
 python -m bot.eval.cli --help         # discover all commands
 ```
@@ -307,7 +309,7 @@ trace's I/O, and creates dataset items. Items can be legacy (simple
 python -m bot.eval.cli run \
   --dataset my-dataset \
   --experiment baseline-v1 \
-  --model openai/step-3.7-flash \
+  --model step-3.7-flash \
   --max-iterations 5 \
   --max-concurrency 2 \
   --mode clean \          # or production
@@ -528,9 +530,9 @@ re-record the golden.
 The eval CLI needs SDK keys (separate from `LANGFUSE_BASIC_AUTH`). See §2.
 
 **`run` fails with LLM auth error:**
-The eval CLI uses `LiteLLMProvider`, which reads standard provider env vars
-(`OPENAI_API_KEY` etc.), not the bot's `LLM_API_KEY`. See §2 for the
-mapping.
+The eval CLI reads `TEST_LLM_API_KEY` first, then the engine env fallback
+(`OPENAI_API_KEY` for the openai-compatible format) — not the bot's
+`LLM_API_KEY`. See §2 for the mapping.
 
 **Local `spans.jsonl` not growing under `otel_http`:**
 Expected — since the collector migration, `otel_http` is OTel-only (no

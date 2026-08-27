@@ -7,6 +7,7 @@ from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager, Tool
 from modex_agent.core.types import LLMResponse, ToolCall
@@ -43,11 +44,15 @@ class _RecordTool(Tool):
         return kwargs["value"]
 
 
-class _Provider:
+class _Provider(CallbackStreamProvider):
     def __init__(self):
+        super().__init__()
         self.calls = 0
 
-    async def chat(self, messages, **kwargs):
+    def get_default_model(self) -> str:
+        return "mock-model"
+
+    async def chat_stream(self, messages, on_content_delta=None, on_reasoning_delta=None, **kwargs):
         self.calls += 1
         if self.calls == 1:
             return LLMResponse(
@@ -184,13 +189,17 @@ async def test_resume_after_deny_returns_error_results():
         assert call.decision in (ApprovalDecision.DENIED, ApprovalDecision.PREEMPTED)
 
 
-class _ProviderNoCallId:
+class _ProviderNoCallId(CallbackStreamProvider):
     """Provider whose tool calls carry NO call_id (some providers omit it)."""
 
     def __init__(self):
+        super().__init__()
         self.calls = 0
 
-    async def chat(self, messages, **kwargs):
+    def get_default_model(self) -> str:
+        return "mock-model"
+
+    async def chat_stream(self, messages, on_content_delta=None, on_reasoning_delta=None, **kwargs):
         self.calls += 1
         if self.calls == 1:
             return LLMResponse(

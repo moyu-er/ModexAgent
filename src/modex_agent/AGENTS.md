@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-22 -->
+<!-- Updated: 2026-08-26 -->
 
 # modex_agent
 
@@ -41,7 +41,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `messaging/` | 4 py | — | `MessageBroker`, `BrokerBridgeService` (see `messaging/AGENTS.md`) |
 | `plugins/` | 5 py | `assembly/` | Plugin-unified agent assembly — 10-slot `ComponentRegistry`, `ComponentFactory` ABC, `Plugin` ABC, `AssemblyPipeline` (4 stages), `DefaultPlugin` (see `plugins/AGENTS.md`) |
 | `scope/` | 9 py | — | Scope declaration tree (ADR-0042) — `ScopeSpec`/`AgentSpec` frozen types + YAML loader, position-derived defaults, two-phase `ScopeTreeValidator` (V1-V11), `ProfileStore` + `STANDARD_PROFILES`, pure `ScopeCompiler` (per-agent `AssemblySpec`s + effective toolsets + provenance bill), N2 spec-hash/generation seam (see `scope/AGENTS.md`) |
-| `providers/` | 3 py | `shared/` | LLM providers — LiteLLM, OpenAI implementations (see `providers/AGENTS.md`) |
+| `providers/` | 1 py | `http/` | LLM providers — direct-HTTP event-stream subsystem (http/, ADR-0046: HTTPStreamProvider + protocol engines) (see `providers/AGENTS.md`) |
 | `workspace/` | 13 py | — | `WorkspaceContext` ABC, `DefaultWorkspaceContext` — cd/exit/restore workspace switching with callback notification and persistence (see `workspace/AGENTS.md`) |
 | `input_pipeline/` | 5 py | — | Extensible user-input stage pipeline — `UserInputEnvelope`, `InputStage` ABC, `Continue`/`Terminate`, `UserInputPipeline` (see `input_pipeline/AGENTS.md`) |
 | `trace/` | 4 py | — | Tracing and observability — `TraceStore`, `TraceHooks`, `TraceType` |
@@ -120,8 +120,7 @@ From `modex_agent`'s perspective:
 - `sandbox/` depends on `core/` (types) only; NOT wired into `tools/` — opt-in capability per ADR-0007.
 
 ### External
-- `openai` — LLM provider
-- `litellm` — LLM provider abstraction
+- `httpx` — direct-HTTP LLM provider transport (ADR-0046)
 - `pydantic` — config models
 - `pyyaml` — frontmatter parsing
 - `pathvalidate` — filename sanitization

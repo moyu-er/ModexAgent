@@ -35,7 +35,7 @@ jobs:
           version: "latest"
       - run: uv python install 3.12
       - run: uv venv --python 3.12
-      - run: uv pip install -e ".[dev,llm,ast,terminal]"
+      - run: uv pip install -e ".[dev,ast,terminal]"
       - run: uv pip install -e "examples/bot_project[eval]"
       # hatch_build.py force_include ships a full STATIC site-packages/bot copy
       # inside every editable wheel; it shadows the source tree on repo-root
@@ -83,7 +83,7 @@ jobs:
           version: "latest"
       - run: uv python install 3.12
       - run: uv venv --python 3.12
-      - run: uv pip install -e ".[dev,llm,ast,terminal]"
+      - run: uv pip install -e ".[dev,ast,terminal]"
       - run: uv pip install -e "examples/bot_project[eval]"
       # Same hatch_build.py static-copy shadow as the replay job (issues.md finding 3).
       - name: Remove static bot copy shadowing the editable install

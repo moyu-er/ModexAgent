@@ -32,7 +32,7 @@ jobs:
           version: "latest"
       - run: uv python install 3.13
       - run: uv venv --python 3.13
-      - run: bash scripts/ci_install.sh -e ".[dev,llm,ast,terminal]"
+      - run: bash scripts/ci_install.sh -e ".[dev,ast,terminal]"
       - run: bash scripts/ci_install.sh -e "examples/bot_project"
       - name: Run E2E integration tests
         run: |
@@ -56,7 +56,7 @@ jobs:
           version: "latest"
       - run: uv python install 3.13
       - run: uv venv --python 3.13
-      - run: bash scripts/ci_install.sh -e ".[dev,llm,ast,terminal]"
+      - run: bash scripts/ci_install.sh -e ".[dev,ast,terminal]"
       - run: bash scripts/ci_install.sh -e "examples/bot_project"
       - name: Run framework integration tests (red anchors T-P1..T-P4 + E2E)
         run: |

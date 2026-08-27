@@ -71,7 +71,6 @@ dev = [
   "ruff==0.12.0",
   "mypy>=1.0.0",
 ]
-llm = ["litellm>=1.82.6", "openai>=2.20.0,<3"]
 sandbox = ["docker>=6.0.0", "e2b-code-interpreter>=0.1.0"]
 gateway = ["qq-botpy>=1.2.0", "python-dotenv>=1.0.0", "aiohttp>=3.9.0", "questionary>=2.0.0", "python-telegram-bot>=20.0"]
 skills = [
@@ -101,7 +100,7 @@ observability = [
 ]
 # Dev-only eval toolchain extra; must never join `all` or user installers (eval-integration MAP).
 harbor = ["harbor>=0.21"]
-all = ["ModexAgent[llm,sandbox,gateway,skills,terminal,ast]"]
+all = ["ModexAgent[sandbox,gateway,skills,terminal,ast]"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/modex_agent"]
