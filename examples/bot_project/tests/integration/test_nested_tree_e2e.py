@@ -47,7 +47,7 @@ from pydantic import BaseModel
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.session_registry import InMemorySessionRegistry
 from modex_agent.core.types import InputMessage, LLMResponse, ToolCall
@@ -107,7 +107,7 @@ _LEAF_GRAPH_RESULT = "LEAF-GRAPH-DELIVERED"
 # ── Scripted LLM (the only fake) ─────────────────────────────────────────
 
 
-class _NestedScriptedProvider(StreamingLLMProvider):
+class _NestedScriptedProvider(CallbackStreamProvider):
     """Routes responses by the caller's TOOL SURFACE.
 
     Each tree position has a distinct toolset: the main-pool root carries

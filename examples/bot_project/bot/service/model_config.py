@@ -13,24 +13,6 @@ from bot.config.domain import Secret
 from modex_agent.core.constants import InterfaceFormat, ReasoningEffort
 from modex_agent.ioc.configs.llm import LLMConfig, Modality, ModelCapabilities
 
-_OPENAI_PREFIX = "openai/"
-_ANTHROPIC_PREFIX = "anthropic/"
-_ROUTE_SEPARATOR = "/"
-
-
-def _strip_model_prefix(model: str) -> str:
-    if model.startswith(_OPENAI_PREFIX):
-        return model[len(_OPENAI_PREFIX) :]
-    if model.startswith(_ANTHROPIC_PREFIX):
-        return model[len(_ANTHROPIC_PREFIX) :]
-    return model
-
-
-def _prefix_to_interface_format(model: str) -> InterfaceFormat:
-    if model.startswith(_ANTHROPIC_PREFIX):
-        return InterfaceFormat.ANTHROPIC
-    return InterfaceFormat.OPENAI_COMPATIBLE
-
 
 class ModelCfg(BaseModel):
     """单个模型的用户可见配置。"""
@@ -41,18 +23,9 @@ class ModelCfg(BaseModel):
     model: str
     capabilities: list[Modality] = Field(default_factory=lambda: [Modality.TEXT])
     temperature: float = 0.7
+    top_p: float | None = None
     max_output_tokens: int = 50000
     reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
-
-    @field_validator("model")
-    @classmethod
-    def _no_routing_prefix(cls, value: str) -> str:
-        if value.startswith(_OPENAI_PREFIX) or value.startswith(_ANTHROPIC_PREFIX):
-            raise ValueError(
-                f"model name must not use routing prefix '{value.split(_ROUTE_SEPARATOR, 1)[0]}/'; "
-                "use interface_format to select the provider"
-            )
-        return value
 
     @field_validator("capabilities", mode="before")
     @classmethod
@@ -74,6 +47,13 @@ class ProviderCfg(BaseModel):
     base_url: str = ""
     interface_format: InterfaceFormat = InterfaceFormat.OPENAI_COMPATIBLE
     api_key: Annotated[str, Secret()]
+    headers: dict[str, str] = Field(default_factory=dict)
+    # 默认 False:第三方 Responses 端点普遍拒绝 store=true(ADR-0046 flip
+    # condition (c));store=false + encrypted_content replay 是普适路径。
+    responses_store: bool = False
+    # Full URL override: when non-empty, bypasses per-format URL construction
+    # from base_url (provider-level — the endpoint belongs to the provider).
+    endpoint_url: str = ""
     # Optional override for the model-list endpoint. When set, the model-fetch
     # service uses this URL verbatim instead of auto-constructing candidates
     # from base_url. Leave empty for standard OpenAI-compatible /v1/models.
@@ -89,38 +69,6 @@ class ProviderCfg(BaseModel):
         if "url" in data and "base_url" not in data:
             data = {**data, "base_url": data["url"]}
         data = {k: v for k, v in data.items() if k != "url"}
-
-        models = data.get("models")
-        if isinstance(models, list):
-            inferred_formats: set[InterfaceFormat] = set()
-            stripped_models: list[Any] = []
-            for item in models:
-                if isinstance(item, dict):
-                    model = item.get("model", "")
-                    if isinstance(model, str):
-                        inferred_formats.add(_prefix_to_interface_format(model))
-                        model = _strip_model_prefix(model)
-                        item = {**item, "model": model}
-                stripped_models.append(item)
-            data = {**data, "models": stripped_models}
-
-            if "interface_format" not in data:
-                if (
-                    InterfaceFormat.ANTHROPIC in inferred_formats
-                    and InterfaceFormat.OPENAI_COMPATIBLE in inferred_formats
-                ):
-                    raise ValueError(
-                        "mixed openai/ and anthropic/ model prefixes within a provider "
-                        "require an explicit interface_format"
-                    )
-                data = {
-                    **data,
-                    "interface_format": (
-                        InterfaceFormat.ANTHROPIC
-                        if InterfaceFormat.ANTHROPIC in inferred_formats
-                        else InterfaceFormat.OPENAI_COMPATIBLE
-                    ),
-                }
 
         return data
 
@@ -214,7 +162,11 @@ class BotModelConfig(BaseModel):
             model=r.model.model,
             api_key=r.provider.api_key,
             base_url=r.provider.base_url,
+            headers=r.provider.headers,
+            responses_store=r.provider.responses_store,
+            endpoint_url=r.provider.endpoint_url,
             temperature=r.model.temperature,
+            top_p=r.model.top_p if r.model.top_p is not None else 0.95,
             max_output_tokens=r.model.max_output_tokens,
             capabilities=r.capabilities,
             reasoning_effort=r.model.reasoning_effort,

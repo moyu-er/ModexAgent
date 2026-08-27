@@ -56,7 +56,7 @@ from bot.workspace.dynamic_workspaces import (
 
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.core.emitter import StreamingAwareEmitter
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.types import InputMessage, LLMResponse, OutputMessage, ToolCall
 from modex_agent.ioc.configs.app import AppConfig
@@ -194,19 +194,21 @@ class _ScriptedLLM:
         )
 
 
-class _EchoDefaultProvider(LLMProvider):
+class _EchoDefaultProvider(CallbackStreamProvider):
     """Service-default provider (memory summarizer / background): echoes."""
 
     def get_default_model(self) -> str:
         return "dummy-mini"
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[Any],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: object,
     ) -> LLMResponse:
         content = _last_user_content(messages)

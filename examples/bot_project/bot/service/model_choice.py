@@ -1,9 +1,13 @@
 # bot/service/model_choice.py
-"""Per-turn 模型选择的跨 broker 载体 + turn task 内 ContextVar + StartNodeTurnHook。
+"""Per-turn model selection's cross-broker carrier + turn-task ContextVar + BeforeGraphHook.
 
 registry 是 session_id -> ResolvedModel 的有界 LRU：input-pipeline task 在 EnqueueStage
 写入，turn task 在 ModelChoiceBindHook 读取。ContextVar 是 hook -> BotModelProvider 的同
 task 桥接（asyncio.create_task 拷贝 context，task 级隔离）。
+
+绑定点选 BEFORE_GRAPH 而非 START_NODE_TURN：approval resume 会重新进入
+actual_turn()（BEFORE_GRAPH 每次都派发），而 START_NODE_TURN 只在 fresh-turn 路径
+派发——resume 轮换 task 后 ContextVar 不延续，会把模型/协议选择静默回落到池默认。
 """
 
 from __future__ import annotations
@@ -14,7 +18,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
 from modex_agent.core.capabilities import ModelInfo
-from modex_agent.hook.abc import StartNodeTurnHook
+from modex_agent.hook.abc import BeforeGraphHook
 
 from .model_config import BotModelConfig, ResolvedModel
 
@@ -59,11 +63,12 @@ class ModelChoiceRegistry:
         return len(self._store)
 
 
-class ModelChoiceBindHook(StartNodeTurnHook):
-    """StartNodeTurnHook：把 registry 中本 session 的模型选择快照进 ContextVar，
+class ModelChoiceBindHook(BeforeGraphHook):
+    """BeforeGraphHook：把 registry 中本 session 的模型选择快照进 ContextVar，
 
     并把当前模型的 capabilities 覆写到 runtime.services.model_info（按 turn
-    切换图片内联行为）。registry 缺失（IM / 后台）时回退默认模型。
+    切换图片内联行为）。registry 缺失（IM / 后台）时回退默认模型。绑定发生在
+    每次 actual_turn() 入口（含 approval resume），先于任何节点与 LLM/工具读取。
     """
 
     def __init__(self, model_config: BotModelConfig, registry: ModelChoiceRegistry) -> None:
@@ -74,7 +79,7 @@ class ModelChoiceBindHook(StartNodeTurnHook):
     def name(self) -> str:
         return "model_choice_bind_hook"
 
-    async def start_node_turn(self, ctx: AgentContext) -> None:
+    async def before_graph(self, ctx: AgentContext) -> None:
         session_id = ctx.session.session_id if ctx.session is not None else ""
         resolved = self._registry.get(session_id) if session_id else None
         if resolved is None:

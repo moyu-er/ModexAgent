@@ -26,7 +26,7 @@ from bot.service.core import BotService
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import StreamingAwareEmitter
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import LLMResponse, OutputMessage
@@ -43,7 +43,7 @@ pytestmark = pytest.mark.integration
 # ---------------------------------------------------------------------------
 
 
-class _ScriptedProvider(LLMProvider):  # type: ignore[misc]
+class _ScriptedProvider(CallbackStreamProvider):  # type: ignore[misc]
     def __init__(self) -> None:
         super().__init__()
         self.calls = 0
@@ -51,13 +51,15 @@ class _ScriptedProvider(LLMProvider):  # type: ignore[misc]
     def get_default_model(self) -> str:
         return "dummy-mini"
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[Any],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: object,
     ) -> LLMResponse:
         self.calls += 1

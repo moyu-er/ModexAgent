@@ -14,9 +14,10 @@ from typing import Any
 
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider, StreamingLLMProvider
+from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.types import LLMResponse
 from modex_agent.ioc.factories.llm import create_llm_provider
+from modex_agent.providers.http.provider import HTTPStreamProvider
 
 from .model_choice import current_model_choice
 from .model_config import BotModelConfig, ResolvedModel
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 _PLACEHOLDER_PROVIDER_KEY = "_unconfigured"
 
 
-class BotModelProvider(StreamingLLMProvider):
+class BotModelProvider(CallbackStreamProvider):
     """按 turn ContextVar 代理到真实 LLM provider。"""
 
     def __init__(self, model_config: BotModelConfig) -> None:
@@ -41,6 +42,21 @@ class BotModelProvider(StreamingLLMProvider):
 
     def get_default_model(self) -> str:
         return self.model
+
+    async def aclose(self) -> None:
+        """Close every cached real provider and empty the cache.
+
+        Each cached ``HTTPStreamProvider`` owns an ``httpx.AsyncClient`` —
+        closing releases the connections. Legacy providers without
+        ``aclose`` are skipped. The cache is emptied so a post-close turn
+        rebuilds fresh providers instead of reusing closed clients.
+        Called by ``BotService.stop()`` after workspaces are evicted (no
+        in-flight turn still needs the providers).
+        """
+        for provider in self._cache.values():
+            if isinstance(provider, HTTPStreamProvider):
+                await provider.aclose()
+        self._cache.clear()
 
     def _resolved(self) -> ResolvedModel:
         return current_model_choice.get() or self._model_config.default_resolved()
@@ -64,7 +80,7 @@ class BotModelProvider(StreamingLLMProvider):
         temperature: float = 0.7,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
-        on_content_delta: Any = None,  # noqa: ANN401  matches StreamingLLMProvider ABC
+        on_content_delta: Any = None,  # noqa: ANN401  matches CallbackStreamProvider ABC
         on_reasoning_delta: Any = None,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
     ) -> LLMResponse:
@@ -97,7 +113,7 @@ class BotModelProvider(StreamingLLMProvider):
             )
         # Model-call trajectory: the single chokepoint log that records which
         # provider+model actually serves each turn (covers every real provider —
-        # OpenAI, LiteLLM, …). INFO so it surfaces in normal operation.
+        # all protocol engines). INFO so it surfaces in normal operation.
         logger.info(
             "model call: provider=%s model=%s messages=%d",
             resolved.provider.name,
@@ -106,11 +122,13 @@ class BotModelProvider(StreamingLLMProvider):
         )
         # NOTE: model/temperature/max_output_tokens are NOT forwarded. The real
         # provider is constructed per resolved model via create_llm_provider
-        # (see _real_provider), which bakes in the ROUTING-STRIPPED model (e.g.
-        # "openai/step-3.7-flash" -> OpenAIProvider(model="step-3.7-flash")) plus
-        # the model's own temperature/max_output_tokens/reasoning_effort. Forwarding
-        # model= here would re-inject the routing prefix and the API would reject
-        # it ("model not found"). Let the baked provider own these values.
+        # (see _real_provider), which bakes in the config's model name
+        # VERBATIM (no prefix processing — a stale routing prefix simply
+        # reaches the API as part of the model name) plus the model's own
+        # temperature/max_output_tokens/reasoning_effort. Forwarding model=
+        # here would override the per-resolved-model provider with whatever
+        # model the framework ABC happened to pass. Let the baked provider
+        # own these values.
         return await real.chat_stream(
             messages=messages,
             tools=tools,

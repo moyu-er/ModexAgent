@@ -20,6 +20,7 @@ from modex_agent.multi_agent import DefaultAgentFactory
 
 if TYPE_CHECKING:
     from bot.workspace.handle import WorkspaceResolverCell
+    from modex_agent.media.store import MediaStore
     from modex_agent.multi_agent.session_tree.session_binding import (
         SessionBindingStore,
     )
@@ -90,6 +91,7 @@ def _build_agent_factory(
     pool_name: str,
     emitter_factory: Callable | None,
     *,
+    media_store_resolver: Callable[[], MediaStore] | None = None,
     external_deps: dict[str, Any] | None = None,
     observability_config: ObservabilityConfig | None = None,
     session_registry: SessionRegistry | None = None,
@@ -140,6 +142,9 @@ def _build_agent_factory(
                 turn_runner.set_pool_context(
                     workspace_manager=workspace_resolver, pool_name=pool_name
                 )
+            builder = turn_runner.turn_context_builder
+            if builder is not None and media_store_resolver is not None:
+                builder.media_store_resolver = media_store_resolver
         return instance
 
     factory.create_agent = _create_with_emitter  # type: ignore[method-assign]

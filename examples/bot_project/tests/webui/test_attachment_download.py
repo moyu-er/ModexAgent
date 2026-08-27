@@ -729,14 +729,13 @@ async def test_upload_ws_send_ingest_preprocess_e2e() -> None:
         with bind_workspace_root(root):
             builder = _make_turn_builder()
             full_sid = msg.metadata["full_session_id"]
-            sanitized, media_blocks, _ = await builder.preprocess(
+            sanitized = await builder.preprocess(
                 msg, full_sid, {}, None
             )
         assert sanitized is not None
         assert "[Attachment: photo.png (image/png, " in sanitized, (
-            f"preprocess must inject the path reference; got {sanitized!r}"
+            f"preprocess must inject the path reference; got: {sanitized!r}"
         )
-        assert media_blocks == [], "mechanism A is dormant in v1"
         # The injected absolute path is a real file holding the original bytes.
         abs_path = Path(str(sanitized).rsplit("@ ", 1)[1].rstrip("]"))
         assert abs_path.is_file(), f"perceived path must exist: {abs_path}"

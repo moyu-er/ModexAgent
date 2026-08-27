@@ -162,9 +162,11 @@ def test_all_choices(tmp_path: Path) -> None:
 
 
 # ── interface-format routing (synthesize_llm_config) ────────────────────
-# interface_format drives routing. OpenAI compatible uses our native
-# OpenAIProvider without a prefix; Anthropic uses LiteLLM with the
-# anthropic/ prefix re-added. Legacy model-name prefixes are stripped.
+# interface_format drives routing. Every format lands on HTTPStreamProvider
+# with its matching protocol engine. Model names load VERBATIM — no prefix
+# stripping, no interface_format inference, no rejection (user ruling
+# 2026-08-26: a stale routing prefix reaches the API as part of the model
+# name).
 
 _ROUTING_YML = """
 models:
@@ -200,43 +202,54 @@ def _anthropic_cfg(tmp_path: Path) -> BotModelConfig:
     return BotModelConfig.from_yaml(p)
 
 
-def test_bare_model_with_openai_compatible_uses_openai_provider(tmp_path: Path) -> None:
+def test_bare_model_with_openai_compatible_uses_compat_engine(tmp_path: Path) -> None:
     from modex_agent.ioc.factories.llm import create_llm_provider
-    from modex_agent.providers.openai_provider import OpenAIProvider
+    from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
+    from modex_agent.providers.http.provider import HTTPStreamProvider
 
     cfg = _routing_cfg(tmp_path)
     resolved = cfg.resolve("P", "bare")
     assert resolved is not None
     real = create_llm_provider(cfg.synthesize_llm_config(resolved))
-    assert isinstance(real, OpenAIProvider)
+    assert isinstance(real, HTTPStreamProvider)
+    assert isinstance(real._protocol, OpenAICompatProtocol)
     assert real._model == "step-3.7-flash"
 
 
-def test_openai_prefix_stripped_for_openai_compatible(tmp_path: Path) -> None:
+def test_openai_prefixed_model_loads_verbatim(tmp_path: Path) -> None:
     from modex_agent.ioc.factories.llm import create_llm_provider
-    from modex_agent.providers.openai_provider import OpenAIProvider
+    from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
+    from modex_agent.providers.http.provider import HTTPStreamProvider
 
     cfg = _routing_cfg(tmp_path)
     resolved = cfg.resolve("P", "prefixed-openai")
     assert resolved is not None
-    real = create_llm_provider(cfg.synthesize_llm_config(resolved))
-    assert isinstance(real, OpenAIProvider)
-    assert real._model == "step-3.7-flash"
+    assert resolved.model.model == "openai/step-3.7-flash"
+    llm = cfg.synthesize_llm_config(resolved)
+    # interface_format stays the explicit provider value — never inferred
+    # from the model prefix.
+    assert llm.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
+    real = create_llm_provider(llm)
+    assert isinstance(real, HTTPStreamProvider)
+    assert isinstance(real._protocol, OpenAICompatProtocol)
+    assert real._model == "openai/step-3.7-flash"
 
 
-def test_anthropic_format_uses_litellm_with_prefix(tmp_path: Path) -> None:
+def test_anthropic_format_uses_anthropic_engine(tmp_path: Path) -> None:
     from modex_agent.ioc.factories.llm import create_llm_provider
-    from modex_agent.providers.litellm_provider import LiteLLMProvider
+    from modex_agent.providers.http.formats.anthropic import AnthropicProtocol
+    from modex_agent.providers.http.provider import HTTPStreamProvider
 
     cfg = _anthropic_cfg(tmp_path)
     resolved = cfg.resolve("P", "claude")
     assert resolved is not None
     real = create_llm_provider(cfg.synthesize_llm_config(resolved))
-    assert isinstance(real, LiteLLMProvider)
-    assert real._model == "anthropic/claude-3-5-sonnet"
+    assert isinstance(real, HTTPStreamProvider)
+    assert isinstance(real._protocol, AnthropicProtocol)
+    assert real._model == "claude-3-5-sonnet"
 
 
-# ── backward compatibility: legacy url and model-name prefixes ───────────
+# ── backward compatibility: legacy url alias; prefixed model names load verbatim ──
 
 _LEGACY_YML = """
 models:
@@ -261,13 +274,15 @@ def test_legacy_url_alias_parses_as_base_url(tmp_path: Path) -> None:
     assert cfg.providers[0].base_url == "https://api.minimaxi.com/v1"
 
 
-def test_legacy_openai_prefix_sets_interface_format_and_strips_prefix(tmp_path: Path) -> None:
+def test_legacy_openai_prefix_loads_verbatim_with_default_format(tmp_path: Path) -> None:
     p = tmp_path / "model.yml"
     p.write_text(_LEGACY_YML, encoding="utf-8")
     cfg = BotModelConfig.from_yaml(p)
     llm = cfg.synthesize_llm_config()
+    # No prefix stripping, no interface_format inference from the prefix —
+    # the default format applies and the model name passes through verbatim.
     assert llm.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
-    assert llm.model == "MiniMax-M3"
+    assert llm.model == "openai/MiniMax-M3"
 
 
 _LEGACY_ANTHROPIC_YML = """
@@ -285,19 +300,25 @@ models:
 """
 
 
-def test_legacy_anthropic_prefix_infers_interface_format(tmp_path: Path) -> None:
+def test_legacy_anthropic_prefix_loads_verbatim_without_inference(tmp_path: Path) -> None:
     from modex_agent.ioc.factories.llm import create_llm_provider
-    from modex_agent.providers.litellm_provider import LiteLLMProvider
+    from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
+    from modex_agent.providers.http.provider import HTTPStreamProvider
 
     p = tmp_path / "model.yml"
     p.write_text(_LEGACY_ANTHROPIC_YML, encoding="utf-8")
     cfg = BotModelConfig.from_yaml(p)
     resolved = cfg.resolve("P", "claude")
     assert resolved is not None
-    assert resolved.provider.interface_format == InterfaceFormat.ANTHROPIC
-    assert resolved.model.model == "claude-3"
-    real = create_llm_provider(cfg.synthesize_llm_config(resolved))
-    assert isinstance(real, LiteLLMProvider)
+    # No inference: interface_format stays the default (OPENAI_COMPATIBLE),
+    # the prefixed model name loads verbatim, no error is raised.
+    assert resolved.provider.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
+    assert resolved.model.model == "anthropic/claude-3"
+    llm = cfg.synthesize_llm_config(resolved)
+    assert llm.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
+    real = create_llm_provider(llm)
+    assert isinstance(real, HTTPStreamProvider)
+    assert isinstance(real._protocol, OpenAICompatProtocol)
     assert real._model == "anthropic/claude-3"
 
 

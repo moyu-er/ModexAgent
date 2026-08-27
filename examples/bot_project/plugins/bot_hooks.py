@@ -8,7 +8,10 @@ Hooks registered:
 
 - ``model_choice_bind`` (React) — :class:`ModelChoiceBindHook` from
   ``bot/service/model_choice.py``. Binds the per-turn model choice from the
-  registry into the ``current_model_choice`` ContextVar at ``start_node_turn``.
+  registry into the ``current_model_choice`` ContextVar at ``before_graph``
+  (every ``actual_turn()`` entry, including approval resume — resume re-enters
+  on a fresh task where the ContextVar would otherwise be lost and the model
+  would silently revert to the pool default).
   The hook's construction deps (``BotModelConfig`` + ``ModelChoiceRegistry``)
   are service-scoped runtime objects carried by config with
   ``arbitrary_types_allowed=True`` (same pattern as

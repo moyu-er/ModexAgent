@@ -138,6 +138,103 @@ describe("ModelEditor", () => {
     expect(next.providers[0]!.interface_format).toBe("anthropic");
   });
 
+  it("interface format dropdown offers openai_response", () => {
+    const onChange = vi.fn();
+    render(<ModelEditor values={values} onChange={onChange} />);
+    fireEvent.click(screen.getByLabelText("Interface format"));
+    fireEvent.click(screen.getByRole("option", { name: "OpenAI Responses" }));
+    const next = onChange.mock.calls[0]![0]! as {
+      providers: { interface_format: string }[];
+    };
+    expect(next.providers[0]!.interface_format).toBe("openai_response");
+  });
+
+  it("headers editor commits edits into the provider payload (round-trip)", () => {
+    const onChange = vi.fn();
+    render(<ModelEditor values={values} onChange={onChange} />);
+    // The default provider card is expanded; its headers editor starts empty.
+    fireEvent.click(screen.getByRole("button", { name: "Add HTTP headers" }));
+    fireEvent.change(screen.getByLabelText("HTTP headers key"), {
+      target: { value: "X-Custom" },
+    });
+    fireEvent.change(screen.getByLabelText("HTTP headers value"), {
+      target: { value: "abc" },
+    });
+    const last = onChange.mock.calls.at(-1)![0]! as {
+      providers: { headers: Record<string, string> }[];
+    };
+    expect(last.providers[0]!.headers).toEqual({ "X-Custom": "abc" });
+  });
+
+  it("headers editor strips empty-key rows from the payload", () => {
+    const onChange = vi.fn();
+    render(<ModelEditor values={values} onChange={onChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add HTTP headers" }));
+    fireEvent.change(screen.getByLabelText("HTTP headers key"), {
+      target: { value: "X-Custom" },
+    });
+    fireEvent.change(screen.getByLabelText("HTTP headers value"), {
+      target: { value: "abc" },
+    });
+    // A second row with a blank key and a typed value must not emit an "" key.
+    fireEvent.click(screen.getByRole("button", { name: "Add HTTP headers" }));
+    fireEvent.change(screen.getAllByLabelText("HTTP headers value")[1]!, {
+      target: { value: "orphan" },
+    });
+    const last = onChange.mock.calls.at(-1)![0]! as {
+      providers: { headers: Record<string, string> }[];
+    };
+    expect(last.providers[0]!.headers).toEqual({ "X-Custom": "abc" });
+    expect(Object.keys(last.providers[0]!.headers)).not.toContain("");
+  });
+
+  it("endpoint_url input updates the provider", () => {
+    const onChange = vi.fn();
+    render(<ModelEditor values={values} onChange={onChange} />);
+    const input = screen.getByLabelText(
+      "Endpoint URL (optional)",
+    ) as HTMLInputElement;
+    expect(input.placeholder).toBe(
+      "Leave empty to auto-derive from the interface format",
+    );
+    fireEvent.change(input, { target: { value: "https://x/v1/responses" } });
+    const next = onChange.mock.calls[0]![0]! as {
+      providers: { endpoint_url: string }[];
+    };
+    expect(next.providers[0]!.endpoint_url).toBe("https://x/v1/responses");
+  });
+
+  it("top_p input sets a number and clears back to null", () => {
+    const onChange = vi.fn();
+    // Stateful wrapper (same pattern as the add-provider card test) so the
+    // controlled number input re-renders with the committed value — without
+    // it React restores the DOM value and a same-value change never fires.
+    const Wrapper = () => {
+      const [v, setV] = useState<Record<string, unknown>>(values);
+      return (
+        <ModelEditor
+          values={v}
+          onChange={(next) => {
+            onChange(next);
+            setV(next);
+          }}
+        />
+      );
+    };
+    render(<Wrapper />);
+    const input = screen.getByLabelText("Top P");
+    fireEvent.change(input, { target: { value: "0.9" } });
+    const set = onChange.mock.calls.at(-1)![0]! as {
+      providers: { models: { top_p: number | null }[] }[];
+    };
+    expect(set.providers[0]!.models[0]!.top_p).toBe(0.9);
+    fireEvent.change(input, { target: { value: "" } });
+    const cleared = onChange.mock.calls.at(-1)![0]! as {
+      providers: { models: { top_p: number | null }[] }[];
+    };
+    expect(cleared.providers[0]!.models[0]!.top_p).toBeNull();
+  });
+
   it("editing max_context_tokens calls onChange", () => {
     const onChange = vi.fn();
     render(<ModelEditor values={values} onChange={onChange} />);

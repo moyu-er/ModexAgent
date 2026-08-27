@@ -93,7 +93,7 @@ observability:
 
 # ---- Eval Harness (Layer 2, opt-in via [eval] extra) ----
 # Run via: python -m bot.eval.cli <curate|run|compare>
-# Requires langfuse (pip install -e ".[eval]") + a model provider extra (e.g. [llm]).
+# Requires langfuse (pip install -e ".[eval]").
 # eval:
 #   dataset_name: "react-baseline"
 #   max_concurrency: 5

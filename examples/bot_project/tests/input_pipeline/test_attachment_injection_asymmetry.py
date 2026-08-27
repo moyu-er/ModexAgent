@@ -162,9 +162,7 @@ async def test_injection_is_transient_transcript_excludes_it() -> None:
         #     the content that assemble_context appends to context_state.history. ---
         with bind_workspace_root(root):
             builder = _make_builder()
-            sanitized, media_blocks, media_processor = await builder.preprocess(
-                msg, full_sid, {}, None
-            )
+            sanitized = await builder.preprocess(msg, full_sid, {}, None)
 
         assert sanitized is not None
         assert sanitized.startswith("look at this\n"), "original content preserved at head"
@@ -176,6 +174,3 @@ async def test_injection_is_transient_transcript_excludes_it() -> None:
         )
         # The injection carries an absolute path (resolved against the ws root).
         assert str((root / rec.path).resolve()) in sanitized or rec.path in sanitized
-        # Mechanism A dormant in v1.
-        assert media_blocks == []
-        assert media_processor is None

@@ -130,6 +130,7 @@ if TYPE_CHECKING:
         WorkspaceResolverCell,
     )
     from modex_agent.core.provider import LLMProvider
+    from modex_agent.media.store import MediaStore
     from modex_agent.multi_agent.execution_strategy import (
         ExecutionStrategyRegistry,
         PoolAssemblyContext,
@@ -218,6 +219,7 @@ async def create_pool(
     pool_data: PoolDataSnapshot | None = None,
     workspace_handle: WorkspaceHandle | None = None,
     workspace_resolver: WorkspaceResolverCell | None = None,
+    media_store_resolver: Callable[[], MediaStore] | None = None,
     # Business factory: (session_id, pool); pool-bound below for the framework.
     emitter_factory: Callable[[str, str], ContentEmitter[Any]] | None = None,
     output_adapter_factory: Callable[[], OutputAdapter] | None = None,
@@ -556,6 +558,7 @@ async def create_pool(
             workspace_resolver,
             pool_name,
             _workspace_emitter_factory,
+            media_store_resolver=media_store_resolver,
             observability_config=(app_config.observability if app_config is not None else None),
             session_registry=session_registry,
             session_binding_store=session_binding_store,
@@ -680,6 +683,7 @@ async def create_pool(
             workspace_resolver,
             pool_name,
             _workspace_emitter_factory,
+            media_store_resolver=media_store_resolver,
             external_deps=external_deps,
             observability_config=(app_config.observability if app_config is not None else None),
             session_registry=session_registry,

@@ -74,7 +74,7 @@ async def test_hook_sets_ctxvar_from_registry(tmp_path: Path) -> None:
     reg.set("sessX", m1)
     current_model_choice.set(None)
     hook = ModelChoiceBindHook(cfg, reg)
-    await hook.start_node_turn(_ctx("sessX"))
+    await hook.before_graph(_ctx("sessX"))
     assert current_model_choice.get() is m1
 
 
@@ -84,7 +84,7 @@ async def test_hook_falls_back_to_default_when_absent(tmp_path: Path) -> None:
     reg = ModelChoiceRegistry()
     current_model_choice.set(None)
     hook = ModelChoiceBindHook(cfg, reg)
-    await hook.start_node_turn(_ctx("unknown"))
+    await hook.before_graph(_ctx("unknown"))
     assert current_model_choice.get() == cfg.default_resolved()
 
 
@@ -94,5 +94,19 @@ async def test_hook_overrides_model_info(tmp_path: Path) -> None:
     reg = ModelChoiceRegistry()
     services = SimpleNamespace(model_info=None)
     hook = ModelChoiceBindHook(cfg, reg)
-    await hook.start_node_turn(_ctx("s", services=services))
+    await hook.before_graph(_ctx("s", services=services))
     assert services.model_info is not None
+
+
+@pytest.mark.asyncio
+async def test_hook_is_a_before_graph_hook(tmp_path: Path) -> None:
+    """BEFORE_GRAPH fires on every actual_turn() entry — including approval
+    resume, where START_NODE_TURN does not fire and the fresh task would
+    otherwise lose the ContextVar binding (model/protocol silently reverting
+    to the pool default mid-session)."""
+    from modex_agent.hook.abc import BeforeGraphHook, StartNodeTurnHook
+
+    cfg = _cfg(tmp_path)
+    hook = ModelChoiceBindHook(cfg, ModelChoiceRegistry())
+    assert isinstance(hook, BeforeGraphHook)
+    assert not isinstance(hook, StartNodeTurnHook)

@@ -23,6 +23,7 @@ import yaml
 from pydantic import ValidationError
 
 if TYPE_CHECKING:
+    from bot.service.media_store import WorkspaceScopedMediaStore
     from modex_agent.commands.processor import SlashCommandProcessor
     from modex_agent.persistence.managers import (
         RegistryPersistenceManager,
@@ -104,6 +105,7 @@ class BotService(AgentBuilderMixin):
         on_subagent_created: Callable[[str, str, str], Awaitable[None]] | None = None,
         session_registry: SessionRegistry | None = None,
         session_store: SessionStore | None = None,
+        media_store: WorkspaceScopedMediaStore | None = None,
     ) -> None:
         self.config_dir = config_dir
         self.config_loader = ConfigLoader(config_dir)
@@ -129,6 +131,7 @@ class BotService(AgentBuilderMixin):
         # at dispatch time (SubagentAutoSendHook needs parent to notify).
         self._session_registry: SessionRegistry | None = session_registry
         self._session_store: SessionStore | None = session_store
+        self._media_store = media_store
 
         # Multi-live workspace stack (built in initialize). Owns the registry,
         # conversation map, resolver, controller, dispatcher, factory. The
@@ -675,6 +678,13 @@ class BotService(AgentBuilderMixin):
             raise BotServiceShutdownIncompleteError(
                 "workspace shutdown incomplete; shared resources retained for retry"
             )
+        # Close cached real providers (each HTTPStreamProvider owns an httpx
+        # client) AFTER evicting workspaces — order matters: pools and
+        # background tasks stop inside evict_all and may still need them.
+        # getattr guard: partial-init instances (tests build via __new__) skip.
+        if isinstance(getattr(self, "_default_provider", None), BotModelProvider):
+            with contextlib.suppress(BaseException):
+                await self._default_provider.aclose()
         # Shut down the shared MCP registry AFTER evicting workspaces: evict_all
         # calls _stop_resources → McpBackend.release() per pool, which on the
         # shared path only DETACHES the facade (real connections are shared and

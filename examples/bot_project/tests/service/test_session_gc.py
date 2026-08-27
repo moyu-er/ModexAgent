@@ -48,7 +48,7 @@ def _paths_for(tmp_path: Path):
     return WorkspacePaths(root=tmp_path / ".modex")
 
 
-def test_artifact_paths_all_nine_with_correct_naming(tmp_path) -> None:
+def test_artifact_paths_all_ten_with_correct_naming(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     sid = "009fc886ecba.coding"
     pool = "coding"
@@ -62,6 +62,7 @@ def test_artifact_paths_all_nine_with_correct_naming(tmp_path) -> None:
     assert (paths.pruned_dir(pool) / "009fc886ecba.coding") in ap
     # media uploads: safe_segment (dot -> _)
     assert (paths.media_dir(pool) / "uploads" / "009fc886ecba_coding") in ap
+    assert (paths.media_dir(pool) / "reads" / "009fc886ecba_coding") in ap
     # runtime trace + output: raw sid
     assert (paths.runtime_dir(pool, "trace") / "009fc886ecba.coding") in ap
     assert (paths.runtime_dir(pool, "output") / "009fc886ecba.coding") in ap
@@ -72,8 +73,8 @@ def test_artifact_paths_all_nine_with_correct_naming(tmp_path) -> None:
     seg_agent = JsonFileTurnStateStore._safe_segment("coding")
     seg_sid = JsonFileTurnStateStore._safe_segment(sid)
     assert (paths.runtime_dir(pool, "turns") / seg_agent / seg_sid) in ap
-    # exactly nine units (fork_contexts removed in T17)
-    assert len(ap) == 9
+    # exactly ten units (fork_contexts removed in T17; media reads added)
+    assert len(ap) == 10
     # fork_contexts must NOT appear
     assert not any("fork_contexts" in str(p) for p in ap)
 
@@ -519,7 +520,7 @@ def test_sweep_parent_orphan_uses_discovered_exact_scope(tmp_path: Path) -> None
     assert factory.cleaned == [(paths.root, "child.worker", exact_scope)]
 
 
-def test_clean_session_removes_all_nine_units(tmp_path) -> None:
+def test_clean_session_removes_all_ten_units(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "coding", "aaa.coding")
     cleaner = _cleaner(paths)

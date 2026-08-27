@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import logging
 import shutil
 from pathlib import Path
@@ -398,6 +399,11 @@ async def _assemble_resources(
             pool_data=pool_data[name],
             workspace_handle=WorkspaceHandle(target=ctx.target, data_root=ctx.paths.root),
             workspace_resolver=resolver_cell,
+            media_store_resolver=(
+                functools.partial(service._media_store.store_for, name)
+                if service._media_store is not None
+                else None
+            ),
             emitter_factory=service.emitter_factory,
             output_adapter_factory=service._output_adapter_factory,
             on_subagent_created=service._on_subagent_created,

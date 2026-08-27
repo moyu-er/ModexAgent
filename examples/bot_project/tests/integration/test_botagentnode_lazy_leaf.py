@@ -47,7 +47,7 @@ from modex_agent.core.constants import ExecutionStrategyKind, FinishReason
 from modex_agent.core.context import InMemoryContextManager
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.session_registry import InMemorySessionRegistry
 from modex_agent.core.session_store import LocalFileSessionStore
@@ -143,46 +143,28 @@ class _FakePoolData(PoolDataSnapshot):
 
 
 
-class _ScriptedProvider(StreamingLLMProvider):
+class _ScriptedProvider(CallbackStreamProvider):
     """Queue-driven LLM: each turn pops responses until a no-tool-call one."""
 
     def __init__(self) -> None:
         self.queue: list[LLMResponse] = []
         self.call_count = 0
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: Any,
     ) -> LLMResponse:
         self.call_count += 1
         if self.queue:
             return self.queue.pop(0)
         return LLMResponse(content="done", finish_reason=FinishReason.STOP)
-
-    async def chat_stream(
-        self,
-        messages: list[ChatMessage],
-        model: str | None = None,
-        temperature: float = 0.7,
-        max_output_tokens: int | None = None,
-        tools: list[dict[str, Any]] | None = None,
-        on_content_delta: Any = None,
-        on_reasoning_delta: Any = None,
-        **kwargs: Any,
-    ) -> LLMResponse:
-        return await self.chat(
-            messages,
-            model=model,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            tools=tools,
-            **kwargs,
-        )
 
     def get_default_model(self) -> str:
         return "mock-model"

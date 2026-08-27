@@ -185,7 +185,6 @@ class WebUIService(BotService):
         media_store: WorkspaceScopedMediaStore = WorkspaceScopedMediaStore(
             data_dir_name=_data_dir_name,
         )
-        self._media_store = media_store
         # The emitter factory (register_websocket.py) captures the store at
         # build time in a closure. The _sessions_dir_for_prefix callback
         # resolves the workspace sessions_dir per conversation prefix so the
@@ -334,6 +333,7 @@ class WebUIService(BotService):
             on_subagent_created=_on_subagent_created,
             session_registry=self._session_registry,
             session_store=session_store,
+            media_store=media_store,
         )
 
         # ── 7. WebUI server ────────────────────────────────────────────
