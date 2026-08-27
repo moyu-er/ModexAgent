@@ -332,7 +332,11 @@ class _BootHarness:
 def _hermetic_config(tmp_path: Path) -> Path:
     """Copy the real bot config; strip the MCP selection + production-only
     hook references from the scope declaration (the hermetic registry
-    bundles only the probe plugins, so those references must not survive)."""
+    bundles only the probe plugins, so those references must not survive).
+    The glue tools are stripped too — experience's factory demands
+    pool-layer resources (``pool_data``) and send_file_to_user's factory is
+    a bot project plugin, neither of which the harness builds/loads —
+    mirroring the eval overlays' glue-tool removal."""
     config_dir = tmp_path / "config"
     shutil.copytree(_BOT_PROJECT / "config", config_dir)
     declaration_path = config_dir / "scopes" / "bot.yml"
@@ -340,12 +344,31 @@ def _hermetic_config(tmp_path: Path) -> Path:
     workspace = raw.get("workspace", {})
     workspace.pop("mcp", None)
 
+    _hermetic_tool_names = {"experience", "send_file_to_user"}
+
     def strip_agents(agents: dict) -> None:
         for body in agents.values():
             if not isinstance(body, dict):
                 continue
             for key in ("hooks", "hook_configs", "mcp"):
                 body.pop(key, None)
+            supplements = body.get("tool_supplements")
+            if isinstance(supplements, list):
+                kept = [s for s in supplements if str(s) not in _hermetic_tool_names]
+                # An explicitly empty tools/supplements list is a WHOLESALE
+                # replacement (O4/V8) that wipes the preset base — drop the
+                # key instead so the agent inherits the preset.
+                if kept:
+                    body["tool_supplements"] = kept
+                else:
+                    body.pop("tool_supplements", None)
+            tools = body.get("tools")
+            if isinstance(tools, list):
+                kept = [t for t in tools if str(t).lstrip("+-") not in _hermetic_tool_names]
+                if kept:
+                    body["tools"] = kept
+                else:
+                    body.pop("tools", None)
             nested = body.get("agents")
             if isinstance(nested, dict):
                 strip_agents(nested)

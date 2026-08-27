@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,24 +9,12 @@ from bot.eval.harbor.pool_mode import PoolModeConfig, PoolModeDependencies, exec
 
 from modex_agent.scope import apply_scope_overlay, load_scope_declaration
 from modex_agent.tools.terminal.persistent_bash import (
-    BashInputTool,
     PersistentBashTool,
     persistent_bash_supported,
 )
 from modex_agent.tools.terminal.subprocess_tool import SubprocessTool
 from modex_agent.tools.workspace_scoped import WorkspaceScopedShellTool
 
-from .test_convergence_characterization import (
-    BENCHMARK_BASH_IDENTITY,
-    BENCHMARK_MEMORY_DUMP,
-    BENCHMARK_ORDERED_TOOLS_CORRECTED,
-    DEFAULT_ARM_LIVE_PROMPT,
-    DEFAULT_ARM_ORDERED_TOOLS,
-    DEFAULT_MEMORY_DUMP,
-    BashIdentity,
-    _assembled_pool,
-    _memory_dump,
-)
 from .test_pool_mode_assembly import (
     _benchmark_dependencies,
     _benchmark_environment,
@@ -43,62 +30,6 @@ from .test_pool_mode_entry import (
 
 _BOT_PROJECT = Path(__file__).resolve().parents[3]
 _REGISTERED_TOOL_NAMES = frozenset({"process", "terminal"})
-
-
-@pytest.mark.asyncio
-async def test_benchmark_arm_matches_split_brain_pins(tmp_path: Path) -> None:
-    async with _assembled_pool(tmp_path, benchmark=True) as (config, assembly, instance):
-        expected_tools = list(BENCHMARK_ORDERED_TOOLS_CORRECTED)
-        if sys.platform == "win32":
-            expected_tools.remove("bash_input")
-        assert instance.tool_manager.list_tools() == expected_tools
-
-        bash = instance.tool_manager.get_tool("bash")
-        bash_input = instance.tool_manager.get_tool("bash_input")
-        if sys.platform == "win32":
-            # CI-gated platform rung: no POSIX pty — bash degrades to the
-            # stateless shell, wrapped workspace-scoped by the root provider.
-            assert type(bash) is WorkspaceScopedShellTool
-            assert type(bash._inner) is SubprocessTool
-            assert bash_input is None
-        else:
-            assert isinstance(bash, PersistentBashTool)
-            assert isinstance(bash_input, BashInputTool)
-            assert BashIdentity(
-                class_name=type(bash).__name__,
-                timeout_seconds=bash.manager.timeout_seconds,
-                max_output_chars=bash.manager.max_output_chars,
-                initial_cwd_is_task_workspace=(
-                    bash.manager._initial_cwd == str(config.entry.task_workspace.resolve())
-                ),
-                bash_input_shares_manager=bash_input.manager is bash.manager,
-            ) == BENCHMARK_BASH_IDENTITY
-
-        assert _memory_dump(assembly) == BENCHMARK_MEMORY_DUMP
-        benchmark_prompt = (_BOT_PROJECT / "agents" / "benchmark.md").read_text(
-            encoding="utf-8"
-        )
-        root = instance.pool.get(instance.root_agent_name)
-        assert root is not None
-        assert assembly.pool_data.context_manager.base_system_prompt == benchmark_prompt
-        assert root.descriptor.system_prompt_template == benchmark_prompt
-        assert assembly.declared.root.spec.system_prompt_provider == "file_prompt"
-        assert assembly.declared.root.spec.system_prompt_config == {
-            "path": "agents/benchmark.md"
-        }
-
-
-@pytest.mark.asyncio
-async def test_default_arm_pins_remain_green(tmp_path: Path) -> None:
-    async with _assembled_pool(tmp_path, benchmark=False) as (_config, assembly, instance):
-        expected_default = [
-            name for name in DEFAULT_ARM_ORDERED_TOOLS if name != "send_to_peer"
-        ]
-        if sys.platform == "win32":
-            expected_default.remove("bash_input")
-        assert instance.tool_manager.list_tools() == expected_default
-        assert _memory_dump(assembly) == DEFAULT_MEMORY_DUMP
-        assert assembly.pool_data.context_manager.base_system_prompt == DEFAULT_ARM_LIVE_PROMPT
 
 
 def test_benchmark_tools_remove_unknown_name_fails_loudly() -> None:

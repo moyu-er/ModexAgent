@@ -172,10 +172,16 @@ class _BootHarness:
 
 def _strip_hermetic_fields(raw: dict) -> None:
     """Drop MCP selections + production-only hook references from the copied
-    declaration (the hermetic registry bundles only the probe plugins)."""
+    declaration (the hermetic registry bundles only the probe plugins).
+    The glue tools are dropped too — experience's factory demands pool-layer
+    resources (``pool_data``) and send_file_to_user's factory is a bot
+    project plugin, neither of which the harness builds/loads — mirroring
+    the eval overlays' glue-tool removal."""
     workspace = raw.get("workspace")
     if isinstance(workspace, dict):
         workspace.pop("mcp", None)
+
+    _hermetic_tool_names = {"experience", "send_file_to_user"}
 
     def strip_agents(agents: dict) -> None:
         for body in agents.values():
@@ -183,6 +189,23 @@ def _strip_hermetic_fields(raw: dict) -> None:
                 continue
             for key in ("hooks", "hook_configs", "mcp"):
                 body.pop(key, None)
+            supplements = body.get("tool_supplements")
+            if isinstance(supplements, list):
+                kept = [s for s in supplements if str(s) not in _hermetic_tool_names]
+                # An explicitly empty tools/supplements list is a WHOLESALE
+                # replacement (O4/V8) that wipes the preset base — drop the
+                # key instead so the agent inherits the preset.
+                if kept:
+                    body["tool_supplements"] = kept
+                else:
+                    body.pop("tool_supplements", None)
+            tools = body.get("tools")
+            if isinstance(tools, list):
+                kept = [t for t in tools if str(t).lstrip("+-") not in _hermetic_tool_names]
+                if kept:
+                    body["tools"] = kept
+                else:
+                    body.pop("tools", None)
             nested = body.get("agents")
             if isinstance(nested, dict):
                 strip_agents(nested)

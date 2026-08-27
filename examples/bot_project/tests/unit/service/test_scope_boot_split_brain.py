@@ -1,29 +1,16 @@
-"""Ticket 07 — scope-declaration boot split-brain (the pivot pool).
+"""Scope-declaration boot road — the default pool as the pivot.
 
-Old road vs new road, same default configuration (SPEC §3.2 / §5.2 / the
-07 ticket): the ``default`` pool is the pivot — the one shipped pool that
-exercises the full derivation table (subagent + peers + approval + aci
-supplement + mcp). After the migration commit it boots from
-``config/scopes/bot.yml`` via load → validate (V1-V11) → compile (ticket
-06) → the existing ADR-0041 assembly pipeline; the other three pools keep
-the legacy roster boot (dual-boot tolerated until ticket 11).
+The ``default`` pool exercises the full derivation table (subagent + peers
++ approval + aci supplement + mcp). It boots from
+``config/scopes/bot.yml`` via load → validate (V1-V11) → compile → the
+ADR-0041 assembly pipeline.
 
-Split-brain discipline (plan §Verification strategy, same as ticket 05):
-
-- The BASELINE commit freezes the OLD road's products — including the
-  communication registration the ticket-05 baseline did not cover
-  (Phase-2 peer injection + ``register_communication_tools``) — as a
-  golden JSON fixture. The migration commit re-drives the SAME
-  configuration down the NEW road and compares field by field.
-- Any intentional difference must be listed in ``ALLOWED_DIFFERENCES``
-  (each entry names its reason); any unlisted difference turns red.
-  Refreshing the golden is forbidden.
-
-The NEW road driver boots through the real boot sequence
-(``boot_scope_declaration`` → ``declared_pool_build`` → ``create_pool``
-with the declaration products) and performs the same Phase-2 peer
-injection — minus ``register_communication_tools``, which the derived
-entries supersede at Stage 4.
+The legacy split-brain goldens were removed: shipped ``bot.yml`` is
+user-customizable configuration, and unit tests must not pin its contents
+(they broke whenever the declaration legitimately changed). What remains
+verifies boot MECHANISMS against the live declaration: tree-derived
+communication registration, lazy materialization from the compiled spec,
+and restart determinism.
 """
 
 from __future__ import annotations
@@ -73,7 +60,6 @@ from modex_agent.workspace.paths import WorkspacePaths
 from .assembly_manifest import (
     AgentManifest,
     AssemblyManifest,
-    assert_bash_wave_parity,
     dump_assembly_manifest,
     roster_source_map,
 )
@@ -81,7 +67,6 @@ from .assembly_manifest import (
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
 BOT_BASE = Path(__file__).resolve().parents[3]
-FIXTURES = Path(__file__).parent / "fixtures" / "split_brain_07"
 
 
 # ── Shared scaffolding ──────────────────────────────────────────────────
@@ -106,8 +91,6 @@ def _workspace_ctx() -> WorkspaceContext:
         paths=WorkspacePaths(root=BOT_BASE / ".modex"),
         is_home=False,
     )
-
-
 
 
 # ── NEW road drivers (scope declaration) ────────────────────────────────
@@ -237,91 +220,8 @@ async def _create_declared_pool(
     return instance, registry, broker
 
 
-async def _new_road_manifest(tmp_path: Path) -> AssemblyManifest:
-    """NEW road: scope-declaration boot + Phase-2 peer injection."""
-    boot = _boot_declaration(tmp_path / ".modex")
-    declared = declared_pool_build(boot, "default")
-    instance, registry, broker = await _create_declared_pool(
-        tmp_path, declared=declared, boot=boot
-    )
-    try:
-        lazy_agents = [
-            AgentManifest(
-                agent_name=sub.provenance.agent,
-                materialized=False,
-                effective_spec_tools=list(sub.spec.tools),
-            )
-            for sub in declared.subagents
-        ]
-        return dump_assembly_manifest(
-            instance,
-            data_dir=tmp_path / ".modex",
-            source_of=roster_source_map(registry, list(declared.root.spec.tools)),
-            lazy_agents=lazy_agents,
-        )
-    finally:
-        await instance.pool.shutdown_all()
-        await broker.stop()
-
-
-# ── Allowlist (intentional differences; every entry needs a reason) ─────
-
-_OLD_ROAD_TOOL_ORDER = [
-    "send_file_to_user",
-    "experience",
-    "read",
-    "write",
-    "ls",
-    "grep",
-    "glob",
-    "bash",
-    "edit",
-    "task",
-    "send_to_peer",
-]
-# Task 8 (2b): the builders.py hardcode is gone — the new road's manager
-# registers the roster in compiled order (the two glue names now sit at
-# their roster positions; `aci_edit` registers under its LLM-facing name
-# `edit`), instead of the hardcoded pair leading the dict.
-_NEW_ROAD_TOOL_ORDER = [
-    "read",
-    "write",
-    "ls",
-    "grep",
-    "glob",
-    "bash",
-    "task",
-    "send_to_peer",
-    "experience",
-    "send_file_to_user",
-    "edit",
-]
-
-_COMM_SOURCE_OLD = "glue"
-_COMM_SOURCE_NEW = "roster:bundled"
-
-# Task 7 (2a/2): the glue tools are roster-declared on the shipped roots,
-# so the manifest provenance flips from hardcoded glue ("glue") to
-# roster-derived — send_file_to_user resolves through the bot project
-# plugin, experience through the FW bundled factory. Dual registration
-# keeps every other observable (class, params, position) byte-identical;
-# only the provenance label follows the declaration.
-_GLUE_ROSTER_SOURCES = {
-    "send_file_to_user": "roster:project",
-    "experience": "roster:bundled",
-}
-
-_LAZY_TOOLS_OLD = [
-    "read",
-    "write",
-    "ls",
-    "grep",
-    "glob",
-    "bash",
-    "todo_write",
-    "todo_read",
-    "aci_edit",
-]
+# The compiled effective-spec tool list the lazy subagent materializes
+# from (the roster order of the declaration road).
 _LAZY_TOOLS_NEW = [
     "read",
     "write",
@@ -337,111 +237,6 @@ _LAZY_TOOLS_NEW = [
 
 
 # ── Tests ──────────────────────────────────────────────────────────────
-
-
-
-async def test_split_brain_manifest_field_by_field(tmp_path: Path) -> None:
-    """AC (c): the SAME default configuration, old boot road vs scope
-    declaration road, produce identical manifests field by field —
-    modulo the allowlisted differences below (stale-guarded: each pinned
-    value must match reality on BOTH roads or the test turns red)."""
-    new = await _new_road_manifest(tmp_path)
-    golden = AssemblyManifest.model_validate_json(
-        (FIXTURES / "old_road_default_manifest.json").read_text(encoding="utf-8")
-    )
-
-    # Exact-equality fields: identity, strategy, infra, pipeline wiring,
-    # and the communication TARGET SET (names + kinds, incl. Phase-2 peers).
-    for field in (
-        "pool_name",
-        "execution_strategy",
-        "terminal_manager",
-        "trio_registry_shared",
-        "todo_store",
-        "interceptors",
-        "commands",
-        "comm_targets",
-    ):
-        assert getattr(new, field) == getattr(golden, field), f"{field} diverged"
-
-    new_main = next(a for a in new.agents if a.materialized)
-    golden_main = next(a for a in golden.agents if a.materialized)
-    for field in (
-        "agent_name",
-        "memory_config",
-        "system_prompt_provider",
-        "system_prompt_sha256",
-        "llm_provider_class",
-    ):
-        assert getattr(new_main, field) == getattr(golden_main, field), (
-            f"main agent {field} diverged"
-        )
-
-    # Hooks: same set modulo the ticket-09 allowlist — the declaration road
-    # dispatches `experience_review` at Stage 4 (roster reference +
-    # chain-supplied infra; the old-road driver builds no pool_data so the
-    # post-boot `_wire_pool_to_resources` wiring never runs), and the
-    # pool_data the new driver now builds wires the trace span hooks (the
-    # old-road driver has no trace store). The old road's frozen baseline
-    # registers the same hook classes in production (see the ticket-09
-    # split-brain suite, which drives both roads WITH pool_data). The
-    # LengthGuardHook wave (register_tree_aware_hooks — the shared seam on
-    # BOTH roads) postdates the frozen golden: tolerated as a live extra,
-    # presence-derived. The deprecated nudge hooks are no longer
-    # roster-referenced in bot.yml.
-    new_hook_names = [h.name for h in new_main.hooks]
-    golden_hook_names = [h.name for h in golden_main.hooks]
-    assert set(new_hook_names) - set(golden_hook_names) == {
-        "experience_review_hook",
-        "RootSpanHook",
-        "ChatSpanHook",
-        "ToolSpanHook",
-        "HandoffSpanHook",
-        "ApprovalSpanHook",
-        "length_guard",
-    }
-    assert set(golden_hook_names) <= set(new_hook_names)
-
-    # Toolsets: same names, same classes, same params — modulo the
-    # allowlisted source relabeling (glue → roster-derived) and the
-    # persistent-bash wave's presence-derived divergence (see
-    # assert_bash_wave_parity).
-    new_tools = {t.name: t for t in new_main.tools}
-    golden_tools = {t.name: t for t in golden_main.tools}
-    assert_bash_wave_parity(new_tools, golden_tools)
-    for name in sorted(golden_tools):
-        if name == "bash" and "bash_input" in new_tools:
-            continue  # wave-replaced slot — asserted in assert_bash_wave_parity
-        assert new_tools[name].tool_class == golden_tools[name].tool_class
-        assert new_tools[name].params == golden_tools[name].params
-        if name in ("task", "send_to_peer"):
-            assert golden_tools[name].source == _COMM_SOURCE_OLD
-            assert new_tools[name].source == _COMM_SOURCE_NEW
-        elif name in _GLUE_ROSTER_SOURCES:
-            assert golden_tools[name].source == "glue"
-            assert new_tools[name].source == _GLUE_ROSTER_SOURCES[name]
-        else:
-            assert new_tools[name].source == golden_tools[name].source, (
-                f"{name}.source diverged"
-            )
-
-    # Lazy subagent: the compiled effective spec gains the derived
-    # send_to_agent entry (SPEC §5.2 — it appears in spec.tools); the
-    # legacy road registers the same tool at materialize time via the
-    # baked per-subagent default.
-    new_lazy = next(a for a in new.agents if not a.materialized)
-    golden_lazy = next(a for a in golden.agents if not a.materialized)
-    assert new_lazy.agent_name == golden_lazy.agent_name == "office-expert"
-    assert new_lazy.effective_spec_tools == _LAZY_TOOLS_NEW
-    assert golden_lazy.effective_spec_tools == _LAZY_TOOLS_OLD
-
-    # Stale-guard: the pinned orders must describe the actual roads. The
-    # new road appends the bash_input companion after the roster block on
-    # POSIX (the structural pair registers post-roster in native_core).
-    assert [t.name for t in golden_main.tools] == _OLD_ROAD_TOOL_ORDER
-    assert [t.name for t in new_main.tools] == _NEW_ROAD_TOOL_ORDER + (
-        ["bash_input"] if persistent_bash_supported() else []
-    )
 
 
 async def test_declared_communication_registration_parity(tmp_path: Path) -> None:
@@ -502,9 +297,7 @@ async def test_lazy_materialization_from_compiled_spec(tmp_path: Path) -> None:
         assert template.compiled_spec is declared.subagents[0].spec
         assert template.toolset_profile.value == "read_write"
 
-        materialized = await template.materialize(
-            None, "inv-smoke", instance.pool.materialize_deps
-        )
+        materialized = await template.materialize(None, "inv-smoke", instance.pool.materialize_deps)
         assert materialized.descriptor.address.name == "office-expert"
         tool_manager = materialized.pipeline.tool_manager
         assert tool_manager is not None
@@ -538,9 +331,7 @@ async def test_restart_round_trip(tmp_path: Path) -> None:
 
     boot = _boot_declaration(data_dir)
     declared = declared_pool_build(boot, "default")
-    instance, registry, broker = await _create_declared_pool(
-        tmp_path, declared=declared, boot=boot
-    )
+    instance, registry, broker = await _create_declared_pool(tmp_path, declared=declared, boot=boot)
     first_manifest: AssemblyManifest
     try:
         lazy_agents = [

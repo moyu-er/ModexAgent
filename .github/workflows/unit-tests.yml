@@ -29,10 +29,12 @@ jobs:
       - run: uv python install ${{ matrix.python-version }}
       - run: uv venv --python ${{ matrix.python-version }}
       # Framework UT imports optional deps that live in extras:
-      # tree-sitter (ast), pexpect/libtmux (terminal). It also imports bot
-      # modules that need aiohttp, provided by the bot_project install.
-      # Mirrors the local dev install (.[all,dev] + bot_project).
-      - run: bash scripts/ci_install.sh -e ".[dev,ast,terminal]"
+      # tree-sitter (ast), pexpect/libtmux (terminal), Pillow/pypdf etc.
+      # (skills — media injection/compression and document-extraction
+      # paths). It also imports bot modules that need aiohttp, provided
+      # by the bot_project install. Mirrors the local dev install
+      # (.[all,dev] + bot_project).
+      - run: bash scripts/ci_install.sh -e ".[dev,ast,terminal,skills]"
       - run: bash scripts/ci_install.sh -e "examples/bot_project"
       - run: |
           uv run pytest tests/unit/ \

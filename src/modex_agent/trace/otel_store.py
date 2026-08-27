@@ -51,6 +51,14 @@ _SENDER_JOIN_TIMEOUT_S = 2.0
 _WARN_WINDOW_S = 5.0
 
 
+class OtelExportHttpError(RuntimeError):
+    """OTLP endpoint answered with a non-2xx status — the span was not delivered."""
+
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"HTTP {status_code}")
+        self.status_code = status_code
+
+
 # ── OtelSpanTraceStore ────────────────────────────────────────────────
 
 
@@ -172,7 +180,9 @@ class OtelSpanTraceStore(TraceQuery):
         """
         span_to_write = span
         if not self._retain_reasoning_content:
-            stripped = {k: v for k, v in span.attributes.items() if k != GenAiAttr.OUTPUT_REASONING_CONTENT}
+            stripped = {
+                k: v for k, v in span.attributes.items() if k != GenAiAttr.OUTPUT_REASONING_CONTENT
+            }
             span_to_write = span.model_copy(update={"attributes": stripped})
 
         session_id = str(span_to_write.attributes.get(GenAiAttr.CONVERSATION_ID.value, "unknown"))
@@ -585,15 +595,11 @@ def _emit_span_via_json_otlp(
         "spanId": span_id,
         "name": span.name,
         "kind": (
-            "SPAN_KIND_CLIENT"
-            if span.kind == SpanKind.CLIENT.value
-            else "SPAN_KIND_INTERNAL"
+            "SPAN_KIND_CLIENT" if span.kind == SpanKind.CLIENT.value else "SPAN_KIND_INTERNAL"
         ),
         "startTimeUnixNano": start_time_ns,
         "endTimeUnixNano": end_time_ns,
-        "attributes": [
-            {"key": k, "value": _to_otlp_value(v)} for k, v in otel_attrs.items()
-        ],
+        "attributes": [{"key": k, "value": _to_otlp_value(v)} for k, v in otel_attrs.items()],
         "status": {
             "code": (
                 "STATUS_CODE_ERROR"
@@ -628,8 +634,12 @@ def _emit_span_via_json_otlp(
         json=payload,
         headers={**headers, "Content-Type": "application/json"},
     )
+    # OTLP-over-HTTP: only 2xx means delivered. Anything else is an export
+    # failure — raise so the sender drops AND counts the span (a bare
+    # warning here would consume the span without delivery and without
+    # counting it, silently losing it).
     if response.status_code >= 400:
-        logger.warning("OTLP endpoint returned HTTP %s", response.status_code)
+        raise OtelExportHttpError(response.status_code)
 
 
 def _to_otlp_value(value: object) -> dict[str, object]:
@@ -644,6 +654,7 @@ def _to_otlp_value(value: object) -> dict[str, object]:
         return {"stringValue": value}
     if isinstance(value, bytes):
         import base64
+
         return {"bytesValue": base64.b64encode(value).decode("ascii")}
     if isinstance(value, list | tuple):
         return {

@@ -97,6 +97,38 @@ class TestCloseDrain:
 # ── R2: collector refused ─────────────────────────────────────────────
 
 
+class TestR2HttpErrorStatus:
+    async def test_http_error_response_counts_as_dropped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-2xx OTLP response (e.g. 502 from an interceptor) means the
+        span was NOT delivered — it must be dropped AND counted, never
+        silently consumed."""
+        client = MagicMock()
+        response = MagicMock()
+        response.status_code = 502
+        client.post.return_value = response
+        monkeypatch.setattr(
+            "modex_agent.trace.otel_store.httpx.Client",
+            MagicMock(return_value=client),
+        )
+        store = OtelSpanTraceStore(
+            base_dir=tmp_path,
+            backend=TraceBackend.OTEL_HTTP,
+            otlp_endpoint="http://collector:4318/v1/traces",
+        )
+        try:
+            await store.save_span(_make_span("s0"))
+            _wait_until(
+                lambda: store.dropped_spans >= 1,
+                timeout=_ASYNC_DEADLINE,
+                description="dropped_spans >= 1 after HTTP 502 response",
+            )
+            assert store.exported_spans == 0
+        finally:
+            store.close()
+
+
 class TestR2CollectorRefused:
     async def test_save_span_fast_warning_and_drop_counter(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -228,9 +260,7 @@ class TestR5BoundedQueue:
 
 
 class TestDropOldestAtomicity:
-    async def test_no_escape_and_counts_accurate_under_drain_race(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_no_escape_and_counts_accurate_under_drain_race(self, tmp_path: Path) -> None:
         """Sender racing the eviction get must never leak queue.Empty, and
         every span must end up exactly once in exported + dropped."""
         store = OtelSpanTraceStore(
@@ -288,9 +318,7 @@ class TestR6ClientOwnership:
             constructed.append(mock)
             return mock
 
-        monkeypatch.setattr(
-            "modex_agent.trace.otel_store.httpx.Client", _fake_client_factory
-        )
+        monkeypatch.setattr("modex_agent.trace.otel_store.httpx.Client", _fake_client_factory)
 
         post_started = threading.Event()
         post_release = threading.Event()
@@ -351,9 +379,7 @@ class TestR6ClientOwnership:
             post_release.set()
             store.close()
 
-    async def test_idle_sender_close_closes_client_once_idempotent(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_idle_sender_close_closes_client_once_idempotent(self, tmp_path: Path) -> None:
         store = OtelSpanTraceStore(
             base_dir=tmp_path,
             backend=TraceBackend.OTEL_HTTP,
