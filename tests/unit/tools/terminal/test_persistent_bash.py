@@ -101,7 +101,7 @@ async def test_modex_env_set_after_spawn_does_not_reach_shell():
         await tool.execute(command="true")
         token = _modex_env.set({"MODEX_TEST_LATE_OVERRIDE": "late"})
         try:
-            assert await tool.execute(command="echo $MODEX_TEST_LATE_OVERRIDE") == ""
+            assert await tool.execute(command="echo $MODEX_TEST_LATE_OVERRIDE") == "[no output]"
         finally:
             _modex_env.reset(token)
     finally:
@@ -109,11 +109,26 @@ async def test_modex_env_set_after_spawn_does_not_reach_shell():
 
 
 async def test_exit_code_marker_only_for_failure():
-    """Non-zero exit appends `[exit code: N]`; zero exit appends nothing."""
+    """Non-zero exit appends `[exit code: N]` — always newline-separated,
+    including when the body is the `[no output]` placeholder; zero exit
+    appends nothing (and a no-output success is `[no output]`)."""
     tool = PersistentBashTool(timeout_seconds=30)
     try:
-        assert await tool.execute(command="false") == "[exit code: 1]"
-        assert await tool.execute(command="true") == ""
+        assert await tool.execute(command="false") == "[no output]\n[exit code: 1]"
+        assert await tool.execute(command="true") == "[no output]"
+    finally:
+        await tool.close()
+
+
+async def test_no_output_placeholder_preserves_whitespace():
+    """Only a LENGTH-ZERO result becomes `[no output]`; the leading/
+    trailing whitespace of real output is meaningful and preserved
+    verbatim through the real PTY."""
+    tool = PersistentBashTool(timeout_seconds=30)
+    try:
+        assert await tool.execute(command="echo") == "[no output]"
+        assert await tool.execute(command="printf ' '") == " "
+        assert await tool.execute(command="printf '  pad  '") == "  pad  "
     finally:
         await tool.close()
 
@@ -168,14 +183,15 @@ async def test_stdin_wait_returns_partial_and_bash_input_completes():
 async def test_silent_stdin_wait_caught_by_probe():
     """`read -s X` prints NOTHING — only kernel evidence can catch it; the
     probe does (bash blocks in read(0)) within one 3s tick. The empty
-    partial output still carries the advisory hint line."""
+    partial becomes `[no output]` and the advisory hint follows after a
+    blank separator line — never a standalone hint."""
     tool = PersistentBashTool(timeout_seconds=30)
     bash_input = BashInputTool(tool.manager)
     try:
         started = monotonic()
         out = await tool.execute(command="read -s X; echo got=$X")
         elapsed = monotonic() - started
-        assert "[hint:" in out
+        assert out.startswith("[no output]\n\n[hint:")
         assert elapsed < 6.0
         resumed = await bash_input.execute(line="abc")
         assert resumed.strip() == "got=abc"
@@ -303,9 +319,13 @@ async def test_timeout_kills_resets_and_reports(tmp_path):
         assert "partial output" in out
         assert "shell was reset" in out
         assert "NOT preserved" in out
+        # empty partial converged onto the placeholder; the old
+        # "(no output captured)" special-case branch is gone
+        assert "[no output]" in out
+        assert "(no output captured)" not in out
         # fresh shell: initial cwd restored, exported env gone
         assert await tool.execute(command="pwd") == str(tmp_path)
-        assert await tool.execute(command="echo $TB_MARKER") == ""
+        assert await tool.execute(command="echo $TB_MARKER") == "[no output]"
     finally:
         await tool.close()
 

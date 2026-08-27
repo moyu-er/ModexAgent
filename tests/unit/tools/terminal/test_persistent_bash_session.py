@@ -571,7 +571,7 @@ async def test_raw_nonshell_takeover_hint():
         output = await tool.execute(
             command='python3 -c "import sys,tty,termios; tty.setraw(0); sys.stdin.read(1)"'
         )
-        assert "[hint:" in output
+        assert output.startswith("[no output]\n\n[hint:")
 
         resumed = await bash_input.execute(line="q")
         assert "[hint:" not in resumed

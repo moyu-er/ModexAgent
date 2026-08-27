@@ -90,7 +90,8 @@ async def test_terminal_state_none_on_termios_error(
 
 
 def test_with_hint_separator_contract() -> None:
-    """Non-empty output gets a blank separator line before the hint; empty
-    output yields the bare hint with no leading blank lines."""
+    """The hint always joins after a blank separator line. Empty output
+    cannot occur in production — `_format_result` guarantees a non-empty
+    content part (`[no output]`) — so the standalone-hint form is gone."""
     assert _with_hint("body", "[hint: x]") == "body\n\n[hint: x]"
-    assert _with_hint("", "[hint: x]") == "[hint: x]"
+    assert _with_hint("", "[hint: x]") == "\n\n[hint: x]"

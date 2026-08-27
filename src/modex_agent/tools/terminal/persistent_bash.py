@@ -163,6 +163,7 @@ class PersistentBashTool(Tool):
             "background processes persist across calls.\n"
             f"{timeout_line}{clip_line}"
             "* stdout and stderr are interleaved in the returned output.\n"
+            "* A command with no output returns `[no output]`.\n"
             "* A trailing `[exit code: N]` line marks a failed (non-zero exit) command.\n"
             "* When a command blocks reading input (a confirmation or password prompt), the "
             "call returns the output printed so far plus a trailing `[hint: ...]` line.\n"

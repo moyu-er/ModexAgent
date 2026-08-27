@@ -69,7 +69,9 @@ rolling buffer (``_SCROLLBACK_MAX_CHARS``/``_SCROLLBACK_MAX_LINES``).
 The response applies ``max_output_chars`` when set — head+tail with an
 explicit elision marker via ``render_overflow_text`` — or returns the
 full text when ``None`` so the framework's overflow interceptor owns
-truncation.
+truncation.  A length-zero result becomes ``[no output]``: the content
+part is never empty, so every trailing advisory (exit-code marker,
+hint, notice) joins on a newline — never glued, never standalone.
 """
 
 from __future__ import annotations
@@ -152,6 +154,7 @@ _SHELL_HINT = (
     "return to the local shell]"
 )
 _SHELL_EXITED_NOTICE = "[shell exited — it will restart fresh on the next call]"
+_NO_OUTPUT = "[no output]"
 _TRUNCATED_HEAD_NOTICE = (
     "[... earlier output of this command was dropped (output budget exceeded) ...]"
 )
@@ -298,16 +301,22 @@ def _bash_ansi_c_quote(value: str) -> str:
 
 
 def _with_notice(output: str, notice: str) -> str:
-    return "\n".join(part for part in (output, notice) if part)
+    return f"{output}\n{notice}"
 
 
 def _with_hint(output: str, hint: str) -> str:
     """Attach a hint advisory after a blank separator line (never glued)."""
-    return "\n\n".join(part for part in (output, hint) if part)
+    return f"{output}\n\n{hint}"
 
 
 def _format_result(raw: str, exit_code: int | None, max_output_chars: int | None) -> str:
-    """Sanitize, strip the PS1 token, clip per the overflow contract, add exit code."""
+    """Sanitize, strip the PS1 token, clip per the overflow contract, add exit code.
+
+    A LENGTH-ZERO result (after the single trailing-newline strip — the
+    leading/trailing whitespace of real output is meaningful and preserved)
+    becomes ``[no output]``, so the content part is never empty and every
+    trailing advisory (exit-code marker, hint, notice) joins on a newline.
+    """
     text = _strip_ps1(_sanitize(raw))
     if text.endswith("\n"):
         text = text[:-1]
@@ -319,9 +328,10 @@ def _format_result(raw: str, exit_code: int | None, max_output_chars: int | None
             tail_chars=tail_chars,
             full_output_path=None,
         )
+    if not text:
+        text = _NO_OUTPUT
     if exit_code is not None and exit_code != 0:
-        marker = f"[exit code: {exit_code}]"
-        return f"{text}\n{marker}" if text else marker
+        return f"{text}\n[exit code: {exit_code}]"
     return text
 
 
@@ -996,7 +1006,7 @@ class PersistentShellSession:
             if pending.deadline is not None and monotonic() >= pending.deadline:
                 partial = self._finalize(accum, pending, None)
                 self._terminate_session_sync()
-                partial_body = f"\n{partial}\n" if partial else "\n(no output captured)\n"
+                partial_body = f"\n{partial}\n"
                 return _TIMEOUT_MESSAGE.format(
                     seconds=pending.timeout_seconds, partial=partial_body
                 )
