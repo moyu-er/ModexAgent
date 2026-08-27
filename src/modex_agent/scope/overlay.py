@@ -4,6 +4,14 @@ Apply :func:`apply_scope_overlay` after ``load_scope_declaration`` and before
 ``boot_scope_spec``. The transform performs no validation shortcut: boot still
 runs declaration rules V1-V11 and effective-value validation over the adjusted
 tree, and the resulting declaration must satisfy them all.
+
+``tools`` overlays do not merge — entries are APPENDED to the declared roster
+(verbatim when the declaration has none); the compiler's single
+``_merge_tools`` pass owns all merging over the full base (preset, derived,
+and supplement-derived names). One combination is rejected loudly: prefixed
+``+/-`` overlay entries against a wholesale (all-unprefixed) declared roster
+raise ``ValueError`` — the concatenation would silently flip wholesale
+semantics to incremental and reintroduce the preset tools.
 """
 
 from __future__ import annotations
@@ -12,7 +20,6 @@ from typing import Any, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from modex_agent.scope.derivation import _merge_tools
 from modex_agent.scope.profile import merge_memory_declarations
 from modex_agent.scope.spec import (
     AgentSpec,
@@ -27,12 +34,20 @@ from modex_agent.tools.presets import ToolPreset
 class AgentOverlay(BaseModel):
     """Optional per-field changes to one declared agent.
 
-    ``tools`` follows the compiler's shared ``_merge_tools`` contract: a plain
-    list replaces the current roster wholesale, while a list containing
-    ``+``/``-`` entries incrementally adds to or removes from it. When the
-    declaration has no explicit roster, prefixed entries remain intact for the
-    compiler to merge against the position-derived preset and communication
-    entries.
+    ``tools`` entries are APPENDED to the declaration's roster — or become
+    the roster verbatim when the declaration has none; the overlay never
+    merges, the compiler's single ``_merge_tools`` pass does, over the full
+    base (preset, derived, and supplement-derived names). Consequences: a
+    ``-name`` overlay entry removes a ``+name`` declared entry (the compiler
+    matches the stripped name against its full base); unprefixed overlay
+    entries appended to a prefixed declared list act as baseline annotations
+    (ignored by the mixed-list rule); unprefixed overlay entries appended to
+    an unprefixed declared roster concatenate — duplicates are possible and
+    visible in the compiled roster (no current consumer constructs
+    unprefixed overlay entries; all repo constructions are minus-only).
+    Prefixed ``+/-`` entries against a wholesale (all-unprefixed) declared
+    roster are REJECTED with ``ValueError``: the concatenation would silently
+    flip wholesale semantics to incremental and reintroduce the preset tools.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -170,10 +185,28 @@ def _apply_agent_overlay(
     if overlay.toolset is not None:
         updates["toolset"] = overlay.toolset
     if overlay.tools is not None:
+        # Wholesale (all-unprefixed) declared roster + prefixed overlay
+        # entries would concatenate into a MIXED list: the compiler's merge
+        # then flips wholesale semantics to incremental and silently
+        # reintroduces the preset tools. Reject loudly.
+        if (
+            agent.tools is not None
+            and any(entry.startswith(("+", "-")) for entry in overlay.tools)
+            and not any(entry.startswith(("+", "-")) for entry in agent.tools)
+        ):
+            msg = (
+                f"scope overlay for agent {agent.name!r}: prefixed +/- tools "
+                "entries cannot apply to a wholesale (unprefixed) declared "
+                "tools list — the concatenation would silently flip "
+                "wholesale semantics to incremental and reintroduce the "
+                "preset tools; declare the roster with +/- entries instead, "
+                "or use an unprefixed overlay list"
+            )
+            raise ValueError(msg)
         updates["tools"] = (
             list(overlay.tools)
             if agent.tools is None
-            else _merge_tools(agent.tools, overlay.tools)
+            else [*agent.tools, *overlay.tools]
         )
     if overlay.memory is not None:
         updates["memory"] = merge_memory_declarations(agent.memory, overlay.memory)
