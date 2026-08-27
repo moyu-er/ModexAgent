@@ -408,6 +408,30 @@ _Avoid_: DI container, factory context, assembly inputs
 A named defaults macro referenced by scopes and agents; resolution is inheritance + deep merge (framework defaults ← profile ← local declaration), single level (the `ProfileStore` refuses nested references), list fields replaced wholesale, effective-value provenance inspectable (per-field winning layer via `AgentProvenance`; the WebUI bill recomputes from YAML per request — no boot-time cache). Landed as `Profile`/`ProfileStore` with `STANDARD_PROFILES` — the five toolset presets as code-level frozen constants — bound by position-derived toolset selection (root → `full`, non-root → `read_write`). Generalized `tool_preset` (the field is dead; its values live on as position-derived defaults).
 _Avoid_: template (collides with AgentTemplate), preset (collides with tool_preset)
 
+**Canonical Message**:
+The single typed message model (`ChatMessage`) shared by storage, memory, governance, and LLM requests; protocol engines translate it into each wire format at call time. Reasoning state rides on declared fields — never on `model_extra`. Per ADR-0046.
+_Avoid_: unified message, internal message, neutral message model
+
+**Wire Message**:
+The per-protocol request structure (Pydantic) that one protocol engine builds from canonical messages; it exists only for the lifetime of a single request and is never persisted.
+_Avoid_: API message, provider message
+
+**Protocol Engine**:
+One wire-protocol implementation (`LLMProtocol`): request-body building, stream-to-event translation, and provider-quirk parsing (e.g. think-tag extraction). Stateless across requests; all per-request state lives in the translate generator's closure. Per ADR-0046.
+_Avoid_: adapter, provider backend
+
+**Event Stream**:
+The provider-neutral `LLMStreamEvent` sequence (text/reasoning deltas, completed tool calls, usage, finish) — the single streaming primitive of the provider system. `chat_stream` is a fold of the event stream with delta callbacks into one `LLMResponse`. Per ADR-0046.
+_Avoid_: stream chunks, token stream
+
+**Reasoning Replay**:
+The declared assistant-message fields (`reasoning_content`, `reasoning_signature`, `reasoning_item_id`, `reasoning_encrypted_content`) that carry a turn's chain-of-thought state so the next request can pass it back (DeepSeek reasoning_content passback, Anthropic thinking signature, OpenAI Responses item_reference/encrypted_content).
+_Avoid_: thinking passback, CoT state
+
+**Tool Stream Key**:
+The stream-local identifier a provider uses while streaming one tool call (chat/Anthropic block `index`, Responses `item_id`) — always distinct from the final `call_id` that tool results must reference. Keying accumulation on the stream key, never on `call_id`, is the rule that survives interleaved parallel deltas.
+_Avoid_: tool index (ambiguous), call_id (that is the pairing key, not the stream key)
+
 ## Relationships
 
 - A **Workspace** owns one or more **Pool Instances**; pool instances are not shared across workspaces.

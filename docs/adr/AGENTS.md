@@ -74,5 +74,6 @@ ADRs document significant architectural decisions, including the context driving
 | 0042 | Scope declaration tree — unified assembly base (implemented 2026-08-22; see `docs/design/scope-assembly/`) |
 | 0043 | Dual execution models — actor sessions and dataflow graphs (implemented 2026-08-22) |
 | 0045 | Kernel terminal-state detection for the persistent bash pair |
+| 0046 | Rebuild the LLM provider system: one provider, protocol engines, event-stream primitive |
 
 <!-- MANUAL -->
