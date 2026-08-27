@@ -71,6 +71,7 @@ from modex_agent.plugins.abc import (
     ReactHookFactory,
     SimpleFactory,
 )
+from modex_agent.tools.presets import EXPERIENCE_REVIEW_HOOK_NAME
 
 if TYPE_CHECKING:
     from modex_agent.plugins.assembly.context import AssemblyContext, PoolContext
@@ -545,6 +546,6 @@ def register_default_hooks(ctx: PluginRegistrationContext) -> None:
     ctx.register_hook("subagent_auto_send", SubagentAutoSendHookFactory())
     ctx.register_hook("memory_trace", MemoryTraceHookFactory())
     ctx.register_hook("todo_reorientation", TodoReorientationHookFactory())
-    ctx.register_hook("experience_review", ExperienceReviewHookFactory())
+    ctx.register_hook(EXPERIENCE_REVIEW_HOOK_NAME, ExperienceReviewHookFactory())
     ctx.register_hook("task_delegation_nudge", TaskDelegationNudgeHookFactory())
     ctx.register_hook("todo_planning_nudge", TodoPlanningNudgeHookFactory())

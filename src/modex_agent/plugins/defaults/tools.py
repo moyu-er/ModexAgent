@@ -1,8 +1,9 @@
 """Default tool factories for preset and supplement tool names.
 
-Stateless preset and supplement tools use ``SimpleFactory``. Todo tools and
-the bash tool use runtime factories because their construction depends on
-pool-scoped runtime objects (TodoStore, terminal manager). Names are
+Stateless preset and supplement tools use ``SimpleFactory``. Todo,
+experience, and bash tools use runtime factories because their
+construction depends on pool-scoped runtime objects (TodoStore, the
+pool's experience dir, terminal manager). Names are
 projected from ``ToolPreset`` and ``ToolSupplement`` rather than hardcoded.
 The ACI edit upgrade is registered under ``aci_edit`` so rosters opt in via
 ``tool_supplements: [aci]`` (``edit`` stays the plain EditFileTool).
@@ -17,9 +18,11 @@ from __future__ import annotations
 
 import logging
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
+from modex_agent.core.experience import PerFileExperienceMetaStore
 from modex_agent.core.tool_manager import Tool
+from modex_agent.memory.tools.experience import ExperienceTool
 from modex_agent.plugins.abc import ComponentFactory, SimpleFactory
 from modex_agent.plugins.assembly.context import PoolContext, PoolRuntimeDeps
 from modex_agent.plugins.loader import PluginRegistrationContext
@@ -214,6 +217,59 @@ class TerminalToolFactory(ComponentFactory):
         return TerminalTool(terminal_manager, registry=process_registry)
 
 
+class ExperienceToolConfig(BaseModel):
+    """Config for :class:`ExperienceToolFactory` — no settings.
+
+    The experience directory is a pool-layer resource extracted from
+    ``ctx.pool_runtime`` at ``create()`` time, not carried by config.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class ExperienceToolFactory(ComponentFactory):
+    """Experience tool from the pool layer (moved from the bot plugin).
+
+    Declares ``PoolContext`` — the experience directory and its metadata
+    store are pool-scoped data reached through
+    ``pool_runtime.pool_assembly_ctx.pool_data``. Resolves the pool's
+    experience dir, materializes it, and wraps it with the per-file
+    metadata store. Missing pool-layer supply fails loudly — a
+    roster-referenced component is never silently skipped.
+    """
+
+    config_model = ExperienceToolConfig
+
+    async def create(self, config: BaseModel, ctx: PoolContext) -> Tool:
+        del config
+        pool_runtime = ctx.pool_runtime
+        pool_assembly = (
+            pool_runtime.pool_assembly_ctx if pool_runtime is not None else None
+        )
+        if pool_assembly is None:
+            raise ValueError(
+                "pool_assembly_ctx is required for experience; reference it "
+                "from a pool roster"
+            )
+        pool_data = pool_assembly.pool_data
+        if pool_data is None:
+            raise ValueError(
+                "pool_data is required for experience; configure experience "
+                "resources in the pool roster"
+            )
+        experience_dir = pool_data.experience_dir
+        if experience_dir is None:
+            raise ValueError(
+                "experience_dir is required for experience; configure "
+                "experience resources in the pool roster"
+            )
+        experience_dir.mkdir(parents=True, exist_ok=True)
+        return ExperienceTool(
+            experience_dir,
+            PerFileExperienceMetaStore(experience_dir),
+        )
+
+
 def register_default_tools(ctx: PluginRegistrationContext) -> None:
     """Register the dynamically projected preset and supplement tool union."""
     # Presets iterate FIRST so a supplement name colliding with a preset
@@ -226,6 +282,10 @@ def register_default_tools(ctx: PluginRegistrationContext) -> None:
     aci_tools: list[Tool] = []
     for supplement in ToolSupplement:
         if supplement is ToolSupplement.TODO:
+            continue
+        if supplement is ToolSupplement.EXPERIENCE:
+            # Produces no pre-built instances (factory-built from pool data
+            # at assembly time) — registered explicitly below.
             continue
         for tool in get_supplement_tools([supplement]):
             if supplement is ToolSupplement.ACI:
@@ -261,3 +321,9 @@ def register_default_tools(ctx: PluginRegistrationContext) -> None:
     }
     for name in get_supplement_tool_names([ToolSupplement.TODO]):
         ctx.register_tool(name, todo_factories[name])
+
+    # Experience tool: the EXPERIENCE supplement projects a name but no
+    # pre-built instances — the pool-data-fed factory builds the tool at
+    # assembly time.
+    for name in get_supplement_tool_names([ToolSupplement.EXPERIENCE]):
+        ctx.register_tool(name, ExperienceToolFactory())

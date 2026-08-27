@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from modex_agent.tools.presets import ToolPreset, get_preset_tools, get_supplement_tools, ToolSupplement
+from modex_agent.tools.presets import (
+    EXPERIENCE_REVIEW_HOOK_NAME,
+    ToolPreset,
+    ToolSupplement,
+    get_preset_tools,
+    get_supplement_tool_names,
+    get_supplement_tools,
+)
 
 
 class TestToolPreset:
@@ -153,3 +160,50 @@ class TestAciSupplement:
         # seen dedup prevents duplicate
         edit_tools = [t for t in tools if t.name == "edit"]
         assert len(edit_tools) == 1
+
+
+class TestExperienceSupplement:
+    """EXPERIENCE supplement — name-only projection, no pre-built instances."""
+
+    def test_experience_is_supplement_value(self) -> None:
+        """ToolSupplement.EXPERIENCE serializes as 'experience'."""
+        assert ToolSupplement.EXPERIENCE == "experience"
+
+    def test_experience_projects_its_name(self) -> None:
+        """get_supplement_tool_names([EXPERIENCE]) == ["experience"] — the
+        name projects without instance delegation."""
+        assert get_supplement_tool_names([ToolSupplement.EXPERIENCE]) == [
+            "experience"
+        ]
+
+    def test_experience_projects_no_instances(self) -> None:
+        """get_supplement_tools([EXPERIENCE]) == [] — no instances, no KeyError."""
+        assert get_supplement_tools([ToolSupplement.EXPERIENCE]) == []
+
+    def test_experience_name_matches_constructed_tool(self, tmp_path) -> None:
+        """Drift guard: a constructed ExperienceTool's .name equals the
+        projection (the name no longer comes from an instance)."""
+        from modex_agent.core.experience import PerFileExperienceMetaStore
+        from modex_agent.memory.tools.experience import ExperienceTool
+
+        projected = get_supplement_tool_names([ToolSupplement.EXPERIENCE])
+        tool = ExperienceTool(tmp_path, PerFileExperienceMetaStore(tmp_path))
+        assert projected == [tool.name]
+
+    def test_experience_review_hook_name_is_the_registration_name(self) -> None:
+        """EXPERIENCE_REVIEW_HOOK_NAME is importable and equals the name
+        register_default_hooks registers the review hook under."""
+        from modex_agent.plugins.abc import ComponentSlot
+        from modex_agent.plugins.defaults.hooks import (
+            ExperienceReviewHookFactory,
+            register_default_hooks,
+        )
+        from modex_agent.plugins.loader import PluginRegistrationContext
+        from modex_agent.plugins.registry import ComponentRegistry
+
+        assert EXPERIENCE_REVIEW_HOOK_NAME == "experience_review"
+        registry = ComponentRegistry()
+        with PluginRegistrationContext(registry) as ctx:
+            register_default_hooks(ctx)
+        factory = registry.resolve(ComponentSlot.HOOK, EXPERIENCE_REVIEW_HOOK_NAME)
+        assert isinstance(factory, ExperienceReviewHookFactory)

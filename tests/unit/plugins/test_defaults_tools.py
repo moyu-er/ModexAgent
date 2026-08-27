@@ -15,7 +15,12 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
-from modex_agent.plugins.defaults.tools import ToolConfig, register_default_tools
+from modex_agent.plugins.defaults.tools import (
+    ExperienceToolConfig,
+    ExperienceToolFactory,
+    ToolConfig,
+    register_default_tools,
+)
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.tools.presets import (
@@ -130,7 +135,10 @@ class TestCommunicationTrioExcluded:
 
 # Names whose factories are runtime (pool-scoped deps) rather than SimpleFactory
 # wrappers, or whose tool name deliberately differs from the registry name.
-_RUNTIME_TOOL_NAMES = frozenset({"todo_read", "todo_write", "bash", "process", "terminal"})
+# "experience": pool-data-fed ExperienceToolFactory (moved from the bot plugin).
+_RUNTIME_TOOL_NAMES = frozenset(
+    {"todo_read", "todo_write", "bash", "process", "terminal", "experience"}
+)
 # Registry name → tool name mismatch: the ACI upgrade is registered under
 # "aci_edit" but yields a tool named "edit" (drop-in upgrade contract).
 _NAME_MISMATCH_TOOLS = frozenset({"aci_edit"})
@@ -167,10 +175,15 @@ class TestFactoryContract:
 
     def test_config_model_is_toolconfig(self):
         """Each factory's config_model is ToolConfig (the shared minimal
-        frozen config for stateless standard tools)."""
+        frozen config for stateless standard tools). The pool-data-fed
+        experience factory is the one exception — its own dedicated frozen
+        config, asserted inline."""
         registry = _register_defaults()
         slot_map = registry._factories.get(ComponentSlot.TOOL, {})  # noqa: SLF001
         for name, factory in slot_map.items():
+            if name == "experience":
+                assert factory.config_model is ExperienceToolConfig
+                continue
             assert factory.config_model is ToolConfig, (
                 f"factory for {name!r} has config_model "
                 f"{factory.config_model!r}, expected ToolConfig"

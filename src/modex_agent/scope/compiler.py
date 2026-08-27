@@ -74,7 +74,11 @@ from modex_agent.scope.profile import (
 )
 from modex_agent.scope.spec import AgentSpec, MemoryDeclaration, PoolSpec, ScopeSpec
 from modex_agent.scope.validator import TASK_TOOL_NAME, EffectiveAgentConfig, _pools_of
-from modex_agent.tools.presets import ToolSupplement, get_supplement_tool_names
+from modex_agent.tools.presets import (
+    EXPERIENCE_REVIEW_HOOK_NAME,
+    ToolSupplement,
+    get_supplement_tool_names,
+)
 from modex_agent.workspace.context import WorkspaceContext
 
 SEND_TO_AGENT_TOOL_NAME: Final = "send_to_agent"
@@ -334,10 +338,24 @@ def _compile_agent(
     # ── tools pipeline: preset expansion + derived entries + O3 ──────────
     derived = _derived_entries(agent, pool=pool, children=children)
     preset_names = _expand_preset_tool_names(toolset)
+    # EXPERIENCE is a NAME-MERGE supplement (unlike TODO/ACI, whose
+    # factories produce instances appended after the merge): its tool is
+    # factory-built at assembly from pool data, so the compiler
+    # contributes only the projected NAME into the merge base — +/-
+    # entries and unprefixed wholesale replaces then control it exactly
+    # like a preset name.
+    experience_names = get_supplement_tool_names([ToolSupplement.EXPERIENCE])
+    supplement_base_names: list[str] = (
+        experience_names if ToolSupplement.EXPERIENCE in supplements else []
+    )
     base = preset_names + [entry.tool for entry in derived]
+    base += [name for name in supplement_base_names if name not in base]
+    append_supplements: list[ToolSupplement] = [
+        sup for sup in supplements if sup is not ToolSupplement.EXPERIENCE
+    ]
     merged_tools = _merge_tools(base, tools_list)
     final_tools, supplement_entries, replacements = _apply_supplements(
-        merged_tools, supplements
+        merged_tools, append_supplements
     )
     declared_origin = (
         ToolOrigin.LOCAL_TOOLS if agent.tools is not None else ToolOrigin.PROFILE_TOOLS
@@ -348,8 +366,22 @@ def _compile_agent(
         preset_names=preset_names,
         tools_list=tools_list,
         declared_origin=declared_origin,
+        supplement_names=supplement_base_names,
     )
     tool_provenance.extend(supplement_entries)
+
+    # EXPERIENCE binding: the review hook follows the compiled tool
+    # roster — injected when the tool name survived the merge (however it
+    # was declared) and the raw hooks declaration did not explicitly
+    # remove it (minus-wins). Order-preserving dedup keeps a coexisting
+    # handwritten ``+experience_review`` the sole entry.
+    merged_hooks = _merge_hooks(agent.hooks)
+    if (
+        f"-{EXPERIENCE_REVIEW_HOOK_NAME}" not in (agent.hooks or [])
+        and any(name in final_tools for name in experience_names)
+        and EXPERIENCE_REVIEW_HOOK_NAME not in merged_hooks
+    ):
+        merged_hooks.append(EXPERIENCE_REVIEW_HOOK_NAME)
 
     system_prompt_provider, system_prompt_config = _expand_system_prompt(
         agent.system_prompt,
@@ -367,7 +399,7 @@ def _compile_agent(
         roles=list(agent.roles),
         tools=final_tools,
         tool_configs=dict(agent.tool_configs or {}),
-        hooks=_merge_hooks(agent.hooks),
+        hooks=merged_hooks,
         hook_configs=dict(agent.hook_configs or {}),
         llm_provider=agent.llm_provider or default_llm_provider,
         llm_provider_config=dict(agent.llm_provider_config or {}),
@@ -539,21 +571,28 @@ def _classify_tools(
     preset_names: list[str],
     tools_list: list[str] | None,
     declared_origin: ToolOrigin,
+    supplement_names: list[str],
 ) -> list[ToolEntryProvenance]:
     """Classify the pre-supplement tool entries by origin.
 
     ``tools_list is None`` → base verbatim (preset + derived entries).
     Incremental (``+/-``) → base entries keep their origins, additions are
     declared. Wholesale (unprefixed) → the whole list is the declaration.
+    ``supplement_names`` (the name-merge entries contributed into the
+    base by supplements, e.g. EXPERIENCE) classify as SUPPLEMENT — by
+    supplements source, not "came from preset base".
     """
     derived_by_name = {entry.tool: entry for entry in derived}
     preset_set = set(preset_names)
+    supplement_set = set(supplement_names)
     if tools_list is None:
         entries: list[ToolEntryProvenance] = []
         for name in merged_tools:
             derived_entry = derived_by_name.get(name)
             if derived_entry is not None:
                 entries.append(derived_entry)
+            elif name in supplement_set:
+                entries.append(ToolEntryProvenance(tool=name, origin=ToolOrigin.SUPPLEMENT))
             else:
                 entries.append(ToolEntryProvenance(tool=name, origin=ToolOrigin.PRESET))
         return entries
@@ -563,6 +602,8 @@ def _classify_tools(
             derived_entry = derived_by_name.get(name)
             if derived_entry is not None:
                 entries.append(derived_entry)
+            elif name in supplement_set:
+                entries.append(ToolEntryProvenance(tool=name, origin=ToolOrigin.SUPPLEMENT))
             elif name in preset_set:
                 entries.append(ToolEntryProvenance(tool=name, origin=ToolOrigin.PRESET))
             else:

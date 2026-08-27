@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
+from typing import Final
 
 from modex_agent.core.tool_manager import InMemoryToolManager, Tool
 from modex_agent.runtime.store import TodoItem, TodoStore
@@ -195,6 +196,13 @@ class ToolSupplement(StrEnum):
     AST_GREP = "ast_grep"  # ast_grep_search + ast_grep_replace
     TODO = "todo"  # todo_read + todo_write
     ACI = "aci"  # replaces edit with AciEditTool (post-edit lint feedback)
+    EXPERIENCE = "experience"  # experience tool + review hook (factory-built at assembly)
+
+
+#: Hook name bound to the EXPERIENCE supplement (single authority):
+#: ``plugins/defaults/hooks.py`` registers the review hook under it and
+#: the scope compiler injects it into hook rosters.
+EXPERIENCE_REVIEW_HOOK_NAME: Final = "experience_review"
 
 
 def _make_ast_grep_tools() -> list[Tool]:
@@ -257,6 +265,10 @@ def get_supplement_tools(
                 seen.add(tool.name)
                 out.append(tool)
             continue
+        if sup is ToolSupplement.EXPERIENCE:
+            # No pre-built instances: the tool is factory-built at assembly
+            # time from pool data (plugins.defaults.tools.ExperienceToolFactory).
+            continue
         for tool in SUPPLEMENT_FACTORIES[sup]():
             if tool.name in seen:
                 continue
@@ -271,9 +283,21 @@ def get_supplement_tools(
 
 
 def get_supplement_tool_names(supplements: list[ToolSupplement]) -> list[str]:
-    """Project supplement names from the tools their factories produce."""
+    """Project supplement names from the tools their factories produce.
+
+    EXPERIENCE is the exception: it has no pre-built instances (its tool
+    is built by a pool-layer factory at assembly time), so its name
+    projects from the enum value directly — never through the instance
+    delegation, which returns no names for it.
+    """
+    instance_backed: list[ToolSupplement] = [
+        sup for sup in supplements if sup is not ToolSupplement.EXPERIENCE
+    ]
     tools = get_supplement_tools(
-        supplements,
+        instance_backed,
         todo_store=_SupplementNameTodoStore(),
     )
-    return [tool.name for tool in tools]
+    names = [tool.name for tool in tools]
+    if ToolSupplement.EXPERIENCE in supplements:
+        names.append(ToolSupplement.EXPERIENCE.value)
+    return names

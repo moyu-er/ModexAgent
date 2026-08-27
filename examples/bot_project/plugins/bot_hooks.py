@@ -1,7 +1,8 @@
-"""Bot-side hook factories and the pool-scoped experience tool factory.
+"""Bot-side hook factories and the pool-scoped send-file tool factory.
 
-Bot hook classes stay in ``bot/service/``. The experience tool is registered
-here because its directory and metadata store are bot pool resources.
+Bot hook classes stay in ``bot/service/``. The send_file_to_user tool is
+registered here because its construction depends on bot-side pool resources
+(the WebUI transcript store and the workspace resolver cell).
 
 Hooks registered:
 
@@ -20,16 +21,16 @@ Hooks registered:
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Final
 
 from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
+from bot.service.pool.agent_factory import _cell_sessions_dir
 from bot.service.pool.communication import UserNoticeCleanupHook
+from bot.tools.custom import SendFileToUserTool
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.experience import PerFileExperienceMetaStore
 from modex_agent.core.tool_manager import Tool
-from modex_agent.memory.tools.experience import ExperienceTool
 from modex_agent.plugins.abc import (
     AgentType,
     ComponentFactory,
@@ -39,8 +40,10 @@ from modex_agent.plugins.abc import (
 from modex_agent.plugins.loader import Plugin, PluginRegistrationContext
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from modex_agent.hook.notification import AgentNotificationService
-    from modex_agent.plugins.assembly.context import AssemblyContext
+    from modex_agent.plugins.assembly.context import AssemblyContext, PoolContext
 
 __all__ = [
     "BotHooksPlugin",
@@ -85,14 +88,34 @@ class UserNoticeCleanupHookConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-class ExperienceToolConfig(BaseModel):
+SEND_FILE_TO_USER_TOOL_NAME: Final = "send_file_to_user"
+
+
+class SendFileToUserToolConfig(BaseModel):
+    """Config for :class:`SendFileToUserToolFactory` — no settings.
+
+    Every construction dependency (output adapter, transcript store,
+    media config, workspace resolver) is pool-layer data read from
+    ``ctx.pool_runtime.pool_assembly_ctx`` at ``create()`` time, not
+    carried by config.
+    """
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-class ExperienceToolFactory(ComponentFactory):
-    config_model = ExperienceToolConfig
+class SendFileToUserToolFactory(ComponentFactory):
+    """Factory for :class:`SendFileToUserTool` — user-facing file delivery.
 
-    async def create(self, config: BaseModel, ctx: AssemblyContext) -> Tool:
+    Declares ``PoolContext`` — the output adapter, transcript store,
+    media config, and workspace resolver are all pool-layer data read
+    off ``pool_runtime.pool_assembly_ctx``. A missing pool assembly
+    context or assembly deps raises ``ValueError`` naming the component
+    (roster-referenced components never silently degrade).
+    """
+
+    config_model = SendFileToUserToolConfig
+
+    async def create(self, config: BaseModel, ctx: PoolContext) -> Tool:
         del config
         pool_runtime = ctx.pool_runtime
         pool_assembly = (
@@ -100,25 +123,27 @@ class ExperienceToolFactory(ComponentFactory):
         )
         if pool_assembly is None:
             raise ValueError(
-                "pool_assembly_ctx is required for experience; reference it "
-                "from a pool roster"
+                f"pool_assembly_ctx is required for {SEND_FILE_TO_USER_TOOL_NAME}; "
+                "reference it from a pool roster"
             )
-        pool_data = pool_assembly.pool_data
-        if pool_data is None:
+        assembly_deps = pool_assembly.assembly_deps
+        if assembly_deps is None:
             raise ValueError(
-                "pool_data is required for experience; configure experience "
-                "resources in the pool roster"
+                f"assembly_deps is required for {SEND_FILE_TO_USER_TOOL_NAME}; "
+                "configure the media dependency in the pool roster"
             )
-        experience_dir = pool_data.experience_dir
-        if experience_dir is None:
-            raise ValueError(
-                "experience_dir is required for experience; configure "
-                "experience resources in the pool roster"
-            )
-        experience_dir.mkdir(parents=True, exist_ok=True)
-        return ExperienceTool(
-            experience_dir,
-            PerFileExperienceMetaStore(experience_dir),
+        workspace_resolver = pool_assembly.workspace_resolver
+
+        def sessions_dir_provider() -> Path | None:
+            if workspace_resolver is not None:
+                return _cell_sessions_dir(workspace_resolver)
+            return None
+
+        return SendFileToUserTool(
+            output_adapter=pool_assembly.output_adapter,
+            transcript_store=pool_assembly.transcript_store,
+            media_config=assembly_deps.media,
+            sessions_dir_provider=sessions_dir_provider,
         )
 
 
@@ -189,11 +214,13 @@ class BotHooksConfig(BaseModel):
 
 
 class BotHooksPlugin(Plugin):
-    """Registers the ``model_choice_bind`` + ``user_notice_cleanup`` hooks."""
+    """Registers the ``model_choice_bind`` + ``user_notice_cleanup`` hooks
+    and the ``send_file_to_user`` tool.
+    """
 
     config_model = BotHooksConfig
 
     def register(self, ctx: PluginRegistrationContext) -> None:
         ctx.register_hook("model_choice_bind", ModelChoiceBindHookFactory())
         ctx.register_hook("user_notice_cleanup", UserNoticeCleanupHookFactory())
-        ctx.register_tool("experience", ExperienceToolFactory())
+        ctx.register_tool(SEND_FILE_TO_USER_TOOL_NAME, SendFileToUserToolFactory())
