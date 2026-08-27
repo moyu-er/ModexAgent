@@ -19,6 +19,7 @@ _POOL_SOURCE_ROOTS: Final = (
     "examples/bot_project/bot/config",
     "examples/bot_project/bot/input_pipeline",
     "examples/bot_project/bot/service",
+    "examples/bot_project/bot/tools",
     "examples/bot_project/bot/utils",
     "examples/bot_project/bot/workspace",
     "examples/bot_project/plugins",
