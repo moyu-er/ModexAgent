@@ -31,9 +31,10 @@ def message_payload(message: dict[str, Any]) -> str:
     reasoning is not replayed and not counted.
 
     The reasoning gate mirrors the provider replay rule
-    (``OpenAIProvider._sanitize_api_messages``) by design: if that rule ever
-    changes, this must change in lockstep or the trigger drifts. Both remain
-    heuristics superseded by usage-anchored measurement
+    (``providers.http.formats.openai_compat`` — ``_assistant_message``
+    attaches ``reasoning_content`` only on tool-call turns) by design: if
+    that rule ever changes, this must change in lockstep or the trigger
+    drifts. Both remain heuristics superseded by usage-anchored measurement
     (docs/design/memory-context-management/decisions.md #18).
     """
     content = message.get("content")

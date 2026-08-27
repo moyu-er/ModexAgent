@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from modex_agent.media import store as media_store
 from modex_agent.media.store import LocalFileMediaStore, StoredFile
 
 _MB: int = 1024 * 1024
@@ -88,6 +89,148 @@ class TestSaveReadRoundTrip:
         assert store.read("conv.main", "att-1") is None
         session_dir = store.media_dir / "uploads" / "conv.main"
         assert list(session_dir.glob("*.part")) == []
+
+
+class TestStoredMediaKinds:
+    def test_reads_kind_round_trips_bytes(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+
+        path = store.save(
+            "conv-main",
+            "att-1",
+            b"read snapshot",
+            kind=media_store.StoredMediaKind.READS,
+        )
+
+        assert path == store.media_dir / "reads" / "conv-main" / "att-1"
+        assert store.read(
+            "conv-main",
+            "att-1",
+            kind=media_store.StoredMediaKind.READS,
+        ) == path
+        assert store.read_bytes(
+            "conv-main",
+            "att-1",
+            kind=media_store.StoredMediaKind.READS,
+        ) == b"read snapshot"
+
+    def test_resolve_bytes_finds_upload(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        store.save("conv-main", "upload-1", b"uploaded")
+
+        resolved = store.resolve_bytes("conv-main", "upload-1")
+
+        assert resolved == b"uploaded"
+
+    def test_resolve_bytes_finds_read_snapshot(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        store.save(
+            "conv-main",
+            "read-1",
+            b"snapshot",
+            kind=media_store.StoredMediaKind.READS,
+        )
+
+        resolved = store.resolve_bytes("conv-main", "read-1")
+
+        assert resolved == b"snapshot"
+
+    def test_resolve_bytes_missing_returns_none(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+
+        resolved = store.resolve_bytes("conv-main", "missing")
+
+        assert resolved is None
+
+    def test_read_bytes_missing_returns_none(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+
+        resolved = store.read_bytes(
+            "conv-main",
+            "missing",
+            kind=media_store.StoredMediaKind.READS,
+        )
+
+        assert resolved is None
+
+    def test_explicit_kind_reads_are_cross_kind_invisible(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        store.save("conv-main", "upload-1", b"uploaded")
+        store.save(
+            "conv-main",
+            "read-1",
+            b"snapshot",
+            kind=media_store.StoredMediaKind.READS,
+        )
+
+        upload_as_read = store.read_bytes(
+            "conv-main",
+            "upload-1",
+            kind=media_store.StoredMediaKind.READS,
+        )
+        read_as_upload = store.read_bytes("conv-main", "read-1")
+
+        assert upload_as_read is None
+        assert read_as_upload is None
+
+    def test_resolve_bytes_raises_typed_error_on_kind_collision(
+        self, tmp_path: Path
+    ) -> None:
+        store = _store(tmp_path)
+        store.save("conv-main", "same-id", b"uploaded")
+        store.save(
+            "conv-main",
+            "same-id",
+            b"snapshot",
+            kind=media_store.StoredMediaKind.READS,
+        )
+
+        with pytest.raises(media_store.MediaRefCollisionError) as raised:
+            store.resolve_bytes("conv-main", "same-id")
+
+        assert raised.value.session_id == "conv-main"
+        assert raised.value.attachment_id == "same-id"
+
+    def test_delete_reads_removes_only_reads_entry(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        store.save("conv-main", "same-id", b"uploaded")
+        store.save(
+            "conv-main",
+            "same-id",
+            b"snapshot",
+            kind=media_store.StoredMediaKind.READS,
+        )
+
+        removed = store.delete(
+            "conv-main",
+            "same-id",
+            kind=media_store.StoredMediaKind.READS,
+        )
+
+        assert removed is True
+        assert store.read("conv-main", "same-id") is not None
+        assert store.read(
+            "conv-main",
+            "same-id",
+            kind=media_store.StoredMediaKind.READS,
+        ) is None
+
+    def test_list_and_budget_ignore_reads(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        store.save("conv-main", "upload-1", b"uploaded")
+        read_path = store.save(
+            "conv-main",
+            "read-1",
+            b"snapshot",
+            kind=media_store.StoredMediaKind.READS,
+        )
+
+        listed = store.list_session("conv-main")
+        evicted = store.enforce_budget("conv-main", 0)
+
+        assert [entry.attachment_id for entry in listed] == ["upload-1"]
+        assert [path.name for path in evicted] == ["upload-1"]
+        assert read_path.is_file()
 
 
 # ── streaming: save must NOT buffer the whole file in memory ─────────────────

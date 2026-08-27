@@ -142,10 +142,6 @@ class ToolDefinition:
             },
         }
 
-    def to_litellm_format(self) -> dict[str, Any]:
-        """转换为LiteLLM工具格式(与OpenAI相同)"""
-        return self.to_openai_format()
-
 
 # 工具函数类型
 ToolFunction = Callable[..., Any]

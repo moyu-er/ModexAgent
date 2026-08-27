@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage, ImageUrlPart, TextPart, render_content_part_ref
 from modex_agent.core.scope import MemoryContext
 from modex_agent.core.types import MessageRole
 from modex_agent.memory.archive_models import ArchiveGenerationResult
@@ -691,12 +691,26 @@ def _estimate_content_tokens(
     messages: Sequence[_MessageLike],
     estimator: TokenEstimator,
 ) -> int:
-    """Estimate persisted message content with the cleanup estimator."""
+    """Estimate persisted message content with the cleanup estimator.
+
+    Parts-list content (persisted ``media://`` references) renders through the
+    shared content-part renderer — bracket-line references, never base64.
+    """
     total = 0
     for message in messages:
         content = message.get("content")
         if isinstance(content, str):
             total += estimator.estimate_text(content)
+        elif isinstance(content, list):
+            rendered = "\n".join(
+                (
+                    render_content_part_ref(part)
+                    if isinstance(part, TextPart | ImageUrlPart)
+                    else str(part)
+                )
+                for part in content
+            )
+            total += estimator.estimate_text(rendered)
         elif content is not None:
             total += estimator.estimate_text(json.dumps(content, ensure_ascii=False))
     return total

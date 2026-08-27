@@ -152,27 +152,6 @@ class TurnCustomKey(StrEnum):
     # TrajectoryMetrics model. Read by eval-side turn aggregation so it
     # never reads spans back from the trace store.
     TRAJECTORY_METRICS = "trajectory_metrics"
-    # Resolved image-kind Attachment records for the current turn (ADR-0014 §3 /
-    # OpenSpec native-multimodal-inline unit 3). Path-only VOs (path/mime/kind/
-    # name/size) — never bytes. Read by the inline renderer (unit 4) to bind
-    # vision blocks; base64 is materialized lazily in unit 5.
-    INLINE_ATTACHMENTS = "inline_attachments"
-    # Per-turn cache of already-rendered image content blocks keyed by the
-    # attachment id (ADR-0014 §5 / OpenSpec native-multimodal-inline unit 5).
-    # Value: dict[str, list[dict]] mapping att.id -> the 2-element caption +
-    # image_url block list, so base64 is encoded once per turn and reused
-    # across ReAct iterations. Lives only in turn state — never persisted.
-    INLINE_IMAGE_CACHE = "_inline_image_cache"
-    # Per-turn cache of image content blocks produced by TOOLS (e.g. ReadFileTool
-    # reading an image file), keyed by tool_call_id. Mirrors INLINE_IMAGE_CACHE
-    # (which is keyed by attachment id for user-uploaded attachments). Value:
-    # dict[str, ToolMediaEntry] mapping call_id -> entry (carries tool_name +
-    # image_blocks for per-call attribution in the synthetic user message).
-    # Lives only in turn state — never persisted. Read by enrich_inline_media
-    # which delegates to a ToolResultMediaStrategy (default
-    # SyntheticUserMessageStrategy — Path B) to inject a synthetic user message
-    # after tool results.
-    TOOL_MEDIA_CACHE = "_tool_media_cache"
     CONTINUATION_REQUEST = "_continuation_request"
     # One-shot flag: a hook with progress-driven continuation (currently only
     # TodoContinuationHook) authorizes the gate to renew MAX_TURNS past the
@@ -230,11 +209,17 @@ class TurnCustomKey(StrEnum):
     # read by GraphWorkflowProvider to conditionally render the Final
     # Reply deliver pattern.
     GRAPH_DOWNSTREAM_HAS_END = "_graph_downstream_has_end"
-    # One-shot per-turn flags for the behavior nudge hooks. Set (unconditionally)
-    # by the hook's before_turn leg; popped by the before_iteration leg on its
-    # first — and only — evaluation of the turn attempt. Popping on evaluation
-    # (regardless of whether a reminder was injected) prevents repeated
-    # injection within the same attempt. Approval resume does not re-fire
-    # BEFORE_TURN, so a resumed turn never re-evaluates. Value: bool.
+    # One-shot per-turn flags for the (DEPRECATED) behavior nudge hooks.
+    # Set unconditionally by the hook's before_turn leg on every turn
+    # attempt; popped by the before_iteration leg on its first evaluation
+    # of the attempt. Gate failures (tool unregistered / empty roster /
+    # existing todos) and a USED verdict (target tool already called this
+    # turn) settle immediately — no injection, no re-evaluation. A
+    # SHORT_TURN verdict (fewer than min_assistant_steps assistant messages
+    # since the last user/agent message) RE-ARMS the flag so later
+    # iterations re-evaluate once the turn accumulates steps. A DUE
+    # verdict injects the reminder once and settles. Approval resume does
+    # not re-fire BEFORE_TURN, so a resumed turn never re-evaluates.
+    # Value: bool.
     TASK_NUDGE_PENDING = "_task_nudge_pending"
     TODO_NUDGE_PENDING = "_todo_nudge_pending"

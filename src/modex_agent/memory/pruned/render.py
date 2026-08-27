@@ -16,7 +16,12 @@ import json
 from datetime import datetime
 from typing import Any
 
-from modex_agent.core.message import ChatMessage, ImageUrlPart, TextPart
+from modex_agent.core.message import (
+    ChatMessage,
+    ImageUrlPart,
+    TextPart,
+    render_content_part_ref,
+)
 from modex_agent.core.types import MessageRole, ToolCall
 
 __all__ = ["render_transcript"]
@@ -94,13 +99,13 @@ def _body(msg: ChatMessage) -> str:
 def _reasoning_text(msg: ChatMessage) -> str | None:
     """Return the assistant reasoning chain verbatim, or None.
 
-    ``reasoning_content`` rides on ``model_extra`` and is read via attribute
-    access (the ``after_turn`` precedent). Only assistant messages carry it;
+    ``reasoning_content`` is a declared ChatMessage field (ADR-0046) read
+    via plain attribute access. Only assistant messages carry it;
     blank values render nothing.
     """
     if str(msg.role) != str(MessageRole.ASSISTANT):
         return None
-    reasoning = getattr(msg, "reasoning_content", None)
+    reasoning = msg.reasoning_content
     if isinstance(reasoning, str) and reasoning.strip():
         return reasoning
     return None
@@ -115,9 +120,7 @@ def _content_text(content: str | list[TextPart | ImageUrlPart]) -> str:
 
 def _part_line(part: TextPart | ImageUrlPart) -> str:
     """TextPart renders its text; ImageUrlPart renders a placeholder."""
-    if isinstance(part, TextPart):
-        return part.text
-    return f"[image: {part.image_url.url}]"
+    return render_content_part_ref(part)
 
 
 def _tool_call_line(tc: ToolCall) -> str:

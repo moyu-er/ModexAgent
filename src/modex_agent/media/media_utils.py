@@ -16,8 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from modex_agent.media.models import Attachment
-from modex_agent.workspace.runtime import resolve_workspace_root
+from pydantic import BaseModel, ConfigDict
 
 # 可选依赖 — 顶层一次性 import，避免每次提取都 try/import
 try:
@@ -132,7 +131,7 @@ class MediaBlock:
     """单个 LLM-ready 媒体内容块。
 
     由 MediaProcessor 根据文件类型生成，直接可嵌入 OpenAI 兼容的
-    多模态 content 列表。不关心具体 LLM API 差异（由 LiteLLM 统一处理）。
+    多模态 content 列表。不关心具体 LLM API 差异（由协议引擎处理）。
 
     Attributes:
         block: OpenAI 兼容的 content block dict
@@ -194,13 +193,11 @@ def _build_image_url_block(
 ) -> dict[str, Any]:
     """Build an OpenAI-compatible ``image_url`` content block from raw bytes.
 
-    Shared data-URL construction used by :class:`ImageHandler` and
-    :func:`build_inline_image_block`. When ``with_meta`` is True (the
-    default, used by :class:`ImageHandler`) a ``_meta.path`` entry is included
-    so the dormant sanitizer/strip-on-reject path can recover the source path.
-    The LIVE inline path passes ``with_meta=False`` so the block sent to the
-    provider API carries no ``_meta`` (the absolute filesystem path must not
-    leak past the call boundary).
+    Data-URL construction used by :class:`ImageHandler`. When ``with_meta``
+    is True (the default) a ``_meta.path`` entry is included so the dormant
+    sanitizer/strip-on-reject path can recover the source path; callers that
+    send the block to a provider API pass ``with_meta=False`` so the absolute
+    filesystem path must not leak past the call boundary.
     """
     b64 = base64.b64encode(raw).decode()
     block: dict[str, Any] = {
@@ -217,33 +214,41 @@ _MAX_IMAGE_BYTES = 5 * 1024 * 1024
 _JPEG_QUALITIES = [85, 70, 55, 40]
 
 
-def _build_image_url_block_from_b64(b64: str, mime: str) -> dict[str, Any]:
-    block: dict[str, Any] = {
-        "type": "image_url",
-        "image_url": {"url": f"data:{mime};base64,{b64}"},
-    }
-    return block
+class CompressedImage(BaseModel):
+    """Model-ready image bytes — the compression core's typed output.
+
+    ``data`` is the (possibly re-encoded) image payload and ``media_type``
+    its authoritative MIME; consumed by the read tool (persisted into the
+    media store READS subtree) and the injection resolver (data-URL build).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    data: bytes
+    media_type: str
 
 
-def build_image_url_block_compressed(
-    raw: bytes, mime: str, path: str = ""
-) -> dict[str, Any]:
-    """Build an ``image_url`` block with Pillow compression (for read tool).
+def compress_image(raw: bytes, source_mime: str) -> CompressedImage | None:
+    """Compress raw image bytes for model delivery; ``None`` when undecodable.
 
-    Downscales images exceeding ``_MAX_IMAGE_DIM`` (2000px) on the long edge
-    using LANCZOS resampling, then re-encodes trying the original format
-    first and JPEG at progressively lower qualities [85,70,55,40] until the
-    base64 payload fits ``_MAX_IMAGE_BYTES`` (5MB). If Pillow is unavailable
-    or decoding fails, degrades to the original bytes (no crash).
+    Semantics (idempotent pass-through):
 
-    TODO: make thresholds configurable (align with opencode
-    ``attachments.image.{max_width,max_height,max_base64_bytes}``).
-    The user-attachment path (``build_inline_image_block``) does not compress
-    yet; unify by routing it through this function once thresholds are
-    configurable.
+    - Pillow unavailable → the original bytes pass through unchanged (best
+      effort, matching the legacy data-URL degrade path).
+    - Pillow decode failure (corrupt bytes) → ``None`` — the caller degrades
+      to a text-only result; garbage never reaches the store or the wire.
+    - Image already within the delivery budget (dimensions ≤
+      ``_MAX_IMAGE_DIM`` AND decoded size ≤ ``_MAX_IMAGE_BYTES``) → returned
+      unchanged. This is what makes the injection pass idempotent: READS
+      snapshots are the output of this function, so re-running them through
+      it is a no-op (no generation loss, no wasted re-encode).
+    - Over budget → LANCZOS downscale to the dimension cap, then re-encode
+      trying the original format first and JPEG at progressively lower
+      qualities [85, 70, 55, 40] until the base64 payload fits
+      ``_MAX_IMAGE_BYTES``; falls back to the smallest candidate produced.
     """
     if _PILImage is None or _PILResampling is None:
-        return _build_image_url_block(raw, mime, path, with_meta=False)
+        return CompressedImage(data=raw, media_type=source_mime)
 
     import io
 
@@ -251,14 +256,21 @@ def build_image_url_block_compressed(
         img = _PILImage.open(io.BytesIO(raw))
         img.load()
     except Exception:
-        return _build_image_url_block(raw, mime, path, with_meta=False)
+        return None
+
+    if img.width <= _MAX_IMAGE_DIM and img.height <= _MAX_IMAGE_DIM and len(raw) <= _MAX_IMAGE_BYTES:
+        return CompressedImage(data=raw, media_type=source_mime)
 
     if img.width > _MAX_IMAGE_DIM or img.height > _MAX_IMAGE_DIM:
         img.thumbnail((_MAX_IMAGE_DIM, _MAX_IMAGE_DIM), _PILResampling.LANCZOS)
 
     candidates: list[tuple[str, bytes]] = []
     buf = io.BytesIO()
-    save_mime = mime if mime in ("image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp") else "image/png"
+    save_mime = (
+        source_mime
+        if source_mime in ("image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp")
+        else "image/png"
+    )
     try:
         img.save(buf, format=save_mime.split("/")[1].upper())
         candidates.append((save_mime, buf.getvalue()))
@@ -273,16 +285,13 @@ def build_image_url_block_compressed(
             continue
 
     if not candidates:
-        return _build_image_url_block(raw, mime, path, with_meta=False)
+        return CompressedImage(data=raw, media_type=source_mime)
 
     for c_mime, encoded in candidates:
-        b64 = base64.b64encode(encoded).decode()
-        if len(b64) <= _MAX_IMAGE_BYTES:
-            return _build_image_url_block_from_b64(b64, c_mime)
-
+        if len(base64.b64encode(encoded)) <= _MAX_IMAGE_BYTES:
+            return CompressedImage(data=encoded, media_type=c_mime)
     c_mime, encoded = candidates[-1]
-    b64 = base64.b64encode(encoded).decode()
-    return _build_image_url_block_from_b64(b64, c_mime)
+    return CompressedImage(data=encoded, media_type=c_mime)
 
 
 class ImageHandler(MediaHandler):
@@ -309,59 +318,6 @@ class ImageHandler(MediaHandler):
             )
         except Exception:
             return None
-
-
-def _inline_caption(att: Attachment) -> dict[str, str]:
-    """Single source of truth for the mechanism-A inline image caption literal."""
-    return {"type": "text", "text": f"<image: {att.name}>"}
-
-
-def build_inline_image_block(att: Attachment) -> list[dict[str, Any]]:
-    """Render an image attachment as a caption + image_url content pair.
-
-    Returns the OpenAI-compatible two-element tail used to inject an image
-    inline into a user message (mechanism A, ADR-0014):
-
-    ``[_inline_caption(att), {"type": "image_url", "image_url": {...}}]``
-
-    The ``image_url`` block shares the same data-URL helper as
-    :class:`ImageHandler` (no duplicated base64/mime handling). The caption
-    is produced by :func:`_inline_caption` so tests and consumers reference
-    the same literal.
-
-    Assumes the caller has already filtered to image attachments — this helper
-    does not branch on ``att.kind``. The file is gate-vetted and present per
-    ADR-0013; if the bytes cannot be read (e.g. the file vanished between gate
-    and render), it degrades to a caption-only pair with a ``<missing>`` note
-    rather than raising — matching :class:`ImageHandler`'s swallow-and-skip
-    behavior so a single unreadable attachment never crashes a turn.
-    """
-    caption = _inline_caption(att)
-    try:
-        # Resolve the record's workspace-relative ``path`` against the turn's
-        # bound workspace root — identical to mechanism B's
-        # ``_attachment_reference`` (``(ws_root / att.path).resolve()``). The bot
-        # process CWD is NOT the workspace root, so reading ``Path(att.path)``
-        # relative to CWD would miss the real file and silently degrade every
-        # inline image to ``<missing image>``. For an already-absolute path
-        # pathlib leaves it unchanged, so this is safe for both locators.
-        p = (resolve_workspace_root() / att.path).resolve()
-        raw = p.read_bytes()
-    except OSError:
-        return [
-            caption,
-            {"type": "text", "text": "<missing image>"},
-        ]
-
-    mime = _detect_image_mime(raw) or att.mime or mimetypes.guess_type(att.path)[0]
-    if not mime or not mime.startswith("image/"):
-        # Unreadable as an image — degrade like ImageHandler (returns None).
-        return [
-            caption,
-            {"type": "text", "text": "<missing image>"},
-        ]
-
-    return [caption, _build_image_url_block(raw, mime, str(p), with_meta=False)]
 
 
 class MediaProcessor:

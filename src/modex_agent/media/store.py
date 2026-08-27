@@ -6,14 +6,15 @@ it has NO workspace/pool/ws knowledge — that routing is the business
 resolver's job (``bot.service.media_store``), mirroring
 ``WorkspaceScopedTranscriptStore``.
 
-Stream/path-oriented throughout: ``save`` accepts a binary stream (or bytes)
-and copies it in fixed-size chunks; ``read`` returns the ``Path`` so the caller
-streams the response. The largest configured file never buffers whole into
-memory.
+The upload API remains stream/path-oriented: ``save`` accepts a binary stream
+(or bytes) and copies it in fixed-size chunks; ``read`` returns the ``Path`` so
+the caller streams the response. Explicit byte-reading methods support model
+injection, where the payload must be materialized.
 
 On-disk layout::
 
     <media_dir>/uploads/<session_id>/<attachment_id>
+    <media_dir>/reads/<session_id>/<attachment_id>
 
 ``session_id`` and ``attachment_id`` are sanitized via :func:`safe_segment`
 so neither can escape ``<media_dir>`` via ``..``.
@@ -25,6 +26,7 @@ import contextlib
 import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import BinaryIO
 
@@ -36,10 +38,27 @@ from modex_agent.workspace.paths import safe_segment
 # streaming operation rather than a whole-file buffer.
 _CHUNK_BYTES: int = 64 * 1024
 
-# Subdirectory under the media dir holding all uploaded attachment bytes.
-# Kept as a leaf so future sibling leaves (e.g. derived thumbnails) can be
-# added without touching the path of existing uploads.
-_UPLOADS_SUBDIR: str = "uploads"
+
+class StoredMediaKind(StrEnum):
+    """Closed set of persisted media subtrees."""
+
+    UPLOADS = "uploads"
+    READS = "reads"
+
+
+class MediaRefCollisionError(Exception):
+    """The same media reference exists in both persisted subtrees."""
+
+    session_id: str
+    attachment_id: str
+
+    def __init__(self, session_id: str, attachment_id: str) -> None:
+        self.session_id = session_id
+        self.attachment_id = attachment_id
+        super().__init__(
+            f"media reference {attachment_id!r} for session {session_id!r} "
+            "exists in both uploads and reads"
+        )
 
 
 @dataclass(frozen=True)
@@ -70,8 +89,10 @@ class MediaStore(ABC):
         session_id: str,
         attachment_id: str,
         stream: BinaryIO | bytes,
+        *,
+        kind: StoredMediaKind = StoredMediaKind.UPLOADS,
     ) -> Path:
-        """Persist ``stream`` under ``<session_id>/<attachment_id>``.
+        """Persist ``stream`` under ``<kind>/<session_id>/<attachment_id>``.
 
         ``stream`` is a readable binary file-like object or a ``bytes``
         blob; both are written without buffering the whole payload in memory.
@@ -79,14 +100,40 @@ class MediaStore(ABC):
         """
 
     @abstractmethod
-    def read(self, session_id: str, attachment_id: str) -> Path | None:
+    def read(
+        self,
+        session_id: str,
+        attachment_id: str,
+        *,
+        kind: StoredMediaKind = StoredMediaKind.UPLOADS,
+    ) -> Path | None:
         """Return the stored path, or ``None`` if no such file exists.
 
         Does NOT read bytes into memory — the caller streams the path.
         """
 
     @abstractmethod
-    def delete(self, session_id: str, attachment_id: str) -> bool:
+    def read_bytes(
+        self,
+        session_id: str,
+        attachment_id: str,
+        *,
+        kind: StoredMediaKind = StoredMediaKind.UPLOADS,
+    ) -> bytes | None:
+        """Return bytes from one explicit subtree, or ``None`` when absent."""
+
+    @abstractmethod
+    def resolve_bytes(self, session_id: str, attachment_id: str) -> bytes | None:
+        """Resolve bytes across uploads then reads, rejecting collisions."""
+
+    @abstractmethod
+    def delete(
+        self,
+        session_id: str,
+        attachment_id: str,
+        *,
+        kind: StoredMediaKind = StoredMediaKind.UPLOADS,
+    ) -> bool:
         """Delete the stored file. Returns ``True`` if a file was removed."""
 
     @abstractmethod
@@ -110,7 +157,7 @@ class LocalFileMediaStore(MediaStore):
     """Local-filesystem ``MediaStore`` rooted at a resolved media directory.
 
     The store never learns the workspace root or pool name — it owns only the
-    ``uploads/<session_id>/<attachment_id>`` subtree under ``media_dir``.
+    ``<kind>/<session_id>/<attachment_id>`` subtrees under ``media_dir``.
 
     Concurrency: writes are atomic (a ``.part`` temp file then ``replace``),
     but concurrent writers to the same ``(session_id, attachment_id)`` race —
@@ -130,16 +177,24 @@ class LocalFileMediaStore(MediaStore):
         """The resolved media root this store writes under."""
         return self._media_dir
 
-    def _uploads_root(self) -> Path:
-        return self._media_dir / _UPLOADS_SUBDIR
+    def _session_dir(
+        self,
+        session_id: str,
+        *,
+        kind: StoredMediaKind = StoredMediaKind.UPLOADS,
+    ) -> Path:
+        """One media-kind subtree for a session, created on demand by save."""
+        return self._media_dir / kind.value / safe_segment(session_id)
 
-    def _session_dir(self, session_id: str) -> Path:
-        """The uploads subtree for one session (created on demand)."""
-        return self._uploads_root() / safe_segment(session_id)
-
-    def _file_path(self, session_id: str, attachment_id: str) -> Path:
+    def _file_path(
+        self,
+        session_id: str,
+        attachment_id: str,
+        *,
+        kind: StoredMediaKind = StoredMediaKind.UPLOADS,
+    ) -> Path:
         """Absolute path for one stored file. Path-escape-proof via safe_segment."""
-        return self._session_dir(session_id) / safe_segment(attachment_id)
+        return self._session_dir(session_id, kind=kind) / safe_segment(attachment_id)
 
     # ------------------------------------------------------------------
     # MediaStore interface
@@ -150,8 +205,10 @@ class LocalFileMediaStore(MediaStore):
         session_id: str,
         attachment_id: str,
         stream: BinaryIO | bytes,
+        *,
+        kind: StoredMediaKind = StoredMediaKind.UPLOADS,
     ) -> Path:
-        target = self._file_path(session_id, attachment_id)
+        target = self._file_path(session_id, attachment_id, kind=kind)
         target.parent.mkdir(parents=True, exist_ok=True)
         # Write a sibling temp file then replace, so a crash mid-write never
         # leaves a half-written attachment under the live id.
@@ -174,18 +231,48 @@ class LocalFileMediaStore(MediaStore):
             raise
         return target
 
-    def read(self, session_id: str, attachment_id: str) -> Path | None:
-        target = self._file_path(session_id, attachment_id)
+    def read(
+        self,
+        session_id: str,
+        attachment_id: str,
+        *,
+        kind: StoredMediaKind = StoredMediaKind.UPLOADS,
+    ) -> Path | None:
+        target = self._file_path(session_id, attachment_id, kind=kind)
         return target if target.is_file() else None
 
-    def delete(self, session_id: str, attachment_id: str) -> bool:
-        target = self._file_path(session_id, attachment_id)
+    def read_bytes(
+        self,
+        session_id: str,
+        attachment_id: str,
+        *,
+        kind: StoredMediaKind = StoredMediaKind.UPLOADS,
+    ) -> bytes | None:
+        target = self.read(session_id, attachment_id, kind=kind)
+        return target.read_bytes() if target is not None else None
+
+    def resolve_bytes(self, session_id: str, attachment_id: str) -> bytes | None:
+        upload = self.read(session_id, attachment_id, kind=StoredMediaKind.UPLOADS)
+        read_snapshot = self.read(session_id, attachment_id, kind=StoredMediaKind.READS)
+        if upload is not None and read_snapshot is not None:
+            raise MediaRefCollisionError(session_id, attachment_id)
+        target = upload if upload is not None else read_snapshot
+        return target.read_bytes() if target is not None else None
+
+    def delete(
+        self,
+        session_id: str,
+        attachment_id: str,
+        *,
+        kind: StoredMediaKind = StoredMediaKind.UPLOADS,
+    ) -> bool:
+        target = self._file_path(session_id, attachment_id, kind=kind)
         if not target.is_file():
             return False
         target.unlink()
         # Drop the session dir when it becomes empty so list/enforce scans stay
-        # cheap and the uploads tree reflects reality.
-        session_dir = self._session_dir(session_id)
+        # cheap and the selected media-kind tree reflects reality.
+        session_dir = self._session_dir(session_id, kind=kind)
         # Not empty (other attachments remain) — expected, not an error.
         with contextlib.suppress(OSError):
             session_dir.rmdir()

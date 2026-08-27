@@ -6,8 +6,8 @@ from typing import Any
 import pytest
 
 from modex_agent.agents.react.message_builder import build_assistant_message
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.types import ToolCall
+from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, build_media_ref
+from modex_agent.core.types import MessageRole, ToolCall
 from modex_agent.memory.token_estimator import (
     CharTokenEstimator,
     TokenEstimator,
@@ -107,6 +107,23 @@ def test_char_estimator_message_includes_overhead() -> None:
     msg = ChatMessage(role="user", content="abcdefgh")  # 2 content tokens
     # estimate_message = estimate_text(payload) + 4 overhead
     assert est.estimate_message(msg) == 2 + 4
+
+
+def test_media_ref_message_estimate_stays_below_100_ascii_chars_equivalent() -> None:
+    # Given
+    estimator = CharTokenEstimator()
+    message = ChatMessage(
+        role=MessageRole.USER,
+        content=[
+            ImageUrlPart(image_url=ImageUrl(url=build_media_ref("asset-123"))),
+        ],
+    )
+
+    # When
+    estimated = estimator.estimate_message(message)
+
+    # Then
+    assert estimated < estimator.MESSAGE_OVERHEAD + (100 // 4)
 
 
 def test_char_estimator_summed_messages() -> None:
