@@ -7,7 +7,7 @@ from enum import Enum, StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from modex_agent.media.models import Attachment
 
@@ -261,6 +261,110 @@ class OutputMessage(BaseModel):
 # Import from framework.core.tool_manager instead
 
 
+class TokenUsage(BaseModel):
+    """Typed LLM token usage.
+
+    ``input_tokens`` counts UNcached prompt tokens only; ``reasoning_tokens``
+    is informational (already included in ``output_tokens``).
+
+    The ``mode="before"`` validator normalizes the three provider wire shapes
+    (OpenAI chat ``prompt_tokens`` + ``prompt_tokens_details.cached_tokens``,
+    Anthropic ``input_tokens``/``cache_read_input_tokens``/
+    ``cache_creation_input_tokens``, OpenAI Responses ``input_tokens`` +
+    ``output_tokens_details.reasoning_tokens``) plus the legacy cassette /
+    DeepSeek key forms (``prompt_cache_hit_tokens``,
+    ``cache_creation.ephemeral_*_input_tokens``). Unknown keys are dropped.
+    Under the OpenAI/DeepSeek convention ``prompt_tokens`` INCLUDES cached
+    tokens, so ``input_tokens = prompt_tokens - cache_read``; a negative
+    result raises ``ValueError`` instead of silently producing a negative
+    count. ``total_tokens`` is always recomputed from the four counters and
+    never taken from the wire.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total_tokens(self) -> int:
+        return (
+            self.input_tokens
+            + self.cache_read_input_tokens
+            + self.cache_creation_input_tokens
+            + self.output_tokens
+        )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_wire_keys(cls, data: Any) -> Any:
+        if isinstance(data, TokenUsage) or not isinstance(data, dict):
+            return data
+        raw: dict[str, Any] = dict(data)
+
+        def read_int(key: str) -> int | None:
+            value = raw.get(key)
+            return None if value is None else int(value)
+
+        def read_nested_int(parent: str, child: str) -> int | None:
+            details = raw.get(parent)
+            if not isinstance(details, dict):
+                return None
+            value = details.get(child)
+            return None if value is None else int(value)
+
+        cache_read = read_int("cache_read_input_tokens")
+        if cache_read is None:
+            cache_read = read_nested_int("prompt_tokens_details", "cached_tokens")
+        if cache_read is None:
+            cache_read = read_nested_int("input_tokens_details", "cached_tokens")
+        if cache_read is None:
+            cache_read = read_int("prompt_cache_hit_tokens")
+
+        cache_creation = read_int("cache_creation_input_tokens")
+        if cache_creation is None:
+            ephemeral_5m = read_nested_int("cache_creation", "ephemeral_5m_input_tokens")
+            ephemeral_1h = read_nested_int("cache_creation", "ephemeral_1h_input_tokens")
+            if ephemeral_5m is not None or ephemeral_1h is not None:
+                cache_creation = (ephemeral_5m or 0) + (ephemeral_1h or 0)
+
+        reasoning = read_int("reasoning_tokens")
+        if reasoning is None:
+            reasoning = read_nested_int("completion_tokens_details", "reasoning_tokens")
+        if reasoning is None:
+            reasoning = read_nested_int("output_tokens_details", "reasoning_tokens")
+
+        output = read_int("output_tokens")
+        if output is None:
+            output = read_int("completion_tokens")
+
+        input_tokens = read_int("input_tokens")
+        if input_tokens is None:
+            prompt_tokens = read_int("prompt_tokens")
+            if prompt_tokens is not None:
+                # OpenAI/DeepSeek convention: prompt_tokens includes cached tokens.
+                input_tokens = prompt_tokens - (cache_read or 0)
+
+        normalized = {
+            "input_tokens": input_tokens or 0,
+            "cache_read_input_tokens": cache_read or 0,
+            "cache_creation_input_tokens": cache_creation or 0,
+            "output_tokens": output or 0,
+            "reasoning_tokens": reasoning or 0,
+        }
+        negative = {key: value for key, value in normalized.items() if value < 0}
+        if negative:
+            raise ValueError(
+                f"TokenUsage normalization produced negative token counts: {negative}; "
+                f"input data: {data!r}"
+            )
+        return normalized
+
+
 class LLMResponse(BaseModel):
     """LLM 统一响应结构
 
@@ -272,8 +376,11 @@ class LLMResponse(BaseModel):
     content: str | None
     tool_calls: list[ToolCall] = Field(default_factory=list)
     reasoning_content: str | None = None
+    reasoning_signature: str | None = None
+    reasoning_item_id: str | None = None
+    reasoning_encrypted_content: str | None = None
     finish_reason: FinishReason = FinishReason.STOP
-    usage: dict[str, int] = Field(default_factory=dict)
+    usage: TokenUsage = Field(default_factory=TokenUsage)
     completion_start_time: str | None = None
     response_id: str | None = None
     error: str | None = None

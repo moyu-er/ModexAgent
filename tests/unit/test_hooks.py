@@ -191,7 +191,7 @@ class TestRunLoggingHook:
         assert any("agent=" in msg for msg in messages)
         assert any("iter=" in msg for msg in messages)
         assert any("final answer" in msg for msg in messages)
-        assert any("prompt_tokens" in msg for msg in messages)
+        assert any("input_tokens" in msg for msg in messages)
 
     @pytest.mark.asyncio
     async def test_logs_tool_call_and_result_with_session_id_and_arguments(self, caplog):

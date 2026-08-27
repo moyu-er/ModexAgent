@@ -35,8 +35,8 @@ class FinishReason(StrEnum):
 class StreamControlAction(StrEnum):
     """LLM 流式控制动作枚举。
 
-    用于 ``LLMStreamChunk.control_action``，标识流式过程中由控制层
-    注入的动作（如取消当前流）。``None`` 表示无控制动作。
+    标识流式过程中由控制层注入的动作（如取消当前流）。``None`` 表示
+    无控制动作。
     """
 
     CANCEL = "cancel"
@@ -122,6 +122,7 @@ class InterfaceFormat(StrEnum):
     """
 
     OPENAI_COMPATIBLE = "openai_compatible"
+    OPENAI_RESPONSE = "openai_response"
     ANTHROPIC = "anthropic"
 
 
@@ -209,6 +210,13 @@ class RuntimeInfoKey(StrEnum):
 # Included in the hourly version hash so the cache correctly distinguishes
 # "no directory" from a specific directory within the same hour.
 _NO_DIR_SENTINEL: str = "no-dir"
+
+# Media-injection budget (framework constants, not user configuration): a
+# single LLM request carries at most _MAX_INJECTED_MEDIA_COUNT resolved media
+# parts totalling at most _MAX_INJECTED_MEDIA_BYTES decoded bytes. Media over
+# the budget is offloaded oldest-first by inject_multimodal.
+_MAX_INJECTED_MEDIA_COUNT: int = 8
+_MAX_INJECTED_MEDIA_BYTES: int = 6_000_000
 
 
 def format_working_directory_line(working_directory: str | Path | None) -> str | None:
