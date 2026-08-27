@@ -1,5 +1,16 @@
 """Task delegation nudge — remind a subagent-owning agent to dispatch.
 
+.. deprecated::
+    DEPRECATED — effectiveness was poor in practice: evaluated at
+    turn-entry moments where the current turn had produced no assistant
+    steps yet, the old scan read the *previous* turn's tail (fresh-turn
+    double-nudge, cross-turn suppression), and the reminder fired before
+    the model had any in-turn context to act on. The shipped declarations
+    no longer roster-reference this hook. If revived: arm the pending
+    flag from ``start_node_turn`` (fresh-turn-only — continuation attempts
+    never re-enter) instead of ``before_turn`` (per-attempt re-arm), and
+    keep the ``scan_tool_usage_in_turn`` verdict machine below.
+
 Behavior-level backstop for the delegation guidance: the system prompt
 carries the static when/how policy, the ``task`` tool description carries
 the live roster, and this hook fires when an agent that owns idle
@@ -10,7 +21,11 @@ from __future__ import annotations
 
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.message_utils import recent_tool_usage, wrap_system_reminder
+from modex_agent.core.message_utils import (
+    ToolNudgeVerdict,
+    scan_tool_usage_in_turn,
+    wrap_system_reminder,
+)
 from modex_agent.core.types import MessageRole
 from modex_agent.hook.abc import BeforeIterationHook, BeforeTurnHook
 from modex_agent.multi_agent.tools import TaskDispatchTool
@@ -27,25 +42,30 @@ _TASK_NUDGE_REMINDER = (
 
 
 class TaskDelegationNudgeHook(BeforeTurnHook, BeforeIterationHook):
-    """One-shot per-turn reminder to use the ``task`` tool when idle.
+    """Deprecated one-shot per-turn reminder to use the ``task`` tool.
 
     State machine (two hook points, stateless instance — Rule 1):
 
-    - ``before_turn`` sets ``TASK_NUDGE_PENDING`` unconditionally on every
-      turn attempt (including continuations). Approval resume does not
-      re-fire ``BEFORE_TURN``, so a resumed turn never re-evaluates.
-    - ``before_iteration`` pops the flag on its first — and only —
-      evaluation of the attempt. Popping regardless of the outcome prevents
-      repeated injection within one attempt; a fresh attempt re-arms the
-      flag, and the recent-usage scan suppresses it when the agent has
-      since dispatched.
+    - ``before_turn`` arms ``TASK_NUDGE_PENDING`` on every turn attempt
+      (including continuations). Approval resume does not re-fire
+      ``BEFORE_TURN``, so a resumed turn never re-evaluates.
+    - ``before_iteration`` pops the flag on its first evaluation of the
+      attempt, then:
 
-    Gates (all must hold to inject): the ``task`` tool is registered, the
-    dispatch tool reports at least one available subagent target, and no
-    ``task`` call appears within the recent-history window. The reminder is
-    appended to ``ctx.history`` as a ``system_reminder`` message —
-    write-through cached and persisted — before the LLM request is built,
-    so the current iteration already sees it.
+      - gate failure (``task`` unregistered, or the dispatch tool's live
+        roster is empty) — settled for this attempt, no injection;
+      - ``USED`` verdict (a ``task`` call inside the current turn's
+        recent-history window) — settled, no injection;
+      - ``SHORT_TURN`` verdict (fewer than 3 assistant messages since the
+        last user/agent message — includes the fresh-turn entry where the
+        count is zero) — re-armed; later iterations of the same attempt
+        re-evaluate once the turn accumulates steps;
+      - ``DUE`` verdict (3 assistant steps without any ``task`` call) —
+        the reminder is appended once, then settled.
+
+    The reminder is appended to ``ctx.history`` as a ``system_reminder``
+    message — write-through cached and persisted — before the LLM request
+    is built, so the current iteration already sees it.
 
     This hook is a behavioral nudge, not a continuation driver: it never
     reads or writes ``CONTINUATION_REQUEST`` / ``CONTINUATION_RENEW_MAX_TURNS``.
@@ -78,7 +98,11 @@ class TaskDelegationNudgeHook(BeforeTurnHook, BeforeIterationHook):
             return
 
         messages = await ctx.history.to_list()
-        if recent_tool_usage(messages, frozenset({"task"})):
+        verdict = scan_tool_usage_in_turn(messages, frozenset({"task"}))
+        if verdict is ToolNudgeVerdict.SHORT_TURN:
+            state.custom[TurnCustomKey.TASK_NUDGE_PENDING] = True
+            return
+        if verdict is ToolNudgeVerdict.USED:
             return
 
         await ctx.history.append(

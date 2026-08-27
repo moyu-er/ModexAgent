@@ -139,9 +139,8 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 - Delegation guidance: `AgentCommunicationSystemPromptProvider` injects the
   "## Delegating To Subagents" section (tool-presence gated — six-element
   brief spec + dispatch discipline; the task tool's dynamic description
-  carries the live roster). `TaskDelegationNudgeHook` (roster-referenced as
-  `+task_delegation_nudge`, self-gating) injects a one-shot reminder when the
-  subagents sit idle through a turn.
+  carries the live roster). (`TaskDelegationNudgeHook` is deprecated and no
+  longer roster-referenced in bot.yml.)
 - `SubagentAutoSendHook` auto-forwards subagent output to parent.
 - Session ID format: `{prefix}.{agent_name}` (two segments, via `SessionIdFactory`; subagent sessions use the minted `invocation_id` as the prefix — see `SessionInfo.session_id_prefix`).
 
@@ -430,7 +429,7 @@ are the converged seams; no platform preconditions on any OS.
   result and parses it. If history doesn't carry results reliably, fall back to
   a server fetch endpoint (see spec §12 — deferred).
 - Registered via `tool_supplements: [todo]` on any agent in the scope declaration (root or nested). Both root agents and subagents can opt in; the bundled nested agents (office-expert, explore, general) all include `todo`. `TodoContinuationHook` is registered on every agent (root + nested) via `register_tree_aware_hooks` in `hook/wiring.py` — the shared convergence function called from both `_wire_main_pipeline` and `AgentTemplate.materialize`.
-- Prompt injection: `TodoAwareSystemPromptProvider` injects the "## Task Tracking" discipline section (tool-presence gated); `TodoPlanningNudgeHook` (roster-referenced as `+todo_planning_nudge`, self-gating) injects a one-shot reminder when a session has no todo list yet.
+- Prompt injection: `TodoAwareSystemPromptProvider` injects the "## Task Tracking" discipline section (tool-presence gated). (`TodoPlanningNudgeHook` is deprecated and no longer roster-referenced in bot.yml.)
 
 ## Subdirectories
 

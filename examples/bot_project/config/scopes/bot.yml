@@ -51,10 +51,8 @@ workspace:
           # create_pool / pool_wiring until ticket 17). experience_review
           # needs no roster entry: the EXPERIENCE supplement injects it,
           # bound to the compiled tool roster.
+          # (Deprecated nudge hooks task_delegation_nudge / todo_planning_nudge are no longer referenced.)
           - +user_notice_cleanup
-          # Behavior nudges (self-gating by tool presence) — this root carries
-          # no todo supplement, so todo_planning_nudge would self-skip anyway.
-          - +task_delegation_nudge
           hook_configs:
             reference_collector:
               max_sources: 20
@@ -80,9 +78,6 @@ workspace:
               tool_supplements:
               - todo
               - aci
-              # Behavior nudge (self-gating by tool presence).
-              hooks:
-              - +todo_planning_nudge
               context_mode: fresh
     coder:
       agents:
@@ -107,11 +102,9 @@ workspace:
           # walks the declaration (09 precedent). experience_review
           # needs no roster entry: the EXPERIENCE supplement injects it,
           # bound to the compiled tool roster.
+          # (Deprecated nudge hooks task_delegation_nudge / todo_planning_nudge are no longer referenced.)
           hooks:
           - +user_notice_cleanup
-          # Behavior nudges (self-gating by tool presence).
-          - +task_delegation_nudge
-          - +todo_planning_nudge
           approval:
             enabled: true
             tools:
@@ -134,9 +127,6 @@ workspace:
               tool_supplements:
               - ast_grep
               - todo
-              # Behavior nudge (self-gating by tool presence).
-              hooks:
-              - +todo_planning_nudge
               context_mode: fresh
             general:
               description: >-
@@ -150,9 +140,6 @@ workspace:
               - aci
               - ast_grep
               - todo
-              # Behavior nudge (self-gating by tool presence).
-              hooks:
-              - +todo_planning_nudge
               context_mode: fresh
     review:
       peers:
@@ -178,11 +165,9 @@ workspace:
           # walks the declaration (09 precedent). experience_review
           # needs no roster entry: the EXPERIENCE supplement injects it,
           # bound to the compiled tool roster.
+          # (Deprecated nudge hooks task_delegation_nudge / todo_planning_nudge are no longer referenced.)
           hooks:
           - +user_notice_cleanup
-          # Behavior nudges (self-gating by tool presence).
-          - +task_delegation_nudge
-          - +todo_planning_nudge
           agents:
             explore:
               description: >-
@@ -196,9 +181,6 @@ workspace:
               tool_supplements:
               - ast_grep
               - todo
-              # Behavior nudge (self-gating by tool presence).
-              hooks:
-              - +todo_planning_nudge
               context_mode: fresh
             general:
               description: >-
@@ -211,9 +193,6 @@ workspace:
               tool_supplements:
               - ast_grep
               - todo
-              # Behavior nudge (self-gating by tool presence).
-              hooks:
-              - +todo_planning_nudge
               context_mode: fresh
     opencode:
       peers:

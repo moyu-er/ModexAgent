@@ -101,35 +101,29 @@ class TestShippedFieldGoldens:
     def test_native_root_hook_rosters_golden(self) -> None:
         # Ticket 09: every native root references the notification
         # HOOK-slot component (the migrated glue); default additionally
-        # collects references. Every subagent-owning root additionally
-        # references the self-gating behavior nudges. experience_review
-        # is NOT a roster entry (task 7): the EXPERIENCE supplement
-        # injects it at compile time, bound to the compiled tool roster.
+        # collects references. experience_review is NOT a roster entry
+        # (task 7): the EXPERIENCE supplement injects it at compile time,
+        # bound to the compiled tool roster. The behavior-nudge hooks are
+        # deprecated and no longer roster-referenced.
         pools = _scope_pools()
         assert _root_of(pools["default"]).hooks == [
             "+reference_collector",
             "+user_notice_cleanup",
-            "+task_delegation_nudge",
         ]
         for name in ("coder", "review"):
-            assert _root_of(pools[name]).hooks == [
-                "+user_notice_cleanup",
-                "+task_delegation_nudge",
-                "+todo_planning_nudge",
-            ]
+            assert _root_of(pools[name]).hooks == ["+user_notice_cleanup"]
 
     def test_subagent_hook_rosters_golden(self) -> None:
-        # Nested agents carry todo supplements, so they reference the
-        # self-gating todo planning nudge; they never own the `task` tool
-        # (no declared children), so no delegation nudge.
+        # Nested agents declare no hooks of their own (the deprecated
+        # todo planning nudge references are removed).
         pools = _scope_pools()
         for pool_name in ("coder", "review"):
             for child in _children_of(pools[pool_name], _root_of(pools[pool_name]).name):
-                assert child.hooks == ["+todo_planning_nudge"], (
+                assert child.hooks is None, (
                     f"{pool_name}.{child.name}: {child.hooks}"
                 )
         office = _children_of(pools["default"], "default")
-        assert [a.hooks for a in office] == [["+todo_planning_nudge"]]
+        assert [a.hooks for a in office] == [None]
 
     def test_native_roots_carry_descriptions(self) -> None:
         pools = _scope_pools()
@@ -145,7 +139,6 @@ class TestShippedFieldGoldens:
         assert root.hooks == [
             "+reference_collector",
             "+user_notice_cleanup",
-            "+task_delegation_nudge",
         ]
         assert root.hook_configs == {"reference_collector": {"max_sources": 20}}
         assert root.tool_supplements == [ToolSupplement.ACI, ToolSupplement.EXPERIENCE]

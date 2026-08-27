@@ -74,7 +74,9 @@ class DefaultPlugin(Plugin):
     - ``HOOK`` — 11 default hooks (inbox_flush, todo_continuation,
       deliver_retry, native_env, run_logging, subagent_auto_send,
       memory_trace, todo_reorientation, experience_review,
-      task_delegation_nudge, todo_planning_nudge).
+      task_delegation_nudge, todo_planning_nudge — the last two DEPRECATED:
+      no longer referenced by the shipped declarations, kept registered for
+      custom opt-in declarations).
     - ``LLM_PROVIDER`` — ``default`` (loads provider from model.yml path).
     - ``SYSTEM_PROMPT_PROVIDER`` — ``file_prompt`` (file-based prompt).
     - ``INTERCEPTOR`` — ``tool_timeout``.

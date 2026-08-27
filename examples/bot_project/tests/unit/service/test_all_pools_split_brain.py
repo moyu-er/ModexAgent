@@ -288,15 +288,12 @@ async def test_split_brain_manifest_field_by_field(pool_name: str, tmp_path: Pat
     # from the bot.yml hooks reference); only the POSITION differs. The
     # LengthGuardHook wave (register_tree_aware_hooks — the shared seam on
     # BOTH roads) postdates the frozen goldens: tolerated as a live extra,
-    # presence-derived. The nudge wave (bot.yml roster references for
-    # task_delegation_nudge / todo_planning_nudge — declaration-road-only
-    # by design, self-gating at runtime) likewise postdates the goldens.
+    # presence-derived. The deprecated nudge hooks are no longer
+    # roster-referenced in bot.yml.
     new_hook_names = [h.name for h in new_main.hooks]
     golden_hook_names = [h["name"] for h in golden_main["hooks"]]
     assert set(new_hook_names) - set(golden_hook_names) == {
         "length_guard",
-        "task_delegation_nudge",
-        "todo_planning_nudge",
     }
     assert set(golden_hook_names) <= set(new_hook_names)
     assert new_hook_names.index("experience_review_hook") < new_hook_names.index(

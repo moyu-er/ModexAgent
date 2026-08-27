@@ -30,8 +30,12 @@ Per-hook table:
 | task_delegation_nudge  | ReactHookFactory, factory form | {native_main, native_sub}  | react   |
 | todo_planning_nudge    | ReactHookFactory, factory form | {native_main, native_sub}  | react   |
 
-The two nudge hooks are self-gating (tool presence checked at runtime), so
-roster references on agents without the relevant tools are silent no-ops.
+The two nudge hooks (``task_delegation_nudge`` / ``todo_planning_nudge``) are
+DEPRECATED — effectiveness was poor (the old scan read the previous turn's
+tail at turn-entry moments), the shipped declarations no longer
+roster-reference them, and the factories remain registered only so custom
+declarations that still opt in keep working. If revived, arm the pending
+flag from ``start_node_turn`` instead of ``before_turn``.
 
 ``subagent_auto_send`` applies to ``external_sub`` via the **strategy
 path** (``ExternalExecutionStrategy.assemble``), NOT via Stage 4 hook
@@ -279,12 +283,14 @@ class TodoContinuationHookFactory(ReactHookFactory):
 
 
 class TaskDelegationNudgeHookFactory(ReactHookFactory):
-    """Factory for ``TaskDelegationNudgeHook`` — idle-subagent dispatch nudge.
+    """DEPRECATED factory for ``TaskDelegationNudgeHook``.
 
-    Zero construction deps: the hook queries the tool manager and the
-    dispatch tool's live roster at runtime (targets change as the store
-    mutates). Self-gating — registering it on an agent without the ``task``
-    tool is a silent no-op.
+    Effectiveness was poor in practice; the shipped declarations no longer
+    reference this hook. Kept registered so custom declarations that opt in
+    keep working. Zero construction deps: the hook queries the tool manager
+    and the dispatch tool's live roster at runtime (targets change as the
+    store mutates). Self-gating — registering it on an agent without the
+    ``task`` tool is a silent no-op.
     """
 
     config_model: ClassVar[type[BaseModel]] = _EmptyHookConfig
@@ -297,9 +303,11 @@ class TaskDelegationNudgeHookFactory(ReactHookFactory):
 
 
 class TodoPlanningNudgeHookFactory(ReactHookFactory):
-    """Factory for ``TodoPlanningNudgeHook`` — empty-todo planning nudge.
+    """DEPRECATED factory for ``TodoPlanningNudgeHook``.
 
-    ``create()`` reads the pool-level ``todo_store`` from
+    Effectiveness was poor in practice; the shipped declarations no longer
+    reference this hook. Kept registered so custom declarations that opt in
+    keep working. ``create()`` reads the pool-level ``todo_store`` from
     ``ctx.pool_runtime`` (the supplied-infra seam). ``None`` is acceptable —
     harnesses without a pool todo store get a silently skipping hook.
     Self-gating via ``todo_write`` tool presence.

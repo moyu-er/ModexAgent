@@ -1,4 +1,8 @@
-"""Tests for `TaskDelegationNudgeHook` — the idle-subagent dispatch nudge."""
+"""Tests for `TaskDelegationNudgeHook` — the idle-subagent dispatch nudge.
+
+Covers the deprecated verdict-machine semantics: SHORT_TURN re-arms, gate
+failures and USED settle, DUE injects once per armed attempt.
+"""
 
 from __future__ import annotations
 
@@ -71,33 +75,60 @@ def _make_context(
     return context, state
 
 
-async def test_full_cycle_flags_injects_and_pops_once() -> None:
+def _tool_call(name: str) -> ToolCall:
+    return ToolCall(
+        tool_name=name,
+        arguments={},
+        call_id="call-1",
+    )
+
+
+async def _append(context: AgentContext, message: ChatMessage) -> None:
+    await context.history.append(message)
+
+
+async def test_fresh_turn_entry_does_not_inject() -> None:
+    """Regression: iteration zero (no in-turn assistant steps) must not nag."""
     context, state = _make_context(task_tool=_task_tool())
+    await _append(context, ChatMessage(role=MessageRole.USER, content="do stuff"))
     hook = TaskDelegationNudgeHook()
 
     await hook.before_turn(context)
+    await hook.before_iteration(context)
 
+    assert await context.history.to_list() == [
+        ChatMessage(role=MessageRole.USER, content="do stuff")
+    ]
+    # SHORT_TURN re-arms: later iterations re-evaluate.
     assert state.custom[TurnCustomKey.TASK_NUDGE_PENDING] is True
 
-    await hook.before_iteration(context)
 
-    assert TurnCustomKey.TASK_NUDGE_PENDING not in state.custom
-    messages = await context.history.to_list()
-    assert len(messages) == 1
-    assert messages[0].role == MessageRole.SYSTEM_REMINDER
-    assert "<system-reminder>" in str(messages[0].content)
-    assert "subagents" in str(messages[0].content)
-
-
-async def test_second_iteration_same_attempt_does_not_reinject() -> None:
+async def test_short_turn_stays_armed_then_due_injects_once() -> None:
     context, state = _make_context(task_tool=_task_tool())
+    await _append(context, ChatMessage(role=MessageRole.USER, content="do stuff"))
     hook = TaskDelegationNudgeHook()
 
     await hook.before_turn(context)
-    await hook.before_iteration(context)
-    await hook.before_iteration(context)
+    await hook.before_iteration(context)  # 0 assistants — SHORT, re-armed
 
-    assert len(await context.history.to_list()) == 1
+    await _append(context, ChatMessage(role=MessageRole.ASSISTANT, content="a"))
+    await hook.before_iteration(context)  # 1 assistant — SHORT, re-armed
+    await _append(context, ChatMessage(role=MessageRole.ASSISTANT, content="b"))
+    await hook.before_iteration(context)  # 2 assistants — SHORT, re-armed
+    assert state.custom[TurnCustomKey.TASK_NUDGE_PENDING] is True
+
+    await _append(context, ChatMessage(role=MessageRole.ASSISTANT, content="c"))
+    await hook.before_iteration(context)  # 3 assistants — DUE, inject + settle
+
+    messages = await context.history.to_list()
+    assert len(messages) == 5
+    assert messages[-1].role == MessageRole.SYSTEM_REMINDER
+    assert "<system-reminder>" in str(messages[-1].content)
+    assert "subagents" in str(messages[-1].content)
+    assert TurnCustomKey.TASK_NUDGE_PENDING not in state.custom
+
+    await hook.before_iteration(context)  # settled — no re-injection
+    assert len(await context.history.to_list()) == 5
 
 
 async def test_no_task_tool_registered_is_silent() -> None:
@@ -118,55 +149,76 @@ async def test_empty_roster_is_silent() -> None:
     await hook.before_turn(context)
     await hook.before_iteration(context)
 
+    assert TurnCustomKey.TASK_NUDGE_PENDING not in state.custom
     assert await context.history.to_list() == []
 
 
-async def test_recent_task_usage_suppresses_injection() -> None:
+async def test_recent_task_usage_settles_without_injection() -> None:
     context, state = _make_context(task_tool=_task_tool())
-    await context.history.append(
-        ChatMessage(role=MessageRole.ASSISTANT, content="dispatching")
+    await _append(context, ChatMessage(role=MessageRole.USER, content="do stuff"))
+    await _append(
+        context, ChatMessage(role=MessageRole.ASSISTANT, content="dispatching")
     )
-    await context.history.append(
-        ChatMessage(role=MessageRole.TOOL, name="task", content="ack")
+    await _append(
+        context, ChatMessage(role=MessageRole.TOOL, name="task", content="ack")
     )
-    await context.history.append(ChatMessage(role=MessageRole.ASSISTANT, content="done"))
+    await _append(context, ChatMessage(role=MessageRole.ASSISTANT, content="done"))
     hook = TaskDelegationNudgeHook()
 
     await hook.before_turn(context)
     await hook.before_iteration(context)
 
     assert await context.history.to_list() == [
+        ChatMessage(role=MessageRole.USER, content="do stuff"),
         ChatMessage(role=MessageRole.ASSISTANT, content="dispatching"),
         ChatMessage(role=MessageRole.TOOL, name="task", content="ack"),
         ChatMessage(role=MessageRole.ASSISTANT, content="done"),
     ]
+    assert TurnCustomKey.TASK_NUDGE_PENDING not in state.custom
 
 
-async def test_usage_beyond_window_still_injects() -> None:
+async def test_previous_turn_task_usage_does_not_settle_current_turn() -> None:
+    """Regression: usage in the previous turn must not suppress this turn."""
     context, state = _make_context(task_tool=_task_tool())
-    for content in ("a", "b", "c"):
-        await context.history.append(
-            ChatMessage(role=MessageRole.ASSISTANT, content=content)
-        )
-    await context.history.append(
-        ChatMessage(role=MessageRole.TOOL, name="task", content="ack")
+    for content in ("old-a", "old-b", "old-c"):
+        await _append(context, ChatMessage(role=MessageRole.ASSISTANT, content=content))
+    await _append(
+        context, ChatMessage(role=MessageRole.TOOL, name="task", content="ack")
     )
-    for content in ("d", "e", "f"):
-        await context.history.append(
-            ChatMessage(role=MessageRole.ASSISTANT, content=content)
-        )
+    await _append(context, ChatMessage(role=MessageRole.USER, content="new turn"))
+    for content in ("a", "b", "c"):
+        await _append(context, ChatMessage(role=MessageRole.ASSISTANT, content=content))
     hook = TaskDelegationNudgeHook()
 
     await hook.before_turn(context)
     await hook.before_iteration(context)
 
     messages = await context.history.to_list()
-    assert len(messages) == 8
     assert messages[-1].role == MessageRole.SYSTEM_REMINDER
+
+
+async def test_previous_turn_tail_alone_does_not_inject() -> None:
+    """Regression: previous-turn assistant tail must not satisfy the threshold."""
+    context, state = _make_context(task_tool=_task_tool())
+    for content in ("old-a", "old-b", "old-c", "old-d"):
+        await _append(context, ChatMessage(role=MessageRole.ASSISTANT, content=content))
+    await _append(context, ChatMessage(role=MessageRole.USER, content="new turn"))
+    await _append(context, ChatMessage(role=MessageRole.ASSISTANT, content="one"))
+    hook = TaskDelegationNudgeHook()
+
+    await hook.before_turn(context)
+    await hook.before_iteration(context)
+
+    messages = await context.history.to_list()
+    assert messages[-1].role == MessageRole.ASSISTANT
+    assert state.custom[TurnCustomKey.TASK_NUDGE_PENDING] is True
 
 
 async def test_continuation_flags_are_never_touched() -> None:
     context, state = _make_context(task_tool=_task_tool())
+    await _append(context, ChatMessage(role=MessageRole.USER, content="do stuff"))
+    for content in ("a", "b", "c"):
+        await _append(context, ChatMessage(role=MessageRole.ASSISTANT, content=content))
     hook = TaskDelegationNudgeHook()
 
     await hook.before_turn(context)
@@ -193,23 +245,19 @@ async def test_missing_react_state_is_silent() -> None:
     assert await context.history.to_list() == []
 
 
-def _tool_call(name: str) -> ToolCall:
-    return ToolCall(
-        tool_name=name,
-        arguments={},
-        call_id="call-1",
-    )
-
-
 async def test_assistant_tool_call_alone_does_not_count_as_usage() -> None:
     """Usage detection reads TOOL-role results, not pending assistant calls."""
     context, state = _make_context(task_tool=_task_tool())
-    await context.history.append(
+    await _append(context, ChatMessage(role=MessageRole.USER, content="do stuff"))
+    for content in ("a", "b"):
+        await _append(context, ChatMessage(role=MessageRole.ASSISTANT, content=content))
+    await _append(
+        context,
         ChatMessage(
             role=MessageRole.ASSISTANT,
             content=None,
             tool_calls=[_tool_call("task")],
-        )
+        ),
     )
     hook = TaskDelegationNudgeHook()
 
@@ -217,5 +265,5 @@ async def test_assistant_tool_call_alone_does_not_count_as_usage() -> None:
     await hook.before_iteration(context)
 
     messages = await context.history.to_list()
-    assert len(messages) == 2
+    assert len(messages) == 5
     assert messages[-1].role == MessageRole.SYSTEM_REMINDER

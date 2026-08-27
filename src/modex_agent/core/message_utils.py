@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from enum import StrEnum
 from typing import Any
 
 from modex_agent.core.message import ChatMessage
@@ -59,39 +60,75 @@ def sanitize_reminder_content(content: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", sanitized).strip()
 
 
-def recent_tool_usage(
+class ToolNudgeVerdict(StrEnum):
+    """Terminal outcomes of the backward in-turn tool-usage scan."""
+
+    USED = "used"
+    """One of the target tools was used in the current turn's recent history."""
+
+    DUE = "due"
+    """Enough assistant steps accumulated without usage — a nudge is warranted."""
+
+    SHORT_TURN = "short_turn"
+    """The turn boundary was reached with too few assistant steps to judge."""
+
+
+def scan_tool_usage_in_turn(
     messages: Sequence[ChatMessage],
     tool_names: frozenset[str],
-    window: int = 3,
-) -> bool:
-    """Check whether any of ``tool_names`` was used in the recent history.
+    min_assistant_steps: int = 3,
+) -> ToolNudgeVerdict:
+    """Classify in-turn usage of ``tool_names`` for behavior-nudge decisions.
 
-    Scans backwards over ``messages`` and stops after seeing ``window``
-    assistant messages (an incomplete traversal — history older than the
-    window is irrelevant for recency nudges). A tool call counts when a
-    TOOL-role message carrying the tool's ``name`` appears inside the
-    window; tool results always sit between the assistant message that
-    issued the call and the next one, so the backward scan covers calls
-    interleaved among the windowed assistant messages.
+    Scans backwards from the latest message and stops at the first terminal
+    outcome:
+
+    - ``USED`` — a TOOL-role message carrying one of ``tool_names`` appears
+      before the boundary: the tools were used in the current turn's recent
+      history.
+    - ``DUE`` — ``min_assistant_steps`` assistant messages were counted
+      without a hit: enough steps have accumulated without usage.
+    - ``SHORT_TURN`` — a ``user``/``agent`` role message (the logical turn
+      boundary) was reached first, or the history ran out, with fewer than
+      ``min_assistant_steps`` assistant messages in the segment. The turn
+      has not accumulated enough steps to judge — nudges must NOT fire on
+      it (this is what prevents the fresh-turn injection bug: at iteration
+      zero the segment contains zero assistant messages).
+
+    Boundary semantics: ``user`` and ``agent`` roles terminate the scan —
+    they mark "the user spoke". ``agent`` is the same boundary by design;
+    the framework itself never writes ``agent``-role messages (it only
+    normalizes them away for the LLM), so it can only come from external
+    input. ``system_reminder`` is deliberately TRANSPARENT: continuation
+    hooks (todo continuation, deliver retry) and the nudge hooks themselves
+    inject system-reminder messages mid-turn, so treating them as a
+    boundary would fragment the current logical turn and make co-resident
+    nudge hooks interfere with each other's scans.
+
+    Tool results always sit between the assistant message that issued the
+    call and the next one, so the backward scan covers calls interleaved
+    among the counted assistant messages.
 
     Args:
         messages: Full message history (latest last).
         tool_names: Tool names to look for.
-        window: Number of recent assistant messages defining the scan
-            boundary. Defaults to 3; callers do not override it.
+        min_assistant_steps: Number of assistant messages without usage
+            that warrant a nudge. Defaults to 3; callers do not override it.
 
     Returns:
-        True when one of ``tool_names`` was used within the window.
+        The terminal verdict — ``USED``, ``DUE``, or ``SHORT_TURN``.
     """
     seen_assistant = 0
     for msg in reversed(messages):
+        if msg.role in (MessageRole.USER, MessageRole.AGENT):
+            return ToolNudgeVerdict.SHORT_TURN
         if msg.role == MessageRole.TOOL and msg.name in tool_names:
-            return True
+            return ToolNudgeVerdict.USED
         if msg.role == MessageRole.ASSISTANT:
             seen_assistant += 1
-            if seen_assistant >= window:
-                return False
-    return False
+            if seen_assistant >= min_assistant_steps:
+                return ToolNudgeVerdict.DUE
+    return ToolNudgeVerdict.SHORT_TURN
 
 
 def normalize_agent_messages_for_llm(
