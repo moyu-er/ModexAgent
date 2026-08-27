@@ -23,7 +23,8 @@ from modex_agent.core.constants import FinishReason
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.types import MessageRole
-from modex_agent.providers import LiteLLMProvider
+from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.semconv import GenAiAttr, SpanKind, SpanStatusCode
 from modex_agent.trace.store import SpanModel, SpanStatus
@@ -61,16 +62,18 @@ class JudgeConfigurationError(RuntimeError):
         )
 
 
-def build_judge_provider_from_env() -> LiteLLMProvider:
+def build_judge_provider_from_env() -> LLMProvider:
     """Build the independent judge provider with construction-time t=0."""
     model = os.environ.get("JUDGE_MODEL")
     if not model:
         raise JudgeConfigurationError("JUDGE_MODEL")
-    return LiteLLMProvider(
-        model=model,
-        api_key=os.environ.get("JUDGE_API_KEY") or None,
-        base_url=os.environ.get("JUDGE_BASE_URL") or None,
-        temperature=_TEMPERATURE,
+    return create_llm_provider(
+        LLMConfig(
+            model=model,
+            api_key=os.environ.get("JUDGE_API_KEY") or "",
+            base_url=os.environ.get("JUDGE_BASE_URL") or "",
+            temperature=_TEMPERATURE,
+        )
     )
 
 

@@ -9,7 +9,7 @@ from bot.eval.sentinel.results import SentinelTaskStatus
 from evals.sentinel.tasks import MEMORY_CHAIN_V1_CHAIN, SentinelArm
 
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.types import LLMResponse
 from modex_agent.ioc.configs.observability import TraceBackend
 from modex_agent.runtime.models import JsonValue
@@ -18,14 +18,16 @@ from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.score_injector import L2ScoreInjector
 
 
-class _NoCallProvider(LLMProvider):
-    async def chat(
+class _NoCallProvider(CallbackStreamProvider):
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, JsonValue]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: JsonValue,
     ) -> LLMResponse:
         _ = (messages, model, temperature, max_output_tokens, tools, kwargs)

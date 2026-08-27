@@ -15,6 +15,7 @@ from bot.eval.judge.runner import (
     build_judge_provider_from_env,
 )
 
+from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.semconv import GenAiAttr
 from modex_agent.trace.store import SpanModel
@@ -79,31 +80,23 @@ async def test_env_builder_and_chat_both_pin_temperature_zero(
             '],"summary":"Both met."}'
         ]
     )
-    construction: list[tuple[str, str | None, str | None, float]] = []
+    construction: list[tuple[str, str, str, float]] = []
 
-    def fake_provider(
-        *,
-        model: str,
-        api_key: str | None,
-        base_url: str | None,
-        temperature: float,
-    ) -> RecordingProvider:
-        construction.append((model, api_key, base_url, temperature))
+    def fake_provider(config: LLMConfig) -> RecordingProvider:
+        construction.append((config.model, config.api_key, config.base_url, config.temperature))
         return provider
 
     monkeypatch.setenv("JUDGE_MODEL", "judge/env-model")
     monkeypatch.setenv("JUDGE_API_KEY", "judge-key")
     monkeypatch.setenv("JUDGE_BASE_URL", "https://judge.invalid/v1")
-    monkeypatch.setattr(runner_module, "LiteLLMProvider", fake_provider)
+    monkeypatch.setattr(runner_module, "create_llm_provider", fake_provider)
 
     # When: the env-built provider executes one judge review.
     built_provider = build_judge_provider_from_env()
     await JudgeRunner(built_provider).review(_judge_input(rubric_set))
 
     # Then: both construction and the recorded request carry temperature 0.0.
-    assert construction == [
-        ("judge/env-model", "judge-key", "https://judge.invalid/v1", 0.0)
-    ]
+    assert construction == [("judge/env-model", "judge-key", "https://judge.invalid/v1", 0.0)]
     assert provider.temperatures == [0.0]
 
 

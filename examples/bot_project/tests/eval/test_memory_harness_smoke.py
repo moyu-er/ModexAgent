@@ -10,7 +10,7 @@ from bot.eval.agent_harness import (
 )
 
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.scope import MemoryContext
 from modex_agent.core.types import LLMResponse, MessageRole, ToolCall
 from modex_agent.memory.default_system import ScopedMessageHistory
@@ -19,18 +19,20 @@ _FACT: Final = "The launch code is indigo-742."
 _SESSION_ID: Final = "eval.memory.smoke.react"
 
 
-class _MemoryChainProvider(LLMProvider):
+class _MemoryChainProvider(CallbackStreamProvider):
     def __init__(self) -> None:
         super().__init__()
         self._call_index = 0
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: Any,
     ) -> LLMResponse:
         del model, temperature, max_output_tokens, kwargs

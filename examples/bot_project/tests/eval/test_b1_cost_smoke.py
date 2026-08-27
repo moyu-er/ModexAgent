@@ -11,7 +11,7 @@ from bot.eval.live_gates import b1_cost_runtime, b1_cost_smoke
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.types import LLMResponse
 from modex_agent.hook import BeforeGraphHook, HookSpec
 from modex_agent.runtime.models import JsonValue
@@ -148,14 +148,16 @@ async def test_dispatch_turn_threads_test_model_to_trace_services(
     captured: dict[str, str | None] = {}
     build_trace_only_services = b1_cost_runtime.build_trace_only_services
 
-    class ScriptedProvider(LLMProvider):
-        async def chat(
+    class ScriptedProvider(CallbackStreamProvider):
+        async def chat_stream(
             self,
             messages: list[ChatMessage],
             model: str | None = None,
-            temperature: float = 0.7,
+            temperature: float | None = None,
             max_output_tokens: int | None = None,
             tools: list[dict[str, Any]] | None = None,
+            on_content_delta=None,
+            on_reasoning_delta=None,
             **kwargs: JsonValue,
         ) -> LLMResponse:
             _ = messages, model, temperature, max_output_tokens, tools, kwargs
@@ -193,8 +195,8 @@ async def test_dispatch_turn_threads_test_model_to_trace_services(
     monkeypatch.setenv("OTEL_FORMAT", "file")
     monkeypatch.setattr(
         b1_cost_runtime,
-        "LiteLLMProvider",
-        lambda **_kwargs: ScriptedProvider(),
+        "create_llm_provider",
+        lambda _config: ScriptedProvider(),
     )
     monkeypatch.setattr(
         b1_cost_runtime,

@@ -21,7 +21,7 @@ from bot.workspace.handle import WorkspaceHandle, WorkspaceHandleRootProvider
 from modex_agent.core.capabilities import ModelCapabilities
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage, ContentFormat, ContentPart, ImageUrlPart, TextPart
-from modex_agent.core.provider import LLMProvider, StreamingLLMProvider
+from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.tool_manager import (
     Tool,
     ToolResult,
@@ -160,7 +160,7 @@ def _build_score_injector(
         return None
 
 
-class _ModelPinningProvider(StreamingLLMProvider):
+class _ModelPinningProvider(CallbackStreamProvider):
     def __init__(self, inner: LLMProvider, model: str) -> None:
         super().__init__()
         self._inner = inner
@@ -181,7 +181,7 @@ class _ModelPinningProvider(StreamingLLMProvider):
         **kwargs: JsonValue,
     ) -> LLMResponse:
         pinned_model = self._model if model is None else model
-        if isinstance(self._inner, StreamingLLMProvider):
+        if isinstance(self._inner, CallbackStreamProvider):
             return await self._inner.chat_stream(
                 messages=messages,
                 model=pinned_model,

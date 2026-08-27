@@ -35,14 +35,15 @@ from bot.eval.sentinel.orchestrator import (
     SentinelRunResult,
 )
 from bot.eval.sentinel.report import SentinelDifferenceReport
-from modex_agent.providers import LiteLLMProvider
+from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.trace.experiment_attrs import ExperimentLinkage, stable_experiment_id
 from modex_agent.trace.langfuse_query import LangfuseClient, parse_provenance
 from modex_agent.trace.pricing import load_pricebook
 from modex_agent.trace.score_injector import L2ScoreInjector
 
 app = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
-_MODEL: Final = "openai/step-3.7-flash"
+_MODEL: Final = "step-3.7-flash"
 _EVIDENCE_PATH: Final = Path("evals/evidence/b7_sentinel.json")
 _EXPECTED_VERDICT_SCORES: Final = len(MEMORY_CHAIN_V1_CHAIN.tasks) * 2
 
@@ -234,10 +235,12 @@ async def run_gate(run_id: str, max_cost: float, seed: int) -> SentinelGateEvide
         raise GateError(step="preflight", detail=", ".join(preflight.missing))
     links = await to_thread.run_sync(_linkages, run_id)
     provider = BudgetedProvider(
-        LiteLLMProvider(
-            _MODEL,
-            api_key=os.environ.get("LLM_API_KEY"),
-            base_url=os.environ.get("LLM_BASE_URL"),
+        create_llm_provider(
+            LLMConfig(
+                model=_MODEL,
+                api_key=os.environ.get("LLM_API_KEY") or "",
+                base_url=os.environ.get("LLM_BASE_URL") or "",
+            )
         ),
         load_pricebook(yml_path=Path("config/model_prices.yml")),
         BudgetConfig(max_cost_usd=max_cost, minimum_call_reserve_usd=0.01),

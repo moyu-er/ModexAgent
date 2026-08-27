@@ -33,7 +33,7 @@ from plugins.bot_strategies import BotDefaultLLMConfig
 
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.types import LLMResponse
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent.pool_instance import PoolInstance
@@ -214,14 +214,16 @@ PRODUCTION_ORDERED_TOOLS: Final = (
 )
 
 
-class _UnusedProvider(LLMProvider):
-    async def chat(
+class _UnusedProvider(CallbackStreamProvider):
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float | None = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: JsonValue,
     ) -> LLMResponse:
         _ = messages, model, temperature, max_output_tokens, tools, kwargs

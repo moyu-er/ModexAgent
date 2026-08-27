@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
@@ -20,17 +20,21 @@ from modex_agent.core.constants import ReasoningEffort
 from modex_agent.core.context import ContextState
 from modex_agent.core.emitter import AgentResult, ContentEmitter
 from modex_agent.core.history import ListMessageHistory
+from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.stream_events import LLMStreamEvent
 from modex_agent.core.types import LLMResponse, MessageRole
+from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.configs.observability import (
     ObservabilityConfig,
     PromptCaptureMode,
     TraceBackend,
     TraceSpanMode,
 )
+from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.plugins.assembly.single_agent import (
     SingleAgentAssembled,
     SingleAgentInfra,
@@ -39,7 +43,6 @@ from modex_agent.plugins.assembly.single_agent import (
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.providers import LiteLLMProvider
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import JsonValue, TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
@@ -202,19 +205,26 @@ class _Emitter(ContentEmitter[ReActEvent]):
 
 
 class _UsageProvider(LLMProvider):
+    """Pass-through provider wrapper.
+
+    Usage key normalization previously lived here; it now happens in
+    ``TokenUsage``'s validator at ``LLMResponse`` construction. The wrapper
+    survives as the BARE-mode provider seam: stream() delegates verbatim,
+    chat() keeps the direct delegation face.
+    """
+
     def __init__(self, delegate: LLMProvider) -> None:
         super().__init__()
         self._delegate = delegate
 
+    async def stream(self, request: LLMRequest) -> AsyncIterator[LLMStreamEvent]:
+        async for event in self._delegate.stream(request):
+            yield event
+
     async def chat(self, messages: list[ChatMessage], model: str | None = None, temperature: float = 0.7,
                    max_output_tokens: int | None = None, tools: list[dict[str, Any]] | None = None,
                    **kwargs: JsonValue) -> LLMResponse:
-        response = await self._delegate.chat(messages, model, temperature, max_output_tokens, tools, **kwargs)
-        usage = response.usage
-        normalized = {**usage,
-                      "cache_read_input_tokens": usage.get("cache_read_input_tokens", usage.get("cache_read_tokens", 0)),
-                      "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", usage.get("cache_write_tokens", 0))}
-        return response.model_copy(update={"usage": normalized})
+        return await self._delegate.chat(messages, model, temperature, max_output_tokens, tools, **kwargs)
 
     def get_default_model(self) -> str:
         return self._delegate.get_default_model()
@@ -416,12 +426,37 @@ async def execute_entry(config: EntryConfig, dependencies: EntryDependencies) ->
     return outcome
 
 
+def _bare_provider_factory(
+    model: str,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    temperature: float = 0.7,
+    reasoning_effort: ReasoningEffort = ReasoningEffort.NONE,
+) -> LLMProvider:
+    """Build the BARE-mode provider through the framework factory.
+
+    ``api_key``/``base_url`` keep ``None`` defaults to preserve
+    ``mode_runner``'s call shape; ``LLMConfig`` spells "unset" as the
+    empty string.
+    """
+    return create_llm_provider(
+        LLMConfig(
+            model=model,
+            api_key=api_key or "",
+            base_url=base_url or "",
+            temperature=temperature,
+            reasoning_effort=reasoning_effort,
+        )
+    )
+
+
 async def _run_from_environment() -> None:
     import os
 
     from bot.eval.harbor.mode_runner import run_from_environment
 
-    await run_from_environment(os.environ, execute_entry, LiteLLMProvider)
+    await run_from_environment(os.environ, execute_entry, _bare_provider_factory)
 
 
 def main() -> None:

@@ -9,14 +9,14 @@ from bot.eval.judge_pass import ExperimentWindow
 
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.types import LLMResponse
 from modex_agent.runtime.models import JsonValue
 from modex_agent.trace.langfuse_query import LangfuseClient, ObservationData
 from modex_agent.trace.score_injector import L2ScoreInjector, ScoreSpec
 
 
-class ScriptedJudgeProvider(LLMProvider):
+class ScriptedJudgeProvider(CallbackStreamProvider):
     """Mutable deterministic provider used to exercise the real judge runner."""
 
     def __init__(self, responses: Sequence[str]) -> None:
@@ -27,13 +27,15 @@ class ScriptedJudgeProvider(LLMProvider):
     def get_default_model(self) -> str:
         return "judge/test-model"
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, JsonValue]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         seed: int | None = None,
         **kwargs: JsonValue,
     ) -> LLMResponse:

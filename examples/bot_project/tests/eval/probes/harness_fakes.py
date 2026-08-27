@@ -19,26 +19,28 @@ from bot.eval.probes.sampler import LibraryScale, config_for_scale, sample_world
 from bot.eval.probes.schema import ProbeType, WorldSpec
 
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.types import LLMResponse
 from modex_agent.trace.pricing import PriceBook, PriceEntry
 from modex_agent.trace.score_injector import L2ScoreInjector, ScoreSpec
 
 
-class ScriptedAnswerProvider(LLMProvider):
+class ScriptedAnswerProvider(CallbackStreamProvider):
     def __init__(self, *, tokens_per_call: int = 100) -> None:
         super().__init__(retry_backoff_seconds=())
         self.tokens_per_call = tokens_per_call
         self.questions: list[str] = []
         self.tool_arguments: list[list[dict[str, Any]] | None] = []
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: Any,
     ) -> LLMResponse:
         del model, temperature, max_output_tokens, kwargs

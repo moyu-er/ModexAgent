@@ -8,7 +8,7 @@ from bot.eval.memory_harness import build_memory_runtime_services
 from bot.service.pool.declaration import boot_scope_spec
 
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.scope import MemoryAgentRole
 from modex_agent.core.types import LLMResponse
 from modex_agent.memory.default_system import DefaultMemorySystem
@@ -19,14 +19,16 @@ _BOT_PROJECT = Path(__file__).resolve().parents[2]
 _DECLARATION_PATH = _BOT_PROJECT / "config" / "scopes" / "eval" / "agents" / "memory-harness.yml"
 
 
-class _NoCallProvider(LLMProvider):
-    async def chat(
+class _NoCallProvider(CallbackStreamProvider):
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: Any,
     ) -> LLMResponse:
         del messages, model, temperature, max_output_tokens, tools, kwargs

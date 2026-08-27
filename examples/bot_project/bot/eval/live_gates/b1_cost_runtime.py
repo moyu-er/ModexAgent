@@ -26,6 +26,8 @@ from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import MessageRole
+from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.plugins.assembly.single_agent import (
     SingleAgentAssembled,
@@ -35,7 +37,6 @@ from modex_agent.plugins.assembly.single_agent import (
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.providers import LiteLLMProvider
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
@@ -143,12 +144,14 @@ def run_preflight() -> PreflightEvidence:
 
 
 async def dispatch_turn() -> TurnDispatch:
-    provider = LiteLLMProvider(
-        model=os.environ["TEST_LLM_MODEL"],
-        api_key=os.environ["TEST_LLM_API_KEY"],
-        base_url=os.environ["TEST_LLM_BASE_URL"],
-        temperature=0.0,
-        max_output_tokens=64,
+    provider = create_llm_provider(
+        LLMConfig(
+            model=os.environ["TEST_LLM_MODEL"],
+            api_key=os.environ["TEST_LLM_API_KEY"],
+            base_url=os.environ["TEST_LLM_BASE_URL"],
+            temperature=0.0,
+            max_output_tokens=64,
+        )
     )
     session = SessionInfo(
         session_id=f"b1-cost-smoke.{uuid4().hex}.react",

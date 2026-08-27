@@ -15,7 +15,7 @@ from bot.eval.judge.runner import (
 
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.types import LLMResponse
 from modex_agent.runtime.models import JsonValue
 
@@ -24,7 +24,7 @@ class ScriptedProviderError(RuntimeError):
     """Expected provider failure used by the scripted test provider."""
 
 
-class RecordingProvider(LLMProvider):
+class RecordingProvider(CallbackStreamProvider):
     """Mutable scripted provider that records the request-level controls."""
 
     def __init__(
@@ -40,13 +40,15 @@ class RecordingProvider(LLMProvider):
     def get_default_model(self) -> str:
         return "judge/test-model"
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, JsonValue]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         seed: int | None = None,
         **kwargs: JsonValue,
     ) -> LLMResponse:

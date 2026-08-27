@@ -43,7 +43,8 @@ from bot.eval.probes.evidence import (
 from bot.eval.probes.generate import load_frozen_library
 from bot.eval.probes.harness import run_probe_harness
 from bot.eval.probes.schema import WorldSpec
-from modex_agent.providers import LiteLLMProvider
+from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.trace.pricing import TOKENS_PER_MILLION, PriceBook, load_pricebook
 from modex_agent.trace.score_injector import L2ScoreInjector
 
@@ -61,12 +62,14 @@ async def dispatch_probe_run(options: ProbeDispatchOptions) -> Path:
 
     world, _manifest = load_frozen_library(options.library, options.manifest)
     pricebook = load_pricebook(yml_path=Path("config/model_prices.yml"))
-    provider = LiteLLMProvider(
-        model=environment.model,
-        api_key=environment.api_key,
-        base_url=environment.base_url,
-        temperature=0.0,
-        max_output_tokens=environment.answer_max_output_tokens,
+    provider = create_llm_provider(
+        LLMConfig(
+            model=environment.model,
+            api_key=environment.api_key,
+            base_url=environment.base_url,
+            temperature=0.0,
+            max_output_tokens=environment.answer_max_output_tokens,
+        )
     )
     memory_cap = memory_arm_cost_cap(options.max_cost_usd, world, environment, pricebook)
     score_fn = deterministic_score_fn(world)

@@ -17,7 +17,8 @@ from bot.eval.probes.renderer import ProbeRenderer, RendererConfig
 from bot.eval.probes.sampler import LibraryScale, SamplerConfig, config_for_scale, sample_world
 from bot.eval.probes.schema import ProbeType, WorldSpec
 from modex_agent.core.provider import LLMProvider
-from modex_agent.providers import LiteLLMProvider
+from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.trace.pricing import PriceBook, load_pricebook
 
 
@@ -84,15 +85,17 @@ class LibraryConsistencyError(RuntimeError):
     """A frozen world and its manifest disagree."""
 
 
-def build_generation_provider_from_env() -> LiteLLMProvider:
+def build_generation_provider_from_env() -> LLMProvider:
     """Build the explicit rendering provider from independent probe env vars."""
     model = os.environ.get("PROBE_GENERATOR_MODEL")
     if not model:
         raise GeneratorConfigurationError("PROBE_GENERATOR_MODEL")
-    return LiteLLMProvider(
-        model=model,
-        api_key=os.environ.get("PROBE_GENERATOR_API_KEY") or None,
-        base_url=os.environ.get("PROBE_GENERATOR_BASE_URL") or None,
+    return create_llm_provider(
+        LLMConfig(
+            model=model,
+            api_key=os.environ.get("PROBE_GENERATOR_API_KEY") or "",
+            base_url=os.environ.get("PROBE_GENERATOR_BASE_URL") or "",
+        )
     )
 
 

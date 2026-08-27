@@ -24,7 +24,7 @@ from bot.eval.probes.schema import Probe, Speaker, WorldSpec
 from modex_agent.core.constants import RuntimeInfoKey
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.scope import MemoryAgentRole, MemoryContext
-from modex_agent.core.types import MessageRole
+from modex_agent.core.types import MessageRole, TokenUsage
 from modex_agent.trace.experiment_attrs import (
     ExperimentLinkage,
     attach_experiment_attrs,
@@ -163,7 +163,7 @@ def _answer_span(
     session_id: str,
     model: str,
     answer: str,
-    usage: dict[str, int],
+    usage: TokenUsage,
 ) -> SpanModel:
     timestamp = datetime.now(UTC).timestamp()
     return SpanModel(
@@ -181,11 +181,9 @@ def _answer_span(
             GenAiAttr.RESPONSE_MODEL: model,
             GenAiAttr.INPUT_MESSAGES: probe.question,
             GenAiAttr.OUTPUT_MESSAGES: answer,
-            GenAiAttr.USAGE_INPUT_TOKENS: usage.get("prompt_tokens", 0),
-            GenAiAttr.USAGE_OUTPUT_TOKENS: usage.get("completion_tokens", 0),
-            GenAiAttr.USAGE_CACHE_READ_INPUT_TOKENS: usage.get("cache_read_input_tokens", 0),
-            GenAiAttr.USAGE_CACHE_CREATION_INPUT_TOKENS: usage.get(
-                "cache_creation_input_tokens", 0
-            ),
+            GenAiAttr.USAGE_INPUT_TOKENS: usage.input_tokens,
+            GenAiAttr.USAGE_OUTPUT_TOKENS: usage.output_tokens,
+            GenAiAttr.USAGE_CACHE_READ_INPUT_TOKENS: usage.cache_read_input_tokens,
+            GenAiAttr.USAGE_CACHE_CREATION_INPUT_TOKENS: usage.cache_creation_input_tokens,
         },
     )

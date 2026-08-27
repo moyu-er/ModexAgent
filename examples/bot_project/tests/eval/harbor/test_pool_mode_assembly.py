@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.scope import MemoryContext, MemoryLayerName, SessionScope
 from modex_agent.core.types import LLMResponse, MessageRole, ToolCall
 from modex_agent.hook.builtin import CurrentTimeInjectionHook
@@ -53,18 +53,20 @@ from modex_agent.trace.store import JsonlSpanQuery
 _BOT_PROJECT = Path(__file__).resolve().parents[3]
 
 
-class _DelegatingProvider(LLMProvider):
+class _DelegatingProvider(CallbackStreamProvider):
     def __init__(self) -> None:
         super().__init__(retry_backoff_seconds=())
         self._child_answered = asyncio.Event()
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float | None = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: JsonValue,
     ) -> LLMResponse:
         _ = model, temperature, max_output_tokens, tools, kwargs
@@ -139,7 +141,7 @@ def _environment(tmp_path: Path) -> dict[str, str]:
     }
 
 
-class _BenchmarkProvider(LLMProvider):
+class _BenchmarkProvider(CallbackStreamProvider):
     """Immediate final answer; records the LLM-bound system prompt.
 
     The benchmark roster has no delegation path, so the scripted turn needs
@@ -152,13 +154,15 @@ class _BenchmarkProvider(LLMProvider):
         super().__init__(retry_backoff_seconds=())
         self.system_prompts: list[str] = []
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float | None = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: JsonValue,
     ) -> LLMResponse:
         _ = model, temperature, max_output_tokens, tools, kwargs
@@ -208,7 +212,7 @@ def _benchmark_dependencies(provider: _BenchmarkProvider) -> PoolModeDependencie
     )
 
 
-class _DefaultArmRecordingProvider(LLMProvider):
+class _DefaultArmRecordingProvider(CallbackStreamProvider):
     """Immediate final answer; records the LLM-bound system prompt and tools.
 
     Captures what the default-arm root actually sees at its first LLM call:
@@ -221,13 +225,15 @@ class _DefaultArmRecordingProvider(LLMProvider):
         self.system_prompts: list[str] = []
         self.tools: list[list[dict[str, Any]]] = []
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float | None = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: JsonValue,
     ) -> LLMResponse:
         _ = model, temperature, max_output_tokens, kwargs
@@ -247,7 +253,7 @@ class _DefaultArmRecordingProvider(LLMProvider):
         return "scripted-model"
 
 
-class _EndTurnDelegatingProvider(LLMProvider):
+class _EndTurnDelegatingProvider(CallbackStreamProvider):
     """Root ends its turn after dispatch; the notification wakes turn 2.
 
     Characterizes the async delegation contract: root turn 1 issues the
@@ -261,13 +267,15 @@ class _EndTurnDelegatingProvider(LLMProvider):
     def __init__(self) -> None:
         super().__init__(retry_backoff_seconds=())
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float | None = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: JsonValue,
     ) -> LLMResponse:
         _ = model, temperature, max_output_tokens, tools, kwargs

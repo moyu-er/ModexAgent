@@ -14,10 +14,11 @@ from bot.service.model_provider import BotModelProvider
 
 from modex_agent.core.constants import FinishReason, ReasoningEffort
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.types import LLMResponse, MessageRole
 from modex_agent.ioc.configs.llm import LLMConfig
-from modex_agent.runtime.models import JsonValue
+from modex_agent.providers import HTTPStreamProvider
+from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
 
 
 def _environment(tmp_path: Path) -> dict[str, str]:
@@ -151,7 +152,7 @@ async def test_bare_provider_receives_model_parameters(
 
     # When
     with (
-        patch.object(entry_module, "LiteLLMProvider", provider_factory),
+        patch.object(entry_module, "_bare_provider_factory", provider_factory),
         patch.object(entry_module, "execute_entry", bare_execute),
     ):
         await entry_module._run_from_environment()
@@ -164,6 +165,21 @@ async def test_bare_provider_receives_model_parameters(
         temperature=1.0,
         reasoning_effort=ReasoningEffort.HIGH,
     )
+
+
+@pytest.mark.asyncio
+async def test_bare_provider_factory_builds_direct_http_provider() -> None:
+    provider = entry_module._bare_provider_factory(
+        "openai/scripted-model",
+        api_key="sk-test",
+        base_url="http://localhost:9999/v1",
+        temperature=0.5,
+    )
+    try:
+        assert isinstance(provider, HTTPStreamProvider)
+        assert type(provider._protocol) is OpenAICompatProtocol
+    finally:
+        await provider.aclose()
 
 
 def test_pool_mode_env_vars_include_model_parameters() -> None:
@@ -180,20 +196,8 @@ def test_pool_mode_env_vars_include_model_parameters() -> None:
     assert {"MODEX_TASK_NAME", "MODEX_TASK_WORKSPACE"} <= names
 
 
-class _BakedRealProvider(LLMProvider):
+class _BakedRealProvider(CallbackStreamProvider):
     """Scripted stand-in for the provider create_llm_provider builds."""
-
-    async def chat(
-        self,
-        messages: list[ChatMessage],
-        model: str | None = None,
-        temperature: float | None = None,
-        max_output_tokens: int | None = None,
-        tools: list[dict[str, Any]] | None = None,
-        **kwargs: JsonValue,
-    ) -> LLMResponse:
-        _ = messages, model, temperature, max_output_tokens, tools, kwargs
-        return LLMResponse(content="ok", finish_reason=FinishReason.STOP)
 
     async def chat_stream(self, **kwargs: Any) -> LLMResponse:  # noqa: ANN401
         _ = kwargs

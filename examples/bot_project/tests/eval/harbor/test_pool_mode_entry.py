@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.plugins.abc import ComponentFactory
@@ -34,14 +34,16 @@ from modex_agent.trace.pricing import PriceBook, PriceEntry
 _BOT_PROJECT = Path(__file__).resolve().parents[3]
 
 
-class _ScriptedProvider(LLMProvider):
-    async def chat(
+class _ScriptedProvider(CallbackStreamProvider):
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: JsonValue,
     ) -> LLMResponse:
         _ = messages, model, temperature, max_output_tokens, tools, kwargs
@@ -55,7 +57,7 @@ class _ScriptedProvider(LLMProvider):
         return "scripted-model"
 
 
-class _DelegatingProvider(LLMProvider):
+class _DelegatingProvider(CallbackStreamProvider):
     """Orchestrator dispatches to the explore subagent and answers only after
     the child's turn has produced its reply — a deterministic delegation flow
     (the child turn provably runs before the orchestrator's final answer)."""
@@ -63,13 +65,15 @@ class _DelegatingProvider(LLMProvider):
     def __init__(self) -> None:
         self._child_answered = asyncio.Event()
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: JsonValue,
     ) -> LLMResponse:
         _ = model, temperature, max_output_tokens, tools, kwargs
@@ -378,13 +382,15 @@ async def test_pool_entry_surfaces_watchdog_cancel_as_diagnostic_error(tmp_path:
     config = PoolModeConfig.from_environment(environment)
 
     class _WatchdogCancelledProvider(_ScriptedProvider):
-        async def chat(
+        async def chat_stream(
             self,
             messages: list[ChatMessage],
             model: str | None = None,
-            temperature: float = 0.7,
+            temperature: float | None = None,
             max_output_tokens: int | None = None,
             tools: list[dict[str, Any]] | None = None,
+            on_content_delta=None,
+            on_reasoning_delta=None,
             **kwargs: JsonValue,
         ) -> LLMResponse:
             _ = model, temperature, max_output_tokens, tools, kwargs
@@ -417,7 +423,7 @@ async def test_environment_entry_defaults_to_existing_bare_path(
     bare_execute = AsyncMock()
 
     with (
-        patch.object(entry_module, "LiteLLMProvider", return_value=_ScriptedProvider()),
+        patch.object(entry_module, "_bare_provider_factory", return_value=_ScriptedProvider()),
         patch.object(entry_module, "execute_entry", bare_execute),
     ):
         await entry_module._run_from_environment()

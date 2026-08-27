@@ -23,7 +23,7 @@ from bot.eval.task_spec import EvalItemSpec
 
 from modex_agent.core.constants import StopReason
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.types import LLMResponse, MessageRole
 from modex_agent.trace.cassette import (
     CassetteCategory,
@@ -34,7 +34,7 @@ from modex_agent.trace.cassette import (
 )
 
 
-class _OfflineProvider(StreamingLLMProvider):
+class _OfflineProvider(CallbackStreamProvider):
     def get_default_model(self) -> str:
         return "fixture-model"
 

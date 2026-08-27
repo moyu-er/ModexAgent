@@ -9,8 +9,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider, StreamingLLMProvider
-from modex_agent.core.types import LLMResponse
+from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
+from modex_agent.core.types import LLMResponse, TokenUsage
 from modex_agent.trace.pricing import (
     TOKENS_PER_MILLION,
     PerModelUsage,
@@ -75,16 +75,13 @@ class BudgetLedger:
             )
 
 
-class BudgetedProvider(StreamingLLMProvider):
+class BudgetedProvider(CallbackStreamProvider):
     """Delegate provider calls while enforcing a pre-call reserve and actual cost.
 
-    Extends ``StreamingLLMProvider`` (not just ``LLMProvider``) so the
-    wrapper does not MASK the delegate's streaming capability: the ReAct
-    LLM client gates its streaming path on
-    ``isinstance(provider, StreamingLLMProvider)``, and a plain-LLMProvider
-    wrapper would silently force every wrapped provider onto the
-    non-streaming path — losing chunk-level dispatch-deadline renewal
-    (long single LLM calls would die as "hung" at the dispatch timeout).
+    Rides ``CallbackStreamProvider`` so the ReAct event loop's callback→event
+    bridge reaches the delegate through this wrapper's ``chat_stream`` —
+    the reserve/record pair therefore governs every streaming call, and
+    direct ``chat()`` callers stay governed through the ``chat`` override.
     """
 
     def __init__(
@@ -117,18 +114,12 @@ class BudgetedProvider(StreamingLLMProvider):
         self._ledger.ensure_affordable(call_reserve)
         return selected_model
 
-    def _record_usage(self, selected_model: str, usage: dict[str, int]) -> None:
+    def _record_usage(self, selected_model: str, usage: TokenUsage) -> None:
         buckets = UsageBuckets(
-            input_tokens=usage.get("prompt_tokens", usage.get("input_tokens", 0)),
-            output_tokens=usage.get("completion_tokens", usage.get("output_tokens", 0)),
-            cache_read_tokens=usage.get(
-                "cache_read_input_tokens",
-                usage.get("cache_read_tokens", 0),
-            ),
-            cache_write_tokens=usage.get(
-                "cache_creation_input_tokens",
-                usage.get("cache_write_tokens", 0),
-            ),
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cache_read_tokens=usage.cache_read_input_tokens,
+            cache_write_tokens=usage.cache_creation_input_tokens,
         )
         call_cost = compute_turn_cost(
             PerModelUsage(by_model={selected_model: buckets}),
@@ -169,11 +160,12 @@ class BudgetedProvider(StreamingLLMProvider):
         **kwargs: Any,
     ) -> LLMResponse:
         selected_model = self._reserve_call(model, max_output_tokens)
-        # Capability boundary probe: only a streaming-capable delegate can
-        # forward the delta callbacks; a plain-LLMProvider delegate (e.g. a
-        # scripted test double) gets one synthesized end-of-call delta so
-        # streaming callers keep their callback contract.
-        if isinstance(self._delegate, StreamingLLMProvider):
+        # Capability boundary probe: only a callback-style delegate can
+        # forward the delta callbacks; a stream-native delegate (e.g. the
+        # real HTTPStreamProvider) falls back to response-level chat() and
+        # gets one synthesized end-of-call delta so streaming callers keep
+        # their callback contract.
+        if isinstance(self._delegate, CallbackStreamProvider):
             response = await self._delegate.chat_stream(
                 messages,
                 model=model,

@@ -23,7 +23,7 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.capabilities import ModelCapabilities
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, TextPart
-from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import (
     InMemoryToolManager,
@@ -85,7 +85,7 @@ class _ScriptedToolManager(ToolManager):
         return self.result
 
 
-class _ScriptedProvider(StreamingLLMProvider):
+class _ScriptedProvider(CallbackStreamProvider):
     def __init__(self, response: LLMResponse) -> None:
         super().__init__()
         self._response = response

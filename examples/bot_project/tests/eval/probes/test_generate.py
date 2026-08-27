@@ -22,27 +22,30 @@ from bot.eval.probes.sampler import LibraryScale, config_for_scale, sample_world
 from bot.eval.probes.schema import Speaker
 
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.types import LLMResponse
 from modex_agent.trace.pricing import PriceBook, PriceEntry
 
 
-class ScriptedCostProvider(LLMProvider):
+class ScriptedCostProvider(CallbackStreamProvider):
     def __init__(self, outputs: list[str], *, tokens_per_call: int) -> None:
         super().__init__(retry_backoff_seconds=())
         self.outputs = deque(outputs)
         self.tokens_per_call = tokens_per_call
         self.calls = 0
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs,
     ) -> LLMResponse:
+        del model, temperature, max_output_tokens, tools, kwargs
         self.calls += 1
         return LLMResponse(
             content=self.outputs.popleft(),

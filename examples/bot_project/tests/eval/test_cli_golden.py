@@ -6,6 +6,7 @@ from bot.eval import cli as eval_cli
 
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.types import MessageRole
+from modex_agent.providers import HTTPStreamProvider
 from modex_agent.trace.cassette import llm_call_key
 
 
@@ -56,3 +57,17 @@ def test_golden_provider_requires_recording_credentials(
 
     with pytest.raises(typer.Exit):
         eval_cli._golden_provider_from_env()
+
+
+async def test_golden_provider_builds_direct_http_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TEST_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("TEST_LLM_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.setenv("TEST_LLM_MODEL", "test-model")
+
+    provider = eval_cli._golden_provider_from_env()
+    try:
+        assert isinstance(provider, HTTPStreamProvider)
+    finally:
+        await provider.aclose()

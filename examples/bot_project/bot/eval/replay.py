@@ -23,7 +23,7 @@ from bot.eval.task_output import EvalTaskOutput, ToolStats, TurnRecord, WorldRes
 from bot.eval.task_spec import EvalItemSpec
 from modex_agent.core.constants import StopReason
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.tool_manager import ToolManager
 from modex_agent.core.types import LLMResponse
 from modex_agent.trace.cassette import (
@@ -82,7 +82,7 @@ class _EvalItem:
         self.input = spec.model_dump(mode="json")
 
 
-class _OfflineProvider(LLMProvider):
+class _OfflineProvider(CallbackStreamProvider):
     def __init__(self, model: str) -> None:
         super().__init__()
         self._model = model
@@ -90,7 +90,7 @@ class _OfflineProvider(LLMProvider):
     def get_default_model(self) -> str:
         return self._model
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,

@@ -13,7 +13,7 @@ Langfuse credentials are read from the environment:
 Usage::
 
     python -m bot.eval.cli curate --dataset react-baseline --max 50
-    python -m bot.eval.cli run --dataset react-baseline --experiment v1 --model openai/gpt-4o
+    python -m bot.eval.cli run --dataset react-baseline --experiment v1 --model gpt-4o
     python -m bot.eval.cli compare --dataset react-baseline
     python -m bot.eval.cli setup-judge --name helpfulness \\
         --prompt "Score the helpfulness of the response from 0.0 to 1.0."
@@ -57,7 +57,8 @@ from bot.eval.judge_cli import judge as judge_command
 from bot.eval.task_spec import EvalItemSpec, EvalToolset
 from modex_agent.core.constants import ReasoningEffort
 from modex_agent.core.provider import LLMProvider
-from modex_agent.providers import LiteLLMProvider
+from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.trace.cassette import CassetteRecorder, CassetteReplayEngine
 from modex_agent.trace.langfuse_query import (
     _MAX_PAGES,
@@ -242,7 +243,7 @@ def run(
     experiment: Annotated[str, typer.Option("--experiment", help="Experiment run name.")],
     model: Annotated[
         str,
-        typer.Option("--model", help="LiteLLM model string, e.g. openai/gpt-4o."),
+        typer.Option("--model", help="Model name, e.g. gpt-4o."),
     ],
     system_prompt: Annotated[
         str,
@@ -268,18 +269,16 @@ def run(
     """Run an experiment against a Langfuse dataset.
 
     Credentials use ``TEST_LLM_API_KEY`` and ``TEST_LLM_BASE_URL`` when set;
-    otherwise LiteLLM resolves provider-standard environment variables such as
-    ``OPENAI_API_KEY`` and ``ANTHROPIC_API_KEY``.
+    otherwise the direct-HTTP provider falls back to ``OPENAI_API_KEY``
+    (openai-compatible routing).
     """
-    # Lazy import: litellm is an optional dependency (the [llm] extra), not
-    # required for curate/compare.
-    from modex_agent.providers import LiteLLMProvider
-
     host, public_key, secret_key = _load_langfuse_env()
-    provider = LiteLLMProvider(
-        model=model,
-        api_key=os.environ.get("TEST_LLM_API_KEY") or None,
-        base_url=os.environ.get("TEST_LLM_BASE_URL") or None,
+    provider = create_llm_provider(
+        LLMConfig(
+            model=model,
+            api_key=os.environ.get("TEST_LLM_API_KEY") or "",
+            base_url=os.environ.get("TEST_LLM_BASE_URL") or "",
+        )
     )
     langfuse_client = Langfuse(
         base_url=host,
@@ -901,7 +900,7 @@ def _stable_golden_message_serialization() -> Iterator[None]:
         yield
 
 
-def _golden_provider_from_env() -> LiteLLMProvider:
+def _golden_provider_from_env() -> LLMProvider:
     api_key = os.environ.get("TEST_LLM_API_KEY")
     base_url = os.environ.get("TEST_LLM_BASE_URL")
     model = os.environ.get("TEST_LLM_MODEL")
@@ -913,15 +912,17 @@ def _golden_provider_from_env() -> LiteLLMProvider:
         )
         raise typer.Exit(code=1)
 
-    return LiteLLMProvider(
-        model=model,
-        api_key=api_key,
-        base_url=base_url,
-        temperature=float(os.environ.get("TEST_LLM_TEMPERATURE", "0.7")),
-        max_output_tokens=int(os.environ.get("TEST_LLM_MAX_OUTPUT_TOKENS", "2000")),
-        reasoning_effort=ReasoningEffort(
-            os.environ.get("TEST_LLM_REASONING_EFFORT", ReasoningEffort.NONE.value)
-        ),
+    return create_llm_provider(
+        LLMConfig(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=float(os.environ.get("TEST_LLM_TEMPERATURE", "0.7")),
+            max_output_tokens=int(os.environ.get("TEST_LLM_MAX_OUTPUT_TOKENS", "2000")),
+            reasoning_effort=ReasoningEffort(
+                os.environ.get("TEST_LLM_REASONING_EFFORT", ReasoningEffort.NONE.value)
+            ),
+        )
     )
 
 

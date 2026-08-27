@@ -6,6 +6,8 @@ from bot.eval import cli as eval_cli
 from bot.eval.task_spec import EvalToolset
 from typer.testing import CliRunner
 
+from modex_agent.ioc.configs.llm import LLMConfig
+
 
 def _invoke_run(
     monkeypatch: pytest.MonkeyPatch,
@@ -14,15 +16,10 @@ def _invoke_run(
     captured: dict[str, object] = {}
     provider = SimpleNamespace()
 
-    def build_provider(
-        *,
-        model: str,
-        api_key: str | None = None,
-        base_url: str | None = None,
-    ) -> SimpleNamespace:
-        captured["provider_model"] = model
-        captured["provider_api_key"] = api_key
-        captured["provider_base_url"] = base_url
+    def build_provider(config: LLMConfig) -> SimpleNamespace:
+        captured["provider_model"] = config.model
+        captured["provider_api_key"] = config.api_key
+        captured["provider_base_url"] = config.base_url
         return provider
 
     class FakeRunner:
@@ -40,7 +37,7 @@ def _invoke_run(
     )
     monkeypatch.setattr(eval_cli, "Langfuse", lambda **_kwargs: SimpleNamespace())
     monkeypatch.setattr(eval_cli, "EvalRunner", FakeRunner)
-    monkeypatch.setattr("modex_agent.providers.LiteLLMProvider", build_provider)
+    monkeypatch.setattr(eval_cli, "create_llm_provider", build_provider)
 
     result = CliRunner().invoke(
         eval_cli.app,
@@ -93,7 +90,7 @@ def test_run_command_passes_test_llm_credentials(
     monkeypatch.setenv("TEST_LLM_API_KEY", "test-key")
     monkeypatch.setenv("TEST_LLM_BASE_URL", "https://llm.example.test/v1")
 
-    # When: the run command constructs its LiteLLM provider.
+    # When: the run command constructs its LLM provider.
     captured = _invoke_run(monkeypatch, [])
 
     # Then: the explicit test credentials reach the provider unchanged.
@@ -108,9 +105,10 @@ def test_run_command_leaves_test_llm_credentials_optional(
     monkeypatch.delenv("TEST_LLM_API_KEY", raising=False)
     monkeypatch.delenv("TEST_LLM_BASE_URL", raising=False)
 
-    # When: the run command constructs its LiteLLM provider.
+    # When: the run command constructs its LLM provider.
     captured = _invoke_run(monkeypatch, [])
 
-    # Then: None delegates credential resolution to LiteLLM's standard environment.
-    assert captured["provider_api_key"] is None
-    assert captured["provider_base_url"] is None
+    # Then: empty config values delegate credential resolution to the
+    # provider's OPENAI_API_KEY environment fallback.
+    assert captured["provider_api_key"] == ""
+    assert captured["provider_base_url"] == ""

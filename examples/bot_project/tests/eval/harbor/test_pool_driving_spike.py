@@ -17,7 +17,7 @@ from modex_agent.core.constants import FinishReason
 from modex_agent.core.emitter import AgentResult, ContentEmitter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage, LLMResponse, ToolCall
 from modex_agent.hook import HookRunner
@@ -41,18 +41,20 @@ _BOT_PROJECT = Path(__file__).resolve().parents[3]
 _ROOT_SESSION = SessionInfo.from_str("harbor.orchestrator")
 
 
-class _ScriptedProvider(LLMProvider):
+class _ScriptedProvider(CallbackStreamProvider):
     def __init__(self, responses: list[LLMResponse]) -> None:
         super().__init__(retry_backoff_seconds=())
         self._responses = deque(responses)
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: JsonValue,
     ) -> LLMResponse:
         _ = messages, model, temperature, max_output_tokens, tools, kwargs
@@ -62,14 +64,16 @@ class _ScriptedProvider(LLMProvider):
         return "openai/harbor-scripted"
 
 
-class _DelegatingProvider(LLMProvider):
-    async def chat(
+class _DelegatingProvider(CallbackStreamProvider):
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: JsonValue,
     ) -> LLMResponse:
         _ = model, temperature, max_output_tokens, tools, kwargs

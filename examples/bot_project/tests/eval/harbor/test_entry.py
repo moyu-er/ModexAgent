@@ -21,7 +21,7 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import FinishReason, StopReason
 from modex_agent.core.emitter import AgentResult, ContentEmitter
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.types import LLMResponse
 from modex_agent.runtime.models import JsonValue
 from modex_agent.tools.terminal.persistent_bash import persistent_bash_supported
@@ -30,14 +30,16 @@ from modex_agent.trace.semconv import GenAiAttr, SpanName
 from modex_agent.trace.store import SpanModel
 
 
-class ScriptedProvider(LLMProvider):
-    async def chat(
+class ScriptedProvider(CallbackStreamProvider):
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
         **kwargs: JsonValue,
     ) -> LLMResponse:
         _ = messages, model, temperature, max_output_tokens, tools, kwargs
@@ -45,10 +47,10 @@ class ScriptedProvider(LLMProvider):
             content="scripted answer",
             finish_reason=FinishReason.STOP,
             usage={
-                "prompt_tokens": 11,
+                "prompt_tokens": 14,
                 "completion_tokens": 7,
-                "cache_read_tokens": 3,
-                "cache_write_tokens": 2,
+                "cache_read_input_tokens": 3,
+                "cache_creation_input_tokens": 2,
             },
         )
 
