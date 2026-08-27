@@ -469,8 +469,11 @@ Langfuse v4 deployment, `.env` configuration, the 12 trajectory metrics, eval
 CLI commands, golden cassette 4-gate replay, `TrainingDataExporter` API, and
 troubleshooting. To **read traces in the Langfuse panel** — understanding
 span types, trace_id/span_id, the 12 metrics, and filtering for problem
-diagnosis — read `docs/langfuse/trace-reading-guide.md`. Architecture details
-live in `bot/eval/AGENTS.md` and `src/modex_agent/trace/AGENTS.md`.
+diagnosis — read `docs/langfuse/trace-reading-guide.md`. To **run Terminal
+Bench 2.1 batches** — launching, resuming, re-running single tasks, reading
+local run data, or cleaning up environment-poisoned tasks — read
+`bot/eval/RUNNING_TB21.md` (the launcher and run-data guide). Architecture
+details live in `bot/eval/AGENTS.md` and `src/modex_agent/trace/AGENTS.md`.
 
 <!-- BEGIN MODEX-RUNTIME (auto-managed; do not edit) -->
 ## ModexAgent runtime

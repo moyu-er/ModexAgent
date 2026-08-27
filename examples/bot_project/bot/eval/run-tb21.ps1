@@ -116,27 +116,47 @@ if ($stale) { Log "swept $($stale.Count) stale trial containers" }
 docker network prune -f | Out-Null
 
 # --- Warm-up (mandatory, before the batch): the trial agent install path
-# --- needs apt/pypi/github through the Docker proxy bridge. A cold proxy
-# --- makes 8 concurrent `apt-get update`s time out and EVERY task dies at
-# --- install ("no_python_runtime") — observed on tb21-all-v7 (2026-08-25).
-# --- Warm the pipe serially first, and refuse to start on a dead network.
-Log "warm-up: probing container egress"
-$probe = docker run --rm curlimages/curl:latest sh -c 'for t in "https://api.deepseek.com/v1/models|llm" "https://pypi.org/simple/|pypi" "http://archive.ubuntu.com/ubuntu/dists/noble/InRelease|apt" "https://astral.sh|uv"; do url="${t%%|*}"; name="${t##*|}"; code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$url"); echo "$name=$code"; done' 2>$null
-$probeLines = @($probe | Where-Object { $_ -match "^[a-z]+=\d+$" })
-$probeLines | ForEach-Object { Log "warm-up probe: $_" }
-$bad = @($probeLines | Where-Object { $_ -notmatch "=(200|401)$" })
-if ($bad.Count -gt 0 -or $probeLines.Count -lt 4) {
-    Log "warm-up FAILED: container egress not ready ($($bad -join ', ')). Refusing to start."
-    throw "warm-up failed: container egress not ready ($($bad -join ', ')). Fix the proxy/VPN, then re-run."
+# --- needs apt/pypi/github through the Docker proxy bridge. A cold or
+# --- flapping proxy makes 8 concurrent `apt-get update`s time out and EVERY
+# --- task dies at install ("no_python_runtime") — observed on tb21-all-v7
+# --- (2026-08-25). Each step retries up to 3 times (VPN nodes flap
+# --- transiently); all attempts failing means the network is truly down.
+$warmupTries = 3
+
+function Invoke-Probe {
+    docker run --rm curlimages/curl:latest sh -c 'for t in "https://api.deepseek.com/v1/models|llm" "https://pypi.org/simple/|pypi" "http://archive.ubuntu.com/ubuntu/dists/noble/InRelease|apt" "https://astral.sh|uv"; do url="${t%%|*}"; name="${t##*|}"; code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$url"); echo "$name=$code"; done' 2>$null
 }
-# apt index warm-up: pull the archive.ubuntu.com indexes through the proxy
-# once, serially, so the batch's 8 concurrent installs don't cold-start it.
-Log "warm-up: apt index pull (serial)"
-$aptWarm = docker run --rm alexgshaw/adaptive-rejection-sampler:20251031 sh -c 'apt-get update -qq >/dev/null 2>&1; echo "apt_update_exit=$?"' 2>$null
-Log "warm-up: $aptWarm"
-if ($aptWarm -notmatch "apt_update_exit=0") {
-    Log "warm-up FAILED: apt-get update did not succeed. Refusing to start."
-    throw "warm-up failed: apt-get update unsuccessful. Fix the proxy/VPN, then re-run."
+$probeOk = $false
+for ($try = 1; $try -le $warmupTries; $try++) {
+    Log "warm-up: probing container egress (attempt $try/$warmupTries)"
+    $probeLines = @(Invoke-Probe | Where-Object { $_ -match "^[a-z]+=\d+$" })
+    $probeLines | ForEach-Object { Log "warm-up probe: $_" }
+    $bad = @($probeLines | Where-Object { $_ -notmatch "=(200|401)$" })
+    if ($bad.Count -eq 0 -and $probeLines.Count -eq 4) { $probeOk = $true; break }
+    Log "warm-up probe attempt $try failed: $($bad -join ', ')"
+}
+if (-not $probeOk) {
+    Log "warm-up FAILED: container egress not ready after $warmupTries attempts. Refusing to start."
+    throw "warm-up failed: container egress not ready after $warmupTries attempts. Fix the proxy/VPN, then re-run."
+}
+
+# apt index warm-up: pull the apt indexes through the proxy once, serially,
+# so the batch's concurrent installs don't cold-start it. Uses the FIRST
+# TASK'S OWN IMAGE (the trial's ubuntu base) — no hardcoded helper image;
+# with -Tasks it is exactly the image the rerun will use.
+$warmImage = ($Tasks -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -First 1)
+if (-not $warmImage) { $warmImage = (Get-ChildItem $dataset -Directory | Sort-Object Name | Select-Object -First 1).Name }
+$warmRef = "alexgshaw/${warmImage}:20251031"
+Log "warm-up: apt index pull (serial, image $warmRef)"
+$aptOk = $false
+for ($try = 1; $try -le $warmupTries; $try++) {
+    $aptWarm = docker run --rm $warmRef sh -c 'apt-get update -qq >/dev/null 2>&1; echo "apt_update_exit=$?"' 2>$null
+    Log "warm-up apt attempt ${try}: $aptWarm"
+    if ($aptWarm -match "apt_update_exit=0") { $aptOk = $true; break }
+}
+if (-not $aptOk) {
+    Log "warm-up FAILED: apt-get update did not succeed after $warmupTries attempts. Refusing to start."
+    throw "warm-up failed: apt-get update unsuccessful after $warmupTries attempts. Fix the proxy/VPN, then re-run."
 }
 Log "warm-up complete: egress green + apt index warm"
 

@@ -19,6 +19,7 @@ Opt-in evaluation harness — runs as a **separate process** (CLI), never import
 | `evalenv.py` | Frozen `LangfuseCredentials` and parameterized `from_env()` — the single narrow read seam for public/secret key pairs and optional host |
 | `harbor/` | Harbor host/container execution, pool-mode assembly, standalone entry, live artifacts, budgets, and smoke/TB21 gates |
 | `harbor/eval_overlay.py` | Frozen eval-arm loader whose schema mirrors FW `ScopeOverlay` 1:1 and adds only `single_agent`/`tools_remove`/`strip_mcp` sugar |
+| `run-tb21.ps1` / `run-tb21.sh` + `RUNNING_TB21.md` | TB2.1 batch launchers (warm-up gate, checkpoint resume, `-Tasks` subset rerun, post-run sweep) + the run guide. Read `RUNNING_TB21.md` before starting, resuming, re-running, or triaging a TB2.1 batch — it maps the local run data (jobs/, state.db, spans.jsonl, evidence) and the poisoned-task wipe-and-rerun procedure |
 | `probes/` | Probe schema, generation, rendering, dual-arm dispatch, evidence, scoring, budget, and harness integration |
 | `judge/` + `judge_cli.py` | Rubric runner, memory judge, annotation, calibration, and judge CLI |
 | `sentinel/` | Declared memory/no-memory arms, orchestration, execution, observation, results, report, and gate CLI |

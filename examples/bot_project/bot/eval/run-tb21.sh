@@ -115,37 +115,72 @@ fi
 docker network prune -f >/dev/null 2>&1 || true
 
 # --- Warm-up (mandatory, before the batch): the trial agent install path
-# --- needs apt/pypi/github through the Docker proxy. A cold proxy makes N
-# --- concurrent `apt-get update`s time out and every task dies at install
-# --- ("no_python_runtime") — observed on tb21-all-v7 (2026-08-25).
-log "warm-up: probing container egress"
-PROBE="$(docker run --rm curlimages/curl:latest sh -c '
+# --- needs apt/pypi/github through the Docker proxy. A cold or flapping
+# --- proxy makes N concurrent `apt-get update`s time out and every task
+# --- dies at install ("no_python_runtime") — observed on tb21-all-v7
+# --- (2026-08-25). Each step retries up to 3 times (VPN nodes flap
+# --- transiently); all attempts failing means the network is truly down.
+WARMUP_TRIES=3
+
+probe_egress() {
+    docker run --rm curlimages/curl:latest sh -c '
 for t in "https://api.deepseek.com/v1/models|llm" "https://pypi.org/simple/|pypi" "http://archive.ubuntu.com/ubuntu/dists/noble/InRelease|apt" "https://astral.sh|uv"; do
     url="${t%%|*}"; name="${t##*|}"
     code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$url")
     echo "$name=$code"
-done' 2>/dev/null || true)"
-echo "$PROBE" | while IFS= read -r line; do
-    if [ -n "$line" ]; then
-        log "warm-up probe: $line"
+done' 2>/dev/null || true
+}
+
+PROBE_OK=0
+TRY=1
+while [ "$TRY" -le "$WARMUP_TRIES" ]; do
+    log "warm-up: probing container egress (attempt $TRY/$WARMUP_TRIES)"
+    PROBE="$(probe_egress)"
+    echo "$PROBE" | while IFS= read -r line; do
+        if [ -n "$line" ]; then
+            log "warm-up probe: $line"
+        fi
+    done
+    BAD="$(echo "$PROBE" | grep -Ev '^(llm|pypi|apt|uv)=(200|401)$' | grep -E '=' || true)"
+    COUNT="$(echo "$PROBE" | grep -cE '^(llm|pypi|apt|uv)=[0-9]+$' || true)"
+    if [ -z "$BAD" ] && [ "${COUNT:-0}" -eq 4 ]; then
+        PROBE_OK=1
+        break
     fi
+    log "warm-up probe attempt $TRY failed: $BAD"
+    TRY=$((TRY + 1))
 done
-BAD="$(echo "$PROBE" | grep -Ev '^(llm|pypi|apt|uv)=(200|401)$' | grep -E '=' || true)"
-COUNT="$(echo "$PROBE" | grep -cE '^(llm|pypi|apt|uv)=[0-9]+$' || true)"
-if [ -n "$BAD" ] || [ "${COUNT:-0}" -lt 4 ]; then
-    log "warm-up FAILED: container egress not ready ($BAD). Refusing to start."
-    echo "warm-up failed: container egress not ready ($BAD). Fix the proxy/VPN, then re-run." >&2
+if [ "$PROBE_OK" -ne 1 ]; then
+    log "warm-up FAILED: container egress not ready after $WARMUP_TRIES attempts. Refusing to start."
+    echo "warm-up failed: container egress not ready after $WARMUP_TRIES attempts. Fix the proxy/VPN, then re-run." >&2
     exit 1
 fi
-# apt index warm-up: pull the archive.ubuntu.com indexes through the proxy
-# once, serially, so the batch's concurrent installs don't cold-start it.
-log "warm-up: apt index pull (serial)"
-APT_WARM="$(docker run --rm alexgshaw/adaptive-rejection-sampler:20251031 \
-    sh -c 'apt-get update -qq >/dev/null 2>&1; echo "apt_update_exit=$?"' 2>/dev/null || true)"
-log "warm-up: $APT_WARM"
-if [ "${APT_WARM}" != "apt_update_exit=0" ]; then
-    log "warm-up FAILED: apt-get update did not succeed. Refusing to start."
-    echo "warm-up failed: apt-get update unsuccessful. Fix the proxy/VPN, then re-run." >&2
+
+# apt index warm-up: pull the apt indexes through the proxy once, serially,
+# so the batch's concurrent installs don't cold-start it. Uses the FIRST
+# TASK'S OWN IMAGE (the trial's ubuntu base) — no hardcoded helper image;
+# with a -Tasks subset it is exactly the image the rerun will use.
+WARM_TASK="$(echo "$TASKS" | tr ',' '\n' | awk 'NF{print $1; exit}')"
+if [ -z "$WARM_TASK" ]; then
+    WARM_TASK="$(ls -1 "$DATASET" | head -n 1)"
+fi
+WARM_REF="alexgshaw/${WARM_TASK}:20251031"
+log "warm-up: apt index pull (serial, image $WARM_REF)"
+APT_OK=0
+TRY=1
+while [ "$TRY" -le "$WARMUP_TRIES" ]; do
+    APT_WARM="$(docker run --rm "$WARM_REF" \
+        sh -c 'apt-get update -qq >/dev/null 2>&1; echo "apt_update_exit=$?"' 2>/dev/null || true)"
+    log "warm-up apt attempt $TRY: $APT_WARM"
+    if [ "$APT_WARM" = "apt_update_exit=0" ]; then
+        APT_OK=1
+        break
+    fi
+    TRY=$((TRY + 1))
+done
+if [ "$APT_OK" -ne 1 ]; then
+    log "warm-up FAILED: apt-get update did not succeed after $WARMUP_TRIES attempts. Refusing to start."
+    echo "warm-up failed: apt-get update unsuccessful after $WARMUP_TRIES attempts. Fix the proxy/VPN, then re-run." >&2
     exit 1
 fi
 log "warm-up complete: egress green + apt index warm"
