@@ -319,6 +319,102 @@ class TestSFTExport:
         assert tool_msgs[0]["tool_call_id"].startswith("call_")
         assert tool_msgs[0]["content"] == "4"
 
+    async def test_tool_results_join_by_real_call_id(self, tmp_path: Path) -> None:
+        """Parallel tool calls with real (provider/snowflake) call ids are
+        joined to their execute_tool spans by id — even when span order and
+        call order differ. No synthetic ``call_<n>`` counter ids appear."""
+        store = InMemoryTraceStore()
+        ts = 1000.0
+        store._spans.append(
+            _make_span(
+                name="invoke_agent",
+                start_time=ts,
+                attributes={
+                    "recent_messages": [{"role": "user", "content": "read both files"}],
+                },
+            )
+        )
+        store._spans.append(
+            _make_span(
+                name="chat",
+                start_time=ts + 1,
+                attributes={
+                    GenAiAttr.OUTPUT_MESSAGES.value: [
+                        {"role": "assistant", "parts": [{"type": "text", "content": ""}]}
+                    ],
+                    "has_tool_calls": True,
+                    GenAiAttr.RESPONSE_FINISH_REASONS.value: ["tool_calls"],
+                    GenAiAttr.OUTPUT_TOOL_CALLS.value: [
+                        {"call_id": "call_A", "tool_name": "read", "arguments": '{"path": "a"}'},
+                        {"call_id": "call_B", "tool_name": "read", "arguments": '{"path": "b"}'},
+                    ],
+                },
+            )
+        )
+        # Tool spans in REVERSE order relative to the assistant tool calls —
+        # order-based matching would pair them wrongly; id join must not.
+        store._spans.append(
+            _make_span(
+                name="execute_tool",
+                start_time=ts + 3,
+                attributes={
+                    GenAiAttr.TOOL_NAME.value: "read",
+                    GenAiAttr.TOOL_RESULT.value: "content_of_b",
+                    GenAiAttr.TOOL_CALL_ID.value: "call_B",
+                },
+            )
+        )
+        store._spans.append(
+            _make_span(
+                name="execute_tool",
+                start_time=ts + 2,
+                attributes={
+                    GenAiAttr.TOOL_NAME.value: "read",
+                    GenAiAttr.TOOL_RESULT.value: "content_of_a",
+                    GenAiAttr.TOOL_CALL_ID.value: "call_A",
+                },
+            )
+        )
+        store._spans.append(
+            _make_span(
+                name="chat",
+                start_time=ts + 4,
+                attributes={
+                    GenAiAttr.OUTPUT_MESSAGES.value: [
+                        {"role": "assistant", "parts": [{"type": "text", "content": "done"}]}
+                    ],
+                    "has_tool_calls": False,
+                    GenAiAttr.RESPONSE_FINISH_REASONS.value: ["stop"],
+                },
+            )
+        )
+        store._spans.append(
+            _make_span(
+                name="training_tag",
+                start_time=ts + 5,
+                attributes={"gen_ai.training.relevant": True},
+            )
+        )
+
+        exporter = TrainingDataExporter(store, output_dir=tmp_path)
+        result = await exporter.export_sft(session_ids=["conv-1:agent-1"])
+
+        examples = _load_jsonl(result.output_path)
+        messages = examples[0]["messages"]
+
+        assistant_with_tools = [
+            m for m in messages if m["role"] == "assistant" and m.get("tool_calls")
+        ]
+        assert len(assistant_with_tools) == 1
+        assert [tc["id"] for tc in assistant_with_tools[0]["tool_calls"]] == ["call_A", "call_B"]
+
+        tool_msgs = [m for m in messages if m["role"] == "tool"]
+        # Each tool message carries its REAL id and the correctly joined result.
+        assert [(m["tool_call_id"], m["content"]) for m in tool_msgs] == [
+            ("call_A", "content_of_a"),
+            ("call_B", "content_of_b"),
+        ]
+
     async def test_reasoning_wrapped_in_think_tags(self, tmp_path: Path) -> None:
         store = InMemoryTraceStore()
         for span in _make_trajectory(

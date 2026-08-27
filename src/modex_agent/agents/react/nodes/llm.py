@@ -23,6 +23,7 @@ from modex_agent.agents.react.message_builder import build_assistant_message
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import FinishReason
+from modex_agent.core.ids import next_call_id
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.types import LLMResponse
 from modex_agent.runtime.dispatch import renew_dispatch_deadline
@@ -114,6 +115,22 @@ class LLMNode(Node[ReActTurnState]):
             )
 
             response = await self._llm_client.call(messages, agent_ctx)
+
+            # Canonicalize tool-call ids BEFORE any consumer sees the
+            # response: AFTER_LLM_RESPONSE hooks (ChatSpanHook), the
+            # assistant history message, and ToolNode must all observe the
+            # SAME id per call, or chat spans / tool spans / exported
+            # trajectories cannot be joined by id. Providers that omit ids
+            # get a Snowflake fallback (see core.ids.next_call_id).
+            if response.tool_calls:
+                response = response.model_copy(
+                    update={
+                        "tool_calls": [
+                            tc if tc.call_id else tc.model_copy(update={"call_id": next_call_id()})
+                            for tc in response.tool_calls
+                        ]
+                    }
+                )
 
             await ctx.runtime.dispatch_hook(
                 ReActHookPoint.AFTER_LLM_RESPONSE,

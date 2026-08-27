@@ -141,7 +141,7 @@ class SummaryPromptCapture(PromptCaptureStrategy):
     def __init__(
         self,
         *,
-        max_messages: int = 6,
+        max_messages: int = 5,
         max_text_chars: int = 2000,
         max_tool_args_chars: int = 1000,
         include_reasoning: bool = True,

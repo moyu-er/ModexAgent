@@ -286,13 +286,20 @@ def _extract_system_message(spans: list[SpanModel]) -> str | None:
 
 def _build_tool_calls(
     tool_calls_attr: object,
-    call_id_start: int,
+    chat_index: int,
 ) -> list[dict[str, Any]]:
     """Build OpenAI ``tool_calls`` list from a ``chat`` span's attributes.
 
     The ``gen_ai.output.tool_calls`` attribute is a list of
-    ``{"tool_name": str, "arguments": str}`` where ``arguments`` is already a
-    JSON string.
+    ``{"call_id": str, "tool_name": str, "arguments": str}`` where
+    ``arguments`` is already a JSON string and ``call_id`` is the runtime's
+    canonical id (stamped by LLMNode before ChatSpanHook fires).
+
+    Entries without a ``call_id`` are legacy spans recorded before the P0
+    callId fix; they get a locally-scoped ``call_<chat_index>_<i>`` id so the
+    exported message list stays internally paired (assistant
+    ``tool_calls[i].id`` must equal the paired tool message's
+    ``tool_call_id``).
     """
     if not isinstance(tool_calls_attr, list):
         return []
@@ -307,9 +314,12 @@ def _build_tool_calls(
         # arguments must be a JSON string per OpenAI format
         if not isinstance(args, str):
             args = json.dumps(args, ensure_ascii=False, default=str)
+        call_id = tc.get("call_id")
+        if not isinstance(call_id, str) or not call_id:
+            call_id = f"call_{chat_index}_{i}"
         result.append(
             {
-                "id": f"call_{call_id_start + i}",
+                "id": call_id,
                 "type": "function",
                 "function": {
                     "name": name,
@@ -352,8 +362,15 @@ def _trajectory_to_messages(spans: list[SpanModel]) -> list[dict[str, Any]]:
         return messages
 
     final_chat_index = len(chat_spans) - 1
-    tool_call_id_counter = 0
-    tool_result_idx = 0  # pointer into tool_spans
+    # Index tool spans by canonical call id for exact joining. Spans whose
+    # ``gen_ai.tool.call.id`` is empty/absent (pre-P0 legacy traces) fall
+    # through to order-based matching via ``tool_result_idx``.
+    tool_span_by_call_id: dict[str, SpanModel] = {}
+    for ts in tool_spans:
+        ts_call_id = ts.attributes.get(GenAiAttr.TOOL_CALL_ID.value)
+        if isinstance(ts_call_id, str) and ts_call_id:
+            tool_span_by_call_id[ts_call_id] = ts
+    tool_result_idx = 0  # order-fallback pointer into tool_spans
 
     for idx, chat_span in enumerate(chat_spans):
         attrs = chat_span.attributes
@@ -365,9 +382,7 @@ def _trajectory_to_messages(spans: list[SpanModel]) -> list[dict[str, Any]]:
 
         if has_tool_calls:
             # Assistant message with tool_calls
-            tool_calls = _build_tool_calls(tool_calls_attr, tool_call_id_counter)
-            n_tools = len(tool_calls)
-            tool_call_id_counter += n_tools
+            tool_calls = _build_tool_calls(tool_calls_attr, idx)
 
             assistant_msg: dict[str, Any] = {
                 "role": MessageRole.ASSISTANT.value,
@@ -376,20 +391,24 @@ def _trajectory_to_messages(spans: list[SpanModel]) -> list[dict[str, Any]]:
             }
             messages.append(assistant_msg)
 
-            # Match subsequent execute_tool spans by order.
-            for i in range(n_tools):
-                if tool_result_idx + i < len(tool_spans):
-                    ts = tool_spans[tool_result_idx + i]
-                    raw_result = ts.attributes.get(GenAiAttr.TOOL_RESULT.value)
-                    result_content = str(raw_result) if raw_result is not None else ""
-                    messages.append(
-                        {
-                            "role": MessageRole.TOOL.value,
-                            "tool_call_id": tool_calls[i]["id"],
-                            "content": result_content,
-                        }
-                    )
-            tool_result_idx += n_tools
+            # Join each assistant tool call to its execute_tool span by the
+            # canonical call id; order-based matching is the legacy fallback.
+            for i, tool_call_entry in enumerate(tool_calls):
+                tool_span = tool_span_by_call_id.get(tool_call_entry["id"])
+                if tool_span is None and tool_result_idx + i < len(tool_spans):
+                    tool_span = tool_spans[tool_result_idx + i]
+                if tool_span is None:
+                    continue
+                raw_result = tool_span.attributes.get(GenAiAttr.TOOL_RESULT.value)
+                result_content = str(raw_result) if raw_result is not None else ""
+                messages.append(
+                    {
+                        "role": MessageRole.TOOL.value,
+                        "tool_call_id": tool_call_entry["id"],
+                        "content": result_content,
+                    }
+                )
+            tool_result_idx += len(tool_calls)
         else:
             is_final = idx == final_chat_index
             if is_final:

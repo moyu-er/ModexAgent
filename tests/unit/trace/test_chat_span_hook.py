@@ -121,7 +121,16 @@ async def test_chat_span_captures_response_details(tmp_path: Path) -> None:
     spans = await store.list_by_session("session.worker")
     attributes = spans[0].attributes
     assert attributes[GenAiAttr.OUTPUT_TOOL_CALLS] == [
-        {"tool_name": "search", "arguments": '{"query": "trace"}'},
+        {"call_id": "call-1", "tool_name": "search", "arguments": '{"query": "trace"}'},
+    ]
+    # OUTPUT_MESSAGES tool_call parts carry the id in the OTel parts format.
+    tool_call_parts = [
+        p
+        for p in attributes[GenAiAttr.OUTPUT_MESSAGES][0]["parts"]
+        if p.get("type") == "tool_call"
+    ]
+    assert tool_call_parts == [
+        {"type": "tool_call", "id": "call-1", "name": "search", "arguments": '{"query": "trace"}'},
     ]
     assert attributes[GenAiAttr.OUTPUT_REASONING_CONTENT] == "Need current data"
     # prompt_tokens(10) includes cached tokens: uncached input = 10 - 4.

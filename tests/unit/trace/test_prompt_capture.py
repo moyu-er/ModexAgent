@@ -115,6 +115,12 @@ def test_full_prompt_capture_includes_system_prompt() -> None:
     )
     assert GenAiAttr.SYSTEM_INSTRUCTIONS in result
     assert result[GenAiAttr.SYSTEM_INSTRUCTIONS] == _SYSTEM_PROMPT
+    # The system message must ALSO ride the captured input messages — it is
+    # what the Langfuse generation Input view renders (summary mode drops it
+    # to hash+length, which is why full is the shipped default).
+    messages = result[GenAiAttr.INPUT_MESSAGES]
+    assert isinstance(messages, list)
+    assert messages[0]["role"] == "system"
 
 
 def test_full_prompt_capture_includes_tool_definitions() -> None:
@@ -157,6 +163,29 @@ def test_summary_still_works_with_new_kwargs() -> None:
     assert GenAiAttr.REQUEST_MODEL in result
     assert GenAiAttr.SYSTEM_PROMPT_HASH in result
     assert GenAiAttr.SYSTEM_PROMPT_LENGTH in result
+
+
+def test_summary_default_window_is_five_messages() -> None:
+    strategy = SummaryPromptCapture()
+    messages = [
+        ChatMessage(role=MessageRole.USER, content=f"msg {i}") for i in range(10)
+    ]
+    result = strategy.capture(messages, model="gpt-4")
+    captured = result[GenAiAttr.INPUT_MESSAGES]
+    assert isinstance(captured, list)
+    assert len(captured) == 5
+    # The LAST five messages are kept (sliding window tail).
+    texts: list[str] = []
+    for entry in captured:
+        assert isinstance(entry, dict)
+        parts = entry["parts"]
+        assert isinstance(parts, list)
+        for part in parts:
+            assert isinstance(part, dict)
+            content = part["content"]
+            assert isinstance(content, str)
+            texts.append(content)
+    assert texts == ["msg 5", "msg 6", "msg 7", "msg 8", "msg 9"]
 
 
 # ── build_prompt_capture routing ──────────────────────────────────────

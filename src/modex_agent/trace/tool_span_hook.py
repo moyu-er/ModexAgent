@@ -106,6 +106,10 @@ class ToolSpanHook(BaseTraceHook, BeforeToolExecutionHook, AfterToolExecutionHoo
             tool_call = calls_by_id.get(result.call_id) if result.call_id is not None else None
             if tool_call is None and index < len(calls_list):
                 tool_call = calls_list[index]
+            # ToolNode stamps the canonical ToolCall id onto every result
+            # path; the tool_call fallback keeps the attribute non-empty
+            # even on paths that bypass ToolNode's stamping.
+            call_id = result.call_id or (tool_call.call_id if tool_call is not None else None)
             arguments = tool_call.arguments if tool_call is not None else {}
             result_text = result.message_content()
             attributes = self._build_base_attrs(ctx, SpanName.EXECUTE_TOOL.value)
@@ -113,7 +117,7 @@ class ToolSpanHook(BaseTraceHook, BeforeToolExecutionHook, AfterToolExecutionHoo
                 {
                     GenAiAttr.TOOL_NAME: result.tool_name,
                     GenAiAttr.TOOL_TYPE: "function",
-                    GenAiAttr.TOOL_CALL_ID: result.call_id or "",
+                    GenAiAttr.TOOL_CALL_ID: call_id or "",
                     GenAiAttr.TOOL_CALL_ARGUMENTS: json.dumps(
                         arguments,
                         ensure_ascii=False,

@@ -478,7 +478,9 @@ class TestCompletionStartTime:
         assert response.completion_start_time is not None
         stamped = datetime.fromisoformat(response.completion_start_time)
         assert stamped.tzinfo is not None
-        assert before <= stamped.timestamp() <= after
+        # ISO microseconds truncate the float timestamp, so allow a 1µs
+        # rounding tolerance on both bounds.
+        assert before - 1e-6 <= stamped.timestamp() <= after + 1e-6
 
     async def test_first_event_of_any_kind_stamps_the_time(self) -> None:
         assembler = EventAssembler()

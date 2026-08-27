@@ -61,7 +61,12 @@ observability:
     x-langfuse-ingestion-version: "4"
   retain_reasoning_content: true
   # Prompt capture scope: off | hash | summary | full
-  # "full" captures complete system prompt + tool definitions for eval/training.
+  # "full" (default) — exact prompt inspection/reproduction on Langfuse: the
+  # system prompt rides gen_ai.system_instructions and every message (system
+  # included) rides the chat input. "summary" keeps only the last-5-messages
+  # window with system reduced to hash+length — system disappears from the
+  # Langfuse generation Input view (observed after e6464278 flipped the
+  # default; restored here).
   prompt_capture: "${PROMPT_CAPTURE:-full}"
   # Span emission tier: minimal | standard | full
   # "full" includes agent.start (system prompt + tools) + iteration spans.

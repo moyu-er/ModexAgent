@@ -119,6 +119,26 @@ async def test_no_tools_no_batch_span(tmp_path: Path) -> None:
     assert "trace-1" not in session.tool_batch_info
 
 
+async def test_tool_span_call_id_falls_back_to_matched_tool_call(tmp_path: Path) -> None:
+    """When a result carries no id (path bypassing ToolNode's stamping),
+    the span attribute falls back to the matched ToolCall's id — never
+    an empty string while an id exists anywhere."""
+    hook, _, store = _make_hook(tmp_path)
+    context = _make_context()
+
+    results = [
+        ToolResult.from_text("search", "found"),  # no call_id
+        ToolResult.from_text("write", "written"),  # no call_id
+    ]
+
+    await hook.before_tool_execution(context, _tool_calls())
+    await hook.after_tool_execution(context, results)
+
+    spans = await store.list_by_session("session.worker")
+    tools = [span for span in spans if span.name == SpanName.EXECUTE_TOOL.value]
+    assert [span.attributes[GenAiAttr.TOOL_CALL_ID] for span in tools] == ["call-1", "call-2"]
+
+
 async def test_tool_spans_not_emitted_without_trace_id(tmp_path: Path) -> None:
     hook, session, store = _make_hook(tmp_path)
     context = _make_context(with_trace=False)
