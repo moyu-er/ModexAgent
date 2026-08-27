@@ -9,6 +9,8 @@ the builder's own contract, not the pipeline's wiring.
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -27,6 +29,7 @@ from modex_agent.core.context import ContextState, InMemoryContextManager
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage
+from modex_agent.media.store import LocalFileMediaStore
 from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder, TurnRequest
@@ -35,6 +38,7 @@ from modex_agent.pipeline.turn_context_config import (
     TurnContextDescriptor,
 )
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 
 
@@ -53,27 +57,27 @@ def _agent_mock(name: str = "agent") -> Any:
 
 def _make_builder(**overrides: Any) -> TurnContextBuilder:
     """Construct a builder with sane defaults; tests override what they exercise."""
-    defaults: dict[str, Any] = dict(
-        agent=_agent_mock(),
-        tool_manager=InMemoryToolManager(),
-        sanitizer=None,
-        command_processor=None,
-        skill_manager=None,
-        context_builder=None,
-        agent_descriptor=None,
-        max_iterations=5,
-        safety=MagicMock(name="safety"),
-        runtime_services=None,
-        runtime_context_manager=None,
-        governance=None,
-        hook_runner=None,
-        interceptor_chain=None,
-        control_channel=None,
-        emitter_factory=None,
-        output_adapter=MagicMock(spec=OutputAdapter),
-        turn_store=None,
-        registry=TurnSessionRegistry(),
-    )
+    defaults: dict[str, Any] = {
+        "agent": _agent_mock(),
+        "tool_manager": InMemoryToolManager(),
+        "sanitizer": None,
+        "command_processor": None,
+        "skill_manager": None,
+        "context_builder": None,
+        "agent_descriptor": None,
+        "max_iterations": 5,
+        "safety": MagicMock(name="safety"),
+        "runtime_services": None,
+        "runtime_context_manager": None,
+        "governance": None,
+        "hook_runner": None,
+        "interceptor_chain": None,
+        "control_channel": None,
+        "emitter_factory": None,
+        "output_adapter": MagicMock(spec=OutputAdapter),
+        "turn_store": None,
+        "registry": TurnSessionRegistry(),
+    }
     defaults.update(overrides)
     return TurnContextBuilder(**defaults)
 
@@ -92,7 +96,7 @@ def test_turn_request_is_frozen() -> None:
         append_user_message=True,
         trigger_agent=True,
     )
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         req.session_id = "x"  # type: ignore[misc]
 
 
@@ -276,14 +280,10 @@ async def test_preprocess_applies_sanitizer() -> None:
     builder = _make_builder(sanitizer=sanitizer)
     input_msg = InputMessage(content="hi", session=SessionInfo.from_str("s:main"))
 
-    sanitized, media_blocks, media_processor = await builder.preprocess(
-        input_msg, "s:main", {}, None
-    )
+    sanitized = await builder.preprocess(input_msg, "s:main", {}, None)
 
     assert sanitized == "HI"
     assert calls == ["hi"]
-    assert media_blocks == []
-    assert media_processor is None
 
 
 # ---------------------------------------------------------------------------
@@ -428,80 +428,58 @@ async def test_build_runtime_and_context_propagates_model_info() -> None:
 
 
 @pytest.mark.asyncio
-async def test_build_runtime_and_context_carries_inline_image_attachments() -> None:
-    """Image-kind resolved attachments land in turn state for the inline renderer.
-
-    ADR-0014 §3 / OpenSpec native-multimodal-inline unit 3: the current turn's
-    image-kind resolved Attachments are carried in
-    ``ctx.runtime.state.custom[INLINE_ATTACHMENTS]`` so the renderer (unit 4)
-    can find them. Non-image attachments are dropped (only image-kind is
-    eligible for native inline rendering). The records carry path/mime/kind/name
-    but NO base64 — bytes are materialized lazily by unit 5.
-    """
-    from modex_agent.media.models import Attachment, AttachmentLocator, Kind
-    from modex_agent.runtime.enums import TurnCustomKey
-
-    img = Attachment(
-        id="a1",
-        kind=Kind.IMAGE,
-        name="cat.png",
-        mime="image/png",
-        size=12345,
-        path="media/cat.png",
-        locator=AttachmentLocator.MEDIA,
-    )
-    doc = Attachment(
-        id="a2",
-        kind=Kind.EXTRACTABLE_DOCUMENT,
-        name="report.pdf",
-        mime="application/pdf",
-        size=999,
-        path="media/report.pdf",
-        locator=AttachmentLocator.MEDIA,
-    )
-
+async def test_build_runtime_and_context_resolves_media_store_per_turn_without_mutating_shared_services(
+    tmp_path: Path,
+) -> None:
+    base_services = AgentRuntimeServices()
+    first_store = LocalFileMediaStore(tmp_path / "first")
+    second_store = LocalFileMediaStore(tmp_path / "second")
+    stores = iter((first_store, second_store))
     builder = _make_builder(
         agent=_agent_mock(),
         turn_store=InMemoryTurnStateStore(),
+        runtime_services=base_services,
+    )
+    builder.media_store_resolver = lambda: next(stores)
+    ctx_mgr = MagicMock(wrap_governance=MagicMock(return_value=None))
+
+    first_ctx, _ = builder.build_runtime_and_context(
+        SessionInfo.from_str("first.main"), ContextState(), ctx_mgr
+    )
+    second_ctx, _ = builder.build_runtime_and_context(
+        SessionInfo.from_str("second.main"), ContextState(), ctx_mgr
     )
 
-    ctx, _emitter = builder.build_runtime_and_context(
-        SessionInfo.from_str("s:main"),
-        ContextState(),
-        MagicMock(wrap_governance=MagicMock(return_value=None)),
-        inline_attachments=[img, doc],
-    )
-
-    assert ctx.runtime is not None
-    carried = ctx.runtime.state.custom[TurnCustomKey.INLINE_ATTACHMENTS]
-    assert [a.id for a in carried] == ["a1"]
-    assert carried[0].kind is Kind.IMAGE
-    assert carried[0].path == "media/cat.png"
-    assert carried[0].mime == "image/png"
-    assert carried[0].name == "cat.png"
-    # Attachment is the path-only VO — it has no bytes/base64 field at all.
-    assert not hasattr(carried[0], "data")
-    assert not hasattr(carried[0], "base64")
+    assert first_ctx.runtime is not None
+    assert second_ctx.runtime is not None
+    assert first_ctx.runtime.services is not base_services
+    assert second_ctx.runtime.services is not base_services
+    assert first_ctx.runtime.services is not second_ctx.runtime.services
+    assert first_ctx.runtime.services.media_store is first_store
+    assert second_ctx.runtime.services.media_store is second_store
+    assert base_services.media_store is None
 
 
 @pytest.mark.asyncio
-async def test_build_runtime_and_context_inline_attachments_defaults_empty() -> None:
-    """Omitting the param yields an empty list carrier (no KeyError for readers)."""
-    from modex_agent.runtime.enums import TurnCustomKey
-
+async def test_build_runtime_and_context_governance_only_propagates_media_store(
+    tmp_path: Path,
+) -> None:
+    base_services = AgentRuntimeServices()
+    store = LocalFileMediaStore(tmp_path / "media")
     builder = _make_builder(
         agent=_agent_mock(),
-        turn_store=InMemoryTurnStateStore(),
+        runtime_services=base_services,
     )
+    builder.media_store_resolver = lambda: store
+    ctx_mgr = MagicMock(wrap_governance=MagicMock(return_value=MagicMock()))
 
-    ctx, _emitter = builder.build_runtime_and_context(
-        SessionInfo.from_str("s:main"),
-        ContextState(),
-        MagicMock(wrap_governance=MagicMock(return_value=None)),
+    ctx, _ = builder.build_runtime_and_context(
+        SessionInfo.from_str("s.main"), ContextState(), ctx_mgr
     )
 
     assert ctx.runtime is not None
-    assert ctx.runtime.state.custom[TurnCustomKey.INLINE_ATTACHMENTS] == []
+    assert ctx.runtime.services.media_store is store
+    assert base_services.media_store is None
 
 
 @pytest.mark.asyncio
@@ -667,8 +645,6 @@ async def test_assemble_delegates_to_context_assembler() -> None:
         input_msg,
         {},
         "hi",
-        [],
-        None,
         ctx_mgr,
         None,
         False,

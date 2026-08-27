@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-27 -->
+<!-- Updated: 2026-08-26 -->
 
 # pipeline
 
@@ -21,7 +21,7 @@ End-to-end flow orchestration. `AgentPipeline` is now a **slimmed facade** (ADR-
 | `dream_scanner.py` | `DreamScanner` — `run_forever()` background loop that scans active contexts every `dream_interval` and triggers `DreamEngine` consolidation, scoped by per-scope `asyncio.Lock` from `runtime.dream_locks`. Pipeline owns the task lifecycle (`run()` creates it, `stop()` cancels + `DreamScanner.stop()`). |
 | `adapters.py` | `InputAdapter` / `OutputAdapter` ABCs. `InputAdapter.configure_input_pipeline()` stores pipeline/ctx/output reference. `WebSocketInputAdapter` overrides with no-op. Concrete: `NullOutputAdapter`, `SessionPrefixStripAdapter`, `CLIOutputAdapter`, `HTTPOutputAdapter`. Streaming: `send()` + `send_delta()` + `flush_deltas()`. |
 | `approval_renderer.py` | `ApprovalRenderer` — detects pending approval state, buffers agent messages during approval, applies unrelated-input auto-denial. Standalone `format_approval_prompt()`. Does NOT parse `/approve`/`/deny` (that's `parse_input_command` from `approval/response`). |
-| `context_assembler.py` | `assemble_context()` — loads history, writes user message, builds system prompt, handles multimodal/attachment content, sideband prompts, runs `MultiAgentContextBuilder`. Called by `TurnContextBuilder.assemble()`. |
+| `context_assembler.py` | `assemble_context()` — loads history, writes user message, builds system prompt, handles multimodal/attachment content (user message carries attachment `media://` ImageUrlParts alongside the text part when the model is IMAGE-capable; otherwise stays plain str), sideband prompts, runs `MultiAgentContextBuilder`. Called by `TurnContextBuilder.assemble()`. |
 | `filters.py` | `ContentFilter` ABC + `ChainedContentFilter`, `ReasoningContentFilter` (strip/keep), `WhitespaceFilter` (collapse/strip). Applied by `OutputAdapter._apply_filter()`. |
 | `snapshot.py` | `PipelineSnapshot` — captures pipeline state for approval suspend/resume (used by `ApprovalResumer` / `TurnRunner._handle_snapshot_approval()`). |
 
