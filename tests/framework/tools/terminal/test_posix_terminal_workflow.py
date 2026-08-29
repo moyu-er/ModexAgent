@@ -4,13 +4,11 @@ Mirrors the Windows test structure (``test_windows_terminal_command_process_work
 for macOS/Linux. Three high-value tests parametrized over visibility × shell:
 
 1. ``test_posix_terminal_workflow`` — tab management + env inheritance +
-   state persistence + interactive prompt + interrupt recovery + close.
+   state persistence + interactive write + interrupt recovery + close.
 2. ``test_posix_command_recreate_default_after_manual_close`` — manually
    kill default terminal; next command recreates it.
-3. ``test_posix_full_capability_sample`` — one big sample exercising every
-   TerminalTool / CommandTool / ProcessTool action: open/list/current/select/
-   interrupt/close, echo/env/cd/export, write/submit/send_keys/paste/
-   interrupt/kill/clear/remove, sleep STUCK whitelist, pager.
+3. ``test_posix_full_capability_sample`` — a sample of terminal tab management,
+   command state persistence, process writes, interrupt recovery, and close.
 
 All tests skip on Windows (Windows has its own suite). VISIBLE skips when
 tmux or terminal emulator is unavailable.
@@ -80,12 +78,9 @@ def _shell_platform() -> Platform:
 
 def _make_cfg() -> TerminalRuntimeConfig:
     return TerminalRuntimeConfig(
-        default_command_timeout_seconds=15,
-        command_tool_outer_timeout_seconds=20,
-        default_yield_ms=500,
+        command_deadline_seconds=15,
         prompt_stabilize_ms=200,
-        no_output_timeout_ms=8_000,
-        input_wait_idle_ms=6_000,
+        input_wait_idle_ms=2_000,
     )
 
 
@@ -136,12 +131,6 @@ def _kill_test_tmux_sessions() -> None:
             subprocess.run(["tmux", "kill-session", "-t", n], timeout=2)
 
 
-_IDLE = frozenset(
-    {TerminalCommandStatus.IDLE, TerminalCommandStatus.UNKNOWN, TerminalCommandStatus.COMPLETED}
-)
-_EXECUTING = frozenset({TerminalCommandStatus.EXECUTING, TerminalCommandStatus.WAITING_INPUT})
-
-
 async def _wait_for_status(
     manager: BaseTerminalManager,
     cfg: TerminalRuntimeConfig,
@@ -159,7 +148,7 @@ async def _wait_for_status(
             last = await session.command_status(config=cfg)
         # When the session is gone (e.g. kill in tmux mode removes it),
         # ``last`` stays UNKNOWN — a terminal condition for target sets
-        # that include UNKNOWN (i.e. _IDLE: no session == idle).
+        # that include UNKNOWN (i.e. no session == idle).
         if last in targets:
             return last
         await asyncio.sleep(interval)
@@ -167,18 +156,6 @@ async def _wait_for_status(
         f"session did not reach {sorted(t.value for t in targets)} "
         f"within {timeout}s (last={last.value})"
     )
-
-
-async def _wait_idle(
-    manager: BaseTerminalManager, cfg: TerminalRuntimeConfig, timeout: float = 10.0
-) -> None:
-    await _wait_for_status(manager, cfg, _IDLE, timeout=timeout)
-
-
-async def _wait_executing(
-    manager: BaseTerminalManager, cfg: TerminalRuntimeConfig, timeout: float = 10.0
-) -> None:
-    await _wait_for_status(manager, cfg, _EXECUTING, timeout=timeout)
 
 
 # ── bundle + parametrization ──────────────────────────────────────
@@ -296,20 +273,18 @@ async def test_posix_terminal_workflow(
             await _wait_for_status(
                 b.manager, b.cfg, frozenset({TerminalCommandStatus.WAITING_INPUT}), timeout=12.0
             )
-        result = await b.process.execute(action="write", data="alice", submit=True)
+        result = await b.process.execute(data="alice", submit=True)
         assert "got_alice" in result, f"process write did not answer:\n{result}"
 
-        # 9. Long-running command — interrupt + recovery.
-        sleep_task = asyncio.create_task(b.command.execute(command="sleep 60"))
-        await _wait_executing(b.manager, b.cfg, timeout=8.0)
-        await b.process.execute(action="interrupt")
-        await asyncio.sleep(1.0)
-        sleep_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, BaseException):
-            await sleep_task
-        with contextlib.suppress(Exception):
-            await b.process.execute(action="interrupt")
-        await _wait_idle(b.manager, b.cfg, timeout=15.0)
+        # 9. Interrupt + recovery — prompting command, ^C via process tool.
+        result = await b.command.execute(
+            command='printf "password: "; read v; sleep 30; echo DONE_NEVER'
+        )
+        if "waiting_input" not in result.lower():
+            await _wait_for_status(
+                b.manager, b.cfg, frozenset({TerminalCommandStatus.WAITING_INPUT}), timeout=12.0
+            )
+        await b.process.execute(data="^C")
 
         result = await b.command.execute(command='echo "RECOVERED"')
         assert _output_line(result, "RECOVERED"), f"recovery failed:\n{result}"
@@ -324,12 +299,12 @@ async def test_posix_terminal_workflow(
         result = await b.terminal.execute(action="list")
         assert "No active terminal tabs" in result, f"list not empty:\n{result}"
 
-        # 12. VISIBLE mode: current reports visible.
+        # 12. VISIBLE mode: the opened tab remains listed.
         if visibility == TerminalVisibility.VISIBLE:
             await b.terminal.execute(action="open", name="vis-check")
             await b.command.execute(command="echo visible_ok")
-            result = await b.terminal.execute(action="current")
-            assert "visible" in result.lower(), f"current should report visible:\n{result}"
+            result = await b.terminal.execute(action="list")
+            assert "vis-check" in result, f"list should report vis-check:\n{result}"
             await b.terminal.execute(action="close", name="vis-check")
     finally:
         await _cleanup(bundle)
@@ -387,11 +362,13 @@ async def test_posix_full_capability_sample(
     shell_path: str,
     shell_family: ShellFamily,
 ) -> None:
-    """One big sample exercising every TerminalTool / CommandTool / ProcessTool action.
+    """Sample tab management, command state, process writes, and interrupt recovery.
 
-    Covers: open/list/current/select/interrupt/close, echo/env/cd/export,
-    write/submit/send_keys/paste/interrupt/kill/clear/remove,
-    sleep STUCK whitelist, pager (less).
+    Sequential tool contract (ADR-0044): one tool call at a time — bash returns
+    a ``waiting_input`` advisory BEFORE the agent interacts via the process
+    tool. No background command task runs while the session is read, so each
+    PTY has a single reader at any moment — mirroring production ToolNode
+    ordering, which executes tool calls strictly sequentially.
     """
     bundle = _make_bundle(visibility, shell_path, shell_family)
     b = bundle
@@ -407,12 +384,9 @@ async def test_posix_full_capability_sample(
         result = await b.command.execute(command='echo "HELLO_9f1a"')
         assert _output_line(result, "HELLO_9f1a"), f"basic echo failed:\n{result}"
 
-        # ── 2. TerminalTool.list + TerminalTool.current ──
+        # ── 2. TerminalTool.list ──
         result = await b.terminal.execute(action="list")
         assert "main" in result, f"list should show main:\n{result}"
-
-        result = await b.terminal.execute(action="current")
-        assert "<status>" in result, f"current should return XML:\n{result}"
 
         # ── 3. State persistence — cd + pwd ──
         await b.command.execute(command="cd /tmp")
@@ -430,116 +404,46 @@ async def test_posix_full_capability_sample(
             await _wait_for_status(
                 b.manager, b.cfg, frozenset({TerminalCommandStatus.WAITING_INPUT}), timeout=12.0
             )
-        result = await b.process.execute(action="write", data="alice", submit=True)
+        result = await b.process.execute(data="alice", submit=True)
         assert "got_alice" in result, f"process.write did not answer:\n{result}"
 
-        # ── 6. ProcessTool.paste + send_keys Ctrl-D — multiline to cat ──
+        # ── 6. ProcessTool raw multiline write — prompting variant ──
         lines = ["paste-line-1", "paste-line-2", "paste-line-3"]
-        cat_task = asyncio.create_task(b.command.execute(command=f"cat > {paste_file}"))
-        await asyncio.sleep(2.0)
-        await _wait_executing(b.manager, b.cfg, timeout=8.0)
-
-        for line in lines:
-            await b.process.execute(action="write", data=line, submit=True)
-            await asyncio.sleep(0.3)
-
-        await asyncio.sleep(0.5)
-        await b.process.execute(action="send_keys", hex=["04"])  # Ctrl-D EOF
-        await asyncio.sleep(1.0)
-        cat_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, BaseException):
-            await cat_task
-        await asyncio.sleep(0.5)
-        with contextlib.suppress(Exception):
-            await b.process.execute(action="interrupt")
-        await asyncio.sleep(0.5)
+        result = await b.command.execute(command=f'printf "paste: "; head -n 3 > {paste_file}')
+        if "waiting_input" not in result.lower():
+            await _wait_for_status(
+                b.manager, b.cfg, frozenset({TerminalCommandStatus.WAITING_INPUT}), timeout=12.0
+            )
+        result = await b.process.execute(data="\n".join(lines) + "\n", submit=False)
 
         result = await b.command.execute(command=f"cat {paste_file}")
         cat_text = _extract_output(result)
         for line in lines:
             assert line in cat_text, f"pasted line {line!r} missing:\n{result}"
 
-        # ── 7. ProcessTool.submit — press Enter with empty input ──
+        # ── 7. ProcessTool write with empty submitted input ──
         result = await b.command.execute(command='printf "confirm: "; read val; echo "result_$val"')
         if "waiting_input" not in result.lower():
             await _wait_for_status(
                 b.manager, b.cfg, frozenset({TerminalCommandStatus.WAITING_INPUT}), timeout=12.0
             )
-        result = await b.process.execute(action="submit")
-        assert "result_" in result, f"process.submit did not produce result_:\n{result}"
+        result = await b.process.execute(data="", submit=True)
+        assert "result_" in result, f"submitted empty write did not produce result_:\n{result}"
 
-        # ── 8. ProcessTool.interrupt — sleep 60 + recovery ──
-        sleep_task = asyncio.create_task(b.command.execute(command="sleep 60"))
-        await _wait_executing(b.manager, b.cfg, timeout=8.0)
-        await b.process.execute(action="interrupt")
-        await asyncio.sleep(1.0)
-        sleep_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, BaseException):
-            await sleep_task
-        with contextlib.suppress(Exception):
-            await b.process.execute(action="interrupt")
-        await _wait_idle(b.manager, b.cfg, timeout=15.0)
+        # ── 8. ProcessTool ^C — interrupt a waiting read + recovery ──
+        result = await b.command.execute(
+            command='printf "password: "; read v; sleep 30; echo DONE_NEVER'
+        )
+        if "waiting_input" not in result.lower():
+            await _wait_for_status(
+                b.manager, b.cfg, frozenset({TerminalCommandStatus.WAITING_INPUT}), timeout=12.0
+            )
+        await b.process.execute(data="^C")
 
         result = await b.command.execute(command='echo "RECOVERED_7b2c"')
         assert _output_line(result, "RECOVERED_7b2c"), f"interrupt recovery failed:\n{result}"
 
-        # ── 9. TerminalTool.interrupt ──
-        sleep_task2 = asyncio.create_task(b.command.execute(command="sleep 60"))
-        await _wait_executing(b.manager, b.cfg, timeout=8.0)
-        await b.terminal.execute(action="interrupt")
-        await asyncio.sleep(1.0)
-        sleep_task2.cancel()
-        with contextlib.suppress(asyncio.CancelledError, BaseException):
-            await sleep_task2
-        with contextlib.suppress(Exception):
-            await b.process.execute(action="interrupt")
-        await _wait_idle(b.manager, b.cfg, timeout=15.0)
-
-        result = await b.command.execute(command='echo "RECOVERED_8c3d"')
-        assert _output_line(result, "RECOVERED_8c3d"), (
-            f"terminal.interrupt recovery failed:\n{result}"
-        )
-
-        # ── 10. ProcessTool.send_keys Ctrl-C — interrupt via byte ──
-        sleep_task3 = asyncio.create_task(b.command.execute(command="sleep 60"))
-        await _wait_executing(b.manager, b.cfg, timeout=8.0)
-        await b.process.execute(action="send_keys", hex=["03"])  # Ctrl-C
-        await _wait_idle(b.manager, b.cfg, timeout=10.0)
-        sleep_task3.cancel()
-        with contextlib.suppress(asyncio.CancelledError, BaseException):
-            await sleep_task3
-
-        # ── 11. send_keys Ctrl-U — clear readline input (HIDDEN only) ──
-        # tmux capture_pane doesn't reflect readline internal edit state.
-        if visibility == TerminalVisibility.HIDDEN:
-            await b.command.execute(command='echo "warmup_u"')
-            await _wait_idle(b.manager, b.cfg, timeout=5.0)
-
-            session = await b.manager.get_default_session()
-            assert session is not None
-            await session.write("garbage_partial_zz")
-            await asyncio.sleep(1.0)
-            await session.write("\x15")  # Ctrl-U
-            await asyncio.sleep(0.8)
-            seg = await session.current_segment()
-            assert "garbage_partial_zz" not in seg.cursor_line, (
-                f"Ctrl-U did not clear readline input:\ncursor={seg.cursor_line!r}"
-            )
-            await session.write("\x03")  # Ctrl-C
-            await asyncio.sleep(0.5)
-            await _wait_idle(b.manager, b.cfg, timeout=5.0)
-
-        # ── 12. ProcessTool.clear — clear finished session ──
-        await b.command.execute(command='echo "finished_1"')
-        result = await b.process.execute(action="clear")
-        assert "Cleared the finished command record" in result, f"clear failed:\n{result}"
-
-        # ── 13. ProcessTool.remove — remove finished/running session ──
-        await b.command.execute(command='echo "finished_2"')
-        result = await b.process.execute(action="remove")
-        assert "removed" in result.lower(), f"remove failed:\n{result}"
-
-        # ── 14. TerminalTool.select — multi-tab switching ──
+        # ── 9. TerminalTool.select — multi-tab switching ──
         await b.terminal.execute(action="open", name="second")
         result = await b.command.execute(command='echo "SECOND_TAB"')
         assert _output_line(result, "SECOND_TAB"), f"command in second tab failed:\n{result}"
@@ -550,19 +454,7 @@ async def test_posix_full_capability_sample(
         result = await b.command.execute(command='echo "BACK_MAIN"')
         assert _output_line(result, "BACK_MAIN"), f"command after select failed:\n{result}"
 
-        # ── 15. ProcessTool.kill — clears running registry ──
-        kill_task = asyncio.create_task(b.command.execute(command="sleep 60"))
-        await _wait_executing(b.manager, b.cfg, timeout=8.0)
-        result = await b.process.execute(action="kill")
-        assert "Killed the running command" in result, f"kill did not report killed:\n{result}"
-        kill_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, BaseException):
-            await kill_task
-        await _wait_idle(b.manager, b.cfg, timeout=15.0)
-        result = await b.command.execute(command='echo "AFTER_KILL"')
-        assert _output_line(result, "AFTER_KILL"), f"recovery after kill failed:\n{result}"
-
-        # ── 16. TerminalTool.close + list empty ──
+        # ── 10. TerminalTool.close + list empty ──
         for tab_name in list(b.manager._sessions):
             with contextlib.suppress(Exception):
                 await b.terminal.execute(action="close", name=tab_name)

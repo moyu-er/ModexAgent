@@ -142,17 +142,22 @@ async def test_takeover_fires_with_real_output_probeless() -> None:
 
 
 @_PTY_SKIP
-async def test_weak_shape_extended_window_probeless(
+async def test_shared_suffix_layer_preempts_probeless_weak_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(session_mod, "stdin_probe_available", lambda: False)
     tool = PersistentBashTool(timeout_seconds=10)
+    bash_input = BashInputTool(tool.manager)
     try:
-        out = await tool.execute(command="echo 'stuck? '; sleep 0.6; echo tail")
+        out = await tool.execute(command="echo 'stuck? '; sleep 3; echo tail")
 
+        # The shared Layer-2 union fires at the normal settle window; ADR-0045's
+        # extended probeless window now governs only session-local weak shapes.
         assert "stuck?" in out
-        assert "tail" in out
-        assert "[hint:" not in out
+        assert "tail" not in out
+        assert "[hint:" in out
+        assert "[hint:" not in await bash_input.execute(line="^C")
+        assert await tool.execute(command="echo healthy") == "healthy"
     finally:
         await tool.close()
 

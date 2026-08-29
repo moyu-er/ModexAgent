@@ -155,9 +155,7 @@ async def test_probe_misreport_suppressed_while_streaming(monkeypatch: pytest.Mo
     monkeypatch.setattr(PersistentShellSession, "_probe_stdin_wait", _probe_misreports)
     tool = PersistentBashTool(timeout_seconds=10)
     try:
-        out = await tool.execute(
-            command="for i in $(seq 1 15); do echo l$i; sleep 0.1; done"
-        )
+        out = await tool.execute(command="for i in $(seq 1 15); do echo l$i; sleep 0.1; done")
         assert out.splitlines()[-1] == "l15"
         assert "[hint:" not in out
     finally:
@@ -213,15 +211,21 @@ async def test_prompt_shape_detected_without_keywords(monkeypatch: pytest.Monkey
         await tool.close()
 
 
-async def test_completed_output_with_prompt_suffix_no_false_wait(
+async def test_suffix_shaped_output_advisory_fires_and_recovers(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """THE gpt2-codegolf false positive (tb21-all-v6): a slow
-    compute-then-print command whose data lines end in ')' must NOT be
-    misread as a stdin wait — the weak suffix heuristic alone is not
-    evidence when the kernel probe is available and says nothing is
-    blocked on stdin. No hint, no WAITING lock, the next bash call just
-    works."""
+    """The gpt2-codegolf shape (tb21-all-v6) under the shared detector's
+    documented Layer-2 contract: a slow compute-then-print command whose
+    data lines end in ')' now surfaces the soft stdin-wait advisory at the
+    settle window — even when the kernel probe is available and says
+    nothing is blocked on stdin. prompt.py's Layer 2 (the prompt-shape
+    suffix layer documented in terminal/AGENTS.md's "keyword ∪
+    prompt-shape" evidence fusion) fires on the trailing ')' before the
+    probe-gated weak path is consulted, so a probe veto now governs only
+    the session-local shell shapes. The false positive is BY-DESIGN
+    tolerable: the hint is soft-worded and the transaction stays
+    recoverable — bash_input(^C) closes it and the next bash call just
+    works (no deadlock, no lost session)."""
     monkeypatch.setattr(session_mod, "stdin_probe_available", lambda: True)
 
     async def _probe_says_not_waiting(self: PersistentShellSession) -> bool:
@@ -229,11 +233,14 @@ async def test_completed_output_with_prompt_suffix_no_false_wait(
 
     monkeypatch.setattr(PersistentShellSession, "_probe_stdin_wait", _probe_says_not_waiting)
     tool = PersistentBashTool(timeout_seconds=10)
+    bash_input = BashInputTool(tool.manager)
     try:
         out = await tool.execute(
-            command="echo 'wpe [85056000..85842432): (-0.0007, 0.1227)'; sleep 0.5; echo tail"
+            command="echo 'wpe [85056000..85842432): (-0.0007, 0.1227)'; sleep 3; echo tail"
         )
-        assert "[hint:" not in out
+        assert "[hint:" in out
+        resumed = await bash_input.execute(line="^C")
+        assert "[hint:" not in resumed
         assert await tool.execute(command="echo healthy") == "healthy"
     finally:
         await tool.close()

@@ -401,6 +401,32 @@ class TestShutdownOwnership:
         assert pool.get("owner") is owner
         assert pool.get_status("owner") == AgentState.SHUTTING_DOWN
 
+    @pytest.mark.asyncio
+    async def test_background_stops_run_in_reverse_and_continue_after_failure(
+        self,
+    ) -> None:
+        pool = AgentPool(broker=_FakeBroker(), agent_factory=MagicMock())
+        calls: list[str] = []
+
+        async def first() -> None:
+            calls.append("first")
+
+        async def broken() -> None:
+            calls.append("broken")
+            raise RuntimeError("cleanup failed")
+
+        async def last() -> None:
+            calls.append("last")
+
+        pool.attach_background_stop(first)
+        pool.attach_background_stop(broken)
+        pool.attach_background_stop(last)
+
+        completed = await pool.shutdown_all(timeout=0.1)
+
+        assert completed is True
+        assert calls == ["last", "broken", "first"]
+
 
 class TestSubmitInputAndPollerHelpers:
     """Task 6: pool.submit_input (C2 payload) + poller helpers + dispatch_envelope."""

@@ -15,7 +15,7 @@ any platform (``PexpectPtyBackend.__init__`` defers the ``pexpect`` import to
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -207,6 +207,66 @@ def test_backend_implements_read_blocking_hook() -> None:
 def test_backend_implements_shell_family_hook() -> None:
     """``_shell_family`` hook is implemented on this backend."""
     assert "_shell_family" in vars(PexpectPtyBackend)
+
+
+def test_stdin_wait_evidence_returns_none_when_probe_unavailable() -> None:
+    backend, _, _ = _make_backend_with_proc()
+
+    with patch(
+        "modex_agent.tools.terminal.backends.pexpect_pty.stdin_probe_available",
+        return_value=False,
+    ):
+        result = backend.stdin_wait_evidence()
+
+    assert result is None
+
+
+def test_stdin_wait_evidence_probes_foreground_group() -> None:
+    backend, proc, _ = _make_backend_with_proc()
+    proc.pid = 123
+
+    with (
+        patch(
+            "modex_agent.tools.terminal.backends.pexpect_pty.stdin_probe_available",
+            return_value=True,
+        ),
+        patch(
+            "modex_agent.tools.terminal.backends.pexpect_pty.foreground_pgid",
+            return_value=456,
+        ) as foreground,
+        patch(
+            "modex_agent.tools.terminal.backends.pexpect_pty.controlling_tty_device",
+            return_value=(136, 0),
+        ) as controlling_tty,
+        patch(
+            "modex_agent.tools.terminal.backends.pexpect_pty.is_stdin_waiting",
+            return_value=True,
+        ) as waiting,
+    ):
+        result = backend.stdin_wait_evidence()
+
+    assert result is True
+    foreground.assert_called_once_with(123)
+    controlling_tty.assert_called_once_with(123)
+    waiting.assert_called_once_with(456, (136, 0))
+
+
+def test_stdin_wait_evidence_converts_os_error_to_absent_evidence() -> None:
+    backend, _, _ = _make_backend_with_proc()
+
+    with (
+        patch(
+            "modex_agent.tools.terminal.backends.pexpect_pty.stdin_probe_available",
+            return_value=True,
+        ),
+        patch(
+            "modex_agent.tools.terminal.backends.pexpect_pty.foreground_pgid",
+            side_effect=OSError,
+        ),
+    ):
+        result = backend.stdin_wait_evidence()
+
+    assert result is None
 
 
 # ── Inherited clear_input_line behavior ──

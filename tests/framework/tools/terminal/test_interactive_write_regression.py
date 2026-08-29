@@ -81,7 +81,7 @@ async def test_write_trailing_newline_single_submit_and_registry_hygiene(
     assert _line_marker(result, "got_y_n"), f"second prompt write failed:\n{result}"
 
     # D5: completion via the write drain must move the session out of
-    # RUNNING — no ghost entries for `process list`/`terminal current`.
+    # RUNNING — no ghost entries remain after the write drain completes.
     session = await tools.terminal._manager.get_default()
     assert session is not None
     residue = tools.registry.get_running_by_terminal(session.name)

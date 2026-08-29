@@ -1,22 +1,22 @@
 """Visible terminal lifecycle: env-var isolation across tabs, long-running
-``current`` tracking with strict status transitions, shell-exit auto-restart.
+status tracking, shell-exit auto-restart.
 
 VISIBLE parametrization. Complementary to ``test_terminal_management.py``
 (HIDDEN) which exercises the TerminalTool action surface — this file targets
 the state-persistence and status-tracking contracts that are most fragile
 under the visible PTY path (ConPTY timing, host↔parent IPC).
 """
+
 from __future__ import annotations
 
 import asyncio
-import re
 import sys
 
 import pytest
 
-from modex_agent.tools.terminal.types import TerminalCommandStatus, TerminalVisibility
+from modex_agent.tools.terminal.types import TerminalVisibility
 
-from .conftest import output_of, run_command, wait_for_status
+from .conftest import output_of, run_command
 
 pytestmark = [
     pytest.mark.skipif(sys.platform != "win32", reason="Windows-only real-PTY workflow"),
@@ -29,12 +29,6 @@ pytestmark = [
 _VIS = [pytest.param(TerminalVisibility.VISIBLE, id="visible")]
 
 
-def _status_value(current_xml: str) -> str:
-    match = re.search(r"<status>([^<]+)</status>", current_xml)
-    assert match, f"<status> tag missing:\n{current_xml}"
-    return match.group(1).strip()
-
-
 @pytest.mark.parametrize("visibility", _VIS, indirect=True)
 @pytest.mark.asyncio
 async def test_visible_lifecycle_and_tracking(tools) -> None:
@@ -43,9 +37,7 @@ async def test_visible_lifecycle_and_tracking(tools) -> None:
     Stages:
       1. Set an env var in tab-A; verify it is invisible in tab-B and still
          set when we return to tab-A (true cross-tab isolation).
-      2. Start a long-running command; ``current`` reports ``executing``
-         mid-flight. After the prompt returns, ``current`` reports ``idle``
-         AND contains the final marker (proves YIELD → IDLE transition).
+      2. Run a slow command through completion; a subsequent command succeeds.
       3. Exit the shell cleanly; verify the next command auto-restarts the
          backend (the visible host process is respawned on demand).
     """
@@ -61,9 +53,7 @@ async def test_visible_lifecycle_and_tracking(tools) -> None:
     await t.execute(action="select", name="b")
     res_b = await run_command(tools, 'echo "B_sees=${SECRET_A}"')
     assert output_of(res_b, "B_sees="), f"b echo did not run cleanly:\n{res_b}"
-    assert "alpha_a3f1" not in res_b, (
-        f"b saw a's env var — isolation broken:\n{res_b}"
-    )
+    assert "alpha_a3f1" not in res_b, f"b saw a's env var — isolation broken:\n{res_b}"
 
     await t.execute(action="select", name="a")
     res_a = await run_command(tools, 'echo "A_sees=${SECRET_A}"')
@@ -71,32 +61,20 @@ async def test_visible_lifecycle_and_tracking(tools) -> None:
         f"a lost its own env var — state not persisted:\n{res_a}"
     )
 
-    # ── 2. Long-running command: EXECUTING mid-flight, IDLE + marker after ──
     yield_res = await run_command(tools, "sleep 2; echo LONG_DONE_b8e1", timeout=15.0)
-    assert "executing" in yield_res.lower(), (
-        f"long command should yield executing, got:\n{yield_res}"
+    assert "<status>completed</status>" in yield_res.lower(), (
+        f"slow command should complete, got:\n{yield_res}"
     )
 
-    cur_mid = await t.execute(action="current")
-    # While still running the status may already have flipped to idle if the
-    # 2s sleep already elapsed; accept either, but the payload must mention
-    # the running command.
-    assert "sleep 2" in cur_mid or "LONG_DONE_b8e1" in cur_mid, (
-        f"current mid-flight missing the running command:\n{cur_mid}"
+    listed_mid = await t.execute(action="list")
+    assert '<tab name="a" default="true"' in listed_mid, (
+        f"a not marked as selected during long command:\n{listed_mid}"
     )
 
-    await wait_for_status(
-        tools,
-        frozenset({TerminalCommandStatus.IDLE, TerminalCommandStatus.UNKNOWN}),
-        timeout=10.0,
-    )
-
-    cur_after = await t.execute(action="current")
-    assert _status_value(cur_after) == "idle", (
-        f"current status not idle after long command completed:\n{cur_after}"
-    )
-    assert "LONG_DONE_b8e1" in cur_after, (
-        f"current after completion missing the marker:\n{cur_after}"
+    after_marker = "AFTER_LONG_b8e1"
+    res_after = await run_command(tools, f"echo {after_marker}")
+    assert output_of(res_after, after_marker), (
+        f"command after long command completion did not run:\n{res_after}"
     )
 
     # ── 3. Shell exit auto-restart ──────────────────────────────────────────

@@ -135,8 +135,8 @@ async def test_ssh_two_sessions_parallel_interactive():
         resumed_b = await _input_as_session(bash_input, "conv.B.main", "pwB")
         assert "Welcome" in resumed_a and "[hint:" in resumed_a
         assert "Welcome" in resumed_b and "[hint:" in resumed_b
-        echo_a = await _input_as_session(bash_input, "conv.A.main", "exit")
-        echo_b = await _input_as_session(bash_input, "conv.B.main", "exit")
+        await _input_as_session(bash_input, "conv.A.main", "exit")
+        await _input_as_session(bash_input, "conv.B.main", "exit")
         assert await _run_as_session(tool, "conv.A.main", "echo doneA") == "doneA"
         assert await _run_as_session(tool, "conv.B.main", "echo doneB") == "doneB"
     finally:

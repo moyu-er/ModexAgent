@@ -1,7 +1,7 @@
 """Unit tests for TerminalSession command-boundary buffer semantics.
 
-Pins the contract that ``terminal current`` relies on: after running a
-command, ``last_command_output()`` must still return that command's output
+Pins the contract consumed by bash result output and guard snapshots: after
+running a command, ``last_command_output()`` must still return that command's output
 (extracted from the second-to-last prompt anchor). ``submit_command`` must
 seal the previous command's block (``mark_command_boundary``) instead of
 wiping the buffer (``clear_buffer``) — wiping removes the prompt line the
@@ -9,12 +9,13 @@ extractor anchors on, making the last command's output invisible to the
 agent (regression e3cbc1d3, surfaced by the Windows real-PTY workflow
 tests ``test_hidden_terminal_management`` / ``test_hidden_process_interaction``).
 """
+
 from __future__ import annotations
 
 from collections import deque
 
 from modex_agent.tools.terminal.backends.base import TerminalBackend
-from modex_agent.tools.terminal.results import SlidingOutputBuffer, TerminalRead
+from modex_agent.tools.terminal.results import SlidingOutputBuffer
 from modex_agent.tools.terminal.session import TerminalSession
 from modex_agent.tools.terminal.types import (
     Platform,
@@ -90,7 +91,9 @@ def _make_session() -> tuple[TerminalSession, _FakeByteStreamBackend]:
     return session, backend
 
 
-async def _run_command(session: TerminalSession, backend: _FakeByteStreamBackend, echo_line: str) -> None:
+async def _run_command(
+    session: TerminalSession, backend: _FakeByteStreamBackend, echo_line: str
+) -> None:
     """submit_command + feed the shell echo/output/prompt bytes into the buffer."""
     await session.submit_command(echo_line)
     backend.pending.append(f"{echo_line}\r\n{echo_line.split(' ', 1)[1]}\r\n{_PROMPT}")

@@ -308,6 +308,51 @@ class TestStrategyResolutionAndAssemble:
         assert propagated.pool_runtime is not None
         assert propagated.pool_runtime.process_registry is None
 
+    async def test_watchdog_stop_registered_on_builder_and_pool(self) -> None:
+        from unittest.mock import patch
+
+        from modex_agent.multi_agent.execution_strategy import StrategyAssembly
+        from modex_agent.tools.terminal import ProcessRegistry
+
+        terminal_manager = MagicMock()
+        process_registry = ProcessRegistry()
+        strategy_result = StrategyAssembly(
+            terminal_manager=terminal_manager,
+            process_registry=process_registry,
+        )
+        stub = _make_stub_strategy()
+        stub.assemble_main = AsyncMock(return_value=strategy_result)  # type: ignore[method-assign]
+        registry = _make_registry(stub)
+        pool = MagicMock()
+        pool.tree = None
+        supply = SupplyInfra(
+            pool_assembly_ctx=_make_pool_assembly_ctx(),
+            pool=pool,
+        )
+        builder = AssemblyBuilder()
+        builder.workspace_resources = _make_workspace_resources()
+        builder.infra = supply
+
+        with patch(
+            "modex_agent.plugins.assembly.stages.pool_assemble.TerminalWatchdog"
+        ) as watchdog_cls:
+            await PoolAssembleStage().process(
+                _make_spec(),
+                builder,
+                _make_ctx(registry, builder.workspace_resources, supply),
+            )
+
+        watchdog = watchdog_cls.return_value
+        watchdog.start.assert_called_once_with()
+        # Success path: the pool stops the watchdog in shutdown_all.
+        pool.attach_background_stop.assert_called_once_with(watchdog.stop)
+        # Failure path: the builder stops it in cleanup() when a later
+        # stage fails (AssemblyPipeline runs builder.cleanup() then
+        # re-raises). stop() is idempotent, so both registrations coexist.
+        assert builder._cleanups == [watchdog.stop]  # noqa: SLF001
+        assert builder.strategy_result is not None
+        assert builder.strategy_result.extra_cleanup == ()
+
     async def test_strategy_assemble_called_with_pool_assembly_ctx(self) -> None:
         """``strategy.assemble_main`` receives a :class:`PoolAssemblyContext`."""
         stub = _make_stub_strategy()
@@ -343,6 +388,115 @@ class TestStrategyResolutionAndAssemble:
         # if factory.create weren't awaited, strategy.assemble_main would be
         # a coroutine, not an AsyncMock, and assert_awaited would fail.
         stub.assemble_main.assert_awaited()  # type: ignore[attr-defined]
+
+
+# ─── Assembly-failure watchdog lifecycle (final-review F1) ───────────────────
+
+
+class _NoopStage(AssemblyStage):
+    """Stub stage — does nothing (stands in for WorkspaceMaterializeStage)."""
+
+    async def process(
+        self,
+        spec: AssemblySpec,
+        builder: AssemblyBuilder,
+        ctx: AssemblyContext,
+    ) -> None:
+        del spec, builder, ctx
+
+
+class _FailingStage(AssemblyStage):
+    """Stub stage 4 — always fails, forcing the pipeline's cleanup-on-failure."""
+
+    async def process(
+        self,
+        spec: AssemblySpec,
+        builder: AssemblyBuilder,
+        ctx: AssemblyContext,
+    ) -> None:
+        del spec, builder, ctx
+        raise RuntimeError("stage 4 boom")
+
+
+class TestAssemblyFailureStopsWatchdog:
+    """F1 regression: on assembly failure AFTER PoolAssembleStage, the
+    builder-registered ``watchdog.stop`` must run via ``builder.cleanup()``.
+    Before the fix the only registration lived on the supplied pool — which
+    failure teardown never reaches — so a stage-4 failure leaked the scanner
+    task."""
+
+    async def test_stage_failure_after_pool_stage_stops_watchdog(self) -> None:
+        import dataclasses
+        from unittest.mock import patch
+
+        from modex_agent.multi_agent.execution_strategy import StrategyAssembly
+        from modex_agent.plugins.assembly.pipeline import AssemblyPipeline
+        from modex_agent.plugins.assembly.stages.infra_assemble import InfraAssembleStage
+        from modex_agent.tools.terminal import ProcessRegistry
+        from modex_agent.tools.terminal.managers import TerminalManagerBase
+        from modex_agent.tools.terminal.watchdog import TerminalWatchdog
+
+        created: list[TerminalWatchdog] = []
+
+        class _RecordingWatchdog(TerminalWatchdog):
+            def __init__(
+                self,
+                manager: TerminalManagerBase,
+                registry: ProcessRegistry,
+                *,
+                interval_s: float = 5.0,
+            ) -> None:
+                super().__init__(manager, registry, interval_s=interval_s)
+                created.append(self)
+
+        class _AssemblyReturningStrategy(_StubExecutionStrategy):
+            """Returns a REAL StrategyAssembly dataclass — the watchdog
+            wiring path requires a dataclass strategy result (mock strategy
+            results skip it via the is_dataclass guard)."""
+
+            def __init__(self, strategy_result: StrategyAssembly) -> None:
+                super().__init__()
+                self._strategy_result = strategy_result
+
+            async def assemble_main(self, ctx: PoolAssemblyContext) -> StrategyAssembly:
+                del ctx
+                return self._strategy_result
+
+        strategy_result = StrategyAssembly(
+            terminal_manager=MagicMock(spec=TerminalManagerBase),
+            process_registry=ProcessRegistry(),
+        )
+        registry = _make_registry(_AssemblyReturningStrategy(strategy_result))
+        pool = MagicMock()
+        pool.tree = None
+        supply = SupplyInfra(
+            pool_assembly_ctx=_make_pool_assembly_ctx(),
+            pool=pool,
+        )
+
+        pipeline = AssemblyPipeline(
+            workspace_materialize=_NoopStage(),
+            infra_assemble=InfraAssembleStage(),
+            pool_assemble=PoolAssembleStage(),
+            agent_assemble=_FailingStage(),
+        )
+        ctx = dataclasses.replace(_make_ctx(registry), infra=supply)
+
+        with (
+            patch(
+                "modex_agent.plugins.assembly.stages.pool_assemble.TerminalWatchdog",
+                _RecordingWatchdog,
+            ),
+            pytest.raises(RuntimeError, match="stage 4 boom"),
+        ):
+            await pipeline.run(_make_spec(), ctx)
+
+        assert len(created) == 1
+        watchdog = created[0]
+        pool.attach_background_stop.assert_called_once_with(watchdog.stop)
+        # start() set _task; only stop() resets it to None — the pipeline's
+        # builder.cleanup() ran and stopped the scanner.
+        assert watchdog._task is None  # noqa: SLF001
 
 
 # ─── Process: builder outputs ───────────────────────────────────────────────
@@ -406,8 +560,12 @@ class TestBuilderOutputs:
         await builder.cleanup()
 
     async def test_supplied_pool_not_registered_for_cleanup(self) -> None:
-        """No cleanup registration — the orchestrator owns the supplied
-        pool's lifecycle (create_pool tears it down via workspace evict)."""
+        """The supplied POOL is never registered on the builder — the
+        orchestrator owns its lifecycle (create_pool tears it down via
+        workspace evict). The watchdog's stop is the one builder-registered
+        cleanup (see test_watchdog_stop_registered_on_builder_and_pool);
+        this stub strategy result is not a dataclass, so even that wiring
+        is skipped here."""
         stub = _make_stub_strategy()
         registry = _make_registry(stub)
         builder = AssemblyBuilder()

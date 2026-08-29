@@ -1,20 +1,14 @@
-"""Guard allowlist asymmetry — STUCK is process-writable, not command-writable.
-
-D6 of the terminal-trio split-brain fix: the STUCK suggestion text tells
-the agent to ``process write``, but ``_PROCESS_ALLOWED`` rejected STUCK —
-the message lied. STUCK's usual causes are unrecognized silent prompts
-(custom PS1, password prompts without markers); a new command into a
-possibly-hung terminal stays rejected.
-"""
-
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from modex_agent.tools.terminal.guard import (
     check_command_writable,
     check_process_writable,
 )
+from modex_agent.tools.terminal.process_registry import ProcessRegistry
 from modex_agent.tools.terminal.types import TerminalCommandStatus
 
 
@@ -30,27 +24,52 @@ def _session_with_status(status: TerminalCommandStatus) -> MagicMock:
     return session
 
 
-async def test_process_guard_allows_stuck() -> None:
-    session = _session_with_status(TerminalCommandStatus.STUCK)
+@pytest.mark.parametrize(
+    "status",
+    [
+        TerminalCommandStatus.IDLE,
+        TerminalCommandStatus.UNKNOWN,
+        TerminalCommandStatus.COMPLETED,
+        TerminalCommandStatus.TIMED_OUT,
+    ],
+)
+async def test_both_guards_allow_settled_states(status: TerminalCommandStatus) -> None:
+    session = _session_with_status(status)
 
-    result = await check_process_writable(session)
+    command_result = await check_command_writable(session)
+    process_result = await check_process_writable(session)
 
-    assert result is None, "STUCK must be process-writable so `process write` works"
-
-
-async def test_command_guard_still_rejects_stuck() -> None:
-    session = _session_with_status(TerminalCommandStatus.STUCK)
-
-    result = await check_command_writable(session)
-
-    assert result is not None, (
-        "STUCK must stay command-rejected (new commands into a possibly-hung terminal)"
-    )
+    assert command_result is None
+    assert process_result is None
 
 
-async def test_process_guard_still_rejects_long_running() -> None:
-    session = _session_with_status(TerminalCommandStatus.LONG_RUNNING)
+async def test_waiting_input_is_process_writable_only() -> None:
+    session = _session_with_status(TerminalCommandStatus.WAITING_INPUT)
 
-    result = await check_process_writable(session)
+    command_result = await check_command_writable(session)
+    process_result = await check_process_writable(session)
 
-    assert result is not None
+    assert command_result is not None
+    assert process_result is None
+
+
+async def test_executing_is_rejected_by_both_guards() -> None:
+    session = _session_with_status(TerminalCommandStatus.EXECUTING)
+
+    command_result = await check_command_writable(session)
+    process_result = await check_process_writable(session)
+
+    assert command_result is not None
+    assert process_result is not None
+
+
+async def test_process_guard_allows_quiet_executing_stdin_consumer() -> None:
+    session = _session_with_status(TerminalCommandStatus.EXECUTING)
+    session.name = "default"
+    registry = ProcessRegistry()
+    running = registry.create(command="cat > file", terminal="default", cwd=None, pid=None)
+    running.last_output_at -= 1.1
+
+    result = await check_process_writable(session, registry=registry)
+
+    assert result is None

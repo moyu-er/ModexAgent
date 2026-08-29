@@ -1,20 +1,16 @@
-"""Process interaction workflow: password / y / yes / n / no prompts,
-multi-line paste, send_keys (Ctrl-C / Ctrl-D), interrupt recovery, pager.
+"""Process write workflow: prompts, raw multiline input, interrupt, and pager."""
 
-HIDDEN parametrization. Complementary to the VISIBLE test in
-``test_terminal_send_keys_visible.py`` which exercises the visible-only
-byte-delivery challenges (Ctrl-U / Tab via ConPTY).
-"""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 
 import pytest
 
 from modex_agent.tools.terminal.types import TerminalCommandStatus, TerminalVisibility
 
-from .conftest import drain_current, output_of, run_command, wait_for_status
+from .conftest import output_of, run_command, wait_for_status
 
 pytestmark = [
     pytest.mark.skipif(sys.platform != "win32", reason="Windows-only real-PTY workflow"),
@@ -32,17 +28,9 @@ async def _start_interactive(tools, command: str) -> None:
     marker detection or idle-based fallback (catches ``read -s``).
     """
     res = await run_command(tools, command, timeout=15.0)
-    lowered = res.lower()
-    if "waiting_input" in lowered:
-        return
-    if "executing" in lowered or "timed_out" in lowered:
-        await wait_for_status(
-            tools,
-            TerminalCommandStatus.WAITING_INPUT,
-            timeout=12.0,
-        )
-        return
-    raise AssertionError(f"interactive command unexpectedly finished:\n{res}")
+    assert "<status>waiting_input</status>" in res.lower(), (
+        f"interactive command should return an input advisory:\n{res}"
+    )
 
 
 async def _answer_and_verify(
@@ -51,22 +39,20 @@ async def _answer_and_verify(
     expected_marker: str,
     *,
     negative_marker: str | None = None,
-) -> None:
+) -> str:
     """Send ``answer`` via process write; verify ``expected_marker`` appears on
     its own line and ``negative_marker`` (if given) does NOT appear on its own.
     """
-    write_res = await tools.process.execute(action="write", data=answer, submit=True)
-    assert "rejected" not in write_res.lower(), (
-        f"process write rejected:\n{write_res}"
-    )
-    drained = await drain_current(tools, expected_marker, attempts=30, delay=0.3)
-    assert output_of(drained, expected_marker), (
-        f"answer {answer!r} did not produce {expected_marker!r} on its own line:\n{drained}"
+    write_res = await tools.process.execute(data=answer, submit=True)
+    assert "rejected" not in write_res.lower(), f"process write rejected:\n{write_res}"
+    assert output_of(write_res, expected_marker), (
+        f"answer {answer!r} did not produce {expected_marker!r} on its own line:\n{write_res}"
     )
     if negative_marker is not None:
-        assert not output_of(drained, negative_marker), (
-            f"unexpected branch {negative_marker!r} taken after answer {answer!r}:\n{drained}"
+        assert not output_of(write_res, negative_marker), (
+            f"unexpected branch {negative_marker!r} taken after answer {answer!r}:\n{write_res}"
         )
+    return write_res
 
 
 @pytest.mark.parametrize("visibility", _VIS, indirect=True)
@@ -87,15 +73,14 @@ async def test_hidden_process_interaction(tools) -> None:
     """
     # ── 1. Password (silent prompt — exercises idle-based detection) ────────
     secret = "S3cret_pwd_7f1a"
-    await _start_interactive(tools, 'bash -c \'read -s v; echo; echo got_"$v"\'')
-    await _answer_and_verify(tools, secret, f"got_{secret}")
+    await _start_interactive(tools, "bash -c 'read -s v; echo; echo got_\"$v\"'")
+    password_result = await _answer_and_verify(tools, secret, f"got_{secret}")
 
     # Verify the password value never appears as standalone output (only
     # inside the ``got_<secret>`` marker we constructed).
-    recent = await tools.terminal.execute(action="current")
-    bare_secret_lines = [ln for ln in recent.splitlines() if ln.strip() == secret]
+    bare_secret_lines = [ln for ln in password_result.splitlines() if ln.strip() == secret]
     assert not bare_secret_lines, (
-        f"password value leaked onto its own line (silent read failed):\n{recent}"
+        f"password value leaked onto its own line (silent read failed):\n{password_result}"
     )
 
     # ── 2. y short answer → yes branch ──────────────────────────────────────
@@ -131,36 +116,33 @@ async def test_hidden_process_interaction(tools) -> None:
     # the PTY's canonical line buffer and one Ctrl-D delivers it WITHOUT EOF,
     # so cat never exits and the follow-up `cat` is guard-rejected.
     lines = ["line-one-7c1", "line-two-7c1", "line-three-7c1"]
-    await run_command(tools, "cat > /tmp/modex_paste_test_7c1.txt", timeout=15.0)
-    await tools.process.execute(action="paste", text="\n".join(lines) + "\n")
-    await tools.process.execute(action="send_keys", hex=["04"])  # Ctrl-D EOF
+    await run_command(tools, "head -n 3 > /tmp/modex_paste_test_7c1.txt", timeout=15.0)
+    await tools.process.execute(data="\n".join(lines) + "\n", submit=False)
     await asyncio.sleep(0.5)
     cat_out = await run_command(tools, "cat /tmp/modex_paste_test_7c1.txt", timeout=15.0)
     for line in lines:
-        assert output_of(cat_out, line), (
-            f"pasted line {line!r} missing from file:\n{cat_out}"
-        )
+        assert output_of(cat_out, line), f"pasted line {line!r} missing from file:\n{cat_out}"
 
     # ── 7. Interrupt recovery — sleep 60 + interrupt + next command works ───
     import asyncio as _asyncio
 
     sleep_task = _asyncio.create_task(run_command(tools, "sleep 60", timeout=20.0))
     await wait_for_status(tools, TerminalCommandStatus.EXECUTING, timeout=4.0)
-    await tools.process.execute(action="interrupt")
+    await tools.process.execute(data="^C")
     await wait_for_status(
         tools,
-        frozenset({
-            TerminalCommandStatus.IDLE,
-            TerminalCommandStatus.UNKNOWN,
-            TerminalCommandStatus.COMPLETED,
-        }),
+        frozenset(
+            {
+                TerminalCommandStatus.IDLE,
+                TerminalCommandStatus.UNKNOWN,
+                TerminalCommandStatus.COMPLETED,
+            }
+        ),
         timeout=6.0,
     )
     sleep_task.cancel()
-    try:
+    with contextlib.suppress(asyncio.CancelledError, BaseException):
         await sleep_task
-    except (asyncio.CancelledError, BaseException):
-        pass
 
     recover_marker = "RECOVERED_8e2d"
     res_recover = await run_command(tools, f"echo {recover_marker}", timeout=15.0)
@@ -179,10 +161,9 @@ async def test_hidden_process_interaction(tools) -> None:
         f"less should still be running, status={status_during_pager}"
     )
 
-    # Space scroll (batch with repeat), then quit.
-    await tools.process.execute(action="write", data=" ", repeat=3)
+    await tools.process.execute(data=" ", submit=False)
     await asyncio.sleep(0.5)
-    await tools.process.execute(action="write", data="q")
+    await tools.process.execute(data="q", submit=False)
 
     await wait_for_status(
         tools,
