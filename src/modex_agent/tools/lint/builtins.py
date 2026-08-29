@@ -588,9 +588,10 @@ class CompositeLinter(FileLinter):
         )
         issues: list[LintIssue] = []
         for r in results:
-            if isinstance(r, Exception):
-                logger.warning("CompositeLinter child crashed: %s", r)
-                continue
-            issues.extend(r.issues)
+            match r:
+                case BaseException():
+                    logger.warning("CompositeLinter child crashed: %s", r)
+                case LintResult():
+                    issues.extend(r.issues)
         issues.sort(key=lambda i: (i.line if i.line > 0 else float("inf"), i.column))
         return LintResult(status="ok", issues=_truncate(issues, self.name))

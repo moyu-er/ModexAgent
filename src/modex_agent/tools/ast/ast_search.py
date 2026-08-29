@@ -63,13 +63,10 @@ class AstGrepSearchTool(Tool):
             "required": ["pattern", "language"],
         }
 
-    async def execute(
-        self,
-        pattern: str,
-        language: str,
-        path: str | None = None,
-        **kwargs: object,
-    ) -> str:
+    async def execute(self, **kwargs: Any) -> str:
+        pattern = kwargs["pattern"]
+        language = kwargs["language"]
+        path = kwargs.get("path")
         if not is_ast_available():
             return AST_UNAVAILABLE_MSG
 

@@ -460,7 +460,7 @@ def _type_hint_to_param_type(type_hint: Any) -> ToolParameterType:
         # 处理 Optional[X] = Union[X, None]
         if origin is Union and len(args) == 2 and type(None) in args:
             # 获取非 None 的类型
-            inner_type = args[0] if args[1] is type(None) else args[1]
+            inner_type = next(arg for arg in args if arg is not type(None))
             return _type_hint_to_param_type(inner_type)
         # 处理 List[X]
         elif origin in (list, list):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -231,7 +232,7 @@ class CommunicationTargetStore:
             targets = [t for t in targets if t.kind != AgentCommKind.NORMAL]
         return targets
 
-    def list_subagents(self) -> list[CommunicationTarget]:
+    def list_subagents(self) -> builtins.list[CommunicationTarget]:
         """Return only SUBAGENT targets (visible in both session and graph mode)."""
         return [t for t in self.list() if t.kind == AgentCommKind.SUBAGENT]
 
@@ -244,7 +245,7 @@ class CommunicationTargetStore:
             t.name for t in self.list() if t.kind == AgentCommKind.SUBAGENT
         )
 
-    def list_peers(self) -> list[CommunicationTarget]:
+    def list_peers(self) -> builtins.list[CommunicationTarget]:
         """Return only NORMAL (peer) targets.
 
         Empty in graph mode — ``list()`` filters NORMAL targets when

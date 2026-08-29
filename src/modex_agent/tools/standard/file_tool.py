@@ -587,9 +587,10 @@ class ReadFileTool(Tool):
         )
         return schema
 
-    async def execute(
-        self, path: str, offset: int = 0, limit: int = _DEFAULT_LIMIT, **kwargs: Any
-    ) -> str | ToolResult:
+    async def execute(self, **kwargs: Any) -> str | ToolResult:
+        path = kwargs["path"]
+        offset = kwargs.get("offset", 0)
+        limit = kwargs.get("limit", _DEFAULT_LIMIT)
         try:
             file_path = _resolve_path(path)
             if not file_path.exists():
@@ -657,7 +658,9 @@ class WriteFileTool(Tool):
             "required": ["path", "content"],
         }
 
-    async def execute(self, path: str, content: str, **kwargs: Any) -> str | ToolResult:
+    async def execute(self, **kwargs: Any) -> str | ToolResult:
+        path = kwargs["path"]
+        content = kwargs["content"]
         try:
             file_path = _resolve_path(path)
             file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -744,14 +747,11 @@ class EditFileTool(Tool):
             "required": ["path", "old_string", "new_string"],
         }
 
-    async def execute(
-        self,
-        path: str,
-        old_string: str,
-        new_string: str,
-        replace_all: bool = False,
-        **kwargs: Any,
-    ) -> str | ToolResult:
+    async def execute(self, **kwargs: Any) -> str | ToolResult:
+        path = kwargs["path"]
+        old_string = kwargs["old_string"]
+        new_string = kwargs["new_string"]
+        replace_all = kwargs.get("replace_all", False)
         try:
             file_path = _resolve_path(path)
 
@@ -889,7 +889,8 @@ class ListDirTool(Tool):
             "required": ["path"],
         }
 
-    async def execute(self, path: str, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> str:
+        path = kwargs["path"]
         try:
             dir_path = _resolve_path(path)
             if not dir_path.exists():

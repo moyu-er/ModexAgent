@@ -124,16 +124,13 @@ class SearchFilesTool(Tool):
             "required": ["pattern"],
         }
 
-    async def execute(
-        self,
-        pattern: str,
-        path: str = ".",
-        include: str = "*",
-        regex: bool = True,
-        max_results: int = 50,
-        context_lines: int = 2,
-        **kwargs: Any,
-    ) -> str:
+    async def execute(self, **kwargs: Any) -> str:
+        pattern = kwargs["pattern"]
+        path = kwargs.get("path", ".")
+        include = kwargs.get("include", "*")
+        regex = kwargs.get("regex", True)
+        max_results = kwargs.get("max_results", 50)
+        context_lines = kwargs.get("context_lines", 2)
         # Coerce string-typed params that LLM providers may send as strings
         # (JSON numbers occasionally arrive as strings depending on the
         # provider's function-calling implementation).  Without this,

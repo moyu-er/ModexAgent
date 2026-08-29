@@ -93,7 +93,7 @@ class Attachment(BaseModel):
             kind=Kind(str(data["kind"])),
             name=str(data["name"]),
             mime=(str(data["mime"]) if data.get("mime") is not None else None),
-            size=int(data["size"]),
+            size=int(str(data["size"])),
             path=str(data["path"]),
             locator=AttachmentLocator(str(data["locator"])),
         )

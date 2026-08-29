@@ -10,28 +10,26 @@ Usage::
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
 
-from .guard import GuardResult
+from .guard import CommandGuard, GuardMatch, GuardResult
 
 
 @dataclass
 class GuardPipeline:
     """Run a list of guards in order, short-circuiting on first denial.
 
-    Each guard is a callable ``(str) -> GuardResult``.
+    Each guard implements :class:`CommandGuard`.
     """
 
-    guards: list[Callable[[str], GuardResult]] = field(default_factory=list)
+    guards: list[CommandGuard] = field(default_factory=list)
 
     def check(self, command: str) -> GuardResult:
         """Run all guards in order.
 
         Returns the first denial result, or ``allowed=True`` if all pass.
         """
-        all_matches: list[Any] = []
+        all_matches: list[GuardMatch] = []
         for guard in self.guards:
             result = guard.check(command)
             if not result.allowed:

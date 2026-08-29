@@ -30,6 +30,7 @@ import platform
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -344,6 +345,7 @@ class IsolationManager:
         import platform as _platform
 
         system = _platform.system()
+        providers: list[Callable[[IsolationConfig], IsolationProvider]]
         if system == "Linux":
             providers = [BubblewrapProvider]
         elif system == "Darwin":

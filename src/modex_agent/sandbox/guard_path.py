@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .guard import CommandSeverity, GuardMatch, GuardResult
+from .guard import CommandGuard, CommandSeverity, GuardMatch, GuardResult
 from .guard_device import is_benign_device_path
 
 # Regex patterns for extracting absolute paths from command strings.
@@ -34,7 +34,7 @@ class PathBoundaryConfig:
     enabled: bool = True
 
 
-class PathBoundaryGuard:
+class PathBoundaryGuard(CommandGuard):
     """Extract absolute paths from command strings and enforce workspace boundaries.
 
     Example::

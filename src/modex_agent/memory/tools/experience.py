@@ -201,7 +201,9 @@ class ExperienceReadTool(Tool):
             config=ToolConfig(),
         )
 
-    async def execute(self, name: str, path: str | None = None, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> str:
+        name = kwargs["name"]
+        path = kwargs.get("path")
         err = _validate_name(name)
         if err:
             return f"<result><status>error</status><error>{xml_text(err)}</error></result>"
@@ -268,7 +270,10 @@ class ExperienceWriteTool(Tool):
             config=ToolConfig(),
         )
 
-    async def execute(self, name: str, content: str, path: str | None = None, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> str:
+        name = kwargs["name"]
+        content = kwargs["content"]
+        path = kwargs.get("path")
         err = _validate_name(name)
         if err:
             return f"<result><status>error</status><error>{xml_text(err)}</error></result>"
@@ -346,9 +351,11 @@ class ExperienceEditTool(Tool):
             config=ToolConfig(),
         )
 
-    async def execute(
-        self, name: str, old_string: str, new_string: str, path: str | None = None, **kwargs: Any
-    ) -> str:
+    async def execute(self, **kwargs: Any) -> str:
+        name = kwargs["name"]
+        old_string = kwargs["old_string"]
+        new_string = kwargs["new_string"]
+        path = kwargs.get("path")
         err = _validate_name(name)
         if err:
             return f"<result><status>error</status><error>{xml_text(err)}</error></result>"
@@ -487,7 +494,9 @@ class ExperienceRenameDirTool(Tool):
             config=ToolConfig(),
         )
 
-    async def execute(self, name: str, new_name: str, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> str:
+        name = kwargs["name"]
+        new_name = kwargs["new_name"]
         for n in (name, new_name):
             err = _validate_name(n)
             if err:
@@ -558,7 +567,8 @@ class ExperienceDeleteTool(Tool):
             config=ToolConfig(),
         )
 
-    async def execute(self, name: str, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> str:
+        name = kwargs["name"]
         err = _validate_name(name)
         if err:
             return f"<result><status>error</status><error>{xml_text(err)}</error></result>"
@@ -688,7 +698,8 @@ class ExperienceTool(Tool):
             config=ToolConfig(),
         )
 
-    async def execute(self, action: str, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> str:
+        action = kwargs["action"]
         if action == "list":
             return await self._list.execute(
                 name=kwargs.get("name") or None,

@@ -675,9 +675,7 @@ class AgentPool(AgentRegistry):
         one async seam, no parallel eviction paths.
         """
         if self._tree is None:
-            raise RuntimeError(
-                "AgentPool.tree not wired before session eviction"
-            )
+            raise RuntimeError("AgentPool.tree not wired before session eviction")
         with contextlib.suppress(Exception):
             await self._tree.on_session_evicted(session_id)
         agent_name = self._session_agents.get(session_id)
@@ -875,7 +873,7 @@ class AgentPool(AgentRegistry):
         # Capability-supply background workers (e.g. the experience curator
         # loop) stop FIRST — the position the retired workspace-level
         # background runner held in the bot's teardown order.
-        for stop in self._background_stops:
+        for stop in reversed(self._background_stops):
             try:
                 await stop()
             except Exception:

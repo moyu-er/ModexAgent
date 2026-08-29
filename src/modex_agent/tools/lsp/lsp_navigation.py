@@ -66,12 +66,5 @@ class LspNavigationTool(Tool):
             "required": ["operation", "file", "line", "character"],
         }
 
-    async def execute(
-        self,
-        operation: str,
-        file: str,
-        line: int,
-        character: int,
-        **kwargs: object,
-    ) -> str:
+    async def execute(self, **kwargs: Any) -> str:
         return _NOT_IMPLEMENTED

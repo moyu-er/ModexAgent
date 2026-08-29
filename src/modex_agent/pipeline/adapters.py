@@ -86,7 +86,7 @@ class InputAdapter(ABC):
         pass
 
     @abstractmethod
-    async def receive(self) -> AsyncIterator[InputMessage]:
+    def receive(self) -> AsyncIterator[InputMessage]:
         """接收输入消息（异步迭代器）"""
         pass
 

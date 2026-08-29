@@ -9,6 +9,7 @@ For command-string path boundary checks see ``guard_path.py``.
 from __future__ import annotations
 
 import re
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import NamedTuple
@@ -38,6 +39,12 @@ class GuardResult:
     allowed: bool
     matches: tuple[GuardMatch, ...] = ()
     reason: str | None = None
+
+
+class CommandGuard(ABC):
+    @abstractmethod
+    def check(self, command: str) -> GuardResult:
+        ...
 
 
 @dataclass
@@ -150,7 +157,7 @@ _DEFAULT_DENY_RULES: list[tuple[str, CommandSeverity, str, str]] = [
 ]
 
 
-class CommandPatternGuard:
+class CommandPatternGuard(CommandGuard):
     """Regex-based deny/allow command guard.
 
     ONLY does pattern matching. For path/network checks, compose with

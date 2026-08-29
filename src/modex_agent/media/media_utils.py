@@ -14,11 +14,16 @@ import mimetypes
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict
 
+if TYPE_CHECKING:
+    from PIL.Image import Resampling
+    from pypdf import PdfReader
+
 # 可选依赖 — 顶层一次性 import，避免每次提取都 try/import
+_PdfReader: type[PdfReader] | None
 try:
     from pypdf import PdfReader as _PdfReader
 except ImportError:
@@ -44,6 +49,7 @@ try:
 except ImportError:
     _PILImage = None
 
+_PILResampling: type[Resampling] | None
 try:
     from PIL import Image as _PILImageForResampling
     _PILResampling = _PILImageForResampling.Resampling
