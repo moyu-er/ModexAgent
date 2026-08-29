@@ -47,12 +47,13 @@ from modex_agent.tools.presets import (
 
 # ---- Expected name sets --------------------------------------------------
 
-#: HOOK slot — 18 default hooks (SPEC §6.7, task 12 + the `tracing`
+#: HOOK slot — 19 default hooks (SPEC §6.7, task 12 + the `tracing`
 #: capability's seven span-hook resolvers).
 _EXPECTED_HOOK_NAMES: frozenset[str] = frozenset(
     {
         "inbox_flush",
         "todo_continuation",
+        "todo_planning_nudge",
         "deliver_retry",
         "length_guard",
         "native_env",

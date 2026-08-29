@@ -3,9 +3,10 @@
 Covers:
 
 - **Protocol shape** — ``TodoCapability`` is a pure opt-in bundle
-  contributing the two todo tool names, the two hook names
+  contributing the two todo tool names, the three hook names
   (react-runner ``todo_continuation`` + memory-runner
-  ``todo_reorientation``), and the ``todo.discipline`` section spec.
+  ``todo_reorientation`` + react-runner ``todo_planning_nudge``), and
+  the ``todo.discipline`` section spec.
 - **Dual anchor** — ``bind`` fails loudly when either todo tool is
   vetoed (``tools: [-todo_write]``): the two tools move together, and
   the error names pool/agent/capability + BOTH tools + the veto entry.
@@ -129,7 +130,11 @@ class TestProtocolShape:
     def test_contribute_shape(self) -> None:
         contribution = TodoCapability().contribute(_tree_view(), TodoCapability().config_model())
         assert contribution.tools == ("todo_write", "todo_read")
-        assert contribution.hooks == ("todo_continuation", "todo_reorientation")
+        assert contribution.hooks == (
+            "todo_continuation",
+            "todo_reorientation",
+            "todo_planning_nudge",
+        )
         assert contribution.sections == (PromptSectionSpec(section_id="todo.discipline", order=30),)
         assert contribution.tool_replacements == ()
 
@@ -149,6 +154,7 @@ class TestDualAnchor:
         assert "todo_read" in tools
         assert "todo_continuation" in hooks
         assert "todo_reorientation" in hooks
+        assert "todo_planning_nudge" in hooks
 
     def test_veto_todo_write_fails_loud_naming_both_tools(self) -> None:
         agent = AgentSpec(
@@ -183,7 +189,11 @@ class TestDualAnchor:
         )
 
         assert "todo_write" not in tools and "todo_read" not in tools
-        assert "todo_continuation" not in hooks and "todo_reorientation" not in hooks
+        assert (
+            "todo_continuation" not in hooks
+            and "todo_reorientation" not in hooks
+            and "todo_planning_nudge" not in hooks
+        )
 
     def test_hook_veto_is_component_surgery_not_anchor_failure(self) -> None:
         tools, hooks = _compile_hooks(
@@ -197,6 +207,37 @@ class TestDualAnchor:
         assert "todo_write" in tools and "todo_read" in tools
         assert "todo_continuation" not in hooks
         assert "todo_reorientation" in hooks
+
+    def test_veto_planning_nudge_keeps_the_rest_of_the_bundle(self) -> None:
+        """``hooks: [-todo_planning_nudge]`` removes only the nudge hook —
+        the tools, the other two hooks, and the discipline section all
+        survive (component-level surgery; the dual tool anchor is
+        untouched)."""
+        spec = ScopeSpec(
+            kind=ScopeKind.POOL,
+            pool=PoolSpec(
+                name="p",
+                agents=[
+                    AgentSpec(
+                        name="main",
+                        capabilities={"todo": {}},
+                        hooks=["-todo_planning_nudge"],
+                    )
+                ],
+            ),
+        )
+        compilation = compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_registry())
+        compiled = compilation.agents[0]
+
+        tools, hooks = tuple(compiled.spec.tools), tuple(compiled.spec.hooks)
+        assert "todo_write" in tools and "todo_read" in tools
+        assert "todo_planning_nudge" not in hooks
+        assert "todo_continuation" in hooks
+        assert "todo_reorientation" in hooks
+        binding = compiled.spec.capabilities[0].binding
+        assert binding.active_sections == (
+            PromptSectionSpec(section_id="todo.discipline", order=30),
+        )
 
     def test_binding_carries_the_section_spec(self) -> None:
         spec = ScopeSpec(
@@ -385,8 +426,9 @@ _TODO_EXEMPTIONS = (
         facet_field=FacetField.HOOK_ROSTER,
         agent_pattern=_TODO_AGENTS_PATTERN,
         reason=(
-            "hook roster now declarative — the same todo_continuation and "
-            "todo_reorientation hooks are delivered through the roster "
+            "hook roster now declarative — the todo_continuation / "
+            "todo_reorientation hooks (and, since the nudge revival wave, "
+            "todo_planning_nudge) are delivered through the roster "
             "channel (factory dispatch); the golden predates declarable "
             "hook rosters, where these hooks were assembly-time injections"
         ),

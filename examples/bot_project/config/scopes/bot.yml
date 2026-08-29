@@ -50,7 +50,7 @@ workspace:
           # create_pool / pool_wiring until ticket 17). experience_review
           # needs no roster entry: the experience capability contributes
           # it together with the tool (anchor-bound).
-          # (Deprecated nudge hooks task_delegation_nudge / todo_planning_nudge are no longer referenced.)
+          # (todo_planning_nudge rides the todo capability automatically; the deprecated task_delegation_nudge is no longer referenced.)
           - +user_notice_cleanup
           # Per-turn model binding (BIZ BotHooksPlugin factory) — declared
           # roster entry since the W6 glue eradication retired the
@@ -102,7 +102,7 @@ workspace:
           # Ticket 11: the notification hook is a HOOK-slot roster
           # reference (Stage 4 dispatch) — config evolution only
           # walks the declaration (09 precedent).
-          # (Deprecated nudge hooks task_delegation_nudge / todo_planning_nudge are no longer referenced.)
+          # (todo_planning_nudge rides the todo capability automatically; the deprecated task_delegation_nudge is no longer referenced.)
           hooks:
           - +user_notice_cleanup
           # Per-turn model binding — declared roster entry since the W6
@@ -167,7 +167,7 @@ workspace:
           # walks the declaration (09 precedent). experience_review
           # needs no roster entry: the experience capability contributes
           # it together with the tool (anchor-bound).
-          # (Deprecated nudge hooks task_delegation_nudge / todo_planning_nudge are no longer referenced.)
+          # (todo_planning_nudge rides the todo capability automatically; the deprecated task_delegation_nudge is no longer referenced.)
           hooks:
           - +user_notice_cleanup
           # Per-turn model binding — declared roster entry since the W6

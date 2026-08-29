@@ -643,6 +643,19 @@ _CAPABILITY_ORIGIN_RECLASSIFICATION_REASON = (
     "origin reclassified SUPPLEMENT→CAPABILITY_DERIVED — the channel's true name, SPEC §9"
 )
 
+_NUDGE_HOOK_ON_SUBAGENTS_GOLDEN = (
+    Exemption(
+        package="subagents",
+        facet_field=FacetField.HOOK_ROSTER,
+        agent_pattern=r"(office-expert|orchestrator|explore|general|reviewer)",
+        reason=(
+            "todo_planning_nudge is now a roster entry the todo capability "
+            "contributes alongside its tools — the golden predates the "
+            "todo nudge revival wave"
+        ),
+    ),
+)
+
 _NATIVE_AGENTS_PATTERN = r"(default|office-expert|orchestrator|explore|general|reviewer)"
 _POSITION_DEFAULT_HOOKS_REASON = (
     "deliver_retry / length_guard / native_env are compiler position-default "
@@ -704,5 +717,9 @@ class TestGoldenSplitBrain:
                         reason=_POSITION_DEFAULT_HOOKS_REASON,
                     ),
                 )
+                # The todo nudge revival wave rides every todo-effective
+                # agent's hook roster (the `default` agent declares no
+                # todo capability — no drift, no exemption for it).
+                exemptions += _NUDGE_HOOK_ON_SUBAGENTS_GOLDEN
             exemptions += _capability_origin_exemptions_for(golden)
             assert_facets_equal(document.root, golden, "subagents", exemptions)

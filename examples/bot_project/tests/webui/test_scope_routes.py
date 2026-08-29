@@ -335,6 +335,7 @@ async def test_bill_field_layers_and_values(tmp_path: Path) -> None:
                 "experience_review",
                 "todo_continuation",
                 "todo_reorientation",
+                "todo_planning_nudge",
             ],
             "layer": "framework",
             "profile": None,
@@ -347,6 +348,11 @@ async def test_bill_field_layers_and_values(tmp_path: Path) -> None:
         }
         assert hook_rows["todo_continuation"] == {
             "hook": "todo_continuation",
+            "origin": "capability_derived",
+            "capability": "todo",
+        }
+        assert hook_rows["todo_planning_nudge"] == {
+            "hook": "todo_planning_nudge",
             "origin": "capability_derived",
             "capability": "todo",
         }

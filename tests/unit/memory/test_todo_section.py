@@ -342,30 +342,3 @@ class TestTodoAwareProviderDeath:
             encoding="utf-8"
         )
         assert "TodoAwareSystemPromptProvider" not in source
-
-
-class TestTodoPlanningNudgeDeath:
-    def test_hook_module_file_deleted(self) -> None:
-        assert not (
-            _ROOT / "src" / "modex_agent" / "hook" / "builtin" / "todo_planning_nudge.py"
-        ).exists()
-
-    def test_factory_and_registration_gone(self) -> None:
-        source = (_ROOT / "src" / "modex_agent" / "plugins" / "defaults" / "hooks.py").read_text(
-            encoding="utf-8"
-        )
-        assert "TodoPlanningNudgeHook" not in source
-        assert "todo_planning_nudge" not in source
-
-    def test_builtin_package_export_gone(self) -> None:
-        source = (_ROOT / "src" / "modex_agent" / "hook" / "builtin" / "__init__.py").read_text(
-            encoding="utf-8"
-        )
-        assert "TodoPlanningNudgeHook" not in source
-
-    def test_hook_slot_has_no_planning_nudge_name(self) -> None:
-        registry = _registry()
-        from modex_agent.plugins.abc import ComponentSlot
-
-        hook_names = set(registry._factories.get(ComponentSlot.HOOK, {}))  # noqa: SLF001
-        assert "todo_planning_nudge" not in hook_names

@@ -176,6 +176,11 @@ class TurnCustomKey(StrEnum):
     # it only costs one re-reminder.
     LOOP_EPISODE = "_loop_episode"
     LAST_CONTINUATION_TODO_SIG = "_last_continuation_todo_sig"
+    # One-shot arm flag: the todo planning nudge may fire once per logical
+    # turn. Armed by TodoPlanningNudgeHook.start_node_turn (fresh turns only
+    # — continuation attempts and approval resume never re-arm), popped by
+    # before_iteration on first evaluation. Value: bool.
+    TODO_NUDGE_PENDING = "_todo_nudge_pending"
     GRAPH_DELIVER_COUNT = "_graph_deliver_count"
     MAX_TURNS = "_max_turns"
     # Per-turn counter for graph knowledge base read actions (read/grep).

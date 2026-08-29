@@ -34,9 +34,11 @@ Per-hook table (SPEC §6.7):
 | subagent_auto_send    | ReactHookFactory, factory form| {external_sub, native_sub}   | react   |
 | memory_trace          | MemoryHookFactory             | {native_main, native_sub}    | memory  |
 | todo_reorientation    | MemoryHookFactory             | {native_main, native_sub}    | memory  |
+| todo_planning_nudge   | ReactHookFactory, factory form| {native_main, native_sub}    | react   |
 | experience_review     | ReactHookFactory, factory form| {native_main}                | react   |
-(Both deprecated nudge factories are absent per the capability migration
-deletion ledger.)
+(The deprecated task-delegation nudge factory remains absent per the
+capability migration deletion ledger; the todo planning nudge returned
+with the todo capability bundle.)
 """
 
 from __future__ import annotations
@@ -67,6 +69,7 @@ from modex_agent.plugins.defaults.hooks import (
     RunLoggingHookFactory,
     SubagentAutoSendHookFactory,
     TodoContinuationHookFactory,
+    TodoPlanningNudgeHookFactory,
     TodoReorientationHookConfig,
     TodoReorientationHookFactory,
     register_default_hooks,
@@ -81,10 +84,11 @@ _ALL_NATIVE = {AgentType.native_main, AgentType.native_sub}
 _SUBAGENT_BOTH = {AgentType.external_sub, AgentType.native_sub}
 _NATIVE_MAIN_ONLY = {AgentType.native_main}
 
-#: The 10 hook names registered by ``register_default_hooks``, in table order.
+#: The 11 hook names registered by ``register_default_hooks``, in table order.
 _EXPECTED_HOOK_NAMES: tuple[str, ...] = (
     "inbox_flush",
     "todo_continuation",
+    "todo_planning_nudge",
     "deliver_retry",
     "length_guard",
     "native_env",
@@ -156,10 +160,10 @@ def _hook_runner(factory: ComponentFactory) -> HookRunnerKind:
 
 
 class TestRegistrationCompleteness:
-    def test_registers_exactly_10_hook_factories(self) -> None:
+    def test_registers_exactly_11_hook_factories(self) -> None:
         registry = _register_all()
         hook_map = registry._factories.get(ComponentSlot.HOOK, {})
-        assert len(hook_map) == 18
+        assert len(hook_map) == 19
 
     @pytest.mark.parametrize("name", _EXPECTED_HOOK_NAMES)
     def test_each_expected_name_is_registered(self, name: str) -> None:
@@ -194,6 +198,7 @@ class TestRunnerKindDispatch:
         [
             "inbox_flush",
             "todo_continuation",
+            "todo_planning_nudge",
             "deliver_retry",
             "native_env",
             "run_logging",
@@ -240,6 +245,7 @@ class TestRunnerKindDispatch:
         factory_form_names = [
             "inbox_flush",
             "todo_continuation",
+            "todo_planning_nudge",
             "native_env",
             "subagent_auto_send",
             "experience_review",
@@ -286,6 +292,7 @@ class TestFactoryForm:
         [
             "inbox_flush",
             "todo_continuation",
+            "todo_planning_nudge",
             "deliver_retry",
             "native_env",
             "subagent_auto_send",
@@ -305,6 +312,7 @@ class TestFactoryForm:
         factory_form_names = [
             "inbox_flush",
             "todo_continuation",
+            "todo_planning_nudge",
             "native_env",
             "subagent_auto_send",
             "memory_trace",
@@ -337,6 +345,7 @@ class TestAppliesToFiltering:
         [
             ("inbox_flush", _ALL_NATIVE),
             ("todo_continuation", _ALL_NATIVE),
+            ("todo_planning_nudge", _ALL_NATIVE),
             ("deliver_retry", _ALL_NATIVE),
             ("native_env", _ALL_NATIVE),
             ("run_logging", _ALL_NATIVE),
@@ -629,10 +638,16 @@ class TestFactoryClassStructure:
         assert RunLoggingHookFactory.applies_to == _ALL_NATIVE
         assert RunLoggingHookFactory.hook_runner is HookRunnerKind.react
 
+    def test_todo_planning_nudge_factory_has_correct_class_vars(self) -> None:
+        assert TodoPlanningNudgeHookFactory.applies_to == _ALL_NATIVE
+        assert TodoPlanningNudgeHookFactory.hook_runner is HookRunnerKind.react
+        assert TodoPlanningNudgeHookFactory.priority == 0
+
     def test_all_factory_form_classes_have_config_model(self) -> None:
         for cls in (
             InboxFlushHookFactory,
             TodoContinuationHookFactory,
+            TodoPlanningNudgeHookFactory,
             DeliverRetryHookFactory,
             NativeEnvInjectionHookFactory,
             SubagentAutoSendHookFactory,
@@ -683,6 +698,40 @@ async def test_todo_reorientation_factory_uses_pool_supply_store() -> None:
     assert hook._has_archive is False  # noqa: SLF001
 
 
+async def test_todo_planning_nudge_factory_uses_pool_supply_store() -> None:
+    from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
+    from modex_agent.plugins.defaults.hooks import TodoPlanningNudgeHookFactory
+
+    store = _TodoStore()
+    factory = TodoPlanningNudgeHookFactory()
+    ctx = AgentContext(
+        registry=MagicMock(),
+        workspace_ctx=MagicMock(),
+        pool_runtime=PoolRuntimeDeps(capability_supply={"todo": TodoSupply(store=store)}),
+        agent_name="probe-agent",
+    )
+
+    hook = await factory.create(MagicMock(), ctx)
+
+    assert hook._todo_store is store  # noqa: SLF001
+
+
+async def test_todo_planning_nudge_factory_raises_without_todo_supply() -> None:
+    """A pool runtime without the todo supply means the capability is not
+    effective anywhere in the pool — a roster-referenced nudge factory
+    must fail loudly, never build a store-less hook."""
+    factory = TodoPlanningNudgeHookFactory()
+    ctx = AgentContext(
+        registry=MagicMock(),
+        workspace_ctx=MagicMock(),
+        pool_runtime=PoolRuntimeDeps(capability_supply={}),
+        agent_name="probe-agent",
+    )
+
+    with pytest.raises(ValueError, match="todo"):
+        await factory.create(MagicMock(), ctx)
+
+
 async def test_missing_pool_runtime_raises_value_error_not_assert() -> None:
     """M7: the pool_runtime state checks are ``ValueError``, not ``assert``
     (asserts vanish under ``python -O``, silently producing tree=None /
@@ -706,6 +755,8 @@ async def test_missing_pool_runtime_raises_value_error_not_assert() -> None:
         await InboxFlushHookFactory().create(InboxFlushHookConfig(agent_name="a"), ctx)
     with pytest.raises(ValueError, match="pool_runtime"):
         await SubagentAutoSendHookFactory().create(SubagentAutoSendHookConfig(), ctx)
+    with pytest.raises(ValueError, match="pool_runtime"):
+        await TodoPlanningNudgeHookFactory().create(MagicMock(), ctx)
 
 
 # ---- SubagentAutoSendHookFactory: tree-from-ctx (B4) ------------------------

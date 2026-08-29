@@ -10,7 +10,7 @@ the factory — never via ``isinstance`` (rule 9):
 
 Two hooks (``length_guard``, ``run_logging``) have no construction deps
 and are wrapped as ``SimpleFactory`` instances (pre-built hook). The
-other eight are factory-form: ``create(config, ctx)`` extracts runtime
+other nine are factory-form: ``create(config, ctx)`` extracts runtime
 deps from ``ctx.pool_runtime`` and combines them with serializable
 settings from ``config``.
 
@@ -20,6 +20,7 @@ Per-hook table:
 |------------------------|--------------------------------|----------------------------|---------|
 | inbox_flush            | ReactHookFactory, factory form | {native_main, native_sub}  | react   |
 | todo_continuation      | ReactHookFactory, factory form | {native_main, native_sub}  | react   |
+| todo_planning_nudge    | ReactHookFactory, factory form | {native_main, native_sub}  | react   |
 | deliver_retry          | ReactHookFactory, factory form | {native_main, native_sub}  | react   |
 | length_guard           | SimpleFactory (pre-built)      | {native_main, native_sub}  | react   |
 | native_env             | ReactHookFactory, factory form | {native_main, native_sub}  | react   |
@@ -72,6 +73,7 @@ from modex_agent.hook.builtin.logging import RunLoggingHook
 from modex_agent.hook.builtin.loop_detection import LoopDetectionHook
 from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
 from modex_agent.hook.builtin.todo_continuation import TodoContinuationHook
+from modex_agent.hook.builtin.todo_planning_nudge import TodoPlanningNudgeHook
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.memory.cleanup_hooks import TodoReorientationHook
 from modex_agent.memory.snapshot import (
@@ -117,6 +119,7 @@ __all__ = [
     "SubagentAutoSendHookFactory",
     "TodoContinuationHookConfig",
     "TodoContinuationHookFactory",
+    "TodoPlanningNudgeHookFactory",
     "TodoReorientationHookConfig",
     "TodoReorientationHookFactory",
     "TraceAgentStartHookFactory",
@@ -319,6 +322,31 @@ class TodoContinuationHookFactory(ReactHookFactory):
             raise ValueError("pool_runtime must be filled by PoolAssembleStage")
         return TodoContinuationHook(
             tree=pool_runtime.session_tree_manager,
+            todo_store=require_todo_supply(pool_runtime).store,
+        )
+
+
+class TodoPlanningNudgeHookFactory(ReactHookFactory):
+    """Factory for ``TodoPlanningNudgeHook`` — empty-todo planning nudge.
+
+    ``create()`` reads the pool's todo store from
+    ``capability_supply['todo']`` (the loud supply read — the store
+    exists iff the ``todo`` capability is effective in the pool).
+    """
+
+    config_model: ClassVar[type[BaseModel]] = _EmptyHookConfig
+    applies_to: ClassVar[set[AgentType] | None] = set(_ALL_NATIVE)
+    priority: ClassVar[int] = 0
+
+    async def create(  # type: ignore[override]
+        self,
+        config: _EmptyHookConfig,  # noqa: ARG002
+        ctx: PoolContext,  # noqa: ARG002
+    ) -> TodoPlanningNudgeHook:
+        pool_runtime = ctx.pool_runtime
+        if pool_runtime is None:
+            raise ValueError("pool_runtime must be filled by PoolAssembleStage")
+        return TodoPlanningNudgeHook(
             todo_store=require_todo_supply(pool_runtime).store,
         )
 
@@ -839,7 +867,7 @@ def _derive_native_env_spec(ctx: AgentContext) -> ExternalEnvSpec:
 
 
 def register_default_hooks(ctx: PluginRegistrationContext) -> None:
-    """Register all 18 default hook factories into *ctx*.
+    """Register all 19 default hook factories into *ctx*.
 
     Called by ``DefaultPlugin.register()`` (task 14) or directly by the
     test harness. Each factory is registered under the HOOK slot with a
@@ -849,6 +877,7 @@ def register_default_hooks(ctx: PluginRegistrationContext) -> None:
     """
     ctx.register_hook("inbox_flush", InboxFlushHookFactory())
     ctx.register_hook("todo_continuation", TodoContinuationHookFactory())
+    ctx.register_hook("todo_planning_nudge", TodoPlanningNudgeHookFactory())
     ctx.register_hook("deliver_retry", DeliverRetryHookFactory())
     ctx.register_hook("length_guard", LengthGuardHookFactory)
     ctx.register_hook("loop_detection", LoopDetectionHookFactory)

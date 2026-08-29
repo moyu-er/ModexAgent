@@ -1,12 +1,13 @@
 """The FW-bundled ``todo`` capability — task-tracking tools + hooks + section.
 
-Bundles the todo tool pair, its two hooks, and the ``todo.discipline``
+Bundles the todo tool pair, its three hooks, and the ``todo.discipline``
 prompt section as an opt-in capability: declaring
 ``capabilities: {todo: {}}`` on an agent contributes the ``todo_write`` /
 ``todo_read`` registry names, the ``todo_continuation`` (react runner,
-priority -1000) / ``todo_reorientation`` (memory runner) hook names, and
-the section spec into the roster merge base. Enablement is compile-time
-knowledge — the historical runtime tool-registration gates (the
+priority -1000) / ``todo_reorientation`` (memory runner) /
+``todo_planning_nudge`` (react runner) hook names, and the section spec
+into the roster merge base. Enablement is compile-time knowledge — the
+historical runtime tool-registration gates (the
 continuation hook's and the retired tool-gated prompt provider's) died
 with this migration (SPEC §8.2).
 
@@ -154,7 +155,7 @@ class TodoCapability(Capability):
     Five-phase shape: ``applies`` defaults False (declaration-only
     enablement — equivalent to the retired todo supplement's
     "not declared, not enabled" semantics); ``contribute`` declares both
-    tool names, both hook names, and the discipline section spec;
+    tool names, the three hook names, and the discipline section spec;
     ``bind`` anchors on BOTH tools surviving the merge; ``supply`` builds
     the pool's :class:`TodoSupply` (iff the capability is effective
     somewhere in the pool — the pre-migration always-built store died
@@ -171,7 +172,7 @@ class TodoCapability(Capability):
         del tree, config  # tree-independent, knob-free
         return CapabilityContribution(
             tools=("todo_write", "todo_read"),
-            hooks=("todo_continuation", "todo_reorientation"),
+            hooks=("todo_continuation", "todo_reorientation", "todo_planning_nudge"),
             sections=(PromptSectionSpec(section_id=_DISCIPLINE_SECTION_ID, order=30),),
         )
 

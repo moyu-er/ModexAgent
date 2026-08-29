@@ -139,6 +139,19 @@ _SUBAGENTS_ON_EXTERNAL_POOL_GOLDEN = (
     ),
 )
 
+_NUDGE_HOOK_ON_EXPERIENCE_GOLDEN = (
+    Exemption(
+        package="experience",
+        facet_field=FacetField.HOOK_ROSTER,
+        agent_pattern=_EXPERIENCE_AGENTS_PATTERN,
+        reason=(
+            "todo_planning_nudge is now a roster entry the todo capability "
+            "contributes alongside its tools — the golden predates the "
+            "todo nudge revival wave"
+        ),
+    ),
+)
+
 _CAPABILITY_ORIGIN_RECLASSIFICATION_REASON = (
     "origin reclassified SUPPLEMENT→CAPABILITY_DERIVED — the channel's true name, SPEC §9"
 )
@@ -536,6 +549,8 @@ class TestGoldenSplitBrain:
                 "experience" in facets.effective_set for facets in golden.values()
             )
             exemptions = _EXPERIENCE_EXEMPTIONS if pool_has_experience else ()
+            if pool_has_experience:
+                exemptions += _NUDGE_HOOK_ON_EXPERIENCE_GOLDEN
             exemptions += _subagents_exemptions_for(golden)
             exemptions += _capability_origin_exemptions_for(golden)
             exemptions += _position_default_hook_exemption_for(golden)

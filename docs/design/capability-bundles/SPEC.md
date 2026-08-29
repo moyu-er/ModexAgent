@@ -265,6 +265,7 @@ class TodoPlugin(Plugin):
         ctx.register_tool("todo_read", TodoToolFactory())
         ctx.register_hook("todo_continuation", TodoContinuationHookFactory())      # react runner
         ctx.register_hook("todo_reorientation", TodoReorientationHookFactory())    # memory runner
+        ctx.register_hook("todo_planning_nudge", TodoPlanningNudgeHookFactory())   # react runner
 ```
 
 贡献名与槽位注册名的错配（贡献了未注册工厂的名字）沿用既有 late-binding 纪律：装配期 `ComponentNotFoundError`，响亮失败。**例外**：`CAPABILITY` 槽本身在**编译期**解析——能力包参与编译，引用未注册能力包必须在 boot 即炸（比槽位 late-binding 早一个周期，与"改树重启生效"的失败时序一致）。

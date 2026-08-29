@@ -20,7 +20,7 @@ Lifecycle extension points — lightweight observation and context injection. Ho
 
 | Directory | Purpose |
 |-----------|---------|
-| `builtin/` | Built-in hook implementations — `logging.py`, `runtime_context.py`, `inbox_flush.py`, `subagent_auto_send.py`, `env_injection.py`, `loop_detection.py`, `deliver_retry.py` (`DeliverRetryHook` — `AfterTurnHook`, sets `CONTINUATION_REQUEST` when the agent stops without delivering; covers both normal stop and max-iteration exits), `current_time.py` (`CurrentTimeInjectionHook` — `StartNodeTurnHook`), `todo_continuation.py` (`TodoContinuationHook` — `AfterTurnHook`), `length_guard.py` (`LengthGuardHook` — `AfterLLMResponseHook` + `AfterTurnHook`, recovers degenerate length/empty endings and fails honestly after 10 nudges), `control_drain.py` (interceptors, not hooks), `experience_review.py`. See `hook/builtin/AGENTS.md`. |
+| `builtin/` | Built-in hook implementations — `logging.py`, `runtime_context.py`, `inbox_flush.py`, `subagent_auto_send.py`, `env_injection.py`, `loop_detection.py`, `deliver_retry.py` (`DeliverRetryHook` — `AfterTurnHook`, sets `CONTINUATION_REQUEST` when the agent stops without delivering; covers both normal stop and max-iteration exits), `current_time.py` (`CurrentTimeInjectionHook` — `StartNodeTurnHook`), `todo_continuation.py` (`TodoContinuationHook` — `AfterTurnHook`), `todo_planning_nudge.py` (`TodoPlanningNudgeHook` — `StartNodeTurnHook` + `BeforeIterationHook`, one-shot per-logical-turn planning reminder roster-dispatched via the `todo` capability), `length_guard.py` (`LengthGuardHook` — `AfterLLMResponseHook` + `AfterTurnHook`, recovers degenerate length/empty endings and fails honestly after 10 nudges), `control_drain.py` (interceptors, not hooks), `experience_review.py`. See `hook/builtin/AGENTS.md`. |
 
 ## Four-Level Hook Hierarchy
 
@@ -123,7 +123,7 @@ Graph-level hooks (`BeforeGraphHook` / `AfterGraphHook` / `FinallyGraphHook`) fi
 
 ### Hook Inventory
 
-#### Built-in Hooks (14 implemented + 1 reserved)
+#### Built-in Hooks (15 implemented + 1 reserved)
 
 | # | Hook | ABC(s) | HookPoint(s) | Description |
 |---|------|--------|--------------|-------------|
@@ -141,6 +141,7 @@ Graph-level hooks (`BeforeGraphHook` / `AfterGraphHook` / `FinallyGraphHook`) fi
 | 12 | `TrainingDataHook` | `OutcomeFinallyHook` | ⑦ finally_graph | Records training data at graph teardown (suspend leg skipped by template-method base) |
 | 13 | `CassetteFlushHook` | `FinallyGraphHook` | ⑦ finally_graph | Saves cassette recording at graph teardown |
 | 14 | `CheckpointHook` | `AfterIterationHook` | after_iteration | Captures per-iteration checkpoint snapshots |
+| 15 | `TodoPlanningNudgeHook` ⭐ | `StartNodeTurnHook` + `BeforeIterationHook` | ② start_node_turn + before_iteration | One-shot per-logical-turn reminder to plan with `todo_write` — the behavior-level backstop for the `todo.discipline` "## Task Tracking" prompt section. Arms `custom[TODO_NUDGE_PENDING]` at fresh-turn start ONLY (the retired implementation armed per turn-attempt on `before_turn`, double-nudging within one logical turn; fresh-turn arming is the structural fix). `before_iteration` pops the flag, then: gate failure (`todo_write` unregistered, no store, or ANY existing todo item) settles; `USED`/`SHORT_TURN`/`DUE` verdicts from `scan_tool_usage_in_turn` settle/re-arm/inject-once. LLM-visible only; never touches `CONTINUATION_REQUEST`. Roster-dispatched via the `todo` capability (ADR-0047): only agents where `capabilities: {todo: {}}` is effective carry it; `hooks: [-todo_planning_nudge]` surgically removes it |
 | — | `EndNodeTurnHook` | (reserved) | ⑤ end_node_turn | ABC + dispatch entry exist for future extensibility; no concrete hook inherits it yet (by design) |
 
 ⭐ = newly added by hook-architecture-rebuild.
