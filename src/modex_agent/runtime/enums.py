@@ -166,6 +166,15 @@ class TurnCustomKey(StrEnum):
     # Incremented on each degenerate ending, reset to 0 by any productive
     # LLM response (content or tool calls). Exhaustion at MAX_NUDGES.
     LENGTH_GUARD_NUDGES = "length_guard_nudges"
+    # Loop-detection episode for the current turn, maintained by
+    # LoopDetectionHook.before_iteration. Value: {"fp": str, "rounds": int} —
+    # the tool-call identity (canonical preview string) that triggered the
+    # advisory reminder, and the trailing-run length at injection. Cleared
+    # whenever the trailing identity changes (loop broken / switched);
+    # consumed when the same identity persists observation_rounds past the
+    # injection (hard exit). Transient: an approval suspend/resume dropping
+    # it only costs one re-reminder.
+    LOOP_EPISODE = "_loop_episode"
     LAST_CONTINUATION_TODO_SIG = "_last_continuation_todo_sig"
     GRAPH_DELIVER_COUNT = "_graph_deliver_count"
     MAX_TURNS = "_max_turns"
@@ -209,17 +218,3 @@ class TurnCustomKey(StrEnum):
     # read by GraphWorkflowProvider to conditionally render the Final
     # Reply deliver pattern.
     GRAPH_DOWNSTREAM_HAS_END = "_graph_downstream_has_end"
-    # One-shot per-turn flags for the (DEPRECATED) behavior nudge hooks.
-    # Set unconditionally by the hook's before_turn leg on every turn
-    # attempt; popped by the before_iteration leg on its first evaluation
-    # of the attempt. Gate failures (tool unregistered / empty roster /
-    # existing todos) and a USED verdict (target tool already called this
-    # turn) settle immediately — no injection, no re-evaluation. A
-    # SHORT_TURN verdict (fewer than min_assistant_steps assistant messages
-    # since the last user/agent message) RE-ARMS the flag so later
-    # iterations re-evaluate once the turn accumulates steps. A DUE
-    # verdict injects the reminder once and settles. Approval resume does
-    # not re-fire BEFORE_TURN, so a resumed turn never re-evaluates.
-    # Value: bool.
-    TASK_NUDGE_PENDING = "_task_nudge_pending"
-    TODO_NUDGE_PENDING = "_todo_nudge_pending"

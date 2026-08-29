@@ -103,8 +103,10 @@ async def test_subagent_loop_routes_to_parent_inbox():
     """A subagent that hits LOOP_DETECTED must notify its parent, not the user."""
     tree = _FakeTree()
     ctx = _make_subagent_ctx()
-    # Seed a prior assistant step with the same content AND the same tool call,
-    # so the AND-based loop detector fires on the first LLM response.
+    # Seed one prior assistant round with the same tool call. The scripted
+    # provider keeps returning it, so the two-stage detector injects a
+    # reminder once the trailing run hits window_size (2) and force-exits
+    # after observation_rounds (2) more rounds.
     await ctx.history.append(
         ChatMessage(
             role="assistant",
@@ -122,7 +124,7 @@ async def test_subagent_loop_routes_to_parent_inbox():
 
     ctx.runtime.services.hooks.add(
         HookSpec(
-            hook=LoopDetectionHook(window_size=2, content_similarity_threshold=0.85),
+            hook=LoopDetectionHook(window_size=2, observation_rounds=2),
             on_error=HookErrorPolicy.LOG,
         )
     )
@@ -142,7 +144,7 @@ async def test_subagent_loop_routes_to_parent_inbox():
 
     # ReActAgent should surface LOOP_DETECTED.
     assert result.stop_reason == StopReason.LOOP_DETECTED
-    assert "<loop_detected" in (result.content or "")
+    assert "Loop detected" in (result.content or "")
 
     # SubagentAutoSendHook should route the notification to the parent inbox.
     assert len(tree.delivered) == 1

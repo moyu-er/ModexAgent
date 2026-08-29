@@ -2,7 +2,6 @@
 import pytest
 
 from modex_agent.agents.react.agent import ReActAgent
-from modex_agent.control.exceptions import LoopDetectedError
 from modex_agent.core.constants import FinishReason, StopReason
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
@@ -10,15 +9,15 @@ from modex_agent.core.types import LLMResponse, ToolCall
 
 
 def _make_ctx():
-    from modex_agent.core.agent import AgentContext
-    from modex_agent.memory.history import ListMessageHistory
-    from modex_agent.core.tool_manager import InMemoryToolManager
-    from modex_agent.core.session_id import SessionInfo
     from modex_agent.agents.react.state import ReActTurnState
+    from modex_agent.core.agent import AgentContext
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.hook import HookRunner
+    from modex_agent.memory.history import ListMessageHistory
     from modex_agent.runtime.enums import AgentKind, TurnPhase
     from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-    from modex_agent.hook import HookRunner
 
     state = ReActTurnState(
         identity=TurnIdentity(agent_id="t", session=SessionInfo.from_str("s"), turn_id="u"),
@@ -87,8 +86,10 @@ async def test_loop_detected_renders_loop_result(monkeypatch):
     agent = ReActAgent(provider=provider)
 
     ctx = _make_ctx()
-    # Seed a prior assistant step with the same content AND the same tool call,
-    # so the AND-based loop detector fires on the first LLM response.
+    # Seed one prior assistant round with the same tool call. The scripted
+    # provider keeps returning it, so the two-stage detector injects a
+    # reminder once the trailing run hits window_size (2) and force-exits
+    # after observation_rounds (2) more rounds.
     await ctx.history.append(
         ChatMessage(
             role="assistant",
@@ -97,7 +98,7 @@ async def test_loop_detected_renders_loop_result(monkeypatch):
         )
     )
     ctx.runtime.services.hooks.add(
-        HookSpec(hook=LoopDetectionHook(window_size=2, content_similarity_threshold=0.85),
+        HookSpec(hook=LoopDetectionHook(window_size=2, observation_rounds=2),
                  on_error=HookErrorPolicy.LOG)
     )
     emitter = _FakeEmitter()
@@ -105,5 +106,6 @@ async def test_loop_detected_renders_loop_result(monkeypatch):
     result = await agent.run(ctx, emitter)
 
     assert result.stop_reason == StopReason.LOOP_DETECTED
-    assert "<loop_detected" in (result.content or "")
+    assert "Loop detected" in (result.content or "")
+    assert "read" in (result.content or "")
     assert emitter.completed is result
