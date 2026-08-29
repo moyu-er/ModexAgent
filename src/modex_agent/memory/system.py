@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, assert_never
 
-from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.constants import RuntimeInfoKey, format_working_directory_line
 from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.emitter import AgentResult
@@ -30,7 +29,6 @@ from modex_agent.memory.token_estimator import TokenEstimator
 
 if TYPE_CHECKING:
     from modex_agent.agents.summarizer.abc import ArchiveGenerator, CoreMemoryConsolidatorBase
-    from modex_agent.core.experience import ExperienceManager
     from modex_agent.core.provider import LLMProvider
     from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
@@ -104,10 +102,14 @@ class MemorySystemContextManager(ContextManager):
     Prompt assembly order (in :meth:`load`):
       1. Runtime metadata (date, platform)
       2. Base system prompt (agent personality / system.md)
+      2a. Capability sections (fixed anchor: fork context → capability
+          block → core memory) — the ``experience.injection`` section
+          renders here for experience-capability agents (the retired
+          position-8 experience special case died with the capability
+          migration, SPEC §7.3/§8.3)
       3. Memory layers via ``injection_policy.assemble()`` — session, archive,
-         core memory (subject to budget & pruning)
-      4. Experiences — persistent reference knowledge (NOT a memory layer)
-      5. Skills — persistent reference knowledge (NOT a memory layer)
+          core memory (subject to budget & pruning)
+      4. Skills — persistent reference knowledge (NOT a memory layer)
 
     Skills and experiences are intentionally kept OUTSIDE the memory
     injection pipeline because they are static reference content — they
@@ -124,12 +126,10 @@ class MemorySystemContextManager(ContextManager):
         default_agent_role: str | MemoryAgentRole | None = None,
         base_system_prompt: str = "",
         injection_policy: MemoryInjectionPolicy | None = None,
-        experience_manager: ExperienceManager | None = None,
         output_base_dir: Path | None = None,
         fork_context_spec: ForkContextSpec | None = None,
         archive_injection_config: ArchiveInjectionConfig | None = None,
         roles: list[str] | None = None,
-        comm_kind: AgentCommKind | None = None,
     ) -> None:
         from modex_agent.memory.injection import FullInjectionPolicy
 
@@ -146,11 +146,29 @@ class MemorySystemContextManager(ContextManager):
         self._last_session_id: str | None = None
         self._context_cache: dict[str, MemoryContext] = {}
         self._max_context_cache_size = 1000
-        self._experience_manager = experience_manager
         self._output_base_dir: Path | None = output_base_dir
         self._fork_context_spec = fork_context_spec
         self._roles: list[str] = list(roles) if roles else []
-        self._comm_kind: AgentCommKind | None = comm_kind
+        self._capability_sections: tuple[SystemPromptProvider, ...] = ()
+        self._capability_sections_locked = False
+
+    def set_capability_sections(self, sections: tuple[SystemPromptProvider, ...]) -> None:
+        """Inject the capability section providers (once-only seam, SPEC §7.3).
+
+        The native assembly core calls this exactly once after resolving the
+        context manager — the one and only injection point for capability
+        prompt sections (setter-only by design: the construction sites stay
+        untouched). A second call raises ``RuntimeError``: the sections back
+        the KV-cache prefix-stability contract, so replacing them
+        mid-lifetime is a bug, never a feature.
+        """
+        if self._capability_sections_locked:
+            raise RuntimeError(
+                "capability sections already set — set_capability_sections "
+                "is a once-only seam (KV-cache prefix stability)"
+            )
+        self._capability_sections = tuple(sections)
+        self._capability_sections_locked = True
 
     def wrap_governance(
         self,
@@ -208,19 +226,16 @@ class MemorySystemContextManager(ContextManager):
         # ────────────────────────────────────────────────────────────────
         from modex_agent.core.prompt import SystemPromptPipeline
         from modex_agent.memory.prompt_pipeline.providers import (
-            AgentCommunicationSystemPromptProvider,
             AgentRoleContractProvider,
             ArchiveProvider,
             BasePromptProvider,
             CoreMemoryProvider,
-            ExperienceProvider,
             GraphWorkflowProvider,
             ModelInfoProvider,
             ProviderBlocksProvider,
             ProviderPrefetchProvider,
             PrunedProvider,
             RuntimeProvider,
-            TodoAwareSystemPromptProvider,
         )
 
         result = await self.injection_policy.assemble(
@@ -238,9 +253,7 @@ class MemorySystemContextManager(ContextManager):
                     working_directory=runtime_info.get(RuntimeInfoKey.WORKING_DIRECTORY)
                 )
             )
-            providers.append(
-                ModelInfoProvider(runtime_info.get(RuntimeInfoKey.MODEL_INFO))
-            )
+            providers.append(ModelInfoProvider(runtime_info.get(RuntimeInfoKey.MODEL_INFO)))
 
         # 2. Base system prompt (static)
         if self.base_system_prompt:
@@ -248,7 +261,9 @@ class MemorySystemContextManager(ContextManager):
 
         # 2a. FORK context — per-invocation (subagents only). Sits AFTER the base
         # prompt as READ-ONLY reference, mirroring the pre-refactor ordering.
-        parent_sid = (runtime_info or {}).get(RuntimeInfoKey.PARENT_SESSION_ID) if runtime_info else None
+        parent_sid = (
+            (runtime_info or {}).get(RuntimeInfoKey.PARENT_SESSION_ID) if runtime_info else None
+        )
         if self._fork_context_spec is not None and parent_sid:
             from modex_agent.memory.prompt_pipeline.providers import (
                 ForkContextProvider,
@@ -256,16 +271,24 @@ class MemorySystemContextManager(ContextManager):
 
             providers.append(
                 ForkContextProvider(
-                self._fork_context_spec, session_id, self._memory_system, parent_sid
+                    self._fork_context_spec, session_id, self._memory_system, parent_sid
                 )
             )
 
-        # 2b. Todo task discipline — gated on tool presence inside the provider
-        providers.append(TodoAwareSystemPromptProvider(tool_manager))
-
-        providers.append(
-            AgentCommunicationSystemPromptProvider(tool_manager, self._comm_kind)
-        )
+        # 2a-NEW. Capability sections — the fixed anchor (SPEC §7.3): one
+        # insertion point between the fork context and core memory. The
+        # retired TodoAware (2b) position, the retired position-8
+        # experience special case, and the retired AgentComm (2c)
+        # composite all render here now for their capability's agents —
+        # the subagents.delegation/consultation/peer sections ride the
+        # same anchor (content byte-equal; the anchor position is the
+        # documented designed delta, SPEC §7.3 N4). Providers render in
+        # the order the native assembly core merged them
+        # (spec.capabilities iteration order; within a wiring, ascending
+        # section order) through the same provider machinery as every
+        # other section. Empty tuple → nothing renders → byte-identical
+        # prompt.
+        providers.extend(self._capability_sections)
 
         # 3. Core memory bundle from injection policy (disclaimer + core memory, budget-trimmed)
         if result.system_prompt:
@@ -302,19 +325,11 @@ class MemorySystemContextManager(ContextManager):
             except Exception:
                 pass
 
-        # 8. Experience (scope-aware via context)
-        if self._experience_manager is not None:
-            try:
-                experience_prompt = await self._experience_manager.build_prompt(
-                    context=ctx,
-                )
-            except Exception:
-                # Elevated from debug: a single malformed experience used to
-                # silently drop ALL experiences from the system prompt.
-                logger.warning("Failed to build experience prompt", exc_info=True)
-            else:
-                if experience_prompt:
-                    providers.append(ExperienceProvider(experience_prompt))
+        # 8. Experience — RETIRED with the capability migration (SPEC
+        # §8.3): the ``experience.injection`` section now renders through
+        # the capability-section anchor above for experience-capability
+        # agents (content byte-equal; the anchor position is the
+        # documented designed delta, SPEC §7.3 N4).
 
         # 9. Skills (static)
         if skill_manager is not None:

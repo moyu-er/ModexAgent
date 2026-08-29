@@ -7,6 +7,7 @@ scope-converge implementation plan). Asserts the exact field contract for
 field names, required vs optional, frozen immutability, and missing-argument
 TypeError behavior.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -34,17 +35,15 @@ class TestPoolRuntimeDeps:
             "notification_service",
             "binding_store",
             "pool_assembly_ctx",
-            "todo_store",
             "root_provider",
             "mcp_registry",
             "emitter_factory",
             "terminal_manager",
             "process_registry",
-            "communication",
-            "experience_review_provider",
             "interceptor_chain",
             "command_processor",
             "persistent_bash",
+            "capability_supply",
         }
         actual = {f.name for f in dataclasses.fields(PoolRuntimeDeps)}
         assert actual == expected
@@ -61,7 +60,6 @@ class TestPoolRuntimeDeps:
         assert instance.binding_store is None
         assert instance.pool_assembly_ctx is None
         assert instance.session_tree_manager is None
-        assert instance.todo_store is None
         assert instance.root_provider is None
         assert instance.mcp_registry is None
         assert instance.emitter_factory is None
@@ -70,7 +68,7 @@ class TestPoolRuntimeDeps:
     def test_frozen_immutability(self) -> None:
         instance = PoolRuntimeDeps(session_tree_manager=MagicMock())
         with pytest.raises(dataclasses.FrozenInstanceError):
-            instance.todo_store = MagicMock()  # type: ignore[misc]
+            instance.root_provider = MagicMock()  # type: ignore[misc]
 
 
 # ---- AssemblyContext ----
@@ -104,9 +102,7 @@ class TestAssemblyContext:
         assert field.default is dataclasses.MISSING
 
     def test_workspace_registry_is_optional(self) -> None:
-        field = {
-            f.name: f for f in dataclasses.fields(AssemblyContext)
-        }["workspace_registry"]
+        field = {f.name: f for f in dataclasses.fields(AssemblyContext)}["workspace_registry"]
         assert field.default is None
 
     def test_workspace_ctx_is_required_no_default(self) -> None:
@@ -126,7 +122,7 @@ class TestAssemblyContext:
     def test_resolution_context_places_resolution_dependencies(self) -> None:
         registry = MagicMock()
         workspace_ctx = MagicMock()
-        pool_runtime = PoolRuntimeDeps(todo_store=MagicMock())
+        pool_runtime = PoolRuntimeDeps(session_tree_manager=MagicMock())
 
         instance = assembly_context.resolution_context(
             registry,

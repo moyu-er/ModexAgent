@@ -32,9 +32,9 @@ class TestAssembledAgent:
         assert dataclasses.is_dataclass(AssembledAgent)
         assert getattr(AssembledAgent, "__dataclass_params__").frozen is True
 
-    def test_has_exactly_9_fields(self) -> None:
+    def test_has_exactly_10_fields(self) -> None:
         fields = dataclasses.fields(AssembledAgent)
-        assert len(fields) == 9
+        assert len(fields) == 10
 
     def test_field_names_exact(self) -> None:
         expected = {
@@ -47,12 +47,13 @@ class TestAssembledAgent:
             "descriptor",
             "propagated_context",
             "mcp_manager",
+            "capability_wirings",
         }
         actual = {f.name for f in dataclasses.fields(AssembledAgent)}
         assert actual == expected
 
     def test_all_fields_default_none(self) -> None:
-        """All 9 fields are optional with ``None`` default — builder accumulates
+        """All 10 fields are optional with ``None`` default — builder accumulates
         incrementally, so no field is required at construction time."""
         instance = AssembledAgent()
         assert instance.agent is None

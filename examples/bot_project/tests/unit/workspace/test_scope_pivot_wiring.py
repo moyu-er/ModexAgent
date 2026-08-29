@@ -24,8 +24,8 @@ from bot.workspace.wiring.resources import (
 
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.multi_agent.pool_router import PoolRoutingStore
-from modex_agent.plugins.abc import ComponentSlot
-from modex_agent.plugins.defaults.prompt import FilePromptProviderFactory
+from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.workspace.context import WorkspaceContext
 
@@ -63,12 +63,14 @@ def _service(home: Path, app_config: AppConfig) -> MagicMock:
     service._output_adapter_factory = None
     service._on_subagent_created = None
     service._strategy_registry = None
-    service._component_registry = ComponentRegistry()
-    service._component_registry.register(
-        ComponentSlot.SYSTEM_PROMPT_PROVIDER,
-        "file_prompt",
-        FilePromptProviderFactory(),
-    )
+    # DefaultPlugin registry — the declaration's child-carrying root needs
+    # the subagents capability resolved at compile (the tree derivation is
+    # capability-contributed since that migration).
+    registry = ComponentRegistry()
+    registry_ctx = PluginRegistrationContext(registry)
+    DefaultPlugin().register(registry_ctx)
+    registry_ctx.flush()
+    service._component_registry = registry
     service.workspace_stack = None
     service.control_channel = None
     service.command_processor = None

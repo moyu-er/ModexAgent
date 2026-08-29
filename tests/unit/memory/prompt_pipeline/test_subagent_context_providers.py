@@ -188,7 +188,6 @@ async def test_fork_provider_differs_per_session():
 
 @pytest.mark.asyncio
 async def test_h1_output_md_provider_not_in_pipeline():
-    from modex_agent.core.agent import AgentCommKind
     from modex_agent.memory.injection import RestrictedInjectionPolicy
     from modex_agent.memory.system import MemorySystemContextManager
 
@@ -196,7 +195,6 @@ async def test_h1_output_md_provider_not_in_pipeline():
         memory_system=_MockMemory(),  # type: ignore[arg-type]
         output_base_dir=Path("/tmp/test_output"),
         injection_policy=RestrictedInjectionPolicy(),
-        comm_kind=AgentCommKind.SUBAGENT,
     )
     state = await mgr.load(session_id="inv1.scout")
     assert state.system_prompt_pipeline is not None
@@ -211,66 +209,43 @@ def test_h2_output_md_provider_class_deprecated():
     assert "[DEPRECATED]" in (OutputMdProvider.__doc__ or "")
 
 
-def test_h3_consult_content_no_output_reference():
-    from modex_agent.core.agent import AgentCommKind
-    from modex_agent.memory.prompt_pipeline.providers import (
-        _SubagentConsultationSubProvider,
-    )
+# ── Consultation brief content (T5 provider → T16 capability section) ─────
+# The retired sub-provider's content migrated verbatim into the
+# subagents capability's consultation section; these content contracts
+# now pin the migrated brief.
 
-    provider = _SubagentConsultationSubProvider(None, AgentCommKind.SUBAGENT)
-    assert "OUTPUT" not in provider.content()
+
+def _consultation_brief() -> str:
+    from modex_agent.plugins.defaults.capabilities.subagents import _CONSULTATION_BRIEF
+
+    return _CONSULTATION_BRIEF
+
+
+def test_h3_consult_content_no_output_reference():
+    assert "OUTPUT" not in _consultation_brief()
 
 
 def test_h4_consult_content_no_deliverable_reference():
-    from modex_agent.core.agent import AgentCommKind
-    from modex_agent.memory.prompt_pipeline.providers import (
-        _SubagentConsultationSubProvider,
-    )
-
-    provider = _SubagentConsultationSubProvider(None, AgentCommKind.SUBAGENT)
-    assert "deliverable" not in provider.content().lower()
+    assert "deliverable" not in _consultation_brief().lower()
 
 
 def test_h5_consult_content_guides_against_reporting_results():
-    from modex_agent.core.agent import AgentCommKind
-    from modex_agent.memory.prompt_pipeline.providers import (
-        _SubagentConsultationSubProvider,
-    )
-
-    provider = _SubagentConsultationSubProvider(None, AgentCommKind.SUBAGENT)
-    assert "Do not use it to report results" in provider.content()
+    assert "Do not use it to report results" in _consultation_brief()
 
 
 def test_h6_consult_content_no_prefixes():
-    from modex_agent.core.agent import AgentCommKind
-    from modex_agent.memory.prompt_pipeline.providers import (
-        _SubagentConsultationSubProvider,
-    )
-
-    provider = _SubagentConsultationSubProvider(None, AgentCommKind.SUBAGENT)
-    content = provider.content()
+    content = _consultation_brief()
     assert "QUESTION" not in content
     assert "NEED_DECISION" not in content
 
 
 def test_h7_consult_content_has_ask_parent_question():
-    from modex_agent.core.agent import AgentCommKind
-    from modex_agent.memory.prompt_pipeline.providers import (
-        _SubagentConsultationSubProvider,
-    )
-
-    provider = _SubagentConsultationSubProvider(None, AgentCommKind.SUBAGENT)
-    assert "ask your parent a question" in provider.content()
+    assert "ask your parent a question" in _consultation_brief()
 
 
-@pytest.mark.asyncio
-async def test_h10_no_dispatch_in_subagent_prompt():
-    from modex_agent.core.agent import AgentCommKind
-    from modex_agent.memory.prompt_pipeline.providers import (
-        AgentCommunicationSystemPromptProvider,
-    )
-
-    provider = AgentCommunicationSystemPromptProvider(None, AgentCommKind.SUBAGENT)
-    result = await provider.get_or_refresh()
-    assert "Dispatching Subagents" not in result
-    assert "PROGRESS_UPDATE" not in result
+def test_h10_no_dispatch_in_subagent_prompt():
+    # The consultation section carries no dispatch guidance (the
+    # delegation brief is a separate compile-time section).
+    content = _consultation_brief()
+    assert "Dispatching Subagents" not in content
+    assert "PROGRESS_UPDATE" not in content

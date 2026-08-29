@@ -44,3 +44,4 @@ class AgentAssembleStage(AssemblyStage):
         builder.agent = result.instance
         builder.descriptor = result.descriptor
         builder.mcp_manager = result.mcp_backend
+        builder.capability_wirings = result.capability_wirings

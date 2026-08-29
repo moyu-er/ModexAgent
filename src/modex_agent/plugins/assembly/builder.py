@@ -47,8 +47,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from modex_agent.multi_agent.pool import AgentPool
     from modex_agent.plugins.assembly.context import AssemblyContext, SupplyInfra
+    from modex_agent.plugins.capability import CapabilityWiring
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +90,12 @@ class AssembledAgent:
     # lifecycle handle the orchestrator harvests into PoolInstance so
     # teardown can release it.
     mcp_manager: Any | None = None
+    # The main agent's capability wiring products (Stage 4's native
+    # capability dispatch) — the orchestrator harvests per-agent wiring
+    # artifacts (e.g. the pool root's communication target store) for
+    # the post-pipeline faces. ``None`` when the agent compiles no
+    # capabilities or the pipeline never reached Stage 4.
+    capability_wirings: Mapping[str, CapabilityWiring] | None = None
 
 
 class AssemblyBuilder:
@@ -129,6 +138,7 @@ class AssemblyBuilder:
     # consumers (interceptor/command factory resolution).
     propagated_context: AssemblyContext | None
     mcp_manager: Any | None
+    capability_wirings: Mapping[str, CapabilityWiring] | None
 
     def __init__(self) -> None:
         self.agent = None
@@ -140,6 +150,7 @@ class AssemblyBuilder:
         self.descriptor = None
         self.propagated_context = None
         self.mcp_manager = None
+        self.capability_wirings = None
         self._cleanups: list[Callable[[], Awaitable[None]]] = []
         self._cleaned_up: bool = False
 
@@ -174,6 +185,7 @@ class AssemblyBuilder:
             descriptor=self.descriptor,
             propagated_context=self.propagated_context,
             mcp_manager=self.mcp_manager,
+            capability_wirings=self.capability_wirings,
         )
 
     async def cleanup(self) -> None:

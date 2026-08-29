@@ -8,12 +8,14 @@ never a materialize-time side registration. This generalizes the existing
 FW per-subagent pattern (``AgentTemplate._register_send_to_agent``) to
 all three tools.
 
-The factories read the pool-layer
-:class:`~modex_agent.plugins.assembly.context.CommunicationFacilities`
-from the context chain (populated by ``PoolAssembleStage`` from
-``SupplyInfra.communication`` on the declaration road; by
-``AgentTemplate.materialize`` for subagents). The legacy roster road is
-deleted — these derived entries are the only registration path.
+The factories read the pool's ``subagents`` capability faces from the
+context chain (the retired ``CommunicationFacilities`` typed carrier
+died with the supply convergence, SPEC §8.4): the pool-level
+:class:`~modex_agent.multi_agent.communication.AgentCommunicationService`
+from ``capability_supply['subagents']`` and the PER-AGENT target store
+from the capability's wiring artifacts
+(``capability_wirings['subagents']`` — populated by
+``SubagentsCapability.assemble`` before tool resolution).
 """
 from __future__ import annotations
 
@@ -34,7 +36,7 @@ from modex_agent.plugins.assembly.context import AgentContext
 from modex_agent.plugins.loader import PluginRegistrationContext
 
 if TYPE_CHECKING:
-    from modex_agent.plugins.assembly.context import CommunicationFacilities
+    from modex_agent.plugins.defaults.capabilities.subagents import SubagentsSupply
 
 
 class _ToolConfig(BaseModel):
@@ -43,17 +45,30 @@ class _ToolConfig(BaseModel):
     model_config = {"frozen": True, "extra": "forbid"}
 
 
-def _facilities(ctx: AgentContext) -> CommunicationFacilities:
-    """The pool-layer communication facilities, loudly when absent."""
-    pool_runtime = ctx.pool_runtime
-    facilities = pool_runtime.communication if pool_runtime is not None else None
-    if facilities is None:
+def _service(ctx: AgentContext) -> SubagentsSupply:
+    """The pool's subagents supply (the communication service carrier)."""
+    from modex_agent.plugins.defaults.capabilities.subagents import (
+        require_subagents_supply,
+    )
+
+    return require_subagents_supply(ctx.pool_runtime)
+
+
+def _target_store(ctx: AgentContext) -> CommunicationTargetStore:
+    """The per-agent communication target store from the ``subagents``
+    wiring artifacts — loudly when absent."""
+    wirings = ctx.capability_wirings
+    wiring = wirings.get("subagents") if wirings is not None else None
+    store = wiring.artifacts.get("target_store") if wiring is not None else None
+    if store is None:
         raise ValueError(
-            "derived communication tool entry requires pool-layer "
-            "communication facilities in PoolRuntimeDeps — the scope "
-            "declaration road wires them at pool assembly (ticket 07)"
+            "derived communication entry requires the per-agent target "
+            "store from the 'subagents' capability's wiring artifacts "
+            "(capability_wirings['subagents']) — the capability assembles "
+            "it for child-carrying agents and pool roots; a hand-referenced "
+            "communication entry without the capability cannot resolve"
         )
-    return facilities
+    return store
 
 
 class TaskToolFactory(ComponentFactory):
@@ -67,17 +82,12 @@ class TaskToolFactory(ComponentFactory):
 
     async def create(self, config: BaseModel, ctx: AgentContext) -> Tool:
         del config
-        facilities = _facilities(ctx)
-        store = facilities.target_store
-        if store is None:
-            raise ValueError(
-                "derived 'task' entry requires a per-agent target store "
-                "(agents with declared children)"
-            )
+        supply = _service(ctx)
+        store = _target_store(ctx)
         return TaskDispatchTool(
             store=store,
             source=AgentAddress(name=ctx.agent_name),
-            service=facilities.service,
+            service=supply.service,
         )
 
 
@@ -93,17 +103,12 @@ class SendToPeerToolFactory(ComponentFactory):
 
     async def create(self, config: BaseModel, ctx: AgentContext) -> Tool:
         del config
-        facilities = _facilities(ctx)
-        store = facilities.target_store
-        if store is None:
-            raise ValueError(
-                "derived 'send_to_peer' entry requires a per-agent target "
-                "store (roots with declared peer links)"
-            )
+        supply = _service(ctx)
+        store = _target_store(ctx)
         return SendToPeerTool(
             store=store,
             source=AgentAddress(name=ctx.agent_name),
-            service=facilities.service,
+            service=supply.service,
         )
 
 
@@ -119,11 +124,11 @@ class SendToAgentToolFactory(ComponentFactory):
 
     async def create(self, config: BaseModel, ctx: AgentContext) -> Tool:
         del config
-        facilities = _facilities(ctx)
+        supply = _service(ctx)
         return SendToAgentTool(
             store=CommunicationTargetStore(for_subagent=True),
             source=AgentAddress(name=ctx.agent_name),
-            service=facilities.service,
+            service=supply.service,
         )
 
 

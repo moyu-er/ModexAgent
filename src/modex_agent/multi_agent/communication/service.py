@@ -141,13 +141,23 @@ class AgentCommunicationService:
         content: str,
         invocation_id: str | None,
         context: AgentContext,
+        declared_children: frozenset[str] | None = None,
     ) -> str:
-        """Send asynchronously via inbox. Returns acknowledgement text."""
+        """Send asynchronously via inbox. Returns acknowledgement text.
+
+        ``declared_children`` (optional) is the SENDER's declared direct
+        children — the per-agent topology input. The communication tools
+        pass their own per-agent store's subagent names (the pool-level
+        service is shared by every agent of the pool, so the service-level
+        store cannot know the sender's children). ``None`` falls back to
+        the service-level store (the pool root's).
+        """
         result = await self._send(
             target=target,
             content=content,
             invocation_id=invocation_id,
             context=context,
+            declared_children=declared_children,
         )
         return format_send_ack(result)
 
@@ -158,6 +168,7 @@ class AgentCommunicationService:
         content: str,
         invocation_id: str | None,
         context: AgentContext,
+        declared_children: frozenset[str] | None = None,
     ) -> AgentSendResult:
         """Core routing logic. Dispatches to one of three SendStrategy
         subclasses based on the target's routing kind."""
@@ -165,7 +176,9 @@ class AgentCommunicationService:
             context.comm_kind,
             target,
             context,
-            declared_children=self._declared_children(),
+            declared_children=(
+                declared_children if declared_children is not None else self._declared_children()
+            ),
         )
         if err is not None:
             return AgentSendResult.with_error(target.name, target.kind, err)
@@ -184,6 +197,19 @@ class AgentCommunicationService:
             context=context,
         )
         return await strategy.execute(req)
+
+    def set_target_store(self, store: CommunicationTargetStore | None) -> None:
+        """Bind the pool ROOT's per-agent target store (the topology
+        fallback carrier).
+
+        The pool-level service is shared by every agent of the pool; the
+        per-sender topology input arrives with each send (the tools pass
+        their own store's subagent names). The service-level store is the
+        FALLBACK for direct callers without a per-sender set (the control
+        facade) — the root's store, bound by the ``subagents``
+        capability's assemble at the root's native assembly.
+        """
+        self._target_store = store
 
     def _declared_children(self) -> frozenset[str]:
         """The sender's declared direct children (SUBAGENT entries of the

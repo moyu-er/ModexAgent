@@ -11,13 +11,12 @@ import logging
 import os
 import sys
 import time
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.agent import AgentCommKind, AgentContext, current_agent_context
+from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.capabilities import Modality, ModelInfo
 from modex_agent.core.constants import (
     _NO_DIR_SENTINEL,
@@ -36,28 +35,10 @@ from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.utils.timezone import get_user_timezone
 
 if TYPE_CHECKING:
-    from modex_agent.core.tool_manager import ToolManager
     from modex_agent.memory.core.system import MemorySystem
     from modex_agent.memory.pruned.manager import PrunedManager
 
 logger = logging.getLogger(__name__)
-
-_TODO_TASK_DISCIPLINE_PROMPT = """\
-## Task Tracking
-
-Track multi-step work with `todo_write`:
-
-* **Plan first** — for any task with 3+ steps, write the full plan as
-  `pending` items before starting.
-* **Update at every transition** — mark items `in_progress` → `completed` as
-  work moves; never describe work as done in prose while the list shows it
-  open.
-* **Refresh on new phases** — when starting a new experiment batch, build,
-  or file, re-write the list to match the current plan; a stale list is as
-  bad as none.
-* **Close out honestly** — do not end your turn with open items unless
-  blocked; if blocked, keep the item open and add one for the blocker.
-"""
 
 
 class BasePromptProvider(SystemPromptProvider):
@@ -72,259 +53,6 @@ class BasePromptProvider(SystemPromptProvider):
 
     async def _fetch_content(self) -> str:
         return self._base_prompt
-
-
-class TodoAwareSystemPromptProvider(SystemPromptProvider):
-    """Task-discipline reminder injected only when the agent owns todo tools.
-
-    The version is binary and stable per agent (``todo-enabled`` or ``no-todo``),
-    so agents with the same tool set share the same cached prefix. Content is
-    gated independently of version so a ``no-todo`` agent emits nothing.
-    """
-
-    def __init__(self, tool_manager: ToolManager | None) -> None:
-        super().__init__()
-        self._tool_manager = tool_manager
-
-    def _has_todo_tools(self) -> bool:
-        if self._tool_manager is None:
-            return False
-        return self._tool_manager.is_registered("todo_read") and (
-            self._tool_manager.is_registered("todo_write")
-        )
-
-    async def _fetch_version(self) -> str:
-        return "todo-enabled" if self._has_todo_tools() else "no-todo"
-
-    async def _fetch_content(self) -> str:
-        return _TODO_TASK_DISCIPLINE_PROMPT if self._has_todo_tools() else ""
-
-
-class _CommSubProvider(ABC):
-    """Internal strategy object for ``AgentCommunicationSystemPromptProvider``.
-
-    Each sub-module contributes one communication-context section. Sub-modules
-    are NOT independent ``SystemPromptProvider`` instances — the composite
-    provider owns the version/cache contract and delegates content/version
-    computation to its sub-modules.
-    """
-
-    @abstractmethod
-    def applies(self) -> bool:
-        """Return True if this sub-module's section should be emitted."""
-
-    @abstractmethod
-    def version_part(self) -> str:
-        """Return the version fragment for this sub-module."""
-
-    @abstractmethod
-    def content(self) -> str:
-        """Return the prompt section content (empty if N/A)."""
-
-
-class _PeerCommSubProvider(_CommSubProvider):
-    """Remote-agent reply contract — moved from the deleted
-    ``PeerCommunicationSystemPromptProvider``.
-
-    Fires when the agent owns ``send_to_peer`` AND at least one target is a
-    remote agent (a ``CommunicationTarget`` whose ``tree_ref`` is set — the
-    target does not share this agent's bus, so there is no implicit reply
-    path). For those targets the agent's ordinary output is invisible and a
-    reply is only possible via ``send_to_peer``.
-    """
-
-    def __init__(self, tool_manager: ToolManager | None) -> None:
-        self._tool_manager = tool_manager
-
-    def _remote_target_names(self) -> list[str]:
-        if self._tool_manager is None:
-            return []
-        tool = self._tool_manager.get_tool("send_to_peer")
-        if tool is None:
-            return []
-        from modex_agent.multi_agent.tools import SendToPeerTool
-
-        if not isinstance(tool, SendToPeerTool):
-            return []
-        return sorted(t.name for t in tool.list_targets() if t.tree_ref is not None)
-
-    def applies(self) -> bool:
-        return bool(self._remote_target_names())
-
-    def version_part(self) -> str:
-        names = self._remote_target_names()
-        return "peer:" + ",".join(names)
-
-    def content(self) -> str:
-        names = self._remote_target_names()
-        if not names:
-            return ""
-        name_list = "\n".join(f"  - {name}" for name in names)
-        return (
-            "## Communicating With Remote Agents\n\n"
-            "Some agents you can reach via `send_to_peer` cannot see anything "
-            "you produce normally — not this reply, not your reasoning, not your "
-            "tool output. For these agents the ONLY way they ever hear from you "
-            "is a `send_to_peer` call aimed at them.\n\n"
-            "Agents that require explicit sends:\n"
-            f"{name_list}\n\n"
-            "Replies are OPTIONAL. Only call `send_to_peer` back when the sender "
-            "actually needs your response — do NOT acknowledge just to be polite, "
-            "and do NOT ping-pong. If the incoming message does not require action "
-            "from you, end your turn without replying.\n"
-        )
-
-
-class _SubagentConsultationSubProvider(_CommSubProvider):
-    """SUBAGENT consultation contract — ask parent for input via
-    ``send_to_agent``.
-
-    Fires when ``comm_kind == SUBAGENT``.
-    """
-
-    def __init__(
-        self,
-        tool_manager: ToolManager | None,
-        comm_kind: AgentCommKind | None,
-    ) -> None:
-        self._tool_manager = tool_manager
-        self._comm_kind = comm_kind
-
-    def applies(self) -> bool:
-        return self._comm_kind == AgentCommKind.SUBAGENT
-
-    def version_part(self) -> str:
-        return "consult"
-
-    def content(self) -> str:
-        return (
-            "## Consulting Your Parent\n\n"
-            "Use `send_to_agent` only to ask your parent a question or request a "
-            "decision when you cannot proceed without input. Do not use it to report "
-            "results or progress."
-        )
-
-
-_TASK_DELEGATION_PROMPT = """\
-## Delegating To Subagents
-
-You own the `task` tool. Its description lists the available subagents and
-what each is for — check it before starting non-trivial work, and pick the
-subagent whose strengths match the job.
-
-When to delegate:
-- Bulk or parallelizable investigation ("find all X", "map how Y works") — a
-  fresh context does it cheaper and without polluting yours.
-- An independent implementation piece that would otherwise crowd your context.
-- Verification of a deliverable before you report it — fresh eyes, no
-  anchoring on your own assumptions.
-
-When NOT to delegate:
-- Needle queries: a specific file, symbol, or 2-3 known files — read/grep
-  directly, it is faster.
-- Tightly coupled edits that depend on your accumulated context — do them
-  yourself.
-- Trivial one-step actions.
-
-Writing the task brief. The subagent sees ONLY the `content` you pass — never
-your conversation, reasoning, or tool results. Output quality is directly
-proportional to brief quality. Structure every brief with all six elements:
-
-- TASK: the concrete objective — what exactly to do, not a topic.
-- CONTEXT: relevant file paths, symbols, patterns, and constraints it must
-  know to work autonomously.
-- SCOPE: research-only (search/read/analyze) or implementation (write/edit).
-- OUTPUT: exactly what to return in its final reply.
-- VERIFICATION: how to verify success (e.g., the test command to run).
-- BOUNDARIES: what NOT to do, out-of-scope items, files it must not touch.
-
-A one-line brief like "fix the bug" is insufficient. If your brief is only a
-few lines, it is probably too thin.
-
-Discipline:
-- Dispatch independent tasks in parallel — multiple `task` calls in a single
-  message — but no more than 3 is suggested, and give parallel subagents
-  disjoint files and resources so they cannot conflict.
-- After dispatching, end your turn and wait for the result notification. You
-  may continue only with non-overlapping work.
-- Do not duplicate delegated work yourself — integrate the result instead.
-- Verify implementation results before relying on them — run the brief's
-  VERIFICATION step or spot-check the change. A success claim is a report,
-  not proof.
-- Synthesize research results before answering — each subagent saw only its
-  slice. Merge findings into one whole picture, reconcile conflicts, and
-  never forward a single narrow result as the complete answer.
-- To continue a subagent session (follow-up, corrections), pass its
-  `invocation_id` instead of re-dispatching from scratch.
-"""
-
-
-class _TaskDelegationSubProvider(_CommSubProvider):
-    """Delegation guidance — fires when the agent owns the ``task`` tool.
-
-    Tool-presence gated like ``TodoAwareSystemPromptProvider``: any agent
-    that can dispatch subagents gets the delegation contract structurally,
-    instead of each persona MD hardcoding it. The prompt carries the full
-    when/how policy and the six-element brief spec; the tool's dynamic
-    description carries the live subagent roster — the two reference each
-    other by section name.
-    """
-
-    def __init__(self, tool_manager: ToolManager | None) -> None:
-        self._tool_manager = tool_manager
-
-    def applies(self) -> bool:
-        return self._tool_manager is not None and self._tool_manager.is_registered("task")
-
-    def version_part(self) -> str:
-        return "delegate"
-
-    def content(self) -> str:
-        return _TASK_DELEGATION_PROMPT
-
-
-class AgentCommunicationSystemPromptProvider(SystemPromptProvider):
-    """Composite provider for agent-communication context.
-
-    Replaces the deleted ``PeerCommunicationSystemPromptProvider`` with a
-    composite contract whose applicability depends on the agent's topology
-    (``comm_kind``), the shape of its ``send_to_agent`` target set, and its
-    tool presence:
-
-    - ``_PeerCommSubProvider`` — remote-agent reply contract (peer targets
-      whose ``tree_ref`` is set).
-    - ``_SubagentConsultationSubProvider`` — SUBAGENT consultation contract
-      (ask parent for input via ``send_to_agent``).
-    - ``_TaskDelegationSubProvider`` — delegation guidance (agent owns the
-      ``task`` tool).
-
-    The composite provider owns the version/cache contract; sub-modules are
-    internal strategy objects that contribute version fragments and content
-    sections. Version is ``"comm:"`` + ``|``-joined fragments of all applying
-    sub-modules (``"comm:none"`` if none apply); content is ``\\n\\n``-joined
-    sections of all applying sub-modules, empty strings skipped (``""`` if
-    none apply).
-    """
-
-    def __init__(
-        self,
-        tool_manager: ToolManager | None,
-        comm_kind: AgentCommKind | None,
-    ) -> None:
-        super().__init__()
-        self._sub_providers: list[_CommSubProvider] = [
-            _PeerCommSubProvider(tool_manager),
-            _SubagentConsultationSubProvider(tool_manager, comm_kind),
-            _TaskDelegationSubProvider(tool_manager),
-        ]
-
-    async def _fetch_version(self) -> str:
-        parts = [sub.version_part() for sub in self._sub_providers if sub.applies()]
-        return "comm:" + "|".join(parts) if parts else "comm:none"
-
-    async def _fetch_content(self) -> str:
-        sections = [sub.content() for sub in self._sub_providers if sub.applies()]
-        return "\n\n".join(s for s in sections if s)
 
 
 _CGROUP_V2_ROOT = Path("/sys/fs/cgroup")
@@ -489,14 +217,16 @@ class RuntimeProvider(SystemPromptProvider):
             f"CPU cores: {cpu}",
         ]
         if mem_mib > 0:
-            lines.extend([
-                f"Memory: {mem_mib} MiB",
-                "Memory is a hard limit: never let combined allocations of "
-                "concurrent commands approach it — exceeding it gets the "
-                "whole process killed (OOM) with all work lost. CPU cores "
-                "are a guide: matching worker count to cores suits CPU-bound "
-                "work, but IO-bound tasks may sensibly run more.",
-            ])
+            lines.extend(
+                [
+                    f"Memory: {mem_mib} MiB",
+                    "Memory is a hard limit: never let combined allocations of "
+                    "concurrent commands approach it — exceeding it gets the "
+                    "whole process killed (OOM) with all work lost. CPU cores "
+                    "are a guide: matching worker count to cores suits CPU-bound "
+                    "work, but IO-bound tasks may sensibly run more.",
+                ]
+            )
         dir_line = format_working_directory_line(self._working_directory)
         if dir_line is not None:
             lines.append(dir_line)
@@ -940,13 +670,15 @@ class GraphWorkflowProvider(SystemPromptProvider):
         custom = _graph_node_custom_state(ctx)
         if custom is None:
             return ""
-        parts: list[str] = ["## Graph Node Context\n",
-                            "### Workflow Guidance\n\n",
-                            "You are a node in a graph workflow. Your regular text "
-                            "output is NOT delivered to anyone — only the `deliver` "
-                            "tool routes your work to downstream nodes.\n\n"
-                            "You MUST call `deliver` before finishing. Check the "
-                            "`deliver` tool for available targets and their roles.\n\n"]
+        parts: list[str] = [
+            "## Graph Node Context\n",
+            "### Workflow Guidance\n\n",
+            "You are a node in a graph workflow. Your regular text "
+            "output is NOT delivered to anyone — only the `deliver` "
+            "tool routes your work to downstream nodes.\n\n"
+            "You MUST call `deliver` before finishing. Check the "
+            "`deliver` tool for available targets and their roles.\n\n",
+        ]
 
         has_agent = custom.get(TurnCustomKey.GRAPH_DOWNSTREAM_HAS_AGENT, False)
         has_end = custom.get(TurnCustomKey.GRAPH_DOWNSTREAM_HAS_END, False)

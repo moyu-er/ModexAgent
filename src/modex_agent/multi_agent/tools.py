@@ -754,11 +754,15 @@ class TaskDispatchTool(Tool):
                 f"Available subagents: {available}"
             )
 
+        # The pool-level service is shared pool-wide; the sender's own
+        # declared children (this tool's store) are the per-sender
+        # topology input.
         return await self._service.send_async(
             target=target,
             content=content,
             invocation_id=invocation_id,
             context=context,
+            declared_children=self._store.subagent_names(),
         )
 
 

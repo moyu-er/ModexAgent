@@ -17,7 +17,6 @@ from modex_agent.ioc.factories.governance import create_governance
 from modex_agent.ioc.factories.memory import create_memory
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.system import MemorySystemContextManager
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
 from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.plugins.abc import ComponentSlot
@@ -166,7 +165,6 @@ async def assemble_declared_single_agent(
             compiled, component_registry, component_ctx, project_dir
         ),
         roles=list(spec.roles),
-        comm_kind=AgentCommKind.NORMAL,
     )
     tool_manager = InMemoryToolManager()
     result = await assemble_native_agent(

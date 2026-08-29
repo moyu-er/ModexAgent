@@ -196,18 +196,36 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     declared_helper = AgentSpec(
         name="helper", parent="main", description="Test helper", max_steps=5
     )
-    compilation = compile_scope(
-        ScopeSpec(
-            kind=ScopeKind.POOL,
-            pool=PoolSpec(
-                name="main", agents=[AgentSpec(name="main"), declared_helper]
-            ),
+    declared_pool = PoolSpec(name="main", agents=[AgentSpec(name="main"), declared_helper])
+
+    # --- component registry (the capability compile input, ticket 12) ---
+    from modex_agent.plugins.defaults import DefaultPlugin
+    from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
+    from modex_agent.plugins.registry import ComponentRegistry
+
+    component_registry = ComponentRegistry()
+    await ComponentRegistryLoader.load(
+        component_registry,
+        PluginDiscoveryConfig(
+            bundled_factories=(DefaultPlugin(),),
+            project_plugin_paths=(),
         ),
+    )
+
+    # The declaration compiles WITH the registry: the `subagents`
+    # capability's tree predicate contributes the derived communication
+    # entries + the `subagent_auto_send` roster hook for the non-root
+    # helper (the retired compiler hard-coding died with ADR-0047) —
+    # compiling registry-less would leave the helper hook-less and the
+    # OUTPUT_<n>.md deliverable would never be written.
+    compilation = compile_scope(
+        ScopeSpec(kind=ScopeKind.POOL, pool=declared_pool),
         workspace_ctx=WorkspaceContext(
             target=project,
             paths=WorkspacePaths(root=project / ".modex"),
             is_home=False,
         ),
+        registry=component_registry,
     )
     compiled_helper = next(
         agent for agent in compilation.agents if agent.provenance.agent == "helper"
@@ -299,9 +317,7 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
     from modex_agent.workspace.scope_path import ScopePath
 
-    scope_path = ScopePath(
-        workspace_root=tmp_path / "workspace", pool_name="main"
-    )
+    scope_path = ScopePath(workspace_root=tmp_path / "workspace", pool_name="main")
     context_fork_builder = ContextForkBuilder()
 
     # SessionTreeManager with InMemory stores — real tree for the
@@ -325,17 +341,41 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     consumer.set_on_consumed(tree_manager.on_consumed)
     poller.attach_tree_manager(tree_manager)
 
-    from modex_agent.plugins.defaults import DefaultPlugin
-    from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
-    from modex_agent.plugins.registry import ComponentRegistry
+    # The pool assembly context the roster hook factories derive from
+    # (SubagentAutoSendHook's declared parent + runtime_dir, native_env's
+    # env spec) plus the pool's aggregated `subagents` capability supply —
+    # the same faces create_pool threads onto AgentMaterializeDeps in
+    # production. pool_data is the fake snapshot (runtime_dir-backed), so
+    # the auto-send hook writes OUTPUT_<n>.md under the workspace's
+    # runtime_state/main/output — not the CWD fallback.
+    from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
+    from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+    from modex_agent.plugins.capability import PoolSupplyAgentEntry, PoolSupplyView
+    from modex_agent.plugins.defaults.capabilities.subagents import SubagentsCapability
 
-    component_registry = ComponentRegistry()
-    await ComponentRegistryLoader.load(
-        component_registry,
-        PluginDiscoveryConfig(
-            bundled_factories=(DefaultPlugin(),),
-            project_plugin_paths=(),
-        ),
+    pool_assembly_ctx = PoolAssemblyContext(
+        pool_name="main",
+        pool_spec=declared_pool,
+        project_dir=project,
+        data_dir=tmp_path / "workspace",
+        broker=broker,
+        inbox_server=inbox_server,
+        agent_bus=bus,
+        output_adapter=None,
+        safety=RuntimeSafetyPolicy(),
+        retention=SessionRetentionPolicy(),
+        registry=TurnSessionRegistry(),
+        pool_data=ws.pool_data["main"],
+    )
+    subagents_supply = SubagentsCapability().supply(
+        PoolSupplyView(
+            pool_name="main",
+            entries=(PoolSupplyAgentEntry(agent_name="helper", config={}),),
+            root_agent_name="main",
+            pool=pool,
+            session_tree=tree_manager,
+            project_dir=project,
+        )
     )
     deps = AgentMaterializeDeps(
         agent_factory=factory,
@@ -352,6 +392,8 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         scope_path=scope_path,
         workspace_manager=workspace_manager,
         component_registry=component_registry,
+        pool_assembly_ctx=pool_assembly_ctx,
+        capability_supply={"subagents": subagents_supply},
     )
     pool.materialize_deps = deps
     pool.template_registry = template_registry
@@ -468,8 +510,7 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
             f"via ResultMeta): {notif_content[:200]}"
         )
         assert provider.DELIVERABLE_TEXT in notif_content, (
-            f"notification body does not contain the deliverable text: "
-            f"{notif_content[:200]}"
+            f"notification body does not contain the deliverable text: {notif_content[:200]}"
         )
     finally:
         await pool.shutdown_all()

@@ -59,7 +59,7 @@ from modex_agent.plugins.assembly.context import (
 )
 from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
 from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.scope.spec import AgentSpec
+from modex_agent.scope.spec import AgentSpec, PoolSpec
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.scope_path import ScopePath
@@ -97,7 +97,22 @@ def _make_deps(
     data_dir: Path | None = None,
     tree: Any | None = None,
     session_registry: Any | None = None,
+    subagent_name: str = "coder",
 ) -> AgentMaterializeDeps:
+    from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
+
+    # The declared pool tree the converged auto-send hook factory derives
+    # the parent name from (the chain's pool_assembly_ctx read).
+    pool_assembly = MagicMock(spec=PoolAssemblyContext)
+    pool_assembly.pool_name = "default"
+    pool_assembly.pool_spec = PoolSpec(
+        name="default",
+        agents=[
+            AgentSpec(name="main"),
+            AgentSpec(name=subagent_name, parent="main"),
+        ],
+    )
+    pool_assembly.pool_data = None
     return AgentMaterializeDeps(
         agent_factory=MagicMock(),
         pool=MagicMock(),
@@ -108,6 +123,7 @@ def _make_deps(
         data_dir=data_dir,
         session_registry=session_registry,
         scope_path=ScopePath(workspace_root=Path("/ws"), pool_name="default"),
+        pool_assembly_ctx=pool_assembly,
     )
 
 
@@ -121,13 +137,19 @@ def _make_subagent_ctx(
     """The per-invocation full-chain context (ticket 10: one mechanism —
     the deleted special-case context's semantics ride the
     AgentContext agent layer + the materialize deps)."""
+    # The external strategy resolves the auto-send HOOK-slot factory off
+    # the chain's registry (the converged construction path), so the
+    # harness registry carries the FW registration.
+    from modex_agent.plugins.abc import ComponentSlot
+    from modex_agent.plugins.defaults.hooks import SubagentAutoSendHookFactory
+
+    registry = ComponentRegistry()
+    registry.register(ComponentSlot.HOOK, "subagent_auto_send", SubagentAutoSendHookFactory())
     return AgentContext(
-        registry=ComponentRegistry(),
+        registry=registry,
         workspace_ctx=WorkspaceContext(
             target=deps.project_dir or Path("."),
-            paths=WorkspacePaths(
-                root=deps.data_dir or (deps.project_dir or Path(".")) / ".modex"
-            ),
+            paths=WorkspacePaths(root=deps.data_dir or (deps.project_dir or Path(".")) / ".modex"),
             is_home=False,
         ),
         pool_runtime=PoolRuntimeDeps(
@@ -150,9 +172,7 @@ def _make_assembly_spec(
     external-sub projection)."""
     workspace_ctx = WorkspaceContext(
         target=deps.project_dir or Path("."),
-        paths=WorkspacePaths(
-            root=deps.data_dir or (deps.project_dir or Path(".")) / ".modex"
-        ),
+        paths=WorkspacePaths(root=deps.data_dir or (deps.project_dir or Path(".")) / ".modex"),
         is_home=False,
     )
     return AssemblySpec(
@@ -248,7 +268,12 @@ async def test_assemble_sub_env_spec_agent_pool_map_includes_parent_for_modexctl
 ) -> None:
     strategy = ExternalExecutionStrategy()
     spec = _make_subagent_spec(agent_name="worker")
-    deps = _make_deps(broker=MagicMock(), project_dir=tmp_path, data_dir=tmp_path / ".modex")
+    deps = _make_deps(
+        broker=MagicMock(),
+        project_dir=tmp_path,
+        data_dir=tmp_path / ".modex",
+        subagent_name="worker",
+    )
     ctx = _make_subagent_ctx(
         spec=spec,
         deps=deps,

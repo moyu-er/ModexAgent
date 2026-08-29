@@ -49,7 +49,6 @@ if TYPE_CHECKING:
     from bot.webui.transcript_store import TranscriptStore
     from bot.workspace.handle import PoolWorkspaceResources
     from modex_agent.memory.core.split_stores import MessageStore
-    from modex_agent.multi_agent.communication.service import AgentCommunicationService
 
 logger = logging.getLogger(__name__)
 
@@ -299,9 +298,9 @@ class WebUIService(BotService):
         # on_subagent_created: dispatch-time pre-registration on the WS input
         # adapter — the anonymous delta buffer (early subagent output) plus
         # the genealogy link, one atomic seam. The actual SessionInfo record
-        # is written by the per-workspace registry inside
-        # AgentCommunicationService._create_dynamic_subagent; we do NOT write
-        # it again here to avoid leaking it into the home workspace.
+        # is written by the communication service's dynamic-subagent path;
+        # we do NOT write it again here to avoid leaking it into the home
+        # workspace.
 
         async def _on_subagent_created(child_id: str, parent_id: str, pool: str) -> None:
             ws_input = get_ws_input()
@@ -698,7 +697,7 @@ class WebUIService(BotService):
         # Constructed with production provider callbacks that navigate the
         # materialized PoolWorkspaceResources to reach the per-session
         # MessageStore (native react path), the workspace TranscriptStore
-        # (external path), and the per-pool AgentCommunicationService
+        # (external path), and the per-pool communication service
         # (send path). Without this injection app["control_facade"] stays
         # None and the control routes return 503.
         from bot.control.facade import BotControlFacade, ControlFacadeError
@@ -769,7 +768,9 @@ class WebUIService(BotService):
         async def _provide_communication_service(
             resources: PoolWorkspaceResources,
             pool_name: str,
-        ) -> AgentCommunicationService:
+        ) -> Any:
+            # The framework capability-supply router, opaque at this layer
+            # (PoolInstance.communication_service is typed Any).
             pool_instance = resources.pools.get(pool_name)
             if pool_instance is None:
                 raise ControlFacadeError(

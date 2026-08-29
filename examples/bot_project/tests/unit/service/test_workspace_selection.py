@@ -23,8 +23,21 @@ from bot.service.pool.declaration import (
 
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.persistence.config import PersistenceBackend
+from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.scope.spec import ScopeKind
+
+
+def _component_registry() -> ComponentRegistry:
+    """DefaultPlugin registry — the tree derivation is capability-contributed
+    (the subagents migration); the boot compile resolves it against this."""
+    registry = ComponentRegistry()
+    ctx = PluginRegistrationContext(registry)
+    DefaultPlugin().register(ctx)
+    ctx.flush()
+    return registry
 
 
 def _write_declaration(tmp_path: Path, body: str) -> Path:
@@ -212,6 +225,7 @@ class TestDeclaredPoolRoot:
             data_dir=tmp_path / ".modex",
             graphs_dirs=(),
             default_llm_provider="bot_default",
+            registry=_component_registry(),
         )
 
         root = declared_pool_root(boot, "main")
@@ -241,6 +255,7 @@ class TestDeclaredPoolRoot:
             data_dir=tmp_path / ".modex",
             graphs_dirs=(),
             default_llm_provider="bot_default",
+            registry=_component_registry(),
         )
 
         root = declared_pool_root(boot, "solo")

@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
 
-from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.scope import MemoryAgentRole
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.memory.injection import RestrictedInjectionPolicy
@@ -39,7 +38,6 @@ def build_session_only_memory(
     fork_context_spec: ForkContextSpec | None = None,
     roles: list[str] | None = None,
     store_registry: MemoryStoreRegistry | None = None,
-    comm_kind: AgentCommKind | None = None,
 ) -> MemorySystemContextManager:
     """Create a session-only memory system for a subagent."""
     layer_config = MemoryLayerConfigSet(
@@ -76,7 +74,6 @@ def build_session_only_memory(
         output_base_dir=output_base_dir,
         fork_context_spec=fork_context_spec,
         roles=roles,
-        comm_kind=comm_kind,
     )
 
 

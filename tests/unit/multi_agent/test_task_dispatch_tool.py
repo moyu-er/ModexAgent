@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from modex_agent.core.agent import AgentContext, current_agent_context
@@ -23,6 +21,7 @@ class _RecordingService:
         self.last_target: CommunicationTarget | None = None
         self.last_content: str | None = None
         self.last_context: AgentContext | None = None
+        self.last_declared_children: frozenset[str] | None = None
 
     async def send_async(
         self,
@@ -31,11 +30,13 @@ class _RecordingService:
         content: str,
         invocation_id: str | None,
         context: AgentContext,
+        declared_children: frozenset[str] | None = None,
     ) -> str:
         self.async_invocation_id = invocation_id
         self.last_target = target
         self.last_content = content
         self.last_context = context
+        self.last_declared_children = declared_children
         return "ok"
 
 
@@ -170,6 +171,9 @@ class TestTaskDispatchToolExecute:
         assert service.last_target.name == "office-expert"
         assert service.last_content == "do the thing"
         assert service.last_context is not None
+        # The pool-level service is shared; the tool passes its OWN
+        # store's subagent names as the per-sender topology input.
+        assert service.last_declared_children == frozenset({"office-expert"})
 
     @pytest.mark.asyncio
     async def test_execute_rejects_unknown_target(self) -> None:

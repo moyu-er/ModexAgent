@@ -28,6 +28,7 @@ Zero framework code changes: the test uses only public APIs
 monkey-patching of framework code (only ``create_memory`` is patched,
 same as the unit tests in ``tests/unit/plugins/test_stage_agent.py``).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -38,7 +39,7 @@ from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook import Hook, HookRunner
-from modex_agent.multi_agent.tools import CommunicationTargetStore
+from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.plugins.abc import (
     HookRunnerKind,
     SimpleFactory,
@@ -46,7 +47,6 @@ from modex_agent.plugins.abc import (
 from modex_agent.plugins.assembly.builder import AssemblyBuilder
 from modex_agent.plugins.assembly.context import (
     AssemblyContext,
-    CommunicationFacilities,
     PoolRuntimeDeps,
 )
 from modex_agent.plugins.assembly.native_core import LlmDefaults, NativeAssemblyInputs
@@ -55,6 +55,7 @@ from modex_agent.plugins.assembly.stages.agent_assemble import (
     AgentAssembleStage,
 )
 from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.defaults.capabilities.subagents import SubagentsSupply
 from modex_agent.plugins.loader import (
     ComponentRegistryLoader,
     Plugin,
@@ -85,9 +86,7 @@ def _modexctl_resolvable() -> bool:
 
 pytestmark = [
     pytest.mark.integration,
-    pytest.mark.skipif(
-        not _modexctl_resolvable(), reason="modexctl binary not resolvable"
-    ),
+    pytest.mark.skipif(not _modexctl_resolvable(), reason="modexctl binary not resolvable"),
 ]
 
 
@@ -126,16 +125,12 @@ class _TestPlugin(Plugin):
     config_model = _TestPluginConfig
 
     def register(self, ctx: PluginRegistrationContext) -> None:
-        ctx.register_tool(
-            "custom_tool", SimpleFactory(_CUSTOM_TOOL, _EmptyConfig)
-        )
+        ctx.register_tool("custom_tool", SimpleFactory(_CUSTOM_TOOL, _EmptyConfig))
         hook_factory = SimpleFactory(_CUSTOM_HOOK, _EmptyConfig)
         hook_factory.applies_to = None  # type: ignore[assignment]
         hook_factory.hook_runner = HookRunnerKind.react  # type: ignore[assignment]
         ctx.register_hook("custom_hook", hook_factory)
-        ctx.register_provider(
-            "test_llm", SimpleFactory(_MOCK_LLM, _EmptyConfig)
-        )
+        ctx.register_provider("test_llm", SimpleFactory(_MOCK_LLM, _EmptyConfig))
 
 
 # ─── Declaration fixtures ───────────────────────────────────────────────────
@@ -193,19 +188,52 @@ pool:
 
 
 def _workspace_ctx(root: Path) -> WorkspaceContext:
-    return WorkspaceContext(
-        target=root, paths=WorkspacePaths(root=root), is_home=False
-    )
+    return WorkspaceContext(target=root, paths=WorkspacePaths(root=root), is_home=False)
 
 
-def _compiled_sub_spec(declaration: str, tmp_path: Path, agent_name: str) -> AssemblySpec:
-    """Write the declaration, compile it through the REAL production road,
-    and return the named subagent's AssemblySpec."""
+def _compiled_sub_spec(
+    declaration: str,
+    tmp_path: Path,
+    agent_name: str,
+    registry: ComponentRegistry,
+) -> AssemblySpec:
+    """Write the declaration, compile it through the REAL production road
+    (registry-threaded — the derived communication entries are
+    capability-contributed since the subagents migration), and return the
+    named subagent's AssemblySpec."""
     declaration_path = tmp_path / "declaration.yml"
     declaration_path.write_text(declaration, encoding="utf-8")
     spec = load_scope_declaration(declaration_path)
-    compilation = compile_scope(spec, workspace_ctx=_workspace_ctx(tmp_path))
+    compilation = compile_scope(spec, workspace_ctx=_workspace_ctx(tmp_path), registry=registry)
     return next(a.spec for a in compilation.agents if a.spec.agent_name == agent_name)
+
+
+def _subagents_pool_runtime(declaration: str, tmp_path: Path) -> PoolRuntimeDeps:
+    """Pool runtime deps carrying the ``subagents`` capability faces the
+    derived communication TOOL factories resolve against: the supply's
+    service (mocked router) + the pool assembly context carrying the
+    DECLARED pool tree (the per-agent target store and the auto-send
+    hook's parent derive from it at assembly)."""
+    declaration_path = tmp_path / "declaration.yml"
+    declaration_path.write_text(declaration, encoding="utf-8")
+    pool_spec = load_scope_declaration(declaration_path).pool
+    assert pool_spec is not None
+    return PoolRuntimeDeps(
+        pool_assembly_ctx=PoolAssemblyContext(
+            pool_name=pool_spec.name,
+            pool_spec=pool_spec,
+            project_dir=tmp_path,
+            data_dir=tmp_path,
+            broker=MagicMock(),
+            inbox_server=MagicMock(),
+            agent_bus=MagicMock(),
+            output_adapter=MagicMock(),
+            safety=MagicMock(),
+            retention=MagicMock(),
+            registry=MagicMock(),
+        ),
+        capability_supply={"subagents": SubagentsSupply(service=MagicMock())},
+    )
 
 
 async def _assemble(
@@ -254,7 +282,7 @@ class TestYamlPluginNewAgent:
         )
 
         # 3+4. Load + compile the declaration through the real road
-        spec = _compiled_sub_spec(_DECLARATION, tmp_path, "testagent")
+        spec = _compiled_sub_spec(_DECLARATION, tmp_path, "testagent", registry)
 
         # 5. Verify the spec references the custom components
         assert "custom_tool" in spec.tools
@@ -265,9 +293,7 @@ class TestYamlPluginNewAgent:
             registry=registry,
             workspace_registry=MagicMock(),  # type: ignore[arg-type]
             workspace_ctx=_workspace_ctx(tmp_path),
-            pool_runtime=PoolRuntimeDeps(
-                communication=CommunicationFacilities(service=MagicMock())
-            ),
+            pool_runtime=_subagents_pool_runtime(_DECLARATION, tmp_path),
         )
         builder, tool_manager, hook_runner = await _assemble(spec, ctx)
 
@@ -281,9 +307,7 @@ class TestYamlPluginNewAgent:
             "Custom hook from test plugin not found in assembled agent's HookRunner"
         )
 
-    async def test_yaml_drives_tool_and_hook_names(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_yaml_drives_tool_and_hook_names(self, tmp_path: Path) -> None:
         """The declaration is the sole source of which tools/hooks the agent gets.
 
         Without the declaration referencing ``custom_tool`` / ``custom_hook``,
@@ -300,7 +324,7 @@ class TestYamlPluginNewAgent:
             ),
         )
 
-        spec = _compiled_sub_spec(_PLAIN_DECLARATION, tmp_path, "plainagent")
+        spec = _compiled_sub_spec(_PLAIN_DECLARATION, tmp_path, "plainagent", registry)
 
         # The plain agent does NOT reference custom components
         assert "custom_tool" not in spec.tools
@@ -310,9 +334,7 @@ class TestYamlPluginNewAgent:
             registry=registry,
             workspace_registry=MagicMock(),  # type: ignore[arg-type]
             workspace_ctx=_workspace_ctx(tmp_path),
-            pool_runtime=PoolRuntimeDeps(
-                communication=CommunicationFacilities(service=MagicMock())
-            ),
+            pool_runtime=_subagents_pool_runtime(_PLAIN_DECLARATION, tmp_path),
         )
         builder, tool_manager, hook_runner = await _assemble(spec, ctx)
 
@@ -334,9 +356,7 @@ class TestNestedSubagentDemo:
     optional plugin registering its components. Zero framework or business
     code changes."""
 
-    async def test_nested_subagent_with_custom_toolset_from_pure_yaml(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_nested_subagent_with_custom_toolset_from_pure_yaml(self, tmp_path: Path) -> None:
         registry = ComponentRegistry()
         await ComponentRegistryLoader.load(
             registry,
@@ -346,7 +366,7 @@ class TestNestedSubagentDemo:
             ),
         )
 
-        spec = _compiled_sub_spec(_NESTED_DECLARATION, tmp_path, "mid")
+        spec = _compiled_sub_spec(_NESTED_DECLARATION, tmp_path, "mid", registry)
         # Custom toolset: the declared +/- merge landed on the position default.
         assert "custom_tool" in spec.tools
         assert "bash" not in spec.tools
@@ -357,7 +377,7 @@ class TestNestedSubagentDemo:
         assert "custom_hook" in spec.hooks
 
         # The leaf two levels down derives its own face from the same YAML.
-        leaf = _compiled_sub_spec(_NESTED_DECLARATION, tmp_path, "leaf")
+        leaf = _compiled_sub_spec(_NESTED_DECLARATION, tmp_path, "leaf", registry)
         assert "send_to_agent" in leaf.tools
         assert "task" not in leaf.tools
         assert "custom_tool" not in leaf.tools
@@ -368,12 +388,7 @@ class TestNestedSubagentDemo:
             registry=registry,
             workspace_registry=MagicMock(),  # type: ignore[arg-type]
             workspace_ctx=_workspace_ctx(tmp_path),
-            pool_runtime=PoolRuntimeDeps(
-                communication=CommunicationFacilities(
-                    service=MagicMock(),
-                    target_store=CommunicationTargetStore(),
-                )
-            ),
+            pool_runtime=_subagents_pool_runtime(_NESTED_DECLARATION, tmp_path),
         )
         builder, tool_manager, hook_runner = await _assemble(spec, ctx)
         assert builder.agent is not None
