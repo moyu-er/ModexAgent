@@ -365,6 +365,14 @@ class ReActRuntimeStateCodec(RuntimeStateCodec):
             else None,
             "tool_call_id": msg.tool_call_id,
             "name": msg.name,
+            # Reasoning replay fields (ADR-0046): an approval-suspended turn
+            # resumes from this snapshot; DeepSeek's Responses endpoint
+            # rejects a resumed request whose assistant tool-call turn lost
+            # its reasoning state.
+            "reasoning_content": msg.reasoning_content,
+            "reasoning_signature": msg.reasoning_signature,
+            "reasoning_item_id": msg.reasoning_item_id,
+            "reasoning_encrypted_content": msg.reasoning_encrypted_content,
         }
 
     def _decode_message_delta(self, data: Mapping[str, JsonValue]) -> MessageDelta:
@@ -386,6 +394,12 @@ class ReActRuntimeStateCodec(RuntimeStateCodec):
                 tool_calls=tool_calls,
                 tool_call_id=data.get("tool_call_id"),  # type: ignore[arg-type]
                 name=data.get("name"),  # type: ignore[arg-type]
+                reasoning_content=data.get("reasoning_content"),  # type: ignore[arg-type]
+                reasoning_signature=data.get("reasoning_signature"),  # type: ignore[arg-type]
+                reasoning_item_id=data.get("reasoning_item_id"),  # type: ignore[arg-type]
+                reasoning_encrypted_content=data.get(  # type: ignore[arg-type]
+                    "reasoning_encrypted_content"
+                ),
             ),
             source=MessageDeltaSource(str(data["source"])),
             provider_payload=data.get("provider_payload"),  # type: ignore[arg-type]

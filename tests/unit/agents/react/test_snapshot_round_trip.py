@@ -1066,3 +1066,64 @@ class TestMessageDeltaPartsContentCodec:
         through_store = json.loads(json.dumps(payload, default=str))
         restored = codec.decode_turn(through_store)
         assert restored.message_delta[0].message.content == "plain"
+
+
+class TestMessageDeltaReasoningReplayCodec:
+    """Reasoning replay fields must survive the snapshot boundary.
+
+    An approval-suspended turn persists its snapshot with the assistant
+    tool-call message; on resume the history is rebuilt from that snapshot.
+    DeepSeek's Responses endpoint rejects the resumed request with
+    "The reasoning_text in the thinking mode must be passed back to the API"
+    when the assistant tool-call turn carries no reasoning state — the
+    encoder must therefore persist all four replay fields, not just
+    ``reasoning_content``.
+    """
+
+    def _snapshot_with_reasoning_delta(self) -> TurnSnapshot:
+        from modex_agent.core.message import ChatMessage, ToolCall
+        from modex_agent.runtime.enums import MessageDeltaSource
+        from modex_agent.runtime.models import MessageDelta, ResumePoint
+
+        message = ChatMessage(
+            role="assistant",
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    call_id="call-1", tool_name="write", arguments={"path": "x"}
+                )
+            ],
+            reasoning_content="Plan first.",
+            reasoning_item_id="rs_abc",
+            reasoning_encrypted_content="enc-blob",
+            reasoning_signature="sig",
+        )
+        return TurnSnapshot(
+            identity=TurnIdentity(
+                agent_id="a1",
+                session=SessionInfo.from_str("ws1.main"),
+                turn_id="t1",
+            ),
+            agent_kind=AgentKind.REACT,
+            phase=TurnPhase.RUNNING,
+            reason=SnapshotReason.TOOL_APPROVAL_REQUIRED,
+            resume_point=ResumePoint(agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING),
+            message_delta=[
+                MessageDelta(message=message, source=MessageDeltaSource.ASSISTANT)
+            ],
+            state_payload={},
+        )
+
+    def test_reasoning_fields_survive_store_json_boundary(self) -> None:
+        codec = ReActRuntimeStateCodec()
+        snapshot = self._snapshot_with_reasoning_delta()
+
+        payload = codec.encode_turn(snapshot)
+        through_store = json.loads(json.dumps(payload, default=str))
+
+        restored = codec.decode_turn(through_store)
+        msg = restored.message_delta[0].message
+        assert msg.reasoning_content == "Plan first."
+        assert msg.reasoning_item_id == "rs_abc"
+        assert msg.reasoning_encrypted_content == "enc-blob"
+        assert msg.reasoning_signature == "sig"
