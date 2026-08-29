@@ -70,12 +70,15 @@ rest of the design.
    owns the foreground, a PS1 token in the output is printed text or stale noise, not
    evidence that the shell reclaimed its prompt.
 3. **A new interactive-takeover exit covers `CHILD_RAW`.** When a raw-mode child owns the
-   foreground, the output has been quiet for 0.25 s, two consecutive 25 ms poll iterations
-   agree on the state, and the buffer is non-empty, the loop returns partial output with an
-   interactive-shell `[hint: ...]` advisory and keeps the transaction answerable: the
-   session enters WAITING with the pending marker preserved and the process alive, so
-   further `bash` commands pass through into the interactive session and `bash_input` can
-   answer it.
+   foreground, the output has been quiet for 0.75 s (`_TAKEOVER_QUIET_S`), three
+   consecutive 25 ms poll iterations agree on the state, and the current command owns real
+   output, the loop returns partial output with an interactive-shell `[hint: ...]` advisory
+   and keeps the transaction answerable: the session enters WAITING with the pending marker
+   preserved and the process alive, so further `bash` commands pass through into the
+   interactive session and `bash_input` can answer it. The START marker alone is not
+   output: that protocol byte previously pierced the old non-empty-buffer gate and produced
+   the zero-output false-positive hints. A zero-output transaction never takes this exit;
+   the Linux `/proc` probe is the sole zero-output authority (third boundary below).
 4. **WAITING kind comes from the kernel signal.** After a Linux `/proc` stdin-wait probe
    hit, the wait is shell-kind (bash may pass through) when the kernel reports `CHILD_RAW`,
    and prompt-kind (the guard stays up; answer via `bash_input`) otherwise.
@@ -83,9 +86,14 @@ rest of the design.
 The keyword layer and the weak prompt-shape layer remain, demoted to fallbacks for the
 states the kernel matrix structurally cannot see: canonical prompts (a canonical stdin
 reader and a long task look identical to the kernel) and builtin reads where the shell
-itself owns the foreground. Both still pass the quiet-window gate.
+itself owns the foreground. Both still pass a quiet-window gate. The weak prompt-shape
+layer now requires the probe's positive confirmation; on probe-unavailable hosts (macOS)
+it requires a 2.0-second quiet window (`_WEAK_PROMPT_SETTLE_S`) instead of the old
+no-corroboration auto-confirm. Keyword markers that are ambiguous without prompt-ending
+punctuation (login/username/code/token/otp/pin/select) require the punctuation, so data
+lines like "Last login: Fri Aug 28" no longer read as prompts.
 
-Two boundaries hold the design together:
+Three boundaries hold the design together:
 
 - **Single foreground source.** Every new foreground-group check flows through
   `_terminal_state()`; no second `tcgetpgrp`/tpgid read path may appear. The existing
@@ -93,16 +101,40 @@ Two boundaries hold the design together:
 - **Silence is never settlement.** A silent foreground command waits for its marker or the
   deadline. The takeover exit requires positive kernel evidence (a raw-mode child owning the
   foreground), never mere quiet.
+- **Zero real output is never mode/shape evidence.** A zero-output transaction settles only
+  on the Linux `/proc` probe's definitional hit, the END marker, or the deadline. The
+  probe's evidence is definitional on both axes: the read/poll target must be the session's
+  own controlling terminal (device-number match, `/dev/tty` alias accepted), and
+  select/poll/epoll waits must be indefinite (NULL timeout pointer or -1 timeout).
+  Bounded-timeout pollers (key checks, progress bars, event-loop ticks) and
+  foreign-terminal readers are running commands, not input waits. Real output is measured
+  from the latest START marker, and a resumed `bash_input` round seeds a synthetic anchor
+  (stripped from the rendered result), so the ownership boundary survives the second
+  collect round.
 
 ## Consequences
 
 - Canonical silent stdin readers remain indistinguishable from long tasks on macOS: the
   kernel reports `CHILD_CANONICAL` in both cases, and only the Linux `/proc` syscall scan
   separates them. Unchanged from before.
-- A raw channel cannot distinguish "remote interactive session" from "remote running a long
-  command": `ssh host` at its prompt and `ssh host "long-cmd"` both present `CHILD_RAW` with
-  quiet output. A human at a real terminal has the same blind spot and resolves it by typing
-  ahead; the agent does the same, guided by the hint advisory. Accepted.
+- The raw-channel ambiguity remains for `ssh host` (interactive) versus `ssh host
+  "long-cmd"` (running): both present `CHILD_RAW` with quiet output, possibly zero real
+  output initially, and a human at a real terminal has the same blind spot and resolves it
+  by typing ahead; the agent does the same, guided by the hint advisory. Accepted. The
+  marker-pierced zero-output false positive, by contrast, is closed by the empty-evidence
+  gate: a non-interactive raw command (`tty.setraw(); sleep`) can no longer return an
+  interactive-shell hint, because the START marker alone is not real output.
+- On macOS, a zero-output raw stdin reader (for example `read -s` inside a raw-mode
+  program) now settles at the command deadline: the kernel there cannot prove the wait, and
+  zero real output is never mode/shape evidence. Accepted trade.
+- The takeover and stdin-wait advisories state the observed evidence and both branch
+  actions rather than asserting an interactive state: the takeover hint reports a quiet
+  terminal under raw-mode child ownership and names both readings (an interactive shell
+  session, or a still-running silent command that will finish or time out on its own). An
+  inferred hint may still be a silent command finishing.
+- Hint timing: the takeover exit returns roughly half a second later than before (the quiet
+  window rose from 0.25 s to 0.75 s, the agreeing samples from two to three), still prompt
+  against the 480 s deadline.
 - Timeout still SIGKILLs the session. The deadline remains the final backstop and its
   semantics are untouched.
 - Raw non-shell programs (vim, less) are classified shell-kind, and `bash` passes through
