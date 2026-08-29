@@ -98,6 +98,17 @@ def _merge_tools(
     return result
 
 
+def strip_add_prefix(entry: str) -> str:
+    """Strip the incremental-merge ``+`` prefix from a declared entry.
+
+    The single ``+``-strip authority for declaration entries (the C2
+    gate's one-home rule): the hook merge below and the compiler's
+    contributed-hook gating both resolve declared ``+name`` entries to
+    their bare names through this helper.
+    """
+    return entry.removeprefix("+")
+
+
 def _merge_hooks(
     hooks_override: list[str] | None,
 ) -> list[str]:
@@ -120,7 +131,7 @@ def _merge_hooks(
     result: list[str] = []
     for entry in hooks_override:
         if entry.startswith("+"):
-            name = entry.removeprefix("+")
+            name = strip_add_prefix(entry)
             if name and name not in result:
                 result.append(name)
         elif entry.startswith("-"):

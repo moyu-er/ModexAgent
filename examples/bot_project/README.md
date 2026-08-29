@@ -40,7 +40,7 @@ Uses **Pool mode** — multi-agent persistent pools with `MessageBroker` + `Agen
 | **Tool Approval** | The agent asks before writing/editing outside your project; approve via WebUI or `/approve`. Off by default; opt-in per agent |
 | **Multi-Agent Collaboration** | Per-pool star (main agent + subagents via `task`/`send_to_agent`) + cross-pool peer messaging between main agents via `send_to_peer` |
 | **Skill System** | Dynamic system prompt construction from Markdown skill files (`local_skills/` or bundled by packages) |
-| **Plugin System** | Register component factories into the 10-slot `ComponentRegistry` (tools, hooks, providers, strategies, …) and reference them by name from pool YAML |
+| **Plugin System** | Register component factories into the 11-slot `ComponentRegistry` (tools, hooks, providers, strategies, capability bundles, …) and reference them by name from pool YAML |
 | **Slash Commands** | `/approve`, `/deny`, `/continue`, and skill-triggering commands |
 | **Pool Runtime** | Multi-agent persistent pools with `MessageBroker` + `AgentMessageBus` routing |
 | **Self-Deployment** | Agent connects via SSH to remote servers, pulls code, and restarts itself |
@@ -711,7 +711,7 @@ tools:
 
 ## Plugin System
 
-Extensions plug into the framework `ComponentRegistry` — a fixed set of 10 component slots (tools, hooks, LLM providers, prompt providers, memory systems, interceptors, command handlers, execution strategies, input stages, data namespaces). A plugin is a `Plugin` class that registers named component factories at startup, from four sources: the framework's bundled defaults, project plugins under `plugins/`, user plugins, or installed packages discovered via entry points. Pool YAML then references components by name (`tools: [+bash]`, `llm_provider:`, `memory_system:`, …) and assembly resolves them through the registry at agent construction. Registration is restart-effective — there is no hot-plug. The authoritative slot list and semantics live in [`docs/design/scope-converge/SPEC.md`](../../docs/design/scope-converge/SPEC.md) (§4, Errata-8).
+Extensions plug into the framework `ComponentRegistry` — a fixed set of 11 component slots (tools, hooks, LLM providers, prompt providers, memory systems, interceptors, command handlers, execution strategies, input stages, data namespaces, capabilities). A plugin is a `Plugin` class that registers named component factories at startup, from four sources: the framework's bundled defaults, project plugins under `plugins/`, user plugins, or installed packages discovered via entry points. Pool YAML then references components by name (`tools: [+bash]`, `llm_provider:`, `memory_system:`, …) and assembly resolves them through the registry at agent construction. The 11th slot hosts capability bundles (ADR-0047): a `Capability` packages a tool set + hooks + prompt sections + pool-level supply into one unit that agents enable via the `capabilities:` declaration map — see the [author guide](../../docs/design/capability-bundles/AUTHOR-GUIDE.md). Registration is restart-effective — there is no hot-plug. The authoritative slot list and semantics live in [`docs/design/scope-converge/SPEC.md`](../../docs/design/scope-converge/SPEC.md) (§4, Errata-8) plus ADR-0047 for the `CAPABILITY` slot.
 
 ## Logs
 

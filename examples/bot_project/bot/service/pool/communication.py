@@ -1,10 +1,9 @@
 """Cleanup notice hook for memory compaction.
 
-``AgentCommunicationService`` + the per-agent ``CommunicationTargetStore``
-are built inline by ``pool/factory.py`` from the compiled declaration
-(declared children for the root store; peer targets via
-``resolve_peer_targets`` in Phase 2) — the legacy template-scan builder
-retired with the roster road.
+The communication service + the per-agent ``CommunicationTargetStore``
+are built by the framework's ``subagents`` capability (the pool supply
+carries the service; the per-agent stores ride the capability's wiring
+artifacts) — this module owns only the cleanup-notice hook.
 """
 
 from __future__ import annotations
@@ -27,8 +26,9 @@ class UserNoticeCleanupHook(CleanupTriggeredHook, CleanupFinishedHook):
     originating channel AND the WebUI observer) and are never written to
     session memory/history.
 
-    Registered via ``memory_system.add_cleanup_hook(...)`` (the converged
-    memory hook runner), NOT on the ReAct ``HookRunner``.
+    Registered via the memory hook runner (``add_cleanup_hook`` on the
+    pool's memory system — the roster dispatch path for the declared
+    ``+user_notice_cleanup`` entry), NOT on the ReAct ``HookRunner``.
     """
 
     _START_NOTICE = "[compact] Consolidating conversation memory, please wait..."

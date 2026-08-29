@@ -2,7 +2,7 @@
 
 ## Project Layout
 
-`src/modex_agent/` is the reusable agent framework (src layout, ADR-0003). `src/modex_graph/` is the standalone graph engine (ADR-0033). Key framework areas: `agents/react/` (ReAct runtime), `agents/external/` (Pi/OpenCode harness), `memory/` (three-layer), `persistence/` (hybrid SQLite+file, ADR-0023), `multi_agent/` (star-topology), `scope/` (scope declaration/validation/compile/bill, ADR-0042), `pipeline/`, `hook/`+`interceptor/`+`control/` (three-layer runtime), `tools/`, `approval/`, `sandbox/`, `media/`, `commands/`. See `src/modex_agent/AGENTS.md` for the exhaustive module table (27 modules).
+`src/modex_agent/` is the reusable agent framework (src layout, ADR-0003). `src/modex_graph/` is the standalone graph engine (ADR-0033). Key framework areas: `agents/react/` (ReAct runtime), `agents/external/` (Pi/OpenCode harness), `memory/` (three-layer), `persistence/` (hybrid SQLite+file, ADR-0023), `multi_agent/` (star-topology), `scope/` (scope declaration/validation/compile/bill, ADR-0042), `plugins/` (11-slot component registry + capability bundles, ADR-0047 — bundled tool/hook/section/supply sets are `Capability` packages enabled per agent via the `capabilities:` declaration map), `pipeline/`, `hook/`+`interceptor/`+`control/` (three-layer runtime), `tools/`, `approval/`, `sandbox/`, `media/`, `commands/`. See `src/modex_agent/AGENTS.md` for the exhaustive module table (27 modules).
 
 `examples/bot_project/` is the primary end-to-end reference (Pool mode, WebUI React frontend, QQ + Telegram adapters). Framework-generic behavior in `src/modex_agent/`; business wiring in `examples/`.
 

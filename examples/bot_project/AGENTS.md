@@ -1,4 +1,4 @@
-<!-- Updated: 2026-08-27 | glue-tool roster convergence doc sync -->
+<!-- Updated: 2026-08-28 | capability-bundles doc sync (ADR-0047) -->
 
 # bot_project
 
@@ -93,7 +93,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/input_pipeline/stages/session_control.py` | S3 — IM-only `/stop` turn cancellation |
 | `bot/input_pipeline/stages/set_channel.py` | S4 — conversation channel tagging (runs first in IM pipeline) |
 | `bot/service/core.py` | `BotService` — initialization, workspace context, pool creation, pipeline wiring |
-| `bot/service/builders.py` | Service-level construction helpers (inbox/turn-state/session/routing/todo stores, external session map, slash-command processor) — tool construction glue is gone (scope assembly resolves tools from the compiled declaration) |
+| `bot/service/builders.py` | Service-level construction helpers (inbox/turn-state/session/routing stores, external session map, slash-command processor) — tool construction glue is gone (scope assembly resolves tools from the compiled declaration) |
 | `bot/service/pool/` | Pool mode assembly — creates `AgentPool` from the compiled scope declaration (`declaration.py` boots: load → validate → compile; `factory.py` assembles). Split into 8 focused modules |
 | `modex_agent/multi_agent/pool_router.py` | `PoolRouter` (framework) — session→pool dispatch shell, `PoolRoutingStore` persistence, declaration-lookup agent→pool ownership |
 | `modex_agent/multi_agent/pool_instance.py` | `PoolInstance` — pool runtime holder (config, pool, root agent name) |
@@ -133,14 +133,17 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
   + `send_to_peer` (peer messaging, session-mode only, roots of pools with
   links) + `send_to_agent` (subagent→parent consultation, every non-root).
   All converge on `AgentCommunicationService.send_async`. The three tools are
-  compiler-derived entries in each agent's compiled spec — injected by the
-  ScopeCompiler from the declaration tree (never roster-declared), resolved at
-  assembly time by the TOOL-slot FW factories.
-- Delegation guidance: `AgentCommunicationSystemPromptProvider` injects the
-  "## Delegating To Subagents" section (tool-presence gated — six-element
-  brief spec + dispatch discipline; the task tool's dynamic description
-  carries the live roster). (`TaskDelegationNudgeHook` is deprecated and no
-  longer roster-referenced in bot.yml.)
+  capability-contributed derived entries in each agent's compiled spec —
+  contributed by the `subagents` capability package from the declaration tree
+  (ADR-0047; never roster-declared), resolved at assembly time by the TOOL-slot
+  FW factories.
+- Delegation guidance: the `subagents` capability's prompt sections render the
+  "## Delegating To Subagents" delegation brief (order=40), the subagent
+  consultation contract (order=41), and the peer reply contract (order=42)
+  through the capability-section anchor in `MemorySystemContextManager.load()`
+  — compile-time gated (declared children / non-root / root-with-peers; ADR-0047).
+  (The retired delegation-nudge hook and the runtime-gated composite
+  provider are fully deleted.)
 - `SubagentAutoSendHook` auto-forwards subagent output to parent.
 - Session ID format: `{prefix}.{agent_name}` (two segments, via `SessionIdFactory`; subagent sessions use the minted `invocation_id` as the prefix — see `SessionInfo.session_id_prefix`).
 
@@ -183,71 +186,84 @@ See ADR-0022 and `docs/design/external-agent-integration/` for the full design.
 All native agents receive memory configuration from the single converged
 source `modex_agent/scope/defaults.py` (position-derived memory families
 backed by `modex_agent/memory/presets.py`); experience is declaration-driven
-— an agent opts in via `tool_supplements: [experience]` (equivalently
-`tools: [+experience]`), and `ExperienceConfig` (`modex_agent/multi_agent/pool_config/experience.py`)
-derives its `enabled` flag from the compiled tool roster
-(`bot/workspace/wiring/stack.py` `declared_assembly_deps`).
-A root agent's archive/core toggle is user-editable per pool through the WebUI
-or the `memory:` block on the agent in `config/scopes/bot.yml`. The schema
-enforces the AND relationship: core memory can be enabled only when archive
-memory is enabled.
+— an agent opts in via `capabilities: {experience: {...}}` (the `experience`
+capability package, ADR-0047), which contributes the tool, the review hook,
+and the injection section as one bundle; the pool-level supply (manager +
+experience dir + curator) is built by `ExperienceCapability.supply()` iff the
+capability is effective somewhere in the pool. A root agent's archive/core
+toggle is user-editable per pool through the WebUI or the `memory:` block on
+the agent in `config/scopes/bot.yml`. The schema enforces the AND
+relationship: core memory can be enabled only when archive memory is enabled.
 
 Detailed configuration remains baked: `ArchiveConfig`/`CoreMemoryConfig`
 internals, dream-engine derivation, session, governance, and pruned settings
 are not per-pool overrides; experience's enable is the one declaration-driven
-switch (its reviewer/curator settings stay preset-baked). Non-root agents
-stay session-only by position default (the non-root memory family); a nested
-agent's `memory:` block carries only the session token-budget override, and
-there is no user-editable experience block.
+switch, and its reviewer/curator knobs (`min_messages`,
+`exp_cooldown_turns`, `max_iterations`, `max_experiences`,
+`curator_interval`) are declarable through the `capabilities: {experience:
+{...}}` config mapping (validated by the capability's `config_model` at
+compile time). Non-root agents stay session-only by position default (the
+non-root memory family); a nested agent's `memory:` block carries only the
+session token-budget override, and there is no user-editable experience
+block.
 
 ### Preset surface (`modex_agent/memory/presets.py` + `modex_agent/multi_agent/pool_config/experience.py`)
 
 | Preset | Used by | Contents |
 |---|---|---|
 | `main_agent_memory(max_context_tokens, archive_enabled, core_enabled)` | every native main agent | session (token-budget compression, `max_context_tokens` from `model.yml`) + governance (tool_chain_repair + lossy_compaction) + pruned. archive/core follow the per-pool `MemoryToggle`; dream is enabled only when both are on. |
-| experience — declaration, not a preset | any agent via `tool_supplements: [experience]` (shipped: the 3 native main agents in `bot.yml`; equivalently `tools: [+experience]`) | compiles the `experience` tool name into the roster + injects `ExperienceReviewHook` (single switch); `ExperienceConfig(enabled=…)` follows the final compiled tool list (`declared_assembly_deps`) — tool, hook, manager, injection, and curator bind together |
+| experience — declaration, not a preset | any agent via `capabilities: {experience: {…}}` (shipped: the 3 native main agents in `bot.yml`) | the `experience` capability package contributes the tool name + `experience_review` hook + `experience.injection` section as one bundle (single switch); the pool supply (manager + dir + curator, D4 lifecycle) is built iff the capability is effective in the pool — tool, hook, manager, injection, and curator bind together |
 | `subagent_memory()` | every native subagent | session + governance (tool_chain_repair only, NO lossy_compaction) + pruned. archive/core/dream = None. No experience preset — experience is opt-in per declaration; shipped declarations enable it on native main agents only. |
 
-### Migration note (roster-driven experience + `send_file_to_user`)
+### Migration note (capability-driven experience + `send_file_to_user`)
 
 Experience used to be unconditional on every native main agent (a position
-default plus hardcoded tool registration in `builders.py`). Both paths are
-deleted: **custom scope declarations must add `tool_supplements: [experience]`
-to keep experience after upgrading** — the shipped `config/scopes/bot.yml`
-already carries it on the three native main agents. The same applies to the
-IM file-send tool: declare `tools: [+send_file_to_user]` (the shipped
-declaration does). An agent that declares the experience supplement on an
-assembly path supplying no experience directory (missing pool data) now
-fails loudly at the factory — the old silent scratch-directory fallback is
-gone.
+default plus hardcoded tool registration in `builders.py`), then rode a
+retired list-form supplement field. Both paths are deleted — the retired
+field now fails loader validation as an unknown key: **custom scope
+declarations must add `capabilities: {experience: {}}` to keep experience
+after upgrading** — the shipped `config/scopes/bot.yml` already carries it on
+the three native main agents. The same applies to the IM file-send tool:
+declare `tools: [+send_file_to_user]` (the shipped declaration does). An
+agent that references an experience component without the capability
+effective (e.g. a bare `tools: [+experience]` roster entry) fails loudly at
+the factory — the supply is built only for capability-effective pools, and
+there is no silent scratch-directory fallback.
 
 ### Wiring chain (consumers perform NO additional config construction)
 
 Declaration road — the compiled spec carries the position-derived memory
-family; the deps channel threads it to every consumer:
+family and the effective capability set; the deps channel threads them to
+every consumer:
 
 ```
-pool/declaration.py (boot): load bot.yml → validate → compile_scope
+pool/declaration.py (boot): load bot.yml → validate → compile_scope (registry)
   └─ declared_pool_build (per pool): root PositionDefaults + overrides
-       └─ wiring.declared_assembly_deps → PoolAssemblyDeps(memory=…, experience=…)
-          (experience.enabled = the compiled tool roster carries the experience name)
+       └─ wiring.declared_assembly_deps → PoolAssemblyDeps(memory=…)
+          (experience is NOT here anymore — the capability's supply owns it)
             │
             ├─ pool_data.build_pool_data()
-            │    ├─ create_memory_system(memory_cfg)        → MemorySystem (archive/core/dream/pruned layers)
-            │    ├─ _build_experience_manager(exp_cfg)      → ExperienceManager (None when exp_cfg disabled)
-            │    └─ MemorySystemContextManager(experience_manager=...)  → ExperienceProvider injects XML into system prompt
+            │    └─ create_memory_system(memory_cfg)        → MemorySystem (archive/core/dream/pruned layers)
             │
             ├─ pool/pipeline_wiring.py
             │    └─ builder.governance = create_governance(memory)  → CompositeGovernance (lossy + tool_chain_repair)
             │
-            ├─ compiler-injected `experience_review` hook (EXPERIENCE supplement;
-            │  the bot.yml `hooks:` list carries `+user_notice_cleanup`)
-            │    └─ HOOK-slot factories resolve at Stage 4 (ExperienceReviewHook via
-            │       PoolRuntimeDeps.experience_review_provider — the bot-global default LLM
-            │       from model.yml, running ReAct with forked parent history)
+            ├─ capability supply aggregation (Stage 3, ADR-0047):
+            │    ExperienceCapability.supply(PoolSupplyView) → ExperienceSupply
+            │       (manager + experience_dir + meta store + curator + review_provider
+            │        = SupplyInfra.default_llm_provider, the bot-global default LLM from model.yml)
+            │    supply start/stop → curator background loop (D4 lifecycle, pool teardown road)
             │
-            └─ background.BackgroundTaskRunner
-                 └─ ExperienceCurator(experience_dir, meta_store, max_experiences)  → LRU eviction loop
+            ├─ `experience_review` hook — capability-contributed roster entry
+            │  (binding-vouched iff the tool survived the merge; the bot.yml
+            │  `hooks:` list carries `+user_notice_cleanup`)
+            │    └─ HOOK-slot factory resolves at Stage 4 (ExperienceReviewHook via
+            │       require_experience_supply → supply.review_provider — the bot-global default LLM,
+            │       running ReAct with forked parent history)
+            │
+            └─ `experience.injection` section (order=50) — ExperienceCapability.assemble
+               wires the provider from the supply's manager → injects XML into system prompt
+               through the capability-section anchor
 
 create_pool() (subagents)
   └─ AgentTemplate.materialize()
@@ -260,19 +276,23 @@ create_pool() (subagents)
 
 Memory cleanup dispatches lifecycle events through a dedicated
 `MemoryHookRunner` (separate from the ReAct `HookRunner`) — no ReAct
-coupling. Two hooks are registered in deterministic order at pool assembly
-(`factory.py`):
+coupling. Both hooks are roster-dispatched at Stage 4 (the retired
+unconditional `factory.py` registrations are gone):
 
 1. **`UserNoticeCleanupHook`** (`CleanupTriggeredHook` +
    `CleanupFinishedHook`) — sends transient user-facing notices
    ("Consolidating conversation memory, please wait…" / "Memory
    consolidated.") via `AgentNotificationService.send_notice`. Notices are
-   never written to session memory.
+   never written to session memory. Declared in bot.yml as
+   `hooks: [+user_notice_cleanup]`.
 2. **`TodoReorientationHook`** (`CleanupFinishedHook`, in
    `modex_agent.memory.cleanup_hooks`) — persists a `<system-reminder>` USER
    message so the agent re-orients after compaction prunes messages.
+   Contributed by the `todo` capability's hook roster (ADR-0047): only agents
+   where the capability is effective carry it, and it lands before
+   `user_notice_cleanup` (merge-base-first).
 
-Both register via `memory_system.add_cleanup_hook(hook)` on the shared
+Both reach the memory runner via the roster dispatch onto the shared
 `DefaultMemorySystem._hook_runner` (one runner per memory system, passed by
 reference to every `ScopedMessageHistory` — late registration is visible to
 all histories).
@@ -311,48 +331,57 @@ points, so the presets never reach them regardless of config:
 ### Experience review mechanism (three coupled components)
 
 The experience system is **reviewer + hook + injection** working together.
-All three must be active for experience to function:
+All three must be active for experience to function — they ride the
+`experience` capability package (ADR-0047), so one declaration switch
+(`capabilities: {experience: {…}}`) binds them:
 
-1. **ExperienceManager** (`pool_data.py` `_build_experience_manager`): built when `assembly_deps.experience`
-   is enabled — the flag follows the compiled tool roster, so declaring (or removing)
-   the experience tool turns the manager on (or off) with it. Held by
-   `MemorySystemContextManager`. At turn load
-   (`system.py:366-377`), `build_prompt()` renders saved experiences as XML
-   metadata → `ExperienceProvider` injects into the main agent's system prompt
-   so the LLM sees `<available_experiences>` and can call the `experience` tool.
+1. **ExperienceManager**: built by `ExperienceCapability.supply()` (Stage 3
+   capability-supply aggregation) iff the capability is effective somewhere
+   in the pool, together with the experience dir (`<data>/experiences/<pool>/<root-agent>`)
+   and the meta store — all held by the `ExperienceSupply`. The injection
+   section provider (`ExperienceCapability.assemble` wiring the
+   `experience.injection` section, order=50) reads the manager from the
+   supply and renders saved experiences as XML metadata at the
+   capability-section anchor, so the LLM sees `<available_experiences>` and
+   can call the `experience` tool.
 
-2. **ExperienceReviewHook** (compiler-injected when the EXPERIENCE supplement's
-   tool name survives into the agent's final compiled tool list — name authority
-   `EXPERIENCE_REVIEW_HOOK_NAME` in `modex_agent/tools/presets.py`; a handwritten
-   `+experience_review` entry coexists via dedup, and `hooks: [-experience_review]`
-   vetoes the injection; resolved at Stage 4): registered on the main
-   agent's `pipeline.hook_runner`. Fires `after_graph` when
+2. **ExperienceReviewHook** (capability-contributed roster entry — the
+   binding vouches it iff the `experience` tool survived the roster merge;
+   a handwritten `+experience_review` entry coexists via dedup, and
+   `hooks: [-experience_review]` vetoes it — minus-wins; resolved at Stage
+   4 via `require_experience_supply`): registered on the main agent's
+   `pipeline.hook_runner`. Fires `after_graph` when
    `stop_reason == completed` and history ≥ `min_messages`. Spawns a
    background task that runs `ExperienceReviewAgent.review()` — a ReAct loop
-using **the bot-global default LLM provider** (`service._default_provider`,
-from `model.yml`) with **forked parent history** (`conversation_messages`
-parameter) so the reviewer sees the full structured conversation (tool_calls,
-tool_results) rather than a flattened text snapshot. The provider is shared
-across all pools (native and external) — experience review is a background
-task that does NOT depend on any pool's own provider. When `default_provider`
-is None (model.yml unconfigured), experience review is skipped with a
-warning; the bot itself boots and runs normally.
+using **the bot-global default LLM provider** (threaded into the supply via
+`SupplyInfra.default_llm_provider`, from `model.yml`) with **forked parent
+history** (`conversation_messages` parameter) so the reviewer sees the full
+structured conversation (tool_calls, tool_results) rather than a flattened
+text snapshot. The provider is shared across all pools (native and
+external) — experience review is a background task that does NOT depend on
+any pool's own provider. When the default provider is None (model.yml
+unconfigured), experience review is skipped with a warning; the bot itself
+boots and runs normally.
 
-3. **ExperienceCurator** (`background.py:109-178`): a background loop per pool
-   that runs LRU eviction when experience count exceeds `max_experiences`.
-   Pinned experiences are immune; the least-recently-used unpinned ones are
-   deleted permanently.
+3. **ExperienceCurator**: built by `ExperienceCapability.supply()` — a
+   background loop per pool that runs LRU eviction when experience count
+   exceeds `max_experiences`. Pinned experiences are immune; the
+   least-recently-used unpinned ones are deleted permanently. Its start/stop
+   rides the supply lifecycle (D4: the pool assembly starts every supply and
+   stops them on both teardown roads).
 
-The three components are bound by one declaration switch: `tool_supplements:
-[experience]` (equivalently `tools: [+experience]`). The binding signal is the
-agent's final compiled tool list — the name surviving the merge injects the
-hook, and `declared_assembly_deps` reads the same list to enable the
-ExperienceManager (and with it the injection and the curator). Explicit
-removal (`tools: [-experience]` or an unprefixed wholesale `tools:` list)
-drops the whole package together; `hooks: [-experience_review]` alone removes
-the reviewer while keeping the tool (minus-wins). A supplement-declared agent
-whose assembly path supplies no experience directory fails loudly at factory
-resolution — there is no silent scratch-directory fallback.
+The three components are bound by one declaration switch:
+`capabilities: {experience: {…}}`. Component-level vetoes dismantle the
+package surgically: `tools: [-experience]` (or an unprefixed wholesale
+`tools:` list) kills the tool AND drops the review hook + injection section
+together (the binding withdraws them when the tool anchor dies —
+minus-wins, no boot failure); `hooks: [-experience_review]` alone removes
+the reviewer while keeping the tool. An agent that references an experience
+component without the capability effective (e.g. a bare
+`tools: [+experience]` roster entry — the degraded bare-tool mode, SPEC
+§5.3) fails loudly at the factory: the supply is built only for
+capability-effective pools, and there is no silent scratch-directory
+fallback.
 
 The degradation modes above describe what is missing when the package is
 partially dismantled by explicit removal:
@@ -420,7 +449,7 @@ are the converged seams; no platform preconditions on any OS.
 
 ## Todo Tools (main + coder pools)
 
-`todo_write` (full-replace) and `todo_read` (active-only: pending + in_progress) let the agent track a multi-step task list per session. The `TodoStore` comes from the supplied-infra chain (`build_pool_todo_store` → `pool_runtime.todo_store` → the FW `TodoToolFactory`); persisted to `<ws>/.modex/runtime_state/<pool>/todos/<session_id>.json` (ws+pool+session isolated).
+`todo_write` (full-replace) and `todo_read` (active-only: pending + in_progress) let the agent track a multi-step task list per session. The `TodoStore` comes from the `todo` capability's pool supply (`TodoCapability.supply()` → `capability_supply['todo']` → the FW `TodoToolFactory`); persisted to `<ws>/.modex/runtime_state/<pool>/todos/<session_id>.json` (ws+pool+session isolated). The retired `build_pool_todo_store` BIZ builder and the typed `pool_runtime.todo_store` field are gone.
 
 - **Decoupled from the WebUI**: the tool does NOT emit a presentation event. The
   WebUI derives the task panel from the generic `tool_call_end` stream (the tool's
@@ -428,8 +457,8 @@ are the converged seams; no platform preconditions on any OS.
   scans the loaded assistant messages for the most recent todo tool block with a
   result and parses it. If history doesn't carry results reliably, fall back to
   a server fetch endpoint (see spec §12 — deferred).
-- Registered via `tool_supplements: [todo]` on any agent in the scope declaration (root or nested). Both root agents and subagents can opt in; the bundled nested agents (office-expert, explore, general) all include `todo`. `TodoContinuationHook` is registered on every agent (root + nested) via `register_tree_aware_hooks` in `hook/wiring.py` — the shared convergence function called from both `_wire_main_pipeline` and `AgentTemplate.materialize`.
-- Prompt injection: `TodoAwareSystemPromptProvider` injects the "## Task Tracking" discipline section (tool-presence gated). (`TodoPlanningNudgeHook` is deprecated and no longer roster-referenced in bot.yml.)
+- Registered via `capabilities: {todo: {}}` on any agent in the scope declaration (root or nested; ADR-0047). Both root agents and subagents can opt in; the bundled nested agents (office-expert, explore, general) all include `todo`. `TodoContinuationHook` (react runner, factory-declared `priority=-1000`) and `TodoReorientationHook` (memory runner) are roster-dispatched only on agents where the capability is effective — the retired unconditional registration branches and both injection points are gone, and the WebUI todo panel reads the same capability supply.
+- Prompt injection: the "## Task Tracking" discipline section renders through the `todo` capability's section channel (`capabilities: {todo: {}}` → `TodoCapability.assemble` → the capability-section anchor in `MemorySystemContextManager.load()`; compile-time gated). The retired planning-nudge hook is fully deleted (its factory residue died with the todo capability migration).
 
 ## Subdirectories
 

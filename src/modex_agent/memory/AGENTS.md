@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-07-15 -->
+<!-- Updated: 2026-08-28 | capability-bundles doc sync (ADR-0047) -->
 
 # memory
 
@@ -15,7 +15,7 @@ The `memory/` module provides a comprehensive memory system for agents. It manag
 
 | File | Description |
 |------|-------------|
-| `system.py` | `MemorySystemContextManager(ContextManager)` — high-level facade wrapping `MemorySystem` for pipeline integration; archive summaries use backend-neutral history retrieval and optional file-path metadata |
+| `system.py` | `MemorySystemContextManager(ContextManager)` — high-level facade wrapping `MemorySystem` for pipeline integration; archive summaries use backend-neutral history retrieval and optional file-path metadata. `load()` renders the capability-section anchor block (ADR-0047): after fork context, before core memory, the providers set once via `set_capability_sections(...)` (setter-only seam, second call raises — the sections back the KV-cache prefix contract) render in ascending section order |
 | `default_system.py` | `DefaultMemorySystem` — standard implementation wiring all layers |
 | `history.py` | `MessageHistory`, `ListMessageHistory`, `ScopedMessageHistory`, `inject_attachments_to_history()` |
 | `context_governance.py` | `ContextGovernance` ABC — `CompositeGovernance`, `TokenBudgetGovernance`, `MicrocompactGovernance`, `ToolChainRepairGovernance`. Mutates only LLM input copy, never persisted session data |
@@ -134,9 +134,11 @@ visible to the agent on the next iteration via `ScopedMessageHistory.to_list()`
 (cache invalidated after append).
 
 **Registration**: `DefaultMemorySystem.add_cleanup_hook(hook)` delegates to
-the shared runner. The bot registers two hooks in deterministic order:
-`UserNoticeCleanupHook` (triggered + finished) → `TodoReorientationHook`
-(finished).
+the shared runner. `TodoReorientationHook` arrives as a `todo`-capability
+roster entry (ADR-0047) — the assembly core dispatches it onto the memory
+runner only for agents where the capability is effective, landing before the
+bot-registered `UserNoticeCleanupHook` (triggered + finished); the retired
+unconditional `factory.py` registration is gone.
 
 ### Pruned Catalog
 - Independent of archive: works with archive off or failed
