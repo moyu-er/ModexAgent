@@ -20,6 +20,7 @@ Contract correction from plan: the strategy returns ``StrategyAssembly``
 only (turn runner / pipeline / collaborators). The stage — NOT the
 strategy — creates the :class:`AgentPool` and :class:`AgentDescriptor`.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -232,10 +233,8 @@ class TestStrategyResolutionAndAssemble:
     async def test_strategy_runtime_outputs_are_propagated(self) -> None:
         stub = _make_stub_strategy()
         terminal_manager = MagicMock()
-        todo_store = MagicMock()
         root_provider = MagicMock()
         stub._mock_assembly.terminal_manager = terminal_manager  # type: ignore[attr-defined]
-        stub._mock_assembly.todo_store = todo_store  # type: ignore[attr-defined]
         stub._mock_assembly.root_provider = root_provider  # type: ignore[attr-defined]
         registry = _make_registry(stub)
         builder = AssemblyBuilder()
@@ -248,7 +247,6 @@ class TestStrategyResolutionAndAssemble:
         assert propagated is not None
         assert propagated.pool_runtime is not None
         assert propagated.pool_runtime.terminal_manager is terminal_manager
-        assert propagated.pool_runtime.todo_store is todo_store
         assert propagated.pool_runtime.root_provider is root_provider
 
     async def test_strategy_process_registry_is_propagated(self) -> None:
@@ -440,9 +438,7 @@ class TestPoolRuntimePropagation:
         original_create = factory.create
         captured_ctx: list[AssemblyContext] = []
 
-        async def _capturing_create(
-            config: Any, ctx: AssemblyContext
-        ) -> _StubExecutionStrategy:
+        async def _capturing_create(config: Any, ctx: AssemblyContext) -> _StubExecutionStrategy:
             captured_ctx.append(ctx)
             return await original_create(config, ctx)
 
@@ -462,9 +458,7 @@ class TestPoolRuntimePropagation:
         assert passed_ctx.pool_runtime is not None
         assert isinstance(passed_ctx.pool_runtime, PoolRuntimeDeps)
         assert passed_ctx.pool_runtime.pool_assembly_ctx is not None
-        assert isinstance(
-            passed_ctx.pool_runtime.pool_assembly_ctx, PoolAssemblyContext
-        )
+        assert isinstance(passed_ctx.pool_runtime.pool_assembly_ctx, PoolAssemblyContext)
 
         await builder.cleanup()
 
@@ -528,6 +522,7 @@ class TestSupplyModeRequired:
         assert deps.session_tree_manager is None
         assert deps.pool_assembly_ctx is not None
 
+
 # ─── Pool-level extension type guards (ticket 10) ────────────────────────────
 
 
@@ -550,45 +545,31 @@ class TestExtensionTypeGuards:
 
     async def test_interceptor_factory_wrong_product_type_raises(self) -> None:
         registry = ComponentRegistry()
-        registry.register(
-            ComponentSlot.INTERCEPTOR, "probe_bad", _WrongProductFactory()
-        )
-        ctx = AssemblyContext(
-            registry=registry, workspace_ctx=_make_workspace_ctx()
-        )
+        registry.register(ComponentSlot.INTERCEPTOR, "probe_bad", _WrongProductFactory())
+        ctx = AssemblyContext(registry=registry, workspace_ctx=_make_workspace_ctx())
         stage = PoolAssembleStage()
 
         with pytest.raises(
             TypeError, match="INTERCEPTOR component 'probe_bad' did not create Interceptor"
         ):
-            await stage._resolve_interceptor_chain(
-                self._spec_with(interceptors=["probe_bad"]), ctx
-            )
+            await stage._resolve_interceptor_chain(self._spec_with(interceptors=["probe_bad"]), ctx)
 
     async def test_command_factory_wrong_product_type_raises(self) -> None:
         registry = ComponentRegistry()
-        registry.register(
-            ComponentSlot.COMMAND_HANDLER, "probe_bad_cmd", _WrongProductFactory()
-        )
-        ctx = AssemblyContext(
-            registry=registry, workspace_ctx=_make_workspace_ctx()
-        )
+        registry.register(ComponentSlot.COMMAND_HANDLER, "probe_bad_cmd", _WrongProductFactory())
+        ctx = AssemblyContext(registry=registry, workspace_ctx=_make_workspace_ctx())
         stage = PoolAssembleStage()
 
         with pytest.raises(
             TypeError,
             match="COMMAND_HANDLER component 'probe_bad_cmd' did not create CommandHandler",
         ):
-            await stage._resolve_command_processor(
-                self._spec_with(commands=["probe_bad_cmd"]), ctx
-            )
+            await stage._resolve_command_processor(self._spec_with(commands=["probe_bad_cmd"]), ctx)
 
     async def test_no_roster_additions_resolve_to_none(self) -> None:
         """Empty interceptor roster / absent commands → ``None`` products —
         the orchestrator keeps the shared chain / passed-in processor."""
-        ctx = AssemblyContext(
-            registry=ComponentRegistry(), workspace_ctx=_make_workspace_ctx()
-        )
+        ctx = AssemblyContext(registry=ComponentRegistry(), workspace_ctx=_make_workspace_ctx())
         stage = PoolAssembleStage()
 
         assert await stage._resolve_interceptor_chain(_make_spec(), ctx) is None

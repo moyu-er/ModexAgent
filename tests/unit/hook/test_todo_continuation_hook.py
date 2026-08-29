@@ -123,31 +123,52 @@ async def test_cancelled_result_does_nothing(tmp_path: Path) -> None:
     await _assert_no_action(context, state)
 
 
-async def test_missing_tool_manager_skips_silently(tmp_path: Path) -> None:
+async def test_missing_tool_manager_still_continues(tmp_path: Path) -> None:
+    """The runtime tool-registration gate is dead (todo capability
+    migration): enablement is compile-time knowledge, so a missing tool
+    manager no longer suppresses the hook — it acts on the store."""
     context, state, store = _make_context(tmp_path)
     context_without_manager = MagicMock(spec=AgentContext)
     context_without_manager.tool_manager = None
     context_without_manager.runtime = context.runtime
     context_without_manager.history = context.history
     context_without_manager.session = context.session
+    await _save_todos(
+        context,
+        store,
+        [TodoItem(content="gate death", status=TodoStatus.PENDING)],
+    )
 
     await TodoContinuationHook(todo_store=store).after_turn(
         context_without_manager,
         AgentResult(content="done", stop_reason=StopReason.COMPLETED),
     )
 
-    await _assert_no_action(context, state)
+    assert state.custom[TurnCustomKey.CONTINUATION_REQUEST] is True
+    messages = await context.history.to_list()
+    assert len(messages) == 1
 
 
-async def test_unregistered_todo_write_skips_silently(tmp_path: Path) -> None:
+async def test_unregistered_todo_write_still_continues(tmp_path: Path) -> None:
+    """The scenario the runtime gate used to block — a tool manager
+    without ``todo_write`` — now runs: the hook exists only where the
+    todo capability is effective (compile-time), so it never probes the
+    tool registry."""
     context, state, store = _make_context(tmp_path, register_todo_write=False)
+    await _save_todos(
+        context,
+        store,
+        [TodoItem(content="gate death", status=TodoStatus.PENDING)],
+    )
 
     await TodoContinuationHook(todo_store=store).after_turn(
         context,
         AgentResult(content="done", stop_reason=StopReason.COMPLETED),
     )
 
-    await _assert_no_action(context, state)
+    assert state.custom[TurnCustomKey.CONTINUATION_REQUEST] is True
+    messages = await context.history.to_list()
+    assert len(messages) == 1
 
 
 async def test_none_todo_store_skips_silently(tmp_path: Path) -> None:

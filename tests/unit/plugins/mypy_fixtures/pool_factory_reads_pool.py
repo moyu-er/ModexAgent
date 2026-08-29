@@ -2,7 +2,7 @@
 
 A factory declaring ``ctx: PoolContext`` reads pool-layer data — the
 SPEC §3.3 todo factory shape:
-``create(config, ctx: PoolContext) -> TodoWriteTool(ctx.pool_runtime.todo_store)``.
+``create(config, ctx: PoolContext) -> TodoWriteTool(require_todo_supply(ctx.pool_runtime).store)``.
 This MUST typecheck cleanly.
 """
 
@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from modex_agent.plugins.abc import ComponentFactory
 from modex_agent.plugins.assembly.context import PoolContext
+from modex_agent.plugins.defaults.capabilities.todo import require_todo_supply
 
 
 class _ProbeConfig(BaseModel):
@@ -22,5 +23,4 @@ class PoolFactoryReadingPoolLayer(ComponentFactory):
     config_model = _ProbeConfig
 
     async def create(self, config: BaseModel, ctx: PoolContext) -> object:  # noqa: ARG002
-        todo_store = ctx.pool_runtime.todo_store if ctx.pool_runtime is not None else None
-        return todo_store
+        return require_todo_supply(ctx.pool_runtime).store

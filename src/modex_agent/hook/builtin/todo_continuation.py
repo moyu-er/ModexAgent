@@ -35,9 +35,12 @@ def _active_todo_hash(active: list[TodoItem]) -> str:
 class TodoContinuationHook(AfterTurnHook):
     """Request continuation when active todo tasks remain after a turn attempt.
 
-    Gates on the agent owning the ``todo_write`` tool (the canonical todo
-    signal) and on being constructed with a ``todo_store``; the todo list
-    itself is read from the injected store, never from a tool.
+    Exists only where the ``todo`` capability is effective — the roster
+    dispatch constructs it (``TodoContinuationHookFactory``), so
+    enablement is compile-time knowledge; the historical runtime
+    tool-registration gate died with that migration. The remaining gate
+    is the ``todo_store`` constructor argument; the todo list itself is
+    read from the injected store, never from a tool.
 
     Each hook acts independently — no OR/AND coordination with other
     AfterTurnHook continuation sources.  This hook:
@@ -47,8 +50,8 @@ class TodoContinuationHook(AfterTurnHook):
          returns (deadlock: no progress made).
       4. Otherwise — injects a ``<system-reminder>`` with the full active
           todo list, sets ``CONTINUATION_REQUEST``, and sets
-         ``CONTINUATION_RENEW_MAX_TURNS`` (watchdog: authorizes the gate to
-          extend MAX_TURNS by 1 when the agent is still making progress).
+         ``CONTINUATION_RENEW_MAX_TURNS`` (watchdog: authorizes the gate
+          to extend MAX_TURNS by 1 when the agent is still making progress).
     """
 
     def __init__(
@@ -67,9 +70,6 @@ class TodoContinuationHook(AfterTurnHook):
         if result.stop_reason in (StopReason.TURN_CANCELLED, StopReason.ERROR):
             return
 
-        tool_manager = ctx.tool_manager
-        if tool_manager is None or not tool_manager.is_registered("todo_write"):
-            return
         if self._todo_store is None:
             return
 

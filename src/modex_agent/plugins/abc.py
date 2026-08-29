@@ -1,6 +1,6 @@
 """Plugin-unified agent assembly type hierarchy.
 
-Defines the 10-slot component factory system's foundational types (SPEC
+Defines the 11-slot component factory system's foundational types (SPEC
 §4).
 
 Design constraints:
@@ -30,12 +30,13 @@ if TYPE_CHECKING:
 
 
 class ComponentSlot(StrEnum):
-    """The 10 component slots in the unified agent assembly system.
+    """The 11 component slots in the unified agent assembly system.
 
     Each slot names a distinct extension point that a plugin factory
     can produce. The slot set is authoritative (SPEC §4.3) — do not
     rename, reorder, or remove members. ``MEMORY_SYSTEM`` was added
-    via SPEC Errata-7; further additions require a new errata.
+    via SPEC Errata-7; ``CAPABILITY`` was added via ADR-0047; further
+    additions require a new errata.
     """
 
     TOOL = "tool"
@@ -48,6 +49,7 @@ class ComponentSlot(StrEnum):
     EXECUTION_STRATEGY = "execution_strategy"
     INPUT_STAGE = "input_stage"
     DATA_NAMESPACE = "data_namespace"
+    CAPABILITY = "capability"
 
 
 class AgentType(StrEnum):
@@ -121,8 +123,9 @@ class ComponentFactory(ABC):
       async because ``ExecutionStrategy.assemble`` is async
       (``execution_strategy.py``) and pipeline stages
       ``await factory.create(...)``.
-    - ``applies_to`` / ``hook_runner``: hook-dispatch metadata
-      (``None`` on non-hook factories). Stages read these directly
+    - ``applies_to`` / ``hook_runner`` / ``priority``: hook-dispatch
+      metadata (``None`` / ``None`` / ``0`` on non-hook factories).
+      Stages read these directly
       (rule 6 — no ``getattr``; rule 8 — declared on the base type).
 
     Return type is ``Any`` because ``ComponentFactory`` produces
@@ -153,6 +156,12 @@ class ComponentFactory(ABC):
     config_model: ClassVar[type[BaseModel]]
     applies_to: ClassVar[set[AgentType] | None] = None
     hook_runner: ClassVar[HookRunnerKind | None] = None
+    priority: ClassVar[int] = 0
+    """Hook-dispatch priority (0 on non-hook factories). Roster dispatch
+    threads it into the ``HookSpec``; ``HookRunner`` sorts by it, so
+    hooks that must run FIRST among their hook point declare negative
+    values (e.g. tree-aware continuation hooks whose reminder should
+    land before other hooks' reminders)."""
 
     @abstractmethod
     async def create(self, config: BaseModel, ctx: AgentContext) -> Any:
@@ -192,17 +201,19 @@ class SimpleFactory(ComponentFactory):
         config_model: type[BaseModel],
         applies_to: set[AgentType] | None = None,
         hook_runner: HookRunnerKind | None = None,
+        priority: int = 0,
     ) -> None:
         self._instance = instance
         # config_model is declared as ClassVar on the parent;
         # SimpleFactory overrides it per-instance because it wraps
         # arbitrary components with different config schemas.
         self.config_model = config_model  # type: ignore[misc]
-        # applies_to / hook_runner: only set when wrapping hook
-        # instances. None means "not a hook factory" — stages read
+        # applies_to / hook_runner / priority: only set when wrapping hook
+        # instances. None/0 means "not a hook factory" — stages read
         # the declared ClassVar directly (rule 6, rule 8).
         self.applies_to = applies_to  # type: ignore[misc]
         self.hook_runner = hook_runner  # type: ignore[misc]
+        self.priority = priority  # type: ignore[misc]
 
     async def create(self, config: BaseModel, ctx: AssemblyContext) -> Any:  # noqa: ARG002
         """Return the pre-built instance. Ignores config and ctx."""
@@ -224,7 +235,9 @@ class HookFactory(ComponentFactory):
     subclasses MUST set it (use ``ReactHookFactory`` or
     ``MemoryHookFactory``). The type stays ``| None`` to satisfy the
     ClassVar invariant override rule; the stage's ``ValueError``
-    fallback enforces the non-None contract at runtime.
+    fallback enforces the non-None contract at runtime. ``priority``
+    (also from :class:`ComponentFactory`) is the factory-declared
+    dispatch priority threaded into the ``HookSpec``.
     """
 
     applies_to: ClassVar[set[AgentType] | None] = None

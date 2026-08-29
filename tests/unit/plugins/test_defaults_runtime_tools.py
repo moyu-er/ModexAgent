@@ -12,6 +12,7 @@ from modex_agent.plugins.assembly.context import (
     PoolContext,
     PoolRuntimeDeps,
 )
+from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
 from modex_agent.plugins.defaults.tools import ToolConfig, register_default_tools
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
@@ -41,7 +42,9 @@ def _ctx(todo_store: TodoStore | None) -> AgentContext:
     return AgentContext(
         registry=MagicMock(),
         workspace_ctx=MagicMock(),
-        pool_runtime=PoolRuntimeDeps(todo_store=todo_store),
+        pool_runtime=PoolRuntimeDeps(
+            capability_supply=({"todo": TodoSupply(store=todo_store)} if todo_store else {})
+        ),
         agent_name="probe-agent",
     )
 
@@ -57,7 +60,7 @@ def test_todo_factory_is_registered_with_frozen_empty_config(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", ["todo_write", "todo_read"])
-async def test_todo_factory_creates_tool_from_pool_runtime_store(name: str) -> None:
+async def test_todo_factory_creates_tool_from_pool_supply_store(name: str) -> None:
     store = _TodoStore()
     factory = _registry().resolve(ComponentSlot.TOOL, name)
 
@@ -68,10 +71,10 @@ async def test_todo_factory_creates_tool_from_pool_runtime_store(name: str) -> N
 
 
 @pytest.mark.parametrize("name", ["todo_write", "todo_read"])
-async def test_todo_factory_missing_store_has_actionable_error(name: str) -> None:
+async def test_todo_factory_missing_supply_has_actionable_error(name: str) -> None:
     factory = _registry().resolve(ComponentSlot.TOOL, name)
 
-    with pytest.raises(ValueError, match=r"pool_runtime\.todo_store.*roster"):
+    with pytest.raises(ValueError, match=r"capability_supply\['todo'\].*\{todo: \{\}\}"):
         await factory.create(ToolConfig(), _ctx(None))
 
 

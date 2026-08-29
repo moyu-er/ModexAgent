@@ -40,7 +40,7 @@ from modex_agent.scope.spec import PoolSpec
 from modex_agent.tools.terminal.managers import create_terminal_manager_or_none
 from modex_agent.trace.cassette import CassetteRecorder
 
-from .builders import _PoolAssemblyMixin, build_pool_todo_store
+from .builders import _PoolAssemblyMixin
 
 
 class ReactExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategy):
@@ -90,16 +90,11 @@ class ReactExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategy):
             use_terminal=main_spec.use_terminal,
             terminal_visibility=main_spec.terminal_visibility,
             pool_name=pool_name,
-            default_cwd=(
-                str(workspace_handle.current) if workspace_handle is not None else None
-            ),
+            default_cwd=(str(workspace_handle.current) if workspace_handle is not None else None),
         )
-        # Pool todo store — supplied infra: handed to the roster's
-        # TodoToolFactory via pool_runtime.todo_store (Stage 3 harvests it
-        # from the StrategyAssembly below).
-        todo_store = build_pool_todo_store(
-            app_config, ctx.persistence, pool_data, pool_name, data_dir
-        )
+        # The pool's todo store is NOT built here anymore: the ``todo``
+        # capability's supply() owns its construction (Stage 3 aggregation
+        # → capability_supply['todo'] → the roster's TodoToolFactory).
         prompt_provider = None
 
         # create_pool unconditionally injects assembly_spec + component_registry
@@ -156,7 +151,6 @@ class ReactExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategy):
             communication_service=None,
             target_store=None,
             cassette_recorder=cassette_recorder,
-            todo_store=todo_store,
             root_provider=root_provider,
             component_hook_specs=(),
             extra_cleanup=(),

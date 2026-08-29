@@ -17,6 +17,7 @@ from bot.webui.types import RuntimeStores
 from modex_agent.core.session_store import SessionStore
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.persistence.config import PersistenceBackend
+from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
 
 if TYPE_CHECKING:
     from bot.webui.transcript_store import TranscriptStore
@@ -34,9 +35,7 @@ def workspace_persistence_for_data_root(
     if home_resources is not None:
         resources_by_workspace.append(home_resources)
     if workspace_stack is not None:
-        resources_by_workspace.extend(
-            workspace_stack.registry.iter_materialized_resources()
-        )
+        resources_by_workspace.extend(workspace_stack.registry.iter_materialized_resources())
     for resources in resources_by_workspace:
         if resources.ctx.paths.root == data_root.resolve():
             return resources.persistence
@@ -107,11 +106,15 @@ async def resolve_runtime_stores(
     Returns a :class:`RuntimeStores` from the materialized workspace
     resources when in SQLite mode, or an empty ``RuntimeStores()`` in
     FILE mode (endpoints fall back to their hardcoded file-based stores).
+
+    The todo panel reads the pool's todo capability supply — the SAME
+    store instance the todo tools write through (identity parity; the
+    capability is the single construction authority). A pool whose agents
+    do not carry the ``todo`` capability has no supply entry: the panel
+    falls back to the FILE-mode store (an empty read — no agent ever
+    writes todos there; the dark-supply death, SPEC P5).
     """
-    if (
-        app_config is None
-        or app_config.persistence.backend is PersistenceBackend.FILE
-    ):
+    if app_config is None or app_config.persistence.backend is PersistenceBackend.FILE:
         return RuntimeStores()
     # Materialize the workspace on demand (same pattern as
     # session_store_for_index) so the resolver works even before the
@@ -120,13 +123,13 @@ async def resolve_runtime_stores(
     # turn_store comes from PoolDataSnapshot (per-pool).
     pool_data = resources.pool_data.get(pool)
     turn_store = pool_data.turn_store if pool_data is not None else None
-    # todo_store is built from the workspace persistence manager
-    # (it is not on PoolDataSnapshot — it lives only in the tool).
+    # todo_store comes from the pool's capability supply (the pool's
+    # materialize deps carry the same mapping Stage 3 aggregated).
     todo_store = None
-    persistence = resources.persistence
-    if persistence is not None:
-        from bot.scope import BotRecordScope
-        from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
-
-        todo_store = SqliteTodoStore(persistence.connection, BotRecordScope(pool=pool))
+    instance = resources.pools.get(pool)
+    deps = instance.pool.materialize_deps if instance is not None else None
+    if deps is not None:
+        supply = deps.capability_supply.get("todo")
+        if isinstance(supply, TodoSupply):
+            todo_store = supply.store
     return RuntimeStores(todo_store=todo_store, turn_store=turn_store)

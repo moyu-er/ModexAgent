@@ -1,0 +1,457 @@
+{
+  "captured_on": "T11 boundary (both ast_grep and todo ride the capabilities face)",
+  "shapes": {
+    "baseline": {
+      "root": {
+        "roster": [
+          "read",
+          "write",
+          "edit",
+          "ls",
+          "grep",
+          "glob",
+          "bash",
+          "task",
+          "ast_grep_search",
+          "ast_grep_replace"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "edit",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ls",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "grep",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "glob",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "task",
+            "origin": "derived_task",
+            "replaces": null,
+            "targets": [
+              "sub"
+            ]
+          },
+          {
+            "tool": "ast_grep_search",
+            "origin": "supplement",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ast_grep_replace",
+            "origin": "supplement",
+            "replaces": null,
+            "targets": []
+          }
+        ],
+        "replacements": []
+      },
+      "sub": {
+        "roster": [
+          "read",
+          "write",
+          "edit",
+          "ls",
+          "grep",
+          "glob",
+          "bash",
+          "send_to_agent"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "edit",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ls",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "grep",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "glob",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "send_to_agent",
+            "origin": "derived_send_to_agent",
+            "replaces": null,
+            "targets": [
+              "root"
+            ]
+          }
+        ],
+        "replacements": []
+      }
+    },
+    "with_todo": {
+      "root": {
+        "roster": [
+          "read",
+          "write",
+          "edit",
+          "ls",
+          "grep",
+          "glob",
+          "bash",
+          "task",
+          "ast_grep_search",
+          "ast_grep_replace",
+          "todo_write",
+          "todo_read"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "edit",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ls",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "grep",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "glob",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "task",
+            "origin": "derived_task",
+            "replaces": null,
+            "targets": [
+              "sub"
+            ]
+          },
+          {
+            "tool": "ast_grep_search",
+            "origin": "supplement",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ast_grep_replace",
+            "origin": "supplement",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "todo_write",
+            "origin": "supplement",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "todo_read",
+            "origin": "supplement",
+            "replaces": null,
+            "targets": []
+          }
+        ],
+        "replacements": []
+      },
+      "sub": {
+        "roster": [
+          "read",
+          "write",
+          "edit",
+          "ls",
+          "grep",
+          "glob",
+          "bash",
+          "send_to_agent"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "edit",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ls",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "grep",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "glob",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "send_to_agent",
+            "origin": "derived_send_to_agent",
+            "replaces": null,
+            "targets": [
+              "root"
+            ]
+          }
+        ],
+        "replacements": []
+      }
+    },
+    "sub_declared": {
+      "root": {
+        "roster": [
+          "read",
+          "write",
+          "edit",
+          "ls",
+          "grep",
+          "glob",
+          "bash",
+          "task"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "edit",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ls",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "grep",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "glob",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "task",
+            "origin": "derived_task",
+            "replaces": null,
+            "targets": [
+              "sub"
+            ]
+          }
+        ],
+        "replacements": []
+      },
+      "sub": {
+        "roster": [
+          "read",
+          "write",
+          "edit",
+          "ls",
+          "grep",
+          "glob",
+          "bash",
+          "send_to_agent",
+          "ast_grep_search",
+          "ast_grep_replace"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "edit",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ls",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "grep",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "glob",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "send_to_agent",
+            "origin": "derived_send_to_agent",
+            "replaces": null,
+            "targets": [
+              "root"
+            ]
+          },
+          {
+            "tool": "ast_grep_search",
+            "origin": "supplement",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ast_grep_replace",
+            "origin": "supplement",
+            "replaces": null,
+            "targets": []
+          }
+        ],
+        "replacements": []
+      }
+    }
+  }
+}

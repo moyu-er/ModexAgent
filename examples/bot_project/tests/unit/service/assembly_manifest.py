@@ -234,9 +234,7 @@ def _react_hooks(instance: Any) -> list[HookEntry]:
     entries: list[HookEntry] = []
     for spec in runner.hook_specs:
         hook = spec.hook
-        entries.append(
-            HookEntry(name=hook.name, hook_class=type(hook).__name__, runner="react")
-        )
+        entries.append(HookEntry(name=hook.name, hook_class=type(hook).__name__, runner="react"))
     return entries
 
 
@@ -274,9 +272,7 @@ def dump_memory_hooks(pool_data: Any) -> list[HookEntry]:
     ``HookRunner`` — so the notification face needs its own introspection.
     Returns ``[]`` when no memory system is reachable (no pool_data).
     """
-    memory_system = getattr(
-        getattr(pool_data, "context_manager", None), "memory_system", None
-    )
+    memory_system = getattr(getattr(pool_data, "context_manager", None), "memory_system", None)
     runner = getattr(memory_system, "_hook_runner", None)  # noqa: SLF001
     hooks = getattr(runner, "_hooks", None) if runner is not None else None  # noqa: SLF001
     if not hooks:
@@ -287,7 +283,6 @@ def dump_memory_hooks(pool_data: Any) -> list[HookEntry]:
     ]
 
 
-
 def roster_source_map(
     registry: Any | None,
     spec_tools: list[str],
@@ -296,9 +291,9 @@ def roster_source_map(
 
     The spec carries registry names (e.g. ``aci_edit``); the registered
     tool's LLM-facing name may differ (AciEditTool's name is ``edit`` —
-    the documented same-name replacement, presets.py ToolSupplement.ACI).
-    SimpleFactory-wrapped tools are introspected for their instance name
-    so the rename stays attributed to the roster.
+    the documented same-name replacement, the ``aci`` capability's O3
+    declaration). SimpleFactory-wrapped tools are introspected for their
+    instance name so the rename stays attributed to the roster.
     """
     from modex_agent.plugins.abc import SimpleFactory
 
@@ -338,10 +333,15 @@ def dump_assembly_manifest(
     runner's cleanup hooks (the notification face); ``None`` leaves the
     face empty — for drivers that build no pool_data it is unobserved.
     """
-    # Todo store: rides on the pool's materialize_deps (create_pool fills
-    # it from the strategy assembly) — supplied infra observed, not assumed.
+    # Todo store: the pool's ``todo`` capability supply (the same mapping
+    # Stage 3 aggregated; the retired ``materialize_deps.todo_store`` typed
+    # carrier died with the supply convergence) — supplied infra observed,
+    # not assumed.
     deps = getattr(pool_instance.pool, "materialize_deps", None)
-    store_obj = getattr(deps, "todo_store", None) if deps is not None else None
+    store_obj = None
+    supply = deps.capability_supply.get("todo") if deps is not None else None
+    if supply is not None:
+        store_obj = getattr(supply, "store", None)
     todo_summary: TodoStoreSummary | None = None
     if store_obj is not None:
         base_dir = getattr(store_obj, "_base_dir", None)
@@ -365,9 +365,7 @@ def dump_assembly_manifest(
             AgentManifest(
                 agent_name=agent_name,
                 materialized=True,
-                tools=dump_tool_roster(
-                    pool_instance.tool_manager, source_of=source_of
-                ),
+                tools=dump_tool_roster(pool_instance.tool_manager, source_of=source_of),
                 hooks=_react_hooks(instance),
                 memory_config=instance.descriptor.memory_config.model_dump(mode="json"),
                 system_prompt_provider=type(instance.context_manager).__name__,

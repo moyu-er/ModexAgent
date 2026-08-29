@@ -8,8 +8,9 @@ AgentTemplate.materialize per call (ADR-0015 D5).
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.pool import AgentPool
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
     from modex_agent.pipeline.adapters import OutputAdapter
+    from modex_agent.plugins.capability import CapabilitySupply
     from modex_agent.plugins.registry import ComponentRegistry
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
@@ -42,7 +44,6 @@ if TYPE_CHECKING:
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.constants import ReasoningEffort
 from modex_agent.core.emitter import ContentEmitter
-from modex_agent.runtime.store import TodoStore
 
 
 class AgentMaterializeDeps:
@@ -74,7 +75,6 @@ class AgentMaterializeDeps:
         scope_path: ScopePath | None = None,
         workspace_manager: WorkspaceManager | None = None,
         mcp_registry: McpConnectionRegistry | None = None,
-        todo_store: TodoStore | None = None,
         execution_strategy: ExecutionStrategy | None = None,
         strategy_registry: ExecutionStrategyRegistry | None = None,
         data_dir: Path | None = None,
@@ -87,6 +87,7 @@ class AgentMaterializeDeps:
         pool_assembly_ctx: PoolAssemblyContext | None = None,
         default_llm_provider: str = "default",
         graph_context_resolver: Callable[[int], GraphContext[Any] | None] | None = None,
+        capability_supply: Mapping[str, CapabilitySupply] = MappingProxyType({}),
     ) -> None:
         self.agent_factory = agent_factory
         self.pool = pool
@@ -112,7 +113,6 @@ class AgentMaterializeDeps:
         self.scope_path = scope_path
         self.workspace_manager = workspace_manager
         self.mcp_registry = mcp_registry
-        self.todo_store = todo_store
         self.execution_strategy = execution_strategy
         self.strategy_registry = strategy_registry
         self.data_dir = data_dir
@@ -125,6 +125,7 @@ class AgentMaterializeDeps:
         self.pool_assembly_ctx = pool_assembly_ctx
         self.default_llm_provider = default_llm_provider
         self.graph_context_resolver = graph_context_resolver
+        self.capability_supply = capability_supply
 
     safety: RuntimeSafetyPolicy | None
     llm_model: str | None
@@ -160,7 +161,6 @@ class AgentMaterializeDeps:
     ``_materialize_external`` in ``template.py``. ``None`` for framework
     tests / non-bot callers."""
     mcp_registry: McpConnectionRegistry | None
-    todo_store: TodoStore | None
     execution_strategy: ExecutionStrategy | None
     """The POOL's main-agent execution strategy (resolved from the main
     spec's ``execution_strategy`` field). Kept for callers that need the
@@ -222,3 +222,10 @@ class AgentMaterializeDeps:
     lazy subagent leaf then receives its ``deliver`` tool on graph turns
     (SPEC §4 axis 3). ``None`` for framework tests / graph-less callers —
     the wiring is skipped, matching the main-pipeline guard."""
+    capability_supply: Mapping[str, CapabilitySupply]
+    """Pool-level capability supply (SPEC §7.1) — the SAME aggregated
+    mapping ``PoolAssembleStage`` lands on ``PoolRuntimeDeps``;
+    ``AgentTemplate.materialize`` threads it onto the per-subagent
+    ``PoolRuntimeDeps`` so capability consumers on the subagent path read
+    one pool-wide face. Empty for framework tests / pools without
+    capabilities."""

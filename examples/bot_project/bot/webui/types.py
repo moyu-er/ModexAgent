@@ -21,6 +21,7 @@ from aiohttp import web
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.webui.events import ServerEvent
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.runtime.store import TodoStore, TurnStateStore
 from modex_graph import GraphOutput
 
 logger = logging.getLogger(__name__)
@@ -170,10 +171,12 @@ class RuntimeStores:
     Carries the ``TodoStore`` and ``TurnStateStore`` the WebUI endpoints
     should read from, matching the backend the agent writes to. ``None``
     fields signal the endpoint to fall back to its hardcoded file store.
+    The todo store is the pool's ``capability_supply['todo']`` instance —
+    the SAME store the todo tools write through.
     """
 
-    todo_store: Any = None
-    turn_store: Any = None
+    todo_store: TodoStore | None = None
+    turn_store: TurnStateStore | None = None
 
 
 def _skill_relpath(filename: str) -> str | None:
