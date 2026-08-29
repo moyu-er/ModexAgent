@@ -2,7 +2,7 @@
 
 These tests are written FIRST and drive the implementation of
 ``src/modex_agent/plugins/abc.py`` (task 1 of the scope-converge
-implementation plan). They assert the exact type contract: 10 ComponentSlot members,
+implementation plan). They assert the exact type contract: 11 ComponentSlot members,
 4 AgentType members, the ComponentFactory/SimpleFactory/HookFactory
 hierarchy, and the two HookRunnerKind values.
 
@@ -30,17 +30,16 @@ from modex_agent.plugins.abc import (
     SimpleFactory,
 )
 
-
-# ---- ComponentSlot (10 members) ----
+# ---- ComponentSlot (11 members) ----
 
 
 class TestComponentSlot:
     def test_is_strenum(self) -> None:
         assert issubclass(ComponentSlot, StrEnum)
 
-    def test_has_exactly_10_members(self) -> None:
+    def test_has_exactly_11_members(self) -> None:
         members = list(ComponentSlot)
-        assert len(members) == 10
+        assert len(members) == 11
 
     def test_member_names_exact(self) -> None:
         expected = {
@@ -54,6 +53,7 @@ class TestComponentSlot:
             "EXECUTION_STRATEGY",
             "INPUT_STAGE",
             "DATA_NAMESPACE",
+            "CAPABILITY",
         }
         actual = {m.name for m in ComponentSlot}
         assert actual == expected
@@ -71,6 +71,7 @@ class TestComponentSlot:
             "EXECUTION_STRATEGY",
             "INPUT_STAGE",
             "DATA_NAMESPACE",
+            "CAPABILITY",
         ],
     )
     def test_each_member_accessible_by_name(self, name: str) -> None:

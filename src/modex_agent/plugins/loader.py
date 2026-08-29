@@ -17,11 +17,12 @@ import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, cast
 
 from pydantic import BaseModel
 
 from modex_agent.plugins.abc import ComponentFactory, ComponentSlot, PluginSource
+from modex_agent.plugins.capability import Capability
 from modex_agent.plugins.registry import ComponentRegistry
 
 logger = logging.getLogger(__name__)
@@ -87,19 +88,24 @@ class PluginRegistrationContext:
     entry_points > bundled, nearest-to-user wins (SPEC §3.5 O2). A
     directly-registered entry (source ``None``) preempts any source.
 
-    The 10 ``register_*`` methods map 1:1 to the 10 ``ComponentSlot``
+    The 11 ``register_*`` methods map 1:1 to the 11 ``ComponentSlot``
     values.
     """
 
     def __init__(self, registry: ComponentRegistry, *, source: PluginSource | None = None) -> None:
         self._registry = registry
         self._source: PluginSource | None = source
-        self._buffer: list[tuple[ComponentSlot, str, ComponentFactory]] = []
+        # CAPABILITY entries are capability instances, not factories
+        # (SPEC §4) — the one slot whose buffered object is not a
+        # ComponentFactory.
+        self._buffer: list[tuple[ComponentSlot, str, ComponentFactory | Capability]] = []
 
-    def _add(self, slot: ComponentSlot, name: str, factory: ComponentFactory) -> None:
-        self._buffer.append((slot, name, factory))
+    def _add(
+        self, slot: ComponentSlot, name: str, component: ComponentFactory | Capability
+    ) -> None:
+        self._buffer.append((slot, name, component))
 
-    # ---- 10 register_* methods (one per ComponentSlot) ----
+    # ---- 11 register_* methods (one per ComponentSlot) ----
 
     def register_tool(self, name: str, factory: ComponentFactory) -> None:
         self._add(ComponentSlot.TOOL, name, factory)
@@ -130,6 +136,16 @@ class PluginRegistrationContext:
 
     def register_namespace(self, name: str, factory: ComponentFactory) -> None:
         self._add(ComponentSlot.DATA_NAMESPACE, name, factory)
+
+    def register_capability(self, name: str, capability: Capability) -> None:
+        """Register a capability INSTANCE under ``(CAPABILITY, name)``.
+
+        Unlike the 10 factory slots, the CAPABILITY slot stores the
+        capability instance itself (SPEC §4) — capabilities participate
+        in compilation, not per-assembly instantiation. Source priority
+        and duplicate semantics are identical to the factory slots.
+        """
+        self._add(ComponentSlot.CAPABILITY, name, capability)
 
     # ---- context manager protocol ----
 
@@ -183,7 +199,15 @@ class PluginRegistrationContext:
                     "same-source conflict)"
                 )
 
-        for slot, name, factory in buffer:
+        for slot, name, component in buffer:
+            # The CAPABILITY slot stores capability instances, not
+            # factories (SPEC §4) — the registry's ComponentFactory-typed
+            # store face predates the 11th slot. ``register`` stores the
+            # object verbatim and ``resolve`` returns it unchanged, so
+            # this cast is representation-only: a registered Capability
+            # resolves to itself (identity preserved for the compile-time
+            # consumer).
+            factory = cast("ComponentFactory", component)
             if name not in self._registry.names(slot):
                 self._registry.register(slot, name, factory, source=self._source)
                 continue

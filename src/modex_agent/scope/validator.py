@@ -11,7 +11,7 @@ Two phases (SPEC §7, closed-loop revision):
   (:func:`validate_declaration`): V1 acyclic, V2 connected, V3 exactly one
   root per pool tree, V4 kind hierarchy, V5 peer topology, V7 profile
   single-level references, V10 graph agent references, V11 name
-  uniqueness.
+  uniqueness, V12 external-agent capability exclusion.
 - **Phase 2 — effective values, post-derivation**
   (:func:`validate_effective_configs`): V6 ``task`` present in the
   compiler-derived effective toolset of child-carrying agents, V9 non-root
@@ -58,6 +58,7 @@ class RuleId(StrEnum):
     NON_ROOT_APPROVAL = "V9"
     GRAPH_AGENT_REFERENCE = "V10"
     NAME_UNIQUENESS = "V11"
+    EXTERNAL_CAPABILITIES = "V12"
 
 
 class ScopeValidationIssue(BaseModel):
@@ -128,7 +129,7 @@ def validate_declaration(
     profiles: Sequence[ProfileDeclaration] = (),
     graph_agent_refs: Sequence[GraphAgentReference] = (),
 ) -> list[ScopeValidationIssue]:
-    """Validate declaration shape: V1-V5, V7, V10, V11 (SPEC §7 phase 1).
+    """Validate declaration shape: V1-V5, V7, V10-V12 (SPEC §7 phase 1).
 
     Args:
         spec: the loaded declaration tree.
@@ -139,7 +140,7 @@ def validate_declaration(
 
     Returns:
         All issues found, in rule order (V1, V2, V3, V4, V5, V7, V10,
-        V11), then declaration order within each rule. Empty = valid.
+        V11, V12), then declaration order within each rule. Empty = valid.
     """
     pools = _pools_of(spec)
     issues: list[ScopeValidationIssue] = []
@@ -155,6 +156,7 @@ def validate_declaration(
     pools_by_name: dict[str, PoolSpec] = {pool.name: pool for pool in pools}
     issues.extend(_check_graph_agent_refs(pools_by_name, graph_agent_refs))
     issues.extend(_check_name_uniqueness(spec, pools))
+    issues.extend(_check_external_capability_declarations(pools))
     return issues
 
 
@@ -507,6 +509,27 @@ def _check_name_uniqueness(
                     )
                 )
     return issues
+
+
+def _check_external_capability_declarations(
+    pools: Sequence[PoolSpec],
+) -> list[ScopeValidationIssue]:
+    """V12 — external agents cannot declare native capability overrides."""
+    return [
+        ScopeValidationIssue(
+            rule=RuleId.EXTERNAL_CAPABILITIES,
+            node=agent.name,
+            message=(
+                f"pool {pool.name!r}: external agent {agent.name!r} declares "
+                "capabilities — explicit capability declarations are invalid "
+                "for external agents because external agents take no native "
+                "component face; remove the capabilities block (V12)"
+            ),
+        )
+        for pool in pools
+        for agent in pool.agents
+        if agent.provider_kind is not None and agent.capabilities
+    ]
 
 
 # ---------------------------------------------------------------------------

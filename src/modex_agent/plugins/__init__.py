@@ -7,6 +7,10 @@ system (SPEC §4-§6). Submodules:
   ``PluginSource`` and the factory hierarchy (``ComponentFactory``,
   ``SimpleFactory``, ``HookFactory``, ``ReactHookFactory``,
   ``MemoryHookFactory``).
+- ``capability`` — the capability-bundle protocol (ADR-0047):
+  ``Capability``, ``CapabilitySupply``, ``CapabilityConfig`` and the
+  five-phase payload types (declaration/tree/roster views,
+  contributions, bindings, supply views, wiring).
 - ``registry`` — ``ComponentRegistry``, ``ComponentNotFoundError``,
   ``TypedBundle``.
 - ``loader`` — ``Plugin``, ``PluginRegistrationContext``,
@@ -44,6 +48,23 @@ from modex_agent.plugins.assembly.context import (
 from modex_agent.plugins.assembly.native_core import LlmDefaults
 from modex_agent.plugins.assembly.pipeline import AssemblyPipeline, AssemblyStage
 from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
+from modex_agent.plugins.capability import (
+    AgentDeclarationView,
+    AgentDeclaredFields,
+    Capability,
+    CapabilityBinding,
+    CapabilityConfig,
+    CapabilityContribution,
+    CapabilitySupply,
+    CapabilityWiring,
+    ChildSummary,
+    FinalRosterView,
+    PoolSupplyAgentEntry,
+    PoolSupplyView,
+    PromptSectionSpec,
+    ToolReplacementSpec,
+    TreePositionView,
+)
 from modex_agent.plugins.loader import (
     ComponentRegistryLoader,
     Plugin,
@@ -58,6 +79,8 @@ from modex_agent.plugins.registry import (
 
 __all__ = [
     "AgentContext",
+    "AgentDeclaredFields",
+    "AgentDeclarationView",
     "AgentType",
     "AssembledAgent",
     "AssemblyBuilder",
@@ -65,11 +88,19 @@ __all__ = [
     "AssemblyPipeline",
     "AssemblySpec",
     "AssemblyStage",
+    "Capability",
+    "CapabilityBinding",
+    "CapabilityConfig",
+    "CapabilityContribution",
+    "CapabilitySupply",
+    "CapabilityWiring",
+    "ChildSummary",
     "ComponentFactory",
     "ComponentNotFoundError",
     "ComponentRegistry",
     "ComponentRegistryLoader",
     "ComponentSlot",
+    "FinalRosterView",
     "HookFactory",
     "HookRunnerKind",
     "LlmDefaults",
@@ -81,8 +112,13 @@ __all__ = [
     "PluginSource",
     "PoolContext",
     "PoolRuntimeDeps",
+    "PoolSupplyAgentEntry",
+    "PoolSupplyView",
+    "PromptSectionSpec",
     "ReactHookFactory",
     "SimpleFactory",
+    "ToolReplacementSpec",
+    "TreePositionView",
     "TypedBundle",
     "WorkspaceContext",
     "agent_context_chain",
