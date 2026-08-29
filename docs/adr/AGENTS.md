@@ -3,7 +3,7 @@
 
 # docs/adr
 
-Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0043; the historical ADR-0034 phase-c-preliminaries was merged into ADR-0033 and archived in `history/001-`; the original ADR-0035 direct-CLI design was superseded by the current ADR-0035 control-plane design and archived in `history/`).
+Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0047; the historical ADR-0034 phase-c-preliminaries was merged into ADR-0033 and archived in `history/001-`; the original ADR-0035 direct-CLI design was superseded by the current ADR-0035 control-plane design and archived in `history/`).
 
 ## Purpose
 
@@ -26,7 +26,7 @@ ADRs document significant architectural decisions, including the context driving
   existing ADR in place. New ADRs are for genuinely new decisions, not
   follow-up work on existing ones.
 
-### ADR Index (0001–0043, excluding archived)
+### ADR Index (0001–0047, excluding archived)
 
 | ADR  | Title |
 |------|-------|
@@ -75,5 +75,6 @@ ADRs document significant architectural decisions, including the context driving
 | 0043 | Dual execution models — actor sessions and dataflow graphs (implemented 2026-08-22) |
 | 0045 | Kernel terminal-state detection for the persistent bash pair |
 | 0046 | Rebuild the LLM provider system: one provider, protocol engines, event-stream primitive |
+| 0047 | Capability bundles — plugin-internal enablement and derivation (implemented 2026-08-28; see `docs/design/capability-bundles/`) |
 
 <!-- MANUAL -->
