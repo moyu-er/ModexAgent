@@ -133,6 +133,18 @@ async def _scripted_registry(provider: LLMProvider) -> ComponentRegistry:
     return registry
 
 
+def _compile_registry() -> ComponentRegistry:
+    """DefaultPlugin-only registry for the compile step (the shipped
+    declaration's ``capabilities:`` blocks resolve against it)."""
+    from modex_agent.plugins.loader import PluginRegistrationContext
+
+    registry = ComponentRegistry()
+    ctx = PluginRegistrationContext(registry)
+    DefaultPlugin().register(ctx)
+    ctx.flush()
+    return registry
+
+
 async def _create_scripted_pool(
     provider: LLMProvider,
     completions: dict[str, asyncio.Future[AgentResult]],
@@ -150,6 +162,7 @@ async def _create_scripted_pool(
         data_dir=data_dir,
         graphs_dirs=(),
         default_llm_provider="bot_default",
+        registry=_compile_registry(),
     )
     declared = declared_pool_build(boot, "coder")
     assembly_deps = PoolAssemblyDeps(memory=main_agent_memory())

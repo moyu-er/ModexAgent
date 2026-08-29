@@ -65,6 +65,18 @@ async def _load_registry() -> ComponentRegistry:
     return registry
 
 
+def _compile_registry() -> ComponentRegistry:
+    """DefaultPlugin-only registry for the compile step (the shipped
+    declaration's ``capabilities:`` blocks resolve against it)."""
+    from modex_agent.plugins.loader import PluginRegistrationContext
+
+    registry = ComponentRegistry()
+    ctx = PluginRegistrationContext(registry)
+    DefaultPlugin().register(ctx)
+    ctx.flush()
+    return registry
+
+
 def _workspace_ctx(root: Path) -> WorkspaceContext:
     return WorkspaceContext(target=root, paths=WorkspacePaths(root=root), is_home=False)
 
@@ -77,6 +89,7 @@ def _boot_declaration(data_dir: Path):
         data_dir=data_dir,
         graphs_dirs=(BOT_BASE / "config" / "graphs",),
         default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        registry=_compile_registry(),
     )
 
 

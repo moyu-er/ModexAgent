@@ -20,11 +20,15 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable
+from functools import lru_cache
 from pathlib import Path
 from typing import Final
 
 import pytest
 
+from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope import (
     AgentSpec,
     MemoryDeclaration,
@@ -38,7 +42,7 @@ from modex_agent.scope import (
     load_scope_declaration,
     spec_hash,
 )
-from modex_agent.tools.presets import ToolPreset, ToolSupplement
+from modex_agent.tools.presets import ToolPreset
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -50,6 +54,19 @@ BOT_YML = REPO_ROOT / "examples" / "bot_project" / "config" / "scopes" / "bot.ym
 def _workspace_ctx(target: str = "/tmp/test_scope_seam_ws") -> WorkspaceContext:
     path = Path(target)
     return WorkspaceContext(target=path, paths=WorkspacePaths(root=path), is_home=False)
+
+
+@lru_cache(maxsize=1)
+def _shipped_registry() -> ComponentRegistry:
+    """DefaultPlugin registry — the shipped declaration carries
+    ``capabilities:`` blocks, so every compile (hash input) resolves the
+    CAPABILITY slot through it. The registry is a compile INPUT, never
+    part of the hashed product."""
+    registry = ComponentRegistry()
+    ctx = PluginRegistrationContext(registry)
+    DefaultPlugin().register(ctx)
+    ctx.flush()
+    return registry
 
 
 def _tree(
@@ -71,7 +88,9 @@ def _tree(
 
 
 def _hash_of(spec: ScopeSpec) -> str:
-    return spec_hash(compile_scope(spec, workspace_ctx=_workspace_ctx()))
+    return spec_hash(
+        compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_shipped_registry())
+    )
 
 
 # One single-field mutation per entry: the mutated compile input must land
@@ -82,8 +101,8 @@ MUTATIONS: Final[list[tuple[str, Callable[[], ScopeSpec]]]] = [
     ("root_max_steps", lambda: _tree(root=AgentSpec(name="root", max_steps=50))),
     ("root_toolset", lambda: _tree(root=AgentSpec(name="root", toolset=ToolPreset.READ_ONLY))),
     (
-        "root_aci_supplement",
-        lambda: _tree(root=AgentSpec(name="root", tool_supplements=[ToolSupplement.ACI])),
+        "root_aci_capability",
+        lambda: _tree(root=AgentSpec(name="root", capabilities={"aci": {}})),
     ),
     (
         "sub_wholesale_tools",
@@ -119,15 +138,22 @@ _SUBPROCESS_CODE = f"""
 from pathlib import Path
 
 import modex_agent
+from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope import compile_scope, load_scope_declaration, spec_hash
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
+
+registry = ComponentRegistry()
+with PluginRegistrationContext(registry) as ctx:
+    DefaultPlugin().register(ctx)
 
 target = Path("/tmp/test_scope_seam_subprocess")
 ctx = WorkspaceContext(target=target, paths=WorkspacePaths(root=target), is_home=False)
 spec = load_scope_declaration(Path({str(BOT_YML)!r}))
 print(modex_agent.__file__)
-print(spec_hash(compile_scope(spec, workspace_ctx=ctx)))
+print(spec_hash(compile_scope(spec, workspace_ctx=ctx, registry=registry)))
 """
 
 
@@ -161,8 +187,12 @@ class TestSpecHashStability:
 
     def test_same_input_same_hash_in_process(self) -> None:
         spec = load_scope_declaration(BOT_YML)
-        first = spec_hash(compile_scope(spec, workspace_ctx=_workspace_ctx()))
-        second = spec_hash(compile_scope(spec, workspace_ctx=_workspace_ctx()))
+        first = spec_hash(
+            compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_shipped_registry())
+        )
+        second = spec_hash(
+            compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_shipped_registry())
+        )
         assert len(first) == 64  # non-trivial payload (9 shipped agents)
         assert first == second
 
@@ -170,9 +200,15 @@ class TestSpecHashStability:
         # workspace_ctx is a runtime object — excluded from the byte-stable
         # face (lane-07 pinned exclusion contract).
         spec = load_scope_declaration(BOT_YML)
-        first = spec_hash(compile_scope(spec, workspace_ctx=_workspace_ctx()))
+        first = spec_hash(
+            compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_shipped_registry())
+        )
         second = spec_hash(
-            compile_scope(spec, workspace_ctx=_workspace_ctx("/tmp/test_scope_seam_ws_other"))
+            compile_scope(
+                spec,
+                workspace_ctx=_workspace_ctx("/tmp/test_scope_seam_ws_other"),
+                registry=_shipped_registry(),
+            )
         )
         assert first == second
 
@@ -185,7 +221,9 @@ class TestSpecHashStability:
         assert Path(module_b).is_relative_to(REPO_ROOT)
         assert hash_a == hash_b
         spec = load_scope_declaration(BOT_YML)
-        assert hash_a == spec_hash(compile_scope(spec, workspace_ctx=_workspace_ctx()))
+        assert hash_a == spec_hash(
+            compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_shipped_registry())
+        )
 
 
 # ─── Mutation matrix (ticket checkbox 2) ─────────────────────────────────────
@@ -252,6 +290,6 @@ class TestGenerationCounter:
         # The wrapper adds zero state to the compiler: identical output.
         spec = load_scope_declaration(BOT_YML)
         tracker = ScopeGenerationTracker()
-        assert tracker.compile(spec, workspace_ctx=_workspace_ctx()) == compile_scope(
-            spec, workspace_ctx=_workspace_ctx()
-        )
+        assert tracker.compile(
+            spec, workspace_ctx=_workspace_ctx(), registry=_shipped_registry()
+        ) == compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_shipped_registry())
