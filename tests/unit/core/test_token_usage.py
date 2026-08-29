@@ -93,11 +93,23 @@ def test_responses_wire_shape_normalizes_details() -> None:
             "total_tokens": 150,
         }
     )
-    assert usage.input_tokens == 100
+    # Responses convention: input_tokens INCLUDES cached_tokens (same as the
+    # chat prompt_tokens convention) — the uncached remainder is what lands
+    # in input_tokens (probe-verified against the real deepseek Responses
+    # endpoint: input=574, cached=512 → reported input must be 62, not 574).
+    assert usage.input_tokens == 60
     assert usage.cache_read_input_tokens == 40
     assert usage.output_tokens == 50
     assert usage.reasoning_tokens == 20
-    assert usage.total_tokens == 190
+    assert usage.total_tokens == 150
+
+
+def test_responses_wire_shape_without_details() -> None:
+    usage = TokenUsage(**{"input_tokens": 100, "output_tokens": 50})
+    assert usage.input_tokens == 100
+    assert usage.cache_read_input_tokens == 0
+    assert usage.output_tokens == 50
+    assert usage.total_tokens == 150
 
 
 # ---------------------------------------------------------------------------

@@ -206,7 +206,7 @@ async def test_save_span_accumulates_under_turn_root(tmp_path: Path) -> None:
             "total_input_tokens": 30,
             "total_output_tokens": 12,
             "llm_call_count": 1,
-            "cache_hit_rate": 10 / 30,
+            "cache_hit_rate": 10 / 40,
             "response_token_ratio": 12 / 42,
             "api_latency_avg_s": 1.5,
         }

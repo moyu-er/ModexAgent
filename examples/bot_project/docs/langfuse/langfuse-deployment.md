@@ -256,7 +256,7 @@ failures are warning-only — a score-posting failure never breaks the turn):
 | `total_output_tokens` | high=cost | sum of chat span output_tokens |
 | `total_reasoning_tokens` | neutral | sum of reasoning.output_tokens |
 | `api_latency_avg_s` | low=good | avg chat span wall-clock duration |
-| `cache_hit_rate` | high=good | cache_read / input_tokens |
+| `cache_hit_rate` | high=good | cache_read / (input_tokens + cache_read) — input_tokens is the uncached count |
 | `response_token_ratio` | neutral | output / (input + output) |
 | `has_reasoning` | neutral | reasoning_tokens > 0 |
 

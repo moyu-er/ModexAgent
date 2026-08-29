@@ -160,7 +160,7 @@ def test_turn_reduction_aggregates_four_usage_buckets_by_chat_span_model() -> No
         "total_output_tokens": 39,
         "total_reasoning_tokens": 0,
         "api_latency_avg_s": 1.0,
-        "cache_hit_rate": 41 / 210,
+        "cache_hit_rate": 41 / 251,
         "response_token_ratio": 39 / 249,
         "has_reasoning": False,
     }

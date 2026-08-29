@@ -344,9 +344,27 @@ def test_ratio_derivations() -> None:
     )
     metrics = state.read_metrics(TRACE_ID, ROOT_ID)
     assert metrics.tool_success_rate == pytest.approx(0.5)
-    assert metrics.cache_hit_rate == pytest.approx(75 / 200)
+    # span input_tokens is the UNCACHED count, so the hit-rate denominator is
+    # uncached + cached across chat spans: 75 / (200 + 75).
+    assert metrics.cache_hit_rate == pytest.approx(75 / 275)
     assert metrics.response_token_ratio == pytest.approx(400 / 600)
     assert metrics.api_latency_avg_s == pytest.approx((2.0 + 1.0) / 2)
+
+
+def test_cache_hit_rate_caps_at_one_for_full_hits() -> None:
+    """Every prompt token served from cache → hit rate is 1.0, not >1.
+
+    With the old denominator (sum(input) alone) a fully-cached round
+    reported input=0 and the rate collapsed to 0.0; with uncached+cached
+    the same round reports 1.0.
+    """
+    state = TraceSessionState()
+    _accumulate_all(
+        state,
+        [_chat("c1", input_tokens=0, output_tokens=10, cache_read_tokens=500)],
+    )
+    metrics = state.read_metrics(TRACE_ID, ROOT_ID)
+    assert metrics.cache_hit_rate == pytest.approx(1.0)
 
 
 # ── MetricCounters unit ────────────────────────────────────────────────

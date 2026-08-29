@@ -44,10 +44,10 @@ class TrajectoryMetrics(BaseModel):
             DeepSeek-V3). neutral (cost reference, not quality).
         api_latency_avg_s: average wall-clock duration of chat spans
             (end_time - start_time). 0.0 when no chat spans. low=good.
-        cache_hit_rate: sum(cache_read_input_tokens) / sum(input_tokens).
-            OpenAI-style providers report prompt_tokens INCLUDING cached
-            tokens, so this is the correct cache hit proportion.
-            0.0 when total input is 0. high=good.
+        cache_hit_rate: cache_read_input_tokens / (input_tokens +
+            cache_read_input_tokens) — TokenUsage.input_tokens is the UNCACHED
+            count, so the prompt total is uncached + cached. 0.0 when total
+            input is 0. high=good.
         response_token_ratio: output / (input + output) tokens.
             0.0 when total is 0. neutral.
         has_reasoning: total_reasoning_tokens > 0. neutral (model
@@ -215,7 +215,13 @@ def compute_metrics(spans: list[SpanModel]) -> TrajectoryMetrics:
     cache_read_tokens = sum(
         _as_int(s.attributes.get(GenAiAttr.USAGE_CACHE_READ_INPUT_TOKENS.value)) for s in chat_spans
     )
-    cache_hit_rate = cache_read_tokens / total_input_tokens if total_input_tokens > 0 else 0.0
+    # Span input_tokens is the UNCACHED count, so the prompt total the cache
+    # served a fraction of is uncached + cached.
+    cache_hit_rate = (
+        cache_read_tokens / (total_input_tokens + cache_read_tokens)
+        if total_input_tokens + cache_read_tokens > 0
+        else 0.0
+    )
 
     total_tokens = total_input_tokens + total_output_tokens
     response_token_ratio = total_output_tokens / total_tokens if total_tokens > 0 else 0.0

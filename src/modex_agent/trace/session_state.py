@@ -67,7 +67,8 @@ class MetricCounters:
     - ``input_tokens`` → ``total_input_tokens``
     - ``output_tokens`` → ``total_output_tokens``
     - ``reasoning_tokens`` → ``total_reasoning_tokens``, ``has_reasoning``
-    - ``cache_read_tokens`` → ``cache_hit_rate`` (÷ ``input_tokens``)
+    - ``cache_read_tokens`` → ``cache_hit_rate`` (÷ ``input_tokens`` +
+      ``cache_read_tokens`` — input_tokens is the uncached count)
     - ``llm_count`` → ``llm_call_count`` (ALL chat spans)
     - ``chat_latency_sum`` + ``chat_timed_count`` → ``api_latency_avg_s``
       (denominator = chat spans with ``end_time`` set only, mirroring
@@ -176,7 +177,13 @@ class MetricCounters:
         api_latency_avg_s = (
             self.chat_latency_sum / self.chat_timed_count if self.chat_timed_count > 0 else 0.0
         )
-        cache_hit_rate = self.cache_read_tokens / self.input_tokens if self.input_tokens > 0 else 0.0
+        # input_tokens is the UNCACHED count — the prompt total the cache
+        # served a fraction of is uncached + cached.
+        cache_hit_rate = (
+            self.cache_read_tokens / (self.input_tokens + self.cache_read_tokens)
+            if self.input_tokens + self.cache_read_tokens > 0
+            else 0.0
+        )
         total_tokens = self.input_tokens + self.output_tokens
         response_token_ratio = self.output_tokens / total_tokens if total_tokens > 0 else 0.0
         return TrajectoryMetrics(

@@ -129,7 +129,9 @@ class TestEventStreamTranslation:
             TextDelta(text=" world"),
             UsageSnapshot(
                 usage=TokenUsage(
-                    input_tokens=10,
+                    # wire input_tokens=10 includes cached=4 (Responses
+                    # convention) — the uncached remainder is 6.
+                    input_tokens=6,
                     cache_read_input_tokens=4,
                     output_tokens=7,
                     reasoning_tokens=2,
@@ -588,6 +590,26 @@ class TestBuildBody:
         assert "top_p" not in body
         assert "max_output_tokens" not in body
         assert "tools" not in body
+
+    def test_prompt_cache_key_lowered_when_present(self) -> None:
+        """The Responses API documents ``prompt_cache_key`` as the
+        cache-routing hint — dropping it scatters same-session requests
+        across cache nodes (the low hit-rate regression this locks out)."""
+        request = LLMRequest(
+            model="gpt-5",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            prompt_cache_key="conv-42",
+        )
+        body = _ENGINE.build_body(request, _cfg())
+        assert body["prompt_cache_key"] == "conv-42"
+
+    def test_prompt_cache_key_absent_when_unset(self) -> None:
+        request = LLMRequest(
+            model="gpt-5",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+        )
+        body = _ENGINE.build_body(request, _cfg())
+        assert "prompt_cache_key" not in body
 
     def test_store_true_replays_item_reference(self) -> None:
         request = LLMRequest(

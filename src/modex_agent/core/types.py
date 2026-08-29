@@ -271,14 +271,16 @@ class TokenUsage(BaseModel):
     (OpenAI chat ``prompt_tokens`` + ``prompt_tokens_details.cached_tokens``,
     Anthropic ``input_tokens``/``cache_read_input_tokens``/
     ``cache_creation_input_tokens``, OpenAI Responses ``input_tokens`` +
-    ``output_tokens_details.reasoning_tokens``) plus the legacy cassette /
+    ``input_tokens_details.cached_tokens``) plus the legacy cassette /
     DeepSeek key forms (``prompt_cache_hit_tokens``,
     ``cache_creation.ephemeral_*_input_tokens``). Unknown keys are dropped.
-    Under the OpenAI/DeepSeek convention ``prompt_tokens`` INCLUDES cached
-    tokens, so ``input_tokens = prompt_tokens - cache_read``; a negative
-    result raises ``ValueError`` instead of silently producing a negative
-    count. ``total_tokens`` is always recomputed from the four counters and
-    never taken from the wire.
+    Under the OpenAI/DeepSeek/Responses convention the wire input count
+    INCLUDES cached tokens (both ``prompt_tokens`` and Responses
+    ``input_tokens``), so ``input_tokens = wire_input - cache_read``; the
+    Anthropic wire shape is already the uncached count and passes through.
+    A negative result raises ``ValueError`` instead of silently producing a
+    negative count. ``total_tokens`` is always recomputed from the four
+    counters and never taken from the wire.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -342,12 +344,24 @@ class TokenUsage(BaseModel):
         if output is None:
             output = read_int("completion_tokens")
 
-        input_tokens = read_int("input_tokens")
-        if input_tokens is None:
+        # One total-prompt-input number per wire shape, flagged with whether
+        # it INCLUDES the cached portion. Anthropic reports the uncached
+        # remainder directly; OpenAI chat (prompt_tokens) and Responses
+        # (input_tokens) report cache-inclusive totals.
+        total_input = read_int("input_tokens")
+        input_includes_cache = (
+            total_input is not None
+            and read_nested_int("input_tokens_details", "cached_tokens") is not None
+        )
+        if total_input is None:
             prompt_tokens = read_int("prompt_tokens")
-            if prompt_tokens is not None:
-                # OpenAI/DeepSeek convention: prompt_tokens includes cached tokens.
-                input_tokens = prompt_tokens - (cache_read or 0)
+            total_input = prompt_tokens if prompt_tokens is not None else 0
+            input_includes_cache = prompt_tokens is not None
+
+        if cache_read and input_includes_cache:
+            total_input -= cache_read
+
+        input_tokens = total_input or 0
 
         normalized = {
             "input_tokens": input_tokens or 0,

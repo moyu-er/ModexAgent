@@ -913,8 +913,13 @@ class TestL2Scoring:
         # durations: 2.0 and 4.0 → avg 3.0
         assert metrics.api_latency_avg_s == pytest.approx(3.0)
 
-    def test_cache_hit_rate_is_cache_read_over_input(self) -> None:
-        """cache_hit_rate = cache_read / input, NOT cache_read / (cache_read + input)."""
+    def test_cache_hit_rate_is_cache_read_over_prompt_total(self) -> None:
+        """cache_hit_rate = cache_read / (input + cache_read).
+
+        Span input_tokens is the UNCACHED count (TokenUsage semantics since
+        the responses-normalization fix), so the prompt total is
+        uncached + cached: 30 / (100 + 30).
+        """
         spans = [
             _make_span(
                 name="chat",
@@ -926,7 +931,7 @@ class TestL2Scoring:
             ),
         ]
         metrics = compute_metrics(spans)
-        assert metrics.cache_hit_rate == pytest.approx(0.3)  # 30/100, NOT 30/130
+        assert metrics.cache_hit_rate == pytest.approx(30 / 130)
 
     def test_response_token_ratio_is_output_over_total(self) -> None:
         spans = [
