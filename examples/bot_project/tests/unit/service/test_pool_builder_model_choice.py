@@ -14,21 +14,10 @@ from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from bot.service.model_provider import BotModelProvider
 from bot.service.pool.factory import _resolve_llm_slot
-from bot.service.pool.pipeline_wiring import _wire_main_pipeline
 
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.core.tool_manager import InMemoryToolManager
-from modex_agent.hook.runner import HookRunner
-from modex_agent.ioc.configs.approval import ApprovalConfig
-from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
-from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.pipeline.approval_renderer import ApprovalRenderer
-from modex_agent.pipeline.approval_resumer import ApprovalResumer
-from modex_agent.pipeline.pipeline import AgentPipeline
-from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
-from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
 from modex_agent.plugins.registry import ComponentRegistry
@@ -95,97 +84,70 @@ async def test_default_config_resolves_bot_model_provider(tmp_path: Path) -> Non
         bot_model_config=cfg,
         model_choice_registry=ModelChoiceRegistry(),
     )
-    ws_ctx = WorkspaceContext(
-        target=tmp_path, paths=WorkspacePaths(root=tmp_path), is_home=False
-    )
+    ws_ctx = WorkspaceContext(target=tmp_path, paths=WorkspacePaths(root=tmp_path), is_home=False)
 
-    provider = await _resolve_llm_slot(
-        registry, "bot_default", {}, pool_assembly_ctx, ws_ctx
-    )
+    provider = await _resolve_llm_slot(registry, "bot_default", {}, pool_assembly_ctx, ws_ctx)
 
     assert isinstance(provider, BotModelProvider)
 
 
-def test_wire_main_pipeline_adds_model_choice_hook(tmp_path: Path) -> None:
+async def test_wire_main_pipeline_adds_model_choice_hook(tmp_path: Path) -> None:
+    """The model-choice binding is a declared roster entry (``hooks:
+    [+model_choice_bind]`` in bot.yml) dispatched at Stage 4 since the W6
+    glue eradication — ``_wire_main_pipeline`` no longer injects it. The
+    factory path pins the bot-side contract: the hook derives
+    ``BotModelConfig`` + ``ModelChoiceRegistry`` from the pool assembly
+    context the create_pool road threads."""
+    from plugins.bot_hooks import ModelChoiceBindHookFactory
+
+    from modex_agent.plugins.abc import AgentType
+    from modex_agent.plugins.assembly.context import (
+        PoolRuntimeDeps,
+        agent_context_chain,
+        resolution_context,
+    )
+    from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
+
     cfg = _cfg(tmp_path)
     reg = ModelChoiceRegistry()
-    main_spec = AgentSpec(name="main", approval=ApprovalConfig(enabled=False))
-    assembly_deps = PoolAssemblyDeps(memory=MemoryConfig())
-
-    agent = _Agent()
-    registry = TurnSessionRegistry()
-    hook_runner = HookRunner()
-    builder = TurnContextBuilder(
-        agent=agent,
-        tool_manager=InMemoryToolManager(),
-        sanitizer=None,
-        command_processor=None,
-        skill_manager=None,
-        context_builder=None,
-        agent_descriptor=None,
-        max_iterations=10,
-        safety=RuntimeSafetyPolicy(),
-        runtime_services=None,
-        runtime_context_manager=None,
-        governance=None,
-        hook_runner=hook_runner,
-        interceptor_chain=None,
-        control_channel=None,
-        emitter_factory=None,
-        output_adapter=MagicMock(),
-        turn_store=None,
-        registry=registry,
-    )
-    approval = ApprovalRenderer(agent=agent, user_interface=None)  # type: ignore[arg-type]
-    resumer = ApprovalResumer(agent=agent, turn_store=None, user_interface=None)
-    turn_runner = ReActTurnRunner(
-        agent=agent,
-        context_manager=MagicMock(),
-        context_manager_factory=None,
-        on_session_start=None,
-        on_session_end=None,
-        safety=RuntimeSafetyPolicy(),
-        turn_store=None,
-        registry=registry,
-        builder=builder,
-        resumer=resumer,
-        approval=approval,
-        workspace_manager=None,
-        pool_name=None,
-        pool_data_resolver=None,
-        agent_descriptor=None,
-    )
-    pipeline = AgentPipeline(
-        agent=agent,
-        turn_runner=turn_runner,
-        input_adapter=MagicMock(),
-        output_adapter=MagicMock(),
-        registry=registry,
-    )
-    turn_runner.bind_to_pipeline(pipeline)
-    main_inst = MagicMock()
-    main_inst.pipeline = pipeline
-    pool = MagicMock()
-    pool._agents = {"main": main_inst}
-
-    _wire_main_pipeline(
-        pool=pool,
-        root_agent_name="main",
-        inbox_consumer=MagicMock(),
-        notification_service=MagicMock(),
-        shared_interceptor_chain=MagicMock(),
-        im_ui=MagicMock(),
-        main_spec=main_spec,
-        assembly_deps=assembly_deps,
-        project_dir=Path("/proj"),
-        command_processor=None,
+    pool_spec = PoolSpec(name="main", agents=[AgentSpec(name="main")])
+    pool_assembly_ctx = PoolAssemblyContext(
         pool_name="main",
-        tool_manager=InMemoryToolManager(),
-        pool_spec=PoolSpec(name="main", agents=[main_spec]),
+        pool_spec=pool_spec,
+        project_dir=tmp_path,
+        data_dir=tmp_path / ".modex",
+        broker=MagicMock(),
+        inbox_server=MagicMock(),
+        agent_bus=MagicMock(),
+        output_adapter=MagicMock(),
+        safety=RuntimeSafetyPolicy(),
+        retention=SessionRetentionPolicy(),
+        registry=TurnSessionRegistry(),
         bot_model_config=cfg,
         model_choice_registry=reg,
-        roster_hook_names=frozenset(),
     )
-    assert pipeline.hook_runner is not None
-    hooks = [spec.hook for spec in pipeline.hook_runner.hook_specs]
-    assert any(isinstance(h, ModelChoiceBindHook) for h in hooks)
+    ws_ctx = WorkspaceContext(target=tmp_path, paths=WorkspacePaths(root=tmp_path), is_home=False)
+    spec = AssemblySpec(
+        agent_type=AgentType.native_main,
+        agent_name="main",
+        pool_name="main",
+        tools=[],
+        hooks=["model_choice_bind"],
+        llm_provider="bot_default",
+        system_prompt_provider="file_prompt",
+        system_prompt_config={},
+        memory_overrides=MemoryOverrides(),
+        execution_strategy="react",
+        workspace_ctx=ws_ctx,
+    )
+    component_ctx = resolution_context(
+        MagicMock(), ws_ctx, PoolRuntimeDeps(pool_assembly_ctx=pool_assembly_ctx)
+    )
+    chain = agent_context_chain(component_ctx, spec=spec)
+
+    hook = await ModelChoiceBindHookFactory().create(
+        ModelChoiceBindHookFactory.config_model(), chain
+    )
+    assert isinstance(hook, ModelChoiceBindHook)
+    assert hook._model_config is cfg  # noqa: SLF001 — pin the threaded config identity
+    assert hook._registry is reg  # noqa: SLF001

@@ -7,8 +7,15 @@ from a declaration.
 
 from modex_agent.scope.compiler import (
     AgentProvenance,
+    CapabilityContributionKind,
+    CapabilityContributionProvenance,
+    CapabilityGateResult,
+    CapabilityProvenance,
+    CapabilityState,
     CompiledAgent,
     FieldProvenance,
+    HookEntryProvenance,
+    HookOrigin,
     ProvenanceLayer,
     ScopeCompilation,
     ToolEntryProvenance,
@@ -17,12 +24,14 @@ from modex_agent.scope.compiler import (
     compile_scope,
 )
 from modex_agent.scope.defaults import (
+    POSITION_DEFAULT_HOOKS,
     MemoryPreset,
     PositionDefaults,
     RegistrationTiming,
     defaults_for_position,
     effective_defaults,
     memory_config_for_position,
+    position_default_hooks,
 )
 from modex_agent.scope.loader import (
     ScopeDeclarationError,
@@ -64,13 +73,21 @@ from modex_agent.scope.validator import (
 )
 
 __all__ = [
+    "POSITION_DEFAULT_HOOKS",
     "AgentProvenance",
     "AgentOverlay",
     "AgentSpec",
+    "CapabilityContributionKind",
+    "CapabilityContributionProvenance",
+    "CapabilityGateResult",
+    "CapabilityProvenance",
+    "CapabilityState",
     "CompiledAgent",
     "EffectiveAgentConfig",
     "FieldProvenance",
     "GraphAgentReference",
+    "HookEntryProvenance",
+    "HookOrigin",
     "MemoryDeclaration",
     "MemoryPreset",
     "PoolSpec",
@@ -105,6 +122,7 @@ __all__ = [
     "load_scope_declaration",
     "memory_config_for_position",
     "merge_memory_declarations",
+    "position_default_hooks",
     "spec_hash",
     "validate_declaration",
     "validate_effective_configs",

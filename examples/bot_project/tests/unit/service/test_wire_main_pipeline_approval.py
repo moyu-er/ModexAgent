@@ -26,7 +26,6 @@ import pytest
 # Bot tests resolve ``bot.*`` via the repo root inserted into sys.path.
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from bot.service.pool.pipeline_wiring import _wire_main_pipeline
 
@@ -77,7 +76,6 @@ def _bot_model_config() -> BotModelConfig:
 
 
 _BOT_CFG = _bot_model_config()
-_REGISTRY = ModelChoiceRegistry()
 
 
 class _InputAdapter:
@@ -202,8 +200,6 @@ def _wire(*, approval: ApprovalConfig | None) -> AgentPipeline:
         tool_manager=InMemoryToolManager(),
         pool_spec=PoolSpec(name="main", agents=[main_spec]),
         bot_model_config=_BOT_CFG,
-        model_choice_registry=_REGISTRY,
-        roster_hook_names=frozenset(),
     )
     return pipeline
 
@@ -289,8 +285,6 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
         pool_spec=PoolSpec(name="main", agents=[main_spec]),
         root_provider=_Provider(),
         bot_model_config=_BOT_CFG,
-        model_choice_registry=_REGISTRY,
-        roster_hook_names=frozenset(),
     )
 
     builder = pipeline._turn_runner.turn_context_builder
@@ -348,8 +342,6 @@ def test_wires_graph_context_resolver_and_config_pipeline_when_passed() -> None:
         tool_manager=InMemoryToolManager(),
         pool_spec=PoolSpec(name="main", agents=[main_spec]),
         bot_model_config=_BOT_CFG,
-        model_choice_registry=_REGISTRY,
-        roster_hook_names=frozenset(),
         graph_context_resolver=_resolver,
     )
 

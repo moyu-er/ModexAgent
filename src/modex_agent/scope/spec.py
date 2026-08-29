@@ -14,8 +14,9 @@ legacy split was deleted in ticket 11.
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
-from typing import Any, assert_never
+from typing import Any, Final, Literal, assert_never
 
 from pydantic import (
     BaseModel,
@@ -33,13 +34,16 @@ from modex_agent.tools.presets import (
     MAX_FORK_MAX_MESSAGES,
     ContextMode,
     ToolPreset,
-    ToolSupplement,
 )
 
 ExecutionStrategyName = ExecutionStrategyKind | str
 """Execution-strategy reference — an :class:`ExecutionStrategyKind` member
 or a registry slot component name (same union semantics as the legacy
 Main/Sub specs)."""
+
+CapabilityOverride = Literal[False] | dict[str, Any]
+
+_CAPABILITY_NAME_PATTERN: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class ScopeKind(StrEnum):
@@ -153,13 +157,17 @@ class AgentSpec(BaseModel):
     """Node-level toolset profile override. ``None`` = position-derived
     default (root → ``full``, non-root → ``read_write``) — the landing
     place of the dead legacy tool-preset values (SPEC §3.4)."""
-    tool_supplements: list[ToolSupplement] = Field(default_factory=list)
     tools: list[str] | None = None
     """Explicit tool roster. ``None`` defers to the toolset profile; a
     non-None list replaces the profile's selection."""
     # Open extension payload (rule 14): per-tool config keyed by tool name,
     # typed by ComponentFactory.config_model at assembly time.
     tool_configs: dict[str, dict[str, Any]] | None = None
+    capabilities: dict[str, CapabilityOverride] | None = None
+    """Capability OVERRIDE MAP, never a whole-set declaration. ``False``
+    force-disables a capability and beats auto-apply; a config mapping
+    force-enables it. ``{}`` is default config, while an empty outer block is
+    equivalent to absence. ``True`` is invalid; use ``{}`` for force-on."""
     hooks: list[str] | None = None
     """Hook roster entries (verbatim, including +/- merge prefixes —
     merging is compiler territory)."""
@@ -211,9 +219,40 @@ class AgentSpec(BaseModel):
         """
         return self.parent is None
 
-    _normalize_execution_strategy = field_validator(
-        "execution_strategy", mode="before"
-    )(_normalize_execution_strategy_name)
+    _normalize_execution_strategy = field_validator("execution_strategy", mode="before")(
+        _normalize_execution_strategy_name
+    )
+
+    @field_validator("capabilities", mode="before")
+    @classmethod
+    def _validate_capability_overrides(
+        cls,
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Validate override-map syntax only, leaving config keys to compile.
+
+        Capability names are identifiers because dots are reserved for prompt
+        section namespacing. ``False`` means force-off; a mapping means
+        force-on with config. ``True`` is rejected so each semantic has one
+        syntax, and an empty outer mapping has the same meaning as ``None``.
+        """
+        if not isinstance(value, dict):
+            return value
+        for name, override in value.items():
+            if override is True:
+                raise ValueError(
+                    f"capability {name!r} override cannot be true; use {{}} "
+                    "to force-on with default config or false to force-off"
+                )
+            if not isinstance(name, str) or _CAPABILITY_NAME_PATTERN.fullmatch(name) is None:
+                raise ValueError(
+                    f"capability name {name!r} must match "
+                    "^[A-Za-z_][A-Za-z0-9_]*$; dots are reserved for "
+                    "prompt-section namespacing"
+                )
+            if override is not False and not isinstance(override, dict):
+                raise ValueError(f"capability {name!r} override must be false or a config mapping")
+        return value
 
     @model_validator(mode="after")
     def _validate(self) -> AgentSpec:
@@ -339,8 +378,7 @@ class ScopeSpec(BaseModel):
             case ScopeKind.POOL:
                 if self.pool is None or self.workspace is not None:
                     raise ValueError(
-                        "kind='pool' requires exactly the pool layer "
-                        "(pool set, workspace None)"
+                        "kind='pool' requires exactly the pool layer (pool set, workspace None)"
                     )
             case unreachable:
                 assert_never(unreachable)

@@ -16,6 +16,7 @@ goldens), so comparisons need no translation.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Final
 
 from pydantic import BaseModel, ConfigDict
 
@@ -88,6 +89,45 @@ def defaults_for_position(*, is_root: bool) -> PositionDefaults:
     )
 
 
+POSITION_DEFAULT_HOOKS: Final[tuple[str, ...]] = (
+    "deliver_retry",
+    "length_guard",
+    "native_env",
+    "loop_detection",
+)
+"""The SPEC §3.2 hook rows — framework hooks every NATIVE agent's roster
+carries by default (both positions; external agents are structurally
+excluded — they take no native hook face).
+
+The names enter the compiler's hook merge base exactly like preset tool
+names: ``hooks: [-name]`` vetoes one, a declared ``+name`` dedups against
+it, and every entry shows a ``position_default`` origin on the bill. The
+roster dispatch (``_dispatch_hooks``) resolves them through the HOOK-slot
+factories, which derive their per-pool construction deps from the
+assembly context chain — the retired code-wired registration function and
+the main/sub ``native_env`` constructions died with this table.
+
+Deliberately absent: ``model_choice_bind`` — a bot-project-owned hook
+(``BotHooksPlugin``). A framework table naming it would make every
+third-party or eval registry (DefaultPlugin-only) reference an
+unresolvable component at assembly. It stays declaration-driven: the
+shipped ``bot.yml`` declares ``hooks: [+model_choice_bind]`` on its
+native mains, and the factory derives its service-scoped deps from the
+context chain."""
+
+
+def position_default_hooks(*, is_root: bool) -> tuple[str, ...]:
+    """The position-default hook names for a tree position (SPEC §3.2).
+
+    Both positions carry the same rows today; the ``is_root`` parameter
+    keeps the position-table call shape shared with
+    :func:`defaults_for_position` so a future position-dependent hook
+    lands here without a second table mechanism.
+    """
+    _ = is_root
+    return POSITION_DEFAULT_HOOKS
+
+
 def effective_defaults(agent: AgentSpec) -> PositionDefaults:
     """Position defaults with the node's own declarations applied.
 
@@ -146,7 +186,5 @@ def memory_config_for_position(
     cfg = subagent_memory()
     if session_max_context_tokens is None:
         return cfg
-    session = cfg.session.model_copy(
-        update={"max_context_tokens": session_max_context_tokens}
-    )
+    session = cfg.session.model_copy(update={"max_context_tokens": session_max_context_tokens})
     return cfg.model_copy(update={"session": session})

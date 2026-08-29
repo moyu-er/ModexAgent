@@ -38,9 +38,9 @@ workspace:
           max_steps: 50
           use_terminal: false
           terminal_visibility: false
-          tool_supplements:
-          - aci
-          - experience
+          capabilities:
+            aci: {}
+            experience: {}
           tools:
           hooks:
           - +reference_collector
@@ -48,10 +48,15 @@ workspace:
           # referenced from the declaration — the declaration road
           # dispatches it at Stage 4 (the legacy road code-wires it in
           # create_pool / pool_wiring until ticket 17). experience_review
-          # needs no roster entry: the EXPERIENCE supplement injects it,
-          # bound to the compiled tool roster.
+          # needs no roster entry: the experience capability contributes
+          # it together with the tool (anchor-bound).
           # (Deprecated nudge hooks task_delegation_nudge / todo_planning_nudge are no longer referenced.)
           - +user_notice_cleanup
+          # Per-turn model binding (BIZ BotHooksPlugin factory) — declared
+          # roster entry since the W6 glue eradication retired the
+          # unconditional create_pool injection; the factory derives its
+          # service-scoped deps from the pool assembly context.
+          - +model_choice_bind
           hook_configs:
             reference_collector:
               max_sources: 20
@@ -74,9 +79,9 @@ workspace:
                 batch operations, and format conversion. Use when the task involves .docx,
                 .xlsx, .pptx, or .pdf file manipulation.
               max_steps: 100
-              tool_supplements:
-              - todo
-              - aci
+              capabilities:
+                aci: {}
+                todo: {}
               context_mode: fresh
     coder:
       agents:
@@ -90,18 +95,19 @@ workspace:
           max_steps: 200
           use_terminal: false
           terminal_visibility: false
-          tool_supplements:
-          - aci
-          - todo
+          capabilities:
+            aci: {}
+            todo: {}
           tools:
           # Ticket 11: the notification hook is a HOOK-slot roster
           # reference (Stage 4 dispatch) — config evolution only
-          # walks the declaration (09 precedent). experience_review
-          # needs no roster entry: the EXPERIENCE supplement injects it,
-          # bound to the compiled tool roster.
+          # walks the declaration (09 precedent).
           # (Deprecated nudge hooks task_delegation_nudge / todo_planning_nudge are no longer referenced.)
           hooks:
           - +user_notice_cleanup
+          # Per-turn model binding — declared roster entry since the W6
+          # glue eradication retired the unconditional create_pool injection.
+          - +model_choice_bind
           approval:
             enabled: true
             tools:
@@ -121,22 +127,22 @@ workspace:
                 when parallel analysis of independent questions is valuable.
               max_steps: 200
               toolset: read_only
-              tool_supplements:
-              - ast_grep
-              - todo
+              capabilities:
+                ast_grep: {}
+                todo: {}
               context_mode: fresh
             general:
               description: >-
                 General-purpose assistant with full capabilities. Handles research,
-                planning, task decomposition, documentation, and implementation when
-                the task doesn't warrant dedicated exploration or is cross-domain.
+                planning, task decomposition, documentation, and implementation when the
+                task doesn't warrant dedicated exploration or is cross-domain.
                 Use for any task that needs a fresh, isolated context.
               max_steps: 200
               toolset: full
-              tool_supplements:
-              - aci
-              - ast_grep
-              - todo
+              capabilities:
+                aci: {}
+                ast_grep: {}
+                todo: {}
               context_mode: fresh
     review:
       peers:
@@ -151,19 +157,22 @@ workspace:
           max_steps: 80
           use_terminal: false
           terminal_visibility: false
-          tool_supplements:
-          - ast_grep
-          - todo
-          - experience
+          capabilities:
+            ast_grep: {}
+            experience: {}
+            todo: {}
           tools:
           # Ticket 11: the notification hook is a HOOK-slot roster
           # reference (Stage 4 dispatch) — config evolution only
           # walks the declaration (09 precedent). experience_review
-          # needs no roster entry: the EXPERIENCE supplement injects it,
-          # bound to the compiled tool roster.
+          # needs no roster entry: the experience capability contributes
+          # it together with the tool (anchor-bound).
           # (Deprecated nudge hooks task_delegation_nudge / todo_planning_nudge are no longer referenced.)
           hooks:
           - +user_notice_cleanup
+          # Per-turn model binding — declared roster entry since the W6
+          # glue eradication retired the unconditional create_pool injection.
+          - +model_choice_bind
           agents:
             explore:
               description: >-
@@ -174,21 +183,21 @@ workspace:
                 when parallel analysis of independent questions is valuable.
               max_steps: 60
               toolset: read_only
-              tool_supplements:
-              - ast_grep
-              - todo
+              capabilities:
+                ast_grep: {}
+                todo: {}
               context_mode: fresh
             general:
               description: >-
                 General-purpose assistant with full capabilities. Handles research,
-                planning, task decomposition, documentation, and implementation when
-                the task doesn't warrant dedicated exploration or is cross-domain.
+                planning, task decomposition, documentation, and implementation when the
+                task doesn't warrant dedicated exploration or is cross-domain.
                 Use for any task that needs a fresh, isolated context.
               max_steps: 80
               toolset: full
-              tool_supplements:
-              - ast_grep
-              - todo
+              capabilities:
+                ast_grep: {}
+                todo: {}
               context_mode: fresh
     opencode:
       peers:

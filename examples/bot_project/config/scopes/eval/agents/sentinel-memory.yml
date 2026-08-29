@@ -2,6 +2,10 @@ pool:
   name: sentinel-memory
   agents:
     react:
+      # Eval single-agent harnesses never ran the pool wiring that carried
+      # these hooks — veto the position-default rows to pin the prior
+      # hook-less assembly (roster reproducibility for recorded cassettes).
+      hooks: [-deliver_retry, -length_guard, -native_env]
       max_steps: 25
       toolset: read_write
       tools: [read, write, edit, ls, grep, glob]

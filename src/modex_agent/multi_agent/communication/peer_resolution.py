@@ -70,9 +70,7 @@ def peer_links_from_declaration(spec: ScopeSpec) -> dict[str, tuple[PeerLink, ..
                     peer_pool=peer_name,
                     peer_agent=peer_root.name,
                     peer_description=peer_root.description,
-                    peer_execution_strategy=ExecutionStrategyKind(
-                        peer_root.execution_strategy
-                    ),
+                    peer_execution_strategy=ExecutionStrategyKind(peer_root.execution_strategy),
                 )
             )
         links[pool.name] = tuple(pool_links)
@@ -117,12 +115,48 @@ def resolve_peer_targets(
                     pool_name=link.peer_pool,
                     tree_ref=peer.tree_manager,
                     description=(
-                        link.peer_description
-                        or f"Peer pool {link.peer_pool}'s main agent"
+                        link.peer_description or f"Peer pool {link.peer_pool}'s main agent"
                     ),
                     execution_strategy=link.peer_execution_strategy,
                 )
             )
+
+
+def build_agent_pool_map(
+    pool_name: str,
+    pool_spec: PoolSpec,
+    peer_links: Sequence[PeerLink],
+) -> dict[str, str]:
+    """The static agent→pool routing map over the DECLARED tree.
+
+    Own pool's agents + each peer link's declared root (the link face
+    carries the peer root's name — a declaration fact, so no pool.yml
+    read). Consumed by the ``MODEX_AGENT_POOL_MAP`` env face (the
+    external-pool env spec and the ``native_env`` hook's template).
+    """
+    pool_map: dict[str, str] = {pool_spec.root_agent.name: pool_name}
+    for agent in pool_spec.agents:
+        pool_map[agent.name] = pool_name
+    for link in peer_links:
+        pool_map[link.peer_agent] = link.peer_pool
+    return pool_map
+
+
+def build_routable_targets(
+    pool_spec: PoolSpec,
+    peer_links: Sequence[PeerLink],
+) -> list[tuple[str, str]]:
+    """The routable targets (own non-root agents + peer roots)."""
+    targets: list[tuple[str, str]] = []
+    root_name = pool_spec.root_agent.name
+    for agent in pool_spec.agents:
+        if agent.name == root_name:
+            continue
+        targets.append((agent.name, agent.description or f"{agent.name} subagent"))
+    for link in peer_links:
+        desc = link.peer_description or f"Peer pool {link.peer_pool}'s main agent"
+        targets.append((link.peer_agent, desc))
+    return targets
 
 
 def _root_agent_of(pools_by_name: Mapping[str, PoolSpec], pool_name: str) -> AgentSpec:

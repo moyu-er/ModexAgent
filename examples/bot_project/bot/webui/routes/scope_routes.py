@@ -40,16 +40,20 @@ from bot.webui.routes.scope_models import (
     ScopeAgentBill,
     ScopeAgentNode,
     ScopeBillResponse,
+    ScopeCapabilityBill,
+    ScopeCapabilityContributionBill,
     ScopeDeclarationResponse,
     ScopeDeclarationSaveResponse,
     ScopeDeclarationUpdateRequest,
     ScopeFieldBill,
     ScopeFieldValue,
+    ScopeHookBill,
     ScopePoolTopology,
     ScopeReplacementBill,
     ScopeToolBill,
     ScopeTopologyResponse,
 )
+from modex_agent.plugins.registry import ComponentNotFoundError
 from modex_agent.scope import (
     STANDARD_PROFILES,
     AgentSpec,
@@ -65,10 +69,11 @@ from modex_agent.scope import (
     validate_declaration,
     validate_effective_configs,
 )
-from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.scope.compiler import ScopeCompilation
 
 if TYPE_CHECKING:
     from bot.webui.server import WebUIServer
+    from bot.workspace.handle import PoolWorkspaceResources
 
 # Use the ``bot.webui.server`` logger so log records from these handlers
 # remain attributable to the WebUI server (matches the other route modules).
@@ -84,8 +89,8 @@ layout convention as ``config/graphs/`` in the graph routes)."""
 
 def _resolve_scope_target(
     request: web.Request,
-) -> tuple[Path, WorkspaceContext] | web.Response:
-    """Resolve the request's workspace to ``(target, workspace_ctx)``.
+) -> PoolWorkspaceResources | web.Response:
+    """Resolve the request's workspace resource bundle.
 
     Mirrors the graph routes' ``_resolve_resources`` degradation: 503 when
     the workspace resolver is not injected or returns nothing.
@@ -98,7 +103,7 @@ def _resolve_scope_target(
     resources = resolver(ws_id)
     if resources is None:
         return web.json_response({"error": "workspace resources not configured"}, status=503)
-    return Path(resources.target), resources.ctx
+    return resources
 
 
 def _load_declaration(path: Path) -> ScopeSpec | web.Response:
@@ -132,6 +137,25 @@ def _issues_response(issues: list[ScopeValidationIssue], *, status: int) -> web.
     )
 
 
+def _compile_declaration(
+    spec: ScopeSpec,
+    resources: PoolWorkspaceResources,
+    *,
+    error_status: int,
+) -> ScopeCompilation | web.Response:
+    try:
+        return compile_scope(
+            spec,
+            workspace_ctx=resources.ctx,
+            registry=resources.component_registry,
+        )
+    except (ComponentNotFoundError, ValueError) as exc:
+        return web.json_response(
+            {"error": "invalid declaration", "detail": str(exc)},
+            status=error_status,
+        )
+
+
 def _declared_pools(spec: ScopeSpec) -> list[PoolSpec]:
     """The declared pools of either root form (V4 guarantees the layer
     matching ``kind`` is set)."""
@@ -159,25 +183,23 @@ def _field_value(
     layer: ProvenanceLayer,
     profile: str | None,
     compiled: CompiledAgent,
-    agent_spec: AgentSpec,
 ) -> ScopeFieldValue:
     """The effective value paired with one provenance field entry, pulled
-    from the compiled artifacts (or, for ``tool_supplements``, the winning
-    declaration layer — the only field with no compiled-output face)."""
+    from the compiled artifacts."""
     match field:
         case "toolset":
             return compiled.defaults.toolset_profile.value
         case "tools":
             return list(compiled.effective.tools)
-        case "tool_supplements":
-            if layer is ProvenanceLayer.LOCAL:
-                return [s.value for s in agent_spec.tool_supplements]
-            if layer is ProvenanceLayer.PROFILE and profile is not None:
-                bound = STANDARD_PROFILES.get(profile)
-                if bound is not None and bound.tool_supplements is not None:
-                    return [s.value for s in bound.tool_supplements]
-                return []
-            return []
+        case "capabilities":
+            # The effective capability set (compile product, registry-
+            # enumeration order) — the override map itself stays in the
+            # declaration YAML the editor surface serves.
+            return [capability.name for capability in compiled.spec.capabilities]
+        case "hooks":
+            # The final hook roster (position defaults + capability
+            # contributions + declared entries, merge order).
+            return list(compiled.spec.hooks)
         case "eager":
             return compiled.defaults.registration.value
         case "max_steps":
@@ -197,7 +219,7 @@ def _agent_bill(spec: ScopeSpec, compiled: CompiledAgent) -> ScopeAgentBill:
         fields=[
             ScopeFieldBill(
                 field=fp.field,
-                value=_field_value(fp.field, fp.layer, fp.profile, compiled, agent_spec),
+                value=_field_value(fp.field, fp.layer, fp.profile, compiled),
                 layer=fp.layer,
                 profile=fp.profile,
             )
@@ -207,18 +229,45 @@ def _agent_bill(spec: ScopeSpec, compiled: CompiledAgent) -> ScopeAgentBill:
             ScopeToolBill(
                 tool=tp.tool,
                 origin=tp.origin,
+                capability=tp.capability,
                 replaces=tp.replaces,
                 targets=list(tp.targets),
             )
             for tp in prov.tools
         ],
+        hooks=[
+            ScopeHookBill(
+                hook=hp.hook,
+                origin=hp.origin,
+                capability=hp.capability,
+            )
+            for hp in prov.hooks
+        ],
         replacements=[
             ScopeReplacementBill(
                 default_tool=r.default_tool,
                 replacement_tool=r.replacement_tool,
-                supplement=r.supplement.value,
+                # Wire field keeps its name until the W4/W5 webui-face
+                # migration; the value is the capability registration name.
+                supplement=r.capability,
             )
             for r in prov.replacements
+        ],
+        capabilities=[
+            ScopeCapabilityBill(
+                capability=capability.capability,
+                state=capability.state,
+                registration_source=capability.registration_source,
+                contributions=[
+                    ScopeCapabilityContributionBill(
+                        kind=contribution.kind,
+                        name=contribution.name,
+                        gate=contribution.gate,
+                    )
+                    for contribution in capability.contributions
+                ],
+            )
+            for capability in prov.capabilities
         ],
     )
 
@@ -231,8 +280,7 @@ async def handle_get_declaration(request: web.Request) -> web.Response:
     r = _resolve_scope_target(request)
     if isinstance(r, web.Response):
         return r
-    target, _ = r
-    path = target / _DECLARATION_RELATIVE_PATH
+    path = Path(r.target) / _DECLARATION_RELATIVE_PATH
     if not path.is_file():
         return web.json_response(
             {"error": "scope declaration not found", "path": str(path)},
@@ -255,7 +303,7 @@ async def handle_put_declaration(request: web.Request) -> web.Response:
     r = _resolve_scope_target(request)
     if isinstance(r, web.Response):
         return r
-    target, ctx = r
+    resources = r
     try:
         body = await request.json()
     except (json.JSONDecodeError, web.HTTPException):
@@ -265,7 +313,7 @@ async def handle_put_declaration(request: web.Request) -> web.Response:
     except ValidationError as exc:
         return web.json_response({"error": "validation", "detail": exc.errors()}, status=400)
 
-    path = target / _DECLARATION_RELATIVE_PATH
+    path = Path(resources.target) / _DECLARATION_RELATIVE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp")
     tmp.write_text(update.yaml, encoding="utf-8")
@@ -285,7 +333,9 @@ async def handle_put_declaration(request: web.Request) -> web.Response:
         issues = validate_declaration(spec, profiles=STANDARD_PROFILES.declarations())
         if issues:
             return _issues_response(issues, status=400)
-        compilation = compile_scope(spec, workspace_ctx=ctx)
+        compilation = _compile_declaration(spec, resources, error_status=400)
+        if isinstance(compilation, web.Response):
+            return compilation
         effective_issues = validate_effective_configs(
             spec, [c.effective for c in compilation.agents]
         )
@@ -307,8 +357,7 @@ async def handle_get_topology(request: web.Request) -> web.Response:
     r = _resolve_scope_target(request)
     if isinstance(r, web.Response):
         return r
-    target, _ = r
-    spec = _load_declaration(target / _DECLARATION_RELATIVE_PATH)
+    spec = _load_declaration(Path(r.target) / _DECLARATION_RELATIVE_PATH)
     if isinstance(spec, web.Response):
         return spec
     return web.json_response(
@@ -340,14 +389,16 @@ async def handle_get_bill(request: web.Request) -> web.Response:
     r = _resolve_scope_target(request)
     if isinstance(r, web.Response):
         return r
-    target, ctx = r
-    spec = _load_declaration(target / _DECLARATION_RELATIVE_PATH)
+    resources = r
+    spec = _load_declaration(Path(resources.target) / _DECLARATION_RELATIVE_PATH)
     if isinstance(spec, web.Response):
         return spec
     issues = validate_declaration(spec, profiles=STANDARD_PROFILES.declarations())
     if issues:
         return _issues_response(issues, status=409)
-    compilation = compile_scope(spec, workspace_ctx=ctx)
+    compilation = _compile_declaration(spec, resources, error_status=409)
+    if isinstance(compilation, web.Response):
+        return compilation
     return web.json_response(
         ScopeBillResponse(agents=[_agent_bill(spec, c) for c in compilation.agents]).model_dump(
             mode="json"

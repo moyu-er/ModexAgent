@@ -29,6 +29,8 @@ from modex_agent.workspace.scope_path import ScopePath
 
 async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
     """Build deps with a mocked agent_factory + pool."""
+    from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
+
     fake_instance = MagicMock()
     fake_instance.pipeline = MagicMock()
     fake_instance.stop = AsyncMock()
@@ -49,6 +51,27 @@ async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
             project_plugin_paths=(),
         ),
     )
+    # The declared pool tree the subagent_auto_send factory derives the
+    # parent name from (the roster-dispatched hook's chain read) — every
+    # template materialized through these deps is the "scout" sub. The
+    # env-spec fields (project_dir / peer_links / control_origin) feed the
+    # position-default native_env factory's chain derivation.
+    pool_assembly = MagicMock(spec=PoolAssemblyContext)
+    pool_assembly.pool_name = "main"
+    pool_assembly.pool_spec = PoolSpec(
+        name="main",
+        agents=[AgentSpec(name="main"), AgentSpec(name="scout", parent="main")],
+    )
+    pool_assembly.pool_data = None
+    pool_assembly.project_dir = Path("/ws")
+    pool_assembly.peer_links = ()
+    pool_assembly.control_origin = "http://127.0.0.1:21800"
+    # The pool's subagents supply — the materialized sub's compiled spec
+    # carries the subagents capability (non-root ⇒ derived send_to_agent
+    # + the auto-send hook + the consultation section), whose assemble
+    # and TOOL factories read the supply off the threaded mapping.
+    from modex_agent.plugins.defaults.capabilities.subagents import SubagentsSupply
+
     deps = AgentMaterializeDeps(
         agent_factory=factory,
         pool=pool,
@@ -60,6 +83,8 @@ async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
         llm_provider=MagicMock(),
         project_dir=None,  # skip prompt file read + MCP + skills
         component_registry=registry,
+        pool_assembly_ctx=pool_assembly,
+        capability_supply={"subagents": SubagentsSupply(service=MagicMock())},
     )
     deps.context_fork_builder = ContextForkBuilder()
     deps.scope_path = ScopePath(workspace_root=Path("/ws"), pool_name="main")
@@ -75,12 +100,20 @@ def _compiled_template(name: str, **agent_kwargs: object) -> AgentTemplate:
     """Compile a two-agent tree (main root + named sub) and seed the sub's
     template exactly as the declaration road does (declared spec +
     position-derived profile + compiled assembly spec)."""
-    declared = AgentSpec(name=name, parent="main", **agent_kwargs)
+    from modex_agent.plugins.defaults import DefaultPlugin
+    from modex_agent.plugins.loader import PluginRegistrationContext
+    from modex_agent.plugins.registry import ComponentRegistry
+
+    registry = ComponentRegistry()
+    with PluginRegistrationContext(registry) as registration:
+        DefaultPlugin().register(registration)
+
+    declared = AgentSpec(name=name, parent="main", **agent_kwargs)  # type: ignore[arg-type]
     spec = ScopeSpec(
         kind=ScopeKind.POOL,
         pool=PoolSpec(name="main", agents=[AgentSpec(name="main"), declared]),
     )
-    compilation = compile_scope(spec, workspace_ctx=_workspace_ctx())
+    compilation = compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=registry)
     compiled = next(a for a in compilation.agents if a.provenance.agent == name)
     return AgentTemplate(
         spec=declared,
@@ -207,12 +240,19 @@ async def test_materialize_subagent_roles_default_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_materialize_subagent_wires_hooks_to_hook_runner():
-    """ADR-0015 D5: SubagentAutoSendHook must reach pipeline.hook_runner
-    (factory's hooks= param only stores on pipeline.hooks, which isn't
-    dispatched). materialize adds hooks to hook_runner post-creation."""
+    """ADR-0015 D5: the subagent's roster hooks must reach
+    pipeline.hook_runner (factory's hooks= param only stores on
+    pipeline.hooks, which isn't dispatched). Since the W6 glue
+    eradication every subagent hook — the position-default rows and the
+    capability-contributed entries alike — is dispatched by the assembly
+    core's roster pass onto the runner."""
+    from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
+    from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
+    from modex_agent.hook.runner import HookRunner
+
     fake_instance = MagicMock()
     fake_instance.pipeline = MagicMock()
-    fake_instance.pipeline.hook_runner = MagicMock()  # truthy → add() is callable
+    fake_instance.pipeline.hook_runner = HookRunner()
     fake_instance.stop = AsyncMock()
     deps, factory = await _make_deps()
     factory.create_agent = AsyncMock(return_value=fake_instance)
@@ -220,8 +260,12 @@ async def test_materialize_subagent_wires_hooks_to_hook_runner():
     template = _compiled_template("scout")
     parent = SessionIdFactory().create(agent_name="main")
     await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
-    # SubagentAutoSendHook must be added to hook_runner (not just pipeline.hooks)
-    assert fake_instance.pipeline.hook_runner.add.call_count >= 1
+    # The roster hooks land on the runner (not just pipeline.hooks):
+    # subagent_auto_send (subagents capability contribution) plus the
+    # position-default deliver_retry row.
+    hooks = [spec.hook for spec in fake_instance.pipeline.hook_runner.hook_specs]
+    assert any(isinstance(hook, SubagentAutoSendHook) for hook in hooks)
+    assert any(isinstance(hook, DeliverRetryHook) for hook in hooks)
 
 
 @pytest.mark.asyncio
@@ -232,6 +276,8 @@ async def test_materialize_roster_todo_continuation_hook_receives_tree():
     tree-aware one) never carries ``tree=None``."""
     from modex_agent.hook.builtin.todo_continuation import TodoContinuationHook
     from modex_agent.hook.runner import HookRunner
+    from modex_agent.plugins.defaults.capabilities.subagents import SubagentsSupply
+    from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
 
     fake_instance = MagicMock()
     fake_instance.pipeline = MagicMock()
@@ -239,12 +285,14 @@ async def test_materialize_roster_todo_continuation_hook_receives_tree():
     fake_instance.stop = AsyncMock()
     deps, factory = await _make_deps()
     factory.create_agent = AsyncMock(return_value=fake_instance)
+    deps.capability_supply = {
+        "todo": TodoSupply(store=MagicMock(name="todo_store")),
+        "subagents": SubagentsSupply(service=MagicMock()),
+    }
     template = _compiled_template("scout", hooks=["todo_continuation"])
     parent = SessionIdFactory().create(agent_name="main")
 
-    instance = await template.materialize(
-        parent_session=parent, invocation_id="inv1", deps=deps
-    )
+    instance = await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
 
     assert instance.pipeline is not None
     assert instance.pipeline.hook_runner is not None
@@ -259,8 +307,19 @@ async def test_materialize_roster_todo_continuation_hook_receives_tree():
 
 @pytest.mark.asyncio
 async def test_materialize_subagent_registers_cleanup_reorientation() -> None:
+    """The subagent's ``todo_reorientation`` memory hook comes from the
+    roster→memory-runner dispatch (the ``todo`` capability contributes it)
+    — the unconditional template injection died with the supply
+    convergence (SPEC §8.2 B2)."""
+    from modex_agent.plugins.defaults.capabilities.subagents import SubagentsSupply
+    from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
+
     deps, factory = await _make_deps()
-    template = _compiled_template("scout")
+    deps.capability_supply = {
+        "todo": TodoSupply(store=MagicMock(name="todo_store")),
+        "subagents": SubagentsSupply(service=MagicMock()),
+    }
+    template = _compiled_template("scout", capabilities={"todo": {}})
 
     await template.materialize(parent_session=None, invocation_id=None, deps=deps)
 
@@ -298,6 +357,7 @@ async def test_materialize_external_injects_emitter_factory_into_turn_runner():
         SubagentAssembly,
     )
     from modex_agent.plugins.assembly.context import AgentContext
+
     sentinel_emitter_factory = MagicMock(name="webui_emitter_factory")
     fake_turn_runner = MagicMock()
     fake_pipeline = MagicMock()
@@ -375,6 +435,7 @@ async def test_materialize_external_injects_pool_context_into_turn_runner():
         SubagentAssembly,
     )
     from modex_agent.plugins.assembly.context import AgentContext
+
     sentinel_workspace_manager = MagicMock(name="workspace_resolver_cell")
     fake_turn_runner = MagicMock()
     fake_pipeline = MagicMock()
@@ -448,6 +509,7 @@ async def test_materialize_external_skips_emitter_injection_when_deps_emitter_no
         SubagentAssembly,
     )
     from modex_agent.plugins.assembly.context import AgentContext
+
     fake_turn_runner = MagicMock()
     fake_pipeline = MagicMock()
     fake_pipeline._turn_runner = fake_turn_runner

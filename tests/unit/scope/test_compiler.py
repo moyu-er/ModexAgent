@@ -10,7 +10,8 @@ Covers the ticket checkboxes:
 - (b) the §5.2 derivation table end to end on a three-level tree
   (task lists DIRECT children only; send_to_agent per non-root; leaf has
   no task entry at all; send_to_peer for roots with links).
-- (c)/(g) supplement same-name replacement accounting (``edit ← aci``) in
+- (c)/(g) capability same-name replacement accounting (``edit ← aci_edit``,
+  declared via ``capabilities: {aci: {}}`` in the shipped declaration) in
   the provenance data, queryable in the pure-function boundary.
 - per-field provenance layers (framework default ← profile ← local).
 - (d) byte stability: same input tree → byte-identical output.
@@ -19,8 +20,12 @@ Covers the ticket checkboxes:
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 
+from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope import load_scope_declaration
 from modex_agent.scope.compiler import (
     AgentProvenance,
@@ -44,7 +49,7 @@ from modex_agent.scope.spec import (
     WorkspaceSpec,
 )
 from modex_agent.scope.validator import RuleId, validate_effective_configs
-from modex_agent.tools.presets import ToolPreset, ToolSupplement, get_preset_tools
+from modex_agent.tools.presets import ToolPreset, get_preset_tools
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -63,6 +68,17 @@ SEND_TO_PEER = "send_to_peer"
 def _workspace_ctx() -> WorkspaceContext:
     target = Path("/tmp/test_scope_compiler_ws")
     return WorkspaceContext(target=target, paths=WorkspacePaths(root=target), is_home=False)
+
+
+@lru_cache(maxsize=1)
+def _shipped_registry() -> ComponentRegistry:
+    """DefaultPlugin registry — the CAPABILITY-slot source the shipped
+    declaration's ``capabilities: {aci: {}}`` blocks resolve against."""
+    registry = ComponentRegistry()
+    ctx = PluginRegistrationContext(registry)
+    DefaultPlugin().register(ctx)
+    ctx.flush()
+    return registry
 
 
 def _preset_names(preset: ToolPreset) -> list[str]:
@@ -89,8 +105,6 @@ def _entry(provenance: AgentProvenance, tool: str) -> ToolEntryProvenance | None
     return next((e for e in provenance.tools if e.tool == tool), None)
 
 
-
-
 # ─── (a) Shipped-declaration compile conventions ────────────────────────────
 
 
@@ -98,16 +112,22 @@ class TestShippedSpecEquivalence:
     def test_pool_name_keeps_legacy_root_agent_name_convention(self) -> None:
         # The compiler sets pool_name to the root agent's name: coder's
         # agents carry "orchestrator", not "coder" (legacy convention).
-        compiled = _by_key(compile_scope(
-            load_scope_declaration(BOT_YML), workspace_ctx=_workspace_ctx()
-        ))
+        compiled = _by_key(
+            compile_scope(
+                load_scope_declaration(BOT_YML),
+                workspace_ctx=_workspace_ctx(),
+                registry=_shipped_registry(),
+            )
+        )
         assert compiled[("coder", "orchestrator")].spec.pool_name == "orchestrator"
         assert compiled[("coder", "explore")].spec.pool_name == "orchestrator"
         assert compiled[("default", "office-expert")].spec.pool_name == "default"
 
     def test_output_covers_every_declared_agent(self) -> None:
         spec = load_scope_declaration(BOT_YML)
-        compilation = compile_scope(spec, workspace_ctx=_workspace_ctx())
+        compilation = compile_scope(
+            spec, workspace_ctx=_workspace_ctx(), registry=_shipped_registry()
+        )
         declared = {(p.name, a.name) for p in _pools(spec) for a in p.agents}
         assert set(_by_key(compilation)) == declared
         assert len(compilation.agents) == 9
@@ -134,8 +154,19 @@ def _three_level_spec() -> ScopeSpec:
 
 
 class TestDerivationTable:
+    """The §5.2 derivation table — now delivered through the subagents
+    capability's ``derived_tools`` channel (the retired hardcoded
+    ``_derived_entries`` died with the capability migration); these tests
+    compile with the DefaultPlugin registry so the capability resolves."""
+
     def _compiled(self) -> dict[tuple[str, str], CompiledAgent]:
-        return _by_key(compile_scope(_three_level_spec(), workspace_ctx=_workspace_ctx()))
+        return _by_key(
+            compile_scope(
+                _three_level_spec(),
+                workspace_ctx=_workspace_ctx(),
+                registry=_shipped_registry(),
+            )
+        )
 
     def test_root_task_lists_direct_children_only(self) -> None:
         root = self._compiled()[("t", "root")]
@@ -188,7 +219,9 @@ class TestDerivationTable:
                 ],
             ),
         )
-        compiled = _by_key(compile_scope(spec, workspace_ctx=_workspace_ctx()))
+        compiled = _by_key(
+            compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_shipped_registry())
+        )
         for pool, peer in (("a", ["b"]), ("b", ["a"])):
             agent = compiled[(pool, f"main-{pool}")]
             entry = _entry(agent.provenance, SEND_TO_PEER)
@@ -202,7 +235,9 @@ class TestDerivationTable:
     def test_effective_tools_equal_spec_tools(self) -> None:
         # SPEC §5.2: V6's "effective toolset" IS the derived spec.tools.
         compilation = compile_scope(
-            load_scope_declaration(BOT_YML), workspace_ctx=_workspace_ctx()
+            load_scope_declaration(BOT_YML),
+            workspace_ctx=_workspace_ctx(),
+            registry=_shipped_registry(),
         )
         for agent in compilation.agents:
             assert agent.effective.tools == agent.spec.tools
@@ -210,21 +245,28 @@ class TestDerivationTable:
             assert agent.effective.agent == agent.provenance.agent
 
 
-# ─── (c)/(g) Supplement same-name replacement accounting (O3) ───────────────
+# ─── (c)/(g) Capability same-name replacement accounting (O3) ───────────────
 
 
-class TestSupplementAccounting:
+class TestCapabilityReplacementAccounting:
+    """The shipped declaration's ``capabilities: {aci: {}}`` blocks ride
+    the generic O3 replacement machinery: ``edit ← aci_edit``."""
+
     def _compiled(self) -> dict[tuple[str, str], CompiledAgent]:
-        return _by_key(compile_scope(
-            load_scope_declaration(BOT_YML), workspace_ctx=_workspace_ctx()
-        ))
+        return _by_key(
+            compile_scope(
+                load_scope_declaration(BOT_YML),
+                workspace_ctx=_workspace_ctx(),
+                registry=_shipped_registry(),
+            )
+        )
 
     def test_aci_replacement_recorded_and_queryable(self) -> None:
         root = self._compiled()[("default", "default")]
         expected = ToolReplacement(
             default_tool="edit",
             replacement_tool="aci_edit",
-            supplement=ToolSupplement.ACI,
+            capability="aci",
         )
         assert root.provenance.replacements == [expected]
         # Queryable in the pure-function boundary (AC g): the O3 record for
@@ -237,12 +279,13 @@ class TestSupplementAccounting:
         assert "edit" not in root.spec.tools
         entry = _entry(root.provenance, "aci_edit")
         assert entry is not None
-        assert entry.origin is ToolOrigin.SUPPLEMENT
+        assert entry.origin is ToolOrigin.CAPABILITY_DERIVED
+        assert entry.capability == "aci"
         assert entry.replaces == "edit"
 
     def test_pools_without_aci_keep_plain_edit(self) -> None:
-        # review's root and general declare [ast_grep, todo] — no aci: the
-        # default edit survives, no replacement records.
+        # review's root and general declare the ast_grep capability (no
+        # aci): the default edit survives, no replacement records.
         for key in (("review", "reviewer"), ("review", "general")):
             agent = self._compiled()[key]
             assert agent.provenance.replacements == []
@@ -256,9 +299,9 @@ class TestSupplementAccounting:
         assert origins == {
             **dict.fromkeys(_preset_names(ToolPreset.READ_WRITE), ToolOrigin.PRESET),
             SEND_TO_AGENT: ToolOrigin.DERIVED_SEND_TO_AGENT,
-            "todo_read": ToolOrigin.SUPPLEMENT,
-            "todo_write": ToolOrigin.SUPPLEMENT,
-            "aci_edit": ToolOrigin.SUPPLEMENT,
+            "todo_read": ToolOrigin.CAPABILITY_DERIVED,
+            "todo_write": ToolOrigin.CAPABILITY_DERIVED,
+            "aci_edit": ToolOrigin.CAPABILITY_DERIVED,
         }
         send = _entry(office.provenance, SEND_TO_AGENT)
         assert send is not None
@@ -282,13 +325,23 @@ class TestProvenanceLayers:
         )
         for agent in compilation.agents:
             assert {f.field for f in agent.provenance.fields} == {
-                "toolset", "tools", "tool_supplements", "eager", "max_steps", "memory"
+                "toolset",
+                "tools",
+                "capabilities",
+                "hooks",
+                "eager",
+                "max_steps",
+                "memory",
             }
 
     def test_shipped_layers_framework_and_local(self) -> None:
-        compiled = _by_key(compile_scope(
-            load_scope_declaration(BOT_YML), workspace_ctx=_workspace_ctx()
-        ))
+        compiled = _by_key(
+            compile_scope(
+                load_scope_declaration(BOT_YML),
+                workspace_ctx=_workspace_ctx(),
+                registry=_shipped_registry(),
+            )
+        )
         # explore declares toolset read_only → LOCAL; office-expert leaves it
         # to the position default → FRAMEWORK. Declared max_steps → LOCAL.
         explore = compiled[("coder", "explore")]
@@ -319,9 +372,7 @@ class TestProvenanceLayers:
             toolset=ToolPreset.READ_WRITE,
             max_steps=60,
             eager=True,
-            memory=MemoryDeclaration(
-                session=SessionMemoryOverride(max_context_tokens=32000)
-            ),
+            memory=MemoryDeclaration(session=SessionMemoryOverride(max_context_tokens=32000)),
         )
         compilation = compile_scope(
             self._single_pool(AgentSpec(name="root"), AgentSpec(name="sub", parent="root")),
@@ -384,15 +435,13 @@ class TestProvenanceLayers:
 class TestByteStability:
     def test_same_input_compiles_byte_identical(self) -> None:
         spec = load_scope_declaration(BOT_YML)
-        first = compile_scope(spec, workspace_ctx=_workspace_ctx())
-        second = compile_scope(spec, workspace_ctx=_workspace_ctx())
+        first = compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_shipped_registry())
+        second = compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_shipped_registry())
         assert len(first.agents) == 9  # non-trivial payload
         # workspace_ctx is a runtime object — excluded from the byte-stable
         # comparison (ticket 18 hashes the rest).
         exclude = {"agents": {"__all__": {"spec": {"workspace_ctx": True}}}}
-        assert first.model_dump_json(exclude=exclude) == second.model_dump_json(
-            exclude=exclude
-        )
+        assert first.model_dump_json(exclude=exclude) == second.model_dump_json(exclude=exclude)
 
 
 # ─── (e) Phase-2 validation driven by real compiler output ──────────────────
@@ -401,7 +450,9 @@ class TestByteStability:
 class TestValidatorPhase2Integration:
     def test_shipped_compilation_passes_v6_v9(self) -> None:
         spec = load_scope_declaration(BOT_YML)
-        compilation = compile_scope(spec, workspace_ctx=_workspace_ctx())
+        compilation = compile_scope(
+            spec, workspace_ctx=_workspace_ctx(), registry=_shipped_registry()
+        )
         configs = [a.effective for a in compilation.agents]
         assert validate_effective_configs(spec, configs) == []
 
@@ -421,9 +472,7 @@ class TestValidatorPhase2Integration:
         compilation = compile_scope(spec, workspace_ctx=_workspace_ctx())
         root = _by_key(compilation)[("p", "root")]
         assert root.spec.tools == ["bash", "edit"]
-        issues = validate_effective_configs(
-            spec, [a.effective for a in compilation.agents]
-        )
+        issues = validate_effective_configs(spec, [a.effective for a in compilation.agents])
         task_issues = [i for i in issues if i.rule is RuleId.TASK_TOOL_PRESENT]
         assert len(task_issues) == 1
         assert task_issues[0].node == "root"

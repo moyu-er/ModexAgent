@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bot.config.webui_config import build_control_origin
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from modex_agent.control.channel import InMemoryControlChannel
@@ -26,6 +27,7 @@ from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
 from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.scope.spec import AgentSpec, PoolSpec
+from modex_agent.workspace.scope_path import ScopePath
 
 if TYPE_CHECKING:
     from bot.kb.provider import KbProvider
@@ -86,6 +88,12 @@ def _build_assembly_context(
         registry=None,  # type: ignore[arg-type]
         workspace_handle=workspace_handle,
         workspace_resolver=workspace_resolver,
+        scope_path=ScopePath(
+            workspace_root=(
+                workspace_handle.current if workspace_handle is not None else project_dir
+            ),
+            pool_name=pool_name,
+        ),
         emitter_factory=emitter_factory,
         app_config=app_config,
         persistence=persistence,
@@ -97,6 +105,7 @@ def _build_assembly_context(
         session_store=session_store,
         bot_model_config=bot_model_config,
         model_choice_registry=model_choice_registry,
+        control_origin=build_control_origin(project_dir / "config"),
         command_processor=command_processor,
         control_channel=control_channel,
         pool_data=pool_data,
@@ -134,6 +143,5 @@ def _fallback_context_manager(main_spec: AgentSpec, system_prompt: str) -> Any:
         default_agent_role="main",
         base_system_prompt=system_prompt,
         injection_policy=FullInjectionPolicy(),
-        experience_manager=None,
         roles=list(main_spec.roles),
     )

@@ -2,6 +2,10 @@ pool:
   name: react-harness
   agents:
     react:
+      # Eval single-agent harnesses never ran the pool wiring that carried
+      # these hooks — veto the position-default rows to pin the prior
+      # hook-less assembly (roster reproducibility for recorded cassettes).
+      hooks: [-deliver_retry, -length_guard, -native_env]
       toolset: read_write
       # Iteration budget sized so the 5400s wall (not the AgentSpec default
       # 100) is the binding constraint — default exhausted winning-avg mid-search.

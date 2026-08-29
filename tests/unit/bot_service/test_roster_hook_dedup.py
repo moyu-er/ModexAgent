@@ -1,10 +1,11 @@
-"""Declaration-hook dedup in bot wiring (D-A8 incremental layer).
+"""Roster hook dispatch in bot wiring (D-A8 incremental layer → T23 closure).
 
-A declaration-referenced hook is dispatched onto the main agent's hook_runner
-by Stage 4 assembly BEFORE create_pool's code-wired default sites run. Each
-code-wired site must skip its hook when the declaration named it — the
-declaration (factory-created) instance wins, mirroring the assembly core's
-name-based ``extra_hooks`` dedup.
+Since the W6 glue eradication every main-agent hook is ROSTER-dispatched:
+the compiler's position-default rows (deliver_retry / length_guard /
+native_env) and the declared ``model_choice_bind`` entry resolve through
+the HOOK-slot factories at Stage 4 — the code-wired injection sites died.
+What remains code-wired on the main pipeline: the deployment-level
+outcome hooks (TurnOutcomeNotify / CassetteFlush).
 
 Since ticket 11 the specs are the scope declaration's (``AgentSpec`` /
 ``PoolSpec``); the pools in the e2e tests boot through the real declaration
@@ -16,13 +17,13 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.hook import HookRunner, HookSpec
+from modex_agent.hook import HookRunner
 from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
 from modex_agent.hook.builtin.env_injection import NativeEnvInjectionHook
+from modex_agent.hook.builtin.length_guard import LengthGuardHook
 from modex_agent.hook.builtin.todo_continuation import TodoContinuationHook
 from modex_agent.hook.notification import TurnOutcomeNotifyHook
 from modex_agent.interceptor.chain import InterceptorChain
@@ -81,8 +82,6 @@ def _run_wire_main_pipeline(
     pool: MagicMock,
     bot_model_config: BotModelConfig,
     project_dir: Path,
-    roster_hook_names: frozenset[str],
-    tree_manager: Any = None,
 ) -> None:
     from bot.service.pool.pipeline_wiring import _wire_main_pipeline
 
@@ -103,55 +102,26 @@ def _run_wire_main_pipeline(
         tool_manager=MagicMock(),
         pool_spec=pool_spec,
         bot_model_config=bot_model_config,
-        model_choice_registry=ModelChoiceRegistry(),
-        roster_hook_names=roster_hook_names,
-        tree_manager=tree_manager,
     )
 
 
-def test_model_choice_bind_not_rewired_when_roster_named(tmp_path: Path) -> None:
-    pipeline, runner = _make_pipeline()
-    pool = _make_pool(pipeline)
-    bot_model_config = _bot_model_config(tmp_path)
-    # Stage 4 already dispatched the factory-created hook.
-    runner.add(HookSpec(hook=ModelChoiceBindHook(bot_model_config, ModelChoiceRegistry())))
-
-    _run_wire_main_pipeline(
-        pool, bot_model_config, tmp_path, frozenset({"model_choice_bind"})
-    )
-
-    names = [spec.hook.name for spec in runner.hook_specs]
-    assert names.count("model_choice_bind_hook") == 1
-
-
-def test_model_choice_bind_wired_without_roster_reference(tmp_path: Path) -> None:
+def test_wire_main_pipeline_wires_only_outcome_hooks(tmp_path: Path) -> None:
+    """The W6 glue eradication: ``_wire_main_pipeline`` no longer injects
+    model_choice_bind / native_env / deliver_retry / length_guard — those
+    ride the compiled roster (position defaults + declared entries),
+    dispatched by Stage 4. What remains code-wired: the deployment-level
+    outcome hooks (TurnOutcomeNotify; CassetteFlush when recording)."""
     pipeline, runner = _make_pipeline()
     pool = _make_pool(pipeline)
 
-    _run_wire_main_pipeline(pool, _bot_model_config(tmp_path), tmp_path, frozenset())
-
-    names = [spec.hook.name for spec in runner.hook_specs]
-    assert names.count("model_choice_bind_hook") == 1
-    assert any(isinstance(spec.hook, NativeEnvInjectionHook) for spec in runner.hook_specs)
-    assert any(isinstance(spec.hook, TurnOutcomeNotifyHook) for spec in runner.hook_specs)
-
-
-def test_roster_named_hooks_skip_code_wired_defaults(tmp_path: Path) -> None:
-    pipeline, runner = _make_pipeline()
-    pool = _make_pool(pipeline)
-    roster = frozenset({"model_choice_bind", "native_env", "todo_continuation", "deliver_retry"})
-
-    _run_wire_main_pipeline(
-        pool, _bot_model_config(tmp_path), tmp_path, roster, tree_manager=MagicMock()
-    )
+    _run_wire_main_pipeline(pool, _bot_model_config(tmp_path), tmp_path)
 
     hooks = [spec.hook for spec in runner.hook_specs]
+    assert any(isinstance(hook, TurnOutcomeNotifyHook) for hook in hooks)
     assert not any(isinstance(hook, ModelChoiceBindHook) for hook in hooks)
     assert not any(isinstance(hook, NativeEnvInjectionHook) for hook in hooks)
-    assert not any(isinstance(hook, TodoContinuationHook) for hook in hooks)
     assert not any(isinstance(hook, DeliverRetryHook) for hook in hooks)
-    # Hooks without roster factories stay code-wired.
-    assert any(isinstance(hook, TurnOutcomeNotifyHook) for hook in hooks)
+    assert not any(isinstance(hook, LengthGuardHook) for hook in hooks)
 
 
 @dataclass(frozen=True)
@@ -186,6 +156,14 @@ def _boot_declared(tmp_path: Path, declaration: str, pool_name: str) -> object:
         declared_pool_build,
     )
 
+    from modex_agent.plugins.defaults import DefaultPlugin
+    from modex_agent.plugins.loader import PluginRegistrationContext
+    from modex_agent.plugins.registry import ComponentRegistry
+
+    registry = ComponentRegistry()
+    with PluginRegistrationContext(registry) as registration:
+        DefaultPlugin().register(registration)
+
     declaration_path = tmp_path / "declaration.yml"
     declaration_path.write_text(declaration, encoding="utf-8")
     boot = boot_scope_declaration(
@@ -194,6 +172,7 @@ def _boot_declared(tmp_path: Path, declaration: str, pool_name: str) -> object:
         data_dir=tmp_path / ".modex",
         graphs_dirs=(),
         default_llm_provider="bot_default",
+        registry=registry,
     )
     return declared_pool_build(boot, pool_name)
 
@@ -202,10 +181,12 @@ async def test_create_pool_roster_hooks_dispatch_and_code_wiring_skips(
     tmp_path: Path,
 ) -> None:
     """End-to-end: declaration-named tree hooks land via Stage 4 exactly
-    once; the code-wired memory defaults register exactly once. The
-    declaration names todo_continuation + deliver_retry + user_notice_cleanup
-    — the first two ride HookRunner (Stage 4 dispatch + code-wiring skip),
-    the third is a memory hook dispatched onto the memory system."""
+    once; the memory hooks register exactly once via the roster→memory-
+    runner dispatch. The declaration names todo_continuation (dedup against
+    the ``todo`` capability's contribution) + deliver_retry +
+    user_notice_cleanup; the capability's todo_reorientation rides the
+    same roster channel (the unconditional create_pool injection died
+    with the todo supply convergence)."""
     from bot.service.pool import create_pool
 
     declaration = """\
@@ -215,6 +196,8 @@ pool:
     main:
       description: dedup main
       toolset: none
+      capabilities:
+        todo: {}
       hooks:
         - +todo_continuation
         - +deliver_retry
@@ -249,12 +232,8 @@ pool:
 
         main_instance = pool_instance.pool._agents["main"]
         runner = main_instance.pipeline.hook_runner
-        todo_count = sum(
-            isinstance(spec.hook, TodoContinuationHook) for spec in runner.hook_specs
-        )
-        deliver_count = sum(
-            isinstance(spec.hook, DeliverRetryHook) for spec in runner.hook_specs
-        )
+        todo_count = sum(isinstance(spec.hook, TodoContinuationHook) for spec in runner.hook_specs)
+        deliver_count = sum(isinstance(spec.hook, DeliverRetryHook) for spec in runner.hook_specs)
         assert todo_count == 1
         assert deliver_count == 1
 
@@ -267,14 +246,104 @@ pool:
         await broker.stop()
 
 
+async def test_create_pool_position_defaults_and_model_choice_bind_dispatch(
+    tmp_path: Path,
+) -> None:
+    """End-to-end (T23): the compiler's position-default rows
+    (deliver_retry / length_guard / native_env) dispatch through Stage 4
+    with NO declaration, and the declared ``+model_choice_bind`` entry
+    dispatches exactly once with its construction deps derived from the
+    pool assembly context — the retired _wire_main_pipeline injections
+    are gone (the outcome hooks remain code-wired)."""
+    from bot.service.pool import create_pool
+    from bot.service.pool.declaration import (
+        boot_scope_declaration,
+        declared_pool_build,
+    )
+    from plugins.bot_hooks import BotHooksPlugin
+
+    from modex_agent.plugins.defaults import DefaultPlugin
+    from modex_agent.plugins.loader import PluginRegistrationContext
+    from modex_agent.plugins.registry import ComponentRegistry
+
+    registry = ComponentRegistry()
+    with PluginRegistrationContext(registry) as registration:
+        DefaultPlugin().register(registration)
+        BotHooksPlugin().register(registration)
+
+    declaration = """\
+pool:
+  name: position-default-pool
+  agents:
+    main:
+      description: position-default main
+      toolset: none
+      hooks:
+        - +model_choice_bind
+"""
+    declaration_path = tmp_path / "declaration.yml"
+    declaration_path.write_text(declaration, encoding="utf-8")
+    boot = boot_scope_declaration(
+        declaration_path=declaration_path,
+        project_dir=tmp_path,
+        data_dir=tmp_path / ".modex",
+        graphs_dirs=(),
+        default_llm_provider="bot_default",
+        registry=registry,
+    )
+    declared = declared_pool_build(boot, "position-default-pool")
+    pool_data, memory_system = _make_pool_data(tmp_path)
+    broker = InMemoryMessageBroker()
+    await broker.start()
+    pool_instance = None
+    try:
+        pool_instance = await create_pool(
+            pool_name="position-default-pool",
+            declared=declared,
+            assembly_deps=PoolAssemblyDeps(memory=MemoryConfig()),
+            project_dir=tmp_path,
+            workspace_registry=object(),
+            workspace_resources=object(),
+            data_dir=tmp_path / ".modex",
+            broker=broker,
+            output_adapter=MagicMock(),
+            safety=RuntimeSafetyPolicy(),
+            retention=SessionRetentionPolicy(),
+            im_ui=MagicMock(),
+            shared_hooks=[],
+            shared_hook_runner=HookRunner(),
+            shared_interceptor_chain=InterceptorChain(),
+            bot_model_config=None,
+            model_choice_registry=ModelChoiceRegistry(),
+            pool_data=pool_data,
+        )
+
+        main_instance = pool_instance.pool._agents["main"]
+        runner = main_instance.pipeline.hook_runner
+        hooks = [spec.hook for spec in runner.hook_specs]
+        assert sum(isinstance(hook, ModelChoiceBindHook) for hook in hooks) == 1
+        assert sum(isinstance(hook, DeliverRetryHook) for hook in hooks) == 1
+        assert sum(isinstance(hook, LengthGuardHook) for hook in hooks) == 1
+        assert sum(isinstance(hook, NativeEnvInjectionHook) for hook in hooks) == 1
+        # The declared entry coexists with the code-wired outcome hooks.
+        assert sum(isinstance(hook, TurnOutcomeNotifyHook) for hook in hooks) == 1
+    finally:
+        if pool_instance is not None:
+            await pool_instance.pool.shutdown_all()
+        await broker.stop()
+
+
 async def test_create_pool_external_main_roster_hook_is_inert(
     tmp_path: Path,
 ) -> None:
     """External mains never dispatch declaration hooks (no Stage 4), so a
     declaration referencing ``user_notice_cleanup`` on an external root
-    dispatches nothing — and the code-wired UserNoticeCleanupHook
-    registration died with the legacy road. Only the strategy-neutral
-    TodoReorientationHook memory default remains."""
+    dispatches nothing — and the code-wired registrations died with the
+    legacy road and the todo supply convergence: external agents can never
+    declare capabilities (V12), so the pool's capability_supply has no
+    ``todo`` entry and NO TodoReorientationHook lands either (the dark-
+    supply death — behavior-neutral, the external memory system never
+    fires cleanup)."""
     from bot.service.pool import create_pool
 
     declaration = """\
@@ -318,7 +387,7 @@ pool:
 
         cleanup_types = _cleanup_hook_types(memory_system)
         assert cleanup_types.count(UserNoticeCleanupHook) == 0
-        assert cleanup_types.count(TodoReorientationHook) == 1
+        assert cleanup_types.count(TodoReorientationHook) == 0
     finally:
         if pool_instance is not None:
             await pool_instance.pool.shutdown_all()

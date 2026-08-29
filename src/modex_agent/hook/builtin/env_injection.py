@@ -48,10 +48,13 @@ class NativeEnvInjectionHook(BeforeGraphHook):
     - ``workflow_id`` / ``task_id`` / ``node_id`` — left as-is from the
       template (``None`` for now — Phase 2 NodeTaskStore).
 
-    Both the main-agent pipeline (``pool_builder._wire_main_pipeline``)
-    and subagent templates (``AgentTemplate.materialize``) register this
-    hook. Subagent templates carry a minimal pool_map (self + parent) and
-    targets (parent only), matching star-topology constraints.
+    Both pooled agents (main via Stage 4 assembly, subagent via
+    ``AgentTemplate.materialize``'s roster dispatch) and poolless
+    single-agent assembly receive this hook through the compiler's
+    position-default roster rows — the ``native_env`` HOOK-slot factory
+    builds the template from the context chain. Subagent templates carry
+    a minimal pool_map (self + parent) and targets (parent only),
+    matching star-topology constraints.
     """
 
     def __init__(self, env_spec_template: ExternalEnvSpec) -> None:

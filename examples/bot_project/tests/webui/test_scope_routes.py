@@ -1,10 +1,10 @@
 """Tests for the scope declaration REST API (ticket 16).
 
 Covers the four endpoints with a real ``WebUIServer`` whose workspace
-resolver returns a ``SimpleNamespace`` carrying just ``target`` + ``ctx``
-(the only attributes the scope handlers read). The declaration file lives at
-``<target>/config/scopes/bot.yml``; tests write it directly to disk so the
-no-cache assertion (SPEC §3.4: the bill recomputes from the YAML per
+resolver returns a ``SimpleNamespace`` carrying ``target`` + ``ctx`` + the
+real ``ComponentRegistry`` used by scope compilation. The declaration file
+lives at ``<target>/config/scopes/bot.yml``; tests write it directly to disk
+so the no-cache assertion (SPEC §3.4: the bill recomputes from the YAML per
 request) is exercised against real file state.
 """
 
@@ -19,12 +19,29 @@ from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.server import WebUIServer
+from pydantic import BaseModel, JsonValue
 
+from modex_agent.plugins.abc import PluginSource
+from modex_agent.plugins.assembly.context import AgentContext as AssemblyAgentContext
+from modex_agent.plugins.capability import (
+    AgentDeclarationView,
+    Capability,
+    CapabilityBinding,
+    CapabilityContribution,
+    CapabilityWiring,
+    PromptSectionSpec,
+    TreePositionView,
+)
+from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.workspace.context import WorkspaceContext
 
 _BOT_PROJECT = Path(__file__).resolve().parents[2]
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
+
+type JsonObject = dict[str, JsonValue]
 
 _WORKSPACE_DECLARATION = """\
 workspace:
@@ -37,8 +54,9 @@ workspace:
         main:
           description: Root of the main pool.
           max_steps: 50
-          tool_supplements:
-          - aci
+          capabilities:
+            todo: {}
+            experience: {}
           agents:
             worker:
               description: Child agent.
@@ -60,6 +78,32 @@ pool:
       max_steps: 10
 """
 
+_CAPABILITY_DECLARATION = """\
+pool:
+  name: capability
+  agents:
+    root:
+      capabilities:
+        aci: {}
+"""
+
+_UNKNOWN_CAPABILITY_DECLARATION = """\
+pool:
+  name: capability
+  agents:
+    root:
+      capabilities:
+        unregistered: {}
+"""
+
+_AUTO_CAPABILITY_DECLARATION = """\
+pool:
+  name: capability
+  agents:
+    root:
+      use_terminal: true
+"""
+
 _TWO_ROOTS_DECLARATION = """\
 pool:
   name: broken
@@ -69,6 +113,25 @@ pool:
     b:
       max_steps: 10
 """
+
+
+class _ThirdPartyAutoCapability(Capability):
+    name = "third_party_auto"
+
+    def applies(self, view: AgentDeclarationView) -> bool:
+        return view.declared.use_terminal is True
+
+    def contribute(self, tree: TreePositionView, config: BaseModel) -> CapabilityContribution:
+        return CapabilityContribution(
+            tools=("third_party_tool",),
+            hooks=("third_party_hook",),
+            sections=(PromptSectionSpec(section_id="third_party_auto.section", order=10),),
+        )
+
+    async def assemble(
+        self, binding: CapabilityBinding, ctx: AssemblyAgentContext
+    ) -> CapabilityWiring:
+        return CapabilityWiring()
 
 
 def _write_declaration(root: Path, text: str) -> Path:
@@ -88,30 +151,58 @@ def _make_server(tmp_path: Path) -> WebUIServer:
     )
 
 
+def _component_registry() -> ComponentRegistry:
+    registry = ComponentRegistry()
+    registration = PluginRegistrationContext(registry)
+    DefaultPlugin().register(registration)
+    registration.flush()
+    project_registration = PluginRegistrationContext(registry, source=PluginSource.PROJECT)
+    project_registration.register_capability("third_party_auto", _ThirdPartyAutoCapability())
+    project_registration.flush()
+    return registry
+
+
 def _make_client(tmp_path: Path) -> TestClient:
     server = _make_server(tmp_path)
     resources = SimpleNamespace(
         target=tmp_path,
         ctx=WorkspaceContext.from_target(tmp_path, data_dir_name=".modex", home=tmp_path),
+        component_registry=_component_registry(),
     )
     server.set_graph_workspace_resolver(lambda ws: resources)  # type: ignore[arg-type]
     return TestClient(TestServer(server.app))
 
 
-def _field(bill_agent: dict[str, object], name: str) -> dict[str, object]:
+def _field(bill_agent: JsonObject, name: str) -> JsonObject:
     fields = bill_agent["fields"]
     assert isinstance(fields, list)
-    return next(f for f in fields if f["field"] == name)  # type: ignore[index]
+    for field in fields:
+        assert isinstance(field, dict)
+        if field.get("field") == name:
+            return field
+    raise AssertionError(f"bill field {name!r} not found")
 
 
-def _agent(bill: dict[str, object], pool: str, agent: str) -> dict[str, object]:
+def _agent(bill: JsonObject, pool: str, agent: str) -> JsonObject:
     agents = bill["agents"]
     assert isinstance(agents, list)
-    return next(
-        a
-        for a in agents
-        if a["pool"] == pool and a["agent"] == agent  # type: ignore[index]
-    )
+    for entry in agents:
+        assert isinstance(entry, dict)
+        if entry.get("pool") == pool and entry.get("agent") == agent:
+            return entry
+    raise AssertionError(f"bill agent {pool}/{agent} not found")
+
+
+def _tools(bill_agent: JsonObject) -> dict[str, JsonObject]:
+    entries = bill_agent["tools"]
+    assert isinstance(entries, list)
+    result: dict[str, JsonObject] = {}
+    for entry in entries:
+        assert isinstance(entry, dict)
+        name = entry.get("tool")
+        assert isinstance(name, str)
+        result[name] = entry
+    return result
 
 
 @pytest.mark.asyncio
@@ -223,8 +314,42 @@ async def test_bill_field_layers_and_values(tmp_path: Path) -> None:
             "layer": "local",
             "profile": None,
         }
-        assert _field(main, "tool_supplements")["layer"] == "local"
-        assert _field(main, "tool_supplements")["value"] == ["aci"]
+        # Declared override map → local layer; the value is the effective
+        # capability set in registry-enumeration order (todo + experience
+        # declared, subagents auto-applied via children/peers).
+        assert _field(main, "capabilities") == {
+            "field": "capabilities",
+            "value": ["experience", "subagents", "todo"],
+            "layer": "local",
+            "profile": None,
+        }
+        # Position-default hook rows + capability contributions, every
+        # roster entry sourced (SPEC §14.8, T23).
+        assert _field(main, "hooks") == {
+            "field": "hooks",
+            "value": [
+                "deliver_retry",
+                "length_guard",
+                "native_env",
+                "loop_detection",
+                "experience_review",
+                "todo_continuation",
+                "todo_reorientation",
+            ],
+            "layer": "framework",
+            "profile": None,
+        }
+        hook_rows = {row["hook"]: row for row in main["hooks"]}
+        assert hook_rows["deliver_retry"] == {
+            "hook": "deliver_retry",
+            "origin": "position_default",
+            "capability": None,
+        }
+        assert hook_rows["todo_continuation"] == {
+            "hook": "todo_continuation",
+            "origin": "capability_derived",
+            "capability": "todo",
+        }
         # Position-derived framework defaults (root → full toolset, eager).
         assert _field(main, "toolset") == {
             "field": "toolset",
@@ -243,17 +368,24 @@ async def test_bill_field_layers_and_values(tmp_path: Path) -> None:
         assert _field(worker, "toolset")["value"] == "read_write"
         assert _field(worker, "toolset")["layer"] == "framework"
         assert _field(worker, "eager")["value"] == "lazy"
-        # Undeclared supplements → framework default empty.
-        assert _field(worker, "tool_supplements")["layer"] == "framework"
-        assert _field(worker, "tool_supplements")["value"] == []
+        # No override declared → framework layer; only the auto-applied
+        # subagents capability (non-root position).
+        assert _field(worker, "capabilities") == {
+            "field": "capabilities",
+            "value": ["subagents"],
+            "layer": "framework",
+            "profile": None,
+        }
     finally:
         await client.close()
 
 
 @pytest.mark.asyncio
 async def test_bill_component_implementation_sources(tmp_path: Path) -> None:
-    """The O2/O3 audit surface: per-tool origins + the ``edit ← aci_edit``
-    replacement record (SPEC §3.5)."""
+    """The O2/O3 audit surface: per-tool origins + replacement records
+    (SPEC §3.5). The ``todo`` capability's contributed tools carry the
+    capability-derived wire face; the dedicated aci test below covers
+    capability-contributed replacements."""
     _write_declaration(tmp_path, _WORKSPACE_DECLARATION)
     client = _make_client(tmp_path)
     await client.start_server()
@@ -262,27 +394,14 @@ async def test_bill_component_implementation_sources(tmp_path: Path) -> None:
         assert resp.status == 200, await resp.text()
         main = _agent(await resp.json(), "main", "main")
 
-        replacements = main["replacements"]
-        assert replacements == [
-            {
-                "default_tool": "edit",
-                "replacement_tool": "aci_edit",
-                "supplement": "aci",
-            }
-        ]
-        tools = {t["tool"]: t for t in main["tools"]}
-        # Supplement-provided implementation, replacing the bundled default.
-        assert tools["aci_edit"]["origin"] == "supplement"
-        assert tools["aci_edit"]["replaces"] == "edit"
-        # The replaced bundled default stays visible with its preset origin —
-        # the pair (preset edit + supplement aci_edit replaces=edit) IS the
-        # audit trail.
+        assert main["replacements"] == []
+        tools = _tools(main)
+        assert tools["todo_read"]["origin"] == "capability_derived"
+        assert tools["todo_read"]["capability"] == "todo"
+        assert tools["todo_write"]["origin"] == "capability_derived"
+        assert tools["todo_write"]["capability"] == "todo"
         assert tools["edit"]["origin"] == "preset"
         assert tools["read"]["origin"] == "preset"
-        # The effective toolset carries the replacement, not the default.
-        effective_tools = _field(main, "tools")["value"]
-        assert "aci_edit" in effective_tools
-        assert "edit" not in effective_tools
         # Derived communication entries with their targets.
         assert tools["task"]["origin"] == "derived_task"
         assert tools["task"]["targets"] == ["worker"]
@@ -290,11 +409,83 @@ async def test_bill_component_implementation_sources(tmp_path: Path) -> None:
         assert tools["send_to_peer"]["targets"] == ["helper"]
 
         worker = _agent(await (await client.get("/api/scope/bill")).json(), "main", "worker")
-        worker_tools = {t["tool"]: t for t in worker["tools"]}
+        worker_tools = _tools(worker)
         assert worker["replacements"] == []
         assert worker_tools["send_to_agent"]["origin"] == "derived_send_to_agent"
         assert worker_tools["send_to_agent"]["targets"] == ["main"]
         assert "task" not in worker_tools  # leaf: no task tool
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_bill_compiles_capability_declaration_with_registry(tmp_path: Path) -> None:
+    _write_declaration(tmp_path, _CAPABILITY_DECLARATION)
+    client = _make_client(tmp_path)
+    await client.start_server()
+    try:
+        response = await client.get("/api/scope/bill")
+
+        assert response.status == 200, await response.text()
+        root = _agent(await response.json(), "capability", "root")
+        tools = _tools(root)
+        assert tools["aci_edit"]["replaces"] == "edit"
+        assert root["replacements"] == [
+            {
+                "default_tool": "edit",
+                "replacement_tool": "aci_edit",
+                "supplement": "aci",
+            }
+        ]
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_bill_reports_third_party_auto_capability_provenance(tmp_path: Path) -> None:
+    _write_declaration(tmp_path, _AUTO_CAPABILITY_DECLARATION)
+    client = _make_client(tmp_path)
+    await client.start_server()
+    try:
+        response = await client.get("/api/scope/bill")
+
+        assert response.status == 200, await response.text()
+        root = _agent(await response.json(), "capability", "root")
+        assert root["capabilities"] == [
+            {
+                "capability": "third_party_auto",
+                "state": "auto",
+                "registration_source": "project",
+                "contributions": [
+                    {"kind": "tool", "name": "third_party_tool", "gate": "vouched"},
+                    {"kind": "hook", "name": "third_party_hook", "gate": "vouched"},
+                    {
+                        "kind": "section",
+                        "name": "third_party_auto.section",
+                        "gate": "vouched",
+                    },
+                ],
+            }
+        ]
+        tools = _tools(root)
+        assert tools["third_party_tool"]["origin"] == "capability_derived"
+        assert tools["third_party_tool"]["capability"] == "third_party_auto"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_bill_reports_unregistered_capability_error(tmp_path: Path) -> None:
+    _write_declaration(tmp_path, _UNKNOWN_CAPABILITY_DECLARATION)
+    client = _make_client(tmp_path)
+    await client.start_server()
+    try:
+        response = await client.get("/api/scope/bill")
+
+        assert response.status == 409
+        body = await response.json()
+        assert body["error"] == "invalid declaration"
+        assert "Component 'unregistered' not found in slot 'capability'" in body["detail"]
     finally:
         await client.close()
 
@@ -346,6 +537,66 @@ async def test_put_declaration_writes_back_and_bill_reflects_disk(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_put_declaration_validates_capabilities_with_registry(tmp_path: Path) -> None:
+    path = _write_declaration(tmp_path, _POOL_ROOT_DECLARATION)
+    client = _make_client(tmp_path)
+    await client.start_server()
+    try:
+        response = await client.put(
+            "/api/scope/declaration",
+            json={"yaml": _CAPABILITY_DECLARATION},
+        )
+
+        assert response.status == 200, await response.text()
+        assert path.read_text(encoding="utf-8") == _CAPABILITY_DECLARATION
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_declaration_capabilities_round_trip(tmp_path: Path) -> None:
+    """The capabilities face round-trips through the editor API: PUT a
+    declaration carrying a ``capabilities: {todo: {}}`` block, GET it
+    back byte-identically, and the recomputed bill reports the capability
+    effective (todo tools in the roster)."""
+    _write_declaration(tmp_path, _POOL_ROOT_DECLARATION)
+    client = _make_client(tmp_path)
+    await client.start_server()
+    try:
+        declaration = (
+            "pool:\n"
+            "  name: capability\n"
+            "  agents:\n"
+            "    root:\n"
+            "      capabilities:\n"
+            "        todo: {}\n"
+        )
+        resp = await client.put("/api/scope/declaration", json={"yaml": declaration})
+        assert resp.status == 200, await resp.text()
+
+        got = await client.get("/api/scope/declaration")
+        assert got.status == 200, await got.text()
+        assert (await got.json())["yaml"] == declaration
+
+        bill = await client.get("/api/scope/bill")
+        assert bill.status == 200, await bill.text()
+        root = _agent(await bill.json(), "capability", "root")
+        assert _field(root, "capabilities") == {
+            "field": "capabilities",
+            "value": ["todo"],
+            "layer": "local",
+            "profile": None,
+        }
+        tools = _tools(root)
+        assert tools["todo_write"]["origin"] == "capability_derived"
+        assert tools["todo_write"]["capability"] == "todo"
+        assert tools["todo_read"]["origin"] == "capability_derived"
+        assert tools["todo_read"]["capability"] == "todo"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_put_declaration_rejects_invalid_bodies(tmp_path: Path) -> None:
     path = _write_declaration(tmp_path, _WORKSPACE_DECLARATION)
     client = _make_client(tmp_path)
@@ -365,7 +616,7 @@ async def test_put_declaration_rejects_invalid_bodies(tmp_path: Path) -> None:
         assert resp.status == 400, await resp.text()
         # V6: a child-carrying agent whose wholesale tools list drops task.
         no_task = _WORKSPACE_DECLARATION.replace(
-            "tool_supplements:\n          - aci",
+            "max_steps: 50",
             "tools:\n          - read",
         )
         resp = await client.put("/api/scope/declaration", json={"yaml": no_task})

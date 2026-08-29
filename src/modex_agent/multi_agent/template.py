@@ -5,8 +5,7 @@
 module on the template (ADR-0015 D3, Design B). It is the subagent-only
 construction path: normals are registered by business wiring via factory
 defaults, never via materialize. ``comm_kind`` is always ``SUBAGENT``;
-``parent_session`` gates parent-dependent features (FORK context and
-SubagentAutoSendHook).
+``parent_session`` gates the FORK context feature.
 
 Construction is direct (not via ``AssemblyPipeline``): the pipeline is a
 per-pool main-agent orchestrator (stages 1-3, SPEC Errata-5), while subagent
@@ -42,13 +41,9 @@ if TYPE_CHECKING:
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import InMemoryToolManager
-    from modex_agent.hook.abc import Hook
     from modex_agent.multi_agent.descriptor import AgentInstance
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
-    from modex_agent.plugins.assembly.context import (
-        AssemblyContext,
-        CommunicationFacilities,
-    )
+    from modex_agent.plugins.assembly.context import AssemblyContext
     from modex_agent.plugins.assembly.spec import AssemblySpec
 
 
@@ -98,10 +93,12 @@ class AgentTemplate:
     skills: SkillsConfig | None = None
     children: tuple[AgentSpec, ...] = ()
     """Declared DIRECT children (SPEC §3.2) — non-empty only for mid-level
-    agents of a nested declaration tree. They populate the agent's per-agent
-    ``CommunicationTargetStore`` at materialization, which the derived
-    ``task`` TOOL-slot factory resolves against; grandchildren never appear
-    here (each child dispatches its own)."""
+    agents of a nested declaration tree. The ``subagents`` capability's
+    assemble reads the DECLARED pool tree (the chain's pool assembly
+    context) for the same children when building the per-agent
+    ``CommunicationTargetStore`` the derived ``task`` TOOL-slot factory
+    resolves against; grandchildren never appear here (each child
+    dispatches its own)."""
 
     async def materialize(
         self,
@@ -111,15 +108,17 @@ class AgentTemplate:
     ) -> AgentInstance:
         """Build a subagent AgentInstance from this template (ADR-0015 D3, Design B).
 
-        subagent-only construction; ``parent_session`` gates parent-dependent
-        features (FORK context and SubagentAutoSendHook).
-        Normals are registered by business wiring via factory defaults, never
-        via materialize.
+        subagent-only construction; ``parent_session`` gates the FORK
+        context feature. Normals are registered by business wiring via
+        factory defaults, never via materialize.
 
         A materialize call with ``parent_session=None`` is a subagent with no
         parent context (e.g. a cold-started template): it still gets a built
-        tool_manager, skill_manager, and session-scoped memory; only the three
-        parent-dependent features above are skipped.
+        tool_manager, skill_manager, and session-scoped memory; only the
+        parent-dependent feature above is skipped. The
+        ``subagent_auto_send`` hook is roster-dispatched for every non-root
+        agent regardless (its factory derives the parent from the declared
+        tree).
 
         ``EXTERNAL`` subagents dispatch early to
         :meth:`_materialize_external`, skipping react-specific assembly
@@ -130,10 +129,7 @@ class AgentTemplate:
         if strategy_name_of(self.spec.execution_strategy) == ExecutionStrategyKind.EXTERNAL.value:
             return await self._materialize_external(parent_session, invocation_id, deps)
 
-        from modex_agent.multi_agent.comm_kind import AgentCommKind
-
         name = self.spec.name
-        parent_name = str(parent_session).split(".")[-1] if parent_session else ""
 
         # ── System prompt (from agents/{type}.md) ──
         system_prompt = ""
@@ -194,12 +190,11 @@ class AgentTemplate:
                 workspace_ctx,
                 PoolRuntimeDeps(
                     session_tree_manager=deps.tree,
-                    todo_store=deps.todo_store,
                     root_provider=deps.root_provider,
                     mcp_registry=deps.mcp_registry,
                     emitter_factory=deps.emitter_factory,
                     pool_assembly_ctx=deps.pool_assembly_ctx,
-                    communication=self._comm_facilities(deps, name),
+                    capability_supply=deps.capability_supply,
                 ),
             )
 
@@ -217,9 +212,7 @@ class AgentTemplate:
         from modex_agent.core.scope import MemoryAgentRole
         from modex_agent.ioc.factories.descriptors import build_session_only_memory
 
-        memory_workspace = (
-            pool_data.memory_dir if pool_data is not None else None
-        ) or (
+        memory_workspace = (pool_data.memory_dir if pool_data is not None else None) or (
             deps.project_dir / "data" / "memory" / _pool_name(deps)
             if deps.project_dir
             else Path(".")
@@ -252,23 +245,14 @@ class AgentTemplate:
             fork_context_spec=fork_context_spec,
             roles=list(self.spec.roles),
             store_registry=deps.memory_store_registry,
-            comm_kind=AgentCommKind.SUBAGENT,
         )
 
-        # ── Register cleanup hooks on the subagent's memory system ──
-        # Every native subagent needs post-cleanup reorientation: when
-        # ``messages_pruned > 0`` the hook persists a ``<system-reminder>``
-        # so the agent re-orients on its next iteration.  When the subagent
-        # has todo tools (``deps.todo_store`` is wired via
-        # ``tool_supplements``) the reminder includes the active todo list;
-        # otherwise a generic "Continue your work" reminder is written.
-        # ``has_archive`` is always False for subagents (``subagent_memory()``
-        # sets ``archive=None``).
-        from modex_agent.memory.cleanup_hooks import TodoReorientationHook
-
-        subagent_ctx.memory_system.add_cleanup_hook(
-            TodoReorientationHook(todo_store=deps.todo_store, has_archive=False)
-        )
+        # Post-cleanup reorientation (``TodoReorientationHook``) is NOT
+        # injected here anymore: the ``todo`` capability contributes
+        # ``todo_reorientation`` as a roster entry, and the roster→memory-
+        # runner dispatch in ``assemble_native_agent``'s ``_dispatch_hooks``
+        # registers it on this same memory system — the single path for
+        # both mains and subagents (SPEC §8.2 B2).
 
         tool_manager = await self._build_tool_manager(
             deps,
@@ -281,61 +265,21 @@ class AgentTemplate:
         context_manager_for_create = subagent_ctx
 
         # ── Hooks ──
-        # ``SubagentAutoSendHook`` descends from the ``Hook`` ABC and is passed
-        # via ``hooks=`` to create_agent, then re-added to
-        # ``pipeline.hook_runner`` below (the ``hooks=`` list itself is not
-        # dispatched by the turn loop). ``InboxFlushHook`` is
-        # NOT here: AgentFactory auto-injects it onto ``hook_runner`` for every
-        # agent with ``inbox_strategy != "none"`` + a consumer, so fold-in is
-        # wired once for both main and subagent at the factory.
-        hooks: list[Hook] = []
-        if parent_session is not None:
-            from modex_agent.hook.builtin import SubagentAutoSendHook
-
-            hooks.append(
-                SubagentAutoSendHook(
-                    tree=deps.tree,
-                    self_name=name,
-                    parent_name=parent_name,
-                    runtime_dir=runtime_dir,
-                )
-            )
-        # NativeEnvInjectionHook — populate _modex_env / _current_session_id
-        # at BEFORE_GRAPH so native subagent subprocess tools receive
-        # MODEX_* env vars (parity with main-agent wiring in pool_builder.
-        # _wire_main_pipeline). The subagent's pool_map carries itself +
-        # its parent so ``modexctl send --to <parent>`` routes correctly;
-        # targets is the parent only (the subagent's sole routable peer
-        # per star topology). session_id / agent_name / parent_session_id
-        # are placeholders overridden per-turn from ctx.session inside the
-        # hook. workspace_root mirrors subagent_external_builder.
-        # _resolve_workspace_dir: prefer deps.project_dir, else climb
-        # three levels from the scope-path-resolved runtime_dir()
-        # (<workspace>/.modex/runtime_state/<pool>).
-        from modex_agent.agents.external.cli_resolver import resolve_modexctl_bin_dir
-        from modex_agent.agents.external.types import ExternalEnvSpec
-        from modex_agent.hook.builtin import NativeEnvInjectionHook
-
-        subagent_pool_name = _pool_name(deps)
-        subagent_pool_map: dict[str, str] = {name: subagent_pool_name}
-        if parent_name:
-            subagent_pool_map[parent_name] = subagent_pool_name
-        subagent_targets: list[tuple[str, str]] = [(parent_name, "")] if parent_name else []
-        subagent_env_spec = ExternalEnvSpec(
-            workspace_root=subagent_workspace_root,
-            inbox_root=subagent_workspace_root / ".modex" / "inbox",
-            workdir=subagent_workspace_root,
-            session_id=f"__pending__.{name}",
-            agent_name=name,
-            provider_session_id="",
-            agent_pool_map=subagent_pool_map,
-            targets=subagent_targets,
-            modexctl_bin_dir=resolve_modexctl_bin_dir(),
-            comm_kind=AgentCommKind.SUBAGENT,
-            parent_session_id=None,
-            control_origin=deps.control_origin,
-        )
-        hooks.append(NativeEnvInjectionHook(env_spec_template=subagent_env_spec))
+        # ``SubagentAutoSendHook`` is NOT constructed here anymore: the
+        # ``subagents`` capability contributes ``subagent_auto_send`` as a
+        # roster entry for every non-root agent, and the roster dispatch
+        # in ``assemble_native_agent`` resolves it through the HOOK-slot
+        # factory (which derives the per-agent fields from the context
+        # chain) — the single registration path for native subagents.
+        # ``InboxFlushHook`` is NOT here: AgentFactory auto-injects it
+        # onto ``hook_runner`` for every agent with
+        # ``inbox_strategy != "none"`` + a consumer, so fold-in is wired
+        # once for both main and subagent at the factory.
+        # ``NativeEnvInjectionHook`` is NOT here either: ``native_env``
+        # is a compiler position-default roster entry (SPEC §3.2 hook
+        # rows) dispatched by the same roster path — the factory derives
+        # the subagent env template (self + declared parent pool map,
+        # SUBAGENT comm kind) from the context chain.
 
         # deps.llm_provider is the deps-assembly resolution of the NAME
         # deps.default_llm_provider: default-named subs reuse the instance,
@@ -395,7 +339,7 @@ class AgentTemplate:
                 safety=deps.safety,
                 project_dir=deps.project_dir,
                 on_subagent_created=deps.on_subagent_created,
-                extra_hooks=tuple(hooks),
+                extra_hooks=(),
                 execution_strategy=ExecutionStrategyKind(self.spec.execution_strategy),
             ),
             ctx=component_ctx,
@@ -408,25 +352,12 @@ class AgentTemplate:
         # (right after roster registration) — the single convergence point
         # shared with the Stage-4 main-agent path.
 
-        # ── Tree-aware continuation hooks — converge with main-agent path
-        # (_wire_main_pipeline calls the same function). Subagents with todo
-        # tools need TodoContinuationHook to drive continuation; DeliverRetryHook
-        # is a no-op for subagents (no deliver tool) but registered for
-        # consistency. The tree-aware subtree check is safe for subagents:
-        # their subtree is empty (star topology), so the check always passes
-        # and the hook fires normally.
-        if instance.pipeline is not None and deps.tree is not None:
-            from modex_agent.hook.wiring import register_tree_aware_hooks
-
-            # Roster hooks named in the subagent template were dispatched by
-            # assemble_native_agent onto the same runner — the shared skip in
-            # register_tree_aware_hooks keeps one instance (roster wins).
-            register_tree_aware_hooks(
-                instance.pipeline.hook_runner,
-                deps.tree,
-                roster_hook_names=frozenset(assembly_spec.hooks),
-                todo_store=deps.todo_store,
-            )
+        # Tree-aware continuation hooks — the deliver_retry + length_guard
+        # position defaults (SPEC §3.2 hook rows) ride the compiled roster:
+        # the ``_dispatch_hooks`` pass above resolved them through the
+        # HOOK-slot factories against this same context chain (the tree
+        # from ``pool_runtime.session_tree_manager`` — the same per-pool
+        # tree the retired code-wired registration read).
 
         # Graph turn-config trio — converge with the main-agent path
         # (_wire_main_pipeline calls the same function). A subagent
@@ -441,9 +372,7 @@ class AgentTemplate:
             wire_graph_turn_config(
                 instance.pipeline._turn_runner.turn_context_builder,
                 graph_context_resolver=deps.graph_context_resolver,
-                session_binding_store=(
-                    deps.tree.binding_store if deps.tree is not None else None
-                ),
+                session_binding_store=(deps.tree.binding_store if deps.tree is not None else None),
             )
 
         return instance
@@ -509,9 +438,7 @@ class AgentTemplate:
             subagent_workspace_root = Path(".")
         workspace_ctx = WorkspaceContext(
             target=subagent_workspace_root,
-            paths=WorkspacePaths(
-                root=deps.data_dir or subagent_workspace_root / ".modex"
-            ),
+            paths=WorkspacePaths(root=deps.data_dir or subagent_workspace_root / ".modex"),
             is_home=False,
         )
 
@@ -528,7 +455,6 @@ class AgentTemplate:
             workspace_ctx,
             PoolRuntimeDeps(
                 session_tree_manager=deps.tree,
-                todo_store=deps.todo_store,
                 root_provider=deps.root_provider,
                 mcp_registry=deps.mcp_registry,
                 emitter_factory=deps.emitter_factory,
@@ -592,65 +518,12 @@ class AgentTemplate:
         # subagent's SendToAgentTool shares the pool's broker/bus/registry.
         # The scope-declaration road supersedes this baked default: its
         # compiled spec carries the derived ``send_to_agent`` entry, resolved
-        # through the TOOL-slot factory against the subagent facilities.
+        # through the TOOL-slot factory against the pool's ``subagents``
+        # capability supply.
         if SEND_TO_AGENT_TOOL_NAME not in assembly_spec.tools:
             self._register_send_to_agent(tm, deps, name)
 
         return tm
-
-    def _comm_facilities(
-        self,
-        deps: AgentMaterializeDeps,
-        name: str,
-    ) -> CommunicationFacilities:
-        """Subagent communication facilities for the derived-entry factory.
-
-        The service construction mirrors the legacy
-        ``_register_send_to_agent`` path (same deps-derived parts, the
-        subagent's own address as source). Mid-level agents of a nested
-        tree (``self.children`` non-empty) get a per-agent target store
-        holding exactly their DIRECT children (SPEC §5.2) — the derived
-        ``task`` entry resolves against it, and the service's topology
-        defense reads the same store for its declared-children gate.
-        Leaves keep ``target_store=None`` — their derived
-        ``send_to_agent`` entry builds its own subagent-mode store.
-        """
-        from modex_agent.core.agent import AgentCommKind
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.communication import AgentCommunicationService
-        from modex_agent.multi_agent.tools import (
-            CommunicationTarget,
-            CommunicationTargetStore,
-        )
-        from modex_agent.plugins.assembly.context import CommunicationFacilities
-
-        store: CommunicationTargetStore | None = None
-        if self.children:
-            store = CommunicationTargetStore()
-            for child in self.children:
-                store.add(
-                    CommunicationTarget(
-                        name=child.name,
-                        kind=AgentCommKind.SUBAGENT,
-                        description=child.description,
-                        execution_strategy=ExecutionStrategyKind(
-                            child.execution_strategy
-                        ),
-                    )
-                )
-        service = AgentCommunicationService(
-            source=AgentAddress(name=name),
-            registry=deps.pool,
-            tree=deps.tree,
-            pool=deps.pool,
-            pool_name=_pool_name(deps),
-            project_dir=deps.project_dir,
-            session_registry=deps.session_registry,
-            scope_path=deps.scope_path,
-            workspace_manager=deps.workspace_manager,
-            target_store=store,
-        )
-        return CommunicationFacilities(service=service, target_store=store)
 
     @staticmethod
     def _register_send_to_agent(

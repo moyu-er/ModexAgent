@@ -270,14 +270,19 @@ async def _build_env(
     provider.root_sends_peer = root_sends_peer
     env = _NestedTreeEnv(provider)
 
+    # The tree derivation (task/send_to_agent/send_to_peer) is
+    # capability-contributed since the subagents migration — the boot
+    # registry resolves it at compile (registry-less compiles of
+    # child-carrying trees fail V6).
+    registry = await _load_registry(provider)
     boot = boot_scope_declaration(
         declaration_path=_FIXTURES / "nested-tree-e2e.yml",
         project_dir=tmp_path,
         data_dir=tmp_path / ".modex",
         graphs_dirs=(_FIXTURES / "graphs",),
         default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        registry=registry,
     )
-    registry = await _load_registry(provider)
 
     for pool_name, _root_name in ((_MAIN_POOL, _ROOT), (_PEER_POOL, _PEER_ROOT)):
         declared = declared_pool_build(boot, pool_name)

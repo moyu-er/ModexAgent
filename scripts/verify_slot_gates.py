@@ -5,8 +5,10 @@ Enforces every removal/convergence gate of
 `.omo/plans/slot-rationalization-steps.md` section 1 (removal ledger L1-L6)
 and section 2 (convergence ledger C1-C5) for the 8-wave slot rationalization
 refactor (plugin slots 13 -> 10). Each wave proves its removal/convergence
-claims by running a `--gate` subset per commit; `--check` over all 16 gates
-is the W7 final gate. Completeness is proven by script, not by eyeball.
+claims by running a `--gate` subset per commit; `--check` over all gates
+(the 16 slot-rationalization gates + the 2 capability-bundles gates below)
+is the standing full battery. Completeness is proven by script, not by
+eyeball.
 
 Gate -> wave when it goes green (plan section 3 commit sequence):
 
@@ -15,6 +17,33 @@ Gate -> wave when it goes green (plan section 3 commit sequence):
     L4        W1.4                     L5        W5.1
     L6        W4.3                     C1a/C1b   W4.2
     C2        W5.2
+    G-CAP1/G-CAP2  W4 (capability-bundles todo 20)
+
+Capability-bundles gates (W4, todo 20 of
+`.omo/plans/capability-bundles-implementation.md`; SPEC §15 OQ5 + §13 W6):
+
+    * G-CAP1 anchors the compile-time-slot asymmetry: CAPABILITY is the
+      ONLY slot the scope compiler may resolve (every other slot is
+      late-binding at assembly time). Inside ``src/modex_agent/scope/``
+      the sanctioned faces are ``registry.resolve_capability(name)``
+      (the typed CAPABILITY accessor) and
+      ``registry.names(ComponentSlot.CAPABILITY)`` (the C0 enumeration).
+      The pattern bans any direct ``registry.resolve(`` call (even with
+      a variable slot) and any ``ComponentSlot.<OTHER>`` member access.
+    * G-CAP2 anchors the W6 unconditional-injection death: within the
+      assembly paths (``src/modex_agent/plugins/assembly/``,
+      ``multi_agent/template.py``, and the bot project's
+      ``bot/service/``) the ONLY sanctioned ``hook_runner.add(`` /
+      ``add_cleanup_hook(`` / ``register_tree_aware_hooks(`` sites are
+      the allowlisted dispatch/wiring functions. The allowlist is
+      DESIGNED TO SHRINK: T23 (W6 glue sweep) removes the
+      ``register_tree_aware_hooks`` calls in template.py and
+      pipeline_wiring.py — delete those entries and lower
+      ``expected_allowed_hits`` when it lands (the gate gets stronger).
+    * Both gates were proven red-able at landing time (E7 discipline):
+      a planted violation in each scope produced a FAIL before the
+      clean tree produced a PASS — transcripts in
+      `.omo/evidence/task-20-capability-bundles-implementation.txt`.
 
 Spec source / errata:
     The GATES table below is the operative spec. Five gates are refined vs
@@ -317,6 +346,65 @@ GATES: tuple[Gate, ...] = (
         wave="W5.2",
         allowed_files=("src/modex_agent/scope/derivation.py",),
         expected_allowed_hits=1,
+    ),
+    # --- G-CAP1: CAPABILITY is the ONLY compile-time-resolved slot (W4, ---
+    # --- capability-bundles todo 20 / SPEC §15 OQ5)                      ---
+    Gate(
+        gate_id="G-CAP1",
+        pattern=r"registry\.resolve\(|ComponentSlot\.(?!CAPABILITY\b)\w+",
+        scope_dirs=("src/modex_agent/scope",),
+        suffixes=(".py",),
+        wave="W4 (capability-bundles todo 20)",
+        # Zero-hit gate by design: inside the scope package the ONLY
+        # sanctioned registry faces are `resolve_capability(name)` (the
+        # typed CAPABILITY accessor — every other slot is late-binding at
+        # assembly time) and `registry.names(ComponentSlot.CAPABILITY)`
+        # (the C0 enumeration, excluded by the lookahead). The two
+        # alternatives catch:
+        #   * `registry.resolve(` — ANY direct resolve call, including
+        #     variable-slot indirection (`registry.resolve(slot, name)`);
+        #   * `ComponentSlot.<OTHER>` — any non-CAPABILITY member access,
+        #     including enumeration (`names(ComponentSlot.HOOK)`) and
+        #     docstring/comment mentions (which must stay clean too).
+    ),
+    # --- G-CAP2: assembly-path unconditional component injection is dead ---
+    # --- (W4, capability-bundles todo 20 / SPEC §13 W6 + §14.8; the       ---
+    # --- allowlist SHRANK with todo 23's W6 glue eradication)             ---
+    Gate(
+        gate_id="G-CAP2",
+        pattern=r"hook_runner\.add\(|\.add_cleanup_hook\(|register_tree_aware_hooks\(",
+        scope_dirs=("src/modex_agent/plugins/assembly", "examples/bot_project/bot/service"),
+        scope_files=("src/modex_agent/multi_agent/template.py",),
+        suffixes=(".py",),
+        wave="W4 (capability-bundles todo 20)",
+        # Allowlist (each site is roster-driven dispatch or audited
+        # deployment glue; the T23 W6 sweep already shrank this list —
+        # the retired tree-aware wiring function's two calls and the
+        # template.py entry died with it):
+        # - native_core.py: the THREE sanctioned dispatch/wiring sites —
+        #   `_dispatch_hooks`'s react branch (`hook_runner.add` with the
+        #   factory priority), its memory branch (`add_cleanup_hook`),
+        #   and the extra_hooks dedup loop (roster-name-gated re-add).
+        # - pipeline_wiring.py: the `_add_hook` helper — the two
+        #   remaining deployment-level outcome hooks (TurnOutcomeNotify /
+        #   CassetteFlush); deliver_retry / length_guard / native_env /
+        #   model_choice_bind all ride the compiler roster since T23.
+        # - external_strategy.py: the external-sub auto-send dispatch —
+        #   resolves the registered HOOK-slot factory (roster-adjacent:
+        #   external subs never run the native capability dispatch), the
+        #   T16-converged single construction home for that hook.
+        # template.py: ZERO hits since T23 (its tree-aware wiring call
+        # and native_env construction died with the position-default
+        # roster rows) — the file stays in scope_files so a
+        # reintroduction fails the gate.
+        # Eval harnesses (bot/eval/) are OUT of scope by design: the gate
+        # guards the production assembly path, not test instrumentation.
+        allowed_files=(
+            "src/modex_agent/plugins/assembly/native_core.py",
+            "examples/bot_project/bot/service/pool/pipeline_wiring.py",
+            "examples/bot_project/bot/service/external_strategy.py",
+        ),
+        expected_allowed_hits=5,
     ),
 )
 

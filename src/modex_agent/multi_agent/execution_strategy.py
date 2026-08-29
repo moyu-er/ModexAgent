@@ -82,7 +82,6 @@ if TYPE_CHECKING:
     from modex_agent.plugins.assembly.context import AgentContext
     from modex_agent.plugins.assembly.spec import AssemblySpec
     from modex_agent.plugins.registry import ComponentRegistry
-    from modex_agent.runtime.store import JsonFileTodoStore
     from modex_agent.scope.spec import PoolSpec
     from modex_agent.tools.mcp.manager import MCPClientManager
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
@@ -91,6 +90,7 @@ if TYPE_CHECKING:
     from modex_agent.tools.terminal.process_registry import ProcessRegistry
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
     from modex_agent.trace.cassette import CassetteRecorder
+    from modex_agent.workspace.scope_path import ScopePath
 
 __all__ = [
     "ExecutionStrategy",
@@ -267,6 +267,12 @@ class PoolAssemblyContext:
     the peer roots' declared names)."""
     workspace_handle: Any | None = None
     workspace_resolver: Any | None = None
+    scope_path: ScopePath | None = None
+    """The pool's resolved :class:`~modex_agent.workspace.scope_path.ScopePath`
+    (workspace root + pool name) — the single scope-path carrier for the
+    pool's assembly consumers (capability supplies build scope-path-aware
+    services on it; subagent materialization threads the SAME object).
+    ``None`` for hand-built contexts (framework tests)."""
 
     emitter_factory: Callable[[str], ContentEmitter[Any]] | None = None
 
@@ -284,6 +290,12 @@ class PoolAssemblyContext:
 
     bot_model_config: Any | None = None
     model_choice_registry: Any | None = None
+
+    control_origin: str = ""
+    """The bot HTTP listener origin (``MODEX_CONTROL_ORIGIN`` source) —
+    the env-spec templates built on the context chain (the ``native_env``
+    hook factory) read it. Empty for framework/hand-built contexts (the
+    env var is still emitted, just empty)."""
 
     command_processor: CommandProcessor | None = None
     control_channel: InMemoryControlChannel | None = None
@@ -325,12 +337,14 @@ class StrategyAssembly:
     built by ``pool_builder`` for both strategies in tickets 3-4; ticket 5/6
     may move them into ``assemble()`` and make them required again.
 
-    The react-only side-product fields ``cassette_recorder``, ``todo_store``,
-    ``root_provider`` are also transitional: ``ReactExecutionStrategy.assemble_main()``
-    fills them so ``pool_builder`` can finish post-assembly wiring
-    (cassette flush hook, subagent ``AgentMaterializeDeps``, approval root)
-    without re-running the build helpers. Ticket 6 moves the helpers into the
-    strategy and these fields leave the assembly contract.
+    The react-only side-product fields ``cassette_recorder`` and
+    ``root_provider`` are also transitional: ``ReactExecutionStrategy.
+    assemble_main()`` fills them so ``pool_builder`` can finish
+    post-assembly wiring (cassette flush hook, approval root) without
+    re-running the build helpers. Ticket 6 moves the helpers into the
+    strategy and these fields leave the assembly contract. (The historical
+    todo-store side product died with the todo capability's supply face —
+    ``TodoCapability.supply`` owns the store's construction.)
 
     The external-only transitional field ``external_deps`` carries the
     deps dict that ``ExternalAwareFactory`` reads to build an
@@ -374,7 +388,6 @@ class StrategyAssembly:
     # Transitional react-only side products (see class docstring). Filled by
     # ``ReactExecutionStrategy.assemble_main()``; ``None`` for external.
     cassette_recorder: CassetteRecorder | None = None
-    todo_store: JsonFileTodoStore | None = None
     root_provider: WorkspaceRootProvider | None = None
     component_hook_specs: tuple[HookSpec, ...] = ()
 

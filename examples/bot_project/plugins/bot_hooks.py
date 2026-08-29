@@ -13,15 +13,16 @@ Hooks registered:
   on a fresh task where the ContextVar would otherwise be lost and the model
   would silently revert to the pool default).
   The hook's construction deps (``BotModelConfig`` + ``ModelChoiceRegistry``)
-  are service-scoped runtime objects carried by config with
-  ``arbitrary_types_allowed=True`` (same pattern as
-  ``ExperienceReviewHookConfig`` in ``defaults/hooks.py``).
+  are service-scoped runtime objects derived from the pool assembly context
+  on the chain at ``create()`` time (``create_pool`` threads both); an
+  explicit config entry (``arbitrary_types_allowed=True``) overrides.
 
 - ``user_notice_cleanup`` (Memory) — :class:`UserNoticeCleanupHook` from
   ``bot/service/pool/communication.py``. Pushes transient user-facing notices
   around memory compaction. The hook's ``notification_service`` dep is
   extracted from ``ctx.pool_runtime`` at ``create()`` time.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar, Final
@@ -67,18 +68,19 @@ class ModelChoiceBindHookConfig(BaseModel):
 
     ``bot_model_config`` and ``model_choice_registry`` are service-scoped
     runtime objects (constructed in ``BotService.initialize`` from
-    ``config/model.yml``). Carried by config with
-    ``arbitrary_types_allowed=True`` — the same pattern as
-    ``ExperienceReviewHookConfig`` for frozen Pydantic models that hold
-    non-Pydantic runtime objects.
+    ``config/model.yml``). Both are OPTIONAL: the shipped declaration
+    references ``model_choice_bind`` as a bare ``hooks: [+model_choice_bind]``
+    entry with no config, and ``create()`` derives the pair from the
+    pool assembly context on the chain (``create_pool`` threads both —
+    the model config placeholder-wrapped). An explicit config entry
+    (``arbitrary_types_allowed=True``, the ``ExperienceReviewHookConfig``
+    pattern) overrides the derivation.
     """
 
-    model_config = ConfigDict(
-        frozen=True, extra="forbid", arbitrary_types_allowed=True
-    )
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
 
-    bot_model_config: BotModelConfig
-    model_choice_registry: ModelChoiceRegistry
+    bot_model_config: BotModelConfig | None = None
+    model_choice_registry: ModelChoiceRegistry | None = None
 
 
 class UserNoticeCleanupHookConfig(BaseModel):
@@ -121,9 +123,7 @@ class SendFileToUserToolFactory(ComponentFactory):
     async def create(self, config: BaseModel, ctx: PoolContext) -> Tool:
         del config
         pool_runtime = ctx.pool_runtime
-        pool_assembly = (
-            pool_runtime.pool_assembly_ctx if pool_runtime is not None else None
-        )
+        pool_assembly = pool_runtime.pool_assembly_ctx if pool_runtime is not None else None
         if pool_assembly is None:
             raise ValueError(
                 f"pool_assembly_ctx is required for {SEND_FILE_TO_USER_TOOL_NAME}; "
@@ -162,19 +162,38 @@ class ModelChoiceBindHookFactory(ReactHookFactory):
     ``HookRunner.add(HookSpec(hook))``.
 
     ``create()`` returns the hook with ``bot_model_config`` and
-    ``model_choice_registry`` from config. These are service-scoped objects
-    that survive across all pools/agents.
+    ``model_choice_registry`` from config when declared; otherwise both
+    are derived from ``ctx.pool_runtime.pool_assembly_ctx`` (service-
+    scoped objects ``create_pool`` threads onto the pool assembly
+    context — the model config is placeholder-wrapped there, so a
+    boot without ``model.yml`` still resolves).
     """
 
     config_model: ClassVar[type[BaseModel]] = ModelChoiceBindHookConfig
     applies_to: ClassVar[set[AgentType] | None] = {AgentType.native_main}
 
     async def create(  # type: ignore[override]
-        self, config: ModelChoiceBindHookConfig, ctx: AssemblyContext  # noqa: ARG002
+        self, config: ModelChoiceBindHookConfig, ctx: AssemblyContext
     ) -> ModelChoiceBindHook:
+        pool_runtime = ctx.pool_runtime
+        pool_assembly = pool_runtime.pool_assembly_ctx if pool_runtime is not None else None
+        model_config = config.bot_model_config
+        if model_config is None:
+            model_config = pool_assembly.bot_model_config if pool_assembly is not None else None
+        registry = config.model_choice_registry
+        if registry is None:
+            registry = pool_assembly.model_choice_registry if pool_assembly is not None else None
+        if not isinstance(model_config, BotModelConfig) or not isinstance(
+            registry, ModelChoiceRegistry
+        ):
+            raise ValueError(
+                "model_choice_bind requires the bot model config and the model "
+                "choice registry (pool_assembly_ctx carries both on the "
+                "create_pool road; declare hook_configs entries to override)"
+            )
         return ModelChoiceBindHook(
-            model_config=config.bot_model_config,
-            registry=config.model_choice_registry,
+            model_config=model_config,
+            registry=registry,
         )
 
 
@@ -192,13 +211,13 @@ class UserNoticeCleanupHookFactory(MemoryHookFactory):
     applies_to: ClassVar[set[AgentType] | None] = {AgentType.native_main}
 
     async def create(  # type: ignore[override]
-        self, config: UserNoticeCleanupHookConfig, ctx: AssemblyContext  # noqa: ARG002
+        self,
+        config: UserNoticeCleanupHookConfig,
+        ctx: AssemblyContext,  # noqa: ARG002
     ) -> UserNoticeCleanupHook:
         pool_runtime = ctx.pool_runtime
         assert pool_runtime is not None, "pool_runtime must be filled by PoolAssembleStage"
-        notification_service: AgentNotificationService | None = (
-            pool_runtime.notification_service
-        )
+        notification_service: AgentNotificationService | None = pool_runtime.notification_service
         assert notification_service is not None, (
             "notification_service must be in pool_runtime for UserNoticeCleanupHook"
         )
