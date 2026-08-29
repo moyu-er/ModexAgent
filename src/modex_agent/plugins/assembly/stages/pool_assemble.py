@@ -55,7 +55,7 @@ from modex_agent.plugins.capability import (
     PoolSupplyAgentEntry,
     PoolSupplyView,
 )
-from modex_agent.tools.terminal import ProcessRegistry
+from modex_agent.tools.terminal import ProcessRegistry, TerminalWatchdog
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -188,9 +188,15 @@ class PoolAssembleStage(AssemblyStage):
        ``factory.create(config, ctx)``.
     5. Awaits ``strategy.assemble_main(pool_assembly_ctx)`` →
        :class:`StrategyAssembly`.
-    6. Records the supplied pool + a fresh :class:`AgentDescriptor` on the
-       builder. The caller owns the supplied pool's lifecycle — no cleanup
-       registration here.
+     6. Records the supplied pool + a fresh :class:`AgentDescriptor` on the
+        builder. The caller owns the supplied pool's lifecycle (the stage
+        never registers pool shutdown on the builder); the stage registers
+        TWO pool-scoped cleanups — the capability supplies' shared stop
+        and the terminal watchdog's ``stop`` — each on BOTH roads: the
+        builder (assembly-failure teardown) and the pool
+        (``AgentPool.attach_background_stop`` for ``shutdown_all``); both
+        stops are idempotent, so a failed assembly whose pool is also
+        torn down double-stops safely.
     """
 
     async def process(
@@ -257,6 +263,27 @@ class PoolAssembleStage(AssemblyStage):
         if process_registry is None and strategy_result.terminal_manager is not None:
             process_registry = ProcessRegistry()
 
+        terminal_manager = strategy_result.terminal_manager
+        if (
+            terminal_manager is not None
+            and process_registry is not None
+            and dataclasses.is_dataclass(strategy_result)
+        ):
+            watchdog = TerminalWatchdog(terminal_manager, process_registry)
+            watchdog.start()
+            # Failure path: AssemblyPipeline runs builder.cleanup() on any
+            # later stage failure — the builder registration stops the
+            # scanner there. Success path: AgentPool.shutdown_all() runs the
+            # pool registration at pool teardown. stop() is idempotent, so a
+            # failed assembly whose pool is also torn down double-stops
+            # safely.
+            builder.register_cleanup(watchdog.stop)
+            infra.pool.attach_background_stop(watchdog.stop)
+            strategy_result = dataclasses.replace(
+                strategy_result,
+                process_registry=process_registry,
+            )
+
         pool_runtime = dataclasses.replace(
             pool_runtime,
             session_tree_manager=infra.pool.tree,
@@ -268,7 +295,7 @@ class PoolAssembleStage(AssemblyStage):
             root_provider=strategy_result.root_provider,
             mcp_registry=infra.pool_assembly_ctx.mcp_registry,
             emitter_factory=infra.pool_assembly_ctx.emitter_factory,
-            terminal_manager=strategy_result.terminal_manager,
+            terminal_manager=terminal_manager,
             process_registry=process_registry,
             persistent_bash=strategy_result.persistent_bash,
         )

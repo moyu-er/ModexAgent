@@ -136,6 +136,13 @@ _AMBIGUOUS_MARKERS: frozenset[str] = frozenset(
 # Characters that typically terminate an input prompt line.
 _PROMPT_ENDING_CHARS: tuple[str, ...] = (":", "?", "]", ")")
 
+# Layer 2's shell-prompt exclusion: the bare remote-shell prompt shape
+# (``user@host:`` / ``root@host:~:``) — a single token, no spaces.  A line
+# ending in ``:`` that merely CONTAINS ``@`` (e.g. ``user@host's password:``)
+# is still very likely a real input prompt and must stay positive, so only
+# this minimal shape is excluded.
+_BARE_REMOTE_PROMPT_PATTERN = re.compile(r"^\S+@\S+:\S*$")
+
 
 def is_waiting_for_input(output: str) -> bool:
     """Check if the last non-empty line of *output* looks like an input prompt.
@@ -179,7 +186,23 @@ def is_waiting_for_input(output: str) -> bool:
             if not stripped.endswith(_PROMPT_ENDING_CHARS) and stripped != marker:
                 continue
         return True
-    return False
+
+    # Layer 1's ambiguous-marker gate and Layer 2 intentionally compose as a
+    # union: ambiguous prose is skipped, while prompt-shaped punctuation remains evidence.
+    # Layer 2: prompt-shaped suffix — catches arbitrary custom prompts
+    # ("name:", "Ready?", "Choose [1]:", "Enter choice)") that no keyword
+    # list covers; without it, non-keyword prompts produce zero evidence on
+    # probe-less hosts and ride the poll loop to the command deadline.
+    # False positives (data lines that merely end with ':', '?', ']' or
+    # ')') are tolerated BY DESIGN: callers gate this behind an
+    # output-quiet window and a soft-worded advisory, so the agent judges
+    # from the output. Shell-prompt endings ('$'/'#'/'%'/'>' suffixes) are
+    # disjoint from this suffix set by construction; the bare user@host
+    # remote form is excluded separately.
+    stripped = last.rstrip()
+    if not stripped.endswith(_PROMPT_ENDING_CHARS):
+        return False
+    return _BARE_REMOTE_PROMPT_PATTERN.match(stripped) is None
 
 
 PROMPT_SUFFIXES: tuple[str, ...] = (

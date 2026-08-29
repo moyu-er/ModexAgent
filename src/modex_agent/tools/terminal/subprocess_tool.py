@@ -295,5 +295,7 @@ class SubprocessTool(Tool):
             "required": ["command"],
         }
 
-    async def execute(self, command: str, working_dir: str | None = None, **kwargs: object) -> str:
+    async def execute(
+        self, command: str = "", working_dir: str | None = None, **kwargs: object
+    ) -> str:
         return await self._executor.execute(command, working_dir, timeout=self.timeout)

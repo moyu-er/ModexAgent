@@ -5,15 +5,13 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, assert_never
 
 from modex_agent.tools.terminal.prompt import (
     _strip_ansi_and_da1,
-    detect_pager_entry,
     extract_last_command_output,
     is_prompt_ready,
     is_waiting_for_input,
-    resolve_cursor_line,
 )
 from modex_agent.tools.terminal.pty_keys import (
     CursorKeyMode,
@@ -70,70 +68,33 @@ class TerminalSession:
         self.created_at = time.time()
         self.last_active = time.time()
         self._needs_restart = True
-        self._busy_after_timeout = False
         self._backend_started = False
-        self._last_status: str | None = None
         self.cursor_key_mode: CursorKeyMode = CursorKeyMode.UNKNOWN
         self.bracketed_paste_enabled: bool = False
         self._last_byte_at: float = time.monotonic()
         self._ever_received_bytes: bool = False
         self._command_started_at: float | None = None
-        self._expected_state: TerminalCommandStatus | None = None
 
     def touch_output(self) -> None:
         """Reset the no-output timer. Called when output bytes are received."""
         self._last_byte_at = time.monotonic()
         self._ever_received_bytes = True
 
-    def set_expected_state(self, status: TerminalCommandStatus | None) -> None:
-        """Set the expected terminal state after an agent operation."""
-        self._expected_state = status
-
     def apply_outcome(self, result: PollResult) -> None:
-        """Update the busy/last_status/command_started state for a poll result.
+        """Apply a poll result through the session's single state-event entry point.
 
-        Per ADR-0010 Decision 7: the single state-event entry point. Tools call
-        this after poll_until_settled; they must NOT poke _busy_after_timeout /
-        _last_status / _command_started_at directly. This writes a DIFFERENT slot
-        than set_expected_state (which writes _expected_state for interference
-        detection) — both coexist.
+        Per ADR-0010 Decision 7, tools call this after ``poll_until_settled``
+        instead of mutating ``_command_started_at`` directly.
         """
         from modex_agent.tools.terminal.poll_loop import PollOutcome
 
         match result.outcome:
             case PollOutcome.PROMPT_DETECTED | PollOutcome.PROCESS_EXIT:
                 self._command_started_at = None
-                self._busy_after_timeout = False
-                self._last_status = "ok"
-            case PollOutcome.YIELDED:
-                self._last_status = "executing"
-            case PollOutcome.INPUT_WAIT:
-                self._busy_after_timeout = False
-                self._last_status = "waiting_input"
-            case PollOutcome.LONG_RUNNING:
-                self._last_status = "long_running"
-            case PollOutcome.PAGINATED:
-                self._busy_after_timeout = False
-                self._last_status = "paginated"
-            case PollOutcome.STUCK:
-                self._command_started_at = None
-                self._last_status = None
-            case PollOutcome.TIMED_OUT:
-                self._busy_after_timeout = True
-                self._last_status = "timeout"
-
-    def detect_interference(self, actual: TerminalCommandStatus) -> bool:
-        """Detect if actual state diverges from expected (possible user interference).
-
-        Only active for visible terminal sessions.
-        """
-        if not self.visible or self._expected_state is None:
-            return False
-        unexpected = {
-            (TerminalCommandStatus.EXECUTING, TerminalCommandStatus.IDLE),
-            (TerminalCommandStatus.LONG_RUNNING, TerminalCommandStatus.IDLE),
-        }
-        return (self._expected_state, actual) in unexpected
+            case PollOutcome.INPUT_WAIT | PollOutcome.TIMED_OUT:
+                pass
+            case unreachable:
+                assert_never(unreachable)
 
     async def ensure_started(self, env: dict[str, str] | None = None) -> None:
         """Start the backend immediately if not already started.
@@ -159,7 +120,6 @@ class TerminalSession:
             )
             self._backend_started = True
             self._needs_restart = False
-            self._busy_after_timeout = False
             await self._backend.drain_startup()
             override = self._prompt_override_command()
             if override is not None:
@@ -181,16 +141,6 @@ class TerminalSession:
     def last_byte_at(self) -> float:
         """Monotonic timestamp of the last raw byte received from the PTY."""
         return self._last_byte_at
-
-    @property
-    def busy_after_timeout(self) -> bool:
-        """True if the previous command timed out and may still be running."""
-        return self._busy_after_timeout
-
-    @property
-    def last_status(self) -> str | None:
-        """Last known session status string (timeout, waiting_input, etc.)."""
-        return self._last_status
 
     @property
     def backend_started(self) -> bool:
@@ -247,8 +197,8 @@ class TerminalSession:
         (``user@host:path$`` on WSL/Linux, ``hostname:dir user$`` on
         macOS) is already matched by ``is_prompt_ready``'s user@host
         pattern.  Injecting ``export PS1=...`` on bash pollutes the
-        output buffer with the command echo, leaking into
-        ``terminal current`` and the first command's output.
+        output buffer with the command echo, leaking into guard diagnostic
+        snapshots and the first command's tool result.
 
         Returns ``None`` for bash, sh, cmd, and powershell.
         """
@@ -358,15 +308,7 @@ class TerminalSession:
     ) -> TerminalCommandStatus:
         """Compute current terminal status using the detection priority rules.
 
-        Priority: COMPLETED > UNKNOWN > WAITING_INPUT > IDLE > PAGINATED >
-                  IDLE_INPUT_WAIT > STUCK > LONG_RUNNING > EXECUTING
-
-        ``IDLE_INPUT_WAIT`` is not a separate enum value — it surfaces as
-        ``WAITING_INPUT``. The naming here just makes the decision order
-        explicit: a session that produced output then fell silent past
-        ``input_wait_idle_ms`` is reported as ``WAITING_INPUT`` rather than
-        ``STUCK``, because the most common cause of "live process, no output"
-        is an unmarked prompt (e.g. ``read -s``).
+        Priority: COMPLETED > UNKNOWN > WAITING_INPUT > IDLE > EXECUTING.
         """
         from modex_agent.tools.terminal.config import TerminalRuntimeConfig as _Cfg
 
@@ -384,42 +326,21 @@ class TerminalSession:
         # Refresh to get latest data
         await self.refresh_output(timeout=0.05)
 
-        # 3. Content marker → WAITING_INPUT (fast path)
         segment = await self.current_segment()
         full_text = segment.text if segment.text else ""
-        if full_text and is_waiting_for_input(full_text):
+        raw_idle_ms = (time.monotonic() - self._last_byte_at) * 1000
+        if (
+            full_text
+            and is_waiting_for_input(full_text)
+            or self._command_started_at is not None
+            and raw_idle_ms >= cfg.input_wait_idle_ms
+        ):
             return TerminalCommandStatus.WAITING_INPUT
 
-        # 4. Prompt stable → IDLE
         if segment.is_empty_prompt:
             self._command_started_at = None
             return TerminalCommandStatus.IDLE
 
-        # 5. Pager detection
-        cursor = resolve_cursor_line(segment)
-        if detect_pager_entry(cursor):
-            return TerminalCommandStatus.PAGINATED
-
-        # 6. Idle-based input wait — MUST be before STUCK. A live process
-        # that fell silent past input_wait_idle_ms is almost certainly
-        # waiting for input (silent prompts like ``read -s``). Gated on
-        # ``_command_started_at`` so a freshly-started long-running command
-        # that has not produced output yet is not misclassified.
-        raw_idle_ms = (time.monotonic() - self._last_byte_at) * 1000
-        if self._command_started_at is not None and raw_idle_ms >= cfg.input_wait_idle_ms:
-            return TerminalCommandStatus.WAITING_INPUT
-
-        # 7. No-output timeout → STUCK
-        if raw_idle_ms >= cfg.no_output_timeout_ms:
-            return TerminalCommandStatus.STUCK
-
-        # 8. Long-running
-        if self._command_started_at is not None:
-            elapsed_ms = (time.monotonic() - self._command_started_at) * 1000
-            if elapsed_ms >= cfg.long_running_threshold_ms:
-                return TerminalCommandStatus.LONG_RUNNING
-
-        # 9. Active output → EXECUTING
         return TerminalCommandStatus.EXECUTING
 
     async def last_command_output(self) -> str:
@@ -458,19 +379,6 @@ class TerminalSession:
         )
         self._backend_started = True
         self._needs_restart = False
-        self._busy_after_timeout = False
-
-    async def send_interrupt(self) -> None:
-        """Send Ctrl-C to the backend and clear busy state.
-
-        Each backend implements interrupt() with its platform-appropriate
-        mechanism: pexpect uses sendintr() (os.kill SIGINT), Windows
-        backends write CTRL_C through the PTY input stream (matching how
-        user keyboard Ctrl+C reaches the shell), tmux forwards it via
-        send_keys.  See pty_keys.CTRL_C for the rationale.
-        """
-        await self._backend.interrupt()
-        self._busy_after_timeout = False
 
     async def submit_command(self, command: str) -> None:
         """Submit a command to the PTY with the shell-appropriate line ending.
@@ -479,8 +387,8 @@ class TerminalSession:
         then seals the previous command's block in the sliding buffer
         (``mark_command_boundary``). The buffer is NOT cleared: the prompt
         line preceding this command is the anchor ``extract_last_command_output``
-        (and thus the agent-facing ``terminal current`` payload) uses to
-        return the last command's output.
+        (and thus agent-facing tool results) uses to return the last command's
+        output.
         Shell cleanup (clear_input_line) is no longer needed here — the
         caller (CommandTool.execute) already guards against busy/dead
         states and the shell is expected to be at a clean prompt.

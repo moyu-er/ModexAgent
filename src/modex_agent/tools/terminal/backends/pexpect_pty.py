@@ -19,7 +19,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
+from modex_agent.tools.terminal._foreground_probe import (
+    controlling_tty_device,
+    foreground_pgid,
+    is_stdin_waiting,
+    stdin_probe_available,
+)
 from modex_agent.tools.terminal.results import SlidingOutputBuffer
 from modex_agent.tools.terminal.types import (
     Platform,
@@ -29,6 +36,9 @@ from modex_agent.tools.terminal.types import (
 )
 
 from .base import TerminalBackend
+
+if TYPE_CHECKING:
+    import pexpect
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +55,7 @@ class PexpectPtyBackend(TerminalBackend):
     def __init__(self) -> None:
         super().__init__()
         self._pexpect: object | None = None  # pexpect module, lazy-loaded in start()
-        self._proc: object | None = None  # pexpect.spawn
+        self._proc: pexpect.spawn | None = None
         self._shell: str | None = None
         self._output_buffer = SlidingOutputBuffer()
 
@@ -134,6 +144,18 @@ class PexpectPtyBackend(TerminalBackend):
 
     def stdin_writable(self) -> bool:
         return self._proc is not None
+
+    def stdin_wait_evidence(self) -> bool | None:
+        if not stdin_probe_available() or self._proc is None:
+            return None
+        try:
+            expected_tty = controlling_tty_device(self._proc.pid)
+            if expected_tty is None:
+                return None
+            pgid = foreground_pgid(self._proc.pid)
+            return is_stdin_waiting(pgid, expected_tty) if pgid is not None else None
+        except OSError:
+            return None
 
     # ------------------------------------------------------------------
     # Signal / termination

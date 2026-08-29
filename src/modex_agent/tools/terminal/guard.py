@@ -34,36 +34,19 @@ class TerminalGuardResult:
 
 _SUGGESTIONS: dict[TerminalCommandStatus, str] = {
     TerminalCommandStatus.EXECUTING: (
-        "Use 'terminal current' to monitor progress, "
-        "or 'process interrupt' to stop the running command. "
-        "If output has stopped, the command may be waiting for input — "
-        "try 'process write' to provide it."
+        "A command is still running in this tab. Use process (^C to interrupt, or send input), "
+        "or wait."
     ),
-    TerminalCommandStatus.LONG_RUNNING: (
-        "Command has been running for an extended period. "
-        "Use 'terminal current' to check progress, "
-        "or 'process interrupt' to stop. "
-        "If output has stopped, the command may be waiting for input."
-    ),
-    TerminalCommandStatus.STUCK: (
-        "No output for an extended period. "
-        "This is usually either a real hang or a silent input prompt — "
-        "try 'process write' to send input first, "
-        "and 'process interrupt' to send Ctrl+C if that does not help."
-    ),
-    TerminalCommandStatus.PAGINATED: (
-        "Terminal is in a pager. Use 'process send_keys' with 'q' to quit, or Space to scroll."
+    TerminalCommandStatus.WAITING_INPUT: (
+        "The previous command may be waiting for input. Answer it with the process tool first."
     ),
 }
 
 _MESSAGES: dict[TerminalCommandStatus, str] = {
     TerminalCommandStatus.EXECUTING: "Terminal is not ready: a command is still executing.",
-    TerminalCommandStatus.LONG_RUNNING: "Terminal is not ready: a long-running command is still active.",
-    TerminalCommandStatus.STUCK: (
-        "Terminal is not ready: no output for an extended period "
-        "(could be stuck OR waiting for input)."
+    TerminalCommandStatus.WAITING_INPUT: (
+        "Terminal is not ready: the previous command may be waiting for input."
     ),
-    TerminalCommandStatus.PAGINATED: "Terminal is not ready: a pager is active.",
 }
 
 _COMMAND_ALLOWED: frozenset[TerminalCommandStatus] = frozenset(
@@ -75,20 +58,7 @@ _COMMAND_ALLOWED: frozenset[TerminalCommandStatus] = frozenset(
     }
 )
 
-_PROCESS_ALLOWED: frozenset[TerminalCommandStatus] = frozenset(
-    {
-        TerminalCommandStatus.IDLE,
-        TerminalCommandStatus.UNKNOWN,
-        TerminalCommandStatus.WAITING_INPUT,
-        TerminalCommandStatus.PAGINATED,
-        TerminalCommandStatus.COMPLETED,
-        TerminalCommandStatus.TIMED_OUT,
-        # STUCK allowed here (NOT in _COMMAND_ALLOWED): its usual causes are
-        # unrecognized prompts needing `process write`; bytes into a real
-        # hang are harmless, a new command is not.
-        TerminalCommandStatus.STUCK,
-    }
-)
+_PROCESS_ALLOWED = _COMMAND_ALLOWED | frozenset({TerminalCommandStatus.WAITING_INPUT})
 
 
 async def check_process_writable(
@@ -98,14 +68,12 @@ async def check_process_writable(
 ) -> TerminalGuardResult | None:
     """Guard for ProcessTool: allow interaction with running processes.
 
-    WAITING_INPUT is allowed — ProcessTool is used to type passwords.
-    PAGINATED is allowed — ProcessTool can send 'q' or Space to control the pager.
+    WAITING_INPUT is allowed so ProcessTool can answer interactive commands.
     EXECUTING is allowed when the running process has not produced any
     output — this covers silent stdin consumers like ``cat > file`` that
     never print a prompt but are waiting for input.
     EXECUTING with prior output (e.g. build output) is still rejected
     to avoid injecting data into a command that isn't expecting it.
-    LONG_RUNNING and STUCK are still rejected.
     """
     cfg = config or TerminalRuntimeConfig()
     result = await _check_writable(session, _PROCESS_ALLOWED, cfg)
@@ -115,8 +83,8 @@ async def check_process_writable(
     if result.status == TerminalCommandStatus.EXECUTING and registry is not None:
         running = registry.get_running_by_terminal(session.name)
         if running is not None:
-            runtime = registry.running_runtime(running.id)
-            if runtime is not None and runtime.idle_ms >= 1000:
+            idle_ms = registry.idle_ms(running.id)
+            if idle_ms is not None and idle_ms >= 1000:
                 return None
 
     return result
@@ -170,16 +138,6 @@ async def check_command_writable(
 ) -> TerminalGuardResult | None:
     """Guard for CommandTool: only allow submission when terminal is truly idle.
 
-    WAITING_INPUT is rejected — a new command would overwrite the password prompt.
-    PAGINATED is rejected — a new command would be swallowed by the pager.
+    WAITING_INPUT is rejected because a new command would overwrite the interaction.
     """
     return await _check_writable(session, _COMMAND_ALLOWED, config)
-
-
-# Backward-compatible alias
-async def check_terminal_writable(
-    session: TerminalSession,
-    config: TerminalRuntimeConfig | None = None,
-) -> TerminalGuardResult | None:
-    """Deprecated — use check_command_writable or check_process_writable."""
-    return await check_command_writable(session, config)

@@ -44,14 +44,14 @@ Kernel terminal-state and stdin-wait detection:
 * **Empty-evidence gate**: zero real output for THIS command (a START marker
   alone is not output) never settles on terminal-mode or output-shape evidence.
   The Linux ``/proc`` probe is the sole zero-output authority.
-* **Canonical waits and fallbacks**: on Linux, every
-  ``_STDIN_PROBE_INTERVAL_S`` the ``/proc`` probe remains the authority for
-  foreground groups blocked reading terminal input. A probe hit classifies
-  WAITING from the terminal signal: ``CHILD_RAW`` is shell-kind and every
-  other state is prompt-kind. Keyword detection and the weak prompt-shape
-  layer remain fallbacks for canonical interactive states and builtin reads;
-  the weak layer requires positive probe confirmation, or a 2.0-second quiet
-  window when the probe is unavailable.
+* **Canonical waits and content evidence**: the shared detector in
+  :mod:`modex_agent.tools.terminal.prompt` (keyword union prompt-shape suffix)
+  is consulted after the normal quiet gate regardless of ``/proc`` probe
+  availability; where available, the probe remains the stronger evidence
+  source for foreground groups blocked reading terminal input. A probe hit
+  classifies WAITING from the terminal signal: ``CHILD_RAW`` is shell-kind and
+  every other state is prompt-kind. ADR-0045's extended probeless window
+  governs only session-local weak shapes outside the shared detector.
   Stale WAITING transactions use the same kernel signal and fall back to the
   trailing shell shape only when terminal-state evidence is unavailable.
 
@@ -1083,13 +1083,11 @@ class PersistentShellSession:
                     return _with_hint(
                         self._finalize(accum, pending, None), _hint_for(self._waiting_shell)
                     )
-            # Stdin-wait content evidence splits by strength. Keyword shapes
-            # fire regardless of the kernel probe — they cover the /dev/tty
-            # blind spot and builtin ``read`` waits. The WEAK generic
-            # prompt-suffix heuristic (a trailing ``:``/``?``/``)`` — data
-            # lines match it too) fires only when the probe is unavailable
-            # or positively confirms a stdin wait; a slow compute-then-
-            # print command (gpt2-codegolf) must not be misread as waiting.
+            # The shared Layer-2 detector (keyword union prompt-shape suffix)
+            # fires at the normal quiet-gated settle window regardless of the
+            # kernel probe. ADR-0045's extended probeless window applies only
+            # to the session-local weak shapes below; see
+            # test_shared_suffix_layer_preempts_probeless_weak_window.
             if accum.text and quiet and is_waiting_for_input(accum.text):
                 self._waiting_shell = False
                 self._pending = pending

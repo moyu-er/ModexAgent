@@ -1,17 +1,9 @@
-"""CommandTool — execute commands in terminal sessions.
-
-Three-tier completion detection:
-  1. Process exit (authoritative)
-  2. Prompt detection (auxiliary completion for persistent shells)
-  3. Timeout (kills process, returns partial output)
-
-Returns structured <command_result> XML with CommandResultStatus.
-"""
+"""CommandTool — execute commands in terminal sessions."""
 
 from __future__ import annotations
 
-import time
-from typing import TYPE_CHECKING, Any
+import logging
+from typing import TYPE_CHECKING, Any, assert_never
 
 if TYPE_CHECKING:
     from modex_agent.core.message import ContentFormat
@@ -21,19 +13,12 @@ from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.guard import TerminalGuardResult, check_command_writable
 from modex_agent.tools.terminal.managers import TerminalManagerBase
 from modex_agent.tools.terminal.poll_loop import mark_exited_if_finished
-from modex_agent.tools.terminal.process_registry import ProcessRegistry, RunningSessionRuntime
-from modex_agent.tools.terminal.prompt import (
-    resolve_cursor_line,
-    sanitize_terminal_output,
-)
-from modex_agent.tools.terminal.pty_keys import CursorKeyMode
-from modex_agent.tools.terminal.session import TerminalSession
-from modex_agent.tools.terminal.types import (
-    CommandResultStatus,
-    ProcessStatus,
-    TerminalCommandStatus,
-)
+from modex_agent.tools.terminal.process_registry import ProcessRegistry
+from modex_agent.tools.terminal.prompt import sanitize_terminal_output
+from modex_agent.tools.terminal.types import CommandResultStatus, ProcessStatus
 from modex_agent.utils.xml import xml_text
+
+logger = logging.getLogger(__name__)
 
 
 def _build_command_xml(
@@ -45,10 +30,7 @@ def _build_command_xml(
     message: str | None = None,
     hint: str | None = None,
 ) -> str:
-    """Build a <command_result> XML string."""
-    parts: list[str] = [
-        "<command_result>",
-    ]
+    parts: list[str] = ["<command_result>"]
     if hint is not None:
         parts.append(f"<hint>{xml_text(hint)}</hint>")
     parts.extend(
@@ -87,19 +69,22 @@ class CommandTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Execute a shell command in a persistent terminal session. "
-            "Working directory, environment variables, and background "
-            "processes persist between calls in the same session.\n\n"
-            "Use 'terminal list' to see all sessions and which is selected (default). "
-            "Use 'terminal select <name>' to switch sessions; use 'terminal open <name>' "
-            "to create a new session (it auto-selects).\n\n"
-            "Do NOT re-run setup commands (cd, source, export, etc.) that were "
-            "already executed in this session.\n\n"
-            "Returns <command_result> XML with <status>: completed, executing, "
-            "timed_out, paginated, waiting_input, or stuck. If <status> is not 'completed', "
-            "use 'terminal current' to check the state.\n\n"
-            "IMPORTANT: If a command asks for a password, STOP and ask the user. "
-            "NEVER guess or invent passwords."
+            "Run a shell command in a persistent terminal session (the currently selected tab).\n"
+            "Working directory, environment variables, and background processes persist between calls in the same tab.\n\n"
+            "The command runs until one of:\n"
+            "- completed — the command finished. Output is included.\n"
+            "- waiting_input — no output for ~10s and the session MAY be waiting for input (a prompt,\n"
+            "  password request, pager, or question). This is a guess, not a fact — the command may\n"
+            "  simply be slow. Judge from the output above: answer it with the process tool, interrupt\n"
+            "  with ^C via process, or keep waiting. The command keeps running while you decide\n"
+            "  (480s total limit).\n"
+            "- timed_out — the command hit the 480s limit. The tab was closed and the shell reset:\n"
+            "  working directory and environment variables are NOT preserved. Run long-lived commands\n"
+            "  in the background (e.g. 'sleep 10 &').\n\n"
+            "Do NOT re-run setup commands (cd, source, export) that already ran in this tab.\n"
+            "If a previous command is still running or waiting, new commands are rejected — interact\n"
+            "with it via the process tool first. Use 'terminal list' to see tabs; 'terminal open/select'\n"
+            "to switch. IMPORTANT: if a command asks for a password, STOP and ask the user."
         )
 
     @property
@@ -121,281 +106,153 @@ class CommandTool(Tool):
 
         return terminal_result_metadata(result)
 
-    async def execute(
-        self,
-        command: str,
-        **_kwargs: object,
-    ) -> str:
+    async def execute(self, command: str = "", **_kwargs: object) -> str:
         from modex_agent.runtime.env_context import _modex_env
         from modex_agent.tools.terminal.env import build_full_env
+        from modex_agent.tools.terminal.poll_loop import PollOutcome, poll_until_settled
 
         overrides = _modex_env.get()
         session = await self._manager.get_default()
         terminal_name = session.name
         is_new_tab = not session.backend_started
+        previous_finished = self._registry.get_finished_by_terminal(terminal_name)
 
-        # Guard: check terminal is writable before proceeding
         guard_result = await check_command_writable(session, config=self._config)
         if guard_result is not None:
             return self._format_rejected(guard_result)
 
-        session.set_expected_state(TerminalCommandStatus.EXECUTING)
         await session.ensure_started(env=build_full_env(overrides) if overrides else None)
-
         proc = self._registry.create(
             command=command,
             terminal=terminal_name,
             cwd=None,
             pid=None,
         )
-
         await session.submit_command(command)
-
-        from modex_agent.tools.terminal.poll_loop import PollOutcome, poll_until_settled
-
-        timeout_seconds = self._config.default_command_timeout_seconds
-        yield_window_ms = self._config.default_yield_ms
-
         result = await poll_until_settled(
             session,
             self._registry,
             proc.id,
             self._config,
-            yield_ms=yield_window_ms,
-            timeout_seconds=timeout_seconds,
-            check_input_wait=True,
             command=command,
+            check_input_wait=True,
         )
 
-        def _inject_hint(xml: str) -> str:
-            if is_new_tab:
-                return xml.replace(
-                    "<command_result>",
-                    f"<command_result>\n<hint>New terminal tab '{xml_text(terminal_name)}' created.</hint>",
+        hint: str | None = None
+        if is_new_tab:
+            hint = f"New terminal tab '{terminal_name}' created."
+            if (
+                previous_finished is not None
+                and previous_finished.status is ProcessStatus.TIMED_OUT
+            ):
+                hint += (
+                    f" Previous tab timed out after {self._config.command_deadline_seconds}s "
+                    "and was closed."
                 )
-            return xml
 
         match result.outcome:
-            case PollOutcome.PROCESS_EXIT | PollOutcome.PROMPT_DETECTED:
+            case PollOutcome.PROMPT_DETECTED | PollOutcome.PROCESS_EXIT:
                 mark_exited_if_finished(self._registry, proc.id, result.outcome)
-                session.set_expected_state(TerminalCommandStatus.IDLE)
                 session.apply_outcome(result)
-                return _inject_hint(
-                    self._format_completed(
-                        result.output_parts, result.elapsed_ms
-                    )
-                )
+                return self._format_completed(result.output_parts, result.elapsed_ms, hint=hint)
             case PollOutcome.INPUT_WAIT:
-                runtime = self._registry.running_runtime(proc.id)
-                session.set_expected_state(TerminalCommandStatus.WAITING_INPUT)
                 session.apply_outcome(result)
-                return _inject_hint(
-                    await self._format_running(
-                        session,
-                        result.output_parts,
-                        runtime,
-                        result.elapsed_ms,
-                        detected_input_wait=True,
-                    )
-                )
-            case PollOutcome.LONG_RUNNING:
-                runtime = self._registry.running_runtime(proc.id)
-                session.set_expected_state(TerminalCommandStatus.LONG_RUNNING)
-                session.apply_outcome(result)
-                return _inject_hint(
-                    await self._format_running(
-                        session,
-                        result.output_parts,
-                        runtime,
-                        result.elapsed_ms,
-                    )
-                )
-            case PollOutcome.STUCK:
-                raw_idle_ms = int((time.monotonic() - session.last_byte_at) * 1000)
-                session.set_expected_state(None)
-                session.apply_outcome(result)
-                return _inject_hint(
-                    self._format_stuck(
-                        result.output_parts, raw_idle_ms, result.elapsed_ms
-                    )
-                )
-            case PollOutcome.PAGINATED:
-                session.set_expected_state(TerminalCommandStatus.PAGINATED)
-                session.apply_outcome(result)
-                return _inject_hint(
-                    self._format_paginated(
-                        result.output_parts, result.elapsed_ms
-                    )
-                )
-            case PollOutcome.YIELDED:
-                session.set_expected_state(TerminalCommandStatus.EXECUTING)
-                session.apply_outcome(result)
-                return _inject_hint(
-                    await self._format_running(
-                        session,
-                        result.output_parts,
-                        None,
-                        result.elapsed_ms,
-                    )
+                idle_ms = self._registry.idle_ms(proc.id)
+                assert idle_ms is not None
+                return self._format_waiting_input(
+                    result.output_parts,
+                    result.elapsed_ms,
+                    idle_ms,
+                    hint=hint,
                 )
             case PollOutcome.TIMED_OUT:
-                await session.terminate()
-                self._registry.mark_exited(
-                    proc.id,
-                    exit_code=None,
-                    exit_signal="TIMEOUT",
-                    status=ProcessStatus.TIMED_OUT,
-                    timed_out=True,
-                )
-                session.set_expected_state(None)
                 session.apply_outcome(result)
-                return _inject_hint(
-                    self._format_timed_out(
-                        result.output_parts,
-                        timeout_seconds,
-                        result.elapsed_ms,
+                # Converged timeout contract (same as the watchdog and
+                # ProcessTool): close-first; mark only after the tab is
+                # gone — a failed close leaves the session RUNNING so the
+                # watchdog retries close+mark on its next tick.
+                try:
+                    await self._manager.close(terminal_name)
+                except Exception:
+                    logger.exception(
+                        "bash: failed to close timed-out terminal tab %s",
+                        terminal_name,
                     )
-                )
-
-    # ------------------------------------------------------------------
-    # XML formatting
-    # ------------------------------------------------------------------
+                else:
+                    self._registry.mark_exited(
+                        proc.id,
+                        exit_code=None,
+                        exit_signal="TIMEOUT",
+                        status=ProcessStatus.TIMED_OUT,
+                        timed_out=True,
+                    )
+                return self._format_timed_out(result.output_parts, result.elapsed_ms, hint=hint)
+            case unreachable:
+                assert_never(unreachable)
 
     @staticmethod
     def _format_completed(
-        output_parts: list[str], elapsed_ms: int
+        output_parts: list[str],
+        elapsed_ms: int,
+        *,
+        hint: str | None,
     ) -> str:
-        raw = "".join(output_parts)
-        output = sanitize_terminal_output(raw).rstrip()
+        output = sanitize_terminal_output("".join(output_parts)).rstrip()
         return _build_command_xml(
             output or "(no output)",
             CommandResultStatus.COMPLETED,
             elapsed_ms,
+            hint=hint,
         )
 
-    @staticmethod
-    async def _format_running(
-        terminal_session: TerminalSession,
+    def _format_waiting_input(
+        self,
         output_parts: list[str],
-        runtime: RunningSessionRuntime | None,
         elapsed_ms: int,
+        idle_ms: int,
         *,
-        detected_input_wait: bool = False,
+        hint: str | None,
     ) -> str:
-        raw = "".join(output_parts)
-        output = sanitize_terminal_output(raw).rstrip()
-        idle_ms = runtime.idle_ms if runtime else None
-
-        is_input_wait = detected_input_wait or (runtime is not None and runtime.waiting_for_input)
-        if is_input_wait:
-            message = (
-                f"No new output for {(runtime.idle_ms if runtime else 0) // 1000}s; "
-                "this session may be waiting for input. "
-                "Use process write, send_keys, submit, or paste to provide input."
-            )
-            return _build_command_xml(
-                output,
-                CommandResultStatus.WAITING_INPUT,
-                elapsed_ms,
-                no_output_ms=idle_ms,
-                message=message,
-            )
-
+        output = sanitize_terminal_output("".join(output_parts)).rstrip()
         message = (
-            "Command still executing. Use terminal current to check progress, "
-            "process write/send_keys/paste for input."
+            f"No output for {idle_ms // 1000}s — the command MAY be waiting for input "
+            "(prompt, password, pager).\n"
+            "Judge from the output above: answer it with the process tool, interrupt with ^C, or wait.\n"
+            f"The command keeps running ({self._config.command_deadline_seconds}s limit)."
         )
-        xml = _build_command_xml(
+        return _build_command_xml(
             output,
-            CommandResultStatus.EXECUTING,
+            CommandResultStatus.WAITING_INPUT,
             elapsed_ms,
             no_output_ms=idle_ms,
             message=message,
+            hint=hint,
         )
 
-        if terminal_session.cursor_key_mode == CursorKeyMode.APPLICATION:
-            segment = await terminal_session.current_segment()
-            if segment and segment.text.strip():
-                tui_text = sanitize_terminal_output(segment.text).rstrip()
-                xml = xml.replace(
-                    "</command_result>",
-                    f"\n<tui_screen>\n{xml_text(tui_text)}\n</tui_screen>\n</command_result>",
-                )
-        else:
-            segment = await terminal_session.current_segment()
-            cursor = resolve_cursor_line(segment)
-            if cursor.strip():
-                cursor_text = sanitize_terminal_output(cursor).rstrip()
-                xml = xml.replace(
-                    "</command_result>",
-                    f"\n<cursor_line>\n{xml_text(cursor_text)}\n</cursor_line>\n</command_result>",
-                )
-
-        return xml
-
-    @staticmethod
-    def _format_paginated(
-        output_parts: list[str],
-        elapsed_ms: int,
-    ) -> str:
-        raw = "".join(output_parts)
-        output = sanitize_terminal_output(raw).rstrip()
-        message = (
-            "A pager (less/more) is active. "
-            "Use 'process write' with 'q' to quit, Space for next page, "
-            "or Enter for next line. Use 'terminal current' to see the full screen."
-        )
-        return _build_command_xml(
-            output,
-            CommandResultStatus.PAGINATED,
-            elapsed_ms,
-            message=message,
-        )
-
-    @staticmethod
-    def _format_stuck(
-        output_parts: list[str],
-        raw_idle_ms: int,
-        elapsed_ms: int,
-    ) -> str:
-        raw = "".join(output_parts)
-        output = sanitize_terminal_output(raw).rstrip()
-        message = (
-            f"No terminal activity for {raw_idle_ms // 1000}s. "
-            "The command may be stuck. Use process interrupt to send Ctrl+C, "
-            "or terminal current to check the screen."
-        )
-        return _build_command_xml(
-            output,
-            CommandResultStatus.STUCK,
-            elapsed_ms,
-            no_output_ms=raw_idle_ms,
-            message=message,
-        )
-
-    @staticmethod
     def _format_timed_out(
+        self,
         output_parts: list[str],
-        timeout_seconds: int,
         elapsed_ms: int,
+        *,
+        hint: str | None,
     ) -> str:
-        raw = "".join(output_parts)
-        output = sanitize_terminal_output(raw).rstrip()
+        output = sanitize_terminal_output("".join(output_parts)).rstrip()
         message = (
-            f"Command timed out after {timeout_seconds}s and was terminated. "
-            "Partial output captured above."
+            f"The command hit the {self._config.command_deadline_seconds}s limit and the tab was "
+            "closed. The shell was reset: working\n"
+            "directory and environment variables are NOT preserved. Partial output above. Run\n"
+            "long-lived commands in the background, or answer prompts promptly via the process tool."
         )
         return _build_command_xml(
-            output,
+            output or "(no output)",
             CommandResultStatus.TIMED_OUT,
             elapsed_ms,
             message=message,
+            hint=hint,
         )
 
     @staticmethod
-    def _format_rejected(
-        guard_result: TerminalGuardResult,
-    ) -> str:
+    def _format_rejected(guard_result: TerminalGuardResult) -> str:
         snap = guard_result.snapshot
         parts = [
             "<command_result>",

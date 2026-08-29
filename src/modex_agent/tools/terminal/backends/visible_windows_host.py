@@ -33,7 +33,7 @@ import socket
 import sys
 import threading
 from abc import ABC, abstractmethod
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 
 _READ_TIMEOUT = 0.5  # seconds for each PTY recv()
 _PTY_ROWS = 30
@@ -76,7 +76,10 @@ def _enable_vt_mode() -> None:
     except ImportError:
         return
 
-    kernel32 = ctypes.windll.kernel32
+    if TYPE_CHECKING:
+        kernel32 = ctypes.CDLL("kernel32")
+    else:
+        kernel32 = ctypes.windll.kernel32
     STD_OUTPUT_HANDLE = -11
     ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
 
@@ -103,7 +106,10 @@ def _disable_console_echo() -> None:
     except ImportError:
         return
 
-    kernel32 = ctypes.windll.kernel32
+    if TYPE_CHECKING:
+        kernel32 = ctypes.CDLL("kernel32")
+    else:
+        kernel32 = ctypes.windll.kernel32
     ENABLE_PROCESSED_INPUT = 0x0001
     ENABLE_LINE_INPUT = 0x0002
     ENABLE_ECHO_INPUT = 0x0004
@@ -130,7 +136,10 @@ def _resize_console(rows: int = _PTY_ROWS, cols: int = _PTY_COLS) -> None:
     except ImportError:
         return
 
-    kernel32 = ctypes.windll.kernel32
+    if TYPE_CHECKING:
+        kernel32 = ctypes.CDLL("kernel32")
+    else:
+        kernel32 = ctypes.windll.kernel32
     STD_OUTPUT_HANDLE = -11
 
     h_stdout = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
@@ -189,7 +198,10 @@ def _get_console_size() -> tuple[int, int] | None:
             ("dwMaximumWindowSize", COORD),
         ]
 
-    kernel32 = ctypes.windll.kernel32
+    if TYPE_CHECKING:
+        kernel32 = ctypes.CDLL("kernel32")
+    else:
+        kernel32 = ctypes.windll.kernel32
     h_stdout = kernel32.GetStdHandle(-11)
     if h_stdout in (-1, None):
         return None
@@ -305,7 +317,10 @@ def _stdin_to_pty(proc: WritablePty, stdin: TextIO) -> None:
     import ctypes
     from ctypes import wintypes
 
-    kernel32 = ctypes.windll.kernel32
+    if TYPE_CHECKING:
+        kernel32 = ctypes.CDLL("kernel32")
+    else:
+        kernel32 = ctypes.windll.kernel32
 
     # Open CONIN$ — always refers to THIS console's input buffer.
     GENERIC_READ = 0x80000000

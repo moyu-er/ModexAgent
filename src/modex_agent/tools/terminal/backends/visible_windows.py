@@ -39,6 +39,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+if sys.platform == "win32":
+    from subprocess import CREATE_NEW_CONSOLE as _CREATE_NEW_CONSOLE
+else:
+    _CREATE_NEW_CONSOLE = 0
+
 from modex_agent.tools.terminal.pty_keys import CTRL_C
 from modex_agent.tools.terminal.results import SlidingOutputBuffer, TerminalRead
 from modex_agent.tools.terminal.types import (
@@ -143,7 +148,7 @@ class WinptyConsoleWindowBackend(WinptyBackend):
             cmd.append(cwd)
         self._proc = subprocess.Popen(
             cmd,
-            creationflags=subprocess.CREATE_NEW_CONSOLE,
+            creationflags=_CREATE_NEW_CONSOLE,
             cwd=cwd,
             env=env,
         )
