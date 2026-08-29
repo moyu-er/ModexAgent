@@ -24,6 +24,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.plugins.abc import AgentType
+from modex_agent.plugins.capability import CompiledCapability
 from modex_agent.workspace.context import WorkspaceContext
 
 
@@ -108,6 +109,13 @@ class AssemblySpec(BaseModel):
     interceptors: list[str] = Field(default_factory=list)
     interceptor_configs: dict[str, dict[str, Any]] = Field(default_factory=dict)
     commands: list[str] | None = None
+
+    # ── capability protocol (ADR-0047 / SPEC §6) ──
+    capabilities: tuple[CompiledCapability, ...] = ()
+    """The agent's effective capabilities as frozen compile products
+    (name + validated config + binding). The capability objects themselves
+    never enter the spec — assembly re-resolves them by name from the
+    registry (byte-stability contract)."""
 
     # ── context reference (Python object, not serialized) ──
     workspace_ctx: WorkspaceContext

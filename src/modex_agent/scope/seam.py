@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 from typing import Final
 
+from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import ScopeCompilation, compile_scope
 from modex_agent.scope.derivation import _DEFAULT_LLM_PROVIDER
 from modex_agent.scope.profile import STANDARD_PROFILES, ProfileStore
@@ -70,13 +71,20 @@ class ScopeGenerationTracker:
         workspace_ctx: WorkspaceContext,
         profiles: ProfileStore = STANDARD_PROFILES,
         default_llm_provider: str = _DEFAULT_LLM_PROVIDER,
+        registry: ComponentRegistry | None = None,
     ) -> ScopeCompilation:
-        """Pure compile plus one generation bump per hosted pool."""
+        """Pure compile plus one generation bump per hosted pool.
+
+        ``registry`` threads the CAPABILITY slot into the compiler (the
+        same parameter ``compile_scope`` takes); the generation counter is
+        unaffected by it — the registry is a compile input, not state.
+        """
         compilation = compile_scope(
             spec,
             workspace_ctx=workspace_ctx,
             profiles=profiles,
             default_llm_provider=default_llm_provider,
+            registry=registry,
         )
         for pool in {agent.provenance.pool for agent in compilation.agents}:
             self._generations[pool] = self._generations.get(pool, 0) + 1

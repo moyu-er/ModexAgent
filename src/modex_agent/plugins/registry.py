@@ -30,6 +30,7 @@ Design constraints (SPEC §4.2, §10.1, §11):
 from __future__ import annotations
 
 import logging
+from typing import cast
 
 from pydantic import BaseModel
 
@@ -40,6 +41,7 @@ from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategyRegistry,
 )
 from modex_agent.plugins.abc import ComponentFactory, ComponentSlot, PluginSource, SimpleFactory
+from modex_agent.plugins.capability import Capability
 
 __all__ = [
     "ComponentNotFoundError",
@@ -173,6 +175,20 @@ class ComponentRegistry:
     def names(self, slot: ComponentSlot) -> tuple[str, ...]:
         """Return registered component names for *slot* in deterministic order."""
         return tuple(sorted(self._factories.get(slot, {})))
+
+    def resolve_capability(self, name: str) -> Capability:
+        """Return the capability INSTANCE registered under ``CAPABILITY``/``name``.
+
+        The CAPABILITY slot stores capability instances, not factories
+        (SPEC §4) — the registry's ``ComponentFactory``-typed store face
+        predates the 11th slot. This accessor is the ONE read-side
+        convergence point for that representation mismatch (the loader's
+        flush site is the write-side counterpart): compile-time consumers
+        get a typed capability instead of scattering their own casts.
+
+        Raises ``ComponentNotFoundError`` when *name* is not registered.
+        """
+        return cast("Capability", self.resolve(ComponentSlot.CAPABILITY, name))
 
     def resolve_namespace_model(self, name: str) -> type[BaseModel]:
         """Return the Pydantic model class for namespace *name*.
