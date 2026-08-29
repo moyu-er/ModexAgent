@@ -22,6 +22,9 @@ from time import monotonic
 import pytest
 
 import modex_agent.tools.terminal._persistent_session as session_mod
+from modex_agent.tools.terminal._foreground_probe import (
+    stdin_probe_available as _probe_available,
+)
 from modex_agent.tools.terminal._persistent_session import PersistentShellSession
 from modex_agent.tools.terminal.persistent_bash import BashInputTool, PersistentBashTool
 
@@ -239,9 +242,8 @@ async def test_completed_output_with_prompt_suffix_no_false_wait(
 async def test_weak_suffix_still_fires_when_probe_confirms(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The complement of the gate: the SAME suffix-shaped output while the
-    kernel probe positively confirms a stdin wait must STILL surface the
-    hint — the weak heuristic keeps its value when corroborated."""
+    """A deliberately non-keyword suffix prompt still fires when the kernel
+    probe positively confirms the stdin wait."""
     monkeypatch.setattr(session_mod, "stdin_probe_available", lambda: True)
 
     async def _probe_confirms(self: PersistentShellSession) -> bool:
@@ -251,8 +253,8 @@ async def test_weak_suffix_still_fires_when_probe_confirms(
     tool = PersistentBashTool(timeout_seconds=10)
     bash_input = BashInputTool(tool.manager)
     try:
-        out = await tool.execute(command="read -p 'Continue? ' X; echo got=$X")
-        assert "Continue?" in out
+        out = await tool.execute(command="read -p 'name: ' X; echo got=$X")
+        assert "name:" in out
         assert "[hint:" in out
         assert (await bash_input.execute(line="y")).strip() == "got=y"
     finally:
@@ -492,7 +494,7 @@ async def test_raw_takeover_returns_promptly_zsh_prompt():
 
         resumed = await bash_input.execute(line="pw")
         elapsed = monotonic() - started
-        assert elapsed < 2.5
+        assert elapsed < 3.5
         assert "Welcome" in resumed
         assert "interactive shell" in resumed
 
@@ -520,7 +522,7 @@ async def test_raw_takeover_returns_promptly_fish_prompt():
 
         resumed = await bash_input.execute(line="pw")
         elapsed = monotonic() - started
-        assert elapsed < 2.5
+        assert elapsed < 3.5
         assert "Welcome" in resumed
         assert "interactive shell" in resumed
 
@@ -554,7 +556,7 @@ async def test_local_nested_shell_passthrough():
         started = monotonic()
         output = await tool.execute(command="bash --noprofile --norc -i")
         elapsed = monotonic() - started
-        assert elapsed < 2.5
+        assert elapsed < 3.5
         assert "interactive shell" in output
 
         assert await tool.execute(command="echo nested-run") == "nested-run"
@@ -564,18 +566,45 @@ async def test_local_nested_shell_passthrough():
         await tool.close()
 
 
-async def test_raw_nonshell_takeover_hint():
+@pytest.mark.skipif(
+    not _probe_available(), reason="zero-output raw stdin waits require the Linux probe"
+)
+async def test_raw_nonshell_takeover_hint_probe_path(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(session_mod, "_STDIN_PROBE_INTERVAL_S", 3.0)
     tool = PersistentBashTool(timeout_seconds=8)
     bash_input = BashInputTool(tool.manager)
     try:
+        started = monotonic()
         output = await tool.execute(
             command='python3 -c "import sys,tty,termios; tty.setraw(0); sys.stdin.read(1)"'
         )
+        elapsed = monotonic() - started
+
         assert output.startswith("[no output]\n\n[hint:")
+        assert 2.5 <= elapsed < 6.0
 
         resumed = await bash_input.execute(line="q")
         assert "[hint:" not in resumed
         assert tool.manager.session_for(None)._phase is session_mod._Phase.IDLE
+    finally:
+        await tool.close()
+
+
+@pytest.mark.skipif(
+    _probe_available(), reason="probe-less zero-output contract runs off Linux"
+)
+async def test_raw_nonshell_takeover_hint_gated_on_probeless():
+    tool = PersistentBashTool(timeout_seconds=3)
+    try:
+        output = await tool.execute(
+            command='python3 -c "import sys,tty,termios; tty.setraw(0); sys.stdin.read(1)"'
+        )
+
+        assert "timed out after 3 seconds" in output
+        assert "[hint:" not in output
+        assert await tool.execute(command="echo fresh") == "fresh"
     finally:
         await tool.close()
 

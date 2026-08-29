@@ -37,16 +37,21 @@ Kernel terminal-state and stdin-wait detection:
 * **Read-loop ordering**: the END marker has absolute priority. A controlled
   PS1 token closes an otherwise unmarked transaction only under
   ``SHELL_READLINE``, or when terminal-state evidence is unavailable.
-  ``CHILD_RAW`` identifies interactive takeover after 0.25 seconds of quiet,
-  two consecutive 25 ms read-loop observations, and a non-empty output buffer; it
-  returns a shell-kind WAITING result that accepts command passthrough.
+  ``CHILD_RAW`` identifies interactive takeover after 0.75 seconds of quiet,
+  three consecutive 25 ms read-loop observations, and real output owned by the
+  current command; it returns a shell-kind WAITING result that accepts command
+  passthrough.
+* **Empty-evidence gate**: zero real output for THIS command (a START marker
+  alone is not output) never settles on terminal-mode or output-shape evidence.
+  The Linux ``/proc`` probe is the sole zero-output authority.
 * **Canonical waits and fallbacks**: on Linux, every
   ``_STDIN_PROBE_INTERVAL_S`` the ``/proc`` probe remains the authority for
   foreground groups blocked reading terminal input. A probe hit classifies
   WAITING from the terminal signal: ``CHILD_RAW`` is shell-kind and every
   other state is prompt-kind. Keyword detection and the weak prompt-shape
   layer remain fallbacks for canonical interactive states and builtin reads;
-  the weak layer requires probe absence or positive probe confirmation.
+  the weak layer requires positive probe confirmation, or a 2.0-second quiet
+  window when the probe is unavailable.
   Stale WAITING transactions use the same kernel signal and fall back to the
   trailing shell shape only when terminal-state evidence is unavailable.
 
@@ -93,6 +98,7 @@ from typing import Any
 from modex_agent.runtime.env_context import _modex_env
 from modex_agent.tools.overflow.truncate import render_overflow_text, split_head_tail
 from modex_agent.tools.terminal._foreground_probe import (
+    controlling_tty_device,
     foreground_pgid,
     is_stdin_waiting,
     parse_proc_stat,
@@ -122,6 +128,10 @@ _STDIN_PROBE_INTERVAL_S = 3.0
 # detectors require this much output silence first — a still-streaming
 # command must not be truncated by an early verdict.
 _PROMPT_SETTLE_S = 0.25
+# Takeover damping: require sustained quiet before raw-child ownership settles.
+_TAKEOVER_QUIET_S = 0.75
+# Probe-less weak-shape window: give silent computation time to resume output.
+_WEAK_PROMPT_SETTLE_S = 2.0
 # Per-command output rolling buffer (tail-keeping; the marker always
 # lands at the end, so completion survives any head dropping).
 _SCROLLBACK_MAX_CHARS = 4_000_000
@@ -142,16 +152,18 @@ _BUSY_RUNNING_MESSAGE = (
     "only bash_input(^C) is accepted while it runs"
 )
 _STDIN_HINT = (
-    "[hint: the command stopped at a prompt waiting for interactive input "
+    "[hint: the command appears stopped at a prompt waiting for interactive input "
     "(password, yes/no confirmation, or a question) — answer it with "
-    "bash_input(line), or interrupt it with bash_input(^C)]"
+    "bash_input(line), or interrupt it with bash_input(^C); if it is still computing "
+    "silently it will finish or time out on its own]"
 )
 _SHELL_HINT = (
-    "[hint: an interactive shell is active (remote login / REPL at its own prompt) — "
-    "run further commands with the bash tool directly; they execute inside that "
-    "shell; answer prompts or send keys (e.g. 'q' for a pager) with bash_input; '^C' "
-    "is forwarded as a byte to the program that owns the terminal; log out (exit) to "
-    "return to the local shell]"
+    "[hint: the terminal went quiet while a raw-mode child owns the foreground — "
+    "likely an interactive shell session (remote login, REPL, TUI) or a still-running "
+    "silent command; further bash commands execute inside that session; answer its "
+    "prompts or send keys (e.g. 'q' for a pager) with bash_input; '^C' is forwarded as "
+    "a byte to the program that owns the terminal; a silent command will finish or time "
+    "out on its own; log out (exit) to return to the local shell]"
 )
 _SHELL_EXITED_NOTICE = "[shell exited — it will restart fresh on the next call]"
 _NO_OUTPUT = "[no output]"
@@ -387,6 +399,27 @@ class _PendingWait:
     start_token: str
     deadline: float | None
     timeout_seconds: int | None = None
+
+
+def _has_real_output(accum: _RollingBuffer, pending: _PendingWait) -> bool:
+    """Return whether this command owns non-whitespace output evidence.
+
+    The gate uses the same latest-START command-ownership boundary as
+    :meth:`_finalize` match-path slicing, but is deliberately stricter for
+    evidence: whitespace-only body text is not real output even though
+    :func:`_format_result` preserves it when rendering. On WAITING exits the
+    gate still slices to the command's own window while ``_finalize`` renders
+    the raw buffer.
+    """
+    text = accum.text
+    start_at = text.rfind(pending.start_token)
+    if start_at >= 0:
+        body = text[start_at + len(pending.start_token) :]
+    elif accum.dropped_head:
+        body = text
+    else:
+        return False
+    return bool(body.strip())
 
 
 class PersistentShellUnsupportedError(RuntimeError):
@@ -893,8 +926,11 @@ class PersistentShellSession:
             return False
 
         def _check() -> bool:
+            expected = controlling_tty_device(proc.pid)
+            if expected is None:
+                return False
             pgid = foreground_pgid(proc.pid)
-            return pgid is not None and is_stdin_waiting(pgid)
+            return pgid is not None and is_stdin_waiting(pgid, expected)
 
         loop = asyncio.get_running_loop()
         try:
@@ -961,16 +997,22 @@ class PersistentShellSession:
         control at readline, or when terminal-state evidence is unavailable;
         tokens seen during canonical shell work or child ownership wait for the
         END marker. The terminal-state matrix is sampled on every
-        read-loop tick: two consecutive child-owned raw-mode observations,
-        after a quiet window and with buffered output, identify interactive
-        takeover and return a shell-kind WAITING result. Other matrix states
-        continue through the stdin probe, keyword detector, and weak
-        prompt-shape fallback. Those layers also require the output-quiet
-        window so a still-streaming command is never truncated by an early
-        verdict. Output silence alone is never stdin-wait evidence — a silent
-        transaction waits for detector evidence or the command deadline.
+        read-loop tick: three consecutive child-owned raw-mode observations,
+        after the takeover quiet window and with real command-owned output,
+        identify interactive takeover and return a shell-kind WAITING result.
+        Other matrix states continue through the stdin probe, keyword detector,
+        and weak prompt-shape fallback. The probe and keyword layers use the
+        normal output-quiet window; a probe-less weak shape uses its extended
+        window so a still-computing command is not truncated by an early
+        verdict. Output silence alone is never stdin-wait evidence except for a
+        positive Linux probe — otherwise a silent transaction waits for the
+        command deadline.
         """
         accum = _RollingBuffer()
+        # A resumed WAITING collect needs the same command-ownership boundary
+        # without replaying the prior prompt text into the rendered result.
+        if self._pending is pending:
+            accum.append(f"{pending.start_token}\n")
         idle_since = monotonic()
         probe_usable = stdin_probe_available()
         next_probe_at = monotonic() + _STDIN_PROBE_INTERVAL_S
@@ -1017,12 +1059,17 @@ class PersistentShellSession:
                 consecutive_raw += 1
             else:
                 consecutive_raw = 0
-            if consecutive_raw >= 2 and quiet and accum.text:
+            if (
+                consecutive_raw >= 3
+                and now - idle_since >= _TAKEOVER_QUIET_S
+                and _has_real_output(accum, pending)
+            ):
                 self._waiting_shell = True
                 self._pending = pending
                 self._phase = _Phase.WAITING
                 self._wait_tail = accum.text[-256:]
                 return _with_hint(self._finalize(accum, pending, None), _SHELL_HINT)
+            # The Linux /proc probe is the sole zero-output authority.
             if probe_usable and now >= next_probe_at:
                 next_probe_at = now + _STDIN_PROBE_INTERVAL_S
                 if quiet and await self._probe_stdin_wait():
@@ -1049,16 +1096,33 @@ class PersistentShellSession:
                 self._phase = _Phase.WAITING
                 self._wait_tail = accum.text[-256:]
                 return _with_hint(self._finalize(accum, pending, None), _STDIN_HINT)
-            if accum.text and quiet and _looks_like_foreign_prompt(accum.text):
-                weak_confirmed = not probe_usable
-                if probe_usable and not weak_confirmed:
-                    weak_confirmed = await self._probe_stdin_wait()
-                if weak_confirmed:
-                    self._waiting_shell = False
-                    self._pending = pending
-                    self._phase = _Phase.WAITING
-                    self._wait_tail = accum.text[-256:]
-                    return _with_hint(self._finalize(accum, pending, None), _STDIN_HINT)
+            if (
+                accum.text
+                and _looks_like_foreign_prompt(accum.text)
+                and (
+                    (probe_usable and quiet and await self._probe_stdin_wait())
+                    or (not probe_usable and now - idle_since >= _WEAK_PROMPT_SETTLE_S)
+                )
+            ):
+                # Kernel classification mirrors the probe road above: a
+                # probe-confirmed stdin wait under CHILD_RAW ownership is a
+                # shell-kind takeover (an interactive remote/REPL shell at
+                # its own prompt — bash passthrough), not a prompt-kind
+                # wait. Hardcoding prompt-kind here let this road (quiet at
+                # _PROMPT_SETTLE_S) preempt the raw-takeover road (quiet at
+                # _TAKEOVER_QUIET_S) on probe-capable hosts and misreport
+                # interactive shells as input prompts. Evidence unavailable
+                # keeps the trailing-shape fallback (prompt-kind).
+                signal = self._terminal_state()
+                self._waiting_shell = (
+                    signal is _TerminalSignal.CHILD_RAW if signal is not None else False
+                )
+                self._pending = pending
+                self._phase = _Phase.WAITING
+                self._wait_tail = accum.text[-256:]
+                return _with_hint(
+                    self._finalize(accum, pending, None), _hint_for(self._waiting_shell)
+                )
 
     def _finalize(
         self,
