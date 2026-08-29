@@ -9,6 +9,7 @@ import pytest
 from modex_agent.tools.terminal._foreground_probe import (
     ProbeInternals,
     ProcStat,
+    controlling_tty_device,
     default_internals,
     foreground_pgid,
     is_stdin_waiting,
@@ -36,11 +37,12 @@ def _stat_line(
     state: str = "S",
     pgrp: int = 100,
     session: int = 100,
+    tty_nr: int = 0x8800,
     tpgid: int = 100,
 ) -> str:
     # Real layout: pid (comm) state ppid pgrp session tty_nr tpgid ... [19]=starttime
     filler = " ".join(["0"] * 13)
-    return f"{pid} ({comm}) {state} {pid - 1} {pgrp} {session} 3 {tpgid} {filler} 12345"
+    return f"{pid} ({comm}) {state} {pid - 1} {pgrp} {session} {tty_nr} {tpgid} {filler} 12345"
 
 
 class FakeProc:
@@ -50,6 +52,11 @@ class FakeProc:
         self.files: dict[str, str] = {}
         self.mem: dict[int, bytes] = {}
         self.links: dict[str, str] = {}
+        self.rdevs: dict[str, int] = {
+            "/dev/pts/0": 0x8800,
+            "/dev/pts/5": 0x8805,
+            "/dev/console": 0x501,
+        }
         self.fds: dict[int, tuple[int, int]] = {}  # fd -> (address, length)
         self._next_fd = 10
 
@@ -93,6 +100,10 @@ class FakeProc:
             except KeyError as exc:
                 raise OSError(f"missing link {path}") from exc
 
+        def _stat_rdev(path: str) -> int | None:
+            target = fake.links.get(path)
+            return None if target is None else fake.rdevs.get(target)
+
         def _read_dir(path: str) -> list[str]:
             # /proc and /proc/<pid>/task listings derived from the file table
             if path == "/proc":
@@ -130,6 +141,7 @@ class FakeProc:
             read_mem=_read_mem,
             close=_close,
             readlink=_readlink,
+            stat_rdev=_stat_rdev,
         )
 
 
@@ -153,6 +165,12 @@ def test_parse_proc_stat_with_nested_parens() -> None:
     stat = parse_proc_stat(_stat_line(1, comm="(systemd)"))
     assert stat is not None
     assert stat.pid == 1
+
+
+def test_parse_proc_stat_exposes_tty_nr() -> None:
+    stat = parse_proc_stat(_stat_line(200, tty_nr=0x8805))
+    assert stat is not None
+    assert stat.tty_nr == 0x8805
 
 
 def test_parse_proc_stat_malformed() -> None:
@@ -185,54 +203,60 @@ def _fake_with_syscall(pgid: int, syscall: str, *, arch_table: str = "x64") -> F
 )
 def test_read_syscall_judgement(syscall: str, expected: bool) -> None:
     fake = _fake_with_syscall(100, syscall)
-    assert is_stdin_waiting(100, fake.internals()) is expected
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is expected
 
 
 def test_select_stdin_in_fd_set() -> None:
     fake = FakeProc()
-    fake.add_process(200, pgrp=100, tpgid=100, syscall="23 0x1 0x7f00 0x0")
+    fake.add_process(200, pgrp=100, tpgid=100, syscall="23 0x1 0x7f00 0x0 0x0 0x0")
     fake.add_mem(0x7F00, b"\x01\x00\x00\x00\x00\x00\x00\x00")  # fd0 bit set
-    assert is_stdin_waiting(100, fake.internals()) is True
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is True
 
 
 def test_select_stdin_not_in_fd_set() -> None:
     fake = FakeProc()
-    fake.add_process(200, pgrp=100, tpgid=100, syscall="23 0x1 0x7f00 0x0")
+    fake.add_process(200, pgrp=100, tpgid=100, syscall="23 0x1 0x7f00 0x0 0x0 0x0")
     fake.add_mem(0x7F00, b"\x00\x02\x00\x00\x00\x00\x00\x00")  # fd1 bit only
-    assert is_stdin_waiting(100, fake.internals()) is False
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
 
 
 def test_select_address_zero() -> None:
     fake = FakeProc()
-    fake.add_process(200, pgrp=100, tpgid=100, syscall="23 0x1 0x0 0x0")
-    assert is_stdin_waiting(100, fake.internals()) is False
+    fake.add_process(200, pgrp=100, tpgid=100, syscall="23 0x1 0x0 0x0 0x0 0x0")
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
 
 
 def test_poll_stdin_pollin() -> None:
     import struct
 
     fake = FakeProc()
-    fake.add_process(200, pgrp=100, tpgid=100, syscall="7 0x7f00 0x1 0x0")
+    fake.add_process(
+        200, pgrp=100, tpgid=100, syscall="7 0x7f00 0x1 0xffffffffffffffff"
+    )
     fake.add_mem(0x7F00, struct.pack("<ihh", 0, 0x001, 0).ljust(8, b"\x00"))
-    assert is_stdin_waiting(100, fake.internals()) is True
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is True
 
 
 def test_poll_other_fd() -> None:
     import struct
 
     fake = FakeProc()
-    fake.add_process(200, pgrp=100, tpgid=100, syscall="7 0x7f00 0x1 0x0")
+    fake.add_process(
+        200, pgrp=100, tpgid=100, syscall="7 0x7f00 0x1 0xffffffffffffffff"
+    )
     fake.add_mem(0x7F00, struct.pack("<ihh", 3, 0x001, 0).ljust(8, b"\x00"))
-    assert is_stdin_waiting(100, fake.internals()) is False
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
 
 
 def test_poll_stdin_no_pollin() -> None:
     import struct
 
     fake = FakeProc()
-    fake.add_process(200, pgrp=100, tpgid=100, syscall="7 0x7f00 0x1 0x0")
+    fake.add_process(
+        200, pgrp=100, tpgid=100, syscall="7 0x7f00 0x1 0xffffffffffffffff"
+    )
     fake.add_mem(0x7F00, struct.pack("<ihh", 0, 0x000, 0).ljust(8, b"\x00"))
-    assert is_stdin_waiting(100, fake.internals()) is False
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
 
 
 def test_epoll_watches_stdin() -> None:
@@ -241,28 +265,203 @@ def test_epoll_watches_stdin() -> None:
         200,
         pgrp=100,
         tpgid=100,
-        syscall="232 0x4 0x7f00 0x10",
+        syscall="232 0x4 0x7f00 0x10 0xffffffffffffffff",
         fdinfo={4: "tfd:      0\ninotify:..."},
     )
-    assert is_stdin_waiting(100, fake.internals()) is True
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is True
 
 
 def test_epoll_watches_other_fd() -> None:
     fake = FakeProc()
     fake.add_process(
-        200, pgrp=100, tpgid=100, syscall="232 0x4 0x7f00 0x10", fdinfo={4: "tfd:      5\n"}
+        200,
+        pgrp=100,
+        tpgid=100,
+        syscall="232 0x4 0x7f00 0x10 0xffffffffffffffff",
+        fdinfo={4: "tfd:      5\n"},
     )
-    assert is_stdin_waiting(100, fake.internals()) is False
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
 
 
 def test_socket_read_is_not_stdin_wait() -> None:
     # recvfrom on x64 is syscall 47 reading fd 3 — the pip-install shape
     fake = _fake_with_syscall(100, "47 0x3 0x7fff 0x100")
-    assert is_stdin_waiting(100, fake.internals()) is False
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
 
 
 # ---------------------------------------------------------------------------
-# fd-0-is-tty guard (pipeline regression: `cmd | tail` false positive)
+# indefinite timeout rules
+# ---------------------------------------------------------------------------
+
+
+def test_poll_zero_timeout_is_not_stdin_wait() -> None:
+    import struct
+
+    fake = FakeProc()
+    fake.add_process(200, pgrp=100, tpgid=100, syscall="7 0x7f00 0x1 0x0")
+    fake.add_mem(0x7F00, struct.pack("<ihh", 0, 0x001, 0).ljust(8, b"\x00"))
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
+
+
+def test_poll_bounded_timeout_is_not_stdin_wait() -> None:
+    import struct
+
+    fake = FakeProc()
+    fake.add_process(200, pgrp=100, tpgid=100, syscall="7 0x7f00 0x1 0x64")
+    fake.add_mem(0x7F00, struct.pack("<ihh", 0, 0x001, 0).ljust(8, b"\x00"))
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
+
+
+def test_ppoll_null_timeout_is_stdin_wait() -> None:
+    import struct
+
+    fake = FakeProc()
+    fake.add_process(200, pgrp=100, tpgid=100, syscall="271 0x7f00 0x1 0x0 0x0")
+    fake.add_mem(0x7F00, struct.pack("<ihh", 0, 0x001, 0).ljust(8, b"\x00"))
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is True
+
+
+def test_ppoll_non_null_timeout_is_not_stdin_wait() -> None:
+    import struct
+
+    fake = FakeProc()
+    fake.add_process(200, pgrp=100, tpgid=100, syscall="271 0x7f00 0x1 0x7fff0000 0x0")
+    fake.add_mem(0x7F00, struct.pack("<ihh", 0, 0x001, 0).ljust(8, b"\x00"))
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
+
+
+def test_epoll_bounded_timeout_is_not_stdin_wait() -> None:
+    fake = FakeProc()
+    fake.add_process(
+        200,
+        pgrp=100,
+        tpgid=100,
+        syscall="232 0x4 0x7f00 0x10 0x64",
+        fdinfo={4: "tfd:      0\n"},
+    )
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
+
+
+def test_select_non_null_timeout_is_not_stdin_wait() -> None:
+    fake = FakeProc()
+    fake.add_process(
+        200, pgrp=100, tpgid=100, syscall="23 0x1 0x7f00 0x0 0x0 0x7fff0000"
+    )
+    fake.add_mem(0x7F00, b"\x01\x00\x00\x00\x00\x00\x00\x00")
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
+
+
+def test_pselect_null_timeout_is_stdin_wait() -> None:
+    fake = FakeProc()
+    fake.add_process(200, pgrp=100, tpgid=100, syscall="270 0x1 0x7f00 0x0 0x0 0x0")
+    fake.add_mem(0x7F00, b"\x01\x00\x00\x00\x00\x00\x00\x00")
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is True
+
+
+def test_pselect_non_null_timeout_is_not_stdin_wait() -> None:
+    fake = FakeProc()
+    fake.add_process(
+        200, pgrp=100, tpgid=100, syscall="270 0x1 0x7f00 0x0 0x0 0x7fff0000"
+    )
+    fake.add_mem(0x7F00, b"\x01\x00\x00\x00\x00\x00\x00\x00")
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
+
+
+def test_epoll_pwait_infinite_timeout_is_stdin_wait() -> None:
+    fake = FakeProc()
+    fake.add_process(
+        200,
+        pgrp=100,
+        tpgid=100,
+        syscall="281 0x4 0x7f00 0x10 0xffffffffffffffff",
+        fdinfo={4: "tfd:      0\n"},
+    )
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is True
+
+
+def test_epoll_pwait_bounded_timeout_is_not_stdin_wait() -> None:
+    fake = FakeProc()
+    fake.add_process(
+        200,
+        pgrp=100,
+        tpgid=100,
+        syscall="281 0x4 0x7f00 0x10 0x64",
+        fdinfo={4: "tfd:      0\n"},
+    )
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
+
+
+# ---------------------------------------------------------------------------
+# truncated syscall evidence
+# ---------------------------------------------------------------------------
+
+
+def test_truncated_select_without_timeout_is_not_stdin_wait() -> None:
+    fake = FakeProc()
+    fake.add_process(200, pgrp=100, tpgid=100, syscall="23 0x1 0x7f00")
+    fake.add_mem(0x7F00, b"\x01\x00\x00\x00\x00\x00\x00\x00")
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
+
+
+def test_truncated_poll_without_timeout_is_not_stdin_wait() -> None:
+    import struct
+
+    fake = FakeProc()
+    fake.add_process(200, pgrp=100, tpgid=100, syscall="7 0x7f00 0x1")
+    fake.add_mem(0x7F00, struct.pack("<ihh", 0, 0x001, 0).ljust(8, b"\x00"))
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
+
+
+def test_truncated_epoll_without_timeout_is_not_stdin_wait() -> None:
+    fake = FakeProc()
+    fake.add_process(
+        200,
+        pgrp=100,
+        tpgid=100,
+        syscall="232 0x4 0x7f00 0x10",
+        fdinfo={4: "tfd:      0\n"},
+    )
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
+
+
+def test_truncated_read_without_unused_args_is_stdin_wait() -> None:
+    fake = FakeProc()
+    fake.add_process(200, pgrp=100, tpgid=100, syscall="0 0x0 0x7fff")
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is True
+
+
+def test_arm64_indefinite_timeout_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(platform, "machine", lambda: "aarch64")
+
+    pselect = FakeProc()
+    pselect.add_process(200, pgrp=100, tpgid=100, syscall="72 0x1 0x7f00 0x0 0x0 0x0")
+    pselect.add_mem(0x7F00, b"\x01\x00\x00\x00\x00\x00\x00\x00")
+    assert is_stdin_waiting(100, (136, 0), pselect.internals()) is True
+    pselect.files["/proc/200/task/200/syscall"] = "72 0x1 0x7f00 0x0 0x0 0x7fff0000"
+    assert is_stdin_waiting(100, (136, 0), pselect.internals()) is False
+
+    ppoll = FakeProc()
+    ppoll.add_process(200, pgrp=100, tpgid=100, syscall="73 0x7f00 0x1 0x0 0x0")
+    ppoll.add_mem(0x7F00, b"\x00\x00\x00\x00\x01\x00\x00\x00")
+    assert is_stdin_waiting(100, (136, 0), ppoll.internals()) is True
+    ppoll.files["/proc/200/task/200/syscall"] = "73 0x7f00 0x1 0x7fff0000 0x0"
+    assert is_stdin_waiting(100, (136, 0), ppoll.internals()) is False
+
+    epoll_pwait = FakeProc()
+    epoll_pwait.add_process(
+        200,
+        pgrp=100,
+        tpgid=100,
+        syscall="22 0x4 0x7f00 0x10 0xffffffffffffffff",
+        fdinfo={4: "tfd:      0\n"},
+    )
+    assert is_stdin_waiting(100, (136, 0), epoll_pwait.internals()) is True
+    epoll_pwait.files["/proc/200/task/200/syscall"] = "22 0x4 0x7f00 0x10 0x64"
+    assert is_stdin_waiting(100, (136, 0), epoll_pwait.internals()) is False
+
+
+# ---------------------------------------------------------------------------
+# controlling-terminal device match (pipeline and cross-tty regressions)
 # ---------------------------------------------------------------------------
 
 
@@ -271,13 +470,20 @@ def test_pipeline_tail_read0_on_pipe_is_not_stdin_wait() -> None:
     # PIPE from the producer — a running pipeline, not an input wait.
     fake = FakeProc()
     fake.add_process(200, pgrp=100, tpgid=100, syscall="0 0x0 0x7fff 0x100", stdin_tty=False)
-    assert is_stdin_waiting(100, fake.internals()) is False
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
 
 
 def test_read0_on_tty_is_stdin_wait() -> None:
     fake = FakeProc()
     fake.add_process(200, pgrp=100, tpgid=100, syscall="0 0x0 0x7fff 0x100", stdin_tty=True)
-    assert is_stdin_waiting(100, fake.internals()) is True
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is True
+
+
+def test_read0_on_different_pts_device_is_not_stdin_wait() -> None:
+    fake = FakeProc()
+    fake.add_process(200, pgrp=100, tpgid=100, syscall="0 0x0 0x7fff 0x100")
+    fake.links["/proc/200/fd/0"] = "/dev/pts/5"
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
 
 
 def test_read_on_nonzero_tty_fd_is_stdin_wait() -> None:
@@ -286,7 +492,7 @@ def test_read_on_nonzero_tty_fd_is_stdin_wait() -> None:
     fake = FakeProc()
     fake.add_process(200, pgrp=100, tpgid=100, syscall="0 0x4 0x7fff 0x100")
     fake.links["/proc/200/fd/4"] = "/dev/tty"
-    assert is_stdin_waiting(100, fake.internals()) is True
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is True
 
 
 def test_read_on_nonzero_pipe_fd_is_not_stdin_wait() -> None:
@@ -295,16 +501,22 @@ def test_read_on_nonzero_pipe_fd_is_not_stdin_wait() -> None:
     fake = FakeProc()
     fake.add_process(200, pgrp=100, tpgid=100, syscall="0 0x4 0x7fff 0x100")
     fake.links["/proc/200/fd/4"] = "pipe:[4161910]"
-    assert is_stdin_waiting(100, fake.internals()) is False
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
 
 
 def test_poll_stdin_on_pipe_is_not_stdin_wait() -> None:
     import struct
 
     fake = FakeProc()
-    fake.add_process(200, pgrp=100, tpgid=100, syscall="7 0x7f00 0x1 0x0", stdin_tty=False)
+    fake.add_process(
+        200,
+        pgrp=100,
+        tpgid=100,
+        syscall="7 0x7f00 0x1 0xffffffffffffffff",
+        stdin_tty=False,
+    )
     fake.add_mem(0x7F00, struct.pack("<ihh", 0, 0x001, 0).ljust(8, b"\x00"))
-    assert is_stdin_waiting(100, fake.internals()) is False
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
 
 
 def test_epoll_stdin_on_pipe_is_not_stdin_wait() -> None:
@@ -313,11 +525,11 @@ def test_epoll_stdin_on_pipe_is_not_stdin_wait() -> None:
         200,
         pgrp=100,
         tpgid=100,
-        syscall="232 0x4 0x7f00 0x10",
+        syscall="232 0x4 0x7f00 0x10 0xffffffffffffffff",
         fdinfo={4: "tfd:      0\n"},
         stdin_tty=False,
     )
-    assert is_stdin_waiting(100, fake.internals()) is False
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
 
 
 def test_missing_fd0_link_is_not_stdin_wait() -> None:
@@ -325,19 +537,33 @@ def test_missing_fd0_link_is_not_stdin_wait() -> None:
     fake = FakeProc()
     fake.add_process(200, pgrp=100, tpgid=100, syscall="0 0x0 0x7fff 0x100")
     del fake.links["/proc/200/fd/0"]
-    assert is_stdin_waiting(100, fake.internals()) is False
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
+
+
+def test_unknown_fd_device_is_not_stdin_wait() -> None:
+    fake = FakeProc()
+    fake.add_process(200, pgrp=100, tpgid=100, syscall="0 0x0 0x7fff 0x100")
+    fake.links["/proc/200/fd/0"] = "/dev/unknown"
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
 
 
 def test_read0_on_console_tty_is_stdin_wait() -> None:
     fake = FakeProc()
     fake.add_process(200, pgrp=100, tpgid=100, syscall="0 0x0 0x7fff 0x100")
     fake.links["/proc/200/fd/0"] = "/dev/console"
-    assert is_stdin_waiting(100, fake.internals()) is True
+    assert is_stdin_waiting(100, (5, 1), fake.internals()) is True
+
+
+def test_read0_on_console_is_not_pts_stdin_wait() -> None:
+    fake = FakeProc()
+    fake.add_process(200, pgrp=100, tpgid=100, syscall="0 0x0 0x7fff 0x100")
+    fake.links["/proc/200/fd/0"] = "/dev/console"
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
 
 
 def test_unknown_syscall_not_waiting() -> None:
     fake = _fake_with_syscall(100, "999 0x0 0x0 0x0")
-    assert is_stdin_waiting(100, fake.internals()) is False
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
 
 
 # ---------------------------------------------------------------------------
@@ -351,15 +577,15 @@ def test_is_stdin_waiting_scans_pgrp_members() -> None:
     fake.add_process(200, pgrp=100, tpgid=100, syscall="0 0x0 0x7fff 0x100")
     fake.add_process(300, pgrp=100, tpgid=100)
     fake.add_process(400, pgrp=500, tpgid=500, syscall="0 0x0 0x7fff 0x100")
-    assert is_stdin_waiting(100, fake.internals()) is True
-    assert is_stdin_waiting(500, fake.internals()) is True
-    assert is_stdin_waiting(999, fake.internals()) is False
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is True
+    assert is_stdin_waiting(500, (136, 0), fake.internals()) is True
+    assert is_stdin_waiting(999, (136, 0), fake.internals()) is False
 
 
 def test_is_stdin_waiting_no_matching_group() -> None:
     fake = FakeProc()
     fake.add_process(200, pgrp=100, tpgid=100, syscall="0 0x5 0x7fff 0x100")
-    assert is_stdin_waiting(100, fake.internals()) is False
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is False
 
 
 def test_is_stdin_waiting_multi_thread_scans_all_threads() -> None:
@@ -372,7 +598,7 @@ def test_is_stdin_waiting_multi_thread_scans_all_threads() -> None:
         threads=["200", "201"],
     )
     fake.files["/proc/200/task/201/syscall"] = "0 0x0 0x7fff 0x100"  # worker: stdin
-    assert is_stdin_waiting(100, fake.internals()) is True
+    assert is_stdin_waiting(100, (136, 0), fake.internals()) is True
 
 
 # ---------------------------------------------------------------------------
@@ -397,6 +623,23 @@ def test_foreground_pgid_missing_pid() -> None:
     assert foreground_pgid(999, fake.internals()) is None
 
 
+def test_controlling_tty_device_decodes_proc_tty_nr() -> None:
+    fake = FakeProc()
+    fake.files["/proc/200/stat"] = _stat_line(200, tty_nr=0x8800)
+    assert controlling_tty_device(200, fake.internals()) == (136, 0)
+
+
+def test_controlling_tty_device_zero_is_none() -> None:
+    fake = FakeProc()
+    fake.files["/proc/200/stat"] = _stat_line(200, tty_nr=0)
+    assert controlling_tty_device(200, fake.internals()) is None
+
+
+def test_controlling_tty_device_missing_pid_is_none() -> None:
+    fake = FakeProc()
+    assert controlling_tty_device(999, fake.internals()) is None
+
+
 # ---------------------------------------------------------------------------
 # misc
 # ---------------------------------------------------------------------------
@@ -412,6 +655,6 @@ def test_stdin_probe_available_is_bool() -> None:
 
 
 def test_proc_stat_is_frozen() -> None:
-    stat = ProcStat(1, 0, 1, 1, "S", 1, "123")
+    stat = ProcStat(1, 0, 1, 1, 0x8800, "S", 1, "123")
     with pytest.raises(Exception):  # noqa: B017 — frozen dataclass contract
         stat.pid = 2  # type: ignore[misc]

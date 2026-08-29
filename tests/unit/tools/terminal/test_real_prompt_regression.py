@@ -53,3 +53,41 @@ def test_real_remote_prompt_with_crlf_variants() -> None:
 def test_real_banner_alone_not_detected() -> None:
     assert _looks_like_foreign_prompt(_BANNER) is False
     assert is_waiting_for_input(_BANNER + _REMOTE_PROMPT) is False
+
+
+def test_selected_data_line_not_input_prompt() -> None:
+    assert is_waiting_for_input("selected 3 files") is False
+
+
+def test_last_login_banner_line_not_input_prompt() -> None:
+    assert is_waiting_for_input("Last login: Fri Aug 28 10:00 2026") is False
+
+
+def test_exit_code_line_not_input_prompt() -> None:
+    assert is_waiting_for_input("exit code: 0") is False
+
+
+def test_error_code_line_not_input_prompt() -> None:
+    assert is_waiting_for_input("error code: 404") is False
+
+
+def test_select_with_colon_is_input_prompt() -> None:
+    assert is_waiting_for_input("Select: ") is True
+
+
+def test_bare_login_prompt_is_input_prompt() -> None:
+    assert is_waiting_for_input("login:") is True
+
+
+def test_prefixed_login_prompt_is_input_prompt() -> None:
+    assert is_waiting_for_input("root login:") is True
+
+
+def test_prefixed_token_prompt_is_input_prompt() -> None:
+    assert is_waiting_for_input("auth token: ") is True
+
+
+def test_classic_prompts_still_detected() -> None:
+    assert is_waiting_for_input("Password: ") is True
+    assert is_waiting_for_input("[y/n]") is True
+    assert is_waiting_for_input("Continue?") is True

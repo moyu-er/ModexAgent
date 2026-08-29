@@ -111,6 +111,9 @@ INPUT_PROMPT_MARKERS: tuple[str, ...] = (
 # (e.g. "Hashing password: 50% done" or "Confirming transaction...").
 # These need extra validation: the line must end with prompt-ending
 # punctuation (':', '?', ']', ')') — otherwise it's likely output, not a prompt.
+# login:/username:/user name:/code:/token:/otp:/pin:/select joined this set:
+# data lines like "Last login: Fri Aug 28 10:00 2026", "exit code: 0" and
+# "selected 3 files" collide with real prompts of the same keywords.
 _AMBIGUOUS_MARKERS: frozenset[str] = frozenset(
     {
         "password",
@@ -119,6 +122,14 @@ _AMBIGUOUS_MARKERS: frozenset[str] = frozenset(
         "overwrite",
         "replace",
         "passcode",
+        "login:",
+        "username:",
+        "user name:",
+        "code:",
+        "token:",
+        "otp:",
+        "pin:",
+        "select",
     }
 )
 
