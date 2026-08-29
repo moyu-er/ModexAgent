@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Final
 
 from modex_agent.core.tool_manager import InMemoryToolManager, Tool
-from modex_agent.runtime.store import TodoItem, TodoStore
 from modex_agent.tools.standard import (
     EditFileTool,
     GlobTool,
@@ -156,9 +155,7 @@ def get_preset_tools(
         if root_provider is not None:
             wrapped = wrap_standard_tools([bash_tool], root_provider)
             if not wrapped:
-                raise RuntimeError(
-                    "wrap_standard_tools returned empty list for bash tool"
-                )
+                raise RuntimeError("wrap_standard_tools returned empty list for bash tool")
             bash_tool = wrapped[0]
         tools.append(bash_tool)
 
@@ -181,123 +178,38 @@ def build_preset_tool_manager(
     return manager
 
 
-class ToolSupplement(StrEnum):
-    """Additive tool group layered on top of a base ToolPreset.
-
-    Unlike ToolPreset (one-of), supplements are multi-select and combine.
-    The ACI supplement is special: its ``AciEditTool`` is a drop-in UPGRADE
-    of the standard ``EditFileTool`` (same LLM-facing name ``"edit"``). In
-    the registry model it is registered under the distinct name
-    ``"aci_edit"``; the scope compiler swaps ``"edit"`` → ``"aci_edit"``
-    when the supplement is selected, so agents without it keep the plain
-    edit tool.
-    """
-
-    AST_GREP = "ast_grep"  # ast_grep_search + ast_grep_replace
-    TODO = "todo"  # todo_read + todo_write
-    ACI = "aci"  # replaces edit with AciEditTool (post-edit lint feedback)
-    EXPERIENCE = "experience"  # experience tool + review hook (factory-built at assembly)
-
-
-#: Hook name bound to the EXPERIENCE supplement (single authority):
-#: ``plugins/defaults/hooks.py`` registers the review hook under it and
-#: the scope compiler injects it into hook rosters.
+#: Hook name bound to the experience capability's review hook (single
+#: authority): ``plugins/defaults/hooks.py`` registers the review hook
+#: under it and the ``experience`` capability package contributes it into
+#: hook rosters.
 EXPERIENCE_REVIEW_HOOK_NAME: Final = "experience_review"
 
 
-def _make_ast_grep_tools() -> list[Tool]:
+def make_ast_grep_tools() -> list[Tool]:
+    """Create the AST search/replace tool pair (registry names
+    ``ast_grep_search`` / ``ast_grep_replace``).
+
+    Consumer: ``plugins/defaults/tools.py`` registers the instances under
+    their own names; the ``ast_grep`` capability package
+    (``plugins/defaults/capabilities/ast_grep.py``) contributes those
+    names into rosters.
+    """
     from modex_agent.tools.ast import AstGrepReplaceTool, AstGrepSearchTool
 
     return [AstGrepSearchTool(), AstGrepReplaceTool()]
 
 
-def _make_aci_tools() -> list[Tool]:
+def make_aci_edit_tool() -> Tool:
     """Create the ACI-enhanced edit tool (registry name ``aci_edit``).
 
-    Produces a single ``AciEditTool`` (LLM-facing name ``"edit"``) with
+    Produces one ``AciEditTool`` (LLM-facing name ``"edit"``) with
     post-edit lint feedback — a drop-in upgrade of ``EditFileTool``.
+    Consumer: ``plugins/defaults/tools.py`` registers the instance under
+    the ``aci_edit`` registry name; the ``aci`` capability package
+    (``plugins/defaults/capabilities/aci.py``) contributes that name into
+    rosters with the ``edit ← aci_edit`` O3 replacement.
     """
     from modex_agent.tools.aci.edit_tool import AciEditTool
     from modex_agent.tools.lint import default_lint_registry
 
-    return [AciEditTool(default_lint_registry)]
-
-
-def _make_todo_tools(todo_store: TodoStore) -> list[Tool]:
-    from modex_agent.tools.standard import TodoReadTool, TodoWriteTool
-
-    return [TodoWriteTool(todo_store), TodoReadTool(todo_store)]
-
-
-class _SupplementNameTodoStore(TodoStore):
-    async def save(self, session_id: str, todos: list[TodoItem]) -> None:
-        return
-
-    async def get(self, session_id: str) -> list[TodoItem]:
-        return []
-
-    async def delete(self, session_id: str) -> None:
-        return
-
-
-SUPPLEMENT_FACTORIES: dict[ToolSupplement, Callable[[], list[Tool]]] = {
-    ToolSupplement.AST_GREP: _make_ast_grep_tools,
-    ToolSupplement.ACI: _make_aci_tools,
-}
-
-
-def get_supplement_tools(
-    supplements: list[ToolSupplement],
-    *,
-    root_provider: WorkspaceRootProvider | None = None,
-    todo_store: TodoStore | None = None,
-) -> list[Tool]:
-    """Return deduped tool instances for the given additive supplements."""
-    seen: set[str] = set()
-    out: list[Tool] = []
-    for sup in supplements:
-        if sup == ToolSupplement.TODO:
-            if todo_store is None:
-                raise ValueError("ToolSupplement.TODO requires a todo_store")
-            for tool in _make_todo_tools(todo_store):
-                if tool.name in seen:
-                    continue
-                seen.add(tool.name)
-                out.append(tool)
-            continue
-        if sup is ToolSupplement.EXPERIENCE:
-            # No pre-built instances: the tool is factory-built at assembly
-            # time from pool data (plugins.defaults.tools.ExperienceToolFactory).
-            continue
-        for tool in SUPPLEMENT_FACTORIES[sup]():
-            if tool.name in seen:
-                continue
-            seen.add(tool.name)
-            out.append(tool)
-    if root_provider is not None and out:
-        wrapped = wrap_standard_tools(out, root_provider)
-        if not wrapped:
-            raise RuntimeError("wrap_standard_tools returned empty for supplements")
-        out = wrapped
-    return out
-
-
-def get_supplement_tool_names(supplements: list[ToolSupplement]) -> list[str]:
-    """Project supplement names from the tools their factories produce.
-
-    EXPERIENCE is the exception: it has no pre-built instances (its tool
-    is built by a pool-layer factory at assembly time), so its name
-    projects from the enum value directly — never through the instance
-    delegation, which returns no names for it.
-    """
-    instance_backed: list[ToolSupplement] = [
-        sup for sup in supplements if sup is not ToolSupplement.EXPERIENCE
-    ]
-    tools = get_supplement_tools(
-        instance_backed,
-        todo_store=_SupplementNameTodoStore(),
-    )
-    names = [tool.name for tool in tools]
-    if ToolSupplement.EXPERIENCE in supplements:
-        names.append(ToolSupplement.EXPERIENCE.value)
-    return names
+    return AciEditTool(default_lint_registry)

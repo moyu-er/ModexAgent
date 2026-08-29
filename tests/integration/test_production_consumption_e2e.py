@@ -266,7 +266,12 @@ def _hermetic_config(tmp_path: Path) -> Path:
     The glue tools are stripped too — experience's factory demands
     pool-layer resources (``pool_data``) and send_file_to_user's factory is
     a bot project plugin, neither of which the harness builds/loads —
-    mirroring the eval overlays' glue-tool removal."""
+    mirroring the eval overlays' glue-tool removal. The experience and todo
+    capability entries are stripped for the same reason: the harness builds
+    no memory system (empty ``PoolAssemblyDeps``, no ``pool_data``), and
+    experience's review hook and todo's reorientation hook are
+    memory-runner roster entries the capability channel contributes — they
+    cannot wire without pool memory resources."""
     config_dir = tmp_path / "config"
     shutil.copytree(_BOT_PROJECT / "config", config_dir)
     declaration_path = config_dir / "scopes" / "bot.yml"
@@ -275,6 +280,7 @@ def _hermetic_config(tmp_path: Path) -> Path:
     workspace.pop("mcp", None)
 
     _hermetic_tool_names = {"experience", "send_file_to_user"}
+    _hermetic_capability_names = {"experience", "todo"}
 
     def strip_agents(agents: dict) -> None:
         for body in agents.values():
@@ -282,16 +288,12 @@ def _hermetic_config(tmp_path: Path) -> Path:
                 continue
             for key in ("hooks", "hook_configs", "mcp"):
                 body.pop(key, None)
-            supplements = body.get("tool_supplements")
-            if isinstance(supplements, list):
-                kept = [s for s in supplements if str(s) not in _hermetic_tool_names]
-                # An explicitly empty tools/supplements list is a WHOLESALE
-                # replacement (O4/V8) that wipes the preset base — drop the
-                # key instead so the agent inherits the preset.
-                if kept:
-                    body["tool_supplements"] = kept
-                else:
-                    body.pop("tool_supplements", None)
+            capabilities = body.get("capabilities")
+            if isinstance(capabilities, dict):
+                for name in _hermetic_capability_names:
+                    capabilities.pop(name, None)
+                if not capabilities:
+                    body.pop("capabilities", None)
             tools = body.get("tools")
             if isinstance(tools, list):
                 kept = [t for t in tools if str(t).lstrip("+-") not in _hermetic_tool_names]
@@ -324,7 +326,7 @@ def _coder_orchestrator(raw: dict) -> dict:
     return raw["workspace"]["pools"]["coder"]["agents"]["orchestrator"]
 
 
-def _boot_declaration(config_dir: Path) -> Any:
+def _boot_declaration(config_dir: Path, component_registry: ComponentRegistry) -> Any:
     """The real production boot: load + validate (V1-V11) + compile."""
     from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
 
@@ -334,6 +336,7 @@ def _boot_declaration(config_dir: Path) -> Any:
         data_dir=config_dir.parent / ".modex",
         graphs_dirs=(config_dir / "graphs",),
         default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        registry=component_registry,
     )
 
 
@@ -359,7 +362,7 @@ async def _boot_pools(
 ) -> tuple[dict[str, PoolInstance], _BootHarness]:
     harness = _BootHarness(config_dir, registry)
     await harness.start()
-    boot = _boot_declaration(config_dir)
+    boot = _boot_declaration(config_dir, registry)
     assert boot.spec.workspace is not None
     pools = {
         pool.name: await harness.create(pool.name, declared_pool_build(boot, pool.name))
@@ -445,7 +448,7 @@ async def test_custom_execution_strategy_plugin_passes_gating(tmp_path: Path) ->
 
     _edit_declaration(config_dir, _set_probe_strategy)
     registry = await _component_registry()
-    boot = _boot_declaration(config_dir)
+    boot = _boot_declaration(config_dir, registry)
     declared = declared_pool_build(boot, "coder")
     harness = _BootHarness(config_dir, registry)
     await harness.start()

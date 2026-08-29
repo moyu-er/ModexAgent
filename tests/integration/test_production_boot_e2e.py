@@ -118,7 +118,7 @@ def _hermetic_config(tmp_path: Path) -> Path:
     return dst
 
 
-def _boot_declaration(config_dir: Path) -> Any:
+def _boot_declaration(config_dir: Path, component_registry: ComponentRegistry) -> Any:
     """The real production boot: load + validate (V1-V11) + compile."""
     from bot.service.pool.declaration import boot_scope_declaration
     from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
@@ -129,6 +129,7 @@ def _boot_declaration(config_dir: Path) -> Any:
         data_dir=config_dir.parent / ".modex",
         graphs_dirs=(config_dir / "graphs",),
         default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        registry=component_registry,
     )
 
 
@@ -150,7 +151,7 @@ async def _boot_pools(config_dir: Path) -> dict[str, Any]:
     )
     strategy_registry = strategy_registry_from_components(component_registry)
 
-    boot = _boot_declaration(config_dir)
+    boot = _boot_declaration(config_dir, component_registry)
     assert boot.spec.workspace is not None
     root = config_dir.parent
     ctx = WorkspaceContext(

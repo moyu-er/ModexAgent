@@ -14,7 +14,6 @@ def test_agent_template_defaults():
     assert t.spec.description == ""
     assert t.spec.max_steps == 100
     assert t.toolset_profile == ToolPreset.READ_WRITE
-    assert t.spec.tool_supplements == []
     assert t.spec.context_mode == ContextMode.FRESH
     assert t.memory is None
     assert t.skills is None

@@ -9,7 +9,8 @@ another profile, SPEC §3.4 rule 1 / V7 / N10). Resolution semantics:
   (:class:`~modex_agent.scope.spec.MemoryDeclaration`) merge field-wise so
   a locally-declared nested field never silently drops profile-set siblings.
 - **wholesale lists (O4/V8)** — a set ``tools`` list IS the whole list;
-  item-wise add/remove stays the dedicated ``tool_supplements`` mechanism.
+  additive tool groups are capability-package concerns (declared through
+  the ``capabilities`` override map), not profile machinery.
 - **no nesting** — a profile referencing another profile is refused at the
   store boundary (loud), keeping the compiler's input single-level.
 
@@ -31,7 +32,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 from modex_agent.scope.spec import MemoryDeclaration, SessionMemoryOverride
 from modex_agent.scope.validator import ProfileDeclaration
-from modex_agent.tools.presets import ToolPreset, ToolSupplement
+from modex_agent.tools.presets import ToolPreset
 
 
 class Profile(BaseModel):
@@ -54,7 +55,6 @@ class Profile(BaseModel):
     everything the field did)."""
     tools: list[str] | None = None
     """Wholesale tool list — ``None`` defers to the toolset preset."""
-    tool_supplements: list[ToolSupplement] | None = None
     eager: bool | None = None
     max_steps: int | None = None
     memory: MemoryDeclaration | None = None

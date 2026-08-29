@@ -338,7 +338,6 @@ export const en = {
       visibleWindow: "Visible window",
       description: "Description",
       descriptionHelper: "Describe this agent's own capabilities and the work it's suited for. Don't mention other agents, delegation, communication, or topology.",
-      toolSupplements: "Tool supplements",
       approvalRequired: "Approval required for write/edit tools",
       archiveMemory: "Archive memory",
       coreMemory: "Core memory",

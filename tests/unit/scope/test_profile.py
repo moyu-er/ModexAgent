@@ -4,7 +4,8 @@ A Profile is a named default-combination macro building on framework
 defaults only: inheritance + deep merge (O1), single-level references
 (V7/N10 — a profile may never reference another profile), wholesale list
 replacement (O4/V8 — a set ``tools`` list IS the whole list;
-``tool_supplements`` is the dedicated additive mechanism). The compiler's
+additive tool groups are capability-package concerns declared
+through the ``capabilities`` override map). The compiler's
 three-layer chain is ``framework default ← profile ← local declaration``.
 
 The FW standard profiles are code-level frozen constants (the five toolset
@@ -45,7 +46,6 @@ class TestProfileType:
         assert profile.profile is None
         assert profile.toolset is None
         assert profile.tools is None
-        assert profile.tool_supplements is None
         assert profile.eager is None
         assert profile.max_steps is None
         assert profile.memory is None
@@ -68,11 +68,10 @@ class TestStandardProfiles:
             assert profile.profile is None
 
     def test_standard_profiles_carry_no_extras(self) -> None:
-        # FW standard profiles are toolset macros only — the other position
+        # FW standard profiles are toolset macros only �� the other position
         # dimensions (memory family, registration) stay framework machinery.
         for profile in STANDARD_PROFILES.profiles.values():
             assert profile.tools is None
-            assert profile.tool_supplements is None
             assert profile.eager is None
             assert profile.max_steps is None
             assert profile.memory is None

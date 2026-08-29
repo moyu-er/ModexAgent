@@ -21,7 +21,6 @@ class TestAgentTemplateDefaults:
         t = AgentTemplate(spec=AgentSpec(name="scout"))
         assert t.spec.name == "scout"
         assert t.toolset_profile == ToolPreset.READ_WRITE
-        assert t.spec.tool_supplements == []
         assert t.spec.mcp == []
         assert t.spec.max_steps == 100
         assert t.spec.context_mode == ContextMode.FRESH

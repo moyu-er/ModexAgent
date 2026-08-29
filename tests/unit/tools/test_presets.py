@@ -5,10 +5,9 @@ from __future__ import annotations
 from modex_agent.tools.presets import (
     EXPERIENCE_REVIEW_HOOK_NAME,
     ToolPreset,
-    ToolSupplement,
     get_preset_tools,
-    get_supplement_tool_names,
-    get_supplement_tools,
+    make_aci_edit_tool,
+    make_ast_grep_tools,
 )
 
 
@@ -84,115 +83,57 @@ class TestGetPresetTools:
         assert "bash" not in names
 
 
-class TestAciSupplement:
-    """ACI supplement — AciEditTool replaces EditFileTool via name overwrite."""
+class TestAciEditToolFactory:
+    """``make_aci_edit_tool`` — the aci capability's TOOL-slot product
+    (registry name ``aci_edit``, LLM-facing name ``edit``). The old
+    supplement face is dead; the capability channel
+    (``capabilities: {aci: {}}``) owns roster contribution."""
 
-    def test_aci_is_supplement_value(self) -> None:
-        """ToolSupplement.ACI serializes as 'aci'."""
-        assert ToolSupplement.ACI == "aci"
-
-    def test_aci_supplement_produces_aci_edit_tool(self) -> None:
-        """ACI supplement produces a single AciEditTool (not a list of tools)."""
+    def test_factory_produces_aci_edit_tool(self) -> None:
+        """The factory produces a single AciEditTool."""
         from modex_agent.tools.aci.edit_tool import AciEditTool
 
-        tools = get_supplement_tools([ToolSupplement.ACI])
-        assert len(tools) == 1
-        assert isinstance(tools[0], AciEditTool)
+        tool = make_aci_edit_tool()
+        assert isinstance(tool, AciEditTool)
 
-    def test_aci_supplement_tool_name_is_edit(self) -> None:
-        """ACI supplement's tool name is 'edit' — overwrites preset's EditFileTool."""
-        tools = get_supplement_tools([ToolSupplement.ACI])
-        assert tools[0].name == "edit"
+    def test_tool_name_is_edit(self) -> None:
+        """The tool's LLM-facing name is 'edit' — drop-in upgrade contract."""
+        assert make_aci_edit_tool().name == "edit"
 
-    def test_aci_supplement_inherits_edit_file_tool(self) -> None:
+    def test_inherits_edit_file_tool(self) -> None:
         """AciEditTool is a subclass of EditFileTool (drop-in replacement)."""
         from modex_agent.tools.aci.edit_tool import AciEditTool
         from modex_agent.tools.standard.file_tool import EditFileTool
 
-        tools = get_supplement_tools([ToolSupplement.ACI])
-        assert isinstance(tools[0], EditFileTool)
-        assert isinstance(tools[0], AciEditTool)
-
-    def test_aci_supplement_wraps_with_root_provider(self) -> None:
-        """ACI supplement tools get wrapped with WorkspaceRootProvider when given."""
-        from pathlib import Path
-
-        from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
-
-        class _FakeProvider(WorkspaceRootProvider):
-            def current(self) -> Path:
-                return Path("/fake/workspace")
-
-        tools = get_supplement_tools([ToolSupplement.ACI], root_provider=_FakeProvider())
-        assert len(tools) == 1
-        assert tools[0].name == "edit"
-
-    def test_aci_supplement_combines_with_ast_grep(self) -> None:
-        """ACI + AST_GREP supplements combine: AciEditTool + ast_grep tools."""
-        from modex_agent.tools.aci.edit_tool import AciEditTool
-
-        tools = get_supplement_tools([ToolSupplement.AST_GREP, ToolSupplement.ACI])
-        names = [t.name for t in tools]
-        assert "edit" in names
-        assert "ast_grep_search" in names
-        assert "ast_grep_replace" in names
-        edit_tool = next(t for t in tools if t.name == "edit")
-        assert isinstance(edit_tool, AciEditTool)
-
-    def test_aci_supplement_combines_with_todo(self) -> None:
-        """ACI + TODO supplements combine: AciEditTool + todo tools."""
-        from pathlib import Path
-
-        from modex_agent.runtime.store import JsonFileTodoStore
-
-        from modex_agent.tools.aci.edit_tool import AciEditTool
-
-        store = JsonFileTodoStore(Path("/tmp/test_todos_aci"))
-        tools = get_supplement_tools([ToolSupplement.TODO, ToolSupplement.ACI], todo_store=store)
-        names = [t.name for t in tools]
-        assert "edit" in names
-        assert "todo_read" in names
-        assert "todo_write" in names
-
-    def test_aci_supplement_does_not_duplicate_edit(self) -> None:
-        """ACI supplement only produces one 'edit' tool (no duplicate)."""
-        tools = get_supplement_tools([ToolSupplement.ACI, ToolSupplement.ACI])
-        # seen dedup prevents duplicate
-        edit_tools = [t for t in tools if t.name == "edit"]
-        assert len(edit_tools) == 1
+        tool = make_aci_edit_tool()
+        assert isinstance(tool, EditFileTool)
+        assert isinstance(tool, AciEditTool)
 
 
-class TestExperienceSupplement:
-    """EXPERIENCE supplement — name-only projection, no pre-built instances."""
+class TestAstGrepToolsFactory:
+    """``make_ast_grep_tools`` — the ast_grep capability's TOOL-slot
+    product (registry names ``ast_grep_search`` / ``ast_grep_replace``).
+    The old supplement face is dead; the capability channel
+    (``capabilities: {ast_grep: {}}``) owns roster contribution."""
 
-    def test_experience_is_supplement_value(self) -> None:
-        """ToolSupplement.EXPERIENCE serializes as 'experience'."""
-        assert ToolSupplement.EXPERIENCE == "experience"
+    def test_factory_produces_both_ast_tools(self) -> None:
+        from modex_agent.tools.ast import AstGrepReplaceTool, AstGrepSearchTool
 
-    def test_experience_projects_its_name(self) -> None:
-        """get_supplement_tool_names([EXPERIENCE]) == ["experience"] — the
-        name projects without instance delegation."""
-        assert get_supplement_tool_names([ToolSupplement.EXPERIENCE]) == [
-            "experience"
-        ]
+        tools = make_ast_grep_tools()
+        assert [type(t) for t in tools] == [AstGrepSearchTool, AstGrepReplaceTool]
 
-    def test_experience_projects_no_instances(self) -> None:
-        """get_supplement_tools([EXPERIENCE]) == [] — no instances, no KeyError."""
-        assert get_supplement_tools([ToolSupplement.EXPERIENCE]) == []
+    def test_tool_names_are_the_registry_names(self) -> None:
+        assert [t.name for t in make_ast_grep_tools()] == ["ast_grep_search", "ast_grep_replace"]
 
-    def test_experience_name_matches_constructed_tool(self, tmp_path) -> None:
-        """Drift guard: a constructed ExperienceTool's .name equals the
-        projection (the name no longer comes from an instance)."""
-        from modex_agent.core.experience import PerFileExperienceMetaStore
-        from modex_agent.memory.tools.experience import ExperienceTool
 
-        projected = get_supplement_tool_names([ToolSupplement.EXPERIENCE])
-        tool = ExperienceTool(tmp_path, PerFileExperienceMetaStore(tmp_path))
-        assert projected == [tool.name]
+class TestExperienceReviewHookName:
+    """The review hook's registration-name authority survives the
+    supplement face's death (the hook factory + capability still use it)."""
 
     def test_experience_review_hook_name_is_the_registration_name(self) -> None:
         """EXPERIENCE_REVIEW_HOOK_NAME is importable and equals the name
-        register_default_hooks registers the review hook under."""
+        register_default_hooks registers the review hook under (the
+        ``experience`` capability contributes it into hook rosters)."""
         from modex_agent.plugins.abc import ComponentSlot
         from modex_agent.plugins.defaults.hooks import (
             ExperienceReviewHookFactory,
