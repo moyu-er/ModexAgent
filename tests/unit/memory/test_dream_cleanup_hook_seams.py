@@ -178,7 +178,7 @@ async def test_cleanup_finished_carries_compaction_usage_and_duration(
 
     assert result.triggered is True
     assert result.usage == usage
-    assert result.duration_ms > 0
+    assert result.duration_ms >= 0  # duration can round to 0ms on fast machines — the propagation equality below is the contract
     [finished] = recording.contexts
     assert finished.cleanup_result is result
     cleanup_result = finished.cleanup_result
