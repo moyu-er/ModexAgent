@@ -3,7 +3,8 @@
 Track multi-step work with `todo_write`:
 
 * **Plan first** — for any task with 3+ steps, write the full plan as
-  `pending` items before starting.
+  `pending` items before starting; if work is already underway, start
+  tracking now (done steps as `completed`) and plan the remainder.
 * **Update at every transition** — mark items `in_progress` → `completed` as
   work moves; never describe work as done in prose while the list shows it
   open.

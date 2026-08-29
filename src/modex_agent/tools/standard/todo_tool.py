@@ -106,6 +106,8 @@ class TodoWriteTool(Tool):
             "## When to use\n"
             "- The task requires 3+ distinct steps or actions.\n"
             "- The work is non-trivial and benefits from planning.\n"
+            "- You are mid-task and more work remains than expected — "
+            "start tracking now (done steps as `completed`).\n"
             "- The user provides multiple tasks or explicitly asks for a "
             "todo list.\n"
             "\n"
@@ -120,7 +122,9 @@ class TodoWriteTool(Tool):
             "- `cancelled` — no longer needed.\n"
             "\n"
             "## Rules\n"
-            "- Create the full list as `pending` before starting any work.\n"
+            "- Prefer creating the full list as `pending` before starting "
+            "any work; if already underway, snapshot progress (done steps "
+            "as `completed`) and plan the remainder.\n"
             "- Mark `completed` only after the work is actually done, "
             "including verification. Never based on intent.\n"
             "- Keep exactly one `in_progress` while work remains.\n"
@@ -137,6 +141,8 @@ class TodoWriteTool(Tool):
             "verification\n"
             '- "Rename getCwd -> getCurrentWorkingDirectory across the repo" '
             "-> 15 occurrences in 8 files\n"
+            '- Mid-task: "3 more files need the same fix" -> start '
+            "tracking now, first items marked `completed`\n"
             "Skip it:\n"
             '- "How do I print Hello World in Python?" -> informational\n'
             '- "Add a comment to calculateTotal" -> single edit\n'
