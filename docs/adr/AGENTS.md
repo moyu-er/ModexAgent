@@ -73,6 +73,7 @@ ADRs document significant architectural decisions, including the context driving
 | 0041 | Plugin unified assembly system |
 | 0042 | Scope declaration tree — unified assembly base (implemented 2026-08-22; see `docs/design/scope-assembly/`) |
 | 0043 | Dual execution models — actor sessions and dataflow graphs (implemented 2026-08-22) |
+| 0044 | Terminal trio simplification — silence is not failure (implemented) |
 | 0045 | Kernel terminal-state detection for the persistent bash pair |
 | 0046 | Rebuild the LLM provider system: one provider, protocol engines, event-stream primitive |
 | 0047 | Capability bundles — plugin-internal enablement and derivation (implemented 2026-08-28; see `docs/design/capability-bundles/`) |
