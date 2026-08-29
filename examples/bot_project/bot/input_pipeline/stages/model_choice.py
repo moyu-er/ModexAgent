@@ -1,9 +1,10 @@
 # bot/input_pipeline/stages/model_choice.py
 """WebUI pipeline stage：把 payload 中的 provider/model 选择解析为 ResolvedModel。
 
-仅注册在 WebUI pipeline；IM pipeline 不注册（始终默认）。无效选择 fallback 默认并告警。
-不设 ContextVar（跨 broker 会丢失）；解析结果写入 envelope.metadata[RESOLVED_MODEL]，
-由 EnqueueStage 注册到 ModelChoiceRegistry。
+仅注册在 WebUI pipeline；IM pipeline 不注册（始终默认）。无效选择 fallback 默认并告警；
+无选择（envelope 不带 provider/model，如审批恢复的 redispatch）不写 RESOLVED_MODEL——
+EnqueueStage 跳过 registry 写入，会话此前的选择得以保留（ModelChoiceBindHook 在
+registry 也无条目时才回落默认）。不设 ContextVar（跨 broker 会丢失）。
 """
 
 from __future__ import annotations
@@ -44,14 +45,21 @@ class ModelChoiceStage(InputStage):
             return Continue(value=envelope)
         provider_name = envelope.metadata.get(RoutingMeta.MODEL_PROVIDER)
         model_name = envelope.metadata.get(RoutingMeta.MODEL_MODEL)
+        if provider_name is None and model_name is None:
+            # No selection on this envelope — e.g. the approval-resume
+            # redispatch (WebUI approvals POST builds the envelope without
+            # provider/model). Leave RESOLVED_MODEL unset so EnqueueStage
+            # skips the registry write and the session's previous choice
+            # survives; writing the default here would silently switch the
+            # resumed turn's model/protocol mid-session.
+            return Continue(value=envelope)
         resolved = self._model_config.resolve(provider_name, model_name)
         if resolved is None:
-            if provider_name or model_name:
-                logger.warning(
-                    "Invalid model choice (%r, %r) — falling back to default",
-                    provider_name,
-                    model_name,
-                )
+            logger.warning(
+                "Invalid model choice (%r, %r) — falling back to default",
+                provider_name,
+                model_name,
+            )
             resolved = self._model_config.default_resolved()
         envelope.metadata[RoutingMeta.RESOLVED_MODEL] = resolved
         return Continue(value=envelope)
