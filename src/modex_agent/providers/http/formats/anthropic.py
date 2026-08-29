@@ -18,8 +18,14 @@ Wire facts this engine owns (PRD §4.3):
   requirement, not a repair); TOOL messages lower to ``tool_result``
   blocks on the immediately following user turn, blocks first.
 - Assistant turns replay a ``thinking`` block (content + signature) on
-  EVERY turn where both fields exist — the opposite cadence from
+  EVERY turn where both fields exist �� the opposite cadence from
   openai_compat, which replays only on tool-call turns.
+- Prompt caching is explicit opt-in: without ``cache_control`` breakpoints
+  the API caches nothing. The engine marks the system block and the last
+  two non-system messages (final block each) with ``{type: "ephemeral"}``
+  �� the opencode placement; prefix order is tools, system, messages, so
+  the system breakpoint already covers the stable tools+system prefix, and
+  at most three breakpoints stay under the API cap of four.
 - Reasoning effort maps to ``thinking: {type: "enabled", budget_tokens}``
   through the budget table; ``extra_body["thinking"]`` overrides the whole
   object precisely.
@@ -120,11 +126,29 @@ class ProtocolStructureError(Exception):
 # ─── Wire request schema (module-private, frozen) ────────────────────────────
 
 
+class _CacheControl(BaseModel):
+    """``{type: "ephemeral"}`` — the prompt-cache breakpoint marker.
+
+    ``ttl`` unset means the provider default (5m); "1h" is the long bucket.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: Literal["ephemeral"] = "ephemeral"
+    ttl: Literal["5m", "1h"] | None = None
+
+
+_EPHEMERAL = _CacheControl()
+
+_CACHED_TAIL_MESSAGES = 2
+
+
 class _TextBlock(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     type: Literal["text"] = "text"
     text: str
+    cache_control: _CacheControl | None = None
 
 
 class _Base64Source(BaseModel):
@@ -150,6 +174,7 @@ class _ImageBlock(BaseModel):
 
     type: Literal["image"] = "image"
     source: _ImageSource
+    cache_control: _CacheControl | None = None
 
 
 class _ToolResultBlock(BaseModel):
@@ -159,6 +184,7 @@ class _ToolResultBlock(BaseModel):
     tool_use_id: str
     content: str | list[_TextBlock | _ImageBlock] = ""
     is_error: bool | None = None
+    cache_control: _CacheControl | None = None
 
 
 class _ThinkingBlock(BaseModel):
@@ -167,6 +193,7 @@ class _ThinkingBlock(BaseModel):
     type: Literal["thinking"] = "thinking"
     thinking: str
     signature: str
+    cache_control: _CacheControl | None = None
 
 
 class _ToolUseBlock(BaseModel):
@@ -177,6 +204,7 @@ class _ToolUseBlock(BaseModel):
     name: str
     # rule 14 exemption: open JSON payload the model filled in.
     input: dict[str, Any]
+    cache_control: _CacheControl | None = None
 
 
 _ContentBlock = Annotated[
@@ -190,6 +218,17 @@ class _WireMessage(BaseModel):
 
     role: Literal["user", "assistant"]
     content: list[_ContentBlock]
+
+
+class _SystemBlock(BaseModel):
+    """``system`` content-block form — required to attach ``cache_control``
+    (a bare string system carries no marker slot)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: Literal["text"] = "text"
+    text: str
+    cache_control: _CacheControl | None = None
 
 
 class _ThinkingConfig(BaseModel):
@@ -214,7 +253,7 @@ class _WireRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     model: str
-    system: str | None = None
+    system: list[_SystemBlock] | None = None
     messages: list[_WireMessage]
     max_tokens: int
     tools: list[_WireTool] | None = None
@@ -419,6 +458,36 @@ def _wire_tool(tool: dict[str, Any]) -> _WireTool:
     )
 
 
+def _mark_final_block(turn: _WireMessage) -> _WireMessage:
+    """Copy ``turn`` with the ephemeral breakpoint on its FINAL content block."""
+    content = list(turn.content)
+    content[-1] = content[-1].model_copy(update={"cache_control": _EPHEMERAL})
+    return _WireMessage(role=turn.role, content=content)
+
+
+def _apply_cache_breakpoints(
+    system_text: str | None, turns: list[_WireMessage]
+) -> tuple[list[_SystemBlock] | None, list[_WireMessage]]:
+    """Place the prompt-cache breakpoints (explicit opt-in — none means the
+    API caches nothing).
+
+    Placement follows the opencode reference: one breakpoint on the system
+    block and one on each of the last two non-system messages. Prefix order
+    is tools, system, messages, so the system breakpoint already covers the
+    stable tools+system prefix; the trailing two let the next agent-loop
+    iteration re-serve the previous tail as a cache hit. At most three
+    breakpoints — under the API cap of four by construction.
+    """
+    system = (
+        [_SystemBlock(text=system_text, cache_control=_EPHEMERAL)] if system_text else None
+    )
+    if not turns:
+        return system, turns
+    head = turns[:-_CACHED_TAIL_MESSAGES]
+    tail = [_mark_final_block(turn) for turn in turns[-_CACHED_TAIL_MESSAGES:]]
+    return system, [*head, *tail]
+
+
 # ─── Event parsing ────────────────────────────────────────────────────────────
 
 
@@ -516,11 +585,14 @@ class AnthropicProtocol(LLMProtocol):
             else cfg.reasoning_effort
         )
         tools = [_wire_tool(t) for t in request.tools] or None
+        system_blocks, marked_turns = _apply_cache_breakpoints(
+            "\n\n".join(system_parts) if system_parts else None, merged
+        )
 
         wire = _WireRequest(
             model=request.model,
-            system="\n\n".join(system_parts) if system_parts else None,
-            messages=merged,
+            system=system_blocks,
+            messages=marked_turns,
             max_tokens=request.max_output_tokens or cfg.max_output_tokens or _FALLBACK_MAX_TOKENS,
             tools=tools,
             temperature=temperature,

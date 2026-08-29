@@ -13,5 +13,5 @@ class TestSafetyConfig:
             turn=TurnSafetyConfig(tool_timeout=120.0),
         )
         assert cfg.llm.request_timeout == 60.0
-        assert cfg.llm.max_retries == 1
+        assert cfg.llm.max_retries == 3
         assert cfg.turn.tool_timeout == 120.0

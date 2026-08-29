@@ -57,7 +57,7 @@ class TestSafetyConfigDefaults:
     def test_safety_all_defaults(self) -> None:
         cfg = SafetyConfig()
         assert cfg.llm.request_timeout is None
-        assert cfg.llm.max_retries == 1
+        assert cfg.llm.max_retries == 3
         assert cfg.turn.tool_timeout == DefaultValues.TOOL_TIMEOUT_SECONDS
 
     def test_safety_partial_llm_override(self) -> None:
@@ -67,5 +67,5 @@ class TestSafetyConfigDefaults:
             llm=LLMSafetyConfig(request_timeout=30.0),
         )
         assert cfg.llm.request_timeout == 30.0
-        assert cfg.llm.max_retries == 1  # default preserved
+        assert cfg.llm.max_retries == 3  # default preserved
         assert cfg.turn.tool_timeout == DefaultValues.TOOL_TIMEOUT_SECONDS  # default preserved

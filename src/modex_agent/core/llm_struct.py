@@ -132,7 +132,7 @@ class LLMTimeoutPolicy(BaseModel):
 
     request_timeout_seconds: float | None = None
     stream_idle_timeout_seconds: float | None = None
-    framework_max_retries: int = 2
+    framework_max_retries: int = 3
     retry_backoff_seconds: tuple[float, ...] = (2.0, 8.0)
 
 

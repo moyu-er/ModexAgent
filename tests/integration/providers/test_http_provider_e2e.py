@@ -421,9 +421,18 @@ async def test_anthropic_thinking_signature_replayed_in_second_round_request(
     assert first.reasoning_signature == "sig-round1"
 
     # Round 1 carried no assistant history yet — the request was a plain
-    # user turn (no thinking block on the wire).
+    # user turn (no thinking block on the wire). The user block carries the
+    # prompt-cache breakpoint marker (the only content block of the last
+    # message — see the anthropic engine's caching placement).
     round1_body = json.loads(requests[0].content)
-    assert round1_body["messages"] == [{"role": "user", "content": [{"type": "text", "text": "q"}]}]
+    assert round1_body["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "q", "cache_control": {"type": "ephemeral"}}
+            ],
+        }
+    ]
 
     # The agent's canonical assistant message, assembled exactly like
     # LLMNode does from the response's replay fields.
@@ -443,14 +452,16 @@ async def test_anthropic_thinking_signature_replayed_in_second_round_request(
     assert second.error is None
 
     # Round 2 closure: the assistant turn on the wire carries the thinking
-    # block with the round-1 signature — the replay chain is closed.
+    # block with the round-1 signature — the replay chain is closed. The
+    # trailing text block carries the prompt-cache breakpoint (the assistant
+    # turn is the second-to-last message).
     assert len(requests) == 2
     round2_body = json.loads(requests[1].content)
     assistant_turns = [m for m in round2_body["messages"] if m["role"] == "assistant"]
     assert len(assistant_turns) == 1
     assert assistant_turns[0]["content"] == [
         {"type": "thinking", "thinking": "Plan first", "signature": "sig-round1"},
-        {"type": "text", "text": "Answer"},
+        {"type": "text", "text": "Answer", "cache_control": {"type": "ephemeral"}},
     ]
 
 

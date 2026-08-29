@@ -124,7 +124,7 @@ async def test_non_2xx_response_becomes_classified_error_response(
             headers={"content-type": "application/json"},
         )
 
-    provider, _requests = make_provider(handler)
+    provider, requests = make_provider(handler)
     response = await provider.chat_stream(messages=_user_message())
 
     assert response.finish_reason == FinishReason.ERROR
@@ -132,6 +132,8 @@ async def test_non_2xx_response_becomes_classified_error_response(
     assert response.error_info.kind == LLMErrorKind.AUTH
     assert response.error_info.should_retry is False
     assert "Incorrect API key provided" in (response.error or "")
+    # Non-retryable failure: the retry loop must not re-send the request.
+    assert len(requests) == 1
 
 
 async def test_idle_gap_becomes_timeout_error_response(
@@ -208,13 +210,107 @@ async def test_connection_error_becomes_connection_error_response(
     async def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused")
 
-    provider, _requests = make_provider(handler)
+    # max_retries=0 pins the single-attempt pass-through (retry behavior
+    # has its own tests below).
+    safety = RuntimeSafetyPolicy(llm=LLMTimeoutPolicy(framework_max_retries=0))
+    provider, requests = make_provider(handler, safety=safety)
     response = await provider.chat_stream(messages=_user_message())
 
     assert response.finish_reason == FinishReason.ERROR
     assert response.error_info is not None
     assert response.error_info.kind == LLMErrorKind.CONNECTION
     assert response.error_info.should_retry is True
+    assert len(requests) == 1
+
+
+def _retry_fast() -> RuntimeSafetyPolicy:
+    """Full default retry budget (3) with zero-cost backoff for tests."""
+    return RuntimeSafetyPolicy(
+        llm=LLMTimeoutPolicy(framework_max_retries=3, retry_backoff_seconds=(0.0,))
+    )
+
+
+async def test_transient_connection_failure_is_retried_and_recovers(
+    make_provider: Callable[..., tuple[HTTPStreamProvider, list[httpx.Request]]],
+) -> None:
+    calls = {"n": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("connection refused")
+        return httpx.Response(200, content=_CHAT_SSE, headers=_SSE_HEADERS)
+
+    provider, requests = make_provider(handler, safety=_retry_fast())
+    response = await provider.chat_stream(messages=_user_message())
+
+    assert response.finish_reason == FinishReason.STOP
+    assert response.content == "Hello world"
+    assert len(requests) == 2
+
+
+async def test_retry_budget_exhaustion_yields_final_failure(
+    make_provider: Callable[..., tuple[HTTPStreamProvider, list[httpx.Request]]],
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    provider, requests = make_provider(handler, safety=_retry_fast())
+    response = await provider.chat_stream(messages=_user_message())
+
+    assert response.finish_reason == FinishReason.ERROR
+    assert response.error_info is not None
+    assert response.error_info.kind == LLMErrorKind.CONNECTION
+    # One initial attempt plus the full retry budget of three.
+    assert len(requests) == 4
+
+
+async def test_eof_without_terminal_event_is_retried_and_recovers(
+    make_provider: Callable[..., tuple[HTTPStreamProvider, list[httpx.Request]]],
+) -> None:
+    calls = {"n": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # 200 with an empty body: the SSE parser ends with no frames and
+            # no terminal event — a mid-generation truncation.
+            return httpx.Response(200, content=b"", headers=_SSE_HEADERS)
+        return httpx.Response(200, content=_CHAT_SSE, headers=_SSE_HEADERS)
+
+    provider, requests = make_provider(handler, safety=_retry_fast())
+    response = await provider.chat_stream(messages=_user_message())
+
+    assert response.finish_reason == FinishReason.STOP
+    assert response.content == "Hello world"
+    assert len(requests) == 2
+
+
+async def test_eof_after_delta_events_is_not_retried(
+    make_provider: Callable[..., tuple[HTTPStreamProvider, list[httpx.Request]]],
+) -> None:
+    async def truncated_body() -> AsyncIterator[bytes]:
+        yield b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+        # EOF right after the delta: no finish_reason frame, no [DONE].
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=truncated_body(), headers=_SSE_HEADERS)
+
+    provider, requests = make_provider(handler, safety=_retry_fast())
+    response = await provider.chat_stream(messages=_user_message())
+
+    # A retry would duplicate the escaped delta downstream — the failure
+    # passes through and the assembler synthesizes the TIMEOUT response.
+    assert response.finish_reason == FinishReason.ERROR
+    assert response.content == "partial"
+    assert len(requests) == 1
+
+
+def test_stream_retry_defaults_agree_across_layers() -> None:
+    from modex_agent.ioc.configs.safety import SafetyConfig
+
+    assert LLMTimeoutPolicy().framework_max_retries == 3
+    assert SafetyConfig().llm.max_retries == 3
 
 
 async def test_api_key_falls_back_to_environment_variable(

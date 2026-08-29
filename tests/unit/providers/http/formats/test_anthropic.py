@@ -68,6 +68,25 @@ def _cfg(**kwargs: object) -> ProtocolConfig:
     return ProtocolConfig(**kwargs)  # type: ignore[arg-type]
 
 
+def _strip(body: dict) -> dict:
+    """Copy ``body`` without cache_control markers.
+
+    Structural tests assert message lowering; breakpoint PLACEMENT is the
+    separate contract owned by TestPromptCaching, so those assertions strip
+    the markers instead of duplicating them per site.
+    """
+    import copy
+
+    cleaned = copy.deepcopy(body)
+    if isinstance(cleaned.get("system"), list):
+        for block in cleaned["system"]:
+            block.pop("cache_control", None)
+    for message in cleaned.get("messages", []):
+        for block in message["content"]:
+            block.pop("cache_control", None)
+    return cleaned
+
+
 def _req(messages: list[ChatMessage], **kwargs: object) -> LLMRequest:
     kwargs.setdefault("model", "claude-sonnet-4-5")
     return LLMRequest(messages=messages, **kwargs)  # type: ignore[arg-type]
@@ -368,8 +387,12 @@ class TestBuildBodyMessages:
             _cfg(),
         )
 
-        assert body["system"] == "You are helpful.\n\nBe terse."
-        assert body["messages"] == [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+        assert _strip(body)["system"] == [
+            {"type": "text", "text": "You are helpful.\n\nBe terse."}
+        ]
+        assert _strip(body)["messages"] == [
+            {"role": "user", "content": [{"type": "text", "text": "hi"}]}
+        ]
 
     def test_tool_result_attaches_to_following_user_turn_blocks_first(self) -> None:
         body = AnthropicProtocol().build_body(
@@ -392,7 +415,7 @@ class TestBuildBodyMessages:
             _cfg(),
         )
 
-        assert body["messages"] == [
+        assert _strip(body)["messages"] == [
             {"role": "user", "content": [{"type": "text", "text": "hi"}]},
             {
                 "role": "assistant",
@@ -435,7 +458,7 @@ class TestBuildBodyMessages:
             _cfg(),
         )
 
-        assert body["messages"][-1] == {
+        assert _strip(body)["messages"][-1] == {
             "role": "user",
             "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "20C"}],
         }
@@ -464,7 +487,7 @@ class TestBuildBodyMessages:
             _cfg(),
         )
 
-        assert body["messages"][-1] == {
+        assert _strip(body)["messages"][-1] == {
             "role": "user",
             "content": [
                 {
@@ -538,7 +561,7 @@ class TestBuildBodyMessages:
                 _cfg(),
             )
 
-        assert body["messages"][-1]["content"] == [
+        assert _strip(body)["messages"][-1]["content"] == [
             {
                 "type": "tool_result",
                 "tool_use_id": "t1",
@@ -568,7 +591,7 @@ class TestBuildBodyMessages:
         )
 
         assert [m["role"] for m in body["messages"]] == ["user", "assistant", "user", "assistant"]
-        assert body["messages"][2]["content"] == [
+        assert _strip(body)["messages"][2]["content"] == [
             {"type": "tool_result", "tool_use_id": "t1", "content": "20C"}
         ]
 
@@ -585,7 +608,7 @@ class TestBuildBodyMessages:
             _cfg(),
         )
 
-        assert body["messages"] == [
+        assert _strip(body)["messages"] == [
             {"role": "user", "content": [{"type": "text", "text": "hi"}]},
             {
                 "role": "assistant",
@@ -652,7 +675,7 @@ class TestBuildBodyMessages:
                 _cfg(),
             )
 
-        assert body["messages"][1]["content"] == [{"type": "text", "text": "a"}]
+        assert _strip(body)["messages"][1]["content"] == [{"type": "text", "text": "a"}]
         assert "content+signature" in caplog.text
 
     def test_non_standard_role_merged_with_error_log(
@@ -669,7 +692,7 @@ class TestBuildBodyMessages:
                 _cfg(),
             )
 
-        assert body["messages"] == [
+        assert _strip(body)["messages"] == [
             {
                 "role": "user",
                 "content": [
@@ -934,7 +957,7 @@ class TestStructuralPairing:
                 _cfg(),
             )
 
-        assert body["messages"] == [
+        assert _strip(body)["messages"] == [
             {"role": "user", "content": [{"type": "text", "text": "hi"}]},
             {"role": "assistant", "content": [{"type": "text", "text": "let me check"}]},
             {"role": "user", "content": [{"type": "text", "text": "and then?"}]},
@@ -960,11 +983,11 @@ class TestStructuralPairing:
             _cfg(),
         )
 
-        assistant_content = body["messages"][1]["content"]
+        assistant_content = _strip(body)["messages"][1]["content"]
         assert assistant_content == [
             {"type": "tool_use", "id": "t1", "name": "get_weather", "input": {}}
         ]
-        assert body["messages"][2]["content"] == [
+        assert _strip(body)["messages"][2]["content"] == [
             {"type": "tool_result", "tool_use_id": "t1", "content": "20C"}
         ]
 
@@ -992,7 +1015,7 @@ class TestImagesAndUrl:
             _cfg(),
         )
 
-        assert body["messages"][0]["content"] == [
+        assert _strip(body)["messages"][0]["content"] == [
             {"type": "text", "text": "what is this?"},
             {
                 "type": "image",
@@ -1032,8 +1055,10 @@ class TestImagesAndUrl:
             body = AnthropicProtocol().build_body(request, _cfg())
 
         assert "media://" not in json.dumps(body)
-        assert body["system"] == "system"
-        assert body["messages"] == [{"role": "user", "content": [{"type": "text", "text": "user"}]}]
+        assert _strip(body)["system"] == [{"type": "text", "text": "system"}]
+        assert _strip(body)["messages"] == [
+            {"role": "user", "content": [{"type": "text", "text": "user"}]}
+        ]
         assert [record.getMessage() for record in caplog.records] == [
             "anthropic engine: unresolved media:// reference reached the wire layer, "
             "part skipped: system-image",
@@ -1056,7 +1081,7 @@ class TestImagesAndUrl:
             _cfg(),
         )
 
-        assert body["messages"][0]["content"] == [
+        assert _strip(body)["messages"][0]["content"] == [
             {
                 "type": "image",
                 "source": {"type": "url", "url": "https://cdn.example.com/cat.png"},
@@ -1085,7 +1110,7 @@ class TestImagesAndUrl:
                 _cfg(),
             )
 
-        assert body["messages"][0]["content"] == [{"type": "text", "text": "look"}]
+        assert _strip(body)["messages"][0]["content"] == [{"type": "text", "text": "look"}]
         assert "unsupported scheme" in caplog.text
 
     @pytest.mark.parametrize(
@@ -1146,3 +1171,91 @@ class TestAuthAndStopReasons:
             )
 
         assert "pause_turn" in caplog.text
+
+
+class TestPromptCaching:
+    """Anthropic prompt caching is explicit opt-in: without ``cache_control``
+    breakpoints the API caches NOTHING (the 0% hit-rate regression this locks
+    out). Placement follows the opencode reference: one ephemeral breakpoint
+    on the system block and one on each of the last two non-system messages —
+    at most three, under the API's four-breakpoint cap by construction.
+    """
+
+    def test_system_marked_as_block_array(self) -> None:
+        body = AnthropicProtocol().build_body(
+            _req([_msg(MessageRole.SYSTEM, "SYS"), _msg(MessageRole.USER, "hi")]),
+            _cfg(),
+        )
+        assert body["system"] == [
+            {"type": "text", "text": "SYS", "cache_control": {"type": "ephemeral"}}
+        ]
+
+    def test_last_two_messages_marked_earlier_unmarked(self) -> None:
+        body = AnthropicProtocol().build_body(
+            _req(
+                [
+                    _msg(MessageRole.SYSTEM, "SYS"),
+                    _msg(MessageRole.USER, "u1"),
+                    _msg(MessageRole.ASSISTANT, "a1"),
+                    _msg(MessageRole.USER, "u2"),
+                ]
+            ),
+            _cfg(),
+        )
+        messages = body["messages"]
+        assert "cache_control" not in messages[0]["content"][0]
+        assert messages[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+        assert messages[2]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_marker_lands_on_the_final_block_only(self) -> None:
+        body = AnthropicProtocol().build_body(
+            _req(
+                [
+                    _msg(MessageRole.USER, "u1"),
+                    _msg(MessageRole.ASSISTANT, "a1"),
+                    _msg(
+                        MessageRole.USER,
+                        [
+                            TextPart(text="look"),
+                            ImageUrlPart(image_url=ImageUrl(url="https://x/i.png")),
+                        ],
+                    ),
+                ]
+            ),
+            _cfg(),
+        )
+        blocks = body["messages"][2]["content"]
+        assert blocks[0]["type"] == "text" and "cache_control" not in blocks[0]
+        assert blocks[1]["type"] == "image"
+        assert blocks[1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_single_message_conversation_still_marked(self) -> None:
+        body = AnthropicProtocol().build_body(_req([_msg(MessageRole.USER, "hi")]), _cfg())
+        assert "system" not in body
+        assert body["messages"][0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_tool_use_block_carries_the_marker(self) -> None:
+        """The steady ReAct tail is an assistant tool_use turn — its marker
+        is what makes the tool-call prefix a cache hit on the next call."""
+        body = AnthropicProtocol().build_body(
+            _req(
+                [
+                    _msg(MessageRole.USER, "weather?"),
+                    _msg(
+                        MessageRole.ASSISTANT,
+                        tool_calls=[
+                            ToolCall(
+                                call_id="t1", tool_name="get_weather", arguments={"city": "Paris"}
+                            )
+                        ],
+                    ),
+                    _msg(MessageRole.TOOL, "20C", tool_call_id="t1"),
+                ]
+            ),
+            _cfg(),
+        )
+        # TOOL results flush as a trailing user turn; the assistant tool_use
+        # turn is the second-to-last message and gets its marker.
+        blocks = body["messages"][1]["content"]
+        assert blocks[0]["type"] == "tool_use"
+        assert blocks[0]["cache_control"] == {"type": "ephemeral"}

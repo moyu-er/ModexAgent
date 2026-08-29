@@ -30,8 +30,9 @@ Wire facts this engine owns (PRD §4.2):
   ``item_reference``; ``store=false`` replays the full item with
   ``encrypted_content`` and the body requests
   ``include: ["reasoning.encrypted_content"]``.
-- ``stop`` and ``prompt_cache_key`` have no Responses wire field in V1
-  (PRD §3) and are deliberately not lowered.
+- ``prompt_cache_key`` passes through as the documented cache-routing hint
+  (same-session requests land on the same cache node); ``stop`` has no
+  Responses wire field and is not lowered.
 - Replay state (the stream's reasoning item id + encrypted content)
   leaves the engine only through ``Finish.replay`` — no per-response
   instance state.
@@ -291,6 +292,7 @@ class _WireRequest(BaseModel):
     top_p: float | None = None
     stream: Literal[True] = True
     store: bool = True
+    prompt_cache_key: str | None = None
     include: list[str] | None = None
 
 
@@ -518,9 +520,10 @@ class OpenAIResponsesProtocol(LLMProtocol):
         """Translate the canonical request onto the Responses API body.
 
         Sampling parameters come from the request envelope (call-site >
-        config fallback for effort / max_output_tokens); ``stop`` and
-        ``prompt_cache_key`` have no wire field in V1 and are not lowered.
-        ``extra_body`` merges into the body top level last — the user wins.
+        config fallback for effort / max_output_tokens); ``prompt_cache_key``
+        passes through as the documented cache-routing hint; ``stop`` has no
+        wire field and is not lowered. ``extra_body`` merges into the body
+        top level last — the user wins.
         """
         instructions: list[str] = []
         items: list[_InputItem] = []
@@ -576,6 +579,7 @@ class OpenAIResponsesProtocol(LLMProtocol):
             temperature=request.temperature,
             top_p=request.top_p,
             store=cfg.store,
+            prompt_cache_key=request.prompt_cache_key,
             # store=false replay needs the encrypted state on EVERY turn: the
             # include list is what makes the response carry encrypted_content,
             # so it is requested whenever store is off — not only on turns that

@@ -23,7 +23,14 @@ from modex_agent.core.constants import ReasoningEffort
 from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.llm_struct import LLMErrorInfo, LLMErrorKind, RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
-from modex_agent.core.stream_events import LLMStreamEvent, StreamFailure
+from modex_agent.core.stream_events import (
+    Finish,
+    LLMStreamEvent,
+    ReasoningDelta,
+    StreamFailure,
+    TextDelta,
+    ToolCallComplete,
+)
 from modex_agent.providers.http.protocol import LLMProtocol, ProtocolConfig
 from modex_agent.providers.http.sse import SseFrame, sse_frames
 
@@ -36,6 +43,7 @@ logger = logging.getLogger(__name__)
 _TRANSPORT_TIMEOUT = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=10.0)
 
 _DEFAULT_RETRY_BACKOFF: tuple[float, ...] = (2.0, 8.0)
+_DEFAULT_MAX_RETRIES: int = 3
 
 
 class _StreamIdleTimeoutError(Exception):
@@ -117,9 +125,11 @@ class HTTPStreamProvider(LLMProvider):
         if safety is not None:
             self._stream_idle_timeout: float | None = safety.llm.stream_idle_timeout_seconds
             retry_backoff = safety.llm.retry_backoff_seconds
+            self._stream_max_retries: int = safety.llm.framework_max_retries
         else:
             self._stream_idle_timeout = None
             retry_backoff = _DEFAULT_RETRY_BACKOFF
+            self._stream_max_retries = _DEFAULT_MAX_RETRIES
         super().__init__(retry_backoff_seconds=retry_backoff)
 
         # SDK-era environment fallback: an empty api_key reads the engine's
@@ -136,7 +146,9 @@ class HTTPStreamProvider(LLMProvider):
         )
         # httpx performs no automatic retries (unlike the openai SDK, whose
         # max_retries=0 had to be spelled out) — retrying is the framework
-        # layer's business (LLMProvider._execute_with_retry).
+        # layer's business: the stream-level retry loop in stream() (budget
+        # from framework_max_retries) plus the response-level
+        # LLMProvider._execute_with_retry.
         self._client = httpx.AsyncClient(
             timeout=_TRANSPORT_TIMEOUT,
             transport=transport,
@@ -165,6 +177,14 @@ class HTTPStreamProvider(LLMProvider):
         is ``BaseException`` — it passes through untouched. Engine events
         (including ``Finish.replay`` payloads) are passed through verbatim;
         assembly is the consumer's business.
+
+        Transient failures are retried up to the policy retry budget
+        (``framework_max_retries``, default 3) — but only while nothing
+        consumer-visible has escaped the current attempt: once a delta or
+        tool call was yielded, a retry would duplicate it downstream, so
+        the failure passes through instead. A stream that ends without a
+        terminal event (EOF truncation) is retryable the same way; the
+        final EOF still lands on the assembler's terminal-event invariant.
         """
         request = self._with_sampling_defaults(request)
         body = self._protocol.build_body(request, self._cfg)
@@ -178,6 +198,73 @@ class HTTPStreamProvider(LLMProvider):
             },
             **{key.lower(): value for key, value in self._cfg.extra_headers.items()},
         }
+        for attempt in range(self._stream_max_retries + 1):
+            escaped = False
+            finished = False
+            failure: StreamFailure | None = None
+            async for event in self._stream_once(body, merged_headers):
+                match event:
+                    case TextDelta() | ReasoningDelta() | ToolCallComplete():
+                        # Consumer-visible side effects — a retry would
+                        # duplicate them downstream.
+                        escaped = True
+                        yield event
+                    case StreamFailure():
+                        # Held, not yielded: yielding would close the
+                        # consumer's stream; the retry decision comes after
+                        # the attempt ends.
+                        failure = event
+                    case Finish():
+                        finished = True
+                        yield event
+                    case _:
+                        yield event
+            if finished:
+                return
+            final_attempt = attempt >= self._stream_max_retries
+            retryable = failure is None or failure.error_info.should_retry
+            if escaped or final_attempt or not retryable:
+                if failure is not None:
+                    logger.warning(
+                        "HTTPStreamProvider stream failed (no retry): model=%s "
+                        "attempt=%d/%d escaped=%s error=%s",
+                        self._model,
+                        attempt + 1,
+                        self._stream_max_retries + 1,
+                        escaped,
+                        failure.error_info.message[:200],
+                    )
+                    yield failure
+                else:
+                    logger.warning(
+                        "HTTPStreamProvider stream ended without terminal event "
+                        "(no retry): model=%s attempt=%d/%d escaped=%s",
+                        self._model,
+                        attempt + 1,
+                        self._stream_max_retries + 1,
+                        escaped,
+                    )
+                return
+            delay = self._retry_backoff_seconds[
+                min(attempt, len(self._retry_backoff_seconds) - 1)
+            ]
+            logger.warning(
+                "HTTPStreamProvider stream retry attempt %d/%d after %.1fs: "
+                "model=%s reason=%s",
+                attempt + 1,
+                self._stream_max_retries + 1,
+                delay,
+                self._model,
+                failure.error_info.message[:200]
+                if failure is not None
+                else "stream ended without terminal event",
+            )
+            await asyncio.sleep(delay)
+
+    async def _stream_once(
+        self, body: dict[str, Any], merged_headers: dict[str, str]
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """One HTTP attempt: POST, watch the idle watchdog, translate SSE."""
         try:
             async with self._client.stream("POST", self._url, json=body, headers=merged_headers) as resp:
                 if not resp.is_success:

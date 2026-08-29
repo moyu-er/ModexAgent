@@ -184,7 +184,7 @@ How every canonical field lowers onto each wire. Canonical sources: `ChatMessage
 | `max_output_tokens` | `max_tokens` | `max_output_tokens` | `max_tokens`, required by the API (fallback 8192 when unset) |
 | `reasoning_effort` | top-level `reasoning_effort` (NONE means omit) | `reasoning: {effort}` (NONE means omit) | `thinking: {type: "enabled", budget_tokens}` via the budget table (NONE means omit) |
 | `stop` | `stop` | no wire field in V1 | `stop_sequences` |
-| `prompt_cache_key` | top-level `prompt_cache_key` | not lowered | not lowered |
+| `prompt_cache_key` | top-level `prompt_cache_key` | top-level `prompt_cache_key` (the documented cache-routing hint) | no wire field — anthropic caches via `cache_control` breakpoints instead |
 | `extra_body` | merged into body top level, user wins | same | same; the `thinking` key overrides the whole thinking object precisely |
 | stream flags | `stream: true` plus `stream_options: {include_usage: true}` | `stream: true` plus `store` | `stream: true` |
 | auth header | `Authorization: Bearer <key>` | `Authorization: Bearer <key>` | `x-api-key` plus `anthropic-version: 2023-06-01` |
@@ -228,6 +228,7 @@ Request:
 
 - SSE frames are event+data pairs: the `event:` line names the event type, the `data:` line carries the JSON payload.
 - Body carries `stream: true` and `store` (default false — see the Errata in chapter 3's replay notes); system messages become top-level `instructions`; tools use the flat schema; `reasoning: {effort}` appears only when the effort is not NONE; `max_output_tokens` passes through directly.
+- `prompt_cache_key` passes through as the documented cache-routing hint — same-session requests land on the same cache node, which is what makes the automatic prefix cache observable as hit rate instead of scattering across nodes.
 - URL: `{base}/responses` (`/v1` is already part of base).
 - Auth: `Authorization: Bearer <key>`.
 
@@ -251,6 +252,7 @@ Request:
 - `max_tokens` is required by the API; the engine supplies `cfg.max_output_tokens`, falling back to 8192 when unset.
 - Tools lower to `{name, description, input_schema}` with `input_schema` taken from the canonical parameters.
 - Temperature clamps to 1.0 with an ERROR log when a value above 1.0 arrives (the API range is 0 to 1).
+- Prompt caching is explicit opt-in on this protocol: without `cache_control` breakpoints the API caches nothing. The engine marks the system block and the final content block of each of the last two non-system messages with `{type: "ephemeral"}` (the opencode placement) — at most three breakpoints, under the API cap of four, by construction. The system field uses the content-block array form because a bare string carries no marker slot; prefix order is tools, system, messages, so the system breakpoint already covers the stable tools+system prefix.
 - Consecutive same-role messages merge (adjacent user with user, adjacent assistant with assistant). This is a translation requirement of the Messages API, not a repair.
 - TOOL messages lower to `tool_result` blocks attached to the immediately following user turn; when merged with that turn's text, `tool_result` blocks come first.
 - Assistant turns replay a `thinking` block (content plus signature) on every turn where both fields are present. A thinking block without a signature is not replayed (ERROR log).

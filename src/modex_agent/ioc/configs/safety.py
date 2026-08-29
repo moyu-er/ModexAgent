@@ -14,7 +14,7 @@ class LLMSafetyConfig(BaseModel):
 
     request_timeout: float | None = None
     stream_idle_timeout: float | None = None
-    max_retries: int = 1
+    max_retries: int = 3
     retry_backoff: list[float] = [2.0, 8.0]
 
 
