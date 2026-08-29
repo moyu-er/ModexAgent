@@ -4,7 +4,8 @@ Verifies that:
 - get_preset_tools wraps standard tools when given a root_provider.
 - Subagent tool managers built inside a pool use the workspace root provider.
 - Main-agent tools remain workspace-scoped.
-- Reviewer/curator/dream/summarizer data paths come from R.pool_data.
+- Reviewer/dream/summarizer data paths come from R.pool_data; the
+  experience dir comes from the experience capability supply (SPEC §8.3).
 """
 
 from __future__ import annotations
@@ -103,7 +104,9 @@ def test_get_preset_tools_with_provider_wraps_bash_tool() -> None:
     def _make_bash() -> SubprocessTool:
         return SubprocessTool(timeout=300)
 
-    tools = get_preset_tools(ToolPreset.FULL, subprocess_tool_factory=_make_bash, root_provider=provider)
+    tools = get_preset_tools(
+        ToolPreset.FULL, subprocess_tool_factory=_make_bash, root_provider=provider
+    )
     bash_tools = [t for t in tools if t.name == "bash"]
     assert len(bash_tools) == 1
     assert isinstance(bash_tools[0], WorkspaceScopedShellTool)
@@ -277,12 +280,17 @@ models:
 # ── Tests: PoolWorkspaceResources ownership ─────────────────────────────
 
 
-async def test_pool_resources_experience_dir_from_pool_data(tmp_path: Path) -> None:
-    """Verify that experience_dir comes from pool_data, not hard-coded paths."""
+async def test_pool_resources_experience_dir_from_capability_supply(tmp_path: Path) -> None:
+    """The experience dir's construction authority is the experience
+    capability supply (SPEC §8.3): ``ExperienceCapability.supply`` builds
+    it at the workspace paths layout, keyed by the pool's root agent —
+    pool_data carries no experience resource anymore."""
     from bot.workspace.pool_data import build_pool_data
 
     from modex_agent.ioc.configs.memory import MemoryConfig
     from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
+    from modex_agent.plugins.capability import PoolSupplyAgentEntry, PoolSupplyView
+    from modex_agent.plugins.defaults.capabilities.experience import ExperienceCapability
     from modex_agent.scope.spec import AgentSpec
 
     target = tmp_path / "ws"
@@ -293,9 +301,19 @@ async def test_pool_resources_experience_dir_from_pool_data(tmp_path: Path) -> N
     assembly_deps = PoolAssemblyDeps(memory=MemoryConfig())
 
     pool_data = await build_pool_data(ctx, "test_pool", root_agent, None, assembly_deps, "")
-    # experience_dir should exactly match the workspace paths accessor
-    expected = ctx.paths.experience_dir("test_pool", "main")
-    assert pool_data.experience_dir == expected
+    # pool_data no longer carries the experience dir (the supply owns it).
+    assert pool_data.experience_dir is None
+
+    supply = ExperienceCapability().supply(
+        PoolSupplyView(
+            pool_name="test_pool",
+            entries=(PoolSupplyAgentEntry(agent_name="main", config={}),),
+            root_agent_name="main",
+            data_dir=ctx.paths.root,
+        )
+    )
+    # The supply's dir exactly matches the workspace paths accessor.
+    assert supply.experience_dir == ctx.paths.experience_dir("test_pool", "main")
 
 
 async def test_build_pool_data_uses_workspace_sqlite_for_session_memory(
@@ -336,8 +354,7 @@ async def test_build_pool_data_uses_workspace_sqlite_for_session_memory(
         assert isinstance(pool_data.turn_store, SqliteTurnStateStore)
         assert pool_data.decision_coordinator._connection is persistence.connection
         assert (
-            pool_data.decision_coordinator._codec_registry
-            is pool_data.turn_store._codec_registry
+            pool_data.decision_coordinator._codec_registry is pool_data.turn_store._codec_registry
         )
         mem_ctx = MemoryContext(session_id="session-1", agent_id="main")
         history = memory_system.create_message_history(mem_ctx)
@@ -413,9 +430,7 @@ async def test_pool_resources_background_tasks_live_on_r(tmp_path: Path) -> None
             await asyncio.sleep(10)
 
     r.background.dream_engine = object()  # type: ignore[assignment]
-    r.background._tasks.append(
-        asyncio.create_task(_mock_loop(), name="workspace-dream")
-    )
+    r.background._tasks.append(asyncio.create_task(_mock_loop(), name="workspace-dream"))
 
     # Verify tasks are registered on R.background
     assert len(r.background.tasks) > 0
@@ -429,42 +444,11 @@ async def test_pool_resources_background_tasks_live_on_r(tmp_path: Path) -> None
         assert t.done()
 
 
-async def test_pool_resources_background_tasks_curator_on_r(tmp_path: Path) -> None:
-    """Verify that curator tasks are registered on R.background and cancel on stop."""
-    from bot.workspace.background import BackgroundTaskRunner
-
-    from modex_agent.core.experience.curator import ExperienceCurator
-    from modex_agent.core.experience.meta import PerFileExperienceMetaStore
-
-    r = _build_test_resources(tmp_path)
-
-    # Create a mock curator
-    exp_dir = tmp_path / "experiences"
-    exp_dir.mkdir()
-    meta = PerFileExperienceMetaStore(lambda: exp_dir)
-    curator = ExperienceCurator(
-        experience_dir=exp_dir,
-        meta_store=meta,
-        max_experiences=10,
-    )
-
-    r.background = BackgroundTaskRunner(
-        pool_data={},
-        assembly_deps={},
-        default_pool_name=None,
-    )
-    r.background.curators["test_pool"] = curator
-    r.background._curator_intervals["test_pool"] = 1
-
-    # Start should create curator tasks
-    await r.background.start()
-    assert len(r.background.tasks) > 0
-    task_names = {t.get_name() for t in r.background.tasks}
-    assert any("curator" in n for n in task_names), f"Expected curator task in {task_names}"
-
-    # Stop should cancel all tasks
-    await r.background.stop()
-    assert len(r.background.tasks) == 0
+# The retired "curator tasks on R.background" test died with the
+# experience capability's supply face: the curator loop lives on
+# ``ExperienceSupply`` now — pool assembly starts it and pool teardown
+# (``AgentPool.shutdown_all``) stops it (SPEC §8.3 D4). The lifecycle is
+# pinned in the framework suite (``tests/unit/plugins/test_experience_supply.py``).
 
 
 # ── Tests: workspace-scoped path resolution ─────────────────────────────

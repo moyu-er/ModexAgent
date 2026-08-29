@@ -163,8 +163,11 @@ async def test_baseline_config_driven_sqlite_landing(tmp_path: Path) -> None:
         manifest = _landing_manifest(resources, home)
         assert manifest == {
             "state_db": True,
+            # No 'experiences': the dark experience dir died with the
+            # capability supply face — the experience capability creates
+            # it iff declared (SPEC §8.3), and this minimal declaration
+            # declares none.
             "skeleton": [
-                "experiences",
                 "inbox",
                 "memory",
                 "overflow",
@@ -373,13 +376,9 @@ async def test_two_workspaces_different_backends_coexist(tmp_path: Path) -> None
         # the file workspace owns the file-backed stores.
         assert sqlite_resources.persistence is not None
         assert (sqlite_home / ".modex" / "state.db").exists()
-        assert type(sqlite_resources.session_index_store).__name__ == (
-            "SqliteSessionStore"
-        )
+        assert type(sqlite_resources.session_index_store).__name__ == ("SqliteSessionStore")
         assert file_resources.persistence is None
-        assert type(file_resources.session_index_store).__name__ == (
-            "WorkspacePoolSessionStore"
-        )
+        assert type(file_resources.session_index_store).__name__ == ("WorkspacePoolSessionStore")
 
         # Per-(workspace, pool) addressing: each workspace's pool data
         # roots at its own target — no cross-workspace leakage.
@@ -446,11 +445,7 @@ async def test_pool_as_root_landing_matches_single_workspace_today(tmp_path: Pat
     _write_project(
         home,
         declaration=(
-            "pool:\n"
-            "  name: main\n"
-            "  agents:\n"
-            "    main:\n"
-            "      description: pool-as-root main\n"
+            "pool:\n  name: main\n  agents:\n    main:\n      description: pool-as-root main\n"
         ),
     )
     app_config = AppConfig.model_validate(
@@ -473,8 +468,9 @@ async def test_pool_as_root_landing_matches_single_workspace_today(tmp_path: Pat
         assert recorded.get("workspace_spec") is None
         assert _landing_manifest(resources, home) == {
             "state_db": True,
+            # No 'experiences' — the dark experience dir died with the
+            # capability supply face (see the baseline landing test).
             "skeleton": [
-                "experiences",
                 "inbox",
                 "memory",
                 "overflow",

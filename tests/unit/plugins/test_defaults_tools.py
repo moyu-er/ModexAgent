@@ -7,6 +7,7 @@ every ``ToolPreset``'s ``get_preset_tools`` expansion — dynamically
 asserted, never hardcoded. Communication tools (task/send_to_peer/
 send_to_agent) are NOT in defaults; they stay BIZ conditional registration.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -17,7 +18,6 @@ from pydantic import BaseModel, ValidationError
 from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
 from modex_agent.plugins.defaults.tools import (
     ExperienceToolConfig,
-    ExperienceToolFactory,
     ToolConfig,
     register_default_tools,
 )
@@ -25,9 +25,7 @@ from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.tools.presets import (
     ToolPreset,
-    ToolSupplement,
     get_preset_tools,
-    get_supplement_tool_names,
 )
 
 # Communication tool names that must NEVER appear in defaults — they are
@@ -53,10 +51,22 @@ def _expected_preset_union() -> set[str]:
 
 def _expected_production_union() -> set[str]:
     # "bash"/"process"/"terminal" are the terminal-trio runtime factories
-    # (process/terminal explicit roster opt-in, not preset-expanded).
-    return _expected_preset_union() | set(
-        get_supplement_tool_names(list(ToolSupplement))
-    ) | {"bash", "process", "terminal", "aci_edit"}
+    # (process/terminal explicit roster opt-in, not preset-expanded);
+    # "ast_grep_search"/"ast_grep_replace", "todo_write"/"todo_read", and
+    # "experience" are the ast_grep / todo / experience capabilities'
+    # direct registrations (no longer supplement-projected); "aci_edit"
+    # is the aci capability's.
+    return _expected_preset_union() | {
+        "bash",
+        "process",
+        "terminal",
+        "aci_edit",
+        "ast_grep_search",
+        "ast_grep_replace",
+        "todo_write",
+        "todo_read",
+        "experience",
+    }
 
 
 def _register_defaults() -> ComponentRegistry:
@@ -155,8 +165,7 @@ class TestFactoryContract:
             if name in _RUNTIME_TOOL_NAMES:
                 continue
             assert isinstance(factory, SimpleFactory), (
-                f"factory for {name!r} is {type(factory).__name__}, "
-                f"expected SimpleFactory"
+                f"factory for {name!r} is {type(factory).__name__}, expected SimpleFactory"
             )
 
     async def test_create_returns_tool_with_matching_name(self):
@@ -169,8 +178,7 @@ class TestFactoryContract:
                 continue
             instance = await factory.create(ToolConfig(), ctx=None)  # type: ignore[arg-type]
             assert instance.name == name, (
-                f"factory.create() for {name!r} returned tool with "
-                f"name {instance.name!r}"
+                f"factory.create() for {name!r} returned tool with name {instance.name!r}"
             )
 
     def test_config_model_is_toolconfig(self):
@@ -252,6 +260,5 @@ class TestRegisterDefaultTools:
         assert set(calls) == expected
         # No duplicate registrations.
         assert len(calls) == len(set(calls)), (
-            f"register_tool called with duplicates: "
-            f"{[n for n in calls if calls.count(n) > 1]}"
+            f"register_tool called with duplicates: {[n for n in calls if calls.count(n) > 1]}"
         )

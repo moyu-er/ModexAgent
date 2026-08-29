@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,10 @@ from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
 from plugins.bot_hooks import SEND_FILE_TO_USER_TOOL_NAME
 
 from modex_agent.ioc.configs.approval import ApprovalConfig
+from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.defaults.capabilities.experience import EXPERIENCE_TOOL_NAME
+from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import CompiledAgent, compile_scope
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.scope.overlay import (
@@ -28,18 +33,23 @@ from modex_agent.scope.spec import (
 from modex_agent.tools.presets import (
     EXPERIENCE_REVIEW_HOOK_NAME,
     ToolPreset,
-    ToolSupplement,
-    get_supplement_tool_names,
 )
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
-# The projections/constants are the single name authorities — no string
-# literals for the experience / send_file names (task-2 file pattern).
-EXPERIENCE_TOOL_NAME = get_supplement_tool_names([ToolSupplement.EXPERIENCE])[0]
-
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 BOT_BASE = PROJECT_ROOT / "examples" / "bot_project"
+
+
+@lru_cache(maxsize=1)
+def _shipped_registry() -> ComponentRegistry:
+    """DefaultPlugin registry — the shipped declaration's
+    ``capabilities:`` blocks resolve against it at compile."""
+    registry = ComponentRegistry()
+    ctx = PluginRegistrationContext(registry)
+    DefaultPlugin().register(ctx)
+    ctx.flush()
+    return registry
 
 
 def _scope_spec() -> ScopeSpec:
@@ -104,9 +114,7 @@ def test_strip_peers_clears_every_bidirectional_pool_link() -> None:
 
 def test_keep_agents_can_reduce_pool_to_its_root() -> None:
     spec = _scope_spec()
-    overlay = ScopeOverlay(
-        pools={"alpha": PoolOverlay(keep_agents=["root-a"])}
-    )
+    overlay = ScopeOverlay(pools={"alpha": PoolOverlay(keep_agents=["root-a"])})
 
     result = apply_scope_overlay(spec, overlay)
 
@@ -115,9 +123,7 @@ def test_keep_agents_can_reduce_pool_to_its_root() -> None:
 
 def test_keep_agents_refuses_to_drop_pool_root() -> None:
     spec = _scope_spec()
-    overlay = ScopeOverlay(
-        pools={"alpha": PoolOverlay(keep_agents=["child-a"])}
-    )
+    overlay = ScopeOverlay(pools={"alpha": PoolOverlay(keep_agents=["child-a"])})
 
     with pytest.raises(ValueError, match=r"alpha.*root-a"):
         apply_scope_overlay(spec, overlay)
@@ -126,11 +132,7 @@ def test_keep_agents_refuses_to_drop_pool_root() -> None:
 def test_agent_overlay_replaces_toolset() -> None:
     spec = _scope_spec()
     overlay = ScopeOverlay(
-        pools={
-            "alpha": PoolOverlay(
-                agents={"root-a": AgentOverlay(toolset=ToolPreset.WEB)}
-            )
-        }
+        pools={"alpha": PoolOverlay(agents={"root-a": AgentOverlay(toolset=ToolPreset.WEB)})}
     )
 
     result = apply_scope_overlay(spec, overlay)
@@ -185,11 +187,7 @@ def test_agent_overlay_memory_merges_only_explicit_fields() -> None:
     overlay = ScopeOverlay(
         pools={
             "alpha": PoolOverlay(
-                agents={
-                    "root-a": AgentOverlay(
-                        memory=MemoryDeclaration(core_enabled=False)
-                    )
-                }
+                agents={"root-a": AgentOverlay(memory=MemoryDeclaration(core_enabled=False))}
             )
         }
     )
@@ -209,20 +207,14 @@ def test_agent_overlay_memory_creates_declaration_for_defaulted_root() -> None:
     overlay = ScopeOverlay(
         pools={
             "beta": PoolOverlay(
-                agents={
-                    "root-b": AgentOverlay(
-                        memory=MemoryDeclaration(core_enabled=False)
-                    )
-                }
+                agents={"root-b": AgentOverlay(memory=MemoryDeclaration(core_enabled=False))}
             )
         }
     )
 
     result = apply_scope_overlay(spec, overlay)
 
-    assert _agent(result, "beta", "root-b").memory == MemoryDeclaration(
-        core_enabled=False
-    )
+    assert _agent(result, "beta", "root-b").memory == MemoryDeclaration(core_enabled=False)
 
 
 def test_agent_overlay_replaces_prompt_provider_and_strips_approval() -> None:
@@ -252,9 +244,7 @@ def test_agent_overlay_replaces_prompt_provider_and_strips_approval() -> None:
 def test_agent_overlay_strips_mcp_selection() -> None:
     spec = _scope_spec()
     overlay = ScopeOverlay(
-        pools={
-            "alpha": PoolOverlay(agents={"root-a": AgentOverlay(strip_mcp=True)})
-        }
+        pools={"alpha": PoolOverlay(agents={"root-a": AgentOverlay(strip_mcp=True)})}
     )
 
     result = apply_scope_overlay(spec, overlay)
@@ -268,18 +258,12 @@ def test_agent_overlay_strips_mcp_selection() -> None:
     [
         (ScopeOverlay(pools={"missing": PoolOverlay()}), "missing"),
         (
-            ScopeOverlay(
-                pools={
-                    "alpha": PoolOverlay(agents={"missing": AgentOverlay()})
-                }
-            ),
+            ScopeOverlay(pools={"alpha": PoolOverlay(agents={"missing": AgentOverlay()})}),
             "missing",
         ),
     ],
 )
-def test_unknown_overlay_names_fail_loudly(
-    overlay: ScopeOverlay, message: str
-) -> None:
+def test_unknown_overlay_names_fail_loudly(overlay: ScopeOverlay, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         apply_scope_overlay(_scope_spec(), overlay)
 
@@ -335,13 +319,10 @@ def test_benchmark_shaped_overlay_boots_real_bot_declaration(
         data_dir=tmp_path / ".modex",
         graphs_dirs=(),
         default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        registry=_shipped_registry(),
     )
 
-    root = next(
-        agent
-        for agent in boot.compilation.agents
-        if agent.provenance.pool == "default"
-    )
+    root = next(agent for agent in boot.compilation.agents if agent.provenance.pool == "default")
     assert not {
         "task",
         "send_to_agent",
@@ -370,24 +351,27 @@ def _overlay_and_compile(
     adjusted = apply_scope_overlay(
         spec, ScopeOverlay(pools={"p": PoolOverlay(agents={agent.name: overlay})})
     )
-    compilation = compile_scope(adjusted, workspace_ctx=_workspace_ctx())
+    compilation = compile_scope(
+        adjusted, workspace_ctx=_workspace_ctx(), registry=_shipped_registry()
+    )
     assert len(compilation.agents) == 1
     return adjusted, compilation.agents[0]
 
 
 class TestOverlayToolsCompileConvergence:
-    def test_overlay_minus_removes_declared_plus_and_supplement_names(self) -> None:
-        # Row (i): declared +send_file_to_user + EXPERIENCE supplement, overlay
-        # minus entries (the eval harness tools_remove shape) → compiled tools
-        # contain NEITHER name and the experience_review hook goes with the
-        # tool (binding follows the final tool list). The old pre-merge kept
-        # both: "-send_file_to_user" never matched the literal "+send_file_to_user"
-        # base entry.
+    def test_overlay_minus_removes_declared_plus_and_capability_names(self) -> None:
+        # Row (i): declared +send_file_to_user + the experience
+        # capability, overlay minus entries (the eval harness
+        # tools_remove shape) — compiled tools contain NEITHER name and
+        # the experience_review hook goes with the tool (the binding
+        # drops the unvouched contributed hook). The old pre-merge kept
+        # both: "-send_file_to_user" never matched the literal
+        # "+send_file_to_user" base entry.
         _adjusted, compiled = _overlay_and_compile(
             AgentSpec(
                 name="root",
                 tools=[f"+{SEND_FILE_TO_USER_TOOL_NAME}"],
-                tool_supplements=[ToolSupplement.EXPERIENCE],
+                capabilities={"experience": {}},
             ),
             AgentOverlay(
                 tools=[

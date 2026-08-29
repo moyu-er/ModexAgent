@@ -66,6 +66,18 @@ async def _load_registry() -> ComponentRegistry:
     return registry
 
 
+def _compile_registry() -> ComponentRegistry:
+    """DefaultPlugin-only registry for the compile step (the shipped
+    declaration's ``capabilities:`` blocks resolve against it)."""
+    from modex_agent.plugins.loader import PluginRegistrationContext
+
+    registry = ComponentRegistry()
+    ctx = PluginRegistrationContext(registry)
+    DefaultPlugin().register(ctx)
+    ctx.flush()
+    return registry
+
+
 def _workspace_ctx(root: Path) -> WorkspaceContext:
     return WorkspaceContext(target=root, paths=WorkspacePaths(root=root), is_home=False)
 
@@ -90,6 +102,7 @@ def _boot_declaration(data_dir: Path):
         data_dir=data_dir,
         graphs_dirs=(BOT_BASE / "config" / "graphs",),
         default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        registry=_compile_registry(),
     )
 
 
@@ -163,15 +176,23 @@ async def test_declared_glue_components_are_roster_dispatched(
         assert len(review_hooks) == 1, "exactly one ExperienceReviewHook (Stage-4 dispatch)"
         hook = review_hooks[0]
         # The chain-supplied infra: the bot-global default provider (not any
-        # pool provider) + the pool's memory system + experience dir.
+        # pool provider) + the pool's memory system + the experience
+        # capability supply's dir (the retired pool_data carrier died with
+        # the supply face, SPEC §8.3).
         assert hook._agent._provider is not None  # noqa: SLF001
         assert hook._memory_system is pool_data.context_manager.memory_system  # noqa: SLF001
-        assert hook._get_dir() == pool_data.experience_dir  # noqa: SLF001
+        supply = instance.pool.materialize_deps.capability_supply["experience"]  # noqa: SLF001
+        assert hook._get_dir() == supply.experience_dir  # noqa: SLF001
 
         memory_hooks = dump_memory_hooks(pool_data)
+        # The default pool's MAIN does not declare the todo capability:
+        # ``todo_reorientation`` rides the roster→memory-runner dispatch,
+        # which registers it only on todo-capable agents (the retired
+        # unconditional create_pool injection died with the todo supply
+        # convergence, SPEC §8.2 — office-expert, the pool's todo sub,
+        # carries the hook on its own session-only memory system).
         assert [h.hook_class for h in memory_hooks] == [
             "UserNoticeCleanupHook",
-            "TodoReorientationHook",
         ]
     finally:
         await instance.pool.shutdown_all()

@@ -5,7 +5,7 @@ import contextlib
 import logging
 import sys
 import time
-from collections.abc import Coroutine, Iterator
+from collections.abc import Awaitable, Callable, Coroutine, Iterator
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -129,8 +129,12 @@ class AgentPool(AgentRegistry):
         # ── ADR-0015 D5 fork-context cleanup (set by Task 2.9 wiring) ──
         self._context_fork_builder: ContextForkBuilder | None = None
         # ── Per-poll InboxPoller (Task 7): attached by create_pool; started
-        #    after materialize-deps injection; stopped in shutdown_all. ──
+        # after materialize-deps injection; stopped in shutdown_all. ──
         self._poller: InboxPoller | None = None
+        # ── Per-pool background-worker stops (capability supply lifecycle,
+        #    SPEC §8.3 D4): attached by PoolAssembleStage; awaited FIRST in
+        #    shutdown_all. ──
+        self._background_stops: list[Callable[[], Awaitable[None]]] = []
         self._valid_transitions: dict[AgentState, set[AgentState]] = {
             AgentState.INITIALIZING: {AgentState.IDLE, AgentState.ERROR, AgentState.SHUTTING_DOWN},
             AgentState.IDLE: {AgentState.WORKING, AgentState.ERROR, AgentState.SHUTTING_DOWN},
@@ -190,6 +194,21 @@ class AgentPool(AgentRegistry):
     def attach_poller(self, poller: InboxPoller) -> None:
         """Attach this pool's InboxPoller (created by create_pool wiring)."""
         self._poller = poller
+
+    # ── Per-pool background-worker stops (capability supply lifecycle, SPEC §8.3 D4) ──
+
+    def attach_background_stop(self, stop: Callable[[], Awaitable[None]]) -> None:
+        """Register a pool-scoped background worker's stop callback.
+
+        Pool assembly (``PoolAssembleStage``) attaches the capability
+        supplies' shared stop right after starting their background
+        workers (e.g. the experience curator loop); ``shutdown_all``
+        awaits it before stopping the turn machinery — the same
+        pool-owned lifecycle the per-pool InboxPoller rides. The callback
+        must be idempotent (it may also fire through the assembly
+        pipeline's cleanup-on-failure road).
+        """
+        self._background_stops.append(stop)
 
     @property
     def session_registry(self) -> SessionRegistry | None:
@@ -853,6 +872,17 @@ class AgentPool(AgentRegistry):
     async def _shutdown_all_once(self, timeout: float) -> bool:
         if self._cleanup_task is not None:
             self._cleanup_task.cancel()
+        # Capability-supply background workers (e.g. the experience curator
+        # loop) stop FIRST — the position the retired workspace-level
+        # background runner held in the bot's teardown order.
+        for stop in self._background_stops:
+            try:
+                await stop()
+            except Exception:
+                logger.warning(
+                    "Background worker stop failed; continuing pool shutdown",
+                    exc_info=True,
+                )
         # Task 7: stop the per-pool InboxPoller so no new between-turn
         # cycles start while agents are being torn down.
         await self.stop_poller()

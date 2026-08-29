@@ -18,6 +18,8 @@ from bot.service.pool.declaration import (
     declared_pool_build,
 )
 
+from modex_agent.plugins.registry import ComponentRegistry
+
 DEFAULT_LLM_PROVIDER = "bot_default"
 
 
@@ -26,10 +28,13 @@ def boot_from_yaml(
     *,
     project_dir: Path,
     data_dir: Path,
+    registry: ComponentRegistry | None = None,
 ) -> object:
     """Write the YAML to ``<data_dir>/declaration.yml`` and boot it.
 
     Returns the :class:`bot.service.pool.declaration.ScopeBoot` products.
+    ``registry`` threads the CAPABILITY-slot registry into the compile —
+    required when the declaration carries ``capabilities:`` blocks.
     """
     data_dir.mkdir(parents=True, exist_ok=True)
     declaration_path = data_dir / "declaration.yml"
@@ -40,6 +45,7 @@ def boot_from_yaml(
         data_dir=data_dir,
         graphs_dirs=(),
         default_llm_provider=DEFAULT_LLM_PROVIDER,
+        registry=registry,
     )
 
 
@@ -54,9 +60,7 @@ def build_declared(
 
     A convenience for the overwhelmingly common single-pool test shape.
     """
-    boot = boot_from_yaml(
-        declaration_yaml, project_dir=project_dir, data_dir=data_dir
-    )
+    boot = boot_from_yaml(declaration_yaml, project_dir=project_dir, data_dir=data_dir)
     return declared_pool_build(boot, pool_name)
 
 
@@ -75,9 +79,7 @@ def compiled_spec_of(
     ``compiled_spec`` an ``AgentTemplate`` needs for materialization.
     """
 
-    boot = boot_from_yaml(
-        agent_yaml_tree, project_dir=project_dir, data_dir=data_dir
-    )
+    boot = boot_from_yaml(agent_yaml_tree, project_dir=project_dir, data_dir=data_dir)
     for compiled in boot.compilation.agents:
         if compiled.provenance.agent == agent_name:
             return compiled.spec

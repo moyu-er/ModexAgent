@@ -57,7 +57,6 @@ if TYPE_CHECKING:
         RegistryPersistenceManager,
         WorkspacePersistenceManager,
     )
-    from modex_agent.pipeline.snapshot import PoolDataSnapshot
     from modex_agent.plugins.registry import ComponentRegistry
     from modex_agent.runtime.codec import RuntimeStateCodecRegistry
 
@@ -288,7 +287,6 @@ class _PoolAssemblyMixin:
             default_agent_role="main",
             base_system_prompt=system_prompt,
             injection_policy=FullInjectionPolicy(),
-            experience_manager=None,
             roles=list(main_spec.roles),
         )
 
@@ -461,44 +459,6 @@ def build_external_session_map_store(
     )
 
     return LocalFileExternalSessionMapStore(ExternalPaths(workspace_dir))
-
-
-def build_pool_todo_store(
-    app_config: AppConfig | None,
-    persistence: WorkspacePersistenceManager | None,
-    pool_data: PoolDataSnapshot | None,
-    pool_name: str,
-    data_dir: Path,
-) -> Any:
-    """Pool todo store — supplied infra (scope-assembly ticket 05).
-
-    The store is pool-scoped infrastructure handed to the factories via
-    the context chain (``pool_runtime.todo_store``); the todo TOOLS
-    themselves are roster-resolved (``todo_write``/``todo_read`` →
-    TodoToolFactory). Path: the workspace's pool_data runtime dir when
-    present, else the data_dir-relative fallback.
-    """
-    if pool_data is not None and pool_data.runtime_dir is not None:
-        todo_dir: Path = pool_data.runtime_dir / "todos"
-    else:
-        todo_dir = data_dir / "runtime_state" / pool_name / "todos"
-    return build_todo_store(app_config, persistence, todo_dir, BotRecordScope(pool=pool_name))
-
-
-def build_todo_store(
-    app_config: AppConfig | None,
-    persistence: WorkspacePersistenceManager | None,
-    todo_dir: Path,
-    scope: RecordScope,
-) -> Any:
-    if _is_sqlite(app_config, persistence):
-        assert persistence is not None
-        from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
-
-        return SqliteTodoStore(persistence.connection, scope)
-    from modex_agent.runtime.store import JsonFileTodoStore
-
-    return JsonFileTodoStore(todo_dir)
 
 
 def build_memory_registry(

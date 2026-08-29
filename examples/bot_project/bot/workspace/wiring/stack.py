@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from bot.service.core import BotService
@@ -17,21 +17,16 @@ from modex_agent.commands.models import CommandContext
 from modex_agent.core.session_id import session_id_prefix_of
 from modex_agent.core.types import InputMessage
 from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.experience import ExperienceConfig
 from modex_agent.scope.compiler import CompiledAgent
 from modex_agent.scope.defaults import (
     memory_config_for_position,
 )
-from modex_agent.tools.presets import ToolSupplement, get_supplement_tool_names
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.control import WorkspaceController
 from modex_agent.workspace.registry import ScopeRegistry, ScopeRegistryStore
 from modex_agent.workspace.routing import WorkspaceResolver
 
 logger = logging.getLogger(__name__)
-
-#: EXPERIENCE supplement tool name (FW projection — the deep-binding signal).
-EXPERIENCE_TOOL_NAME: Final = get_supplement_tool_names([ToolSupplement.EXPERIENCE])[0]
 
 
 @dataclass(frozen=True)
@@ -59,12 +54,12 @@ def declared_assembly_deps(
 
     The SINGLE assembly-deps road: the memory config comes from the
     position-derived defaults + the node's ``memory:`` override (the
-    compiled ``MemoryOverrides`` session face), the session threshold
+    compiled ``MemoryOverrides`` session face) and the session threshold
     falls back to the boot-injected model window when the node declares
-    none, and experience is deep-bound to the compiled tool roster —
-    enabled iff the root's final tools carry the experience name, so
-    the EXPERIENCE supplement declaration is the one switch that turns
-    on the tool, the review hook, the manager, and the curator together.
+    none. Experience is NOT here anymore: the retired root-roster-derived
+    experience config died with the experience capability's supply face —
+    ``ExperienceCapability.supply`` builds the manager/dir/curator from
+    the compile product's capability config (SPEC §8.3).
     """
     session_max_context_tokens = root.spec.memory_overrides.max_context_tokens
     if session_max_context_tokens is None:
@@ -74,10 +69,8 @@ def declared_assembly_deps(
             root.defaults,
             session_max_context_tokens=session_max_context_tokens,
         ),
-        experience=ExperienceConfig(
-            enabled=EXPERIENCE_TOOL_NAME in root.spec.tools
-        ),
     )
+
 
 def build_workspace_stack(
     service: BotService, *, data_dir_name: str, enabled: bool = True

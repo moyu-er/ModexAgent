@@ -1,46 +1,45 @@
-"""Real feedback loop for the experience-injection-on-workspace-switch bug.
+"""Real feedback loop for the experience-injection channel (T14 rewrite).
 
-All existing tests in examples/bot_project use MagicMock for the context
-manager, so they never exercise the real chain:
+The original regression this file pinned — mutating
+``MemorySystemContextManager._experience_manager`` in place (the retired
+``BotService._rebuild_experience`` shape) — died with the special case:
+the injection now rides the capability-section channel
+(``ExperienceCapability.supply`` → the manager → ``assemble``'s
+content-hash provider → the capability-section anchor of ``load()``).
 
-    MemorySystemContextManager.load()
-      → step 8: if self._experience_manager is not None:
-          → ExperienceManager.build_prompt(context=ctx)
-            → FileExperienceSource.list_experiences(context=ctx)
-      → experience text lands in the system-prompt pipeline
-
-This file builds REAL objects and drives that chain end to end, then mutates
-``_experience_manager`` exactly the way ``BotService._rebuild_experience``
-does and asserts the NEW workspace's experience is injected.
-
-This is the regression test the handoff doc claimed existed
-(``test_experience_injection_e2e.py``) but never did.
+The channel-shaped equivalent of the same regression: the provider
+instance is REUSED across ``load()`` calls (the capability-section
+channel contract), so it must refresh when the experience set changes —
+a mid-session EXPERIENCE.md write (what the review hook does) appears on
+the next ``load()``, and removed experiences disappear. All existing
+tests that used MagicMock for the context manager never exercised the
+real chain; this file builds REAL objects and drives them end to end.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
-from modex_agent.core.experience.manager import ExperienceManager
-from modex_agent.core.experience.source import FileExperienceSource
 from modex_agent.memory.hooks import MemoryHookRunner
 from modex_agent.memory.system import MemorySystemContextManager
+from modex_agent.plugins.assembly.context import AgentContext, PoolRuntimeDeps
+from modex_agent.plugins.capability import CapabilityBinding, PromptSectionSpec
+from modex_agent.plugins.defaults.capabilities.experience import (
+    ExperienceCapability,
+    ExperienceSupply,
+)
+from modex_agent.plugins.registry import ComponentRegistry
 
 _EXP_MD_TEMPLATE = (
-    "---\n"
-    "name: {name}\n"
-    "description: {desc}\n"
-    "scenario: test\n"
-    "---\n"
-    "# {name}\n\n"
-    "Body for {name}.\n"
+    "---\nname: {name}\ndescription: {desc}\nscenario: test\n---\n# {name}\n\nBody for {name}.\n"
 )
+
+_INJECTION_SECTION = PromptSectionSpec(section_id="experience.injection", order=50)
 
 
 def _write_experience(root: Path, name: str, desc: str) -> None:
-    exp_dir = root / name
+    exp_dir = root / "experiences" / "pool" / "main" / name
     exp_dir.mkdir(parents=True, exist_ok=True)
     (exp_dir / "EXPERIENCE.md").write_text(
         _EXP_MD_TEMPLATE.format(name=name, desc=desc), encoding="utf-8"
@@ -66,63 +65,94 @@ def _make_mock_memory_system() -> MagicMock:
     return mock_system
 
 
-def _ctx_mgr(exp_dir: Path) -> MemorySystemContextManager:
-    return MemorySystemContextManager(
-        memory_system=_make_mock_memory_system(),
-        base_system_prompt="base",
-        experience_manager=ExperienceManager(
-            source=FileExperienceSource(directories=[exp_dir])
+def _supply_for(data_dir: Path) -> ExperienceSupply:
+    """The REAL production construction: capability.supply(view)."""
+    from modex_agent.plugins.capability import PoolSupplyAgentEntry, PoolSupplyView
+
+    capability = ExperienceCapability()
+    supply = capability.supply(
+        PoolSupplyView(
+            pool_name="pool",
+            entries=(PoolSupplyAgentEntry(agent_name="main", config={}),),
+            root_agent_name="main",
+            data_dir=data_dir,
+        )
+    )
+    assert isinstance(supply, ExperienceSupply)
+    return supply
+
+
+async def _channel_provider(supply: ExperienceSupply):
+    """The REAL production path: assemble() wires the section provider."""
+    capability = ExperienceCapability()
+    wiring = await capability.assemble(
+        CapabilityBinding(active_sections=(_INJECTION_SECTION,)),
+        AgentContext(
+            registry=ComponentRegistry(),
+            workspace_ctx=MagicMock(),
+            pool_runtime=PoolRuntimeDeps(capability_supply={"experience": supply}),
+            agent_name="main",
         ),
     )
+    assert len(wiring.prompt_providers) == 1
+    return wiring.prompt_providers[0]
 
 
-@pytest.mark.asyncio
-async def test_load_injects_experience_from_current_dir(tmp_path: Path) -> None:
-    """Sanity: load() injects experience text for the configured directory."""
-    exp_dir = tmp_path / "ws-a" / "experiences" / "pool" / "agent"
-    _write_experience(exp_dir, "exp-alpha", "alpha experience")
-    ctx_mgr = _ctx_mgr(exp_dir)
+def _ctx_mgr(provider) -> MemorySystemContextManager:
+    mgr = MemorySystemContextManager(
+        memory_system=_make_mock_memory_system(),
+        base_system_prompt="base",
+    )
+    mgr.set_capability_sections((provider,))
+    return mgr
 
-    state = await ctx_mgr.load("s1", tool_manager=MagicMock())
+
+async def _prompt(mgr: MemorySystemContextManager, session_id: str) -> str:
+    state = await mgr.load(session_id, tool_manager=MagicMock())
     assert state.system_prompt_pipeline is not None
-    prompt = await state.system_prompt_pipeline.get_or_refresh()
+    return await state.system_prompt_pipeline.get_or_refresh()
+
+
+async def test_load_injects_experience_from_current_dir(tmp_path: Path) -> None:
+    """Sanity: load() injects experience text through the capability channel."""
+    _write_experience(tmp_path, "exp-alpha", "alpha experience")
+    provider = await _channel_provider(_supply_for(tmp_path))
+
+    prompt = await _prompt(_ctx_mgr(provider), "s1")
 
     assert "exp-alpha" in prompt, f"experience should be injected, got:\n{prompt}"
 
 
-@pytest.mark.asyncio
-async def test_rebuilt_experience_manager_switches_injected_content(
-    tmp_path: Path,
-) -> None:
-    """The core regression: after replacing ``_experience_manager`` to point
-    at a new workspace (mimicking ``_rebuild_experience``), load() must inject
-    the NEW workspace's experience, not the old one — and not nothing."""
-    dir_a = tmp_path / "ws-a" / "experiences" / "pool" / "agent"
-    dir_b = tmp_path / "ws-b" / "experiences" / "pool" / "agent"
-    _write_experience(dir_a, "exp-alpha", "alpha experience")
-    _write_experience(dir_b, "exp-beta", "beta experience")
+async def test_reused_provider_switches_injected_content(tmp_path: Path) -> None:
+    """The channel regression: the SAME provider instance (reused across
+    load()s — the capability-section contract) must pick up experiences
+    written after the first load and drop removed ones — the content-hash
+    refresh that replaced the retired in-place manager rebuild."""
+    _write_experience(tmp_path, "exp-alpha", "alpha experience")
+    provider = await _channel_provider(_supply_for(tmp_path))
+    mgr = _ctx_mgr(provider)
 
-    ctx_mgr = _ctx_mgr(dir_a)
-
-    # Before switch: alpha injected.
-    state_a = await ctx_mgr.load("s1", tool_manager=MagicMock())
-    assert state_a.system_prompt_pipeline is not None
-    prompt_a = await state_a.system_prompt_pipeline.get_or_refresh()
+    prompt_a = await _prompt(mgr, "s1")
     assert "exp-alpha" in prompt_a
 
-    # Mimic BotService._rebuild_experience: replace the manager in place.
-    ctx_mgr._experience_manager = ExperienceManager(
-        source=FileExperienceSource(directories=[dir_b])
-    )
+    # Mid-session write (what the review hook does) + removal.
+    _write_experience(tmp_path, "exp-beta", "beta experience")
+    removed = tmp_path / "experiences" / "pool" / "main" / "exp-alpha"
+    (removed / "EXPERIENCE.md").unlink()
+    removed.rmdir()
 
-    # After switch: beta injected, alpha gone.
-    state_b = await ctx_mgr.load("s2", tool_manager=MagicMock())
-    assert state_b.system_prompt_pipeline is not None
-    prompt_b = await state_b.system_prompt_pipeline.get_or_refresh()
+    prompt_b = await _prompt(mgr, "s2")
+    assert "exp-beta" in prompt_b, f"new experience must be injected, got:\n{prompt_b}"
+    assert "exp-alpha" not in prompt_b, f"removed experience must be gone, got:\n{prompt_b}"
 
-    assert "exp-beta" in prompt_b, (
-        f"new workspace experience must be injected, got:\n{prompt_b}"
-    )
-    assert "exp-alpha" not in prompt_b, (
-        f"old workspace experience must be gone, got:\n{prompt_b}"
-    )
+
+async def test_no_experiences_renders_no_section(tmp_path: Path) -> None:
+    """Empty experience set → empty section content → nothing joins the
+    prompt (the retired ``if experience_prompt:`` guard's parity — the
+    pipeline skips empty providers)."""
+    provider = await _channel_provider(_supply_for(tmp_path))
+    mgr = _ctx_mgr(provider)
+
+    prompt = await _prompt(mgr, "s1")
+
+    assert "## Experiences" not in prompt
