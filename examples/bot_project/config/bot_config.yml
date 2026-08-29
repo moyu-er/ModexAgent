@@ -71,11 +71,12 @@ observability:
   # Span emission tier: minimal | standard | full
   # "full" includes agent.start (system prompt + tools) + iteration spans.
   trace_spans: "${TRACE_SPANS:-full}"
+  # ── Training-data collection flags — env-overridable ──
   # Capture tool definitions in agent.start span (Langfuse metadata).
-  capture_tools: true
+  capture_tools: "${CAPTURE_TOOLS:-true}"
   # Layer 1 eval: inject L2 heuristic scores to Langfuse on each turn finish.
-  # Requires trace_backend=otel_http + reachable Langfuse. Default: false.
-  eval_score_injection: true
+  # Requires trace_backend=otel_http + reachable Langfuse.
+  eval_score_injection: "${EVAL_SCORE_INJECTION:-true}"
   # Langfuse trace segmentation (optional, env-driven).
   # environment: dev / staging / production — filters traces by deployment context.
   # version: application or prompt version — for A/B testing and trace grouping.
@@ -91,8 +92,8 @@ observability:
   # checkpoint_per_iteration: true
   # cassette_enabled: false
   # cassette_scope: "default"       # default / full
-  # Training Data Derivation:
-  # training_relevant: false
+  # Training Data Derivation (env-overridable):
+  # training_relevant: "${TRAINING_RELEVANT:-false}"
   # training_max_iterations: 20
   # training_max_tokens: 100000
 
