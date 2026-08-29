@@ -22,6 +22,7 @@ from modex_agent.tools.overflow.truncate import (
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
+    from modex_agent.tools.overflow.store import ToolOverflowStore
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
     def handler(self) -> ToolResultOverflowHandler | None:
         return self._handler
 
-    def repoint_overflow_store(self, store: object) -> None:
+    def repoint_overflow_store(self, store: ToolOverflowStore) -> None:
         """Retarget the overflow handler's store (workspace switch).
 
         No-op when this interceptor has no overflow handler installed.

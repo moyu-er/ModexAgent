@@ -10,21 +10,23 @@ from modex_agent.core.emitter import AgentResult
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.types import ToolCall
 from modex_agent.interceptor.abc import (
-    Interceptor,
-    InterceptorScope,
     IterationContext,
+    IterationInterceptor,
     ToolCallContext,
+    ToolCallInterceptor,
     ToolCallNext,
-    TurnContext,
+    TurnInterceptor,
     TurnNext,
 )
 from modex_agent.interceptor.chain import InterceptorChain
 
 
-class BoomInterceptor:
+class BoomInterceptor(ToolCallInterceptor):
     """Interceptor that raises a plain exception."""
 
-    scopes = frozenset([InterceptorScope.TOOL_CALL])
+    @property
+    def name(self) -> str:
+        return "boom"
 
     async def around_tool_call(
         self,
@@ -35,10 +37,12 @@ class BoomInterceptor:
         raise RuntimeError("boom")
 
 
-class ControlErrorInterceptor:
+class ControlErrorInterceptor(ToolCallInterceptor):
     """Interceptor that raises an AgentControlError subclass."""
 
-    scopes = frozenset([InterceptorScope.TOOL_CALL])
+    @property
+    def name(self) -> str:
+        return "control-error"
 
     def __init__(self, exc: AgentControlError) -> None:
         self._exc = exc
@@ -52,14 +56,16 @@ class ControlErrorInterceptor:
         raise self._exc
 
 
-class OrderInterceptor:
+class OrderInterceptor(ToolCallInterceptor):
     """Records enter/exit order to verify onion wrapping."""
 
-    scopes = frozenset([InterceptorScope.TOOL_CALL])
-
     def __init__(self, name: str, log: list[str]) -> None:
-        self._name = name
+        self._log_name = name
         self._log = log
+
+    @property
+    def name(self) -> str:
+        return self._log_name
 
     async def around_tool_call(
         self,
@@ -67,16 +73,18 @@ class OrderInterceptor:
         call: ToolCallContext,
         next_call: ToolCallNext,
     ) -> ToolResult:
-        self._log.append(f"{self._name}_in")
+        self._log.append(f"{self._log_name}_in")
         result = await next_call()
-        self._log.append(f"{self._name}_out")
+        self._log.append(f"{self._log_name}_out")
         return result
 
 
-class ShortCircuitInterceptor:
+class ShortCircuitInterceptor(ToolCallInterceptor):
     """Returns a substitute result without calling next_call."""
 
-    scopes = frozenset([InterceptorScope.TOOL_CALL])
+    @property
+    def name(self) -> str:
+        return "short-circuit"
 
     def __init__(self, result: ToolResult) -> None:
         self._result = result
@@ -221,8 +229,10 @@ class TestInterceptorChainTurn:
 
     @pytest.mark.asyncio
     async def test_turn_plain_exception_propagates(self, fake_ctx):
-        class BoomTurnInterceptor:
-            scopes = frozenset([InterceptorScope.TURN])
+        class BoomTurnInterceptor(TurnInterceptor):
+            @property
+            def name(self) -> str:
+                return "boom-turn"
 
             async def around_turn(self, ctx, next_call: TurnNext) -> AgentResult:
                 raise RuntimeError("turn boom")
@@ -237,8 +247,10 @@ class TestInterceptorChainTurn:
 
     @pytest.mark.asyncio
     async def test_turn_control_error_propagates(self, fake_ctx):
-        class CancelTurnInterceptor:
-            scopes = frozenset([InterceptorScope.TURN])
+        class CancelTurnInterceptor(TurnInterceptor):
+            @property
+            def name(self) -> str:
+                return "cancel-turn"
 
             async def around_turn(self, ctx, next_call: TurnNext) -> AgentResult:
                 raise AgentCancelledError("admin cancel")
@@ -257,8 +269,10 @@ class TestInterceptorChainIteration:
 
     @pytest.mark.asyncio
     async def test_iteration_plain_exception_propagates(self, fake_ctx):
-        class BoomIterationInterceptor:
-            scopes = frozenset([InterceptorScope.ITERATION])
+        class BoomIterationInterceptor(IterationInterceptor):
+            @property
+            def name(self) -> str:
+                return "boom-iteration"
 
             async def around_iteration(self, ctx, call: IterationContext, next_call) -> None:
                 raise RuntimeError("iteration boom")
@@ -273,8 +287,10 @@ class TestInterceptorChainIteration:
 
     @pytest.mark.asyncio
     async def test_iteration_cancelled_propagates(self, fake_ctx):
-        class CancelIterationInterceptor:
-            scopes = frozenset([InterceptorScope.ITERATION])
+        class CancelIterationInterceptor(IterationInterceptor):
+            @property
+            def name(self) -> str:
+                return "cancel-iteration"
 
             async def around_iteration(self, ctx, call: IterationContext, next_call) -> None:
                 raise AgentCancelledError("cancel")

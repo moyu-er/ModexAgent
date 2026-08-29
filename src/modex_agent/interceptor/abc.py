@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from modex_agent.core.tool_manager import ToolResult
     from modex_agent.core.types import ToolCall
     from modex_agent.runtime.models import TurnStateBase
+    from modex_agent.tools.overflow.store import ToolOverflowStore
 
 
 class InterceptorScope(StrEnum):
@@ -174,7 +175,7 @@ class Interceptor(ABC):
                 result.add(s)
         return frozenset(result)
 
-    def repoint_overflow_store(self, store: object) -> None:
+    def repoint_overflow_store(self, store: ToolOverflowStore) -> None:
         """Retarget any overflow store this interceptor holds at *store*.
 
         Default no-op: most interceptors do not manage overflow storage.

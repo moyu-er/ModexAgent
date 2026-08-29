@@ -18,11 +18,15 @@ from modex_agent.interceptor.abc import (
     Interceptor,
     InterceptorScope,
     IterationContext,
+    IterationInterceptor,
     IterationNext,
     LLMStreamContext,
     LLMStreamEvents,
+    LLMStreamInterceptor,
     ToolCallContext,
+    ToolCallInterceptor,
     ToolCallNext,
+    TurnInterceptor,
     TurnNext,
     aclose_llm_stream,
 )
@@ -136,7 +140,11 @@ class InterceptorChain:
         语义）与 ``CancelledError`` 原样传播；其他异常转译为一个合成的
         ``StreamFailure`` 终结事件后终止。
         """
-        resolved = self._resolved(InterceptorScope.LLM_STREAM)
+        resolved = [
+            interceptor
+            for interceptor in self._interceptors
+            if isinstance(interceptor, LLMStreamInterceptor)
+        ]
         events = actual_stream
         for interceptor in reversed(resolved):
             events = interceptor.around_llm_stream(ctx, call, events)
@@ -163,16 +171,16 @@ class InterceptorChain:
     # 链构建
     # -------------------------------------------------------------------
 
-    def _resolved(self, scope: InterceptorScope) -> list[Interceptor]:
-        """返回声明了指定 scope 的拦截器列表（保持注册顺序）。"""
-        return [i for i in self._interceptors if scope in i.scopes]
-
     def _build_tool_chain(
         self,
         call: ToolCallContext,
         actual: ToolCallNext,
     ) -> Any:  # noqa: ANN401
-        resolved = self._resolved(InterceptorScope.TOOL_CALL)
+        resolved = [
+            interceptor
+            for interceptor in self._interceptors
+            if isinstance(interceptor, ToolCallInterceptor)
+        ]
 
         async def _dispatch(ctx: AgentContext, c: ToolCallContext) -> ToolResult:
             if not resolved:
@@ -192,7 +200,11 @@ class InterceptorChain:
         return _dispatch
 
     def _build_turn_chain(self, actual: TurnNext) -> Any:  # noqa: ANN401
-        resolved = self._resolved(InterceptorScope.TURN)
+        resolved = [
+            interceptor
+            for interceptor in self._interceptors
+            if isinstance(interceptor, TurnInterceptor)
+        ]
 
         async def _dispatch(ctx: AgentContext) -> AgentResult:
             if not resolved:
@@ -211,7 +223,11 @@ class InterceptorChain:
         return _dispatch
 
     def _build_iteration_chain(self, call: IterationContext, actual: IterationNext) -> Any:  # noqa: ANN401
-        resolved = self._resolved(InterceptorScope.ITERATION)
+        resolved = [
+            interceptor
+            for interceptor in self._interceptors
+            if isinstance(interceptor, IterationInterceptor)
+        ]
 
         async def _dispatch(ctx: AgentContext, c: IterationContext) -> None:
             if not resolved:
