@@ -33,6 +33,7 @@ from typing import Final
 
 from bot.service.pool.declaration_graphs import extract_graph_agent_refs
 from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
 from modex_agent.multi_agent.communication.peer_resolution import (
     PeerLink,
     peer_links_from_declaration,
@@ -40,11 +41,13 @@ from modex_agent.multi_agent.communication.peer_resolution import (
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.persistence.config import PersistenceConfig
-from modex_agent.plugins.abc import AgentType
+from modex_agent.plugins.abc import AgentType, ComponentSlot
+from modex_agent.plugins.defaults.capabilities.tracing import TracingCapabilityConfig
+from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import CompiledAgent, ScopeCompilation, compile_scope
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.scope.profile import STANDARD_PROFILES
-from modex_agent.scope.spec import PoolSpec, ScopeKind, ScopeSpec
+from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.scope.validator import (
     ScopeValidationIssue,
     validate_declaration,
@@ -111,6 +114,8 @@ def boot_scope_declaration(
     data_dir: Path,
     graphs_dirs: Sequence[Path],
     default_llm_provider: str,
+    registry: ComponentRegistry | None = None,
+    observability: ObservabilityConfig | None = None,
 ) -> ScopeBoot:
     """Load ``declaration_path`` → validate (V1-V11, incl. the V10 graph
     cross-check) → compile.
@@ -126,6 +131,13 @@ def boot_scope_declaration(
             the resources.py copytree resolution). The first existing
             directory supplies the V10 references.
         default_llm_provider: the BIZ default LLM provider component name.
+        registry: the boot ComponentRegistry, threaded into
+            ``compile_scope`` for the capability compile protocol (C0/C1/C2).
+            ``None`` disables capability resolution — a declaration with
+            capabilities then fails loudly at compile.
+        observability: the deployment's global observability config —
+            drives the tracing fallback (see
+            :func:`boot_scope_spec`); ``None`` → the FW defaults.
 
     Raises:
         ScopeBootError: any phase-1/phase-2 validation issue (all issues
@@ -139,6 +151,8 @@ def boot_scope_declaration(
         data_dir=data_dir,
         graphs_dirs=graphs_dirs,
         default_llm_provider=default_llm_provider,
+        registry=registry,
+        observability=observability,
     )
 
 
@@ -149,6 +163,8 @@ def boot_scope_spec(
     data_dir: Path,
     graphs_dirs: Sequence[Path],
     default_llm_provider: str,
+    registry: ComponentRegistry | None = None,
+    observability: ObservabilityConfig | None = None,
 ) -> ScopeBoot:
     """Validate + compile an ALREADY-LOADED declaration tree.
 
@@ -156,7 +172,17 @@ def boot_scope_spec(
     caller built or adjusted in memory (e.g. eval's approval-off rewrite)
     instead of read from disk. Validation sees the ADJUSTED tree — callers
     must keep the tree shape-valid (frozen ``model_copy`` updates only).
+
+    ``observability`` (the deployment's global observability config)
+    drives the tracing fallback (:func:`apply_tracing_fallback`) BEFORE
+    validation: global-config tracing stays effective on deployments
+    whose declarations predate the ``capabilities: {tracing: {…}}`` face
+    (zero behavior change on the shipped tree). ``None`` → the FW
+    defaults (backend=FILE, tier=STANDARD — the retired factory fallback
+    ``ObservabilityConfig()``), so tracing stays on exactly as the
+    retired code-wired path kept it for config-less harnesses.
     """
+    spec = apply_tracing_fallback(spec, observability or ObservabilityConfig(), registry)
     graph_refs = extract_graph_agent_refs(graphs_dirs)
     issues = validate_declaration(
         spec,
@@ -173,12 +199,81 @@ def boot_scope_spec(
             is_home=False,
         ),
         default_llm_provider=default_llm_provider,
+        registry=registry,
     )
     issues = validate_effective_configs(spec, [agent.effective for agent in compilation.agents])
     if issues:
         raise ScopeBootError(issues, phase="phase-2 (effective values)")
     _log_replacements(compilation)
     return ScopeBoot(spec=spec, compilation=compilation)
+
+
+def apply_tracing_fallback(
+    spec: ScopeSpec,
+    observability: ObservabilityConfig,
+    registry: ComponentRegistry | None = None,
+) -> ScopeSpec:
+    """Inject the ``tracing`` capability override from the GLOBAL
+    observability config — the BIZ fallback (ADR-0047).
+
+    The shipped declarations do not carry ``capabilities: {tracing: …}``;
+    global-config tracing keeps working through this pre-compile spec
+    mutation: when ``trace_backend != off``, every NATIVE agent in the
+    tree gains ``capabilities: {"tracing": <global config subset>}``
+    unless it already declares ``tracing`` itself (a declaration always
+    wins — the fallback never overwrites). External agents never receive
+    the capability (C0/V12 structural exclusion). ``trace_backend=off``
+    injects nothing — tracing dark. A ``None`` registry (hand-built
+    harness boots) injects nothing either: the capability protocol
+    resolves through the registry, so a registry-less compile cannot
+    carry injected capabilities (T17's hermetic-strip discipline).
+
+    This is the template for future "global config feature → capability"
+    migrations: the deployment-level default becomes a compile-input
+    override, keeping the capability protocol the single enablement
+    authority (the retired code-wired hook injection died with the
+    tracing capability convergence).
+    """
+    if registry is None or observability.trace_backend is TraceBackend.OFF:
+        return spec
+    if "tracing" not in registry.names(ComponentSlot.CAPABILITY):
+        # A registry without the FW DefaultPlugin (hand-rolled harness
+        # registries) cannot resolve the capability — injecting it would
+        # V13-fail the boot. Production registries always carry it.
+        return spec
+    override = TracingCapabilityConfig.from_observability(observability).model_dump()
+    pools: list[PoolSpec] = (
+        [spec.pool]
+        if spec.pool is not None
+        else list(spec.workspace.pools if spec.workspace else [])
+    )
+    changed = False
+    mutated_pools: list[PoolSpec] = []
+    for pool in pools:
+        mutated_agents: list[AgentSpec] = []
+        pool_changed = False
+        for agent in pool.agents:
+            if agent.provider_kind is not None:  # external — structurally excluded
+                mutated_agents.append(agent)
+                continue
+            if agent.capabilities is not None and "tracing" in agent.capabilities:
+                mutated_agents.append(agent)  # declaration wins
+                continue
+            capabilities = {**(agent.capabilities or {}), "tracing": override}
+            mutated_agents.append(agent.model_copy(update={"capabilities": capabilities}))
+            pool_changed = True
+        mutated_pools.append(
+            pool.model_copy(update={"agents": mutated_agents}) if pool_changed else pool
+        )
+        changed = changed or pool_changed
+    if not changed:
+        return spec
+    if spec.pool is not None:
+        return spec.model_copy(update={"pool": mutated_pools[0]})
+    assert spec.workspace is not None
+    return spec.model_copy(
+        update={"workspace": spec.workspace.model_copy(update={"pools": mutated_pools})}
+    )
 
 
 def declared_pool_build(boot: ScopeBoot, pool_name: str) -> DeclaredPoolBuild:
@@ -390,10 +485,10 @@ def _log_replacements(compilation: ScopeCompilation) -> None:
     for agent in compilation.agents:
         for replacement in agent.provenance.replacements:
             logger.info(
-                "scope: pool '%s' agent '%s': tool '%s' replaced by '%s' (supplement %s)",
+                "scope: pool '%s' agent '%s': tool '%s' replaced by '%s' (capability %s)",
                 agent.provenance.pool,
                 agent.provenance.agent,
                 replacement.default_tool,
                 replacement.replacement_tool,
-                replacement.supplement.value,
+                replacement.capability,
             )

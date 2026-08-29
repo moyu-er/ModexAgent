@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from bot.service.external_strategy import ExternalAwareFactory
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
+from modex_agent.ioc.configs.observability import TraceBackend
 from modex_agent.multi_agent import DefaultAgentFactory
 
 if TYPE_CHECKING:
@@ -93,10 +93,8 @@ def _build_agent_factory(
     *,
     media_store_resolver: Callable[[], MediaStore] | None = None,
     external_deps: dict[str, Any] | None = None,
-    observability_config: ObservabilityConfig | None = None,
     session_registry: SessionRegistry | None = None,
     session_binding_store: SessionBindingStore | None = None,
-    trace_store: Any | None = None,
 ) -> DefaultAgentFactory:
     if external_deps is not None:
         factory: DefaultAgentFactory = ExternalAwareFactory(
@@ -110,10 +108,8 @@ def _build_agent_factory(
             default_interceptor_chain=shared_interceptor_chain,
             control_channel=control_channel,
             external_deps=external_deps,
-            observability_config=observability_config,
             session_registry=session_registry,
             session_binding_store=session_binding_store,
-            trace_store=trace_store,
         )
     else:
         factory = DefaultAgentFactory(
@@ -126,8 +122,7 @@ def _build_agent_factory(
             default_hook_runner=shared_hook_runner,
             default_interceptor_chain=shared_interceptor_chain,
             control_channel=control_channel,
-            observability_config=observability_config,
-            trace_store=trace_store,
+            session_registry=session_registry,
         )
 
     _orig_create = factory.create_agent

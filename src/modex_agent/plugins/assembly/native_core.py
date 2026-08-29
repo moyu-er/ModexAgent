@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict
@@ -19,6 +21,7 @@ from modex_agent.hook.runner import HookRunner
 from modex_agent.ioc.configs.memory import ArchiveConfig, CoreMemoryConfig, MemoryConfig
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.presets import subagent_memory
+from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.descriptor import (
@@ -34,6 +37,7 @@ from modex_agent.plugins.assembly.context import (
     agent_context_chain,
 )
 from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
+from modex_agent.plugins.capability import CapabilityWiring
 
 if TYPE_CHECKING:
     from modex_agent.core.context import ContextManager
@@ -130,6 +134,7 @@ class NativeAssemblyResult:
         memory_config: MemoryConfig,
         hook_runner: HookRunner,
         mcp_backend: Any | None = None,
+        capability_wirings: Mapping[str, CapabilityWiring] | None = None,
     ) -> None:
         self.descriptor = descriptor
         self.instance = instance
@@ -140,6 +145,9 @@ class NativeAssemblyResult:
         self.memory_config = memory_config
         self.hook_runner = hook_runner
         self.mcp_backend = mcp_backend
+        # Per-capability wiring products keyed by registration name; None
+        # when constructed outside the capability dispatch (direct tests).
+        self.capability_wirings = capability_wirings
 
 
 async def _resolve_multi(
@@ -222,7 +230,9 @@ async def _dispatch_hooks(
         hook = await factory.create(config, ctx)
         match factory.hook_runner:
             case HookRunnerKind.react:
-                hook_runner.add(HookSpec(hook=hook))
+                # The factory's declared priority rides the HookSpec —
+                # HookRunner sorts by it (negative = runs first).
+                hook_runner.add(HookSpec(hook=hook, priority=factory.priority))
             case HookRunnerKind.memory:
                 if spec.memory_system is not None:
                     raise ValueError(
@@ -262,7 +272,23 @@ async def assemble_native_agent(
         spec=spec,
         parent_session=parent_session,
         invocation_id=invocation_id,
+        llm_defaults=inputs.llm_defaults,
     )
+    # Capability dispatch (SPEC §7.2) runs BEFORE tool resolution: the
+    # per-agent wiring artifacts (e.g. the ``subagents`` capability's
+    # per-agent communication target store) must be ON the chain for the
+    # TOOL-slot factories resolving the roster below. The merged prompt
+    # providers feed the capability-section anchor of the native memory
+    # context manager later in this function (SPEC §7.3) — the sections
+    # must be set before the first load(), which happens at runtime
+    # after this assembly returns.
+    capability_wirings: dict[str, CapabilityWiring] = {}
+    for compiled_cap in spec.capabilities:
+        cap = registry.resolve_capability(compiled_cap.name)
+        wiring = await cap.assemble(compiled_cap.binding, chain)
+        capability_wirings[compiled_cap.name] = wiring
+    if capability_wirings:
+        chain = dataclasses.replace(chain, capability_wirings=MappingProxyType(capability_wirings))
     tools: list[Tool] = await _resolve_multi(
         registry, ComponentSlot.TOOL, spec.tools, spec.tool_configs, chain
     )
@@ -363,6 +389,34 @@ async def assemble_native_agent(
         hook_runner.add(HookSpec(hook=hook))
         seen_hook_names.add(hook.name)
 
+    # Capability-section anchor (SPEC §7.3): the merged prompt providers
+    # (spec.capabilities iteration order; within one wiring, the
+    # capability's own section order) feed the capability-section anchor
+    # of the native memory context manager — the sections must be set
+    # before the first load(), which happens at runtime after this
+    # assembly returns.
+    merged_sections: list[SystemPromptProvider] = [
+        provider
+        for compiled_cap in spec.capabilities
+        for provider in capability_wirings[compiled_cap.name].prompt_providers
+    ]
+    if merged_sections:
+        # isinstance is justified at this extension boundary: a custom
+        # MEMORY_SYSTEM replaces the whole prompt assembly (SPEC Errata-7
+        # replacement-face semantics — the same class of loss as
+        # Errata-8(c)), so capability sections are native-only. The custom
+        # owner opted out of native prompt assembly; skip, never raise.
+        if isinstance(context_manager, MemorySystemContextManager):
+            context_manager.set_capability_sections(tuple(merged_sections))
+        else:
+            logger.debug(
+                "Capability sections for agent %r skipped: context manager "
+                "%s is not the native MemorySystemContextManager (a custom "
+                "memory system replaces prompt assembly)",
+                spec.agent_name,
+                type(context_manager).__name__,
+            )
+
     comm_kind = (
         AgentCommKind.SUBAGENT if spec.agent_type is AgentType.native_sub else AgentCommKind.NORMAL
     )
@@ -426,4 +480,5 @@ async def assemble_native_agent(
         memory_config=memory_config,
         hook_runner=hook_runner,
         mcp_backend=mcp_backend,
+        capability_wirings=capability_wirings,
     )

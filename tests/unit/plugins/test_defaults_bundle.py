@@ -1,10 +1,10 @@
 """Integration test for DefaultPlugin — the FW-bundled defaults aggregator (task 14).
 
 ``DefaultPlugin`` (in ``src/modex_agent/plugins/defaults/__init__.py``) is a
-single ``Plugin`` entry point that calls all 6 ``register_default_*``
+single ``Plugin`` entry point that calls all 8 ``register_default_*``
 functions. This test loads it through the real
 ``ComponentRegistryLoader.load`` path (not direct ``register_default_*``
-calls) and asserts the EXACT name set registered into each of the 10
+calls) and asserts the EXACT name set registered into each of the 11
 ``ComponentSlot`` values.
 
 Design decision — 4 slots are EMPTY by FW design:
@@ -21,8 +21,13 @@ Design decision — 4 slots are EMPTY by FW design:
   namespaces; plugins supply their own (the former default trigger
   configs were dead registrations and were removed).
 
-The other 6 slots are populated by the 6 ``register_default_*`` functions.
+The other 7 slots are populated by the 8 ``register_default_*`` functions
+(tools counts twice: preset tools + derived communication entries).
+``CAPABILITY`` holds the FW-bundled capability packages (``aci``,
+``ast_grep``, ``experience``, ``subagents``, ``todo``; ADR-0047 — grows
+one package per migration wave).
 """
+
 from __future__ import annotations
 
 from pydantic import BaseModel
@@ -37,27 +42,33 @@ from modex_agent.plugins.loader import (
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.tools.presets import (
     ToolPreset,
-    ToolSupplement,
     get_preset_tools,
-    get_supplement_tool_names,
 )
 
 # ---- Expected name sets --------------------------------------------------
 
-#: HOOK slot — 11 default hooks (SPEC §6.7, task 12).
+#: HOOK slot — 18 default hooks (SPEC §6.7, task 12 + the `tracing`
+#: capability's seven span-hook resolvers).
 _EXPECTED_HOOK_NAMES: frozenset[str] = frozenset(
     {
         "inbox_flush",
         "todo_continuation",
         "deliver_retry",
+        "length_guard",
         "native_env",
+        "loop_detection",
         "run_logging",
         "subagent_auto_send",
         "memory_trace",
         "todo_reorientation",
         "experience_review",
-        "task_delegation_nudge",
-        "todo_planning_nudge",
+        "trace_root",
+        "trace_chat",
+        "trace_tool",
+        "trace_handoff",
+        "trace_approval",
+        "trace_agent_start",
+        "trace_iteration",
     }
 )
 
@@ -82,25 +93,33 @@ def _expected_tool_names() -> frozenset[str]:
 
     Same anchoring as ``test_defaults_tools.py``: iterate every
     ``ToolPreset``, expand via ``get_preset_tools`` (default args), union
-    tool names, plus the registry-level extras — ``bash`` (preset-gated
+    tool names, plus the registry-level extras �� ``bash`` (preset-gated
     name with a runtime factory), ``process``/``terminal`` (terminal-trio
     companions, explicit roster opt-in), ``aci_edit`` (the ACI
-    upgrade's registry name), and the derived communication entries
-    ``task``/``send_to_agent``/``send_to_peer`` (ticket 07: resolved only
-    when a compiled spec carries them). If presets.py changes, this
-    adapts automatically — no hardcoded list.
+    upgrade's registry name), ``ast_grep_search``/``ast_grep_replace``
+    (the ast_grep capability's direct registrations),
+    ``todo_write``/``todo_read`` (the todo capability's direct
+    registrations), ``experience`` (the experience capability's), and
+    the derived communication entries
+    ``task``/``send_to_agent``/``send_to_peer``
+    (ticket 07: resolved only when a compiled spec carries them). If
+    presets.py changes, this adapts automatically �� no hardcoded list.
     """
     names: set[str] = set()
     for preset in ToolPreset:
         for tool in get_preset_tools(preset):
             names.add(tool.name)
-    names.update(get_supplement_tool_names(list(ToolSupplement)))
     names.update(
         {
             "bash",
             "process",
             "terminal",
             "aci_edit",
+            "ast_grep_search",
+            "ast_grep_replace",
+            "todo_write",
+            "todo_read",
+            "experience",
             "task",
             "send_to_agent",
             "send_to_peer",
@@ -173,9 +192,9 @@ class TestDefaultPluginClass:
 
 
 class TestPerSlotNameSets:
-    """Assert the EXACT name set registered into each of the 10 slots.
+    """Assert the EXACT name set registered into each of the 11 slots.
 
-    6 slots are populated by the 6 ``register_default_*`` functions; 4 are
+    7 slots are populated by the 8 ``register_default_*`` functions; 4 are
     empty by FW design (EXECUTION_STRATEGY, INPUT_STAGE, MEMORY_SYSTEM,
     DATA_NAMESPACE — see module docstring).
     """
@@ -185,11 +204,10 @@ class TestPerSlotNameSets:
         actual = _slot_names(registry, ComponentSlot.TOOL)
         expected = _expected_tool_names()
         assert actual == expected, (
-            f"TOOL slot drift: missing={expected - actual}, "
-            f"extra={actual - expected}"
+            f"TOOL slot drift: missing={expected - actual}, extra={actual - expected}"
         )
 
-    async def test_hook_slot_has_10_names(self) -> None:
+    async def test_hook_slot_has_18_names(self) -> None:
         registry = await _load_default_plugin()
         actual = _slot_names(registry, ComponentSlot.HOOK)
         assert actual == _EXPECTED_HOOK_NAMES, (
@@ -220,6 +238,16 @@ class TestPerSlotNameSets:
             f"extra={actual - _EXPECTED_COMMAND_NAMES}"
         )
 
+    async def test_capability_slot_has_bundled_packages(self) -> None:
+        """CAPABILITY carries the FW-bundled capability packages — ``aci``,
+        ``ast_grep``, ``experience``, ``subagents``, ``todo`` and
+        ``tracing`` (ADR-0047; grows one package per migration wave)."""
+        registry = await _load_default_plugin()
+        actual = _slot_names(registry, ComponentSlot.CAPABILITY)
+        assert actual == {"aci", "ast_grep", "experience", "subagents", "todo", "tracing"}, (
+            f"CAPABILITY drift: {actual}"
+        )
+
     # ---- Empty slots (FW design — bot plugin territory) -----------------
 
     async def test_execution_strategy_slot_is_empty(self) -> None:
@@ -233,8 +261,7 @@ class TestPerSlotNameSets:
         registry = await _load_default_plugin()
         actual = _slot_names(registry, ComponentSlot.EXECUTION_STRATEGY)
         assert actual == set(), (
-            f"EXECUTION_STRATEGY must be empty (bot plugin territory), "
-            f"got {actual}"
+            f"EXECUTION_STRATEGY must be empty (bot plugin territory), got {actual}"
         )
 
     async def test_input_stage_slot_is_empty(self) -> None:
@@ -247,10 +274,7 @@ class TestPerSlotNameSets:
         """
         registry = await _load_default_plugin()
         actual = _slot_names(registry, ComponentSlot.INPUT_STAGE)
-        assert actual == set(), (
-            f"INPUT_STAGE must be empty (bot IM plugin territory), "
-            f"got {actual}"
-        )
+        assert actual == set(), f"INPUT_STAGE must be empty (bot IM plugin territory), got {actual}"
 
     async def test_data_namespace_slot_is_empty(self) -> None:
         """DATA_NAMESPACE is empty — no default data namespaces.
@@ -260,41 +284,30 @@ class TestPerSlotNameSets:
         """
         registry = await _load_default_plugin()
         actual = _slot_names(registry, ComponentSlot.DATA_NAMESPACE)
-        assert actual == set(), (
-            f"DATA_NAMESPACE must be empty, got {actual}"
-        )
+        assert actual == set(), f"DATA_NAMESPACE must be empty, got {actual}"
 
 
-# ---- Aggregate: all 10 slots accounted for ------------------------------
+# ---- Aggregate: all 11 slots accounted for ------------------------------
 
 
 class TestAllSlotsAccounted:
-    """The 6 populated + 4 empty slots cover all 10 ComponentSlot values.
+    """The 7 populated + 4 empty slots cover all 11 ComponentSlot values.
 
     This is a structural assertion: every slot is either populated with a
     known name set or explicitly empty by design. No slot is left
     unaccounted.
     """
 
-    async def test_populated_slots_count_is_6(self) -> None:
+    async def test_populated_slots_count_is_7(self) -> None:
         registry = await _load_default_plugin()
-        populated = {
-            slot
-            for slot in ComponentSlot
-            if _slot_names(registry, slot)
-        }
-        assert len(populated) == 6, (
-            f"Expected 6 populated slots, got {len(populated)}: "
-            f"{[s.value for s in populated]}"
+        populated = {slot for slot in ComponentSlot if _slot_names(registry, slot)}
+        assert len(populated) == 7, (
+            f"Expected 7 populated slots, got {len(populated)}: {[s.value for s in populated]}"
         )
 
     async def test_empty_slots_are_exactly_the_4_designated(self) -> None:
         registry = await _load_default_plugin()
-        empty = {
-            slot
-            for slot in ComponentSlot
-            if not _slot_names(registry, slot)
-        }
+        empty = {slot for slot in ComponentSlot if not _slot_names(registry, slot)}
         expected_empty = {
             ComponentSlot.EXECUTION_STRATEGY,
             ComponentSlot.INPUT_STAGE,
@@ -323,10 +336,12 @@ class TestAllSlotsAccounted:
             ),
             (ComponentSlot.INTERCEPTOR, _EXPECTED_INTERCEPTOR_NAMES),
             (ComponentSlot.COMMAND_HANDLER, _EXPECTED_COMMAND_NAMES),
+            (
+                ComponentSlot.CAPABILITY,
+                frozenset({"aci", "ast_grep", "experience", "subagents", "todo", "tracing"}),
+            ),
         ]
         for slot, names in checks:
             for name in names:
                 factory = registry.resolve(slot, name)
-                assert factory is not None, (
-                    f"{name!r} not resolvable in {slot.value!r}"
-                )
+                assert factory is not None, f"{name!r} not resolvable in {slot.value!r}"

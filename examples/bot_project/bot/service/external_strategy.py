@@ -67,10 +67,13 @@ from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
-from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
-from modex_agent.multi_agent.communication.peer_resolution import PeerLink
+from modex_agent.multi_agent.communication.peer_resolution import (
+    PeerLink,
+    build_agent_pool_map,
+    build_routable_targets,
+)
 from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
 from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy as ExecutionStrategyABC,
@@ -84,7 +87,6 @@ from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.plugins.assembly.context import AgentContext
 from modex_agent.scope.spec import PoolSpec
-from modex_agent.workspace.scope_path import resolve_scope_path
 
 from .builders import _PoolAssemblyMixin
 
@@ -187,10 +189,12 @@ class ExternalAwareFactory(DefaultAgentFactory):
         self._external_deps: dict[str, Any] = external_deps or {}
         self._control_channel = kwargs.get("control_channel")
         self._session_registry = kwargs.get("session_registry")
-        self._observability_config = kwargs.get("observability_config")
         # Stub the attributes the base class would set, in case any code path
         # reads them via super() (defense-in-depth; ExternalTurnRunner doesn't
-        # use them, but a future base-class method could).
+        # use them, but a future base-class method could). The retired
+        # observability_config / trace_store kwargs died with the `tracing`
+        # capability convergence (span hooks are capability-contributed roster
+        # entries; external agents take no native hook surface).
         self._default_llm_provider = kwargs.get("default_llm_provider")
         self._default_tool_manager = kwargs.get("default_tool_manager")
         self._skill_manager = kwargs.get("skill_manager")
@@ -202,7 +206,6 @@ class ExternalAwareFactory(DefaultAgentFactory):
         self._default_hook_runner = kwargs.get("default_hook_runner")
         self._default_interceptor_chain = kwargs.get("default_interceptor_chain")
         self._default_turn_store = kwargs.get("default_turn_store")
-        self._trace_store = kwargs.get("trace_store")
         self._session_binding_store = kwargs.get("session_binding_store")
         self._inbox_producer = None
         self._inbox_consumer = None
@@ -315,42 +318,6 @@ def _modexctl_bin_dir() -> Path:
     return resolve_modexctl_bin_dir()
 
 
-def _build_agent_pool_map(
-    pool_name: str,
-    pool_spec: PoolSpec,
-    peer_links: Sequence[PeerLink],
-) -> dict[str, str]:
-    """The static agent→pool routing map over the DECLARED tree.
-
-    Own pool's agents + each peer link's declared root (the link face
-    carries the peer root's name — a declaration fact, so no pool.yml
-    read).
-    """
-    pool_map: dict[str, str] = {pool_spec.root_agent.name: pool_name}
-    for agent in pool_spec.agents:
-        pool_map[agent.name] = pool_name
-    for link in peer_links:
-        pool_map[link.peer_agent] = link.peer_pool
-    return pool_map
-
-
-def _build_targets(
-    pool_spec: PoolSpec,
-    peer_links: Sequence[PeerLink],
-) -> list[tuple[str, str]]:
-    """The routable targets (own non-root agents + peer roots)."""
-    targets: list[tuple[str, str]] = []
-    root_name = pool_spec.root_agent.name
-    for agent in pool_spec.agents:
-        if agent.name == root_name:
-            continue
-        targets.append((agent.name, agent.description or f"{agent.name} subagent"))
-    for link in peer_links:
-        desc = link.peer_description or f"Peer pool {link.peer_pool}'s main agent"
-        targets.append((link.peer_agent, desc))
-    return targets
-
-
 def build_external_env_spec(
     pool_name: str,
     pool_spec: PoolSpec,
@@ -389,8 +356,8 @@ def build_external_env_spec(
         session_id=f"__pending__.{root_agent_name}",
         agent_name=root_agent_name,
         provider_session_id="",
-        agent_pool_map=_build_agent_pool_map(pool_name, pool_spec, peer_links),
-        targets=_build_targets(pool_spec, peer_links),
+        agent_pool_map=build_agent_pool_map(pool_name, pool_spec, peer_links),
+        targets=build_routable_targets(pool_spec, peer_links),
         modexctl_bin_dir=_modexctl_bin_dir(),
         control_origin=build_control_origin(project_dir / "config"),
     )
@@ -599,10 +566,12 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         deleted ``BotSubagentExternalBuilder.build()`` (ADR-0027 convergence).
 
         The 7 steps: (1) env_spec (2) session_store (3) parser (4) backend
-        (5) child_discovery (6) ExternalAgent (7) HookRunner carrying
-        SubagentAutoSendHook. Pipeline assembly (``assemble_pipeline``)
-        runs here too — the caller (``AgentTemplate.materialize``) only
-        injects the emitter + registers the returned pair into the pool.
+        (5) child_discovery (6) ExternalAgent (7) HookRunner carrying the
+        auto-send hook (the HOOK-slot factory, resolved explicitly —
+        external subagents never run the native roster dispatch). Pipeline
+        assembly (``assemble_pipeline``) runs here too — the caller
+        (``AgentTemplate.materialize``) only injects the emitter +
+        registers the returned pair into the pool.
 
         Ticket 10: the per-invocation data (``parent_session``,
         ``invocation_id``, agent identity, and the per-agent spec
@@ -613,7 +582,7 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
 
         Returns a :class:`SubagentAssembly` carrying the ``AgentDescriptor``
         and the fully-built ``AgentInstance`` (external agent + minimal
-        pipeline + SubagentAutoSendHook on the pipeline's hook runner).
+        pipeline + the auto-send hook on the pipeline's hook runner).
         """
         spec = ctx.spec
         if spec is None:
@@ -636,8 +605,6 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         data_dir = deps.data_dir or project_dir / ".modex"
         workspace_dir = project_dir
         inbox_root = data_dir / "inbox"
-        pool_data = resolve_scope_path(deps.workspace_manager, scope_path)
-        runtime_dir = pool_data.runtime_dir if pool_data is not None else None
 
         descriptor = AgentDescriptor(
             address=AgentAddress(name=agent_name),
@@ -705,16 +672,21 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
             child_emitter_factory=child_emitter_factory,
         )
 
+        # The auto-send hook rides the SAME HOOK-slot factory the native
+        # roster dispatch uses (the chain carries the tree, the declared
+        # parent, the runtime dir, and the per-agent spec the factory
+        # derives its fields from) — external subagents never run the
+        # native capability dispatch, so the strategy resolves the
+        # factory explicitly; the per-agent construction logic has ONE
+        # home (plugins/defaults/hooks.py).
+        from modex_agent.plugins.abc import ComponentSlot
+
+        hook_factory = ctx.registry.resolve(ComponentSlot.HOOK, "subagent_auto_send")
+        hook = await hook_factory.create(hook_factory.config_model(), ctx)
         hook_runner = HookRunner()
         hook_runner.add(
             HookSpec(
-                hook=SubagentAutoSendHook(
-                    tree=deps.tree,
-                    self_name=agent_name,
-                    parent_name=parent_name,
-                    runtime_dir=runtime_dir or Path("."),
-                    execution_strategy=ExecutionStrategyKind.EXTERNAL,
-                ),
+                hook=hook,
                 on_error=HookErrorPolicy.LOG,
             )
         )

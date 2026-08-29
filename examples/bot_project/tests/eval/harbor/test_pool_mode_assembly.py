@@ -30,6 +30,7 @@ from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.scope import MemoryContext, MemoryLayerName, SessionScope
 from modex_agent.core.types import LLMResponse, MessageRole, ToolCall
 from modex_agent.hook.builtin import CurrentTimeInjectionHook
+from modex_agent.hook.builtin.checkpoint import CheckpointHook
 from modex_agent.hook.builtin.knowledge_hook import KnowledgeHook
 from modex_agent.interceptor.builtin import ToolResultLimitInterceptor
 from modex_agent.persistence.config import PersistenceBackend
@@ -289,9 +290,7 @@ class _EndTurnDelegatingProvider(CallbackStreamProvider):
                 finish_reason=FinishReason.STOP,
                 usage={"prompt_tokens": 7, "completion_tokens": 3},
             )
-        has_task_result = any(
-            m.role == MessageRole.TOOL and m.name == "task" for m in messages
-        )
+        has_task_result = any(m.role == MessageRole.TOOL and m.name == "task" for m in messages)
         if not has_task_result:
             return LLMResponse(
                 content=None,
@@ -456,12 +455,16 @@ async def test_pool_assembly_mirrors_production_values(tmp_path: Path) -> None:
     assert pool_kwargs["bot_model_config"] is not None
     assert assembly_deps_arg.memory is not None
     # Deep binding: the default arm's tools_remove strips the DECLARED
-    # experience name pre-compile, so the compiled roster drives the deps.
-    assert assembly_deps_arg.experience is not None
-    assert assembly_deps_arg.experience.enabled is False
+    # experience name pre-compile, so the compiled product drives the
+    # capability face (no experience entry → no supply/hook/section).
+    assert "experience" not in [capability.name for capability in declared.root.spec.capabilities]
+    # The observability-driven training hooks ride the shared runner with
+    # the time/knowledge pair (the resources.py mirror — the retired
+    # factory-side injection died with the tracing capability convergence).
     assert [type(hook) for hook in pool_kwargs["shared_hooks"]] == [
         CurrentTimeInjectionHook,
         KnowledgeHook,
+        CheckpointHook,
     ]
     assert system_prompt_arg == static_system_prompt(
         await resolve_declared_root_prompt(
@@ -737,18 +740,12 @@ async def test_default_arm_live_prompt_carries_delegation_guidance_and_roster(
     assert "all six elements" in prompt
     assert provider.tools, "no tool schemas reached the LLM"
     task_schema = next(
-        (
-            t
-            for t in provider.tools[0]
-            if (t.get("function") or {}).get("name") == "task"
-        ),
+        (t for t in provider.tools[0] if (t.get("function") or {}).get("name") == "task"),
         None,
     )
     assert task_schema is not None, "task tool missing from the LLM tool list"
     function = task_schema.get("function") or {}
-    target = ((function.get("parameters") or {}).get("properties") or {}).get(
-        "target_agent"
-    ) or {}
+    target = ((function.get("parameters") or {}).get("properties") or {}).get("target_agent") or {}
     assert target.get("enum") == ["explore", "general"]
     assert outcome.child_sessions == ()
     assert outcome.output == "default arm answer"

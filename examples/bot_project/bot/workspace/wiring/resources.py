@@ -178,9 +178,7 @@ async def _assemble_resources(
     declaration_path = service._project_dir / "config" / "scopes" / "bot.yml"
     if not declaration_path.exists():
         raise ScopeBootRequiredError(declaration_path, service._project_dir)
-    dynamic_declaration = dynamic_workspace_declaration_path(
-        service._project_dir, ctx.target
-    )
+    dynamic_declaration = dynamic_workspace_declaration_path(service._project_dir, ctx.target)
     if dynamic_declaration is not None:
         declaration_path = dynamic_declaration
     scope_boot = boot_scope_declaration(
@@ -189,6 +187,8 @@ async def _assemble_resources(
         data_dir=ctx.paths.root,
         graphs_dirs=(workspace_graphs_dir, global_graphs_dir),
         default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        registry=service._component_registry,
+        observability=app_config.observability,
     )
     # Ticket 17 — per-workspace resource selection: apply THIS workspace's
     # declaration overrides onto the service config view (idempotent for
@@ -329,6 +329,7 @@ async def _assemble_resources(
         transcript_store=service._transcript_store,
         workspace_transcript_store=workspace_transcript_store,
         kb_provider=kb_provider,
+        component_registry=service._component_registry,
         session_pool_index=session_pool_index,
     )
     state.resources = resources
@@ -343,6 +344,25 @@ async def _assemble_resources(
         CurrentTimeInjectionHook(),  # StartNodeTurnHook
         KnowledgeHook(),  # BeforeTurnHook + AfterTurnHook — independent, no renewal
     ]
+    # The observability-driven training hooks moved here from the retired
+    # DefaultAgentFactory injection (the `tracing` capability convergence):
+    # both are stateless per-turn readers (ctx.runtime.services), so the
+    # deployment-level shared runner preserves behavior for every native
+    # agent. The eval-side env-driven flags stay global-config owned.
+    observability = app_config.observability
+    if observability is not None:
+        from modex_agent.hook.builtin.checkpoint import CheckpointHook
+        from modex_agent.hook.builtin.training_data import TrainingDataHook
+
+        if observability.checkpoint_per_iteration:
+            shared_hooks.append(CheckpointHook())
+        if observability.training_relevant:
+            shared_hooks.append(
+                TrainingDataHook(
+                    max_iterations=observability.training_max_iterations,
+                    max_tokens=observability.training_max_tokens,
+                )
+            )
     shared_hook_runner = _build_hook_runner(shared_hooks)
     im_ui = IMUserInterface(
         output_adapter=service.output_adapter,
@@ -434,6 +454,19 @@ async def _assemble_resources(
     # resolution service; the links arrive over the scope path (the single
     # link source since ticket 11 deleted the legacy pool.yml feeding).
     resolve_peer_targets(resources.pools, peer_links_from_declaration(scope_boot.spec))
+
+    # Stamp the `tracing` capability supply's store onto each pool's
+    # snapshot: per-turn consumers (turn_context_builder's runtime
+    # services, TrainingDataHook) read ``pool_data.trace_store`` — the
+    # supply is the construction authority, the snapshot the read face.
+    # Pools without the capability (external pools) keep ``None``.
+    from modex_agent.plugins.defaults.capabilities.tracing import TraceSupply
+
+    for name, pi in pools.items():
+        deps = pi.pool.materialize_deps
+        supply = deps.capability_supply.get("tracing") if deps is not None else None
+        if isinstance(supply, TraceSupply) and pool_data[name].trace_store is None:
+            object.__setattr__(pool_data[name], "trace_store", supply.store)
 
     # Wire each pool's main pipeline + communication service to THIS workspace
     # (R). Subagent pipelines pick up R via the resolver cell through the
@@ -539,7 +572,10 @@ async def _assemble_resources(
             )
             default_pool = fallback
 
-    # 6. Background tasks (dream/curator) — per workspace.
+    # 6. Background tasks (dream) — per workspace. The per-pool experience
+    #    curator loops moved to the experience capability supply (SPEC
+    #    §8.3 D4): pool assembly starts them, AgentPool.shutdown_all stops
+    #    them — the workspace runner no longer touches curators.
     background = BackgroundTaskRunner(
         pool_data=pool_data,
         assembly_deps=assembly_deps,

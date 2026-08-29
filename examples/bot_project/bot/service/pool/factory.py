@@ -29,14 +29,12 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
-from bot.config.webui_config import build_control_origin
 from bot.scope import BotRecordScope
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from bot.service.session_pool_index import SessionPoolIndex
 from modex_agent.commands.processor import SlashCommandProcessor
 from modex_agent.control.channel import InMemoryControlChannel
-from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.emitter import ContentEmitter
@@ -47,12 +45,9 @@ from modex_agent.core.session_store import SessionStore
 from modex_agent.hook import Hook, HookRunner
 from modex_agent.hook.notification import AgentNotificationService
 from modex_agent.ioc.factories.session_tree import build_session_tree_stores
-from modex_agent.memory.cleanup_hooks import TodoReorientationHook
 from modex_agent.messaging.broker_bridge import BrokerBridgeService, OutputRoute
 from modex_agent.multi_agent import SessionRetentionPolicy
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
-from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
 from modex_agent.multi_agent.execution_strategy import strategy_name_of
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
@@ -62,16 +57,12 @@ from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
-from modex_agent.multi_agent.tools import (
-    CommunicationTarget,
-    CommunicationTargetStore,
-)
+from modex_agent.multi_agent.tools import CommunicationTargetStore
 from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.assembly.context import (
     AssemblyContext,
-    CommunicationFacilities,
     PoolRuntimeDeps,
     SupplyInfra,
     resolution_context,
@@ -88,13 +79,16 @@ from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
 from modex_agent.plugins.assembly.stages.workspace_materialize import (
     WorkspaceMaterializeStage,
 )
+from modex_agent.plugins.defaults.capabilities.subagents import (
+    SubagentsSupply,
+    build_pool_communication_service,
+)
 from modex_agent.plugins.registry import (
     ComponentRegistry,
     strategy_registry_from_components,
 )
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
-from modex_agent.workspace.scope_path import ScopePath
 
 from ..builders import build_inbox, resolve_declared_root_prompt
 from ..external_strategy import ProviderUnavailableError
@@ -434,12 +428,11 @@ async def create_pool(
     template_registry = declared.template_registry
     templates = template_registry.list_templates(pool_name)
     logger.info("Pool '%s': %d subagent templates available", pool_name, len(templates))
-    scope_path = ScopePath(
-        workspace_root=(
-            workspace_handle.current if workspace_handle is not None else project_dir
-        ),
-        pool_name=pool_name,
-    )
+    # Pre-pipeline: the capability supply aggregation (Stage 3) reads the
+    # pool's template registry handle when building the subagents supply.
+    pool.template_registry = template_registry
+    scope_path = ctx.scope_path
+    assert scope_path is not None  # _build_assembly_context always carries it
     context_fork_builder = ContextForkBuilder()
 
     poller = InboxPoller(pool, interval=0.2)
@@ -469,43 +462,11 @@ async def create_pool(
     )
     inbox_consumer.set_on_consumed(tree_manager.on_consumed)
     poller.attach_tree_manager(tree_manager)
-
-    # Declaration road (ticket 07): the root's per-agent communication
-    # facilities — service + target store populated from the DERIVED child
-    # entries (SPEC §5.2), replacing the legacy template-driven pool-level
-    # store. Ticket 12: the store lists the root's DIRECT children only
-    # (declared.root_children) — grandchildren are the mid-level agent's
-    # own dispatch surface. Peer targets join the same store at workspace
-    # materialize time through the FW resolution service (ticket 13).
-    root_store = CommunicationTargetStore()
-    for child in declared.root_children:
-        root_store.add(
-            CommunicationTarget(
-                name=child.spec.agent_name,
-                kind=AgentCommKind.SUBAGENT,
-                description=child.spec.description,
-                execution_strategy=ExecutionStrategyKind(
-                    child.spec.execution_strategy
-                ),
-            )
-        )
-    communication_facilities = CommunicationFacilities(
-        service=AgentCommunicationService(
-            source=AgentAddress(name=root_agent_name),
-            registry=pool,
-            tree=tree_manager,
-            template_registry=template_registry,
-            pool=pool,
-            pool_name=pool_name,
-            project_dir=project_dir,
-            session_registry=session_registry,
-            scope_path=scope_path,
-            workspace_manager=workspace_resolver,
-            trace_enabled=_resolve_trace_enabled(app_config),
-            target_store=root_store,
-        ),
-        target_store=root_store,
-    )
+    # Pre-pipeline: PoolAssembleStage reads the pool's tree handle for
+    # the capability supply views (and its PoolRuntimeDeps
+    # session_tree_manager) — the setter is idempotent with the
+    # post-pipeline materialize_deps assignment (the same tree object).
+    pool.tree = tree_manager
 
     # C1 main path: the main agent's LLM_PROVIDER name resolves to an
     # instance exactly once here, feeding BOTH the agent factory and the
@@ -559,10 +520,8 @@ async def create_pool(
             pool_name,
             _workspace_emitter_factory,
             media_store_resolver=media_store_resolver,
-            observability_config=(app_config.observability if app_config is not None else None),
             session_registry=session_registry,
             session_binding_store=session_binding_store,
-            trace_store=pool_data.trace_store if pool_data is not None else None,
         )
         pool._agent_factory = factory
         return NativeAssemblyInputs(
@@ -602,19 +561,28 @@ async def create_pool(
 
     # Constructed BEFORE the pipeline (ticket 09): HOOK-slot factories
     # dispatched at Stage 4 (user_notice_cleanup, experience_review) resolve
-    # their runtime deps from the chain — the notification service and the
-    # bot-global default review provider ride SupplyInfra into
-    # PoolRuntimeDeps.
+    # their runtime deps from the chain — the notification service rides
+    # SupplyInfra into PoolRuntimeDeps, and the bot-global default provider
+    # rides SupplyInfra into the capability supply views (the experience
+    # reviewer builds on it — the retired experience-specific typed field
+    # died with the supply-face convergence).
     notification_service = AgentNotificationService(
         output_adapter=output_adapter,
     )
-    experience_review_provider = sub_default_llm_provider
+    default_llm_provider = sub_default_llm_provider
     infra = SupplyInfra(
         pool_assembly_ctx=ctx,
         pool=pool,
-        communication=communication_facilities,
+        # The pool's COMPLETE compiled spec set (root + subagents) — Stage 3
+        # aggregates the capability supply over exactly this set (SPEC
+        # §7.1), so capabilities effective only on subagents still get
+        # their pool-level supply.
+        pool_specs=(
+            declared.root.spec,
+            *(agent.spec for agent in declared.subagents),
+        ),
         notification_service=notification_service,
-        experience_review_provider=experience_review_provider,
+        default_llm_provider=default_llm_provider,
     )
     assembly_ctx = AssemblyContext(
         registry=resolved_registry,
@@ -643,7 +611,6 @@ async def create_pool(
     if assembly is not None:
         terminal_manager = assembly.terminal_manager
         tool_manager = assembly.tool_manager
-        todo_store = assembly.todo_store
         skill_manager = assembly.skill_manager
         context_manager = assembly.context_manager
         cassette_recorder = assembly.cassette_recorder
@@ -654,7 +621,6 @@ async def create_pool(
     else:
         terminal_manager = None
         tool_manager = None
-        todo_store = None
         skill_manager = None
         context_manager = None
         cassette_recorder = None
@@ -685,10 +651,8 @@ async def create_pool(
             _workspace_emitter_factory,
             media_store_resolver=media_store_resolver,
             external_deps=external_deps,
-            observability_config=(app_config.observability if app_config is not None else None),
             session_registry=session_registry,
             session_binding_store=session_binding_store,
-            trace_store=pool_data.trace_store if pool_data is not None else None,
         )
     pool._agent_factory = factory  # type: ignore[attr-defined]
 
@@ -706,15 +670,23 @@ async def create_pool(
         if ms is not None:
             subagent_store_registry = ms.store_registry
 
-    control_origin = build_control_origin(project_dir / "config")
+    control_origin = ctx.control_origin
     # The lazy graph-context closure shared by the main pipeline AND the
     # subagent materialization deps (ticket 12 — one resolver, both paths).
     graph_context_resolver = (
-        _make_graph_context_resolver(workspace_resolver)
-        if workspace_resolver is not None
-        else None
+        _make_graph_context_resolver(workspace_resolver) if workspace_resolver is not None else None
     )
 
+    # The pool's aggregated capability supply (built once by Stage 3 over
+    # pool_specs) rides the pipeline product onto the subagent
+    # materialization path — main PoolRuntimeDeps and AgentMaterializeDeps
+    # carry the SAME mapping (SPEC §7.1).
+    propagated = assembled.propagated_context if assembled is not None else None
+    capability_supply = (
+        propagated.pool_runtime.capability_supply
+        if propagated is not None and propagated.pool_runtime is not None
+        else {}
+    )
     deps = AgentMaterializeDeps(
         agent_factory=factory,
         pool=pool,
@@ -743,7 +715,6 @@ async def create_pool(
         scope_path=scope_path,
         workspace_manager=workspace_resolver,
         mcp_registry=mcp_registry,
-        todo_store=todo_store,
         execution_strategy=strategy,
         strategy_registry=registry,
         data_dir=data_dir,
@@ -756,9 +727,9 @@ async def create_pool(
         component_registry=resolved_registry,
         pool_assembly_ctx=ctx,
         graph_context_resolver=graph_context_resolver,
+        capability_supply=capability_supply,
     )
     pool.materialize_deps = deps
-    pool.template_registry = template_registry
     pool.pool_name = pool_name
     pool.context_fork_builder = context_fork_builder
 
@@ -795,42 +766,52 @@ async def create_pool(
     # the main agent is ready — causing "no template for X; skipping".
     pool.start_poller()
 
-    # NOTE: ``pool_data`` is non-None for ALL pools — including external
-    # (Pi/OpenCode) pools whose ``build_pool_data`` still builds a
-    # ``DefaultMemorySystem``.  For external pools the hooks are registered
-    # but never fire: ``ExternalTurnRunner`` uses an empty
-    # ``ListMessageHistory`` and never appends to the framework memory
-    # system, so ``cleanup_session`` is never invoked.  The registration is
-    # intentionally kept (rather than guarded on strategy) so that if
-    # external agents ever gain native memory-system support the notices
-    # work without rewiring.
-    if pool_data is not None:
-        memory_system = pool_data.context_manager.memory_system
-        if memory_system is not None:
-            # `user_notice_cleanup` is roster-referenced and dispatched onto
-            # this memory system by Stage 4 (native mains only; external
-            # mains have no Stage 4 — their memory system never fires
-            # cleanup, so the omission is behavior-neutral).
-            memory_cfg = assembly_deps.memory
-            has_archive = (
-                memory_cfg is not None
-                and memory_cfg.archive is not None
-                and memory_cfg.archive.enabled
-            )
-            memory_system.add_cleanup_hook(
-                TodoReorientationHook(todo_store, has_archive=has_archive)
-            )
+    # The memory-runner hooks are NOT injected here anymore. The historical
+    # unconditional ``TodoReorientationHook`` registration died with the todo
+    # supply convergence (SPEC §8.2 B2): the ``todo`` capability contributes
+    # ``todo_reorientation`` as a roster entry, and Stage 4's
+    # ``_dispatch_hooks`` memory branch registers it on the pool's memory
+    # system — for native mains with the todo capability; external mains
+    # (no Stage 4, and external agents can never declare capabilities) get
+    # none, which is behavior-neutral since their memory system never fires
+    # cleanup. ``user_notice_cleanup`` was already roster-dispatched only.
 
-    # The facilities built pre-pipeline ARE the main service + per-agent
-    # store (tools resolved at Stage 4 against them).
-    main_service = communication_facilities.service
-    main_store = communication_facilities.target_store or CommunicationTargetStore()
+    # The pool's communication faces (the retired pre-pipeline BIZ
+    # construction died with the subagents supply wave, SPEC §8.4): the
+    # ``subagents`` capability's supply carries the service and the root's
+    # native assembly carries the per-agent target store (its wiring
+    # artifact — peer targets join the SAME store at workspace materialize
+    # time). Capability-less pools (external pools, lone roots) fall back
+    # to the FW builder — the single construction authority the capability
+    # supply itself uses — so the control-facade/modexctl plane keeps a
+    # router for every pool.
+    subagents_supply = capability_supply.get("subagents")
+    if isinstance(subagents_supply, SubagentsSupply):
+        main_service = subagents_supply.service
+    else:
+        main_service = build_pool_communication_service(
+            root_agent_name=root_agent_name,
+            pool=pool,
+            tree=tree_manager,
+            pool_name=pool_name,
+            project_dir=project_dir,
+            session_registry=session_registry,
+            template_registry=template_registry,
+            scope_path=scope_path,
+            workspace_manager=workspace_resolver,
+            trace_enabled=_resolve_trace_enabled(app_config),
+        )
+    subagents_wiring = (
+        (assembled.capability_wirings or {}).get("subagents") if assembled is not None else None
+    )
+    main_store = (
+        subagents_wiring.artifacts.get("target_store") if subagents_wiring is not None else None
+    ) or CommunicationTargetStore()
     logger.info(
         "Pool '%s': communication store (%d targets)",
         pool_name,
         len(main_store.list()),
     )
-    main_service._target_store = main_store
 
     # Pool-level extensions (ticket 10): PoolAssembleStage resolves the
     # spec's INTERCEPTOR / COMMAND_HANDLER rosters against the
@@ -845,15 +826,13 @@ async def create_pool(
         else None
     )
     pool_interceptor_chain = (
-        extensions_pool_runtime.interceptor_chain
-        if extensions_pool_runtime is not None
-        else None
+        extensions_pool_runtime.interceptor_chain if extensions_pool_runtime is not None else None
     ) or shared_interceptor_chain
     pool_command_processor = (
-        extensions_pool_runtime.command_processor
-        if extensions_pool_runtime is not None
-        else None
-    ) or command_processor or SlashCommandProcessor.default()
+        (extensions_pool_runtime.command_processor if extensions_pool_runtime is not None else None)
+        or command_processor
+        or SlashCommandProcessor.default()
+    )
 
     if strategy.requires_main_agent_tools:
         _wire_main_pipeline(
@@ -873,15 +852,10 @@ async def create_pool(
             peer_links=declared.peer_links,
             root_provider=root_provider,
             bot_model_config=bot_model_config,
-            model_choice_registry=model_choice_registry,
-            roster_hook_names=roster_hook_names,
             cassette_recorder=cassette_recorder,
-            control_origin=control_origin,
             graph_context_resolver=graph_context_resolver,
             session_binding_store=session_binding_store,
-            tree_manager=tree_manager,
             component_hook_specs=component_hook_specs,
-            todo_store=todo_store,
         )
     else:
         # external path: the external agent has no tool surface (it

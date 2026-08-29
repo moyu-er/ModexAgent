@@ -19,6 +19,7 @@ import ast
 import logging
 import re
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,12 @@ from bot.service.pool.declaration import (
     declared_pool_build,
 )
 from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
+
+from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
+from modex_agent.plugins.capability import CapabilityError
+from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.plugins.registry import ComponentRegistry
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
@@ -98,6 +105,17 @@ _COMMUNICATION_SYMBOLS = (
 _POOL_DIR = BOT_BASE / "bot" / "service" / "pool"
 
 
+@lru_cache(maxsize=1)
+def _component_registry() -> ComponentRegistry:
+    """DefaultPlugin registry — the shipped declaration's
+    ``capabilities:`` blocks resolve against it at compile."""
+    registry = ComponentRegistry()
+    ctx = PluginRegistrationContext(registry)
+    DefaultPlugin().register(ctx)
+    ctx.flush()
+    return registry
+
+
 def _boot(
     declaration_path: Path,
     tmp_path: Path,
@@ -109,6 +127,7 @@ def _boot(
         data_dir=tmp_path / ".modex",
         graphs_dirs=graphs_dirs or (BOT_BASE / "config" / "graphs",),
         default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        registry=_component_registry(),
     )
 
 
@@ -155,16 +174,21 @@ def test_boot_v3_and_v11_issues_all_carried(tmp_path: Path) -> None:
 
 def test_boot_v6_missing_task_fails_phase2(tmp_path: Path) -> None:
     """A child-carrying root whose wholesale tools list drops ``task``
-    aborts boot at phase 2 (V6 — the declared subtree would be
-    unreachable)."""
-    with pytest.raises(ScopeBootError) as excinfo:
+    aborts boot — since the subagents migration, at COMPILE time: the
+    capability's bind anchor (the V6 dual check's richer-error layer)
+    fires one boot cycle before the phase-2 validator. The registry-less
+    phase-2 V6 layer keeps its own boot pin in
+    ``test_boot_v6_mid_level_missing_task_fails_phase2`` below."""
+    with pytest.raises(CapabilityError) as excinfo:
         _boot(
             FIXTURES / "v6_missing_task.yml",
             tmp_path,
             graphs_dirs=(tmp_path / "no-graphs",),
         )
-    assert "V6" in str(excinfo.value)
-    assert "phase-2" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "'subagents'" in message
+    assert "V6 dual check" in message
+    assert "'task'" in message
 
 
 def test_boot_v9_non_root_approval_fails_phase2(tmp_path: Path) -> None:
@@ -391,6 +415,10 @@ def _boot_nested(tmp_path: Path):
         data_dir=tmp_path / ".modex",
         graphs_dirs=(_E2E_FIXTURE / "graphs",),
         default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        # The tree derivation (task/send_to_agent/send_to_peer) is
+        # capability-contributed since the subagents migration — the boot
+        # registry resolves it at compile.
+        registry=_component_registry(),
     )
 
 
@@ -456,6 +484,9 @@ pool:
             data_dir=tmp_path / ".modex",
             graphs_dirs=(tmp_path / "no-graphs",),
             default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+            # The tracing fallback is observability-driven; OFF keeps this
+            # registry-less boot free of injected capabilities.
+            observability=ObservabilityConfig(trace_backend=TraceBackend.OFF),
         )
     assert "V6" in str(excinfo.value)
     assert "phase-2" in str(excinfo.value)

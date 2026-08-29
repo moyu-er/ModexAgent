@@ -27,27 +27,39 @@ propagated via ``dataclasses.replace`` — :class:`AssemblyContext` is
 frozen (rule 11), so the updated context is passed to
 ``factory.create(config, ctx)`` rather than mutating in place.
 """
+
 from __future__ import annotations
 
 import dataclasses
+import logging
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from modex_agent.commands.handlers import CommandHandler
 from modex_agent.commands.processor import SlashCommandProcessor
 from modex_agent.interceptor.abc import Interceptor
 from modex_agent.interceptor.chain import InterceptorChain
+from modex_agent.ioc.configs.observability import TraceBackend
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.assembly.context import (
     AgentContext,
     PoolRuntimeDeps,
+    SupplyInfra,
     agent_context_chain,
 )
 from modex_agent.plugins.assembly.pipeline import AssemblyStage
+from modex_agent.plugins.capability import (
+    CapabilitySupply,
+    PoolSupplyAgentEntry,
+    PoolSupplyView,
+)
 from modex_agent.tools.terminal import ProcessRegistry
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from modex_agent.commands.models import CommandProcessor
     from modex_agent.multi_agent.execution_strategy import (
         ExecutionStrategy,
@@ -56,6 +68,109 @@ if TYPE_CHECKING:
     from modex_agent.plugins.assembly.builder import AssemblyBuilder
     from modex_agent.plugins.assembly.context import AssemblyContext
     from modex_agent.plugins.assembly.spec import AssemblySpec
+    from modex_agent.plugins.registry import ComponentRegistry
+
+logger = logging.getLogger(__name__)
+
+
+def _aggregate_capability_supply(
+    specs: tuple[AssemblySpec, ...],
+    registry: ComponentRegistry,
+    infra: SupplyInfra,
+) -> Mapping[str, CapabilitySupply]:
+    """Aggregate the pool's capability supply (SPEC §7.1, S phase).
+
+    ONE aggregation per pool: the union of effective capabilities across
+    the pool's compiled ``AssemblySpec``s, deduplicated in first-appearance
+    order (specs in their given order — root first, then subagents in
+    declaration order; each spec's ``capabilities`` tuple in the compiler's
+    registry-enumeration order). Each distinct name resolves via
+    ``registry.resolve_capability`` and receives a
+    :class:`PoolSupplyView` listing every (agent, config) pair it is
+    effective on in that same order, plus the pool-assembly resource
+    handles (root agent name / data_dir / runtime_dir / persistence /
+    default LLM provider / pool + tree + registries + scope path +
+    workspace manager + project dir / trace toggle) capabilities may
+    construct supplies from.
+    ``supply()`` returning ``None`` → no mapping entry; a raise → pool
+    assembly aborts (the pipeline's cleanup-on-failure semantics own the
+    teardown — never caught here).
+
+    Pure with respect to its inputs: the only effects are the
+    ``supply()`` calls, which are assembly-time legitimate (SPEC §3.3).
+    """
+    pool_assembly_ctx = infra.pool_assembly_ctx
+    assert pool_assembly_ctx is not None  # the stage validated infra before calling
+    entries_by_name: dict[str, list[PoolSupplyAgentEntry]] = {}
+    for spec in specs:
+        for compiled in spec.capabilities:
+            entries_by_name.setdefault(compiled.name, []).append(
+                PoolSupplyAgentEntry(agent_name=spec.agent_name, config=compiled.config)
+            )
+    pool_data = pool_assembly_ctx.pool_data
+    app_config = pool_assembly_ctx.app_config
+    if app_config is None or app_config.observability is None:
+        trace_enabled = True
+    else:
+        trace_enabled = app_config.observability.trace_backend != TraceBackend.OFF
+    supply: dict[str, CapabilitySupply] = {}
+    for name, entries in entries_by_name.items():
+        capability = registry.resolve_capability(name)
+        product = capability.supply(
+            PoolSupplyView(
+                pool_name=pool_assembly_ctx.pool_name,
+                entries=tuple(entries),
+                # The first spec is the pool's root/main agent (the
+                # SupplyInfra.pool_specs contract: root first, then
+                # subagents in declaration order; the pipeline input spec
+                # alone is the main's) — the keying agent for per-main
+                # pool storage.
+                root_agent_name=specs[0].agent_name,
+                data_dir=pool_assembly_ctx.data_dir,
+                runtime_dir=pool_data.runtime_dir if pool_data is not None else None,
+                persistence_backend=(
+                    app_config.persistence.backend.value if app_config is not None else None
+                ),
+                persistence=pool_assembly_ctx.persistence,
+                default_llm_provider=infra.default_llm_provider,
+                pool=infra.pool,
+                session_tree=infra.pool.tree if infra.pool is not None else None,
+                template_registry=(
+                    infra.pool.template_registry if infra.pool is not None else None
+                ),
+                session_registry=pool_assembly_ctx.session_registry,
+                scope_path=pool_assembly_ctx.scope_path,
+                workspace_manager=pool_assembly_ctx.workspace_resolver,
+                project_dir=pool_assembly_ctx.project_dir,
+                trace_enabled=trace_enabled,
+                trace_store=(pool_data.trace_store if pool_data is not None else None),
+            )
+        )
+        if product is not None:
+            supply[name] = product
+    return MappingProxyType(supply)
+
+
+async def _stop_capability_supplies(supplies: tuple[CapabilitySupply, ...]) -> None:
+    """Stop every aggregated supply's background workers (SPEC §8.3 D4).
+
+    The single stop shared by BOTH teardown roads — the pipeline's
+    cleanup-on-failure (registered on the builder by the stage) and the
+    pool's shutdown (attached to ``AgentPool``) — so a started worker can
+    never leak. Per-supply exception isolation mirrors the builder's
+    cleanup invariant: one failing stop never blocks the rest. Supplies
+    are stopped in reverse aggregation order (last-started first) and
+    each stop is idempotent, making the two roads safe to double-fire.
+    """
+    for supply in reversed(supplies):
+        try:
+            await supply.stop()
+        except Exception:
+            logger.warning(
+                "Capability supply %s stop failed; continuing with remaining stops",
+                type(supply).__name__,
+                exc_info=True,
+            )
 
 
 class PoolAssembleStage(AssemblyStage):
@@ -93,13 +208,37 @@ class PoolAssembleStage(AssemblyStage):
                 "was removed (SPEC Errata-5)"
             )
 
-        pool_runtime = PoolRuntimeDeps(pool_assembly_ctx=infra.pool_assembly_ctx)
+        # ONE capability-supply aggregation per pool (SPEC §7.1): over the
+        # supplied spec set when the orchestrator threaded it (root +
+        # subagents), else over the pipeline input spec alone. Runs BEFORE
+        # the strategy resolution so a ``supply()`` failure aborts pool
+        # assembly before any strategy resource is built.
+        pool_specs = infra.pool_specs if infra.pool_specs else (spec,)
+        capability_supply = _aggregate_capability_supply(pool_specs, ctx.registry, infra)
+        # D4 supply lifecycle (SPEC §8.3): supplies construct inside the
+        # aggregation; their pool-scoped background workers start HERE
+        # (pool assembly) and stop at pool teardown — the pipeline's
+        # cleanup-on-failure (the builder registration below) and
+        # ``AgentPool.shutdown_all`` (the pool's teardown machinery) share
+        # the one idempotent stop attached to the pool.
+        supplies = tuple(capability_supply.values())
+        for supply in supplies:
+            await supply.start()
+        if supplies:
+
+            async def stop_supplies() -> None:
+                await _stop_capability_supplies(supplies)
+
+            builder.register_cleanup(stop_supplies)
+            infra.pool.attach_background_stop(stop_supplies)
+        pool_runtime = PoolRuntimeDeps(
+            pool_assembly_ctx=infra.pool_assembly_ctx,
+            capability_supply=capability_supply,
+        )
         ctx = dataclasses.replace(ctx, pool_runtime=pool_runtime)
         builder.propagated_context = ctx
 
-        factory = ctx.registry.resolve(
-            ComponentSlot.EXECUTION_STRATEGY, spec.execution_strategy
-        )
+        factory = ctx.registry.resolve(ComponentSlot.EXECUTION_STRATEGY, spec.execution_strategy)
 
         config = factory.config_model()
         # Ticket 04: factories receive the full-chain context. The strategy
@@ -108,9 +247,7 @@ class PoolAssembleStage(AssemblyStage):
             config, agent_context_chain(ctx, spec=spec)
         )
 
-        strategy_result: StrategyAssembly = await strategy.assemble_main(
-            infra.pool_assembly_ctx
-        )
+        strategy_result: StrategyAssembly = await strategy.assemble_main(infra.pool_assembly_ctx)
 
         # Invariant: terminal_manager is not None ⇒ process_registry is not
         # None. Strategies that build the terminal trio fill the registry;
@@ -128,14 +265,11 @@ class PoolAssembleStage(AssemblyStage):
                 infra.notification_service or strategy_result.notification_service
             ),
             binding_store=strategy_result.target_store,
-            todo_store=strategy_result.todo_store,
             root_provider=strategy_result.root_provider,
             mcp_registry=infra.pool_assembly_ctx.mcp_registry,
             emitter_factory=infra.pool_assembly_ctx.emitter_factory,
             terminal_manager=strategy_result.terminal_manager,
             process_registry=process_registry,
-            communication=infra.communication,
-            experience_review_provider=infra.experience_review_provider,
             persistent_bash=strategy_result.persistent_bash,
         )
         # Pool-level extensions (ticket 10) resolve against the
@@ -145,12 +279,8 @@ class PoolAssembleStage(AssemblyStage):
         extension_chain = agent_context_chain(ctx, spec=spec)
         pool_runtime = dataclasses.replace(
             pool_runtime,
-            interceptor_chain=await self._resolve_interceptor_chain(
-                spec, extension_chain
-            ),
-            command_processor=await self._resolve_command_processor(
-                spec, extension_chain
-            ),
+            interceptor_chain=await self._resolve_interceptor_chain(spec, extension_chain),
+            command_processor=await self._resolve_command_processor(spec, extension_chain),
         )
         ctx = dataclasses.replace(ctx, pool_runtime=pool_runtime)
         builder.propagated_context = ctx
@@ -184,9 +314,7 @@ class PoolAssembleStage(AssemblyStage):
         chain = InterceptorChain(shared.interceptors if shared is not None else [])
         for name in spec.interceptors:
             factory = ctx.registry.resolve(ComponentSlot.INTERCEPTOR, name)
-            config = factory.config_model.model_validate(
-                spec.interceptor_configs.get(name, {})
-            )
+            config = factory.config_model.model_validate(spec.interceptor_configs.get(name, {}))
             interceptor = await factory.create(config, ctx)
             if not isinstance(interceptor, Interceptor):
                 raise TypeError(f"INTERCEPTOR component {name!r} did not create Interceptor")
@@ -212,9 +340,7 @@ class PoolAssembleStage(AssemblyStage):
             config = factory.config_model.model_validate({})
             handler = await factory.create(config, ctx)
             if not isinstance(handler, CommandHandler):
-                raise TypeError(
-                    f"COMMAND_HANDLER component {name!r} did not create CommandHandler"
-                )
+                raise TypeError(f"COMMAND_HANDLER component {name!r} did not create CommandHandler")
             handlers.append(handler)
         return SlashCommandProcessor(handlers=handlers)
 

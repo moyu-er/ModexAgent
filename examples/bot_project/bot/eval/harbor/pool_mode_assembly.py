@@ -193,6 +193,8 @@ async def build_eval_pool_assembly(
         data_dir=config.data_dir,
         graphs_dirs=(),
         default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        registry=component_registry,
+        observability=app_config.observability,
     )
     declared = declared_pool_build(scope_boot, config.pool_name)
     bot_model_config = build_model_config(config.entry)
@@ -260,7 +262,23 @@ async def build_eval_pool_assembly(
             pool_data={config.pool_name: pool_data},
         )
         output_adapter = NullOutputAdapter()
+        # Production wiring mirror (resources.py): the observability-driven
+        # training hooks ride the shared runner (both read per-turn state
+        # from ctx.runtime.services — stateless instances shared per pool).
         shared_hooks = [CurrentTimeInjectionHook(), KnowledgeHook()]
+        if app_config.observability is not None:
+            from modex_agent.hook.builtin.checkpoint import CheckpointHook
+            from modex_agent.hook.builtin.training_data import TrainingDataHook
+
+            if app_config.observability.checkpoint_per_iteration:
+                shared_hooks.append(CheckpointHook())
+            if app_config.observability.training_relevant:
+                shared_hooks.append(
+                    TrainingDataHook(
+                        max_iterations=app_config.observability.training_max_iterations,
+                        max_tokens=app_config.observability.training_max_tokens,
+                    )
+                )
         interceptor_chain = build_tool_overflow_interceptor_chain(
             overflow_store,
             control_channel=None,

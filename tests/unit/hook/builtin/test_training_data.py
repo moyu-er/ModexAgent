@@ -9,7 +9,7 @@ import pytest
 from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import ExecutionStrategyKind, StopReason
+from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
@@ -18,10 +18,6 @@ from modex_agent.hook.abc import FinallyGraphHook
 from modex_agent.hook.builtin.training_data import TRAINING_RELEVANT_ATTR, TrainingDataHook
 from modex_agent.ioc.configs.observability import ObservabilityConfig
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind
-from modex_agent.multi_agent.descriptor import AgentDescriptor
-from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.runtime.enums import (
     AgentKind,
     TurnCustomKey,
@@ -143,15 +139,6 @@ async def _fire(
 ) -> None:
     payload = HookPayload(data={"result": result})
     await _runner(hook).dispatch(HookPoint.FINALLY_GRAPH, ctx, payload)
-
-
-def _desc() -> AgentDescriptor:
-    return AgentDescriptor(
-        address=AgentAddress(name="main"),
-        execution_strategy=ExecutionStrategyKind.REACT,
-        comm_kind=AgentCommKind.NORMAL,
-        system_prompt_template="",
-    )
 
 
 def _training_span(store: _RecordingOtelStore) -> SpanModel:
@@ -520,63 +507,68 @@ async def test_saved_span_uses_training_tag_name() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Factory wiring
+# Deployment wiring (the observability-driven registration moved from the
+# retired DefaultAgentFactory injection to the deployment's shared runner —
+# bot wiring; the hook itself is unchanged)
 # ---------------------------------------------------------------------------
 
 
-async def test_factory_registers_training_data_hook_when_enabled() -> None:
-    factory = DefaultAgentFactory(
-        observability_config=ObservabilityConfig(
-            training_relevant=True,
-            training_max_iterations=15,
-            training_max_tokens=50_000,
-        ),
+def _deployment_hooks(obs: ObservabilityConfig) -> list[HookSpec]:
+    """The bot wiring's construction (resources.py mirror): the training
+    hook joins the shared runner iff ``training_relevant``."""
+    if obs.training_relevant:
+        return [
+            HookSpec(
+                hook=TrainingDataHook(
+                    max_iterations=obs.training_max_iterations,
+                    max_tokens=obs.training_max_tokens,
+                )
+            )
+        ]
+    return []
+
+
+async def test_deployment_runner_carries_training_data_hook_when_enabled() -> None:
+    runner = HookRunner(
+        _deployment_hooks(
+            ObservabilityConfig(
+                training_relevant=True,
+                training_max_iterations=15,
+                training_max_tokens=50_000,
+            )
+        )
     )
-    instance = await factory.create_agent(_desc(), broker=None)
-    assert instance.pipeline is not None
-    runner = instance.pipeline.hook_runner
-    assert runner is not None
     kinds = {type(s.hook) for s in runner.hook_specs}
     assert TrainingDataHook in kinds
 
 
-async def test_factory_no_training_data_hook_when_disabled() -> None:
-    factory = DefaultAgentFactory(observability_config=ObservabilityConfig(training_relevant=False))
-    instance = await factory.create_agent(_desc(), broker=None)
-    assert instance.pipeline is not None
-    runner = instance.pipeline.hook_runner
-    assert runner is not None
+async def test_deployment_runner_no_training_data_hook_when_disabled() -> None:
+    runner = HookRunner(_deployment_hooks(ObservabilityConfig(training_relevant=False)))
     kinds = {type(s.hook) for s in runner.hook_specs}
     assert TrainingDataHook not in kinds
 
 
-async def test_factory_disabled_by_default() -> None:
-    factory = DefaultAgentFactory()
-    instance = await factory.create_agent(_desc(), broker=None)
-    runner = instance.pipeline.hook_runner
-    assert runner is not None
+async def test_deployment_disabled_by_default() -> None:
+    runner = HookRunner(_deployment_hooks(ObservabilityConfig()))
     kinds = {type(s.hook) for s in runner.hook_specs}
     assert TrainingDataHook not in kinds
 
 
-async def test_factory_passes_max_iterations_and_max_tokens_to_hook() -> None:
-    factory = DefaultAgentFactory(
-        observability_config=ObservabilityConfig(
-            training_relevant=True,
-            training_max_iterations=7,
-            training_max_tokens=42_000,
-        ),
+async def test_deployment_passes_max_iterations_and_max_tokens_to_hook() -> None:
+    runner = HookRunner(
+        _deployment_hooks(
+            ObservabilityConfig(
+                training_relevant=True,
+                training_max_iterations=7,
+                training_max_tokens=42_000,
+            )
+        )
     )
-    instance = await factory.create_agent(_desc(), broker=None)
-    runner = instance.pipeline.hook_runner
-    assert runner is not None
-    training_hooks = [
-        s.hook for s in runner.hook_specs if isinstance(s.hook, TrainingDataHook)
-    ]
+    training_hooks = [s.hook for s in runner.hook_specs if isinstance(s.hook, TrainingDataHook)]
     assert len(training_hooks) == 1
     hook = training_hooks[0]
-    assert hook._max_iterations == 7
-    assert hook._max_tokens == 42_000
+    assert hook._max_iterations == 7  # noqa: SLF001
+    assert hook._max_tokens == 42_000  # noqa: SLF001
 
 
 # ---------------------------------------------------------------------------

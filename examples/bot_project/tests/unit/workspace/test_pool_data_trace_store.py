@@ -1,9 +1,13 @@
+"""``build_pool_data``'s ``trace_store`` seam after the `tracing` capability
+convergence: the retired BIZ construction block died — the caller-carried
+store (the harbor trial's collector-backed store) rides the snapshot into
+the capability supply view untouched; the production path passes ``None``
+and the ``tracing`` capability's supply builds the pool's store."""
+
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
-from bot.workspace import pool_data as pool_data_module
 from bot.workspace.pool_data import build_pool_data
 
 from modex_agent.ioc.configs.memory import MemoryConfig
@@ -25,40 +29,32 @@ def _pool_inputs(
     )
 
 
-async def test_build_pool_data_uses_injected_trace_store(tmp_path: Path) -> None:
-    # Given
+async def test_build_pool_data_carries_injected_trace_store(tmp_path: Path) -> None:
     ctx, root_agent, assembly_deps = _pool_inputs(tmp_path)
     injected_store = OtelSpanTraceStore(tmp_path / "caller-trace")
 
-    # When
-    with (
-        patch.object(pool_data_module, "build_trace_stores") as build_stores,
-        patch.object(pool_data_module, "OtelSpanTraceStore") as store_type,
-    ):
-        pool_data = await build_pool_data(
-            ctx,
-            "test_pool",
-            root_agent,
-            None,
-            assembly_deps,
-            trace_store=injected_store,
-        )
+    pool_data = await build_pool_data(
+        ctx,
+        "test_pool",
+        root_agent,
+        None,
+        assembly_deps,
+        trace_store=injected_store,
+    )
 
-    # Then
     assert pool_data.trace_store is injected_store
-    build_stores.assert_not_called()
-    store_type.assert_not_called()
     memory_system = pool_data.context_manager.memory_system
     assert memory_system is not None
     await memory_system.close()
     injected_store.close()
 
 
-async def test_build_pool_data_builds_default_trace_store(tmp_path: Path) -> None:
-    # Given
+async def test_build_pool_data_production_path_leaves_store_none(tmp_path: Path) -> None:
+    """The production path builds NO store here — the `tracing`
+    capability's supply owns construction (the workspace wiring stamps the
+    supply's store onto the snapshot after assembly)."""
     ctx, root_agent, assembly_deps = _pool_inputs(tmp_path)
 
-    # When
     pool_data = await build_pool_data(
         ctx,
         "test_pool",
@@ -67,10 +63,7 @@ async def test_build_pool_data_builds_default_trace_store(tmp_path: Path) -> Non
         assembly_deps,
     )
 
-    # Then
-    default_store = pool_data.trace_store
-    assert isinstance(default_store, OtelSpanTraceStore)
+    assert pool_data.trace_store is None
     memory_system = pool_data.context_manager.memory_system
     assert memory_system is not None
     await memory_system.close()
-    default_store.close()

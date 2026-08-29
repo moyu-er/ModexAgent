@@ -66,17 +66,49 @@ pool:
   agents:
     main:
       description: synthesized root
-      tool_supplements:
-      - experience
+      capabilities:
+        experience: {}
 """
 
-_NO_SUPPLEMENT_DECLARATION = """\
+_NO_CAPABILITY_DECLARATION = """\
 pool:
   name: p
   agents:
     main:
       description: synthesized root
 """
+
+
+def _compile_registry():
+    """DefaultPlugin registry — the declaration's ``capabilities:`` block
+    resolves against it at compile."""
+    from modex_agent.plugins.defaults import DefaultPlugin
+    from modex_agent.plugins.loader import PluginRegistrationContext
+    from modex_agent.plugins.registry import ComponentRegistry
+
+    registry = ComponentRegistry()
+    ctx = PluginRegistrationContext(registry)
+    DefaultPlugin().register(ctx)
+    ctx.flush()
+    return registry
+
+
+def _position_root(
+    tmp_path: Path,
+    *,
+    declaration: str = _ONE_POOL_DECLARATION,
+):
+    """The compiled root through the declaration road: boot a one-root
+    declaration. The default fixture declares the experience capability
+    (the deep-binding signal); pass ``declaration=_NO_CAPABILITY_DECLARATION``
+    for the off-signal shape."""
+    boot = boot_from_yaml(
+        declaration,
+        project_dir=tmp_path,
+        data_dir=tmp_path / ".modex",
+        registry=_compile_registry(),
+    )
+    return next(iter(boot.compilation.agents))
 
 
 def _position_deps(
@@ -86,16 +118,13 @@ def _position_deps(
     declaration: str = _ONE_POOL_DECLARATION,
 ) -> PoolAssemblyDeps:
     """Deps through the SINGLE declaration road (stack.py): boot a
-    one-root declaration and derive the root's assembly deps. The default
-    fixture declares the EXPERIENCE supplement (the declared-driven
-    enable signal); pass ``declaration=_NO_SUPPLEMENT_DECLARATION`` for
-    the off-signal shape."""
+    one-root declaration and derive the root's assembly deps. Experience
+    is NOT on the deps road anymore — the experience capability's supply
+    face builds the manager/dir/curator from the compile product's
+    capability config (SPEC §8.3)."""
     from bot.workspace.wiring.stack import declared_assembly_deps
 
-    boot = boot_from_yaml(
-        declaration, project_dir=tmp_path, data_dir=tmp_path / ".modex"
-    )
-    root = next(iter(boot.compilation.agents))
+    root = _position_root(tmp_path, declaration=declaration)
     return declared_assembly_deps(root, max_context_tokens=max_context_tokens)
 
 
@@ -162,27 +191,44 @@ class TestMemoryDefaultsContract:
         m = main_agent_memory(max_context_tokens=128000)
         assert m.session.max_context_tokens == 128000
 
-    def test_main_agent_experience_enabled_by_declared_supplement(
-        self, tmp_path: Path
-    ) -> None:
-        """A root declaring the EXPERIENCE supplement MUST get experience
-        enabled on the deps road (declared-driven: the compiled tool
-        roster is the signal).
+    def test_experience_capability_entry_on_declared_root(self, tmp_path: Path) -> None:
+        """A root declaring the experience capability MUST compile an
+        ``experience`` entry in its capabilities block — the deep-binding
+        signal the capability's supply face reads (manager + dir + curator
+        + review hook + injection section all ride it).
 
         Without this, ExperienceReviewHook never fires, no EXPERIENCE.md
-        is ever created, and the ExperienceProvider injection is empty.
+        is ever created, and the injection section never renders.
         """
-        deps = _position_deps(tmp_path, max_context_tokens=None)
+        root = _position_root(tmp_path)
 
-        e = deps.experience
-        assert e is not None
-        assert e.enabled is True
-        # Reviewer parameters must have sensible defaults
-        assert e.min_messages > 0
-        assert e.exp_cooldown_turns >= 0
-        assert e.max_iterations > 0
-        assert e.max_experiences > 0
-        assert e.curator_interval > 0
+        names = [c.name for c in root.spec.capabilities]
+        assert "experience" in names
+
+    def test_experience_config_carries_all_reviewer_params(self, tmp_path: Path) -> None:
+        """The compiled capability entry's config dump must carry ALL
+        parameters needed by:
+        - ExperienceReviewAgent (max_iterations)
+        - ExperienceReviewHook (min_messages, exp_cooldown_turns)
+        - ExperienceCurator (max_experiences, curator_interval)
+
+        The supply face (``ExperienceCapability.supply``) threads these
+        into the manager/dir/curator construction.
+        """
+        root = _position_root(tmp_path)
+
+        entry = next(c for c in root.spec.capabilities if c.name == "experience")
+        e = entry.config
+        # ExperienceReviewAgent params
+        assert e["max_iterations"] > 0, "max_iterations must be set for ExperienceReviewAgent"
+        # ExperienceReviewHook params
+        assert e["min_messages"] > 0, "min_messages must be set for ExperienceReviewHook"
+        assert e["exp_cooldown_turns"] >= 0, (
+            "exp_cooldown_turns must be set for ExperienceReviewHook"
+        )
+        # ExperienceCurator params
+        assert e["max_experiences"] > 0, "max_experiences must be set for ExperienceCurator"
+        assert e["curator_interval"] > 0, "curator_interval must be set for ExperienceCurator"
 
     def test_subagent_memory_is_minimal(self) -> None:
         """Subagent memory MUST be session + pruned + governance ONLY.
@@ -213,9 +259,7 @@ class TestMemoryDefaultsContract:
         assert m.archive is None, "subagent must NOT have archive"
         assert m.core is None, "subagent must NOT have core memory"
         assert m.dream_engine is None, "subagent must NOT have dream_engine"
-        assert m.governance.budget is None, (
-            "subagent governance must NOT have budget"
-        )
+        assert m.governance.budget is None, "subagent governance must NOT have budget"
 
     def test_no_subagent_experience_preset_exists(self) -> None:
         """There must be NO subagent_experience() — review is main-agent-only."""
@@ -248,20 +292,19 @@ class TestAssemblyDepsUniformInjection:
         for m in memories:
             assert m is not None
             assert m.archive is None  # default off
-            assert m.core is None      # default off
+            assert m.core is None  # default off
             assert m.dream_engine is None  # default off
             assert m.compact is not None and m.compact.enabled  # compact always on
             assert m.governance is not None and m.governance.budget is not None
             assert m.pruned is not None and m.pruned.enabled
             assert m.session.max_context_tokens == 50000
 
-    def test_all_pools_get_same_experience_preset(self, tmp_path: Path) -> None:
-        """Every supplement-declaring root gets experience enabled
-        (declared-driven: the compiled tool roster is the signal)."""
-        deps = _position_deps(tmp_path, max_context_tokens=None)
+    def test_all_pools_get_same_experience_signal(self, tmp_path: Path) -> None:
+        """Every capability-declaring root compiles the experience entry
+        (declared-driven: the compiled capabilities block is the signal)."""
+        root = _position_root(tmp_path)
 
-        assert deps.experience is not None
-        assert deps.experience.enabled is True
+        assert "experience" in [c.name for c in root.spec.capabilities]
 
     def test_works_with_empty_pool_list(self, tmp_path: Path) -> None:
         """Empty pool list must not crash (defensive)."""
@@ -272,12 +315,11 @@ class TestAssemblyDepsUniformInjection:
         """A single declared root gets the full config."""
         deps = _position_deps(tmp_path, max_context_tokens=None)
         assert deps.memory is not None
-        assert deps.experience is not None and deps.experience.enabled
-
+        root = _position_root(tmp_path)
+        assert "experience" in [c.name for c in root.spec.capabilities]
 
 
 # ─── Test 4: External main agent structural skip at wiring ───────────────────
-
 
 
 # ─── Test 5: Experience three-component packaging ────────────────────────────
@@ -288,173 +330,50 @@ class TestExperienceThreeComponentPackaging:
     packaged together: ExperienceManager (injection) + ExperienceReviewHook
     (review) + ExperienceCurator (LRU eviction).
 
-    If any component is missing, experience degrades silently (see AGENTS.md
-    "Experience review mechanism" section).
+    The packaging signal is the compiled ``experience`` capability entry
+    (the supply face builds all three from it); the component-level
+    construction pins live in the framework suite
+    (``tests/unit/plugins/test_experience_supply.py``).
     """
 
-    def test_experience_config_carries_all_reviewer_params(
-        self, tmp_path: Path
-    ) -> None:
-        """The deps road's ExperienceConfig must carry ALL parameters
-        needed by:
+    def test_experience_config_carries_all_reviewer_params(self, tmp_path: Path) -> None:
+        """The compiled capability entry's config dump must carry ALL
+        parameters needed by:
         - ExperienceReviewAgent (max_iterations)
         - ExperienceReviewHook (min_messages, exp_cooldown_turns)
         - ExperienceCurator (max_experiences, curator_interval)
         """
-        deps = _position_deps(tmp_path, max_context_tokens=None)
+        root = _position_root(tmp_path)
 
-        e = deps.experience
-        assert e is not None
+        entry = next(c for c in root.spec.capabilities if c.name == "experience")
+        e = entry.config
         # ExperienceReviewAgent params
-        assert e.max_iterations > 0, "max_iterations must be set for ExperienceReviewAgent"
+        assert e["max_iterations"] > 0, "max_iterations must be set for ExperienceReviewAgent"
         # ExperienceReviewHook params
-        assert e.min_messages > 0, "min_messages must be set for ExperienceReviewHook"
-        assert e.exp_cooldown_turns >= 0, "exp_cooldown_turns must be set for ExperienceReviewHook"
+        assert e["min_messages"] > 0, "min_messages must be set for ExperienceReviewHook"
+        assert e["exp_cooldown_turns"] >= 0, (
+            "exp_cooldown_turns must be set for ExperienceReviewHook"
+        )
         # ExperienceCurator params
-        assert e.max_experiences > 0, "max_experiences must be set for ExperienceCurator"
-        assert e.curator_interval > 0, "curator_interval must be set for ExperienceCurator"
+        assert e["max_experiences"] > 0, "max_experiences must be set for ExperienceCurator"
+        assert e["curator_interval"] > 0, "curator_interval must be set for ExperienceCurator"
 
-    def test_experience_manager_built_when_experience_enabled(
-        self, tmp_path: Path
-    ) -> None:
-        """_build_experience_manager MUST return a non-None ExperienceManager
-        when experience is enabled.
-
-        This is the injection component — without it, ExperienceProvider
-        never adds <available_experiences> to the system prompt.
-        """
-        from bot.workspace.pool_data import _build_experience_manager
-
-        deps = _position_deps(tmp_path, max_context_tokens=50000)
-
-        exp_dir = tmp_path / "experiences" / "test" / "main"
-        exp_dir.mkdir(parents=True, exist_ok=True)
-
-        manager = _build_experience_manager(deps, exp_dir)
-        assert manager is not None, (
-            "ExperienceManager must be built when experience is enabled — "
-            "without it, no <available_experiences> XML in system prompt"
-        )
-
-    def test_experience_manager_none_when_experience_disabled(
-        self, tmp_path: Path
-    ) -> None:
-        """_build_experience_manager MUST return None when experience is
-        disabled (defensive — verifies the guard clause works)."""
-        from bot.workspace.pool_data import _build_experience_manager
-
-        # Construct deps with experience=None (memory must be real MemoryConfig
-        # because PoolAssemblyDeps is a frozen Pydantic model)
-        from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-
-        deps = PoolAssemblyDeps(
-            memory=MemoryConfig(),
-            experience=None,
-        )
-        exp_dir = tmp_path / "experiences" / "test"
-        manager = _build_experience_manager(deps, exp_dir)
-        assert manager is None
-
-    def test_experience_manager_absent_without_supplement(
-        self, tmp_path: Path
-    ) -> None:
+    def test_experience_capability_absent_without_declaration(self, tmp_path: Path) -> None:
         """Deep-binding off-signal proof: a root WITHOUT the experience
-        supplement gets a DISABLED ExperienceConfig and NO
-        ExperienceManager — the compiled tool roster is the ONLY enable
-        signal (the position default is gone)."""
-        from bot.workspace.pool_data import _build_experience_manager
+        capability compiles NO experience entry — the compiled
+        capabilities block is the ONLY enable signal (the position
+        default is gone; no supply, no hook, no section, no curator).
+        (The `tracing` entry rides the observability fallback — a
+        separate mechanism, pinned in test_tracing_capability.py.)"""
+        root = _position_root(tmp_path, declaration=_NO_CAPABILITY_DECLARATION)
 
-        deps = _position_deps(
-            tmp_path,
-            max_context_tokens=None,
-            declaration=_NO_SUPPLEMENT_DECLARATION,
-        )
-
-        assert deps.experience is not None
-        assert deps.experience.enabled is False
-        exp_dir = tmp_path / "experiences" / "off" / "main"
-        exp_dir.mkdir(parents=True, exist_ok=True)
-        manager = _build_experience_manager(deps, exp_dir)
-        assert manager is None, (
-            "ExperienceManager must NOT be built when the root declares "
-            "no EXPERIENCE supplement — the deep binding must follow the "
-            "compiled tool roster, not the root position"
-        )
-
-    def test_experience_curator_built_when_experience_enabled(
-        self, tmp_path: Path
-    ) -> None:
-        """BackgroundTaskRunner._build_curators MUST create an
-        ExperienceCurator for every pool with experience enabled.
-
-        This is the LRU eviction component — without it, the experience
-        directory grows unbounded.
-        """
-        from bot.workspace.background import BackgroundTaskRunner
-
-        deps_map = {
-            "native_a": _position_deps(tmp_path, max_context_tokens=50000),
-            "native_b": _position_deps(tmp_path, max_context_tokens=50000),
-        }
-
-        pool_data_a = MagicMock()
-        pool_data_a.experience_dir = tmp_path / "exp_a"
-        pool_data_a.experience_dir.mkdir(parents=True, exist_ok=True)
-        pool_data_a.experience_meta = MagicMock()
-
-        pool_data_b = MagicMock()
-        pool_data_b.experience_dir = tmp_path / "exp_b"
-        pool_data_b.experience_dir.mkdir(parents=True, exist_ok=True)
-        pool_data_b.experience_meta = MagicMock()
-
-        bg = BackgroundTaskRunner(
-            pool_data={"native_a": pool_data_a, "native_b": pool_data_b},
-            assembly_deps=deps_map,
-            default_pool_name="native_a",
-        )
-        bg._build_curators()
-
-        # Both pools must have curators
-        assert "native_a" in bg.curators, "native_a must have ExperienceCurator"
-        assert "native_b" in bg.curators, "native_b must have ExperienceCurator"
-
-    def test_experience_curator_skipped_when_experience_disabled(
-        self, tmp_path: Path
-    ) -> None:
-        """BackgroundTaskRunner._build_curators MUST NOT create a curator
-        for pools with experience=None (defensive guard)."""
-        from bot.workspace.background import BackgroundTaskRunner
-
-        from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-
-        pool_data = MagicMock()
-        pool_data.experience_dir = tmp_path / "exp"
-        pool_data.experience_meta = MagicMock()
-
-        # PoolAssemblyDeps is a frozen Pydantic model — memory must be real
-        deps_no_exp = PoolAssemblyDeps(
-            memory=MemoryConfig(),
-            experience=None,
-        )
-
-        bg = BackgroundTaskRunner(
-            pool_data={"disabled_pool": pool_data},
-            assembly_deps={"disabled_pool": deps_no_exp},
-            default_pool_name="disabled_pool",
-        )
-        bg._build_curators()
-
-        assert "disabled_pool" not in bg.curators, (
-            "ExperienceCurator must NOT be built when experience is disabled"
-        )
+        assert [c.name for c in root.spec.capabilities if c.name == "experience"] == []
 
 
 # ─── Test 6: End-to-end with synthesized mixed pool config ───────────────────
 
 
-
 # ─── Test 7: Experience reviewer uses bot-global default_provider ─────────────
-
 
 
 # ─── Test 8: Archive emitter notification (UserNoticeCleanupHook) ──────────
@@ -682,18 +601,14 @@ class TestMemorySystemCleanupHookFiring:
         for i in range(20):
             await history.append({"role": "user", "content": f"msg-{i}"})
 
-        assert len(hook.calls) > 0, (
-            "CleanupFinishedHook must fire when cleanup is triggered"
-        )
+        assert len(hook.calls) > 0, "CleanupFinishedHook must fire when cleanup is triggered"
         finished_ctx = hook.calls[0]
         assert finished_ctx.memory_context is not None
         assert finished_ctx.memory_context.session_id == "test-session"
         assert finished_ctx.cleanup_result is not None
         assert finished_ctx.cleanup_result.triggered is True
 
-    def test_real_cleanup_fires_triggered_and_finished_on_normal_path(
-        self, tmp_path: Path
-    ) -> None:
+    def test_real_cleanup_fires_triggered_and_finished_on_normal_path(self, tmp_path: Path) -> None:
         import asyncio
 
         asyncio.run(self._run_real_cleanup_fires_both(tmp_path))

@@ -23,13 +23,15 @@ declaration IS its capability boundary (the type is the readable layer
 — a factory declaring ``PoolContext`` cannot type-reach workspace-layer
 fields).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from modex_agent.commands.models import CommandProcessor
     from modex_agent.control.channel import InMemoryControlChannel
@@ -38,7 +40,6 @@ if TYPE_CHECKING:
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.hook.notification import AgentNotificationService
     from modex_agent.interceptor.chain import InterceptorChain
-    from modex_agent.multi_agent.communication import AgentCommunicationService
     from modex_agent.multi_agent.execution_strategy import (
         PoolAssemblyContext,
     )
@@ -49,8 +50,8 @@ if TYPE_CHECKING:
     # Forward references to types defined elsewhere:
     # - ComponentRegistry (``plugins/registry.py``)
     from modex_agent.plugins.assembly.spec import AssemblySpec
+    from modex_agent.plugins.capability import CapabilitySupply, CapabilityWiring
     from modex_agent.plugins.registry import ComponentRegistry
-    from modex_agent.runtime.store import TodoStore
     from modex_agent.scope.spec import WorkspaceSpec
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
     from modex_agent.tools.terminal.managers import TerminalManagerBase
@@ -65,30 +66,6 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class CommunicationFacilities:
-    """Pool-layer communication facilities (SPEC §3.3 通信设施, ticket 07).
-
-    Carries what the derived communication tool factories need beyond the
-    agent's own identity (which comes from :class:`AgentContext`):
-
-    - ``service`` — the per-source :class:`AgentCommunicationService`
-      router (the pure router of ADR-0015 D5; construction stays with the
-      orchestrator during the dual-boot period, tickets 09/10 move it).
-    - ``target_store`` — the PER-AGENT target store holding the derived
-      entries: direct-child SUBAGENT targets for ``task`` and peer NORMAL
-      targets for ``send_to_peer`` (SPEC §5.2). ``None`` for subagent
-      consultation (``send_to_agent`` resolves its parent dynamically —
-      ``CommunicationTargetStore(for_subagent=True)``).
-
-    Runtime-object container per rule 12 — NOT Pydantic ``BaseModel``.
-    Frozen per rule 11 (leaf value-object, no behavior).
-    """
-
-    service: AgentCommunicationService
-    target_store: CommunicationTargetStore | None = None
-
-
-@dataclass(frozen=True)
 class SupplyInfra:
     """Typed supply-mode infra carrier (C2 fix — replaces ``dict[str, Any]``).
 
@@ -100,21 +77,27 @@ class SupplyInfra:
 
     pool_assembly_ctx: PoolAssemblyContext | None = None
     pool: AgentPool | None = None
-    communication: CommunicationFacilities | None = None
-    """Pool-layer communication facilities for the agent being assembled
-    (ticket 07): the derived communication TOOL factories resolve against
-    this. ``None`` on the legacy roster road (whose specs carry no derived
-    entries, so the factories never resolve)."""
+    pool_specs: tuple[AssemblySpec, ...] = ()
+    """The pool's COMPLETE compiled spec set (root first, then subagents
+    in declaration order) — the capability supply aggregation input
+    (SPEC §7.1). ``PoolAssembleStage`` aggregates over exactly this set,
+    so capabilities effective only on subagents still get their
+    pool-level supply. Empty → the stage aggregates over the pipeline
+    input spec alone (framework tests / legacy supply shapes)."""
     notification_service: AgentNotificationService | None = None
     """The pool's notification service (ticket 09): supplied by the
     orchestrator so HOOK-slot factories dispatched at Stage 4 (e.g.
     ``user_notice_cleanup``) can resolve it — the strategies leave the
     StrategyAssembly field ``None``. Takes precedence over the strategy
     product."""
-    experience_review_provider: LLMProvider | None = None
-    """The bot-global default LLM provider (ticket 09): feeds the
-    ``experience_review`` HOOK-slot factory's review agent. ``None`` on
-    the legacy roster road (whose specs never reference the hook)."""
+    default_llm_provider: LLMProvider | None = None
+    """The deployment-level default LLM provider (the orchestrator-resolved
+    bot-global default): threaded into the capability supply views so
+    LLM-driven supply-side background workers can build on it (the
+    ``experience`` reviewer is the bundled consumer — the retired
+    experience-specific ``experience_review_provider`` typed field died
+    with the supply-face convergence). ``None`` on the legacy roster road
+    (whose specs never reference such workers)."""
 
 
 @dataclass(frozen=True)
@@ -135,7 +118,6 @@ class PoolRuntimeDeps:
     notification_service: AgentNotificationService | None = None
     binding_store: CommunicationTargetStore | None = None
     pool_assembly_ctx: PoolAssemblyContext | None = None
-    todo_store: TodoStore | None = None
     root_provider: WorkspaceRootProvider | None = None
     mcp_registry: McpConnectionRegistry | None = None
     emitter_factory: Callable[[str], ContentEmitter[Any]] | None = None
@@ -145,16 +127,6 @@ class PoolRuntimeDeps:
     # enforced by PoolAssembleStage). All terminal tool factories share
     # this single instance.
     process_registry: ProcessRegistry | None = None
-    # Pool-layer communication facilities (ticket 07) — the derived
-    # communication TOOL factories (task / send_to_peer / send_to_agent)
-    # resolve against this when the compiled spec carries the derived
-    # entries. Copied from SupplyInfra by PoolAssembleStage.
-    communication: CommunicationFacilities | None = None
-    # The bot-global default LLM provider (ticket 09) — the
-    # experience_review HOOK-slot factory builds its review agent on this.
-    # Supplied via SupplyInfra by PoolAssembleStage; ``None`` on the legacy
-    # roster road.
-    experience_review_provider: LLMProvider | None = None
     # Pool-level extensions resolved by PoolAssembleStage (ticket 10) from
     # the spec's INTERCEPTOR / COMMAND_HANDLER rosters against this
     # enriched context. ``None`` = no roster additions — the orchestrator
@@ -167,6 +139,13 @@ class PoolRuntimeDeps:
     # roster-resolved ``bash`` IS the tool whose ``bash_input`` companion
     # shares its session.
     persistent_bash: PersistentBashTool | None = None
+    # Pool-level capability supply (SPEC §7.1): ONE aggregated mapping per
+    # pool, keyed by capability registration name. Aggregated by
+    # ``PoolAssembleStage`` over the pool's compiled specs; the subagent
+    # materialization path receives the SAME mapping via
+    # ``AgentMaterializeDeps.capability_supply``. The typed supply fields
+    # above converge onto this face in their own W3/W4 waves.
+    capability_supply: Mapping[str, CapabilitySupply] = MappingProxyType({})
 
 
 @dataclass(frozen=True)
@@ -257,11 +236,11 @@ class WorkspaceContext:
 class PoolContext:
     """Pool-layer carrier of the assembly context chain (SPEC §3.3).
 
-    Holds the pool runtime dependencies — todo store, terminal manager,
-    communication facilities, session tree, notification service — all
-    inside :class:`PoolRuntimeDeps` — plus the pool-scoped LLM provider.
-    Memory handles join this layer when their construction migrates into
-    the chain (tickets 09/10).
+    Holds the pool runtime dependencies — terminal manager, capability
+    supply, session tree, notification service — all inside
+    :class:`PoolRuntimeDeps` — plus the pool-scoped LLM provider. Memory
+    handles join this layer when their construction migrates into the
+    chain (tickets 09/10).
 
     Runtime-object container per rule 12 — NOT Pydantic ``BaseModel``.
     Frozen per rule 11 (leaf value-object, no behavior).
@@ -303,6 +282,23 @@ class AgentContext(WorkspaceContext, PoolContext, AssemblyContext):
     parent_session: SessionInfo | str | None = None
     invocation_id: str | None = None
     spec: AssemblySpec | None = None
+    llm_defaults: Any | None = None
+    """The agent's descriptor-level LLM defaults (the
+    :class:`~modex_agent.plugins.assembly.native_core.LlmDefaults` object
+    feeding ``AgentLLMConfig`` — model name, temperature, max output
+    tokens). Threaded by ``assemble_native_agent`` so capability
+    ``assemble()`` phases can derive per-agent model facts (the tracing
+    capability's span attributes) without reaching into the descriptor;
+    ``None`` on hand-built chains (capability assembles then degrade to
+    model-less spans, matching the retired ``llm_config is None`` path)."""
+    capability_wirings: Mapping[str, CapabilityWiring] | None = None
+    """The per-agent capability wiring products (SPEC §7.2 A-phase),
+    keyed by capability registration name. ``assemble_native_agent``
+    runs the capability dispatch BEFORE tool resolution and threads the
+    wirings here, so TOOL/HOOK factories resolve per-agent wiring
+    artifacts (e.g. the ``subagents`` capability's per-agent
+    communication target store) off the SAME chain they already read.
+    ``None`` when the agent compiles no capabilities."""
 
 
 def agent_context_chain(
@@ -311,6 +307,7 @@ def agent_context_chain(
     spec: AssemblySpec,
     parent_session: SessionInfo | str | None = None,
     invocation_id: str | None = None,
+    llm_defaults: Any | None = None,
 ) -> AgentContext:
     """Derive the per-agent full-chain view from the legacy context.
 
@@ -331,11 +328,10 @@ def agent_context_chain(
         pool_runtime=pool_runtime,
         llm_provider=ctx.llm_provider,
         infra=ctx.infra,
-        mcp_registry=(
-            pool_runtime.mcp_registry if pool_runtime is not None else None
-        ),
+        mcp_registry=(pool_runtime.mcp_registry if pool_runtime is not None else None),
         agent_name=spec.agent_name,
         parent_session=parent_session,
         invocation_id=invocation_id,
         spec=spec,
+        llm_defaults=llm_defaults,
     )

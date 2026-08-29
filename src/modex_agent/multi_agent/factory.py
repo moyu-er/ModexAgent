@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.provider import LLMProvider
-    from modex_agent.trace.otel_store import OtelSpanTraceStore
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,6 @@ from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook import HookRunner
 from modex_agent.hook.builtin import InboxFlushHook
 from modex_agent.ioc.configs.llm import LLMConfig
-from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
 from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.tools.filter import FilteredToolManager
 
@@ -88,9 +86,7 @@ class DefaultAgentFactory(AgentFactory):
         default_interceptor_chain: Any | None = None,
         default_turn_store: Any | None = None,
         control_channel: InMemoryControlChannel | None = None,
-        trace_store: OtelSpanTraceStore | None = None,
         session_registry: SessionRegistry | None = None,
-        observability_config: ObservabilityConfig | None = None,
     ) -> None:
         self._default_llm_provider = default_llm_provider
         self._default_tool_manager = default_tool_manager
@@ -104,9 +100,7 @@ class DefaultAgentFactory(AgentFactory):
         self._default_interceptor_chain = default_interceptor_chain
         self._default_turn_store = default_turn_store
         self._control_channel = control_channel
-        self._trace_store = trace_store
         self._session_registry = session_registry
-        self._observability_config = observability_config
         self._inbox_producer = InboxProducer(inbox_server) if inbox_server else None
         self._inbox_consumer = inbox_consumer
         # Shared runtime-context manager across all agents created by this factory.
@@ -400,80 +394,30 @@ class DefaultAgentFactory(AgentFactory):
         turn_runner.bind_to_pipeline(pipeline)
 
         from modex_agent.hook import HookErrorPolicy, HookSpec
-        from modex_agent.hook.builtin import LoopDetectionHook
-        from modex_agent.hook.builtin.checkpoint import CheckpointHook
-        from modex_agent.hook.builtin.training_data import TrainingDataHook
-        from modex_agent.trace.factory import build_trace_hooks
 
-        obs = self._observability_config or ObservabilityConfig()
-        checkpoint_per_iteration = obs.checkpoint_per_iteration
-        training_relevant = obs.training_relevant
-        training_max_iterations = obs.training_max_iterations
-        training_max_tokens = obs.training_max_tokens
-        model_name = descriptor.llm_config.model if descriptor.llm_config is not None else None
-
-        llm_cfg = descriptor.llm_config
-        provider_name = (
-            model_name.split("/")[0] if model_name is not None and "/" in model_name else None
-        )
-        request_params = (
-            {
-                "temperature": llm_cfg.temperature,
-                "max_tokens": llm_cfg.max_output_tokens,
-            }
-            if llm_cfg is not None
-            else None
-        )
-
-        # L2 score injection (Layer 1 eval)
-        score_injector = None
-        if (
-            obs.eval_score_injection
-            and obs.trace_backend == TraceBackend.OTEL_HTTP
-            and obs.otel_endpoint
-        ):
-            try:
-                from urllib.parse import urlparse
-
-                from modex_agent.trace.score_injector import L2ScoreInjector
-
-                parsed = urlparse(obs.otel_endpoint)
-                ingestion_url = obs.eval_ingestion_url or (
-                    f"{parsed.scheme}://{parsed.netloc}/api/public/ingestion"
-                )
-                headers = obs.otel_headers or {}
-                score_injector = L2ScoreInjector(
-                    ingestion_url=ingestion_url,
-                    headers=headers,
-                )
-            except Exception:
-                logger.warning(
-                    "L2ScoreInjector creation failed; score injection disabled.",
-                    exc_info=True,
-                )
-
-        trace_hooks = build_trace_hooks(
-            config=obs,
-            model=model_name,
-            provider_name=provider_name,
-            request_params=request_params,
-            score_injector=score_injector,
-            store=self._trace_store,
-        )
-        for spec in trace_hooks:
-            hook_runner.add(spec)
         hook_runner.extend(default_hook_specs)
 
-        live_hooks: list[Any] = [LoopDetectionHook()]
-        if checkpoint_per_iteration:
-            live_hooks.append(CheckpointHook())
-        if training_relevant:
-            live_hooks.append(
-                TrainingDataHook(
-                    max_iterations=training_max_iterations,
-                    max_tokens=training_max_tokens,
-                )
-            )
+        # LoopDetectionHook is NOT constructed here: it reaches the runner as a
+        # compiler position-default roster row (`loop_detection` in
+        # POSITION_DEFAULT_HOOKS), resolved through the HOOK-slot factory like
+        # every roster entry — vetoable via `hooks: [-loop_detection]` and
+        # visible on the bill with a position_default origin (ADR-0047 W6).
+        #
+        # ANTI-REGRESSION (ADR-0047 W6): trace span hooks are NOT constructed
+        # here either. The retired block (the trace-family builder call + the
+        # inline L2 score-injector construction + the add-loop over the
+        # observability ctor state) died with the `tracing` capability
+        # convergence: the span hooks reach the runner as capability-contributed
+        # roster entries (`trace_root`/`trace_chat`/`trace_tool`/
+        # `trace_handoff`/`trace_approval`/`trace_agent_start`/
+        # `trace_iteration`, resolved through the HOOK-slot factories whose
+        # construction authority is TracingCapability.assemble — vetoable via
+        # `hooks: [-trace_*]`, tier-gated by the `trace_spans` binding vouch.
+        # The same death took the checkpoint/training hooks: both moved to the
+        # deployment's shared_hooks (bot wiring), keeping per-turn state
+        # semantics (both read ctx.runtime.services per turn). Do NOT
+        # reintroduce any observability-driven hook construction here.
+        live_hooks: list[Any] = []
         if auto_inbox_flush is not None:
             live_hooks.append(auto_inbox_flush)
         for hook in live_hooks:

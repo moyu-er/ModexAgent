@@ -131,6 +131,8 @@ class TestAgentContextFields:
             "parent_session",
             "invocation_id",
             "spec",
+            "llm_defaults",
+            "capability_wirings",
         }
         actual = {f.name for f in dataclasses.fields(AgentContext)}
         assert actual == expected
@@ -200,7 +202,7 @@ def _full_chain() -> AgentContext:
     return AgentContext(
         registry=MagicMock(),
         workspace_ctx=MagicMock(),
-        pool_runtime=PoolRuntimeDeps(todo_store=MagicMock()),
+        pool_runtime=PoolRuntimeDeps(session_tree_manager=MagicMock()),
         agent_name="probe-agent",
     )
 
@@ -233,7 +235,7 @@ class TestAgentContextChainBridge:
     def test_bridge_carries_all_legacy_view_fields(self) -> None:
         registry = MagicMock()
         workspace_ctx = MagicMock()
-        pool_runtime = PoolRuntimeDeps(todo_store=MagicMock())
+        pool_runtime = PoolRuntimeDeps(session_tree_manager=MagicMock())
         ctx = AssemblyContext(
             registry=registry,
             workspace_ctx=workspace_ctx,
@@ -310,7 +312,9 @@ class TestLegacyViewUnchanged:
         assert actual == expected
 
     def test_resolution_context_still_builds_legacy_view(self) -> None:
-        ctx = resolution_context(MagicMock(), MagicMock(), PoolRuntimeDeps(todo_store=MagicMock()))
+        ctx = resolution_context(
+            MagicMock(), MagicMock(), PoolRuntimeDeps(session_tree_manager=MagicMock())
+        )
         assert isinstance(ctx, AssemblyContext)
         assert not isinstance(ctx, AgentContext)
 
@@ -364,7 +368,9 @@ class TestResolverPassesFullChain:
 
     async def test_bundled_todo_factory_reads_chain_pool_layer(self) -> None:
         """SPEC §3.3 todo factory example: ``create(config, ctx:
-        PoolContext) -> TodoWriteTool(ctx.pool_runtime.todo_store)``."""
+        PoolContext) -> TodoWriteTool(require_todo_supply(pool_runtime)
+        .store)`` — the pool's capability supply is the read surface."""
+        from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
         from modex_agent.runtime.store import TodoItem, TodoStore
         from modex_agent.tools.standard.todo_tool import TodoWriteTool
 
@@ -393,7 +399,7 @@ class TestResolverPassesFullChain:
         chain = AgentContext(
             registry=registry,
             workspace_ctx=MagicMock(),
-            pool_runtime=PoolRuntimeDeps(todo_store=store),
+            pool_runtime=PoolRuntimeDeps(capability_supply={"todo": TodoSupply(store=store)}),
             agent_name="probe-agent",
         )
 
@@ -440,9 +446,7 @@ class TestWorkspaceSpecConsumption:
                 return object()
 
         registry = ComponentRegistry()
-        registry.register(
-            ComponentSlot.TOOL, "ws_probe", _WorkspaceScopedProbeFactory()
-        )
+        registry.register(ComponentSlot.TOOL, "ws_probe", _WorkspaceScopedProbeFactory())
         chain = AgentContext(
             registry=registry,
             workspace_ctx=MagicMock(),
@@ -461,9 +465,7 @@ class TestWorkspaceSpecConsumption:
         ctx = AssemblyContext(
             registry=MagicMock(),
             workspace_ctx=MagicMock(),
-            workspace_spec=ScopeSpec(
-                kind=ScopeKind.WORKSPACE, workspace=declared
-            ).workspace,
+            workspace_spec=ScopeSpec(kind=ScopeKind.WORKSPACE, workspace=declared).workspace,
         )
 
         chain = agent_context_chain(ctx, spec=_spec())

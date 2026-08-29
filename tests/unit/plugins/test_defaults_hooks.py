@@ -4,19 +4,22 @@ Written FIRST to drive the implementation of
 ``src/modex_agent/plugins/defaults/hooks.py``. Asserts:
 
 1. **Registration completeness** — ``register_default_hooks`` registers
-   exactly 11 hook factories in the HOOK slot with the correct names.
+   exactly 10 hook factories in the HOOK slot with the correct names.
 2. **Runner-kind dispatch** — Memory hooks (memory_trace,
    todo_reorientation) declare ``hook_runner=memory``; all others declare
    ``hook_runner=react``. Memory hooks go through
    ``memory_system.add_cleanup_hook``, NOT ``HookRunner.add``.
 3. **applies_to filtering** — native_main does NOT receive
-   subagent_auto_send; native_sub receives todo_reorientation via the Memory
-   channel; external_sub receives subagent_auto_send (via strategy path,
-   documented — NOT via Stage 4 hook dispatch).
-4. **SimpleFactory vs factory-form** — deliver_retry and run_logging are
-   SimpleFactory-wrapped (pre-built instance, no deps); the other 9 are
+   subagent_auto_send; todo_reorientation reaches BOTH native types via
+   the Memory channel (the roster→memory-runner dispatch is its single
+   registration path since the todo supply convergence); external_sub
+   receives subagent_auto_send (via strategy path, documented — NOT via
+   Stage 4 hook dispatch).
+4. **SimpleFactory vs factory-form** — length_guard and run_logging are
+   SimpleFactory-wrapped (pre-built instance, no deps); the other 8 are
    custom ReactHookFactory/MemoryHookFactory subclasses with ``create()``
-   that extracts deps from ``ctx.pool_runtime``.
+   that extracts deps from ``ctx.pool_runtime`` (deliver_retry derives
+   the tree, native_env the env template).
 
 Per-hook table (SPEC §6.7):
 
@@ -24,18 +27,21 @@ Per-hook table (SPEC §6.7):
 |-----------------------|-------------------------------|------------------------------|---------|
 | inbox_flush           | ReactHookFactory, factory form| {native_main, native_sub}    | react   |
 | todo_continuation     | ReactHookFactory, factory form| {native_main, native_sub}    | react   |
-| deliver_retry         | ReactHookFactory, SimpleFactory| {native_main, native_sub}   | react   |
+| deliver_retry         | ReactHookFactory, factory form| {native_main, native_sub}    | react   |
+| length_guard          | ReactHookFactory, SimpleFactory| {native_main, native_sub}   | react   |
 | native_env            | ReactHookFactory, factory form| {native_main, native_sub}    | react   |
 | run_logging           | ReactHookFactory, SimpleFactory| {native_main, native_sub}   | react   |
 | subagent_auto_send    | ReactHookFactory, factory form| {external_sub, native_sub}   | react   |
 | memory_trace          | MemoryHookFactory             | {native_main, native_sub}    | memory  |
-| todo_reorientation    | MemoryHookFactory             | {native_sub}                 | memory  |
+| todo_reorientation    | MemoryHookFactory             | {native_main, native_sub}    | memory  |
 | experience_review     | ReactHookFactory, factory form| {native_main}                | react   |
-| task_delegation_nudge | ReactHookFactory, factory form| {native_main, native_sub}    | react   |
-| todo_planning_nudge   | ReactHookFactory, factory form| {native_main, native_sub}    | react   |
+(Both deprecated nudge factories are absent per the capability migration
+deletion ledger.)
 """
+
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -55,6 +61,7 @@ from modex_agent.plugins.defaults.hooks import (
     ExperienceReviewHookConfig,
     ExperienceReviewHookFactory,
     InboxFlushHookFactory,
+    LengthGuardHookFactory,
     MemoryTraceHookFactory,
     NativeEnvInjectionHookFactory,
     RunLoggingHookFactory,
@@ -72,22 +79,28 @@ from modex_agent.runtime.store import TodoItem, TodoStore
 
 _ALL_NATIVE = {AgentType.native_main, AgentType.native_sub}
 _SUBAGENT_BOTH = {AgentType.external_sub, AgentType.native_sub}
-_NATIVE_SUB_ONLY = {AgentType.native_sub}
 _NATIVE_MAIN_ONLY = {AgentType.native_main}
 
-#: The 11 hook names registered by ``register_default_hooks``, in table order.
+#: The 10 hook names registered by ``register_default_hooks``, in table order.
 _EXPECTED_HOOK_NAMES: tuple[str, ...] = (
     "inbox_flush",
     "todo_continuation",
     "deliver_retry",
+    "length_guard",
     "native_env",
+    "loop_detection",
     "run_logging",
     "subagent_auto_send",
     "memory_trace",
     "todo_reorientation",
     "experience_review",
-    "task_delegation_nudge",
-    "todo_planning_nudge",
+    "trace_root",
+    "trace_chat",
+    "trace_tool",
+    "trace_handoff",
+    "trace_approval",
+    "trace_agent_start",
+    "trace_iteration",
 )
 
 
@@ -135,9 +148,7 @@ def _applies_to(factory: ComponentFactory) -> set[AgentType]:
 def _hook_runner(factory: ComponentFactory) -> HookRunnerKind:
     """Read the ``hook_runner`` ClassVar/instance-attr."""
     runner = getattr(factory, "hook_runner", None)
-    assert runner is not None, (
-        f"Factory {type(factory).__name__} must declare hook_runner"
-    )
+    assert runner is not None, f"Factory {type(factory).__name__} must declare hook_runner"
     return runner  # type: ignore[no-any-return]
 
 
@@ -145,10 +156,10 @@ def _hook_runner(factory: ComponentFactory) -> HookRunnerKind:
 
 
 class TestRegistrationCompleteness:
-    def test_registers_exactly_11_hook_factories(self) -> None:
+    def test_registers_exactly_10_hook_factories(self) -> None:
         registry = _register_all()
         hook_map = registry._factories.get(ComponentSlot.HOOK, {})
-        assert len(hook_map) == 11
+        assert len(hook_map) == 18
 
     @pytest.mark.parametrize("name", _EXPECTED_HOOK_NAMES)
     def test_each_expected_name_is_registered(self, name: str) -> None:
@@ -163,8 +174,7 @@ class TestRegistrationCompleteness:
         actual = set(hook_map.keys())
         expected = set(_EXPECTED_HOOK_NAMES)
         assert actual == expected, (
-            f"Unexpected hook names: {actual - expected}; "
-            f"missing: {expected - actual}"
+            f"Unexpected hook names: {actual - expected}; missing: {expected - actual}"
         )
 
 
@@ -189,8 +199,6 @@ class TestRunnerKindDispatch:
             "run_logging",
             "subagent_auto_send",
             "experience_review",
-            "task_delegation_nudge",
-            "todo_planning_nudge",
         ],
     )
     def test_react_hooks_have_react_runner(self, name: str) -> None:
@@ -221,8 +229,7 @@ class TestRunnerKindDispatch:
         for name in ("memory_trace", "todo_reorientation"):
             factory = _resolve(registry, name)
             assert isinstance(factory, MemoryHookFactory), (
-                f"{name} must be a MemoryHookFactory instance, "
-                f"got {type(factory).__name__}"
+                f"{name} must be a MemoryHookFactory instance, got {type(factory).__name__}"
             )
 
     def test_react_factory_form_hooks_are_react_hook_factory_subclass(
@@ -236,14 +243,11 @@ class TestRunnerKindDispatch:
             "native_env",
             "subagent_auto_send",
             "experience_review",
-            "task_delegation_nudge",
-            "todo_planning_nudge",
         ]
         for name in factory_form_names:
             factory = _resolve(registry, name)
             assert isinstance(factory, ReactHookFactory), (
-                f"{name} must be a ReactHookFactory instance, "
-                f"got {type(factory).__name__}"
+                f"{name} must be a ReactHookFactory instance, got {type(factory).__name__}"
             )
 
 
@@ -251,9 +255,9 @@ class TestRunnerKindDispatch:
 
 
 class TestFactoryForm:
-    def test_deliver_retry_is_simple_factory(self) -> None:
+    def test_length_guard_is_simple_factory(self) -> None:
         registry = _register_all()
-        factory = registry.resolve(ComponentSlot.HOOK, "deliver_retry")
+        factory = registry.resolve(ComponentSlot.HOOK, "length_guard")
         assert isinstance(factory, SimpleFactory)
 
     def test_run_logging_is_simple_factory(self) -> None:
@@ -270,11 +274,9 @@ class TestFactoryForm:
         set as instance attributes (same pattern as ``config_model``).
         """
         registry = _register_all()
-        for name in ("deliver_retry", "run_logging"):
+        for name in ("length_guard", "run_logging"):
             factory = registry.resolve(ComponentSlot.HOOK, name)
-            assert hasattr(factory, "applies_to"), (
-                f"{name} SimpleFactory must have applies_to set"
-            )
+            assert hasattr(factory, "applies_to"), f"{name} SimpleFactory must have applies_to set"
             assert hasattr(factory, "hook_runner"), (
                 f"{name} SimpleFactory must have hook_runner set"
             )
@@ -284,16 +286,13 @@ class TestFactoryForm:
         [
             "inbox_flush",
             "todo_continuation",
+            "deliver_retry",
             "native_env",
             "subagent_auto_send",
             "experience_review",
-            "task_delegation_nudge",
-            "todo_planning_nudge",
         ],
     )
-    def test_factory_form_hooks_are_not_simple_factory(
-        self, name: str
-    ) -> None:
+    def test_factory_form_hooks_are_not_simple_factory(self, name: str) -> None:
         registry = _register_all()
         factory = registry.resolve(ComponentSlot.HOOK, name)
         assert not isinstance(factory, SimpleFactory), (
@@ -311,18 +310,12 @@ class TestFactoryForm:
             "memory_trace",
             "todo_reorientation",
             "experience_review",
-            "task_delegation_nudge",
-            "todo_planning_nudge",
         ]
         for name in factory_form_names:
             factory = registry.resolve(ComponentSlot.HOOK, name)
             config_model = getattr(factory, "config_model", None)
-            assert config_model is not None, (
-                f"{name} factory must declare config_model"
-            )
-            assert isinstance(config_model, type), (
-                f"{name} config_model must be a class"
-            )
+            assert config_model is not None, f"{name} factory must declare config_model"
+            assert isinstance(config_model, type), f"{name} config_model must be a class"
             assert issubclass(config_model, BaseModel), (
                 f"{name} config_model must be a Pydantic BaseModel subclass"
             )
@@ -349,21 +342,15 @@ class TestAppliesToFiltering:
             ("run_logging", _ALL_NATIVE),
             ("subagent_auto_send", _SUBAGENT_BOTH),
             ("memory_trace", _ALL_NATIVE),
-            ("todo_reorientation", _NATIVE_SUB_ONLY),
+            ("todo_reorientation", _ALL_NATIVE),
             ("experience_review", _NATIVE_MAIN_ONLY),
-            ("task_delegation_nudge", _ALL_NATIVE),
-            ("todo_planning_nudge", _ALL_NATIVE),
         ],
     )
-    def test_applies_to_matches_spec_table(
-        self, name: str, expected: set[AgentType]
-    ) -> None:
+    def test_applies_to_matches_spec_table(self, name: str, expected: set[AgentType]) -> None:
         registry = _register_all()
         factory = _resolve(registry, name)
         actual = _applies_to(factory)
-        assert actual == expected, (
-            f"{name}: applies_to {actual} != expected {expected}"
-        )
+        assert actual == expected, f"{name}: applies_to {actual} != expected {expected}"
 
     def test_native_main_does_not_receive_subagent_auto_send(self) -> None:
         """Critical: native_main spec does NOT get subagent_auto_send.
@@ -419,10 +406,11 @@ class TestAppliesToFiltering:
 class TestExperienceReviewChainSupply:
     """Ticket 09: the factory assembles the hook from chain-supplied infra.
 
-    A roster reference must resolve against ``pool_runtime`` supply — the
-    bot-global default provider, the pool's memory system, and the
-    experience dir from ``pool_assembly_ctx.pool_data``. Missing supply
-    fails LOUDLY (a referenced component is never silently skipped).
+    A roster reference must resolve against the pool's ``experience``
+    capability supply — the review provider (the deployment's default
+    LLM), the experience dir + meta store — plus the pool's memory system
+    from ``pool_assembly_ctx.pool_data``. Missing supply fails LOUDLY (a
+    referenced component is never silently skipped).
     """
 
     @staticmethod
@@ -440,17 +428,37 @@ class TestExperienceReviewChainSupply:
         provider: object | None,
         pool_data: object | None = None,
     ) -> PoolRuntimeDeps:
-        from unittest.mock import MagicMock
+        from pathlib import Path
 
+        from modex_agent.core.experience import (
+            ExperienceCurator,
+            ExperienceManager,
+            FileExperienceSource,
+            PerFileExperienceMetaStore,
+        )
         from modex_agent.plugins.assembly.context import (
             PoolRuntimeDeps as _Deps,
         )
+        from modex_agent.plugins.defaults.capabilities.experience import ExperienceSupply
 
+        # A REAL supply (the factory type-checks it); the dir is never
+        # touched — these tests pin the missing-infra raises, not review IO.
+        exp_dir = Path("/tmp/experience-supply-test")
+        meta_store = PerFileExperienceMetaStore(exp_dir)
+        supply = ExperienceSupply(
+            pool_name="default",
+            manager=ExperienceManager(source=FileExperienceSource(directories=[exp_dir])),
+            experience_dir=exp_dir,
+            meta_store=meta_store,
+            curator=ExperienceCurator(experience_dir=exp_dir, meta_store=meta_store),
+            curator_interval=86400,
+            review_provider=provider,  # type: ignore[arg-type]
+        )
         pool_assembly = MagicMock()
         pool_assembly.pool_data = pool_data
         return _Deps(
             pool_assembly_ctx=pool_assembly,
-            experience_review_provider=provider,  # type: ignore[arg-type]
+            capability_supply={"experience": supply},
         )
 
     @staticmethod
@@ -458,7 +466,6 @@ class TestExperienceReviewChainSupply:
         from unittest.mock import MagicMock
 
         pool_data = MagicMock()
-        pool_data.experience_dir = tmp_path / "experiences"
         context_manager = MagicMock()
         context_manager.memory_system = memory_system
         pool_data.context_manager = context_manager
@@ -473,23 +480,18 @@ class TestExperienceReviewChainSupply:
 
         memory_system = MagicMock(spec=MemorySystem)
         pool_data = self._pool_data(tmp_path, memory_system=memory_system)
-        pool_runtime = self._pool_runtime(
-            provider=MagicMock(spec=LLMProvider), pool_data=pool_data
-        )
+        pool_runtime = self._pool_runtime(provider=MagicMock(spec=LLMProvider), pool_data=pool_data)
         factory = ExperienceReviewHookFactory()
-        hook = await factory.create(
-            ExperienceReviewHookConfig(), self._ctx(pool_runtime)
-        )
+        hook = await factory.create(ExperienceReviewHookConfig(), self._ctx(pool_runtime))
         assert isinstance(hook, ExperienceReviewHook)
         assert hook._memory_system is memory_system  # noqa: SLF001
-        assert hook._get_dir() == tmp_path / "experiences"  # noqa: SLF001
         assert hook._agent._provider is not None  # noqa: SLF001
 
     async def test_missing_provider_supply_raises_loud(self, tmp_path) -> None:
         pool_data = self._pool_data(tmp_path, memory_system=object())
         pool_runtime = self._pool_runtime(provider=None, pool_data=pool_data)
         factory = ExperienceReviewHookFactory()
-        with pytest.raises(ValueError, match="experience_review_provider"):
+        with pytest.raises(ValueError, match="review_provider"):
             await factory.create(ExperienceReviewHookConfig(), self._ctx(pool_runtime))
 
     async def test_missing_pool_data_raises_loud(self) -> None:
@@ -497,9 +499,7 @@ class TestExperienceReviewChainSupply:
 
         from modex_agent.core.provider import LLMProvider
 
-        pool_runtime = self._pool_runtime(
-            provider=MagicMock(spec=LLMProvider), pool_data=None
-        )
+        pool_runtime = self._pool_runtime(provider=MagicMock(spec=LLMProvider), pool_data=None)
         factory = ExperienceReviewHookFactory()
         with pytest.raises(ValueError, match="pool_data"):
             await factory.create(ExperienceReviewHookConfig(), self._ctx(pool_runtime))
@@ -509,15 +509,21 @@ class TestExperienceReviewChainSupply:
         with pytest.raises(ValueError, match="pool_runtime"):
             await factory.create(ExperienceReviewHookConfig(), self._ctx(None))
 
+    async def test_missing_capability_supply_raises_loud(self) -> None:
+        from modex_agent.plugins.assembly.context import PoolRuntimeDeps as _Deps
+
+        pool_runtime = _Deps()
+        factory = ExperienceReviewHookFactory()
+        with pytest.raises(ValueError, match="experience"):
+            await factory.create(ExperienceReviewHookConfig(), self._ctx(pool_runtime))
+
     async def test_missing_memory_system_raises_loud(self, tmp_path) -> None:
         from unittest.mock import MagicMock
 
         from modex_agent.core.provider import LLMProvider
 
         pool_data = self._pool_data(tmp_path, memory_system=None)
-        pool_runtime = self._pool_runtime(
-            provider=MagicMock(spec=LLMProvider), pool_data=pool_data
-        )
+        pool_runtime = self._pool_runtime(provider=MagicMock(spec=LLMProvider), pool_data=pool_data)
         factory = ExperienceReviewHookFactory()
         with pytest.raises(ValueError, match="memory system"):
             await factory.create(ExperienceReviewHookConfig(), self._ctx(pool_runtime))
@@ -560,7 +566,7 @@ class TestStage4FilteringSimulation:
         """external_main receives no default hooks.
 
         External main agents have their own hook wiring via the external
-        strategy; none of the 11 default hooks apply to external_main.
+        strategy; none of the 9 default hooks apply to external_main.
         """
         hooks = self._hooks_for(AgentType.external_main)
         assert hooks == set()
@@ -598,15 +604,15 @@ class TestFactoryClassStructure:
         assert MemoryTraceHookFactory.hook_runner is HookRunnerKind.memory
 
     def test_todo_reorientation_factory_class_vars(self) -> None:
-        assert TodoReorientationHookFactory.applies_to == _NATIVE_SUB_ONLY
+        assert TodoReorientationHookFactory.applies_to == _ALL_NATIVE
         assert TodoReorientationHookFactory.hook_runner is HookRunnerKind.memory
 
     def test_experience_review_factory_class_vars(self) -> None:
         assert ExperienceReviewHookFactory.applies_to == _NATIVE_MAIN_ONLY
         assert ExperienceReviewHookFactory.hook_runner is HookRunnerKind.react
 
-    def test_deliver_retry_factory_is_simple_factory(self) -> None:
-        assert isinstance(DeliverRetryHookFactory, SimpleFactory)
+    def test_length_guard_factory_is_simple_factory(self) -> None:
+        assert isinstance(LengthGuardHookFactory, SimpleFactory)
 
     def test_run_logging_factory_is_simple_factory(self) -> None:
         assert isinstance(RunLoggingHookFactory, SimpleFactory)
@@ -614,6 +620,10 @@ class TestFactoryClassStructure:
     def test_deliver_retry_factory_has_correct_class_vars(self) -> None:
         assert DeliverRetryHookFactory.applies_to == _ALL_NATIVE
         assert DeliverRetryHookFactory.hook_runner is HookRunnerKind.react
+
+    def test_length_guard_factory_has_correct_class_vars(self) -> None:
+        assert LengthGuardHookFactory.applies_to == _ALL_NATIVE
+        assert LengthGuardHookFactory.hook_runner is HookRunnerKind.react
 
     def test_run_logging_factory_has_correct_class_vars(self) -> None:
         assert RunLoggingHookFactory.applies_to == _ALL_NATIVE
@@ -623,6 +633,7 @@ class TestFactoryClassStructure:
         for cls in (
             InboxFlushHookFactory,
             TodoContinuationHookFactory,
+            DeliverRetryHookFactory,
             NativeEnvInjectionHookFactory,
             SubagentAutoSendHookFactory,
             MemoryTraceHookFactory,
@@ -630,9 +641,7 @@ class TestFactoryClassStructure:
             ExperienceReviewHookFactory,
         ):
             config_model = getattr(cls, "config_model", None)
-            assert config_model is not None, (
-                f"{cls.__name__} must declare config_model"
-            )
+            assert config_model is not None, f"{cls.__name__} must declare config_model"
             assert issubclass(config_model, BaseModel)
 
 
@@ -656,19 +665,22 @@ class TestMemoryVsReactBoundary:
         assert memory_hooks == {"memory_trace", "todo_reorientation"}
 
 
-async def test_todo_reorientation_factory_uses_pool_runtime_store() -> None:
+async def test_todo_reorientation_factory_uses_pool_supply_store() -> None:
+    from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
+
     store = _TodoStore()
     factory = TodoReorientationHookFactory()
     ctx = AgentContext(
         registry=MagicMock(),
         workspace_ctx=MagicMock(),
-        pool_runtime=PoolRuntimeDeps(todo_store=store),
+        pool_runtime=PoolRuntimeDeps(capability_supply={"todo": TodoSupply(store=store)}),
         agent_name="probe-agent",
     )
 
     hook = await factory.create(TodoReorientationHookConfig(), ctx)
 
     assert hook._todo_store is store  # noqa: SLF001
+    assert hook._has_archive is False  # noqa: SLF001
 
 
 async def test_missing_pool_runtime_raises_value_error_not_assert() -> None:
@@ -691,10 +703,94 @@ async def test_missing_pool_runtime_raises_value_error_not_assert() -> None:
     with pytest.raises(ValueError, match="pool_runtime"):
         await TodoContinuationHookFactory().create(TodoContinuationHookConfig(), ctx)
     with pytest.raises(ValueError, match="pool_runtime"):
-        await InboxFlushHookFactory().create(
-            InboxFlushHookConfig(agent_name="a"), ctx
-        )
+        await InboxFlushHookFactory().create(InboxFlushHookConfig(agent_name="a"), ctx)
     with pytest.raises(ValueError, match="pool_runtime"):
-        await SubagentAutoSendHookFactory().create(
-            SubagentAutoSendHookConfig(self_name="s"), ctx
-        )
+        await SubagentAutoSendHookFactory().create(SubagentAutoSendHookConfig(), ctx)
+
+
+# ---- SubagentAutoSendHookFactory: tree-from-ctx (B4) ------------------------
+
+
+def _auto_send_ctx(
+    *,
+    agent_name: str = "sub",
+    pool_spec_agents: tuple[tuple[str, str | None], ...] = (("root", None), ("sub", "root")),
+    runtime_dir: Any = None,
+    execution_strategy: str = "react",
+    session_tree_manager: Any = None,
+) -> AgentContext:
+    """A full-chain ctx carrying the declared pool tree the factory
+    derives its per-agent fields from."""
+    from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
+    from modex_agent.plugins.assembly.spec import AssemblySpec
+    from modex_agent.scope.spec import AgentSpec, PoolSpec
+
+    pool_spec = PoolSpec(
+        name="p",
+        agents=[AgentSpec(name=name, parent=parent) for name, parent in pool_spec_agents],
+    )
+    pool_data = MagicMock()
+    pool_data.runtime_dir = runtime_dir
+    pool_assembly = MagicMock(spec=PoolAssemblyContext)
+    pool_assembly.pool_name = "p"
+    pool_assembly.pool_spec = pool_spec
+    pool_assembly.pool_data = pool_data
+    spec = MagicMock(spec=AssemblySpec)
+    spec.execution_strategy = execution_strategy
+    return AgentContext(
+        registry=MagicMock(),
+        workspace_ctx=MagicMock(),
+        pool_runtime=PoolRuntimeDeps(
+            session_tree_manager=session_tree_manager,
+            pool_assembly_ctx=pool_assembly,
+        ),
+        agent_name=agent_name,
+        spec=spec,
+    )
+
+
+async def test_auto_send_factory_derives_fields_from_the_chain() -> None:
+    from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
+    from modex_agent.plugins.defaults.hooks import SubagentAutoSendHookConfig
+
+    runtime_dir = MagicMock(name="runtime_dir")
+    tree = MagicMock(name="tree")
+    ctx = _auto_send_ctx(runtime_dir=runtime_dir, session_tree_manager=tree)
+
+    hook = await SubagentAutoSendHookFactory().create(SubagentAutoSendHookConfig(), ctx)
+
+    assert isinstance(hook, SubagentAutoSendHook)
+    assert hook._self_name == "sub"  # noqa: SLF001
+    assert hook._parent_name == "root"  # noqa: SLF001
+    assert hook._runtime_dir is runtime_dir  # noqa: SLF001
+    assert hook._execution_strategy.value == "react"  # noqa: SLF001
+    assert hook._tree is tree  # noqa: SLF001
+
+
+async def test_auto_send_factory_loud_when_the_chain_lacks_the_pool_tree() -> None:
+    from modex_agent.plugins.assembly.spec import AssemblySpec
+    from modex_agent.plugins.defaults.hooks import SubagentAutoSendHookConfig
+
+    spec = MagicMock(spec=AssemblySpec)
+    spec.execution_strategy = "react"
+    ctx = AgentContext(
+        registry=MagicMock(),
+        workspace_ctx=MagicMock(),
+        pool_runtime=PoolRuntimeDeps(),  # no pool_assembly_ctx
+        agent_name="sub",
+        spec=spec,
+    )
+
+    with pytest.raises(ValueError, match="pool_assembly_ctx"):
+        await SubagentAutoSendHookFactory().create(SubagentAutoSendHookConfig(), ctx)
+
+
+async def test_auto_send_factory_loud_for_a_root_agent() -> None:
+    """The hook is a non-root roster entry; a root agent reaching this
+    factory means the declaration tree and the roster disagree."""
+    from modex_agent.plugins.defaults.hooks import SubagentAutoSendHookConfig
+
+    ctx = _auto_send_ctx(agent_name="root")
+
+    with pytest.raises(ValueError, match="declared parent"):
+        await SubagentAutoSendHookFactory().create(SubagentAutoSendHookConfig(), ctx)
