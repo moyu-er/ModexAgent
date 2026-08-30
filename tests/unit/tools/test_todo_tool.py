@@ -6,7 +6,10 @@ import pytest
 from modex_agent.core.agent import current_agent_context
 from modex_agent.core.types import TodoStatus
 from modex_agent.runtime.store import JsonFileTodoStore, TodoItem
-from modex_agent.tools.standard.todo_tool import ACTIVE_VIEW_PREFIX
+from modex_agent.tools.standard.todo_tool import (
+    ACTIVE_VIEW_PREFIX,
+    FINISHED_VIEW_SUFFIX,
+)
 
 
 def _active_json(result: str) -> list:
@@ -150,16 +153,18 @@ async def test_active_view_text_prefix_only_when_non_empty(tmp_path) -> None:
     assert result.startswith(ACTIVE_VIEW_PREFIX)
     assert _active_json(result) == [{"content": "a", "status": "pending"}]
 
-    # Empty active view (only completed/cancelled): bare "[]", no prefix.
+    # Empty active view from an all-cancelled write: bare "[]", no prefix
+    # and no finish-line reminder (dropped work is not a finish).
     token = _set_ctx("s1")
     try:
         result = await TodoWriteTool(JsonFileTodoStore(tmp_path)).execute(
-            todos=[{"content": "done", "status": "completed"}]
+            todos=[{"content": "dropped", "status": "cancelled"}]
         )
     finally:
         current_agent_context.reset(token)
     assert result == "[]"
     assert ACTIVE_VIEW_PREFIX not in result
+    assert FINISHED_VIEW_SUFFIX not in result
 
     # todo_read on a never-written session: bare "[]", no prefix.
     token = _set_ctx("s-empty")
@@ -168,3 +173,61 @@ async def test_active_view_text_prefix_only_when_non_empty(tmp_path) -> None:
     finally:
         current_agent_context.reset(token)
     assert result == "[]"
+
+
+@pytest.mark.asyncio
+async def test_write_finished_plan_appends_reminder(tmp_path) -> None:
+    """A full-replace write that completes the plan (>=1 completed, none
+    active) returns the bare active view plus the finish-line reminder —
+    the reminder fires exactly at the natural end-of-work moment."""
+    from modex_agent.tools.standard import TodoWriteTool
+
+    token = _set_ctx("s1")
+    try:
+        result = await TodoWriteTool(JsonFileTodoStore(tmp_path)).execute(
+            todos=[
+                {"content": "done-a", "status": "completed"},
+                {"content": "done-b", "status": "completed"},
+                {"content": "dropped", "status": "cancelled"},
+            ]
+        )
+    finally:
+        current_agent_context.reset(token)
+    assert result.startswith("[]\n")
+    assert FINISHED_VIEW_SUFFIX in result
+    assert ACTIVE_VIEW_PREFIX not in result
+
+
+@pytest.mark.asyncio
+async def test_write_empty_payload_no_reminder(tmp_path) -> None:
+    """Clearing the list entirely (todos=[]) is not a finish — no completed
+    work is recorded, so no reminder."""
+    from modex_agent.tools.standard import TodoWriteTool
+
+    token = _set_ctx("s1")
+    try:
+        result = await TodoWriteTool(JsonFileTodoStore(tmp_path)).execute(todos=[])
+    finally:
+        current_agent_context.reset(token)
+    assert result == "[]"
+    assert FINISHED_VIEW_SUFFIX not in result
+
+
+@pytest.mark.asyncio
+async def test_read_finished_plan_no_reminder(tmp_path) -> None:
+    """todo_read over a finished plan keeps the bare active view — reading a
+    finished list is a status query, not the completion event the reminder
+    addresses (the reminder is a todo_write result signal)."""
+    from modex_agent.tools.standard import TodoReadTool, TodoWriteTool
+
+    store = JsonFileTodoStore(tmp_path)
+    token = _set_ctx("s1")
+    try:
+        await TodoWriteTool(store).execute(
+            todos=[{"content": "done", "status": "completed"}]
+        )
+        result = await TodoReadTool(store).execute()
+    finally:
+        current_agent_context.reset(token)
+    assert result == "[]"
+    assert FINISHED_VIEW_SUFFIX not in result

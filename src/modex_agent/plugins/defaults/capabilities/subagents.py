@@ -227,11 +227,15 @@ def require_subagents_supply(pool_runtime: PoolRuntimeDeps | None) -> SubagentsS
 #: Constant versions for the static briefs — the content never changes,
 #: so the KV-cache prefix never invalidates within a session (SPEC §7.3
 #: / E10: static content = constant version).
-_DELEGATION_SECTION_VERSION = "subagents.delegation.v1"
+_DELEGATION_SECTION_VERSION = "subagents.delegation.v2"
 _CONSULTATION_SECTION_VERSION = "subagents.consultation.v1"
 
-# The delegation brief — VERBATIM the retired provider's
-# ``_TASK_DELEGATION_PROMPT`` (byte-parity pinned by the section golden).
+# The delegation brief — v2 revises the delegation axis from per-step
+# triviality to overall complexity (v1's "trivial one-step actions"
+# exemption let a 9-call install grind stay in the main context because
+# each call was trivial; observed on tb21-all-v8 bn-fit-modify, where
+# 20/40 calls were self-contained grind a fresh-context subagent should
+# have absorbed). Byte-parity pinned by the section golden.
 _DELEGATION_BRIEF = """\
 ## Delegating To Subagents
 
@@ -242,16 +246,21 @@ subagent whose strengths match the job.
 When to delegate:
 - Bulk or parallelizable investigation ("find all X", "map how Y works") — a
   fresh context does it cheaper and without polluting yours.
+- A complex, self-contained sub-goal — even when each step is trivial
+  (install a toolchain, pin down an unfamiliar API, chase one class of
+  error): delegate it, your context is the scarce resource.
+- Mid-flight escalation: if a self-contained sub-goal keeps generating more
+  steps than expected, stop grinding — package the findings so far into the
+  brief and hand off the remainder.
 - An independent implementation piece that would otherwise crowd your context.
 - Verification of a deliverable before you report it — fresh eyes, no
   anchoring on your own assumptions.
 
 When NOT to delegate:
-- Needle queries: a specific file, symbol, or 2-3 known files — read/grep
-  directly, it is faster.
-- Tightly coupled edits that depend on your accumulated context — do them
-  yourself.
-- Trivial one-step actions.
+- Simple few-step work: a needle query or a couple of known calls — direct
+  tool use is faster.
+- Work whose brief would cost more to write than the work itself — deeply
+  coupled to your live context, do it yourself.
 
 Writing the task brief. The subagent sees ONLY the `content` you pass — never
 your conversation, reasoning, or tool results. Output quality is directly

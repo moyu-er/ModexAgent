@@ -94,6 +94,30 @@ def _tool_with_running_session() -> tuple[ProcessTool, ProcessRegistry, MagicMoc
     return ProcessTool(registry=registry, manager=manager), registry, terminal_session
 
 
+class _TickClock:
+    """Deterministic clock seam for the deadline-advance assertions.
+
+    ``time.monotonic()`` on Windows quantizes to ~15.6ms ticks; when the
+    fixture's ``create`` and ``execute``'s ``refresh_deadline`` land in the
+    same tick, ``deadline_at`` comes back bit-identical and the strict ``>``
+    assertions flake (platform clock granularity, not refresh logic). Patch
+    ``process_registry.time`` with this clock around ``execute`` so every
+    refresh advances the deadline deterministically.
+    """
+
+    def __init__(self) -> None:
+        self._monotonic = 1_000_000.0
+        self._wall = 1_000_000.0
+
+    def monotonic(self) -> float:
+        self._monotonic += 0.015625
+        return self._monotonic
+
+    def time(self) -> float:
+        self._wall += 1.0
+        return self._wall
+
+
 async def test_process_ctrl_c_token_interrupts_without_typing_literal_text() -> None:
     tool, registry, terminal_session = _tool_with_running_session()
     running = registry.get_running_by_terminal("default")
@@ -106,7 +130,10 @@ async def test_process_ctrl_c_token_interrupts_without_typing_literal_text() -> 
         return_value=TerminalSegment(text="", is_empty_prompt=True)
     )
 
-    with patch("modex_agent.tools.terminal.process_tool.asyncio.sleep", new=AsyncMock()):
+    with (
+        patch("modex_agent.tools.terminal.process_tool.asyncio.sleep", new=AsyncMock()),
+        patch("modex_agent.tools.terminal.process_registry.time", new=_TickClock()),
+    ):
         await tool.execute(data="ctrl+c")
 
     terminal_session.interrupt.assert_awaited_once_with()
@@ -132,6 +159,7 @@ async def test_process_write_submits_exactly_one_enter() -> None:
             "modex_agent.tools.terminal.process_tool._drain_terminal_after_action",
             new=AsyncMock(return_value=("continued", result)),
         ),
+        patch("modex_agent.tools.terminal.process_registry.time", new=_TickClock()),
     ):
         await tool.execute(data="y", submit=True)
 
