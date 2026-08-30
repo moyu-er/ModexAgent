@@ -114,6 +114,13 @@ class ExternalTurnRunner(TurnRunner):
         self._workspace_manager: WorkspaceManager | None = None
         self._session_binding_store = session_binding_store
 
+    @property
+    def hook_runner(self) -> HookRunner | None:
+        """The hook runner — overrides the ABC's None default so the
+        pipeline facade (``AgentPipeline.hook_runner``) exposes the
+        externally-registered hooks (e.g. ``SubagentAutoSendHook``)."""
+        return self._hook_runner
+
     def set_pool_context(
         self,
         *,
@@ -239,7 +246,12 @@ class ExternalTurnRunner(TurnRunner):
                 session_id,
                 agent_name,
             )
-            await emitter.emit_complete(AgentResult(stop_reason=StopReason.CANCELLED))
+            # Assign before re-raise so the shielded FINALLY_GRAPH below sees a
+            # terminal CANCELLED outcome, never ``result=None`` — the suspend
+            # signature is reserved for GraphInterrupt approval suspension
+            # (mirrors the ReAct cancel path in agents/react/agent.py).
+            result = AgentResult(stop_reason=StopReason.CANCELLED)
+            await emitter.emit_complete(result)
             raise
         except Exception as exc:
             # Defensive: ExternalAgent.run() catches its own exceptions

@@ -44,7 +44,7 @@ class PoolInstance:
     skill_manager: Any | None
     mcp_manager: Any | None
     terminal_manager: TerminalManagerBase | None
-    main_agent_name: str
+    root_agent_name: str
     main_execution_strategy: ExecutionStrategyKind
     provider: Any
     notification_service: Any  # AgentNotificationService
@@ -55,7 +55,13 @@ class PoolInstance:
     target_store: CommunicationTargetStore  # exposed for cross-pool peer wiring
     session_binding_store: SessionBindingStore | None = None  # tree-level session binding
     requires_main_agent_tools: bool = True  # ADR-0025: mirror of strategy.requires_main_agent_tools
+    roster_hook_names: frozenset[str] = frozenset()  # main-agent roster hooks dispatched at assembly (D-A8)
+    comm_tools_derived: bool = False
+    """Ticket 07: the communication tools were tree-derived at assembly
+    (the compiled spec's derived entries resolved through TOOL-slot
+    factories). True on the declaration road — the only assembly road;
+    the legacy Phase-2 registration it once gated is deleted."""
 
     @property
     def main_address(self) -> AgentAddress:
-        return AgentAddress(kind=AddressKind.AGENT, name=self.main_agent_name)
+        return AgentAddress(kind=AddressKind.AGENT, name=self.root_agent_name)

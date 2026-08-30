@@ -40,7 +40,7 @@
 | **工具审批** | Agent 在改动项目外文件前会先征求同意；WebUI 点按钮或在聊天里 `/approve`。默认关闭，按 Agent 开启 |
 | **多 Agent 协作** | 池内星型（主 Agent + subagent，经 `send_to_agent`）+ 跨池主 Agent 间对等通信 |
 | **技能系统** | 从 Markdown 文件动态构建系统提示词（`local_skills/` 本地或包内置） |
-| **插件系统** | 动态扩展工具、记忆提供者和技能来源 |
+| **插件系统** | 向 10 槽位 `ComponentRegistry` 注册组件工厂（工具、钩子、提供者、策略等），pool YAML 按名引用 |
 | **Slash 指令** | `/approve`、`/deny`、`/continue`、`/cd`、`/pool名称`、`/stop` 及技能触发指令 |
 | **Input Pipeline** | 统一消息处理流水线——IM 与 WebUI 共用；阶段「认领或透传」，未知 `/命令` 由唯一终结阶段统一拒绝；IM 10 阶段 / WebUI 8 阶段 |
 | **Pool 运行时** | 多 Agent 常驻池，通过 `MessageBroker` + `AgentMessageBus` 路由消息 |
@@ -466,33 +466,24 @@ WebUI 的 **Skills** 标签页列出每个技能及其来源。
 
 ### 治理系统
 
-治理在每次调用 LLM 之前作用于模型可见的消息副本。在 Pool 配置或 Subagent 模板的 `memory.governance` 下配置。
+治理在每次调用 LLM 之前作用于模型可见的消息副本。它**不可通过 YAML 配置**——各 agent 的治理由其记忆预设派生：主 Agent 为工具链修复 + 有损内容压缩，subagent 仅工具链修复。
 
-主 Agent 示例（`config/pools/default/pool.yml`）：
+`memory:` 块只接受预设级开关：
+
+主 Agent（`config/pools/default/pool.yml`）——仅归档/核心记忆开关（`session` 或 `governance` 键会被拒绝并导致 pool 加载失败）：
 
 ```yaml
 memory:
-  session:
-    max_messages: 150
-    max_context_tokens: 100000
-  governance:
-    tool_chain_repair: true      # 必需：修复孤儿/不完整 tool-call 组
-    lossy_compaction:
-      tool_result_head_chars: 1200
-      assistant_head_chars: 1200
-      agent_head_chars: 2000
-      user_head_chars: 4000
-      compact_range_count: 50    # 可选：默认 50，最小 20
+  archive_enabled: true   # 长期归档层
+  core_enabled: false     # 核心记忆——需要 archive_enabled
 ```
 
-Subagent 模板（`config/pools/*/templates/*.yml`）保持轻量治理：
+Subagent 模板（`config/pools/*/templates/*.yml`）——仅会话 token 预算覆盖（`governance` 键会告警并忽略）：
 
 ```yaml
 memory:
   session:
-    max_messages: 100
-  governance:
-    tool_chain_repair: true
+    max_context_tokens: 32000
 ```
 
 ## Pool 与 Workspace
@@ -537,9 +528,11 @@ config/pools/
 | `full` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅* |
 | `read_write` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | `read_only` | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | — |
-| `read_only` | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | — |
+| `none` | — | — | — | — | — | — | — | — |
+| `web` | ✅† | — | — | — | — | — | — | — |
 
-`*` 终端工具需 `use_terminal: true`。subagent 的 bash 一律走 `SubprocessTool`（无状态）。
+`*` 终端工具需 `use_terminal: true`。无 terminal manager 时，bash 回落到 `PersistentBashTool`（每会话一个有状态 shell + `bash_input`；仅 POSIX）。
+`†` `web` preset 仅通过 `web_search` / `web_reader` 读取。
 
 ### 手动（YAML）
 
@@ -553,10 +546,9 @@ extra_tools: []                # 可选：preset 之外再加的工具名
 system_prompt: |
   你是一个...的 Agent。
   完成后通过 send_to_agent 把结果回复给主 Agent（target_agent="main")。
-skills:
-  roots:
-    - "skills/subagents/my-agent"
 ```
+
+技能按 agent 落在磁盘上（`skills/<pool>/<agent>/`，经 WebUI **Skills** 标签页分配）——模板 YAML 不携带 `skills` 字段。
 
 重启服务（或在 WebUI 保存），agent 自动注册——主 Agent 即可把活派给它。
 
@@ -659,19 +651,18 @@ telegram:
 ### 记忆
 
 ```yaml
+# pool.yml（主 Agent）——仅归档/核心记忆开关
+memory:
+  archive_enabled: true
+  core_enabled: false
+
+# templates/*.yml（subagent）——仅会话 token 预算
 memory:
   session:
-    max_messages: 150
-    max_context_tokens: 100000
-  governance:
-    tool_chain_repair: true
-    lossy_compaction:
-      tool_result_head_chars: 1200
-      assistant_head_chars: 1200
-      agent_head_chars: 2000
-      user_head_chars: 4000
-      compact_range_count: 50
+    max_context_tokens: 32000
 ```
+
+治理（工具链修复、有损压缩）由记忆预设派生——不可通过 YAML 配置。
 
 ### MCP
 
@@ -715,14 +706,7 @@ tools:
 
 ## 插件系统
 
-插件动态扩展工具、记忆提供者和技能来源，无需修改核心代码：
-
-```yaml
-plugins:
-  enabled: true
-  configurations: {}
-'''
-
+扩展经由框架 `ComponentRegistry` 接入——固定的 10 个组件槽位（工具、钩子、LLM 提供者、提示词提供者、记忆系统、拦截器、命令处理器、执行策略、输入阶段、数据命名空间）。插件是 `Plugin` 类，在启动时注册具名组件工厂，来源有四：框架内置默认、`plugins/` 下的项目插件、用户插件、或经 entry points 发现的已安装包。pool YAML 随后按名引用组件（`tools: [+bash]`、`llm_provider:`、`memory_system:` 等），装配时经 registry 解析。注册重启生效——不做热插拔。权威槽位清单与语义见 [`docs/design/scope-converge/SPEC.md`](../../docs/design/scope-converge/SPEC.md)（§4、Errata-8）。
 ## 日志
 
 日志文件位于 `logs/bot.log`，包含：

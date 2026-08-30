@@ -407,22 +407,26 @@ class TestE2EStepFun:
             TurnTimeoutPolicy,
         )
         from modex_agent.core.scope import MemoryAgentRole
+        from modex_agent.ioc.configs.llm import LLMConfig
         from modex_agent.ioc.factories.descriptors import build_session_only_memory
+        from modex_agent.ioc.factories.llm import create_llm_provider
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.comm_kind import AgentCommKind
         from modex_agent.multi_agent.descriptor import (
             AgentDescriptor,
             AgentLLMConfig,
         )
-        from modex_agent.providers.litellm_provider import LiteLLMProvider
 
         mc = e2e_model_config
-        provider = LiteLLMProvider(
-            model=f"openai/{mc.model}",
-            api_key=mc.api_key,
-            base_url=mc.base_url,
-            temperature=mc.temperature,
-            max_output_tokens=mc.max_output_tokens,
+        provider = create_llm_provider(
+            LLMConfig(
+                model=mc.model,
+                api_key=mc.api_key,
+                base_url=mc.base_url,
+                temperature=mc.temperature,
+                max_output_tokens=mc.max_output_tokens,
+                reasoning_effort=mc.reasoning_effort,
+            )
         )
         caps = ModelInfo(
             model_name=mc.model,
@@ -670,22 +674,26 @@ class TestE2EReviewLoopWithMemory:
             TurnTimeoutPolicy,
         )
         from modex_agent.core.scope import MemoryAgentRole
+        from modex_agent.ioc.configs.llm import LLMConfig
         from modex_agent.ioc.factories.descriptors import build_session_only_memory
+        from modex_agent.ioc.factories.llm import create_llm_provider
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.comm_kind import AgentCommKind
         from modex_agent.multi_agent.descriptor import (
             AgentDescriptor,
             AgentLLMConfig,
         )
-        from modex_agent.providers.litellm_provider import LiteLLMProvider
 
         mc = e2e_model_config
-        provider = LiteLLMProvider(
-            model=f"openai/{mc.model}",
-            api_key=mc.api_key,
-            base_url=mc.base_url,
-            temperature=mc.temperature,
-            max_output_tokens=mc.max_output_tokens,
+        provider = create_llm_provider(
+            LLMConfig(
+                model=mc.model,
+                api_key=mc.api_key,
+                base_url=mc.base_url,
+                temperature=mc.temperature,
+                max_output_tokens=mc.max_output_tokens,
+                reasoning_effort=mc.reasoning_effort,
+            )
         )
         caps = ModelInfo(
             model_name=mc.model,

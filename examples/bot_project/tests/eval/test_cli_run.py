@@ -6,6 +6,8 @@ from bot.eval import cli as eval_cli
 from bot.eval.task_spec import EvalToolset
 from typer.testing import CliRunner
 
+from modex_agent.ioc.configs.llm import LLMConfig
+
 
 def _invoke_run(
     monkeypatch: pytest.MonkeyPatch,
@@ -14,8 +16,10 @@ def _invoke_run(
     captured: dict[str, object] = {}
     provider = SimpleNamespace()
 
-    def build_provider(*, model: str) -> SimpleNamespace:
-        captured["provider_model"] = model
+    def build_provider(config: LLMConfig) -> SimpleNamespace:
+        captured["provider_model"] = config.model
+        captured["provider_api_key"] = config.api_key
+        captured["provider_base_url"] = config.base_url
         return provider
 
     class FakeRunner:
@@ -33,7 +37,7 @@ def _invoke_run(
     )
     monkeypatch.setattr(eval_cli, "Langfuse", lambda **_kwargs: SimpleNamespace())
     monkeypatch.setattr(eval_cli, "EvalRunner", FakeRunner)
-    monkeypatch.setattr("modex_agent.providers.LiteLLMProvider", build_provider)
+    monkeypatch.setattr(eval_cli, "create_llm_provider", build_provider)
 
     result = CliRunner().invoke(
         eval_cli.app,
@@ -52,6 +56,7 @@ def _invoke_run(
     assert result.exit_code == 0, result.output
     assert captured["provider"] is provider
     assert captured["provider_model"] == "openai/test-model"
+    assert captured["model"] == "openai/test-model"
     return captured
 
 
@@ -76,3 +81,34 @@ def test_run_command_defaults_to_spec_toolset_and_clean_mode(
     assert captured["toolset"] is None
     assert captured["mode"] == "clean"
     assert captured["archive_root"] == Path("evals/runs")
+
+
+def test_run_command_passes_test_llm_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: the credential variables documented by the calibration runbook.
+    monkeypatch.setenv("TEST_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("TEST_LLM_BASE_URL", "https://llm.example.test/v1")
+
+    # When: the run command constructs its LLM provider.
+    captured = _invoke_run(monkeypatch, [])
+
+    # Then: the explicit test credentials reach the provider unchanged.
+    assert captured["provider_api_key"] == "test-key"
+    assert captured["provider_base_url"] == "https://llm.example.test/v1"
+
+
+def test_run_command_leaves_test_llm_credentials_optional(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: no test-specific credentials override provider-standard variables.
+    monkeypatch.delenv("TEST_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("TEST_LLM_BASE_URL", raising=False)
+
+    # When: the run command constructs its LLM provider.
+    captured = _invoke_run(monkeypatch, [])
+
+    # Then: empty config values delegate credential resolution to the
+    # provider's OPENAI_API_KEY environment fallback.
+    assert captured["provider_api_key"] == ""
+    assert captured["provider_base_url"] == ""

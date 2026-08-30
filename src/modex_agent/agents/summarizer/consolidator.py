@@ -9,13 +9,17 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
 
 from modex_agent.agents.summarizer.abc import (
     CoreMemoryConsolidatorBase,
     _get_registry,
 )
-from modex_agent.agents.summarizer.scoped_file_agent import ScopedFileAgent
+from modex_agent.agents.summarizer.outcomes import ConsolidationOutcome
+from modex_agent.agents.summarizer.scoped_file_agent import (
+    ScopedFileAgent,
+    UsageCollectingProvider,
+)
+from modex_agent.core.provider import LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +38,7 @@ class CoreMemoryConsolidator(ScopedFileAgent, CoreMemoryConsolidatorBase):
     archive directories.
     """
 
-    def __init__(self, provider: Any, max_iterations: int = 25) -> None:
+    def __init__(self, provider: LLMProvider, max_iterations: int = 25) -> None:
         super().__init__(provider=provider, max_iterations=max_iterations)
 
     # -- prompt builder -----------------------------------------------------
@@ -76,14 +80,15 @@ class CoreMemoryConsolidator(ScopedFileAgent, CoreMemoryConsolidatorBase):
         *,
         max_iterations: int | None = None,
         invocation_id: str = "",
-    ) -> bool:
+    ) -> ConsolidationOutcome:
         """Main entry: process knowledge.md extracts, update core memory files.
 
         Pre-reads ``knowledge.md`` from each archive directory and provides
         the content inline in the user message.
         """
+        collector = UsageCollectingProvider(self._provider)
         if not archive_ids:
-            return True
+            return ConsolidationOutcome(changed=True, usage=None)
 
         effective_max_iterations = (
             max_iterations if max_iterations is not None else self.max_iterations
@@ -130,7 +135,8 @@ class CoreMemoryConsolidator(ScopedFileAgent, CoreMemoryConsolidatorBase):
         )
 
         for attempt in range(2):
-            ok = await self._run_agent(
+            content = await self._run_agent(
+                provider=collector,
                 system_prompt=system_prompt,
                 user_msg=user_msg,
                 allowed_dirs=[core_memory_dir],
@@ -139,7 +145,7 @@ class CoreMemoryConsolidator(ScopedFileAgent, CoreMemoryConsolidatorBase):
                 trace_path=trace_path,
                 max_iterations=effective_max_iterations,
             )
-            if ok:
+            if content is not None:
                 # Unlike ArchiveSummarizer (which writes files from scratch
                 # and must verify they exist), core memory files are already
                 # present via ensure_defaults.  The agent may legitimately
@@ -150,7 +156,10 @@ class CoreMemoryConsolidator(ScopedFileAgent, CoreMemoryConsolidatorBase):
                     invocation_id or trace_key,
                     attempt + 1,
                 )
-                return True
+                return ConsolidationOutcome(
+                    changed=True,
+                    usage=collector.operation_usage(),
+                )
             logger.warning(
                 "CoreMemoryConsolidator attempt %d failed archive_ids=%s invocation=%s",
                 attempt + 1,
@@ -158,4 +167,4 @@ class CoreMemoryConsolidator(ScopedFileAgent, CoreMemoryConsolidatorBase):
                 invocation_id or trace_key,
             )
 
-        return False
+        return ConsolidationOutcome(changed=False, usage=collector.operation_usage())

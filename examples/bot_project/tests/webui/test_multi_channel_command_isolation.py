@@ -196,8 +196,8 @@ async def test_pool_switch_isolated_across_im_channels() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         store = PoolSessionStore(Path(tmp))
         pools = {
-            "coding": type("Pool", (), {"main_agent_name": "coding"})(),
-            "main": type("Pool", (), {"main_agent_name": "main"})(),
+            "coding": type("Pool", (), {"root_agent_name": "coding"})(),
+            "main": type("Pool", (), {"root_agent_name": "main"})(),
         }
         pool_router = PoolRouter(
             input_adapter=None,  # type: ignore[arg-type]
@@ -205,6 +205,7 @@ async def test_pool_switch_isolated_across_im_channels() -> None:
             pools=pools,
             session_store=store,
             default_pool="main",
+            agent_pool_ownership={"main": ("main",), "coding": ("coding",)},
         )
 
         set_conv_channel("qq-user-2", "qq")

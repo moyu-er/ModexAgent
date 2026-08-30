@@ -3,6 +3,10 @@
 Reproduces the user-facing symptom: with the checked-in bot_config.yml,
 workspace switching is disabled so POST /api/workspace/cd returns
 ``success: false`` with ``workspace switching disabled``.
+
+Ticket 14: the ``workspace.enabled`` config flag is dead (N15). The stack
+shape is selected by the scope declaration's form — a workspace-layer
+declaration boots multi-live; its absence boots single-home.
 """
 
 from __future__ import annotations
@@ -12,10 +16,13 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from bot.service.pool.declaration import workspace_layer_present
 
-from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.persistence.config import PersistenceBackend
+from modex_agent.scope.loader import load_scope_declaration
+from modex_agent.scope.spec import ScopeKind
 from modex_agent.workspace.control import WorkspaceController
-from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.registry import ScopeRegistry
 from modex_agent.workspace.store import GlobalWorkspaceStore
 
 
@@ -24,19 +31,46 @@ def _real_project_dir() -> Path:
 
 
 @pytest.mark.asyncio
-async def test_checked_in_config_enables_workspace_switching() -> None:
-    """The checked-in bot_config.yml must enable workspace switching.
+async def test_checked_in_declaration_selects_multi_live_stack() -> None:
+    """The checked-in scope declaration carries the workspace layer — the
+    multi-live stack shape (the replacement for ``workspace.enabled: true``).
 
-    Regression: WorkspaceConfig.enabled defaults to False. If bot_config.yml
-    does not explicitly set ``workspace.enabled: true``, the WebUI workspace
-    switcher will show 'workspace switching disabled'.
+    Regression: with no workspace layer in bot.yml (and the config flag
+    deleted), the WebUI workspace switcher would show 'workspace switching
+    disabled'.
     """
     project_dir = _real_project_dir()
-    app_config = AppConfig.from_yaml(project_dir / "config" / "bot_config.yml")
-    assert app_config.workspace.enabled is True, (
-        "bot_config.yml must set workspace.enabled: true; "
-        "otherwise the WebUI workspace switcher shows 'workspace switching disabled'"
+    spec = load_scope_declaration(project_dir / "config" / "scopes" / "bot.yml")
+    assert spec.kind is ScopeKind.WORKSPACE
+    assert spec.workspace is not None
+    assert workspace_layer_present(spec) is True, (
+        "bot.yml must carry the workspace layer; without it the WebUI "
+        "workspace switcher shows 'workspace switching disabled'"
     )
+    # Ticket 14: the shipped declaration carries the full resource-selection
+    # face with values matching the service defaults (data landing
+    # unchanged).
+    assert spec.workspace.persistence is not None
+    assert spec.workspace.persistence.backend is PersistenceBackend.SQLITE
+    assert spec.workspace.paths is not None
+    assert spec.workspace.paths.data_dir_name == ".modex"
+
+
+@pytest.mark.asyncio
+async def test_pool_as_root_and_absent_declarations_boot_single_home() -> None:
+    """N15: declaration absence IS the single-workspace form — no config
+    flag, no second mechanism."""
+    assert workspace_layer_present(None) is False
+
+    pool_root_spec = load_scope_declaration(
+        Path(__file__).resolve().parents[4]
+        / "tests"
+        / "fixtures"
+        / "scope"
+        / "pool-as-root.yml"
+    )
+    assert pool_root_spec.kind is ScopeKind.POOL
+    assert workspace_layer_present(pool_root_spec) is False
 
 
 @pytest.mark.asyncio
@@ -48,7 +82,7 @@ async def test_workspace_controller_allows_open_when_enabled() -> None:
         target = Path(tmp) / "target_ws"
         target.mkdir()
 
-        registry = WorkspaceRegistry(
+        registry = ScopeRegistry(
             home=home,
             data_dir_name=".modex",
             factory=MagicMock(),  # type: ignore[arg-type]
@@ -73,7 +107,7 @@ async def test_workspace_controller_rejects_open_when_disabled() -> None:
         target = Path(tmp) / "target_ws"
         target.mkdir()
 
-        registry = WorkspaceRegistry(
+        registry = ScopeRegistry(
             home=home,
             data_dir_name=".modex",
             factory=MagicMock(),  # type: ignore[arg-type]

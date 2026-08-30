@@ -54,28 +54,24 @@ class _StubInput(BrokerInputAdapter):
 
 
 class _FakePoolInstance:
-    """Minimal stub that has main_agent_name, main_address, and a recording
+    """Minimal stub that has root_agent_name, main_address, and a recording
     ``pool.submit_input`` (the poll-driven routing entry point)."""
 
     def __init__(self, name: str) -> None:
         self.name = name
-        self.main_agent_name = name
+        self.root_agent_name = name
         self.submitted: list = []
         record = self.submitted
-        main_agent_name = name
 
         class _Inner:
             async def submit_input(self, sid, msg):  # noqa: ANN001
                 record.append((sid, msg))
 
-            def serves_agent(self, agent_name):  # noqa: ANN001
-                return agent_name == main_agent_name
-
         self.pool = _Inner()
 
     @property
     def main_address(self):
-        return AgentAddress(kind=AddressKind.AGENT, name=self.main_agent_name)
+        return AgentAddress(kind=AddressKind.AGENT, name=self.root_agent_name)
 
 
 # ── PoolRoutingStore Tests ──
@@ -190,6 +186,7 @@ async def test_pool_router_preserves_workspace_when_submitting_message(tmp_path:
         pools=cast(dict[str, PoolInstance], {"main": pool}),
         session_store=store,
         default_pool="main",
+        agent_pool_ownership={"main": ("main",)},
     )
 
     await router.route_message(message)
@@ -220,6 +217,7 @@ class TestPoolRouterSetPool:
             pools=pools,
             session_store=LocalFilePoolRoutingStore(tmp_path),
             default_pool="main",
+            agent_pool_ownership={"main": ("main",), "coding": ("coding",)},
         )
 
     def test_set_pool_updates_store(self, router):
@@ -257,6 +255,7 @@ class TestPoolRouterRouting:
             pools=pools,
             session_store=LocalFilePoolRoutingStore(tmp_path),
             default_pool="main",
+            agent_pool_ownership={"main": ("main",), "coding": ("coding",)},
         )
 
     @pytest.mark.asyncio
@@ -291,6 +290,7 @@ class TestPoolRouterRouting:
             pools=pools,
             session_store=store,
             default_pool="main",
+            agent_pool_ownership={"main": ("main",), "coding": ("coding",)},
         )
 
         await broker.start()

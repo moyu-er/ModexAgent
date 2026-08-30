@@ -6,23 +6,25 @@ Verifies that:
 3. The sliding ceiling (DEFAULT_MAX_AHEAD_SECONDS = 1200s) caps each renew's
    forward reach, but slides forward with each renew — so continuous activity
    can keep the turn alive indefinitely.
-4. Both _stream_with_control and _stream_plain paths renew per-chunk
+4. Both the chained (LLM_STREAM interceptor) and plain event-loop paths renew
+   per-event
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import pytest
 
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.stream_events import LLMStreamEvent
 from modex_agent.core.types import LLMResponse
-from modex_agent.interceptor.abc import InterceptorScope, LLMStreamChunk
+from modex_agent.interceptor.abc import InterceptorScope
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.dispatch import (
     DispatchDeadline,
@@ -61,9 +63,11 @@ class _PassthroughInterceptorChain:
     def has_scope(self, scope: InterceptorScope) -> bool:
         return scope == InterceptorScope.LLM_STREAM
 
-    async def around_llm_stream(self, ctx, call, next_stream) -> AsyncIterator[LLMStreamChunk]:
-        async for chunk in next_stream():
-            yield chunk
+    async def around_llm_stream(
+        self, ctx, call, events: AsyncIterator[LLMStreamEvent]
+    ) -> AsyncIterator[LLMStreamEvent]:
+        async for event in events:
+            yield event
 
 
 class _FakeEmitter:
@@ -94,7 +98,7 @@ class _RenewCountingDeadline(DispatchDeadline):
         super().renew(seconds)
 
 
-class _TrackingStreamProvider(StreamingLLMProvider):
+class _TrackingStreamProvider(CallbackStreamProvider):
     """Streams deltas through callbacks, mirroring real provider behavior."""
 
     def __init__(
@@ -138,7 +142,7 @@ class TestDispatchDeadlineDefaults:
 
 
 class TestPerChunkRenewalStreamWithControl:
-    """_stream_with_control must call renew_dispatch_deadline() on every delta."""
+    """The chained event-loop path must call renew_dispatch_deadline() on every delta."""
 
     @pytest.mark.asyncio
     async def test_content_delta_renews_deadline_each_chunk(self):
@@ -215,7 +219,7 @@ class TestPerChunkRenewalStreamWithControl:
 
 
 class TestPerChunkRenewalStreamPlain:
-    """_stream_plain must also call renew_dispatch_deadline() on every delta."""
+    """The plain event-loop path must also call renew_dispatch_deadline() on every delta."""
 
     @pytest.mark.asyncio
     async def test_content_delta_renews_in_plain_stream(self):

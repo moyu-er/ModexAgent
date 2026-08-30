@@ -42,5 +42,5 @@ class LspDiagnosticsTool(Tool):
             "required": ["file"],
         }
 
-    async def execute(self, file: str, **kwargs: object) -> str:
+    async def execute(self, **kwargs: Any) -> str:
         return _NOT_IMPLEMENTED

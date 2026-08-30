@@ -105,8 +105,39 @@ class ObservabilityConfig(BaseModel):
     eval_score_injection: bool = Field(
         default=False,
         description=(
-            "Inject L2 heuristic scores (tool_success_rate, reasoning_depth, "
-            "trajectory_compactness, overall) to Langfuse on each turn finish. "
+            "Inject trajectory metrics (tool_success_rate, tool_call_count, "
+            "error_tool_count, iteration_count, llm_call_count, "
+            "total_input_tokens, total_output_tokens, total_reasoning_tokens, "
+            "api_latency_avg_s, cache_hit_rate, response_token_ratio, "
+            "has_reasoning) to Langfuse on each turn finish. "
             "Requires trace_backend=otel_http and a reachable Langfuse instance."
+        ),
+    )
+    eval_ingestion_url: str | None = Field(
+        default=None,
+        description=(
+            "Explicit Langfuse ingestion URL for score injection; "
+            "None derives from otel_endpoint."
+        ),
+    )
+    environment: str = Field(
+        default="default",
+        description=(
+            "Langfuse environment for trace segmentation (dev/staging/production). "
+            "Mapped to langfuse.environment on every span."
+        ),
+    )
+    version: str | None = Field(
+        default=None,
+        description=(
+            "Application or prompt version for A/B testing and trace grouping. "
+            "Mapped to langfuse.version on every span when set."
+        ),
+    )
+    tags: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Custom trace tags for filtering in Langfuse. "
+            "Mapped to langfuse.trace.tags on every span when non-empty."
         ),
     )

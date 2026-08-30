@@ -5,7 +5,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator
 
-from .broker import Address, BrokerMessage, MessageBroker
+from .broker import Address, AddressKind, BrokerMessage, MessageBroker
 
 _SENTINEL = object()
 logger = logging.getLogger(__name__)
@@ -74,7 +74,7 @@ class InMemoryMessageBroker(MessageBroker):
             yield msg
 
     async def subscribe(self, topics: list[str]) -> AsyncIterator[BrokerMessage]:
-        temp_address = Address(kind="_temp", name=str(uuid.uuid4()))
+        temp_address = Address(kind=AddressKind._TEMP, name=str(uuid.uuid4()))
         await self.register_consumer(temp_address)
         try:
             for topic in topics:

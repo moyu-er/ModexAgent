@@ -12,7 +12,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from .guard import CommandSeverity, GuardMatch, GuardResult
+from .guard import CommandGuard, CommandSeverity, GuardMatch, GuardResult
 
 # Blocked private/internal networks (same as nanobot)
 _BLOCKED_NETWORKS: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = [
@@ -130,7 +130,7 @@ class NetworkGuardConfig:
     allow_loopback: bool = False
 
 
-class NetworkGuard:
+class NetworkGuard(CommandGuard):
     """SSRF detection guard for command strings.
 
     Scans commands for URLs and validates they do not target private/internal

@@ -166,8 +166,7 @@ class TestPeerNormalAck:
         )
         assert result.exit_code == 0
         assert "Message sent to peer agent 'coder'." in result.stdout
-        assert "next_step:" in result.stdout
-        assert "not automatic" in result.stdout
+        assert "whether it replies is up to it" in result.stdout.replace("\n", " ")
 
     def test_peer_send_constructs_correct_request(
         self,
@@ -221,7 +220,10 @@ class TestNativeSubagentAck:
         assert "session_id" not in result.stdout
         assert "status:" not in result.stdout
         assert "tail the Trace" not in result.stdout
-        assert "automatic_notification: true" in result.stdout
+        assert "running in background" in result.stdout
+        assert "Avoid calling task with this invocation_id" in result.stdout.replace(
+            "\n", " "
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +249,10 @@ class TestExternalSubagentAck:
         assert "invocation_id: inv789" in result.stdout
         assert "session_id" not in result.stdout
         assert "status:" not in result.stdout
+        assert "running in background" in result.stdout
+        assert "Avoid calling task with this invocation_id" in result.stdout.replace(
+            "\n", " "
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +275,9 @@ class TestParentReplyAck:
         )
         assert result.exit_code == 0
         assert "Reply delivered to 'main'." in result.stdout
-        assert "process your reply asynchronously" in result.stdout
+        # The ack text is hard-wrapped at a fixed width; assert on the
+        # whitespace-normalized stdout so the phrase check survives wraps.
+        assert "process your reply asynchronously" in " ".join(result.stdout.split())
 
     def test_parent_reply_sets_parent_session_id(
         self,
@@ -598,7 +606,10 @@ class TestResumedAck:
         assert "session_id" not in result.stdout
         assert "status:" not in result.stdout
         assert "tail the Trace" not in result.stdout
-        assert "automatic_notification: true" in result.stdout
+        assert "running in background" in result.stdout
+        assert "Avoid calling task with this invocation_id" in result.stdout.replace(
+            "\n", " "
+        )
 
 
 class TestRequestedNotFoundAck:

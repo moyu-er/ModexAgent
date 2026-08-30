@@ -15,6 +15,10 @@ from modex_agent.core.session_id import SessionIdFactory, encode_snowflake
 from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
 from modex_agent.workspace.runtime import bind_workspace_root
+from tests.input_pipeline.assembly_support import (
+    TEST_ASSEMBLY_CTX,
+    TEST_COMPONENT_REGISTRY,
+)
 
 
 def _sid(agent: str, conv: str) -> str:
@@ -96,7 +100,9 @@ async def test_im_normal_message_persisted_and_enqueued() -> None:
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
-            pipe = build_im_pipeline(
+            pipe = await build_im_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
                 skill_registry=_NoSkill(), known_pools={"main", "coding"}
             )
             env = UserInputEnvelope(external_id="u1", content="hello", channel="qq")
@@ -117,7 +123,9 @@ async def test_webui_explicit_coding_pool_persisted_to_coding() -> None:
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
-            pipe = build_webui_pipeline(
+            pipe = await build_webui_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
                 skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
             )
             env = UserInputEnvelope(
@@ -142,7 +150,12 @@ async def test_im_stop_command_not_persisted() -> None:
             cmd_adapter._try_intercept_control = AsyncMock(return_value=True)
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued, command_adapter=cmd_adapter)
-            pipe = build_im_pipeline(skill_registry=_NoSkill(), known_pools={"main"})
+            pipe = await build_im_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
+                skill_registry=_NoSkill(),
+                known_pools={"main"},
+            )
             env = UserInputEnvelope(external_id="u1", content="/stop", channel="qq")
             await pipe.handle(env, ctx)
             assert await store.load(_sid("main", "u1")) == []
@@ -158,7 +171,12 @@ async def test_im_continue_command_not_persisted_but_enqueued() -> None:
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
-            pipe = build_im_pipeline(skill_registry=_NoSkill(), known_pools={"main"})
+            pipe = await build_im_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
+                skill_registry=_NoSkill(),
+                known_pools={"main"},
+            )
             env = UserInputEnvelope(external_id="u1", content="/continue", channel="qq")
             result = await pipe.handle(env, ctx)
             assert result.should_continue(), "/continue passes through as HANDLED"
@@ -177,7 +195,9 @@ async def test_webui_continue_command_handled() -> None:
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
-            pipe = build_webui_pipeline(
+            pipe = await build_webui_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
                 skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
             )
             env = UserInputEnvelope(
@@ -228,7 +248,9 @@ async def test_im_cd_command_terminates_in_s2() -> None:
                     notice=f"cd: workspace ready at {target_dir}",
                 )
             )
-            pipe = build_im_pipeline(
+            pipe = await build_im_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
                 skill_registry=_NoSkill(),
                 known_pools={"main"},
                 workspace_controller=controller,  # type: ignore[arg-type]
@@ -253,7 +275,9 @@ async def test_im_pool_command_switches_pool_and_terminates() -> None:
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
             # pool_session_store.get returns "main" by default; /coding switches
-            pipe = build_im_pipeline(
+            pipe = await build_im_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
                 skill_registry=_NoSkill(), known_pools={"main", "coding"}
             )
             env = UserInputEnvelope(external_id="u1", content="/coding", channel="qq")
@@ -282,7 +306,12 @@ async def test_im_exit_command_terminates_in_s2() -> None:
             cmd_adapter.home = project_dir
             cmd_adapter.save_current_ws = MagicMock()
             ctx = _make_ctx(store, enqueued, command_adapter=cmd_adapter)
-            pipe = build_im_pipeline(skill_registry=_NoSkill(), known_pools={"main"})
+            pipe = await build_im_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
+                skill_registry=_NoSkill(),
+                known_pools={"main"},
+            )
             env = UserInputEnvelope(external_id="u1", content="/exit", channel="qq")
             result = await pipe.handle(env, ctx)
             assert not result.should_continue(), "/exit must terminate"
@@ -302,7 +331,9 @@ async def test_im_valid_skill_persisted_raw_llm_gets_xml() -> None:
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
-            pipe = build_im_pipeline(
+            pipe = await build_im_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
                 skill_registry=_FakeSkill({"office-expert"}),
                 known_pools={"main"},
             )
@@ -330,7 +361,9 @@ async def test_im_invalid_skill_terminates_not_persisted() -> None:
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
-            pipe = build_im_pipeline(
+            pipe = await build_im_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
                 skill_registry=_NoSkill(), known_pools={"main"}
             )
             env = UserInputEnvelope(
@@ -353,7 +386,9 @@ async def test_webui_invalid_skill_terminates_not_persisted() -> None:
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
-            pipe = build_webui_pipeline(
+            pipe = await build_webui_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
                 skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
             )
             env = UserInputEnvelope(
@@ -397,7 +432,9 @@ async def test_multi_channel_pool_isolation() -> None:
                 command_adapter=cmd_adapter_im,
                 current_ws_provider=(lambda r=root: r),
             )
-            pipe_im = build_im_pipeline(
+            pipe_im = await build_im_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
                 skill_registry=_NoSkill(), known_pools={"main", "coding"}
             )
 
@@ -414,7 +451,9 @@ async def test_multi_channel_pool_isolation() -> None:
                 command_adapter=cmd_adapter_ws,
                 current_ws_provider=(lambda r=root: r),
             )
-            pipe_ws = build_webui_pipeline(
+            pipe_ws = await build_webui_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
                 skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
             )
 
@@ -455,7 +494,9 @@ async def test_webui_slash_cd_produces_error_not_enqueued() -> None:
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
-            pipe = build_webui_pipeline(
+            pipe = await build_webui_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
                 skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
             )
             env = UserInputEnvelope(
@@ -493,7 +534,12 @@ async def test_im_pwd_command_terminates_in_s2() -> None:
             ctx = _make_ctx(
                 store, enqueued, command_adapter=cmd_adapter, workspace_root=workspace_dir
             )
-            pipe = build_im_pipeline(skill_registry=_NoSkill(), known_pools={"main"})
+            pipe = await build_im_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
+                skill_registry=_NoSkill(),
+                known_pools={"main"},
+            )
             env = UserInputEnvelope(external_id="u1", content="/pwd", channel="qq")
             result = await pipe.handle(env, ctx)
             assert not result.should_continue(), "/pwd must terminate"
@@ -541,7 +587,9 @@ async def test_skill_resolved_from_correct_pool() -> None:
                 "main": {"brainstorming"},
                 "coding": {"office-expert"},
             })
-            pipe = build_im_pipeline(
+            pipe = await build_im_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
                 skill_registry=registry, known_pools={"main", "coding"},
             )
 
@@ -592,7 +640,9 @@ async def test_skill_pool_isolation_webui() -> None:
                 "main": {"brainstorming"},
                 "coding": {"office-expert"},
             })
-            pipe = build_webui_pipeline(
+            pipe = await build_webui_pipeline(
+                registry=TEST_COMPONENT_REGISTRY,
+                ctx=TEST_ASSEMBLY_CTX,
                 skill_registry=registry, bot_model_config=_bot_model_config()
             )
 

@@ -24,6 +24,7 @@ from modex_agent.hook.abc import (
     BeforeLLMHook,
     BeforeToolExecutionHook,
     BeforeTurnHook,
+    ClosableHook,
     EndNodeTurnHook,
     FinalizeContentHook,
     FinallyGraphHook,
@@ -239,6 +240,16 @@ class HookRunner:
         """批量追加 hook 规格。"""
         self._hook_specs.extend(specs)
 
+    async def aclose(self) -> None:
+        """Close resources owned by registered hooks."""
+        await asyncio.gather(
+            *(
+                spec.hook.aclose()
+                for spec in self._hook_specs
+                if isinstance(spec.hook, ClosableHook)
+            )
+        )
+
     async def dispatch(
         self,
         hook_point: HookPoint,
@@ -318,9 +329,9 @@ class HookRunner:
             pass
         elif spec.on_error == HookErrorPolicy.ABORT:
             error_type = "timeout" if is_timeout else "error"
-            from modex_agent.control.exceptions import PolicyViolation
+            from modex_agent.control.exceptions import PolicyViolationError
 
-            raise PolicyViolation(
+            raise PolicyViolationError(
                 f"Hook {hook_name}.{hook_point.value} {error_type} (policy=abort)"
             )
 

@@ -38,7 +38,6 @@ async def test_max_iterations_sends_exactly_one_failed_agent_result() -> None:
     tree=_mock_tree(bus),
         self_name="worker",
         parent_name="main",
-        trace_enabled=False,
     )
     context = AgentContext(
         system_prompt="test",
@@ -69,24 +68,23 @@ def test_loop_detected_is_non_normal() -> None:
     assert "loop_detected" in SubagentAutoSendHook._NON_NORMAL_STOPS
 
 
-def test_classify_loop_detected_hint() -> None:
+def test_classify_loop_detected_issue_has_no_invocation_id() -> None:
     success, issue = SubagentAutoSendHook._classify(
         stop_reason="loop_detected",
         error=None,
-        invocation_id="inv-1",
         is_external=False,
     )
     assert success is False
     assert "loop" in issue.lower()
-    assert "invocation_id=inv-1" in issue
+    assert "invocation_id" not in issue
 
 
-def test_classify_loop_detected_no_invocation_id() -> None:
+def test_classify_loop_detected_marks_task_incomplete() -> None:
     success, issue = SubagentAutoSendHook._classify(
         stop_reason="loop_detected",
         error=None,
-        invocation_id="",
         is_external=False,
     )
     assert success is False
     assert "loop" in issue.lower()
+    assert "Task is incomplete." in issue

@@ -21,7 +21,7 @@ the constructor and stored as ``self._<name>``.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from modex_agent.core.types import InputMessage
     from modex_agent.hook.runner import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
-    from modex_agent.media.media_utils import MediaBlock, MediaProcessor
+    from modex_agent.media.store import MediaStore
     from modex_agent.memory.context_governance import ContextGovernance
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.multi_agent.router import RouteResult
@@ -179,6 +179,7 @@ class TurnContextBuilder:
         self._graph_context_resolver: Callable[[int], GraphContext[Any] | None] | None = None
         self._config_pipeline: TurnContextConfigPipeline | None = None
         self._session_binding_store: SessionBindingStore | None = None
+        self._media_store_resolver: Callable[[], MediaStore] | None = None
 
     # ── Post-construction wiring (typed setters) ─────────────────────────
     #
@@ -246,6 +247,14 @@ class TurnContextBuilder:
     @session_binding_store.setter
     def session_binding_store(self, value: SessionBindingStore | None) -> None:
         self._session_binding_store = value
+
+    @property
+    def media_store_resolver(self) -> Callable[[], MediaStore] | None:
+        return self._media_store_resolver
+
+    @media_store_resolver.setter
+    def media_store_resolver(self, value: Callable[[], MediaStore] | None) -> None:
+        self._media_store_resolver = value
 
     async def build_turn_request(
         self,
@@ -349,20 +358,18 @@ class TurnContextBuilder:
         session_id: str,
         input_metadata: dict[str, Any],
         _route_result: RouteResult | None,
-    ) -> tuple[str | None, list[MediaBlock], MediaProcessor | None]:
+    ) -> str | None:
         """Preprocess input: sanitize content and handle attachments.
 
         Returns:
-            (sanitized_content, media_blocks, media_processor).
+            sanitized_content (with mechanism-B attachment reference lines
+            appended when the turn carries resolved attachments).
         """
         sanitized_content = input_msg.content
         if self._sanitizer is not None:
             sanitized_content = self._sanitizer(sanitized_content)
             if sanitized_content != input_msg.content:
                 logger.info("Input content sanitized for session %s", session_id)
-
-        media_blocks: list[MediaBlock] = []
-        _media_processor: MediaProcessor | None = None
 
         # --- Mechanism B (v1, any model): transient path-reference injection. ---
         # For each gate-accepted inbound Attachment, append a text reference so the
@@ -383,20 +390,7 @@ class TurnContextBuilder:
                 f"{sanitized_content}\n{injection}" if sanitized_content else injection
             )
 
-        # --- Mechanism A (DORMANT — native multimodal inline rendering). ---
-        # The MediaProcessor-based vision-block path is the dormant provider-side
-        # renderer seam (ADR-0013 §10). It is NOT activated in v1: every Modality
-        # flag is off, so every attachment reaches the agent as the text reference
-        # above. Activated by G10 once ModelCapabilities/Modality is wired.
-        # TODO(G10): when the Modality for an attachment's kind is on, hand its
-        #   resolved Attachment to MediaProcessor to build inline content blocks;
-        #   gate the path-reference above on the inverse condition. Until then the
-        #   legacy input_msg.attachments (list[str]) is intentionally NOT fed here
-        #   — those are channel temp paths, not the persisted perception-gate-
-        #   vetted files (the gate-vetted path lives on Attachment.path).
-        # _media_processor = MediaProcessor(); media_result = await ...
-
-        return sanitized_content, media_blocks, _media_processor
+        return sanitized_content
 
     async def assemble(
         self,
@@ -404,8 +398,6 @@ class TurnContextBuilder:
         input_msg: InputMessage,
         input_metadata: dict[str, Any],
         sanitized_content: str | None,
-        media_blocks: list[MediaBlock],
-        _media_processor: MediaProcessor | None,
         ctx_mgr: ContextManager,
         route_result: RouteResult | None,
         _is_approval_cmd: bool,
@@ -418,8 +410,6 @@ class TurnContextBuilder:
             input_msg,
             input_metadata,
             sanitized_content,
-            media_blocks,
-            _media_processor,
             ctx_mgr,
             route_result,
             _is_approval_cmd,
@@ -439,16 +429,10 @@ class TurnContextBuilder:
         *,
         input_metadata: dict[str, Any] | None = None,
         pool_data: PoolDataSnapshot | None = None,
-        inline_attachments: Sequence[Attachment] | None = None,
         workspace: Path | None = None,
         turn_descriptor: TurnContextDescriptor | None = None,
     ) -> tuple[AgentContext, ContentEmitter]:
         """Build AgentContext and emitter for the turn.
-
-        ``inline_attachments`` are the current turn's resolved Attachment
-        records (path-only, no bytes). Only the image-kind subset is carried
-        in turn state (ADR-0014 §3 / mechanism A) so the inline renderer can
-        bind vision blocks. Defaults to empty.
         """
 
         # Ensure per-session injection queue exists
@@ -496,6 +480,11 @@ class TurnContextBuilder:
         # > pipeline-level self.turn_store.
         snapshot_turn_store = pool_data.turn_store if pool_data is not None else self._turn_store
         snapshot_trace_store = pool_data.trace_store if pool_data is not None else None
+        media_store = base_services.media_store if base_services is not None else None
+        if self._media_store_resolver is not None and (
+            snapshot_turn_store is not None or governance is not None
+        ):
+            media_store = self._media_store_resolver()
 
         # ---- typed AgentRuntime with ReActTurnState (new) ----
         if snapshot_turn_store is not None:
@@ -533,6 +522,7 @@ class TurnContextBuilder:
                 control_channel=self._control_channel
                 or (base_services.control_channel if base_services is not None else None),
                 model_info=(base_services.model_info if base_services is not None else None),
+                media_store=media_store,
             )
             agent_context.runtime = AgentRuntime(services=services, state=react_state)
             agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
@@ -551,6 +541,7 @@ class TurnContextBuilder:
                     control_channel=self._control_channel
                     or (base_services.control_channel if base_services is not None else None),
                     model_info=(base_services.model_info if base_services is not None else None),
+                    media_store=media_store,
                 ),
                 state=ReActTurnState(
                     identity=turn_identity,
@@ -559,28 +550,18 @@ class TurnContextBuilder:
                 ),
             )
 
-        # Carry the current turn's resolved image-kind attachments in turn state
-        # (ADR-0014 §3). The inline renderer (unit 4) reads these to bind vision
-        # blocks. Set once here — both runtime branches above share this path.
-        if agent_context.runtime is not None:
-            from modex_agent.media.models import Kind
+        # Trace linkage metadata for the turn's spans (subagent parentage).
+        if agent_context.runtime is not None and input_metadata is not None:
             from modex_agent.runtime.enums import TurnCustomKey
 
-            images = (
-                [a for a in inline_attachments if a.kind is Kind.IMAGE]
-                if inline_attachments
-                else []
-            )
-            agent_context.runtime.state.custom[TurnCustomKey.INLINE_ATTACHMENTS] = images
-            if input_metadata is not None:
-                trace_id = input_metadata.get("trace_id")
-                if trace_id is not None:
-                    agent_context.runtime.state.custom[TurnCustomKey.TRACE_ID] = str(trace_id)
-                parent_span_id = input_metadata.get("parent_span_id")
-                if parent_span_id is not None:
-                    agent_context.runtime.state.custom[TurnCustomKey.PARENT_SPAN_ID] = str(
-                        parent_span_id
-                    )
+            trace_id = input_metadata.get("trace_id")
+            if trace_id is not None:
+                agent_context.runtime.state.custom[TurnCustomKey.TRACE_ID] = str(trace_id)
+            parent_span_id = input_metadata.get("parent_span_id")
+            if parent_span_id is not None:
+                agent_context.runtime.state.custom[TurnCustomKey.PARENT_SPAN_ID] = str(
+                    parent_span_id
+                )
 
         # Emitter selection
         if self._emitter_factory:

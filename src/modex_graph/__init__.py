@@ -109,7 +109,7 @@ from .persistence import (
 from .run_control import GraphRunControl
 from .runtime import GraphRuntime
 from .scheduler import LinearScheduler, NodeInstance, ParallelScheduler, Scheduler
-from .spec import EdgeSpec, GraphSpec, NodeSpec
+from .spec import EdgeSpec, FieldSpec, GraphSpec, NodeSpec
 from .spec_compiler import GraphSpecCompiler
 from .spec_store import (
     GraphSpecStore,
@@ -184,6 +184,7 @@ __all__ = [
     "GraphSpec",
     "NodeSpec",
     "EdgeSpec",
+    "FieldSpec",
     # Runtime graph instance
     "GraphInstance",
     # Graph spec persistence

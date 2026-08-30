@@ -44,13 +44,12 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
 
     project_dir = Path(__file__).resolve().parent.parent
 
-    # pool_name -> main_agent_name, mirroring WebUIService production wiring.
-    from modex_agent.multi_agent.pool_config import PoolStore
+    # pool_name -> root agent name, mirroring WebUIService production wiring.
+    from modex_agent.scope.loader import load_scope_declaration
 
-    _pool_store = PoolStore(base_dir=project_dir)
-    _pool_to_main_agent = {
-        s.name: _pool_store.read_pool(s.name).main.agent_name for s in _pool_store.list_pools()
-    }
+    _spec = load_scope_declaration(project_dir / "config" / "scopes" / "bot.yml")
+    _pools = _spec.workspace.pools if _spec.workspace is not None else []
+    _pool_to_main_agent = {pool.name: pool.root_agent.name for pool in _pools}
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
 
@@ -80,7 +79,7 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
 
     from tests.webui._pipeline_fixture import attach_default_pipeline
 
-    attach_default_pipeline(
+    await attach_default_pipeline(
         server,
         store,
         input_adapter,
@@ -227,7 +226,7 @@ class TestAttachmentWiring:
             skill_manager=None,
             mcp_manager=None,
             terminal_manager=None,
-            main_agent_name="main",
+            root_agent_name="main",
             main_execution_strategy=ExecutionStrategyKind.REACT,
             provider=None,
             notification_service=None,
@@ -289,12 +288,11 @@ async def test_cross_pool_same_name_subagent_transcript_partitioning() -> None:
 
     project_dir = Path(__file__).resolve().parent.parent
 
-    from modex_agent.multi_agent.pool_config import PoolStore
+    from modex_agent.scope.loader import load_scope_declaration
 
-    _pool_store = PoolStore(base_dir=project_dir)
-    _pool_to_main_agent = {
-        s.name: _pool_store.read_pool(s.name).main.agent_name for s in _pool_store.list_pools()
-    }
+    _spec = load_scope_declaration(project_dir / "config" / "scopes" / "bot.yml")
+    _pools = _spec.workspace.pools if _spec.workspace is not None else []
+    _pool_to_main_agent = {pool.name: pool.root_agent.name for pool in _pools}
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
 
@@ -324,7 +322,7 @@ async def test_cross_pool_same_name_subagent_transcript_partitioning() -> None:
 
     from tests.webui._pipeline_fixture import attach_default_pipeline
 
-    attach_default_pipeline(
+    await attach_default_pipeline(
         server,
         store,
         input_adapter,

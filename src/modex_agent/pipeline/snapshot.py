@@ -28,11 +28,13 @@ if TYPE_CHECKING:
 class PoolDataSnapshot(ABC):
     """Base dataclass for the per-turn data snapshot the pipeline consumes.
 
-    The concrete snapshot also carries experience / memory fields used by
+    The concrete snapshot may carry experience / memory fields used by
     hooks and other consumers; ``experience_dir`` is declared here because
-    ``ExperienceReviewHook`` resolves it from ``AgentContext.workspace_snapshot``
-    at turn time.  Business-specific wiring fields (e.g. ``experience_meta``)
-    live in subclasses.
+    ``ExperienceReviewHook`` may resolve it from
+    ``AgentContext.workspace_snapshot`` at turn time (``None`` on the
+    migrated tree — the experience capability supply owns the dir and the
+    hook falls back to its factory-supplied one). Business-specific wiring
+    fields live in subclasses.
     """
 
     context_manager: ContextManager
@@ -41,7 +43,11 @@ class PoolDataSnapshot(ABC):
     memory_dir: Path | None
     runtime_dir: Path | None
     pruned_manager: PrunedManager | None
-    experience_dir: Path | None
+    experience_dir: Path | None = None
+    """``None`` on the migrated tree: the experience capability supply is
+    the experience dir's construction authority (SPEC §8.3) and
+    ``ExperienceReviewHook`` falls back to its factory-supplied dir — the
+    field stays for custom snapshots that carry a per-turn dir."""
     decision_coordinator: ApprovalDecisionCoordinator | None = field(
         default=None,
         kw_only=True,

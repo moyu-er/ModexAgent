@@ -1,13 +1,5 @@
-"""Shared poll loop for CommandTool and ProcessTool write/submit drain.
-
-Both CommandTool.execute() and ProcessTool._drain_terminal_after_action()
-use the same poll-detect-yield pattern. This module extracts that into
-a single reusable function.
-"""
-
 from __future__ import annotations
 
-import re
 import time
 from dataclasses import dataclass
 from enum import StrEnum
@@ -19,18 +11,37 @@ from modex_agent.tools.terminal.prompt import (
     is_waiting_for_input,
     resolve_cursor_line,
 )
+from modex_agent.tools.terminal.results import TerminalSegment
 from modex_agent.tools.terminal.session import TerminalSession
+from modex_agent.tools.terminal.types import ProcessStatus
+
+
+def mark_exited_if_finished(
+    registry: ProcessRegistry,
+    proc_id: str,
+    outcome: PollOutcome,
+) -> None:
+    """Mark a process COMPLETED in the registry when a drain outcome proves it.
+
+    Shared by ``CommandTool.execute`` and ``ProcessTool``'s post-write drain
+    so the outcome→registry mapping exists in exactly one place. Only
+    ``PROMPT_DETECTED`` and ``PROCESS_EXIT`` prove completion — every other
+    outcome means the interaction is still live and the session stays RUNNING.
+    """
+    if outcome in (PollOutcome.PROMPT_DETECTED, PollOutcome.PROCESS_EXIT):
+        registry.mark_exited(
+            proc_id,
+            exit_code=None,
+            exit_signal=None,
+            status=ProcessStatus.COMPLETED,
+        )
 
 
 class PollOutcome(StrEnum):
     PROMPT_DETECTED = "prompt_detected"
-    YIELDED = "yielded"
-    TIMED_OUT = "timed_out"
-    INPUT_WAIT = "input_wait"
-    STUCK = "stuck"
-    LONG_RUNNING = "long_running"
     PROCESS_EXIT = "process_exit"
-    PAGINATED = "paginated"
+    INPUT_WAIT = "input_wait"
+    TIMED_OUT = "timed_out"
 
 
 @dataclass
@@ -46,24 +57,15 @@ async def poll_until_settled(
     proc_id: str,
     config: TerminalRuntimeConfig,
     *,
-    yield_ms: int,
-    timeout_seconds: int,
-    check_input_wait: bool = False,
     command: str = "",
+    check_input_wait: bool = True,
 ) -> PollResult:
-    """Poll the terminal until a completion condition is met.
-
-    Returns a PollResult indicating why the loop ended and all collected output.
-
-    When *command* matches a pattern in ``config.no_output_whitelist`` (e.g.
-    ``sleep``), the STUCK (no-output timeout) check is skipped entirely —
-    such commands are expected to produce no output for extended periods.
-    """
+    """Poll until completion evidence, input-wait evidence, or the deadline."""
+    del command
     start = time.monotonic()
     output_parts: list[str] = []
     output_received = False
     prompt_stable_since: float | None = None
-    _whitelisted = command and any(re.search(p, command) for p in config.no_output_whitelist)
 
     while True:
         elapsed_ms = int((time.monotonic() - start) * 1000)
@@ -77,31 +79,18 @@ async def poll_until_settled(
         if read.stderr:
             registry.append_output(proc_id, "stderr", read.stderr)
             output_parts.append(read.stderr)
+            output_received = True
+            prompt_stable_since = None
 
-        # 1. Process exit
         if not await session.is_alive():
+            record = registry.get_running(proc_id) or registry.get_finished(proc_id)
+            # A backend dying at or after its deadline is the timeout kill;
+            # only a pre-deadline death proves a natural process exit.
+            if record is not None and time.monotonic() >= record.deadline_at:
+                return PollResult(PollOutcome.TIMED_OUT, output_parts, elapsed_ms)
             return PollResult(PollOutcome.PROCESS_EXIT, output_parts, elapsed_ms)
 
-        # 2. Content-based input wait (fast path)
-        if check_input_wait and output_received and is_waiting_for_input("".join(output_parts)):
-            return PollResult(PollOutcome.INPUT_WAIT, output_parts, elapsed_ms)
-
-        # 2b. Idle-based input wait — catches silent prompts (e.g. ``read -s``)
-        # that have no marker text for the content detector above. Uses the
-        # registry's tiered idle thresholds (initial/active_idle_threshold_ms).
-        if check_input_wait and output_received and await session.is_alive():
-            runtime = registry.running_runtime(proc_id)
-            if runtime is not None and runtime.waiting_for_input:
-                return PollResult(PollOutcome.INPUT_WAIT, output_parts, elapsed_ms)
-
-        # 3. Pager detection — before prompt so pagers don't look like idle
-        if output_received:
-            segment = await session.current_segment()
-            cursor = resolve_cursor_line(segment)
-            if detect_pager_entry(cursor):
-                return PollResult(PollOutcome.PAGINATED, output_parts, elapsed_ms)
-
-        # 4. Prompt detection
+        segment: TerminalSegment | None = None
         if output_received:
             segment = await session.current_segment()
             if segment.is_empty_prompt:
@@ -112,29 +101,18 @@ async def poll_until_settled(
             else:
                 prompt_stable_since = None
 
-        # 5. No-output timeout → STUCK only if NOT an idle-based input wait.
-        # Silent prompts (e.g. ``read -s``) would otherwise be misclassified.
-        # Whitelisted commands (e.g. ``sleep``) skip this check entirely.
-        if not _whitelisted:
-            raw_idle_ms = int((time.monotonic() - session.last_byte_at) * 1000)
-            if raw_idle_ms >= config.no_output_timeout_ms:
-                runtime = registry.running_runtime(proc_id)
-                is_input_wait = runtime is not None and runtime.waiting_for_input
-                if not is_input_wait and not is_waiting_for_input("".join(output_parts)):
-                    return PollResult(PollOutcome.STUCK, output_parts, elapsed_ms)
+        idle_ms = registry.idle_ms(proc_id)
+        if check_input_wait and idle_ms is not None and idle_ms >= config.input_wait_idle_ms:
+            if segment is None:
+                segment = await session.current_segment()
+            has_evidence = (
+                session._backend.stdin_wait_evidence() is True
+                or is_waiting_for_input("".join(output_parts))
+                or detect_pager_entry(resolve_cursor_line(segment))
+            )
+            if has_evidence:
+                return PollResult(PollOutcome.INPUT_WAIT, output_parts, elapsed_ms)
 
-        # 5.5 Long-running detection (before yield)
-        if (
-            elapsed_ms >= config.long_running_threshold_ms
-            and output_received
-            and await session.is_alive()
-        ):
-            return PollResult(PollOutcome.LONG_RUNNING, output_parts, elapsed_ms)
-
-        # 6. Yield window
-        if elapsed_ms >= yield_ms:
-            return PollResult(PollOutcome.YIELDED, output_parts, elapsed_ms)
-
-        # 7. Hard timeout
-        if elapsed_ms >= timeout_seconds * 1000:
+        running = registry.get_running(proc_id)
+        if running is not None and running.deadline_at <= time.monotonic():
             return PollResult(PollOutcome.TIMED_OUT, output_parts, elapsed_ms)

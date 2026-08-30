@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict
@@ -107,7 +108,7 @@ class GraphDeliverTargetStore:
             )
         return targets
 
-    def names(self) -> list[str]:
+    def names(self) -> builtins.list[str]:
         """Return just the target names — for error messages."""
         return [t.name for t in self.list()]
 

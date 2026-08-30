@@ -9,6 +9,7 @@ Tests cover:
 - L2 scoring computes correct values
 - Scope-aware filtering warns on cross-tenant
 """
+
 from __future__ import annotations
 
 import json
@@ -19,13 +20,13 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
-from modex_agent.trace.store import SpanModel, SpanStatus, TraceQuery
 from modex_agent.trace.scoring import (
-    TrajectoryScore,
-    compute_score,
-    overall_score,
+    TrajectoryMetrics,
+    compute_metrics,
+    extract_final_response,
 )
+from modex_agent.trace.semconv import GenAiAttr, SpanStatusCode
+from modex_agent.trace.store import SpanModel, SpanStatus, TraceQuery
 from modex_agent.trace.training_exporter import (
     DPOPair,
     ExportResult,
@@ -34,6 +35,7 @@ from modex_agent.trace.training_exporter import (
     _edit_distance_ratio,
     _extract_system_message,
     _extract_user_message,
+    _is_training_relevant,
     _jaccard_similarity,
     _levenshtein,
     _ngram_set,
@@ -166,9 +168,7 @@ def _make_trajectory(
                     GenAiAttr.TOOL_NAME.value: "calculator",
                     GenAiAttr.TOOL_RESULT.value: "4",
                 },
-                status_code=SpanStatusCode.OK
-                if tool_success
-                else SpanStatusCode.ERROR,
+                status_code=SpanStatusCode.OK if tool_success else SpanStatusCode.ERROR,
             )
         )
         ts += 1
@@ -319,6 +319,102 @@ class TestSFTExport:
         assert tool_msgs[0]["tool_call_id"].startswith("call_")
         assert tool_msgs[0]["content"] == "4"
 
+    async def test_tool_results_join_by_real_call_id(self, tmp_path: Path) -> None:
+        """Parallel tool calls with real (provider/snowflake) call ids are
+        joined to their execute_tool spans by id — even when span order and
+        call order differ. No synthetic ``call_<n>`` counter ids appear."""
+        store = InMemoryTraceStore()
+        ts = 1000.0
+        store._spans.append(
+            _make_span(
+                name="invoke_agent",
+                start_time=ts,
+                attributes={
+                    "recent_messages": [{"role": "user", "content": "read both files"}],
+                },
+            )
+        )
+        store._spans.append(
+            _make_span(
+                name="chat",
+                start_time=ts + 1,
+                attributes={
+                    GenAiAttr.OUTPUT_MESSAGES.value: [
+                        {"role": "assistant", "parts": [{"type": "text", "content": ""}]}
+                    ],
+                    "has_tool_calls": True,
+                    GenAiAttr.RESPONSE_FINISH_REASONS.value: ["tool_calls"],
+                    GenAiAttr.OUTPUT_TOOL_CALLS.value: [
+                        {"call_id": "call_A", "tool_name": "read", "arguments": '{"path": "a"}'},
+                        {"call_id": "call_B", "tool_name": "read", "arguments": '{"path": "b"}'},
+                    ],
+                },
+            )
+        )
+        # Tool spans in REVERSE order relative to the assistant tool calls —
+        # order-based matching would pair them wrongly; id join must not.
+        store._spans.append(
+            _make_span(
+                name="execute_tool",
+                start_time=ts + 3,
+                attributes={
+                    GenAiAttr.TOOL_NAME.value: "read",
+                    GenAiAttr.TOOL_RESULT.value: "content_of_b",
+                    GenAiAttr.TOOL_CALL_ID.value: "call_B",
+                },
+            )
+        )
+        store._spans.append(
+            _make_span(
+                name="execute_tool",
+                start_time=ts + 2,
+                attributes={
+                    GenAiAttr.TOOL_NAME.value: "read",
+                    GenAiAttr.TOOL_RESULT.value: "content_of_a",
+                    GenAiAttr.TOOL_CALL_ID.value: "call_A",
+                },
+            )
+        )
+        store._spans.append(
+            _make_span(
+                name="chat",
+                start_time=ts + 4,
+                attributes={
+                    GenAiAttr.OUTPUT_MESSAGES.value: [
+                        {"role": "assistant", "parts": [{"type": "text", "content": "done"}]}
+                    ],
+                    "has_tool_calls": False,
+                    GenAiAttr.RESPONSE_FINISH_REASONS.value: ["stop"],
+                },
+            )
+        )
+        store._spans.append(
+            _make_span(
+                name="training_tag",
+                start_time=ts + 5,
+                attributes={"gen_ai.training.relevant": True},
+            )
+        )
+
+        exporter = TrainingDataExporter(store, output_dir=tmp_path)
+        result = await exporter.export_sft(session_ids=["conv-1:agent-1"])
+
+        examples = _load_jsonl(result.output_path)
+        messages = examples[0]["messages"]
+
+        assistant_with_tools = [
+            m for m in messages if m["role"] == "assistant" and m.get("tool_calls")
+        ]
+        assert len(assistant_with_tools) == 1
+        assert [tc["id"] for tc in assistant_with_tools[0]["tool_calls"]] == ["call_A", "call_B"]
+
+        tool_msgs = [m for m in messages if m["role"] == "tool"]
+        # Each tool message carries its REAL id and the correctly joined result.
+        assert [(m["tool_call_id"], m["content"]) for m in tool_msgs] == [
+            ("call_A", "content_of_a"),
+            ("call_B", "content_of_b"),
+        ]
+
     async def test_reasoning_wrapped_in_think_tags(self, tmp_path: Path) -> None:
         store = InMemoryTraceStore()
         for span in _make_trajectory(
@@ -370,6 +466,51 @@ class TestSFTExport:
         result = await exporter.export_sft(session_ids=["conv-1:agent-1"])
 
         assert result.sft_count == 0
+
+    def test_any_true_tag_accepts_trajectory(self) -> None:
+        """Locks the exporter's any-true acceptance semantics — the reason a
+        single stray suspend-time ``relevant=true`` tag is fatal: a
+        [true, false] trajectory (the legacy suspend-then-failed shape) is
+        exported. Exporter code is intentionally unchanged; the fix lives in
+        TrainingDataHook, which no longer emits the true tag at suspend."""
+        spans = _make_trajectory(training_relevant=False)
+        spans.append(
+            _make_span(
+                name="training_tag",
+                start_time=5000.0,
+                attributes={"gen_ai.training.relevant": True},
+            )
+        )
+
+        assert _is_training_relevant(spans) is True
+
+    async def test_suspend_then_failed_turn_not_exported(self, tmp_path: Path) -> None:
+        """A suspended-then-failed turn now carries exactly one false tag
+        (zero tags at suspend, one false at the terminal finalize — the
+        TrainingDataHook suspend sentinel). The any-true exporter therefore
+        rejects it. The same trajectory with a legacy suspend-time true tag
+        appended WOULD be exported, which is the defect this locks out."""
+        store = InMemoryTraceStore()
+        for span in _make_trajectory(training_relevant=False):
+            store._spans.append(span)
+
+        exporter = TrainingDataExporter(store, output_dir=tmp_path)
+        result = await exporter.export_sft(session_ids=["conv-1:agent-1"])
+        assert result.sft_count == 0
+
+        legacy = InMemoryTraceStore()
+        for span in _make_trajectory(training_relevant=False):
+            legacy._spans.append(span)
+        legacy._spans.append(
+            _make_span(
+                name="training_tag",
+                start_time=5000.0,
+                attributes={"gen_ai.training.relevant": True},
+            )
+        )
+        legacy_exporter = TrainingDataExporter(legacy, output_dir=tmp_path)
+        legacy_result = await legacy_exporter.export_sft(session_ids=["conv-1:agent-1"])
+        assert legacy_result.sft_count == 1  # proves the delta is the stray true tag
 
     async def test_empty_session_ids_returns_empty(self, tmp_path: Path) -> None:
         store = InMemoryTraceStore()
@@ -440,7 +581,7 @@ class TestDPOExport:
         assert pair["rejected"] == "I think it might be 5."
         assert pair["chosen_model"] == "react_main"
         assert pair["rejected_model"] == "react_main"
-        assert pair["chosen_rating"] >= pair["rejected_rating"]
+        assert pair["chosen_tool_success_rate"] >= pair["rejected_tool_success_rate"]
 
     async def test_dpo_no_approval_data_skipped(self, tmp_path: Path) -> None:
         store = InMemoryTraceStore()
@@ -473,6 +614,32 @@ class TestDPOExport:
         result = await exporter.export_dpo(session_ids=["conv-1:agent-1"])
 
         # Both have identical scores (1.0 tool success) → gap = 0 < 0.5 → no pairs.
+        assert result.dpo_count == 0
+
+    async def test_dpo_gap_filter_is_directional(self, tmp_path: Path) -> None:
+        """Gap filter is directional: chosen - rejected, not abs(chosen - rejected).
+
+        Approved trajectory has LOWER tool success than denied → negative gap → filtered.
+        """
+        store = InMemoryTraceStore()
+        for span in _make_trajectory(
+            trace_id="trace-approved-low",
+            approval=True,
+            final_content="The answer is 4.",
+            tool_success=False,
+        ):
+            store._spans.append(span)
+        for span in _make_trajectory(
+            trace_id="trace-denied-high",
+            approval=False,
+            final_content="I think it might be 42.",
+            tool_success=True,
+        ):
+            store._spans.append(span)
+
+        exporter = TrainingDataExporter(store, output_dir=tmp_path)
+        result = await exporter.export_dpo(session_ids=["conv-1:agent-1"])
+
         assert result.dpo_count == 0
 
     async def test_dpo_refusal_filter(self, tmp_path: Path) -> None:
@@ -587,53 +754,257 @@ class TestDeduplication:
 
 
 class TestL2Scoring:
-    def test_compute_score_all_success(self) -> None:
+    # ── Basic sanity tests ─────────────────────────────────────────────
+
+    def test_compute_metrics_returns_metrics_type(self) -> None:
         spans = _make_trajectory(tool_success=True, with_reasoning=True)
-        score = compute_score(spans)
-        assert isinstance(score, TrajectoryScore)
-        assert score.tool_success_rate == 1.0
-        assert score.reasoning_depth == 15
-        # final_content = "The answer is 4." = 16 chars
-        # total_tokens = (10+5) + (20+10) = 45
-        assert score.trajectory_compactness == pytest.approx(16 / 45, rel=1e-3)
+        metrics = compute_metrics(spans)
+        assert isinstance(metrics, TrajectoryMetrics)
 
-    def test_compute_score_failed_tool(self) -> None:
+    def test_compute_metrics_all_success(self) -> None:
+        spans = _make_trajectory(tool_success=True, with_reasoning=True)
+        metrics = compute_metrics(spans)
+        assert metrics.tool_success_rate == 1.0
+        assert metrics.tool_call_count == 1
+        assert metrics.error_tool_count == 0
+        assert metrics.llm_call_count == 2
+        assert metrics.total_reasoning_tokens == 15
+        assert metrics.has_reasoning is True
+
+    def test_compute_metrics_failed_tool(self) -> None:
         spans = _make_trajectory(tool_success=False, with_reasoning=True)
-        score = compute_score(spans)
-        assert score.tool_success_rate == 0.0
-        assert score.reasoning_depth == 15
+        metrics = compute_metrics(spans)
+        assert metrics.tool_success_rate == 0.0
+        assert metrics.error_tool_count == 1
 
-    def test_compute_score_no_tools(self) -> None:
+    def test_compute_metrics_no_tools(self) -> None:
         spans = _make_trajectory(with_tool_calls=False, with_reasoning=True)
-        score = compute_score(spans)
+        metrics = compute_metrics(spans)
         # No tools → tool_success_rate defaults to 1.0
-        assert score.tool_success_rate == 1.0
+        assert metrics.tool_success_rate == 1.0
+        assert metrics.tool_call_count == 0
 
-    def test_compute_score_no_reasoning(self) -> None:
+    def test_compute_metrics_no_reasoning(self) -> None:
         spans = _make_trajectory(with_reasoning=False)
-        score = compute_score(spans)
-        assert score.reasoning_depth == 0
+        metrics = compute_metrics(spans)
+        assert metrics.total_reasoning_tokens == 0
+        assert metrics.has_reasoning is False
 
-    def test_overall_score_combines_metrics(self) -> None:
-        score = TrajectoryScore(
-            tool_success_rate=1.0,
-            reasoning_depth=500,
-            trajectory_compactness=0.3,
-        )
-        overall = overall_score(score)
-        # 0.5*1.0 + 0.3*(500/1000) + 0.2*0.3 = 0.5 + 0.15 + 0.06 = 0.71
-        assert overall == pytest.approx(0.71, rel=1e-3)
+    # ── Direct formula tests (one per metric field) ────────────────────
 
-    def test_overall_score_caps_at_1(self) -> None:
-        score = TrajectoryScore(
-            tool_success_rate=1.0,
-            reasoning_depth=10000,
-            trajectory_compactness=2.0,
-        )
-        overall = overall_score(score)
-        assert overall <= 1.0
-        # 0.5*1 + 0.3*1 + 0.2*1 = 1.0
-        assert overall == pytest.approx(1.0, rel=1e-3)
+    def test_tool_success_rate_mixed_success_and_error(self) -> None:
+        """tool_success_rate = (total - error) / total with mixed tool spans."""
+        spans = [
+            _make_span(name="execute_tool", start_time=1000.0),
+            _make_span(name="execute_tool", start_time=1001.0, status_code=SpanStatusCode.ERROR),
+        ]
+        metrics = compute_metrics(spans)
+        assert metrics.tool_success_rate == pytest.approx(0.5)
+
+    def test_tool_call_count_equals_execute_tool_span_count(self) -> None:
+        spans = [
+            _make_span(name="execute_tool", start_time=1000.0),
+            _make_span(name="execute_tool", start_time=1001.0),
+            _make_span(name="execute_tool", start_time=1002.0),
+        ]
+        metrics = compute_metrics(spans)
+        assert metrics.tool_call_count == 3
+
+    def test_error_tool_count_equals_error_status_count(self) -> None:
+        spans = [
+            _make_span(name="execute_tool", start_time=1000.0, status_code=SpanStatusCode.ERROR),
+            _make_span(name="execute_tool", start_time=1001.0, status_code=SpanStatusCode.ERROR),
+            _make_span(name="execute_tool", start_time=1002.0),
+        ]
+        metrics = compute_metrics(spans)
+        assert metrics.error_tool_count == 2
+
+    def test_iteration_count_equals_iteration_start_count(self) -> None:
+        spans = [
+            _make_span(name="iteration.start", start_time=1000.0),
+            _make_span(name="iteration.start", start_time=1001.0),
+            _make_span(name="iteration.start", start_time=1002.0),
+        ]
+        metrics = compute_metrics(spans)
+        assert metrics.iteration_count == 3
+
+    def test_iteration_count_zero_when_no_iteration_spans(self) -> None:
+        spans = [_make_span(name="chat", start_time=1000.0)]
+        metrics = compute_metrics(spans)
+        assert metrics.iteration_count == 0
+
+    def test_llm_call_count_equals_chat_span_count(self) -> None:
+        spans = [
+            _make_span(name="chat", start_time=1000.0),
+            _make_span(name="chat", start_time=1001.0),
+        ]
+        metrics = compute_metrics(spans)
+        assert metrics.llm_call_count == 2
+
+    def test_total_input_tokens_sums_chat_spans_not_root(self) -> None:
+        """Tokens are summed from chat spans only, NOT from invoke_agent root."""
+        spans = [
+            _make_span(
+                name="invoke_agent",
+                start_time=999.0,
+                attributes={GenAiAttr.USAGE_INPUT_TOKENS.value: 100},
+            ),
+            _make_span(
+                name="chat",
+                start_time=1000.0,
+                attributes={GenAiAttr.USAGE_INPUT_TOKENS.value: 10},
+            ),
+            _make_span(
+                name="chat",
+                start_time=1001.0,
+                attributes={GenAiAttr.USAGE_INPUT_TOKENS.value: 20},
+            ),
+        ]
+        metrics = compute_metrics(spans)
+        assert metrics.total_input_tokens == 30  # 10 + 20, NOT 130
+
+    def test_total_output_tokens_sums_chat_spans(self) -> None:
+        spans = [
+            _make_span(
+                name="chat",
+                start_time=1000.0,
+                attributes={GenAiAttr.USAGE_OUTPUT_TOKENS.value: 5},
+            ),
+            _make_span(
+                name="chat",
+                start_time=1001.0,
+                attributes={GenAiAttr.USAGE_OUTPUT_TOKENS.value: 15},
+            ),
+        ]
+        metrics = compute_metrics(spans)
+        assert metrics.total_output_tokens == 20
+
+    def test_total_reasoning_tokens_sums_chat_spans(self) -> None:
+        spans = [
+            _make_span(
+                name="chat",
+                start_time=1000.0,
+                attributes={GenAiAttr.USAGE_REASONING_TOKENS.value: 10},
+            ),
+            _make_span(
+                name="chat",
+                start_time=1001.0,
+                attributes={GenAiAttr.USAGE_REASONING_TOKENS.value: 20},
+            ),
+        ]
+        metrics = compute_metrics(spans)
+        assert metrics.total_reasoning_tokens == 30
+
+    def test_total_reasoning_tokens_zero_for_non_reasoning(self) -> None:
+        spans = [
+            _make_span(
+                name="chat",
+                start_time=1000.0,
+                attributes={GenAiAttr.USAGE_INPUT_TOKENS.value: 10},
+            ),
+        ]
+        metrics = compute_metrics(spans)
+        assert metrics.total_reasoning_tokens == 0
+
+    def test_api_latency_avg_s_averages_chat_durations(self) -> None:
+        chat1 = _make_span(name="chat", start_time=1000.0).model_copy(update={"end_time": 1002.0})
+        chat2 = _make_span(name="chat", start_time=1003.0).model_copy(update={"end_time": 1007.0})
+        metrics = compute_metrics([chat1, chat2])
+        # durations: 2.0 and 4.0 → avg 3.0
+        assert metrics.api_latency_avg_s == pytest.approx(3.0)
+
+    def test_cache_hit_rate_is_cache_read_over_prompt_total(self) -> None:
+        """cache_hit_rate = cache_read / (input + cache_read).
+
+        Span input_tokens is the UNCACHED count (TokenUsage semantics since
+        the responses-normalization fix), so the prompt total is
+        uncached + cached: 30 / (100 + 30).
+        """
+        spans = [
+            _make_span(
+                name="chat",
+                start_time=1000.0,
+                attributes={
+                    GenAiAttr.USAGE_INPUT_TOKENS.value: 100,
+                    GenAiAttr.USAGE_CACHE_READ_INPUT_TOKENS.value: 30,
+                },
+            ),
+        ]
+        metrics = compute_metrics(spans)
+        assert metrics.cache_hit_rate == pytest.approx(30 / 130)
+
+    def test_response_token_ratio_is_output_over_total(self) -> None:
+        spans = [
+            _make_span(
+                name="chat",
+                start_time=1000.0,
+                attributes={
+                    GenAiAttr.USAGE_INPUT_TOKENS.value: 30,
+                    GenAiAttr.USAGE_OUTPUT_TOKENS.value: 70,
+                },
+            ),
+        ]
+        metrics = compute_metrics(spans)
+        assert metrics.response_token_ratio == pytest.approx(0.7)  # 70/(30+70)
+
+    def test_has_reasoning_is_bool_of_reasoning_tokens(self) -> None:
+        # With reasoning tokens → True
+        with_reasoning = [
+            _make_span(
+                name="chat",
+                start_time=1000.0,
+                attributes={GenAiAttr.USAGE_REASONING_TOKENS.value: 1},
+            ),
+        ]
+        assert compute_metrics(with_reasoning).has_reasoning is True
+
+        # Without reasoning tokens → False
+        without_reasoning = [
+            _make_span(
+                name="chat",
+                start_time=1000.0,
+                attributes={GenAiAttr.USAGE_INPUT_TOKENS.value: 10},
+            ),
+        ]
+        assert compute_metrics(without_reasoning).has_reasoning is False
+
+    # ── extract_final_response fallback ────────────────────────────────
+
+    def test_extract_final_response_fallback_to_root_output(self) -> None:
+        """When no tool-call-free chat span exists, fall back to invoke_agent output."""
+        spans = [
+            _make_span(
+                name="invoke_agent",
+                start_time=1000.0,
+                attributes={GenAiAttr.LANGFUSE_OBSERVATION_OUTPUT.value: "root output"},
+            ),
+            _make_span(
+                name="chat",
+                start_time=1001.0,
+                attributes={
+                    GenAiAttr.OUTPUT_MESSAGES.value: [
+                        {
+                            "role": "assistant",
+                            "parts": [{"type": "text", "content": "tool call response"}],
+                        }
+                    ],
+                    GenAiAttr.OUTPUT_TOOL_CALLS.value: [{"tool_name": "calc", "arguments": "{}"}],
+                },
+            ),
+        ]
+        assert extract_final_response(spans) == "root output"
+
+    # ── Legacy helpers removed ─────────────────────────────────────────
+
+    def test_legacy_score_helpers_removed(self) -> None:
+        """Legacy scalar combine/cap/rating helpers are gone from the scoring module."""
+        from modex_agent.trace import scoring
+
+        public = {name for name in dir(scoring) if not name.startswith("_")}
+        assert "TrajectoryMetrics" in public
+        assert "compute_metrics" in public
+        assert not any("overall" in n for n in public)
+        assert not any("rating" in n for n in public)
 
 
 # ── Tests: Scope-aware filtering ───────────────────────────────────────
@@ -656,9 +1027,7 @@ class TestScopeAwareFiltering:
             store._spans.append(span)
 
         exporter = TrainingDataExporter(store, output_dir=tmp_path)
-        with caplog.at_level(
-            logging.WARNING, logger="modex_agent.trace.training_exporter"
-        ):
+        with caplog.at_level(logging.WARNING, logger="modex_agent.trace.training_exporter"):
             await exporter.export_sft(
                 session_ids=["tenant-1:agent-1", "tenant-2:agent-1"],
             )
@@ -681,9 +1050,7 @@ class TestScopeAwareFiltering:
             store._spans.append(span)
 
         exporter = TrainingDataExporter(store, output_dir=tmp_path)
-        with caplog.at_level(
-            logging.WARNING, logger="modex_agent.trace.training_exporter"
-        ):
+        with caplog.at_level(logging.WARNING, logger="modex_agent.trace.training_exporter"):
             await exporter.export_sft(
                 session_ids=["tenant-1:agent-1", "tenant-2:agent-1"],
                 allow_cross_tenant=True,
@@ -707,9 +1074,7 @@ class TestScopeAwareFiltering:
             store._spans.append(span)
 
         exporter = TrainingDataExporter(store, output_dir=tmp_path)
-        with caplog.at_level(
-            logging.WARNING, logger="modex_agent.trace.training_exporter"
-        ):
+        with caplog.at_level(logging.WARNING, logger="modex_agent.trace.training_exporter"):
             await exporter.export_sft(
                 session_ids=["conv-1:agent-1", "conv-1:agent-2"],
             )
@@ -799,22 +1164,31 @@ class TestDataModels:
             prompt="q",
             chosen="a",
             chosen_model="m",
-            chosen_rating=5,
+            chosen_tool_success_rate=1.0,
             rejected="b",
             rejected_model="m",
-            rejected_rating=1,
+            rejected_tool_success_rate=0.0,
         )
         with pytest.raises(ValidationError):
             pair.chosen = "c"  # type: ignore[misc]
 
-    def test_trajectory_score_frozen(self) -> None:
-        score = TrajectoryScore(
+    def test_trajectory_metrics_frozen(self) -> None:
+        metrics = TrajectoryMetrics(
             tool_success_rate=1.0,
-            reasoning_depth=10,
-            trajectory_compactness=0.5,
+            tool_call_count=1,
+            error_tool_count=0,
+            iteration_count=0,
+            llm_call_count=1,
+            total_input_tokens=10,
+            total_output_tokens=5,
+            total_reasoning_tokens=0,
+            api_latency_avg_s=0.1,
+            cache_hit_rate=0.0,
+            response_token_ratio=0.33,
+            has_reasoning=False,
         )
         with pytest.raises(ValidationError):
-            score.tool_success_rate = 0.5  # type: ignore[misc]
+            metrics.tool_success_rate = 0.5  # type: ignore[misc]
 
     def test_export_result_defaults(self) -> None:
         result = ExportResult(output_path=Path("/tmp/out.jsonl"))

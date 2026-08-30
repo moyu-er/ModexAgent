@@ -19,7 +19,12 @@ from pathlib import Path
 from typing import Any
 
 from modex_agent.agents.summarizer.abc import _get_registry
-from modex_agent.agents.summarizer.scoped_file_agent import ScopedFileAgent
+from modex_agent.agents.summarizer.outcomes import CompactionOutcome
+from modex_agent.agents.summarizer.scoped_file_agent import (
+    ScopedFileAgent,
+    UsageCollectingProvider,
+)
+from modex_agent.core.provider import LLMProvider
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import MessageRole
 
@@ -52,7 +57,7 @@ class SessionCompactorAgent(ScopedFileAgent):
 
     def __init__(
         self,
-        provider: Any,
+        provider: LLMProvider,
         config: SessionCompactorConfig | None = None,
     ) -> None:
         cfg = config or SessionCompactorConfig()
@@ -73,7 +78,7 @@ class SessionCompactorAgent(ScopedFileAgent):
         previous_summary: str | None = None,
         *,
         session_id: str = "session-compactor",
-    ) -> str:
+    ) -> CompactionOutcome:
         """Generate a compact summary from pruned messages.
 
         Args:
@@ -85,18 +90,20 @@ class SessionCompactorAgent(ScopedFileAgent):
             session_id: Session identifier for trace file disambiguation.
 
         Returns:
-            The compact summary text, or empty string on failure.
+            Summary text plus operation-local LLM usage, with an empty summary on failure.
         """
+        collector = UsageCollectingProvider(self._provider)
         transcript = self._serialize_messages(messages)
         if not transcript.strip():
             logger.warning("SessionCompactorAgent: empty transcript, skipping")
-            return ""
+            return CompactionOutcome(summary="", usage=None)
 
         system_prompt = self._build_system_prompt()
         user_msg = self._build_user_message(transcript, previous_summary)
 
         trace_path = Path.cwd() / ".modex" / "compact_traces" / f"{session_id}.jsonl"
-        ok = await self._run_agent(
+        content = await self._run_agent(
+            provider=collector,
             system_prompt=system_prompt,
             user_msg=user_msg,
             allowed_dirs=[],
@@ -107,21 +114,20 @@ class SessionCompactorAgent(ScopedFileAgent):
             temperature=self._config.temperature,
             max_output_tokens=self._config.max_output_tokens,
         )
-        if not ok:
+        if content is None:
             logger.warning("SessionCompactorAgent: _run_agent returned False")
-            return ""
+            return CompactionOutcome(summary="", usage=collector.operation_usage())
 
-        content = self._last_content
         if not content or not content.strip():
             logger.warning("SessionCompactorAgent: empty content after run")
-            return ""
+            return CompactionOutcome(summary="", usage=collector.operation_usage())
 
         # Strip think tags as a safety net (LLMNode already does this, but
         # the content from the emitter may not have been through that path).
         from modex_agent.utils.helpers import strip_think
 
         content = strip_think(content) or content
-        return content
+        return CompactionOutcome(summary=content, usage=collector.operation_usage())
 
     # -- serialization -------------------------------------------------------
 
@@ -133,6 +139,7 @@ class SessionCompactorAgent(ScopedFileAgent):
 
         Format:
             [User]: <content>
+            [Assistant reasoning]: <reasoning, truncated to tool_output_max_chars>
             [Assistant]: <content>
             [Assistant tool calls]: tool_name(key=value, ...)
             [Tool result]: <content, truncated to tool_output_max_chars>
@@ -163,6 +170,14 @@ class SessionCompactorAgent(ScopedFileAgent):
                 content = str(content) if content is not None else ""
 
             if role == str(MessageRole.ASSISTANT):
+                # reasoning_content persists on every assistant message but is
+                # replayed by providers only on tool-call turns; compaction
+                # summarizes the full persisted record.
+                reasoning = msg.get("reasoning_content")
+                if isinstance(reasoning, str) and reasoning.strip():
+                    if len(reasoning) > max_tool:
+                        reasoning = reasoning[:max_tool] + f"\n... ({len(reasoning)} chars total)"
+                    lines.append(f"[Assistant reasoning]: {reasoning}")
                 # Output tool calls if present.
                 tool_calls = msg.get("tool_calls")
                 if tool_calls and isinstance(tool_calls, Sequence):

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import logging
 import shutil
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -13,36 +15,55 @@ if TYPE_CHECKING:
     from bot.service.core import BotService
     from modex_agent.persistence.managers import WorkspacePersistenceManager
 
-from bot.service._runtime_builders import (
+from bot.service.builders import (
     _build_hook_runner,
     _build_main_command_processor,
-    _collect_run_hooks,
+    resolve_declared_root_prompt,
 )
 from bot.service.model_choice import ModelChoiceRegistry
-from bot.service.pool.communication import register_communication_tools
+from bot.service.pool.declaration import (
+    DeclaredPoolBuild,
+    ScopeBoot,
+    apply_workspace_resource_selection,
+    boot_scope_declaration,
+    declared_pool_build,
+)
 from bot.service.session_pool_index import SessionPoolIndex
 from bot.workspace.background import BackgroundTaskRunner
+from bot.workspace.dynamic_workspaces import dynamic_workspace_declaration_path
 from bot.workspace.handle import (
     PoolWorkspaceResources,
     WorkspaceHandle,
     WorkspaceResolverCell,
 )
 from bot.workspace.pool_data import build_pool_data
+from bot.workspace.wiring.stack import declared_assembly_deps
 from modex_agent.approval.ui import IMUserInterface
+from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
 from modex_agent.hook.builtin import CurrentTimeInjectionHook
+from modex_agent.hook.builtin.control_drain import (
+    ControlDrainInterceptor,
+    LlmCancelInterceptor,
+)
 from modex_agent.hook.builtin.knowledge_hook import KnowledgeHook
+from modex_agent.interceptor.builtin import ToolResultLimitInterceptor
+from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
-from modex_agent.multi_agent.comm_kind import AgentCommKind
-from modex_agent.multi_agent.pool_config import PoolStore
+from modex_agent.multi_agent.communication.peer_resolution import (
+    peer_links_from_declaration,
+    resolve_peer_targets,
+)
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.specs import PoolSpec
-from modex_agent.multi_agent.pool_router import PoolRouter
-from modex_agent.multi_agent.tools import CommunicationTarget
+from modex_agent.multi_agent.pool_router import PoolRouter, agent_pool_ownership
 from modex_agent.persistence.config import PersistenceBackend
+from modex_agent.tools.overflow.cleaner import OverflowCleaner
+from modex_agent.tools.overflow.handler import ToolResultOverflowHandler
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
+from modex_agent.tools.overflow.store import ToolOverflowStore
 from modex_agent.tools.terminal.managers import TerminalManagerBase
+from modex_agent.tools.terminal.persistent_bash import PersistentBashTool
 from modex_agent.workspace.context import WorkspaceContext
 
 logger = logging.getLogger(__name__)
@@ -50,6 +71,43 @@ logger = logging.getLogger(__name__)
 
 class _PoolShutdownIncompleteError(RuntimeError):
     pass
+
+
+class ScopeBootRequiredError(RuntimeError):
+    """No scope declaration found — the legacy roster road is deleted.
+
+    The old ``config/pools/<name>/pool.yml`` + ``templates/*.yml`` format
+    is no longer read; pools are declared in the scope declaration
+    (``config/scopes/bot.yml``). The message points the operator at the
+    migration path instead of silently mis-reading the old format.
+    """
+
+    def __init__(self, declaration_path: Path, project_dir: Path) -> None:
+        old_pools_dir = project_dir / "config" / "pools"
+        detail = (
+            f"no scope declaration at {declaration_path} — pools are declared "
+            "in the scope declaration and the legacy roster format is no "
+            "longer read"
+        )
+        if old_pools_dir.exists():
+            detail += (
+                f" (found legacy {old_pools_dir} — migrate its pools into the"
+                " declaration: each config/pools/<name>/pool.yml main agent"
+                " and templates/*.yml subagent become one pool tree under"
+                " the declaration's workspace.pools)"
+            )
+        super().__init__(detail)
+
+
+def _declaration_road_pools(scope_boot: ScopeBoot) -> list[str]:
+    """Every pool the declaration hosts, in declaration order (the pool
+    list source since ticket 11 — the PoolStore disk scan is deleted).
+    """
+    if scope_boot.spec.pool is not None:
+        return [scope_boot.spec.pool.name]
+    if scope_boot.spec.workspace is not None:
+        return [pool.name for pool in scope_boot.spec.workspace.pools]
+    return []
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -90,27 +148,72 @@ async def _assemble_resources(
     Re-homes FAITHFULLY the per-workspace construction the old
     ``_on_workspace_activate`` + ``_initialize_pool`` did. Uses
     PER-WORKSPACE broker/inbox/bus/interceptor rooted at ``ctx.paths``.
+
+    Ticket 14 contract: ``service._app_config`` is the declaration-resolved
+    config view (``apply_workspace_resource_selection`` ran once at
+    ``BotService.initialize``). Ticket 17 re-applies the selection for THIS
+    workspace's declaration below — idempotent for the primary declaration,
+    effective for a dynamic workspace's backend override.
     """
     from bot.service.builders import build_pool_routing_store, build_session_store
     from bot.service.pool import create_pool
-    from bot.workspace.wiring.pool_wiring import (
-        _build_workspace_interceptor_chain,
-        _wire_pool_to_resources,
-    )
-    from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
+    from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
 
     app_config = service._app_config
     if app_config is None:
         raise RuntimeError("AppConfig must be loaded before workspace resource assembly")
-    pool_store = PoolStore(base_dir=service._project_dir)
-    pool_names = [s.name for s in pool_store.list_pools()]
-    pool_specs: dict[str, PoolSpec] = {name: pool_store.read_pool(name) for name in pool_names}
+
+    # Ticket 11 — the scope declaration is the single pool source and the
+    # single boot road: load + validate (V1-V11 incl. the V10 graph
+    # cross-check) + compile the FULL declaration once per workspace
+    # build; every declared pool consumes the products. A deployment
+    # WITHOUT a declaration fails loudly — the legacy roster road
+    # (config/pools/<name>/pool.yml + templates/*.yml) is deleted and no
+    # longer read.
+    # Ticket 17 — a runtime-created workspace boots ITS OWN declaration
+    # (config/scopes/workspaces/<name>.yml); every other target (home,
+    # /cd'd directories) boots the primary declaration as before.
+    workspace_graphs_dir = ctx.target / "config" / "graphs"
+    global_graphs_dir = service._project_dir / "config" / "graphs"
+    declaration_path = service._project_dir / "config" / "scopes" / "bot.yml"
+    if not declaration_path.exists():
+        raise ScopeBootRequiredError(declaration_path, service._project_dir)
+    dynamic_declaration = dynamic_workspace_declaration_path(service._project_dir, ctx.target)
+    if dynamic_declaration is not None:
+        declaration_path = dynamic_declaration
+    scope_boot = boot_scope_declaration(
+        declaration_path=declaration_path,
+        project_dir=service._project_dir,
+        data_dir=ctx.paths.root,
+        graphs_dirs=(workspace_graphs_dir, global_graphs_dir),
+        default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        registry=service._component_registry,
+        observability=app_config.observability,
+    )
+    # Ticket 17 — per-workspace resource selection: apply THIS workspace's
+    # declaration overrides onto the service config view (idempotent for
+    # the primary declaration, whose overrides were resolved once at
+    # service boot; a dynamic workspace's backend selection takes effect
+    # here). A per-workspace paths override is refused loudly — the
+    # WorkspaceContext is built with the service-level layout, so a
+    # differing data_dir_name would silently split the workspace's stores.
+    effective_app_config = apply_workspace_resource_selection(app_config, scope_boot.spec)
+    if effective_app_config.paths.data_dir_name != app_config.paths.data_dir_name:
+        raise RuntimeError(
+            f"{declaration_path.name}: declares paths.data_dir_name "
+            f"{effective_app_config.paths.data_dir_name!r} but the workspace "
+            "context is built with the service-level layout "
+            f"({app_config.paths.data_dir_name!r}) — a per-workspace path "
+            "layout would silently split this workspace's stores"
+        )
+    app_config = effective_app_config
+    pool_names = sorted(_declaration_road_pools(scope_boot))
 
     logger.info(
         "[workspace-build] target=%s mcp_registry=%s pools=%s",
         ctx.target,
         "set" if service._mcp_registry is not None else "None",
-        list(pool_specs),
+        pool_names,
     )
 
     # T26: open the workspace SQLite DB when backend is SQLITE. The
@@ -138,25 +241,34 @@ async def _assemble_resources(
         if service._bot_model_config is not None
         else None
     )
-    assembly_deps: dict[str, PoolAssemblyDeps] = _build_assembly_deps_for_pools(
-        pool_specs=pool_specs,
-        max_context_tokens=max_context_tokens,
-    )
+    declared_builds: dict[str, DeclaredPoolBuild] = {}
+    for name in pool_names:
+        declared_builds[name] = declared_pool_build(scope_boot, name)
+    # ONE assembly-deps road: position-derived defaults from each pool's
+    # compiled root (ticket 14; the pool.yml fallback synthesis died with
+    # the legacy road).
+    assembly_deps: dict[str, PoolAssemblyDeps] = {}
+    for name in pool_names:
+        assembly_deps[name] = declared_assembly_deps(
+            declared_builds[name].root,
+            max_context_tokens=max_context_tokens,
+        )
 
     # 1. Workspace-level stores.
     ctx.paths.mkdir_skeleton()
-    overflow_store = LocalFileToolOverflowStore(
-        workspace=ctx.paths.overflow_dir
-    )
+    overflow_store = LocalFileToolOverflowStore(workspace=ctx.paths.overflow_dir)
     session_index_store = build_session_store(
         app_config,
         persistence,
         session_index_dir=ctx.paths.session_index_dir,
         pool_resolver=lambda session: (
-            service._pool_session_store.get(session.session_id_prefix, "")
-            if service._pool_session_store is not None
-            else ""
-        ) or "main",
+            (
+                service._pool_session_store.get(session.session_id_prefix, "")
+                if service._pool_session_store is not None
+                else ""
+            )
+            or "main"
+        ),
         data_dir_name=app_config.paths.data_dir_name,
     )
     from modex_agent.core.session_registry import InMemorySessionRegistry
@@ -217,21 +329,40 @@ async def _assemble_resources(
         transcript_store=service._transcript_store,
         workspace_transcript_store=workspace_transcript_store,
         kb_provider=kb_provider,
+        component_registry=service._component_registry,
         session_pool_index=session_pool_index,
     )
     state.resources = resources
     # 3. Per-workspace interceptor chain, rooted at THIS workspace's overflow dir.
-    shared_interceptor_chain = _build_workspace_interceptor_chain(service, overflow_store)
+    shared_interceptor_chain = build_tool_overflow_interceptor_chain(
+        overflow_store,
+        control_channel=service.control_channel,
+    )
 
-    plugin_integration = service.plugin_integration
-    if plugin_integration is None:
-        raise RuntimeError("PluginIntegration must be initialized before workspace resource assembly")
     # Shared (service-level) infra reused across this workspace's pools.
     shared_hooks = [
-        CurrentTimeInjectionHook(),       # StartNodeTurnHook
-        KnowledgeHook(),                  # BeforeTurnHook + AfterTurnHook — independent, no renewal
-        *_collect_run_hooks(plugin_integration, app_config),
+        CurrentTimeInjectionHook(),  # StartNodeTurnHook
+        KnowledgeHook(),  # BeforeTurnHook + AfterTurnHook — independent, no renewal
     ]
+    # The observability-driven training hooks moved here from the retired
+    # DefaultAgentFactory injection (the `tracing` capability convergence):
+    # both are stateless per-turn readers (ctx.runtime.services), so the
+    # deployment-level shared runner preserves behavior for every native
+    # agent. The eval-side env-driven flags stay global-config owned.
+    observability = app_config.observability
+    if observability is not None:
+        from modex_agent.hook.builtin.checkpoint import CheckpointHook
+        from modex_agent.hook.builtin.training_data import TrainingDataHook
+
+        if observability.checkpoint_per_iteration:
+            shared_hooks.append(CheckpointHook())
+        if observability.training_relevant:
+            shared_hooks.append(
+                TrainingDataHook(
+                    max_iterations=observability.training_max_iterations,
+                    max_tokens=observability.training_max_tokens,
+                )
+            )
     shared_hook_runner = _build_hook_runner(shared_hooks)
     im_ui = IMUserInterface(
         output_adapter=service.output_adapter,
@@ -250,10 +381,14 @@ async def _assemble_resources(
         pool_data[name] = await build_pool_data(
             ctx,
             name,
-            pool_specs[name],
+            declared_builds[name].pool.root_agent,
             service._default_provider,
             assembly_deps[name],
-            service._system_prompt_for(name),
+            await resolve_declared_root_prompt(
+                declared_builds[name],
+                service._project_dir,
+                service._component_registry,
+            ),
             app_config=app_config,
             persistence=persistence,
         )
@@ -262,11 +397,12 @@ async def _assemble_resources(
     #    drop workspace_manager; add pool_data + workspace_handle; broker/
     #    inbox/bus come from THIS workspace. The resolver cell is filled with
     #    R after assembly so per-turn pool_data resolution lands back here.
+    #    Every pool boots from the scope declaration (ticket 11).
     resolver_cell = WorkspaceResolverCell()
     for name in pool_names:
         pools[name] = await create_pool(
             pool_name=name,
-            pool_spec=pool_specs[name],
+            declared=declared_builds[name],
             assembly_deps=assembly_deps[name],
             project_dir=service._project_dir,
             data_dir=ctx.paths.root,
@@ -283,6 +419,11 @@ async def _assemble_resources(
             pool_data=pool_data[name],
             workspace_handle=WorkspaceHandle(target=ctx.target, data_root=ctx.paths.root),
             workspace_resolver=resolver_cell,
+            media_store_resolver=(
+                functools.partial(service._media_store.store_for, name)
+                if service._media_store is not None
+                else None
+            ),
             emitter_factory=service.emitter_factory,
             output_adapter_factory=service._output_adapter_factory,
             on_subagent_created=service._on_subagent_created,
@@ -299,42 +440,43 @@ async def _assemble_resources(
             kb_provider=resources.kb_provider,
             strategy_registry=service._strategy_registry,
             session_pool_index=session_pool_index,
+            workspace_registry=service.workspace_stack.registry
+            if service.workspace_stack is not None
+            else None,
+            workspace_resources=resources,
+            component_registry=service._component_registry,
+            workspace_spec=scope_boot.spec.workspace,
         )
 
-    # Phase 2: cross-pool peer wiring + communication tool registration. Must
-    # run after all Phase 1 pools are built so subagent targets precede peer
-    # targets in each store's insertion order, and so communication tools
-    # (task / send_to_peer) are registered once with the full target set.
-    pool_store = PoolStore(base_dir=service.project_dir)
-    for pool_name, instance in resources.pools.items():
-        pool_tree = pool_store.read_pool(pool_name)
-        for peer_pool_name in pool_tree.peers:
-            peer_instance = resources.pools[peer_pool_name]
-            peer_tree = pool_store.read_pool(peer_pool_name)
-            description = peer_tree.main.description or f"Peer pool {peer_pool_name}'s main agent"
-            target = CommunicationTarget(
-                name=peer_instance.main_agent_name,
-                kind=AgentCommKind.NORMAL,
-                pool_name=peer_pool_name,
-                tree_ref=peer_instance.tree_manager,
-                description=description,
-                execution_strategy=peer_tree.main.execution_strategy,
-            )
-            instance.target_store.add(target)
-        if instance.requires_main_agent_tools:
-            register_communication_tools(instance)
+    # Phase 2: cross-pool peer wiring. Must run after all Phase 1 pools are
+    # built so subagent targets precede peer targets in each store's
+    # insertion order. Ticket 13: peer targets resolve through the FW
+    # resolution service; the links arrive over the scope path (the single
+    # link source since ticket 11 deleted the legacy pool.yml feeding).
+    resolve_peer_targets(resources.pools, peer_links_from_declaration(scope_boot.spec))
+
+    # Stamp the `tracing` capability supply's store onto each pool's
+    # snapshot: per-turn consumers (turn_context_builder's runtime
+    # services, TrainingDataHook) read ``pool_data.trace_store`` — the
+    # supply is the construction authority, the snapshot the read face.
+    # Pools without the capability (external pools) keep ``None``.
+    from modex_agent.plugins.defaults.capabilities.tracing import TraceSupply
+
+    for name, pi in pools.items():
+        deps = pi.pool.materialize_deps
+        supply = deps.capability_supply.get("tracing") if deps is not None else None
+        if isinstance(supply, TraceSupply) and pool_data[name].trace_store is None:
+            object.__setattr__(pool_data[name], "trace_store", supply.store)
 
     # Wire each pool's main pipeline + communication service to THIS workspace
-    # (R), then run the experience-hook wiring that used to live in
-    # _wire_pool_to_workspace. Subagent pipelines pick up R via the resolver
-    # cell through the factory wrap.
+    # (R). Subagent pipelines pick up R via the resolver cell through the
+    # factory wrap.
     resolver_cell.set(resources)
     # Task 7: each pool now owns its per-poll InboxPoller (constructed + started
     # inside create_pool), so the workspace-level shared-bus signal fan-out is
     # superseded. The Drainer + idle poller (still spawned per pool until Task
     # 8 disables them) operate on each pool's own bus.
-    for name, pi in pools.items():
-        _wire_pool_to_resources(pi, name, assembly_deps[name], resources, service._default_provider)
+    for pi in pools.values():
         # Start this pool's output broker bridge so agent output published to
         # THIS workspace's broker reaches the output adapter. This MUST happen
         # at materialization for EVERY workspace — home and non-home alike —
@@ -353,6 +495,7 @@ async def _assemble_resources(
     from bot.graph.output_adapter import WebUIGraphOutputAdapter
     from bot.graph.spec_loader import GraphSpecLoader
     from modex_agent.orchestration import GraphOrchestrator, SqliteCoordinatorFactory
+    from modex_agent.plugins.assembly.graph_schema import build_state_schema_compiler
     from modex_graph import (
         DefaultGraphState,
         DelayNodeFactory,
@@ -390,14 +533,14 @@ async def _assemble_resources(
         coordinator_factory=coordinator_factory,
         output_adapter=output_adapter,
         io_store=graph_io_store,
+        # Lets declarative state_schema specs resolve plugin data-namespace types.
+        state_schema_compiler=build_state_schema_compiler(service._component_registry),
     )
 
     # Per-workspace config/graphs: first materialize copies from the global
     # template; subsequent boots load the workspace-local copy so PUT edits
     # survive restart. ctx.target (== resources.target) converges with
     # handle_put_spec; ctx.paths.root would be the .modex data subdir instead.
-    workspace_graphs_dir = ctx.target / "config" / "graphs"
-    global_graphs_dir = service._project_dir / "config" / "graphs"
     if not workspace_graphs_dir.exists() and global_graphs_dir.exists():
         shutil.copytree(global_graphs_dir, workspace_graphs_dir)
     if workspace_graphs_dir.exists():
@@ -429,7 +572,10 @@ async def _assemble_resources(
             )
             default_pool = fallback
 
-    # 6. Background tasks (dream/curator) — per workspace.
+    # 6. Background tasks (dream) — per workspace. The per-pool experience
+    #    curator loops moved to the experience capability supply (SPEC
+    #    §8.3 D4): pool assembly starts them, AgentPool.shutdown_all stops
+    #    them — the workspace runner no longer touches curators.
     background = BackgroundTaskRunner(
         pool_data=pool_data,
         assembly_deps=assembly_deps,
@@ -472,6 +618,7 @@ async def _assemble_resources(
         pools=pools,
         session_store=session_store,
         default_pool=default_pool,
+        agent_pool_ownership=agent_pool_ownership(scope_boot.spec),
     )
 
     return resources
@@ -481,9 +628,10 @@ async def _stop_resources(resources: PoolWorkspaceResources) -> None:
     """Tear down one workspace's resources (re-home of _on_workspace_deactivate).
 
     Stop order: background tasks → terminals → pools (MCP release + shutdown +
-    broker bridges) → broker → graph orchestrator → graph connection. The
-    workspace DB closes LAST (after all DB-writing producers have stopped and
-    final flushes complete) so no write races a closing connection.
+    broker bridges) → broker → per-pool trace stores (bounded OTLP flush) →
+    graph orchestrator → graph connection. The workspace DB closes LAST
+    (after all DB-writing producers have stopped and final flushes complete)
+    so no write races a closing connection.
     """
     pools_ok = False
     try:
@@ -501,11 +649,7 @@ async def _stop_resources(resources: PoolWorkspaceResources) -> None:
                 if resources.graph_conn is not None:
                     resources.graph_conn.close()
             finally:
-                if (
-                    resources.persistence is not None
-                    and resources.owns_persistence
-                    and pools_ok
-                ):
+                if resources.persistence is not None and resources.owns_persistence and pools_ok:
                     await resources.persistence.close()
 
 
@@ -516,10 +660,16 @@ async def _stop_pools(resources: PoolWorkspaceResources) -> None:
     tasks: list[asyncio.Task[None]] = []
     for pi in resources.pools.values():
         mgr = pi.terminal_manager
-        if mgr is None:
-            continue
-        for term_name in list(mgr.list_names()):
-            tasks.append(asyncio.create_task(_close_terminal(mgr, term_name)))
+        if mgr is not None:
+            for term_name in list(mgr.list_names()):
+                tasks.append(asyncio.create_task(_close_terminal(mgr, term_name)))
+        # Fallback persistent bash (no terminal manager): the registered
+        # "bash" tool IS the shell owner — close it so the PTY child is
+        # reaped at pool shutdown. Idempotent (safe with the eval roster's
+        # own trial-teardown close).
+        bash_tool = pi.tool_manager.get_tool("bash")
+        if isinstance(bash_tool, PersistentBashTool):
+            tasks.append(asyncio.create_task(_close_persistent_bash(bash_tool)))
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
     pools_stopped = True
@@ -546,6 +696,10 @@ async def _stop_pools(resources: PoolWorkspaceResources) -> None:
         raise _PoolShutdownIncompleteError("pool shutdown incomplete")
     if resources.transcript_store is not None:
         resources.transcript_store.release_workspace(resources.ctx.paths.sessions_dir)
+    for pool_data in resources.pool_data.values():
+        if pool_data.trace_store is not None:
+            with contextlib.suppress(BaseException):
+                pool_data.trace_store.close()
     if resources.owned_pool_routing_store is not None:
         with contextlib.suppress(BaseException):
             resources.owned_pool_routing_store.close()
@@ -556,3 +710,32 @@ async def _close_terminal(mgr: TerminalManagerBase, name: str) -> None:
         await mgr.close(name)
     except BaseException:
         logger.debug("terminal close failed for %s", name, exc_info=True)
+
+
+async def _close_persistent_bash(bash: PersistentBashTool) -> None:
+    try:
+        await bash.close()
+    except BaseException:
+        logger.debug("persistent bash close failed", exc_info=True)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Workspace-shared interceptor chain + legacy-road pool wiring (folded in
+# from the deleted pool_wiring.py — ticket 14)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def build_tool_overflow_interceptor_chain(
+    overflow_store: ToolOverflowStore,
+    *,
+    control_channel: InMemoryControlChannel | None = None,
+) -> InterceptorChain:
+    """Build one overflow chain, optionally including control interceptors."""
+    chain = InterceptorChain()
+    overflow_cleaner = OverflowCleaner(overflow_store)
+    overflow_handler = ToolResultOverflowHandler(store=overflow_store, cleaner=overflow_cleaner)
+    chain.add(ToolResultLimitInterceptor(overflow_handler=overflow_handler, max_chars=50_000))
+    if control_channel is not None:
+        chain.add(ControlDrainInterceptor(channel=control_channel))
+        chain.add(LlmCancelInterceptor(channel=control_channel))
+    return chain

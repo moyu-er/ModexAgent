@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.control.exceptions import PolicyViolation
+from modex_agent.control.exceptions import PolicyViolationError
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
@@ -171,12 +171,12 @@ async def test_error_ignore_policy() -> None:
 
 @pytest.mark.asyncio
 async def test_error_abort_policy() -> None:
-    """With ABORT policy, exceptions propagate as PolicyViolation."""
+    """With ABORT policy, exceptions propagate as PolicyViolationError."""
     hook = _FailingFinallyGraphHook()
     runner = HookRunner([HookSpec(hook, on_error=HookErrorPolicy.ABORT)])
     ctx = _make_minimal_context()
 
-    with pytest.raises(PolicyViolation, match="failing_finally_graph"):
+    with pytest.raises(PolicyViolationError, match="failing_finally_graph"):
         await runner.dispatch(
             HookPoint.FINALLY_GRAPH,
             ctx,

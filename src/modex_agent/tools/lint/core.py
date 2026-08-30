@@ -251,11 +251,12 @@ class LintRegistry:
 
         issues: list[LintIssue] = []
         for r in results:
-            if isinstance(r, Exception):
-                # fail-open: a crashing linter doesn't break others
-                logger.warning("Linter crashed: %s", r, exc_info=True)
-                continue
-            issues.extend(r.issues)
+            match r:
+                case BaseException():
+                    # fail-open: a crashing linter doesn't break others
+                    logger.warning("Linter crashed: %s", r, exc_info=True)
+                case LintResult():
+                    issues.extend(r.issues)
 
         # Sort: (line, column) ascending; line=0 (unstructured) sorts last
         issues.sort(key=lambda i: (i.line if i.line > 0 else float("inf"), i.column))

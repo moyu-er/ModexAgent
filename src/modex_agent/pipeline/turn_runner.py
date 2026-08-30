@@ -519,7 +519,7 @@ class ReActTurnRunner(TurnRunner):
         if turn_request is None:
             return None
 
-        sanitized_content, media_blocks, media_processor = await self._builder.preprocess(
+        sanitized_content = await self._builder.preprocess(
             input_msg,
             session_id,
             input_metadata,
@@ -558,8 +558,6 @@ class ReActTurnRunner(TurnRunner):
             input_msg,
             input_metadata,
             sanitized_content,
-            media_blocks,
-            media_processor,
             ctx_mgr,
             route_result,
             is_approval_cmd,
@@ -574,7 +572,6 @@ class ReActTurnRunner(TurnRunner):
             ctx_mgr,
             input_metadata=input_metadata,
             pool_data=pool_data,
-            inline_attachments=input_msg.attachments_resolved,
             workspace=input_msg.workspace,
             turn_descriptor=turn_descriptor,
         )

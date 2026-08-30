@@ -13,9 +13,16 @@ from modex_agent.interceptor.abc import (
     ToolCallNext,
 )
 from modex_agent.tools.overflow.handler import ToolResultOverflowHandler
+from modex_agent.tools.overflow.truncate import (
+    DEFAULT_HEAD_RATIO,
+    DEFAULT_TAIL_RATIO,
+    render_overflow_text,
+    split_head_tail,
+)
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
+    from modex_agent.tools.overflow.store import ToolOverflowStore
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +33,11 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
     """Tool result overflow interceptor.
 
     When a tool result exceeds *max_chars*, the full content is persisted
-    to disk and the model receives truncated text with a path to the full
-    output. Falls back to simple truncation when *overflow_handler* is None.
+    to disk and the model receives head + elision marker + tail + a path to
+    the full output. Error results are bounded too — errors, stack traces,
+    and exit codes cluster at the END of tool output. Falls back to the same
+    head/tail shape without a persisted path when *overflow_handler* is None
+    or storing fails.
     """
 
     @property
@@ -39,16 +49,20 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
         overflow_handler: ToolResultOverflowHandler | None = None,
         max_chars: int = _DEFAULT_MAX_CHARS,
         session_id_provider: Callable[[AgentContext], str] | None = None,
+        head_ratio: float = DEFAULT_HEAD_RATIO,
+        tail_ratio: float = DEFAULT_TAIL_RATIO,
     ) -> None:
         self._handler = overflow_handler
         self._max_chars = max_chars
         self._get_session_id = session_id_provider or self._default_session_id
+        self._head_ratio = head_ratio
+        self._tail_ratio = tail_ratio
 
     @property
     def handler(self) -> ToolResultOverflowHandler | None:
         return self._handler
 
-    def repoint_overflow_store(self, store: object) -> None:
+    def repoint_overflow_store(self, store: ToolOverflowStore) -> None:
         """Retarget the overflow handler's store (workspace switch).
 
         No-op when this interceptor has no overflow handler installed.
@@ -64,25 +78,25 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
     ) -> ToolResult:
         result: ToolResult = await next_call()  # type: ignore[misc]
 
-        # 1. Skip if already processed, has error, or no content
-        if result.error or not result.content or result.overflow_processed:
+        # 1. Skip if already processed
+        if result.overflow_processed:
             return result
 
-        # 2. Short result — pass through
+        # 2. Short result — pass through. Error results are NOT exempt:
+        #    bounding only shrinks the rendered content, the error flag is
+        #    preserved on the rebuilt ToolResult.
         result_str = result.message_content()
-        if len(result_str) <= self._max_chars:
+        if not result_str or len(result_str) <= self._max_chars:
             return result
 
-        # 3. No handler — fallback to old truncation
+        # 3. No handler — head/tail truncation, full output NOT persisted
         if self._handler is None:
-            truncated = result_str[: self._max_chars] + (
-                f"\n... (truncated, {len(result_str)} chars total)"
-            )
             return ToolResult.from_text(
                 result.tool_name,
-                truncated,
+                self._render_unpersisted(result_str),
                 call_id=result.call_id,
                 execution_time=result.execution_time,
+                error=result.error,
                 overflow_processed=False,
             )
 
@@ -103,8 +117,9 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
             logger.exception("Overflow store failed for %s/%s", session_id, tool_call_id)
             return ToolResult.from_text(
                 result.tool_name,
-                result_str[: self._max_chars],
+                self._render_unpersisted(result_str),
                 call_id=result.call_id,
+                error=result.error,
                 overflow_processed=False,
             )
 
@@ -122,7 +137,20 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
             result.tool_name,
             overflow_content,
             call_id=result.call_id,
+            error=result.error,
             overflow_processed=True,
+        )
+
+    def _render_unpersisted(self, content: str) -> str:
+        """Head/tail truncation for paths where the full output is NOT persisted."""
+        head_chars, tail_chars = split_head_tail(
+            self._max_chars, self._head_ratio, self._tail_ratio
+        )
+        return render_overflow_text(
+            content,
+            head_chars=head_chars,
+            tail_chars=tail_chars,
+            full_output_path=None,
         )
 
     @staticmethod

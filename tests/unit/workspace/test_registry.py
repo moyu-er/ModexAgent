@@ -1,4 +1,4 @@
-"""Tests for framework.workspace.registry.WorkspaceRegistry (stub R + stub factory)."""
+"""Tests for framework.workspace.registry.ScopeRegistry (stub R + stub factory)."""
 
 from __future__ import annotations
 
@@ -8,17 +8,17 @@ from pathlib import Path
 import pytest
 
 from modex_agent.workspace.context import WorkspaceContext
-from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.registry import ScopeRegistry
 from modex_agent.workspace.store import GlobalWorkspaceStore
 
 from ._stubs import StubFactory, StubResources
 
 
 @pytest.fixture
-def registry(tmp_path: Path) -> WorkspaceRegistry[StubResources]:
+def registry(tmp_path: Path) -> ScopeRegistry[StubResources]:
     home = tmp_path / "proj"
     home.mkdir()
-    return WorkspaceRegistry(
+    return ScopeRegistry(
         home=home,
         data_dir_name=".modex",
         factory=StubFactory(),
@@ -33,7 +33,7 @@ async def test_initialize_loads_persisted_contexts(tmp_path: Path) -> None:
     target.mkdir()
     store = GlobalWorkspaceStore(home=home, data_dir_name=".modex")
     await store.save_known_targets([target])
-    registry = WorkspaceRegistry(
+    registry = ScopeRegistry(
         home=home,
         data_dir_name=".modex",
         factory=StubFactory(),
@@ -46,13 +46,13 @@ async def test_initialize_loads_persisted_contexts(tmp_path: Path) -> None:
 
 
 async def test_home_context_always_present(
-    registry: WorkspaceRegistry[StubResources],
+    registry: ScopeRegistry[StubResources],
 ) -> None:
     assert registry.home_context.is_home is True
 
 
 async def test_get_or_open_registers_non_home(
-    registry: WorkspaceRegistry[StubResources], tmp_path: Path
+    registry: ScopeRegistry[StubResources], tmp_path: Path
 ) -> None:
     target = tmp_path / "wsB"
     target.mkdir()
@@ -67,7 +67,7 @@ async def test_materialize_is_lazy_and_cached(
     home = tmp_path / "proj"
     home.mkdir()
     factory = StubFactory()
-    registry = WorkspaceRegistry(
+    registry = ScopeRegistry(
         home=home,
         data_dir_name=".modex",
         factory=factory,
@@ -98,7 +98,7 @@ async def test_concurrent_materialize_same_target_dedups(tmp_path: Path) -> None
     home = tmp_path / "proj"
     home.mkdir()
     factory = _SlowFactory()
-    registry = WorkspaceRegistry(
+    registry = ScopeRegistry(
         home=home,
         data_dir_name=".modex",
         factory=factory,
@@ -115,7 +115,7 @@ async def test_concurrent_materialize_same_target_dedups(tmp_path: Path) -> None
 
 
 async def test_evict_releases_cache_and_rematerializes_fresh(
-    registry: WorkspaceRegistry[StubResources], tmp_path: Path
+    registry: ScopeRegistry[StubResources], tmp_path: Path
 ) -> None:
     target = tmp_path / "wsB"
     target.mkdir()
@@ -133,7 +133,7 @@ async def test_no_eviction_when_under_cap(tmp_path: Path) -> None:
     home = tmp_path / "proj"
     home.mkdir()
     factory = StubFactory()
-    registry = WorkspaceRegistry(
+    registry = ScopeRegistry(
         home=home,
         data_dir_name=".modex",
         factory=factory,
@@ -156,7 +156,7 @@ async def test_eviction_of_oldest_when_over_cap(tmp_path: Path) -> None:
     home = tmp_path / "proj"
     home.mkdir()
     factory = StubFactory()
-    registry = WorkspaceRegistry(
+    registry = ScopeRegistry(
         home=home,
         data_dir_name=".modex",
         factory=factory,
@@ -186,7 +186,7 @@ async def test_rematerialization_after_eviction(tmp_path: Path) -> None:
     home = tmp_path / "proj"
     home.mkdir()
     factory = StubFactory()
-    registry = WorkspaceRegistry(
+    registry = ScopeRegistry(
         home=home,
         data_dir_name=".modex",
         factory=factory,
@@ -212,7 +212,7 @@ async def test_lru_order_updates_on_access(tmp_path: Path) -> None:
     home = tmp_path / "proj"
     home.mkdir()
     factory = StubFactory()
-    registry = WorkspaceRegistry(
+    registry = ScopeRegistry(
         home=home,
         data_dir_name=".modex",
         factory=factory,
@@ -241,7 +241,7 @@ async def test_lru_order_updates_on_access(tmp_path: Path) -> None:
 
 
 async def test_evict_all_evicts_every_materialized(
-    registry: WorkspaceRegistry[StubResources], tmp_path: Path
+    registry: ScopeRegistry[StubResources], tmp_path: Path
 ) -> None:
     """evict_all() tears down EVERY materialized workspace, not just one.
 
@@ -281,7 +281,7 @@ async def test_failed_evict_remains_materialized_and_retryable(tmp_path: Path) -
     home.mkdir()
     target.mkdir()
     factory = _RetryFactory()
-    registry = WorkspaceRegistry(
+    registry = ScopeRegistry(
         home=home,
         data_dir_name=".modex",
         factory=factory,
@@ -312,7 +312,7 @@ async def test_evict_and_release_failure_retains_resource(tmp_path: Path) -> Non
     target = tmp_path / "ws"
     home.mkdir()
     target.mkdir()
-    registry = WorkspaceRegistry(
+    registry = ScopeRegistry(
         home=home,
         data_dir_name=".modex",
         factory=_FailingFactory(),
@@ -338,7 +338,7 @@ async def test_cap_eviction_failure_retains_oldest_resource(tmp_path: Path) -> N
     home.mkdir()
     first.mkdir()
     second.mkdir()
-    registry = WorkspaceRegistry(
+    registry = ScopeRegistry(
         home=home,
         data_dir_name=".modex",
         factory=_FailingFactory(),
@@ -374,7 +374,7 @@ async def test_evict_all_tries_later_resources_after_failure(tmp_path: Path) -> 
     first.mkdir()
     second.mkdir()
     factory = _SelectiveFactory(first.resolve())
-    registry = WorkspaceRegistry(
+    registry = ScopeRegistry(
         home=home,
         data_dir_name=".modex",
         factory=factory,
@@ -403,7 +403,7 @@ async def test_in_flight_workspace_protected_from_eviction(tmp_path: Path) -> No
     home = tmp_path / "proj"
     home.mkdir()
     factory = StubFactory()
-    registry = WorkspaceRegistry(
+    registry = ScopeRegistry(
         home=home,
         data_dir_name=".modex",
         factory=factory,
@@ -433,7 +433,7 @@ async def test_in_flight_workspace_protected_from_eviction(tmp_path: Path) -> No
 async def test_contexts_retained_after_eviction(tmp_path: Path) -> None:
     home = tmp_path / "proj"
     home.mkdir()
-    registry = WorkspaceRegistry(
+    registry = ScopeRegistry(
         home=home,
         data_dir_name=".modex",
         factory=StubFactory(),

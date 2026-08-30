@@ -254,44 +254,6 @@ def _strip_runtime_unused(site_packages: Path) -> None:
     print(f"    Runtime unused stripped: {removed_bytes / 1e6:.1f} MB total")
 
 
-def _strip_litellm(site_packages: Path) -> None:
-    """Prune litellm's tokenizer cache files (~123 MB of model cost/config JSON).
-
-    litellm bundles one tokenizer JSON per supported model under
-    litellm_core_utils/tokenizers/. The bot only needs
-    anthropic_tokenizer.json (required at import time via
-    importlib.resources); the other ~75 files are per-model token-counting
-    caches that litellm downloads on first use. The bot uses tiktoken for
-    token counting, so these caches are never read at runtime.
-
-    Verified safe: keeping only __init__.py + anthropic_tokenizer.json
-    does not break `import litellm`.
-    """
-    litellm = site_packages / "litellm"
-    if not litellm.is_dir():
-        return
-
-    tok_dir = litellm / "litellm_core_utils" / "tokenizers"
-    if not tok_dir.is_dir():
-        return
-
-    print("  [prepare_python] Pruning litellm tokenizer cache files...")
-    removed_bytes = 0
-    for f in tok_dir.iterdir():
-        if f.name in ("__init__.py", "anthropic_tokenizer.json"):
-            continue
-        size = f.stat().st_size if f.is_file() else sum(
-            x.stat().st_size for x in f.rglob("*") if x.is_file()
-        )
-        removed_bytes += size
-        if f.is_dir():
-            shutil.rmtree(f)
-        else:
-            f.unlink()
-
-    print(f"    litellm tokenizer cache pruned: {removed_bytes / 1e6:.1f} MB removed")
-
-
 def _strip_pycache(python_dir: Path) -> None:
     """Delete every __pycache__ directory under the bundled Python tree.
 
@@ -319,7 +281,7 @@ def _verify(python_dir: Path) -> None:
 
     third_party = [
         "import pydantic; import aiohttp; import httpx; import yaml; import typer; import rich",
-        "import litellm; import openai; import tiktoken; import questionary",
+        "import tiktoken; import questionary",
         "import PIL; import docx; import openpyxl; import pptx",
         "import aiosqlite",
     ]
@@ -370,7 +332,6 @@ def main() -> None:
     sp = python_dir / "Lib" / "site-packages"
     _strip_dev_deps(sp)
     _strip_runtime_unused(sp)
-    _strip_litellm(sp)
     _strip_pycache(python_dir)
     _verify(python_dir)
 

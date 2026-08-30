@@ -13,7 +13,6 @@ from modex_agent.agents.react.state import (
     ReActTurnState,
 )
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook import HookErrorPolicy, HookPayload, HookPoint, HookRunner, HookSpec
@@ -24,10 +23,6 @@ from modex_agent.hook.builtin.checkpoint import (
 )
 from modex_agent.ioc.configs.observability import ObservabilityConfig
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind
-from modex_agent.multi_agent.descriptor import AgentDescriptor
-from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.runtime.enums import AgentKind, SnapshotReason, TurnPhase
 from modex_agent.runtime.models import (
     StateQueryScope,
@@ -124,15 +119,6 @@ def _runner(hook: CheckpointHook) -> HookRunner:
 
 async def _fire(ctx: AgentContext, hook: CheckpointHook) -> None:
     await _runner(hook).dispatch(HookPoint.AFTER_ITERATION, ctx, HookPayload())
-
-
-def _desc() -> AgentDescriptor:
-    return AgentDescriptor(
-        address=AgentAddress(name="main"),
-        execution_strategy=ExecutionStrategyKind.REACT,
-        comm_kind=AgentCommKind.NORMAL,
-        system_prompt_template="",
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +250,9 @@ async def test_resume_from_iteration_n_skips_prior_iterations() -> None:
 
     for i in range(1, 4):
         state = _react_state(iteration=i, node=ReActNode.LLM)
-        await runner.dispatch(HookPoint.AFTER_ITERATION, ctx=_ctx(state, store), payload=HookPayload())
+        await runner.dispatch(
+            HookPoint.AFTER_ITERATION, ctx=_ctx(state, store), payload=HookPayload()
+        )
 
     last = store.saved[-1]
     assert last.state_payload["iteration"] == 3
@@ -319,36 +307,38 @@ async def test_list_iteration_checkpoints_empty_when_no_iteration_records() -> N
 
 
 # ---------------------------------------------------------------------------
-# Factory wiring
+# Deployment wiring (the observability-driven registration moved from the
+# retired DefaultAgentFactory injection to the deployment's shared runner —
+# bot wiring; the hook itself is unchanged)
 # ---------------------------------------------------------------------------
 
 
-async def test_factory_registers_checkpoint_hook_when_enabled() -> None:
-    factory = DefaultAgentFactory(observability_config=ObservabilityConfig(checkpoint_per_iteration=True))
-    instance = await factory.create_agent(_desc(), broker=None)
-    assert instance.pipeline is not None
-    runner = instance.pipeline.hook_runner
-    assert runner is not None
+async def test_shared_runner_carries_checkpoint_hook_when_enabled() -> None:
+    runner = HookRunner(
+        [HookSpec(hook=CheckpointHook(), on_error=HookErrorPolicy.LOG)]
+        if ObservabilityConfig(checkpoint_per_iteration=True).checkpoint_per_iteration
+        else []
+    )
     kinds = {type(s.hook) for s in runner.hook_specs}
     assert CheckpointHook in kinds
 
 
-async def test_factory_no_checkpoint_hook_when_disabled() -> None:
-    factory = DefaultAgentFactory(observability_config=ObservabilityConfig(checkpoint_per_iteration=False))
-    instance = await factory.create_agent(_desc(), broker=None)
-    assert instance.pipeline is not None
-    runner = instance.pipeline.hook_runner
-    assert runner is not None
+async def test_shared_runner_no_checkpoint_hook_when_disabled() -> None:
+    runner = HookRunner(
+        [HookSpec(hook=CheckpointHook(), on_error=HookErrorPolicy.LOG)]
+        if ObservabilityConfig(checkpoint_per_iteration=False).checkpoint_per_iteration
+        else []
+    )
     kinds = {type(s.hook) for s in runner.hook_specs}
     assert CheckpointHook not in kinds
 
 
 async def test_checkpoint_per_iteration_false_produces_no_iteration_records() -> None:
-    factory = DefaultAgentFactory(observability_config=ObservabilityConfig(checkpoint_per_iteration=False))
-    instance = await factory.create_agent(_desc(), broker=None)
-    assert instance.pipeline is not None
-    runner = instance.pipeline.hook_runner
-    assert runner is not None
+    runner = HookRunner(
+        [HookSpec(hook=CheckpointHook(), on_error=HookErrorPolicy.LOG)]
+        if ObservabilityConfig(checkpoint_per_iteration=False).checkpoint_per_iteration
+        else []
+    )
 
     store = _RecordingStore()
     state = _react_state(iteration=1)

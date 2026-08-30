@@ -131,11 +131,18 @@ class AgentMessageEnvelope:
         ``source_agent`` / ``receiver_agent`` are present only when the source
         is an agent (not channel/user). ``sender_agent`` is intentionally
         omitted — it duplicated ``source_agent`` in the legacy pool-side helper.
+
+        Free-form ``InputMessage.metadata`` serialized into the payload by
+        ``submit_input`` (``BrokerInputPayload``) is merged back beneath the
+        authoritative routing and envelope metadata.
         """
+        from modex_agent.messaging.broker_bridge import metadata_from_payload
+
         source_name = self.source.name if self.source else None
         target_name = self.target.name if self.target else None
         is_agent_source = bool(self.source and self.source.kind == AddressKind.AGENT)
         return {
+            **metadata_from_payload(self.payload),
             "session_id": self.agent_session_id,
             "agent_session_id": self.agent_session_id,
             "message_type": self.message_type,

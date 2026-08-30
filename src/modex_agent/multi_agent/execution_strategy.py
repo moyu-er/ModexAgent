@@ -40,7 +40,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, assert_never
+
+from modex_agent.core.constants import ExecutionStrategyKind
 
 if TYPE_CHECKING:
     from modex_agent.agents.external.agent import StreamingProviderBackend
@@ -51,7 +53,7 @@ if TYPE_CHECKING:
     from modex_agent.core.context import ContextManager
     from modex_agent.core.emitter import ContentEmitter
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-    from modex_agent.core.provider import LLMProvider
+    from modex_agent.core.prompt import SystemPromptProvider
     from modex_agent.core.session_registry import SessionRegistry
     from modex_agent.core.session_store import SessionStore
     from modex_agent.core.skills.manager import SkillManager
@@ -64,31 +66,52 @@ if TYPE_CHECKING:
     from modex_agent.memory.consolidation.dream_engine import DreamEngine
     from modex_agent.messaging.broker import MessageBroker
     from modex_agent.multi_agent.bus import AgentMessageBus
+    from modex_agent.multi_agent.communication.peer_resolution import PeerLink
     from modex_agent.multi_agent.communication.service import AgentCommunicationService
+    from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
     from modex_agent.multi_agent.inbox.server import InboxMQ
+    from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
     from modex_agent.multi_agent.pool import SessionRetentionPolicy
     from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-    from modex_agent.multi_agent.pool_config.specs import PoolSpec
     from modex_agent.multi_agent.router import AgentMessageRouter
     from modex_agent.multi_agent.tools import CommunicationTargetStore
     from modex_agent.pipeline.adapters import OutputAdapter
     from modex_agent.pipeline.snapshot import PoolDataSnapshot
     from modex_agent.pipeline.turn_runner_abc import TurnRunner
     from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-    from modex_agent.runtime.store import JsonFileTodoStore
+    from modex_agent.plugins.assembly.context import AgentContext
+    from modex_agent.plugins.assembly.spec import AssemblySpec
+    from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.scope.spec import PoolSpec
     from modex_agent.tools.mcp.manager import MCPClientManager
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
     from modex_agent.tools.terminal.managers import BaseTerminalManager
+    from modex_agent.tools.terminal.persistent_bash import PersistentBashTool
+    from modex_agent.tools.terminal.process_registry import ProcessRegistry
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
     from modex_agent.trace.cassette import CassetteRecorder
+    from modex_agent.workspace.scope_path import ScopePath
 
 __all__ = [
     "ExecutionStrategy",
     "ExecutionStrategyRegistry",
     "PoolAssemblyContext",
     "StrategyAssembly",
+    "SubagentAssembly",
     "default_strategy_registry",
+    "strategy_name_of",
 ]
+
+
+def strategy_name_of(value: ExecutionStrategyKind | str) -> str:
+    """Return the component-registry name for an execution strategy reference."""
+    match value:
+        case ExecutionStrategyKind():
+            return value.value
+        case str() as name:
+            return name
+        case unreachable:
+            assert_never(unreachable)
 
 
 class ExecutionStrategy(ABC):
@@ -106,11 +129,18 @@ class ExecutionStrategy(ABC):
     - ``supports_subagents``: whether this shape permits subagent templates
       (default ``True``; ``external`` overrides to ``False``).
     - ``requires_main_agent_tools``: whether the pool builder must register
-      the ``task`` communication tool on the main agent (default
-      ``True``; ``external`` overrides to ``False`` since its main
-      agent has no tool surface).
-    - :meth:`assemble`: construct all runtime components this strategy needs
-      and return a :class:`StrategyAssembly`.
+      the ``task`` communication tool on the main agent (default ``True``;
+      ``external`` overrides to ``False`` since its main agent has no tool
+      surface).
+    - ``requires_llm_provider``: whether the pool builder resolves the
+      LLM_PROVIDER slot for this pool's agents (default ``True``;
+      ``external`` overrides to ``False`` — the external CLI owns its
+      model config).
+    - :meth:`assemble_main`: construct all runtime components this strategy
+      needs for the pool's main agent and return a
+      :class:`StrategyAssembly`.
+    - :meth:`assemble_sub`: assemble a per-invocation subagent of this
+      strategy's shape (optional — only external shapes implement it).
     - :meth:`validate_pool_spec`: fail-fast at startup if the pool spec is
       incompatible with this strategy (e.g. ``external`` rejects
       subagents and requires ``provider_kind``).
@@ -135,29 +165,67 @@ class ExecutionStrategy(ABC):
         """
         return True
 
-    @abstractmethod
-    async def assemble(self, ctx: PoolAssemblyContext) -> StrategyAssembly:
-        """Construct all runtime components this strategy needs.
+    @property
+    def requires_llm_provider(self) -> bool:
+        """Whether the pool builder resolves the LLM_PROVIDER slot for
+        this pool's agents (default ``True``). ``external`` overrides to
+        ``False`` — the external CLI owns its model config, so no
+        framework provider is pre-resolved.
+        """
+        return True
 
-        Called once during pool assembly. Returns a fully-configured
+    @abstractmethod
+    async def assemble_main(self, ctx: PoolAssemblyContext) -> StrategyAssembly:
+        """Construct all runtime components the pool's MAIN agent needs.
+
+        Called once during pool assembly (``PoolAssembleStage`` /
+        ``create_pool``). Returns a fully-configured
         :class:`StrategyAssembly` whose ``turn_runner`` is ready to execute
         turns.
         """
         ...
 
-    @abstractmethod
-    def validate_pool_spec(self, spec: PoolSpec) -> None:
-        """Fail-fast at startup if ``spec`` is incompatible with this strategy.
+    async def assemble_sub(
+        self,
+        ctx: AgentContext,
+        deps: AgentMaterializeDeps,
+    ) -> SubagentAssembly:
+        """Assemble a SUBAGENT of this strategy's shape (per-invocation).
 
-        Called before :meth:`assemble`. Raises ``ValueError`` (or a more
-        specific subtype) on incompatibility.
+        Called by ``AgentTemplate.materialize`` when a subagent spec selects
+        this strategy (a subagent's ``execution_strategy`` field is resolved
+        against the strategy registry — it may differ from the pool's main
+        strategy). Only strategies with an external subagent shape implement
+        this; the default raises because native react subagents are
+        constructed directly by ``AgentTemplate.materialize`` and never
+        reach a strategy.
+
+        Ticket 10: the per-invocation data (``parent_session``,
+        ``invocation_id``, agent identity, and the per-agent spec
+        reference) rides the full-chain :class:`AgentContext` — one
+        mechanism, same as every other agent-layer datum (the former
+        per-invocation special-case context is deleted). ``deps`` carries
+        the per-pool materialize connections (tree, broker, session
+        registry, path resolver) — per-pool data, not per-invocation
+        data.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support subagent assembly")
+
+    @abstractmethod
+    def validate_pool_spec(self, pool: PoolSpec) -> None:
+        """Fail-fast at startup if the declared pool is incompatible.
+
+        The pool is the DECLARED :class:`modex_agent.scope.spec.PoolSpec`
+        (the declaration road's single pool face). Called before
+        :meth:`assemble`; raises ``ValueError`` (or a more specific
+        subtype) on incompatibility.
         """
         ...
 
 
 @dataclass(frozen=True)
 class PoolAssemblyContext:
-    """Input to :meth:`ExecutionStrategy.assemble` — common-assembly resources.
+    """Input to :meth:`ExecutionStrategy.assemble_main` — common-assembly resources.
 
     Carries every resource the common assembly phase (``pool_builder``)
     produces that a strategy might read. Strategies must not mutate this
@@ -177,6 +245,9 @@ class PoolAssemblyContext:
     # Required: pool identity and config
     pool_name: str
     pool_spec: PoolSpec
+    """The DECLARED pool (``modex_agent.scope.spec.PoolSpec``) — the
+    declaration road's single pool face; strategies read the root agent
+    via ``pool_spec.root_agent``."""
     project_dir: Path
     data_dir: Path
 
@@ -191,8 +262,17 @@ class PoolAssemblyContext:
 
     registry: TurnSessionRegistry
 
+    peer_links: tuple[PeerLink, ...] = ()
+    """The pool's declared peer links (the env-spec agent-pool map reads
+    the peer roots' declared names)."""
     workspace_handle: Any | None = None
     workspace_resolver: Any | None = None
+    scope_path: ScopePath | None = None
+    """The pool's resolved :class:`~modex_agent.workspace.scope_path.ScopePath`
+    (workspace root + pool name) — the single scope-path carrier for the
+    pool's assembly consumers (capability supplies build scope-path-aware
+    services on it; subagent materialization threads the SAME object).
+    ``None`` for hand-built contexts (framework tests)."""
 
     emitter_factory: Callable[[str], ContentEmitter[Any]] | None = None
 
@@ -211,6 +291,12 @@ class PoolAssemblyContext:
     bot_model_config: Any | None = None
     model_choice_registry: Any | None = None
 
+    control_origin: str = ""
+    """The bot HTTP listener origin (``MODEX_CONTROL_ORIGIN`` source) —
+    the env-spec templates built on the context chain (the ``native_env``
+    hook factory) read it. Empty for framework/hand-built contexts (the
+    env var is still emitted, just empty)."""
+
     command_processor: CommandProcessor | None = None
     control_channel: InMemoryControlChannel | None = None
 
@@ -224,11 +310,13 @@ class PoolAssemblyContext:
     router: AgentMessageRouter | None = None
 
     assembly_deps: PoolAssemblyDeps | None = None
+    component_registry: ComponentRegistry | None = None
+    assembly_spec: AssemblySpec | None = None
 
 
 @dataclass(frozen=True)
 class StrategyAssembly:
-    """Output of :meth:`ExecutionStrategy.assemble` — runtime-object container.
+    """Output of :meth:`ExecutionStrategy.assemble_main` — runtime-object container.
 
     Carries everything the pool builder and pipeline need from the strategy:
     the ``Agent``, the :class:`TurnRunner`, common services, react-only
@@ -249,16 +337,18 @@ class StrategyAssembly:
     built by ``pool_builder`` for both strategies in tickets 3-4; ticket 5/6
     may move them into ``assemble()`` and make them required again.
 
-    The react-only side-product fields ``cassette_recorder``, ``todo_store``,
-    ``root_provider`` are also transitional: ``ReactExecutionStrategy.assemble()``
-    fills them so ``pool_builder`` can finish post-assembly wiring
-    (cassette flush hook, subagent ``AgentMaterializeDeps``, approval root)
-    without re-running the build helpers. Ticket 6 moves the helpers into the
-    strategy and these fields leave the assembly contract.
+    The react-only side-product fields ``cassette_recorder`` and
+    ``root_provider`` are also transitional: ``ReactExecutionStrategy.
+    assemble_main()`` fills them so ``pool_builder`` can finish
+    post-assembly wiring (cassette flush hook, approval root) without
+    re-running the build helpers. Ticket 6 moves the helpers into the
+    strategy and these fields leave the assembly contract. (The historical
+    todo-store side product died with the todo capability's supply face —
+    ``TodoCapability.supply`` owns the store's construction.)
 
     The external-only transitional field ``external_deps`` carries the
     deps dict that ``ExternalAwareFactory`` reads to build an
-    ``ExternalAgent``. ``ExternalExecutionStrategy.assemble()``
+    ``ExternalAgent``. ``ExternalExecutionStrategy.assemble_main()``
     fills it; ``None`` for react. Ticket 6 eliminates this field when
     strategies build agents directly (the factory dispatch branch is deleted
     and the strategy owns agent construction).
@@ -271,11 +361,21 @@ class StrategyAssembly:
     communication_service: AgentCommunicationService | None = None
     target_store: CommunicationTargetStore | None = None
 
-    provider: LLMProvider | None = None
+    system_prompt_provider: SystemPromptProvider | None = None
     tool_manager: ToolManager | None = None
     skill_manager: SkillManager | None = None
     mcp_manager: MCPClientManager | None = None
     terminal_manager: BaseTerminalManager | None = None
+    # Pool-unique ProcessRegistry backing the terminal trio; harvested by
+    # PoolAssembleStage into PoolRuntimeDeps so FW tool factories resolve
+    # against the SAME registry (split-brain fix).
+    process_registry: ProcessRegistry | None = None
+    # Pool-unique fallback persistent bash (set iff terminal_manager is
+    # None); harvested by PoolAssembleStage into PoolRuntimeDeps so the FW
+    # bash factory resolves to the SAME instance the strategy registered
+    # with its ``bash_input`` companion — no session fork between the two
+    # roster-resolved/pre-registered tools.
+    persistent_bash: PersistentBashTool | None = None
     context_manager: ContextManager | None = None
     dream_engine: DreamEngine | None = None
     dream_interval: float | None = None
@@ -286,25 +386,38 @@ class StrategyAssembly:
     session_map_store: ExternalSessionMapStore | None = None
 
     # Transitional react-only side products (see class docstring). Filled by
-    # ``ReactExecutionStrategy.assemble()``; ``None`` for external.
+    # ``ReactExecutionStrategy.assemble_main()``; ``None`` for external.
     cassette_recorder: CassetteRecorder | None = None
-    todo_store: JsonFileTodoStore | None = None
     root_provider: WorkspaceRootProvider | None = None
+    component_hook_specs: tuple[HookSpec, ...] = ()
 
     # Transitional external-only deps dict (see class docstring). Filled by
-    # ``ExternalExecutionStrategy.assemble()``; ``None`` for react.
+    # ``ExternalExecutionStrategy.assemble_main()``; ``None`` for react.
     external_deps: dict[str, Any] | None = None
 
     extra_cleanup: tuple[Callable[[], Awaitable[None]], ...] = ()
 
 
+@dataclass(frozen=True)
+class SubagentAssembly:
+    """Output of :meth:`ExecutionStrategy.assemble_sub` — subagent carrier.
+
+    Runtime-object container per rule 12 — NOT Pydantic ``BaseModel``. The
+    caller (``AgentTemplate.materialize``) registers both halves into the
+    pool via ``pool.register_resident(descriptor, instance)``.
+    """
+
+    descriptor: AgentDescriptor
+    instance: AgentInstance
+
+
 class ExecutionStrategyRegistry:
     """Process-scoped, write-once-read-many registry of :class:`ExecutionStrategy`.
 
-    ``BotService.initialize()`` registers shipped strategies (``react``,
-    ``external``) before any pool is created. The framework ships a
-    :func:`default_strategy_registry` factory that returns an empty registry;
-    shipped strategies register themselves in their own tickets (3 and 4).
+    Services derive this runtime lookup from the ``EXECUTION_STRATEGY`` slot in
+    their :class:`ComponentRegistry`; they do not register a parallel strategy
+    set by hand. The framework-only :func:`default_strategy_registry` remains
+    an empty registry for isolated callers.
     """
 
     def __init__(self) -> None:
@@ -332,9 +445,7 @@ class ExecutionStrategyRegistry:
 def default_strategy_registry() -> ExecutionStrategyRegistry:
     """Return an empty registry.
 
-    Shipped strategies (``react``, ``external``) register themselves in
-    later tickets once their classes exist. This factory is the framework-only
-    entry point; business layers may override by constructing their own
-    registry and registering a custom strategy set.
+    This is the framework-only entry point for isolated callers. Applications
+    derive their registry from ``ComponentRegistry`` instead.
     """
     return ExecutionStrategyRegistry()

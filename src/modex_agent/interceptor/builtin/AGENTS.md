@@ -14,14 +14,14 @@ pipeline layer.
 ## Files
 | File | Class | Scope(s) | Description |
 |------|-------|----------|-------------|
-| `tool_timeout.py` | `ToolTimeoutInterceptor` | TOOL_CALL | Mandatory per-invocation tool deadline (default 400s). Composed by `ToolExecutor` as the innermost interceptor so the deadline measures only `ToolManager.execute()` time. On expiry, cancels the tool coroutine and returns a `<tool_timeout>` XML `ToolResult` (with `error` set so `success=False`); the ReAct loop continues. External `CancelledError`/`AgentCancelled` propagate naturally. |
+| `tool_timeout.py` | `ToolTimeoutInterceptor` | TOOL_CALL | Mandatory per-invocation tool deadline (default 400s). Composed by `ToolExecutor` as the innermost interceptor so the deadline measures only `ToolManager.execute()` time. On expiry, cancels the tool coroutine and returns a `<tool_timeout>` XML `ToolResult` (with `error` set so `success=False`); the ReAct loop continues. External `CancelledError`/`AgentCancelledError` propagate naturally. |
 | `result_limit.py` | `ToolResultLimitInterceptor` | TOOL_CALL | Truncates tool results via a `ToolResultOverflowHandler` (default `max_chars=50000`); overflow spilled to `OverflowStore`. |
 | `tool_approval.py` | `ArgumentMatcher` | (helper, not interceptor) | Path-based tool argument classification, used by `ApprovalRuntime.classifier`. |
 
 ## Where the Cancel Interceptors Actually Live
 | File (NOT here) | Class | Scope(s) | Description |
 |------|-------|----------|-------------|
-| `modex_agent/hook/builtin/control_drain.py` | `ControlDrainInterceptor` | TOOL_CALL | Drains `{CANCEL_TURN}` before each tool call; raises `AgentCancelled` on a turn-matched command. |
+| `modex_agent/hook/builtin/control_drain.py` | `ControlDrainInterceptor` | TOOL_CALL | Drains `{CANCEL_TURN}` before each tool call; raises `AgentCancelledError` on a turn-matched command. |
 | `modex_agent/hook/builtin/control_drain.py` | `LlmCancelInterceptor` | LLM_STREAM | Drains `{CANCEL_TURN}` before each streamed chunk; aborts the stream on a match. |
 
 Both drain an always-empty queue in the current runtime (see

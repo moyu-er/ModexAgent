@@ -3,14 +3,18 @@
 /pool_name switching is handled by the input pipeline
 (``EnvironmentControlStage``) before messages reach the queue.
 PoolRouter routes every message to the pool recorded in a
-PoolRoutingStore (set by ResolvePoolStage / UI callbacks).
+PoolRoutingStore (set by ResolvePoolStage / UI callbacks). Agent→pool
+ownership is compile-time declaration knowledge
+(:func:`agent_pool_ownership`) — one lookup, never an all-pools scan.
 """
 
 from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -21,7 +25,34 @@ from modex_agent.messaging.broker import MessageBroker
 from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.pipeline.adapters import InputAdapter
 
+if TYPE_CHECKING:
+    from modex_agent.scope.spec import ScopeSpec
+
 logger = logging.getLogger(__name__)
+
+
+def agent_pool_ownership(spec: ScopeSpec) -> dict[str, tuple[str, ...]]:
+    """agent name → the pools declaring it, in declaration order.
+
+    The declaration lookup table the router reconciles against: agent→pool
+    ownership is compile-time knowledge (SPEC §5.3 — the declaration
+    replaces the runtime all-pools scan). Agent names are unique within a
+    pool (V11) but MAY repeat across pools (e.g. a shared subagent name);
+    the value keeps every declaring pool so the router can tell "the
+    routed pool owns this agent" from "another pool does", and the first
+    entry is the deterministic re-route target for repeated names.
+    """
+    if spec.pool is not None:
+        pools = [spec.pool]
+    elif spec.workspace is not None:
+        pools = list(spec.workspace.pools)
+    else:
+        pools = []
+    ownership: dict[str, list[str]] = {}
+    for pool in pools:
+        for agent in pool.agents:
+            ownership.setdefault(agent.name, []).append(pool.name)
+    return {agent: tuple(owners) for agent, owners in ownership.items()}
 
 
 class PoolRoutingStore(ABC):
@@ -60,8 +91,14 @@ class PoolRoutingStore(ABC):
         """Convenience alias: delegate to ``set_pool``."""
         self.set_pool(session_prefix, pool_name)
 
-    def close(self) -> None:  # noqa: B027 - file-backed stores own no resources
-        """Release resources owned by this store."""
+    def close(self) -> None:  # noqa: B027 - no-op default; resource-owning stores override
+        """Release resources owned by this store.
+
+        The no-op default suits the file-backed routing stores, which own no
+        dedicated resources. Stores that own real resources (a shared SQLite
+        connection; an OTEL_HTTP trace store's sender thread + OTLP client)
+        override this and must be closed at teardown.
+        """
         return None
 
 
@@ -126,7 +163,11 @@ class PoolRouter:
     ``ResolvePoolStage`` / UI callbacks).  /pool_name switching is
     handled upstream by the input pipeline (``EnvironmentControlStage``).
 
-    Zero hardcoded pool names — dispatch is ``pools.get(name)``.
+    Zero hardcoded pool names — dispatch is ``pools.get(name)``. When a
+    message's session names an agent, the declaration lookup
+    (``agent_pool_ownership``) reconciles the routed pool with the
+    agent's owning pool; an agent no pool declares is dropped loudly
+    (addressing constitution — never routed on to produce an orphan).
     """
 
     def __init__(
@@ -136,12 +177,15 @@ class PoolRouter:
         pools: dict[str, PoolInstance],
         session_store: PoolRoutingStore,
         default_pool: str | None,
+        *,
+        agent_pool_ownership: Mapping[str, tuple[str, ...]],
     ) -> None:
         self._input_adapter = input_adapter
         self._broker = broker
         self._pools = pools
         self._session_store = session_store
         self._default_pool = default_pool
+        self._agent_pool_ownership = agent_pool_ownership
 
     async def run(self) -> None:
         async for msg in self._input_adapter.receive():  # type: ignore[attr-defined]  # mypy false-positive: abstract receive() is async-generator at runtime
@@ -165,52 +209,38 @@ class PoolRouter:
                 target,
             )
             return
-        target = self._reconcile_pool_for_agent(target, msg)
-        pool = self._pools[target]
-        await self._route_to_pool(msg, pool)
-
-    def _reconcile_pool_for_agent(self, target: str, msg: InputMessage) -> str:
-        """Reconcile the routed pool with the message's agent_name.
-
-        ``session_id`` encodes an agent_name (e.g. ``conv1.orchestrator``).
-        When a user switches pools via WebUI the routing store updates to the
-        new pool, but a message already carrying the old pool's agent_name
-        would land in the wrong pool — creating an orphan that the poller
-        can never consume (``no template for X; skipping`` forever).
-
-        If the target pool does not serve ``msg.session.agent_name``, search
-        all pools for one that does and re-route there. The routing store is
-        NOT mutated — per ADR-0019 the store is the routing authority,
-        maintained by the pool-switch write path; the router only corrects
-        the per-message routing decision.
-        """
         agent_name = msg.session.agent_name
-        if not agent_name:
-            return target
-        if self._pools[target].pool.serves_agent(agent_name):
-            return target
-        for name, instance in self._pools.items():
-            if name == target:
-                continue
-            if instance.pool.serves_agent(agent_name):
+        if agent_name:
+            # The routing store is NOT mutated here — per ADR-0019 the store
+            # is the routing authority, maintained by the pool-switch write
+            # path; the router only corrects the per-message routing decision.
+            owners = self._agent_pool_ownership.get(agent_name, ())
+            if target not in owners:
+                owner = next(
+                    (name for name in owners if name in self._pools), None
+                )
+                if owner is None:
+                    logger.error(
+                        "No pool serves agent '%s' for session %s; dropping "
+                        "message (declaration lookup miss — routing to '%s' "
+                        "would produce an orphan).",
+                        agent_name,
+                        session_prefix,
+                        target,
+                    )
+                    return
                 logger.warning(
                     "Re-routing session %s from pool '%s' to pool '%s' "
-                    "(agent '%s' is not served by '%s').",
-                    msg.session.session_id_prefix,
+                    "(agent '%s' is declared in '%s').",
+                    session_prefix,
                     target,
-                    name,
+                    owner,
                     agent_name,
-                    target,
+                    owner,
                 )
-                return name
-        logger.error(
-            "No pool serves agent '%s' for session %s; routing to '%s' "
-            "will produce an orphan message.",
-            agent_name,
-            msg.session.session_id_prefix,
-            target,
-        )
-        return target
+                target = owner
+        pool = self._pools[target]
+        await self._route_to_pool(msg, pool)
 
     def set_pool(self, session_id: str, pool_name: str) -> None:
         """Set pool routing for a session without sending a notification.

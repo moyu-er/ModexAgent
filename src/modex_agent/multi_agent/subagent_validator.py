@@ -35,8 +35,9 @@ class SubagentAgentValidator:
             raise ValueError(
                 f"Subagent '{sub_name}' must not deny 'send_to_agent' (needed to reply to main)"
             )
-        # The `task` tool is main-agent-only by registration (pool_builder,
-        # not AgentTemplate._build_tool_manager). No denied_tools check needed.
+        # The `task` tool is held by any agent with declared children (root
+        # and mid-level alike — SPEC §3.2); registration is declaration-
+        # derived, so no denied_tools check is needed here.
 
         if descriptor.execution_strategy == "pipeline":
             raise ValueError(

@@ -186,6 +186,13 @@ class TerminalBackend(ABC):
         result = await self.read_pending(timeout=timeout, max_size=max_size)
         return result.raw
 
+    def stdin_wait_evidence(self) -> bool | None:
+        """Linux kernel probe: is the foreground process group blocked reading stdin?
+
+        None means no evidence is available on this platform.
+        """
+        return None
+
     # ------------------------------------------------------------------
     # Shared byte-stream behaviors (ADR-0032 D4)
     # ------------------------------------------------------------------

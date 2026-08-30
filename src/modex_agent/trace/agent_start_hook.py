@@ -36,6 +36,9 @@ class AgentStartSpanHook(BaseTraceHook, StartNodeTurnHook):
         score_injector: L2ScoreInjector | None,
         prompt_capture: PromptCaptureStrategy,
         capture_tools: bool,
+        environment: str = "default",
+        version: str | None = None,
+        tags: list[str] | None = None,
     ) -> None:
         super().__init__(
             session=session,
@@ -44,6 +47,9 @@ class AgentStartSpanHook(BaseTraceHook, StartNodeTurnHook):
             provider_name=provider_name,
             request_params=request_params,
             score_injector=score_injector,
+            environment=environment,
+            version=version,
+            tags=tags,
         )
         self._prompt_capture = prompt_capture
         self._capture_tools = capture_tools

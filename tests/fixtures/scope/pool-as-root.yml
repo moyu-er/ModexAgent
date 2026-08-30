@@ -1,0 +1,8 @@
+pool:
+  name: standalone
+  agents:
+    root:
+      description: standalone root
+      agents:
+        helper:
+          description: standalone child

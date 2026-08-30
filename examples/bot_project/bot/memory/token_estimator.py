@@ -17,4 +17,7 @@ class TiktokenTokenEstimator(TokenEstimator):
         self._encoding = load_cl100k()
 
     def estimate_text(self, text: str) -> int:
-        return len(self._encoding.encode(text))
+        # encode_ordinary counts special tokens (e.g. <|endoftext|>) as plain
+        # text instead of raising: estimation runs on untrusted tool output,
+        # and a budget estimate must never kill the turn (live TB crash).
+        return len(self._encoding.encode_ordinary(text))

@@ -31,7 +31,11 @@ four-level strategy that **does not depend on the bot process's PATH**:
    ``modexctl`` next to ``python`` (``Scripts/`` on Windows, ``bin/`` on
    POSIX). This is independent of the launching shell's PATH: it follows the
    Python that's actually running the bot. Resolves the typical case even
-   when the user launched from an anaconda or system shell.
+   when the user launched from an anaconda or system shell. The LITERAL
+   parent of ``sys.executable`` is probed first — Debian/Ubuntu venvs
+   symlink ``bin/python`` to the system interpreter, so resolving first
+   would escape the venv — with the resolved parent as a secondary
+   candidate for exotic layouts.
 3. **``shutil.which("modexctl")``** — legacy PATH lookup, last resort.
 4. **Raise** — :class:`ModexctlResolutionError` with diagnostic context.
    Failing loudly at boot is better than the previous silent runtime
@@ -72,30 +76,40 @@ class ModexctlResolutionError(RuntimeError):
         )
 
 
-def _sibling_bin_dir() -> Path:
-    """Directory that holds ``modexctl`` next to ``sys.executable``.
+def _sibling_bin_dirs() -> tuple[Path, ...]:
+    """Candidate directories that may hold ``modexctl`` beside the interpreter.
 
     On Windows the wheel installs console scripts into ``Scripts/``
     alongside ``python.exe``; on POSIX into ``bin/`` alongside ``python``.
     Some embeddable Python distributions (e.g. python-build-standalone used
     by the Windows installer) put scripts in the same directory as
-    ``python.exe``, so we also accept the executable's own parent.
+    ``python.exe``, so the executable's own parent is accepted too.
+
+    Candidate order matters. ``python3 -m venv`` on Debian/Ubuntu creates
+    ``venv/bin/python`` as a SYMLINK to ``/usr/bin/python3``, so resolving
+    ``sys.executable`` before taking the parent lands in ``/usr/bin`` and
+    defeats the venv bin layout. The literal parent is therefore the FIRST
+    candidate (wheel installers place ``modexctl`` next to the interpreter
+    path the OS actually executed); the resolved parent is a SECONDARY
+    candidate for exotic layouts where the literal path is only a redirect.
+    Duplicates are removed, so a non-symlinked executable yields a single
+    candidate.
 
     The function never raises — callers probe each candidate via
     :func:`_has_modexctl` and fall through to the next strategy.
     """
-    exe = Path(sys.executable).resolve()
-    parent = exe.parent
-    if sys.platform == "win32":
-        # Standard venv / wheel install layout
-        scripts = parent / "Scripts"
-        if scripts.is_dir():
-            return scripts
-        # python-build-standalone and embeddable layouts: scripts sit next
-        # to the interpreter (no Scripts/ subdirectory).
-        return parent
-    # POSIX: venv uses bin/, system Python uses bin/ as well
-    return parent
+    candidates: list[Path] = []
+    for exe in (Path(sys.executable), Path(sys.executable).resolve()):
+        if sys.platform == "win32":
+            # Standard venv / wheel install layout
+            scripts = exe.parent / "Scripts"
+            candidate = scripts if scripts.is_dir() else exe.parent
+        else:
+            # POSIX: venv uses bin/, system Python uses bin/ as well
+            candidate = exe.parent
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return tuple(candidates)
 
 
 def _has_modexctl(directory: Path) -> bool:
@@ -122,8 +136,11 @@ def resolve_modexctl_bin_dir() -> Path:
        after existence check; if the directory does not exist we fall
        through (a stale override is silently ignored rather than fatal —
        the user may have moved the install and forgotten to clear the var).
-    2. Sibling of ``sys.executable`` (see :func:`_sibling_bin_dir`) — the
+    2. Sibling of ``sys.executable`` (see :func:`_sibling_bin_dirs`) — the
        authoritative location wheel installers use, independent of PATH.
+       Literal parent first (Debian/Ubuntu venv ``bin/python`` is a symlink
+       to the system interpreter, so ``Path.resolve()`` would escape the
+       venv), resolved parent second.
     3. ``shutil.which("modexctl")`` parent — legacy PATH lookup fallback.
     4. :class:`ModexctlResolutionError` — never return ``Path(".")``.
 
@@ -140,10 +157,11 @@ def resolve_modexctl_bin_dir() -> Path:
         if _has_modexctl(override_path):
             return override_path
 
-    # 2. Sibling of sys.executable (wheel layout — authoritative, PATH-free)
-    sibling = _sibling_bin_dir()
-    if _has_modexctl(sibling):
-        return sibling
+    # 2. Siblings of sys.executable (wheel layout — authoritative, PATH-free;
+    # literal parent first, resolved parent second — see _sibling_bin_dirs)
+    for sibling in _sibling_bin_dirs():
+        if _has_modexctl(sibling):
+            return sibling
 
     # 3. shutil.which — legacy PATH lookup
     which_result = shutil.which("modexctl")

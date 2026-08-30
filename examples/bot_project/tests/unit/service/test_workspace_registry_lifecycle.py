@@ -38,7 +38,6 @@ async def test_initialize_closes_canonical_registry_after_materialization_failur
     service._default_provider = None
     service.control_channel = None
     service.command_processor = None
-    service.plugin_integration = None
     service._pool_session_store = None
 
     registry = MagicMock()
@@ -66,7 +65,6 @@ async def test_initialize_closes_canonical_registry_after_materialization_failur
         patch.object(service, "_build_default_provider", return_value=MagicMock()),
         patch("bot.service.core._build_control_channel", return_value=MagicMock()),
         patch("bot.service.core._build_main_command_processor", return_value=MagicMock()),
-        patch("bot.service.core.PoolStore", create=True),
         patch(
             "bot.service.builders.build_pool_routing_store",
             return_value=routing_store,
@@ -81,7 +79,7 @@ async def test_initialize_closes_canonical_registry_after_materialization_failur
             "modex_agent.persistence.managers.WorkspacePersistenceManager",
             return_value=home_manager,
         ) as home_manager_type,
-        patch("bot.service.core.build_single_workspace_stack", return_value=stack),
+        patch("bot.service.core.build_workspace_stack", return_value=stack),
         pytest.raises(RuntimeError, match="materialization failed"),
     ):
         await service.initialize()
@@ -100,6 +98,10 @@ async def test_initialize_closes_canonical_registry_after_materialization_failur
     )
     registry.initialize.assert_awaited_once()
     registry.evict_all.assert_awaited_once()
+    assert service._service_assembly_ctx is not None
+    assert service._service_assembly_ctx.registry is service._component_registry
+    assert service._service_assembly_ctx.workspace_ctx is registry.home_context
+    assert service._service_assembly_ctx.workspace_registry is registry
     routing_store.close.assert_called_once_with()
     home_manager.close.assert_awaited_once()
     manager.close.assert_awaited_once()
@@ -205,7 +207,6 @@ async def test_initialize_preserves_shared_dependencies_when_eviction_is_incompl
     service._default_provider = None
     service.control_channel = None
     service.command_processor = None
-    service.plugin_integration = None
     service._pool_session_store = None
 
     initialization_error = RuntimeError("materialization failed")
@@ -235,7 +236,6 @@ async def test_initialize_preserves_shared_dependencies_when_eviction_is_incompl
         patch.object(service, "_build_default_provider", return_value=MagicMock()),
         patch("bot.service.core._build_control_channel", return_value=MagicMock()),
         patch("bot.service.core._build_main_command_processor", return_value=MagicMock()),
-        patch("bot.service.core.PoolStore", create=True),
         patch(
             "bot.service.builders.build_pool_routing_store",
             return_value=routing_store,
@@ -250,7 +250,7 @@ async def test_initialize_preserves_shared_dependencies_when_eviction_is_incompl
             "modex_agent.persistence.managers.WorkspacePersistenceManager",
             return_value=home_manager,
         ),
-        patch("bot.service.core.build_single_workspace_stack", return_value=stack),
+        patch("bot.service.core.build_workspace_stack", return_value=stack),
         pytest.raises(RuntimeError, match="materialization failed") as raised,
     ):
         await service.initialize()

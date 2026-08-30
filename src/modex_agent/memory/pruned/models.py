@@ -26,6 +26,7 @@ class PrunedIndexEntry:
     start_time_display: str = ""  # "YYYY-MM-DD HH:MM" (display)
     end_time_display: str = ""  # "YYYY-MM-DD HH:MM" (display)
     topic: str = ""  # from archive CONTEXT summary, or time-range fallback
+    content_chars: int = 0  # rendered transcript char count; size signal for injection preview
 
     def to_dict(self) -> dict:
         """Serialize all fields to a plain dict."""
@@ -48,6 +49,7 @@ class PrunedIndexEntry:
             "start_time_display",
             "end_time_display",
             "topic",
+            "content_chars",
         }
         filtered = {k: v for k, v in data.items() if k in known}
         return cls(**filtered)

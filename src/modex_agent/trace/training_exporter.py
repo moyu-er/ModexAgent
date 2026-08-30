@@ -8,8 +8,10 @@ aggregates spans by ``trace_id`` into trajectories, and produces:
 * **DPO** — preference-pair JSONL from approval data (approved=chosen,
   denied=rejected).
 
-L2 heuristic scoring (tool success rate, reasoning depth, trajectory
-compactness), 3-tier deduplication (exact SHA-256 → n-gram Jaccard → semantic
+Trajectory metrics (12 direction-clear fields including tool_success_rate,
+tool_call_count, error_tool_count, iteration_count, token counts, latency,
+cache hit rate, and reasoning indicator) computed via ``compute_metrics``,
+3-tier deduplication (exact SHA-256 → n-gram Jaccard → semantic
 embedding [Phase 1: tier 3 not implemented]), and scope-aware filtering
 (cross-tenant warning) are applied.
 """
@@ -28,12 +30,10 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.trace.scoring import (
-    TrajectoryScore,
-    compute_score,
+    TrajectoryMetrics,
+    compute_metrics,
     extract_final_response,
     extract_output_text,
-    overall_score,
-    score_to_rating,
 )
 from modex_agent.trace.semconv import GenAiAttr, SpanName
 from modex_agent.trace.store import SpanModel, TraceQuery
@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 _NGRAM_SIZE: int = 3
 _NGRAM_SIMILARITY_THRESHOLD: float = 0.8
 _SCORE_GAP_THRESHOLD: float = 0.5
+"""Minimum directional gap: chosen tool_success_rate must exceed rejected by at least this amount."""
 _EDIT_DISTANCE_RATIO_THRESHOLD: float = 0.1
 _REFUSAL_PHRASES: tuple[str, ...] = (
     "i can't",
@@ -98,7 +99,7 @@ class SFTExample(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     messages: list[dict[str, Any]] = Field(default_factory=list)
-    score: TrajectoryScore | None = None
+    score: TrajectoryMetrics | None = None
 
 
 class DPOPair(BaseModel):
@@ -109,10 +110,10 @@ class DPOPair(BaseModel):
     prompt: str
     chosen: str
     chosen_model: str
-    chosen_rating: int
+    chosen_tool_success_rate: float
     rejected: str
     rejected_model: str
-    rejected_rating: int
+    rejected_tool_success_rate: float
 
 
 class ExportResult(BaseModel):
@@ -285,13 +286,20 @@ def _extract_system_message(spans: list[SpanModel]) -> str | None:
 
 def _build_tool_calls(
     tool_calls_attr: object,
-    call_id_start: int,
+    chat_index: int,
 ) -> list[dict[str, Any]]:
     """Build OpenAI ``tool_calls`` list from a ``chat`` span's attributes.
 
     The ``gen_ai.output.tool_calls`` attribute is a list of
-    ``{"tool_name": str, "arguments": str}`` where ``arguments`` is already a
-    JSON string.
+    ``{"call_id": str, "tool_name": str, "arguments": str}`` where
+    ``arguments`` is already a JSON string and ``call_id`` is the runtime's
+    canonical id (stamped by LLMNode before ChatSpanHook fires).
+
+    Entries without a ``call_id`` are legacy spans recorded before the P0
+    callId fix; they get a locally-scoped ``call_<chat_index>_<i>`` id so the
+    exported message list stays internally paired (assistant
+    ``tool_calls[i].id`` must equal the paired tool message's
+    ``tool_call_id``).
     """
     if not isinstance(tool_calls_attr, list):
         return []
@@ -306,9 +314,12 @@ def _build_tool_calls(
         # arguments must be a JSON string per OpenAI format
         if not isinstance(args, str):
             args = json.dumps(args, ensure_ascii=False, default=str)
+        call_id = tc.get("call_id")
+        if not isinstance(call_id, str) or not call_id:
+            call_id = f"call_{chat_index}_{i}"
         result.append(
             {
-                "id": f"call_{call_id_start + i}",
+                "id": call_id,
                 "type": "function",
                 "function": {
                     "name": name,
@@ -351,8 +362,15 @@ def _trajectory_to_messages(spans: list[SpanModel]) -> list[dict[str, Any]]:
         return messages
 
     final_chat_index = len(chat_spans) - 1
-    tool_call_id_counter = 0
-    tool_result_idx = 0  # pointer into tool_spans
+    # Index tool spans by canonical call id for exact joining. Spans whose
+    # ``gen_ai.tool.call.id`` is empty/absent (pre-P0 legacy traces) fall
+    # through to order-based matching via ``tool_result_idx``.
+    tool_span_by_call_id: dict[str, SpanModel] = {}
+    for ts in tool_spans:
+        ts_call_id = ts.attributes.get(GenAiAttr.TOOL_CALL_ID.value)
+        if isinstance(ts_call_id, str) and ts_call_id:
+            tool_span_by_call_id[ts_call_id] = ts
+    tool_result_idx = 0  # order-fallback pointer into tool_spans
 
     for idx, chat_span in enumerate(chat_spans):
         attrs = chat_span.attributes
@@ -364,9 +382,7 @@ def _trajectory_to_messages(spans: list[SpanModel]) -> list[dict[str, Any]]:
 
         if has_tool_calls:
             # Assistant message with tool_calls
-            tool_calls = _build_tool_calls(tool_calls_attr, tool_call_id_counter)
-            n_tools = len(tool_calls)
-            tool_call_id_counter += n_tools
+            tool_calls = _build_tool_calls(tool_calls_attr, idx)
 
             assistant_msg: dict[str, Any] = {
                 "role": MessageRole.ASSISTANT.value,
@@ -375,20 +391,24 @@ def _trajectory_to_messages(spans: list[SpanModel]) -> list[dict[str, Any]]:
             }
             messages.append(assistant_msg)
 
-            # Match subsequent execute_tool spans by order.
-            for i in range(n_tools):
-                if tool_result_idx + i < len(tool_spans):
-                    ts = tool_spans[tool_result_idx + i]
-                    raw_result = ts.attributes.get(GenAiAttr.TOOL_RESULT.value)
-                    result_content = str(raw_result) if raw_result is not None else ""
-                    messages.append(
-                        {
-                            "role": MessageRole.TOOL.value,
-                            "tool_call_id": tool_calls[i]["id"],
-                            "content": result_content,
-                        }
-                    )
-            tool_result_idx += n_tools
+            # Join each assistant tool call to its execute_tool span by the
+            # canonical call id; order-based matching is the legacy fallback.
+            for i, tool_call_entry in enumerate(tool_calls):
+                tool_span = tool_span_by_call_id.get(tool_call_entry["id"])
+                if tool_span is None and tool_result_idx + i < len(tool_spans):
+                    tool_span = tool_spans[tool_result_idx + i]
+                if tool_span is None:
+                    continue
+                raw_result = tool_span.attributes.get(GenAiAttr.TOOL_RESULT.value)
+                result_content = str(raw_result) if raw_result is not None else ""
+                messages.append(
+                    {
+                        "role": MessageRole.TOOL.value,
+                        "tool_call_id": tool_call_entry["id"],
+                        "content": result_content,
+                    }
+                )
+            tool_result_idx += len(tool_calls)
         else:
             is_final = idx == final_chat_index
             if is_final:
@@ -512,7 +532,7 @@ class TrainingDataExporter:
         self._check_cross_tenant(trajectories, allow_cross_tenant=allow_cross_tenant)
 
         # Build SFT candidates from training-relevant trajectories.
-        candidates: list[tuple[list[dict[str, Any]], TrajectoryScore]] = []
+        candidates: list[tuple[list[dict[str, Any]], TrajectoryMetrics]] = []
         for spans in trajectories.values():
             if not _is_training_relevant(spans):
                 continue
@@ -520,7 +540,7 @@ class TrainingDataExporter:
             if len(messages) < 2:
                 # Need at least user + assistant.
                 continue
-            score = compute_score(spans)
+            score = compute_metrics(spans)
             candidates.append((messages, score))
 
         accepted, deduped_count = self._dedup_sft(candidates)
@@ -596,16 +616,18 @@ class TrainingDataExporter:
         raw_pairs: list[DPOPair] = []
         for task_msg, groups in task_groups.items():
             for chosen_spans in groups["approved"]:
-                chosen_score = overall_score(compute_score(chosen_spans))
+                chosen_metrics = compute_metrics(chosen_spans)
+                chosen_score = chosen_metrics.tool_success_rate
                 chosen_response = extract_final_response(chosen_spans)
                 chosen_agent = _extract_agent_name(chosen_spans)
                 for rejected_spans in groups["denied"]:
-                    rejected_score = overall_score(compute_score(rejected_spans))
+                    rejected_metrics = compute_metrics(rejected_spans)
+                    rejected_score = rejected_metrics.tool_success_rate
                     rejected_response = extract_final_response(rejected_spans)
                     rejected_agent = _extract_agent_name(rejected_spans)
 
                     # Filter: min score gap.
-                    if abs(chosen_score - rejected_score) < _SCORE_GAP_THRESHOLD:
+                    if chosen_score - rejected_score < _SCORE_GAP_THRESHOLD:
                         continue
                     # Filter: min edit-distance ratio.
                     if (
@@ -622,10 +644,10 @@ class TrainingDataExporter:
                             prompt=task_msg,
                             chosen=chosen_response,
                             chosen_model=chosen_agent,
-                            chosen_rating=score_to_rating(chosen_score),
+                            chosen_tool_success_rate=chosen_score,
                             rejected=rejected_response,
                             rejected_model=rejected_agent,
-                            rejected_rating=score_to_rating(rejected_score),
+                            rejected_tool_success_rate=rejected_score,
                         )
                     )
 
@@ -708,8 +730,8 @@ class TrainingDataExporter:
 
     def _dedup_sft(
         self,
-        candidates: list[tuple[list[dict[str, Any]], TrajectoryScore]],
-    ) -> tuple[list[tuple[list[dict[str, Any]], TrajectoryScore]], int]:
+        candidates: list[tuple[list[dict[str, Any]], TrajectoryMetrics]],
+    ) -> tuple[list[tuple[list[dict[str, Any]], TrajectoryMetrics]], int]:
         """Apply 3-tier deduplication (cheapest first).
 
         Tier 1: exact SHA-256 hash of the messages list.
@@ -718,7 +740,7 @@ class TrainingDataExporter:
         """
         seen_hashes: set[str] = set()
         seen_ngrams: list[frozenset[str]] = []
-        accepted: list[tuple[list[dict[str, Any]], TrajectoryScore]] = []
+        accepted: list[tuple[list[dict[str, Any]], TrajectoryMetrics]] = []
         deduped_count = 0
 
         for messages, score in candidates:

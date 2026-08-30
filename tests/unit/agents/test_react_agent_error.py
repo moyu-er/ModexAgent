@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -12,6 +11,7 @@ from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.constants import FinishReason, StopReason
 from modex_agent.core.emitter import AgentResult
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.runtime.enums import AgentKind, TurnPhase
@@ -72,16 +72,32 @@ class _FakeEmitter:
         self.events.append(("error", error))
 
 
+class _ScriptedProvider(CallbackStreamProvider):
+    """chat-only scripted mock riding the callback→event bridge."""
+
+    def __init__(self, response: LLMResponse | None = None, error: BaseException | None = None):
+        super().__init__()
+        self._response = response
+        self._error = error
+
+    def get_default_model(self) -> str:
+        return "mock"
+
+    async def chat_stream(self, messages, *, on_content_delta=None, on_reasoning_delta=None, **kw):
+        if self._error is not None:
+            raise self._error
+        assert self._response is not None
+        return self._response
+
+
 class TestReActAgentErrorResponse:
     @pytest.mark.asyncio
     async def test_error_finish_reason_returns_agent_error(self):
-        provider = MagicMock()
-        provider.chat = AsyncMock(return_value=LLMResponse(
+        provider = _ScriptedProvider(response=LLMResponse(
             content="Error calling LLM: something went wrong",
             finish_reason=FinishReason.ERROR.value,
             error="something went wrong",
         ))
-        provider.get_default_model = lambda: "mock"
         agent = ReActAgent(provider=provider)
         emitter = _FakeEmitter()
         ctx = _make_ctx()
@@ -94,12 +110,10 @@ class TestReActAgentErrorResponse:
 
     @pytest.mark.asyncio
     async def test_normal_response_proceeds(self):
-        provider = MagicMock()
-        provider.chat = AsyncMock(return_value=LLMResponse(
+        provider = _ScriptedProvider(response=LLMResponse(
             content="Hello, how can I help?",
             finish_reason=FinishReason.STOP.value,
         ))
-        provider.get_default_model = lambda: "mock"
         agent = ReActAgent(provider=provider)
         emitter = _FakeEmitter()
         ctx = _make_ctx()
@@ -120,11 +134,7 @@ class TestReActAgentCancelledError:
         task.cancel() to interrupt in-flight LLM calls, so the agent must
         handle CancelledError cleanly.
         """
-        provider = MagicMock()
-        async def raise_cancelled(*args, **kwargs):
-            raise asyncio.CancelledError()
-        provider.chat = raise_cancelled
-        provider.get_default_model = lambda: "mock"
+        provider = _ScriptedProvider(error=asyncio.CancelledError())
         agent = ReActAgent(provider=provider)
         emitter = _FakeEmitter()
         ctx = _make_ctx()
@@ -167,11 +177,9 @@ class TestReActAgentControlCancel:
             scope=ControlScope(session_id="test.agent"),
         ))
 
-        provider = MagicMock()
-        provider.chat = AsyncMock(return_value=LLMResponse(
+        provider = _ScriptedProvider(response=LLMResponse(
             content="unreached", finish_reason=FinishReason.STOP.value,
         ))
-        provider.get_default_model = lambda: "mock"
 
         agent = ReActAgent(provider=provider)
         emitter = _FakeEmitter()
@@ -194,12 +202,10 @@ class TestReActAgentControlCancel:
 class TestReActAgentToolTimeout:
     @pytest.mark.asyncio
     async def test_tool_timeout_returns_error_result(self):
-        provider = MagicMock()
-        provider.chat = AsyncMock(return_value=LLMResponse(
+        provider = _ScriptedProvider(response=LLMResponse(
             content="", finish_reason=FinishReason.TOOL_CALLS.value,
             tool_calls=[ToolCall(tool_name="slow_tool", arguments={}, call_id="c1")],
         ))
-        provider.get_default_model = lambda: "mock"
         class SlowTool:
             async def execute(self, tool_name, arguments):
                 await asyncio.sleep(0.5)
@@ -227,11 +233,9 @@ class TestReActAgentToolTimeout:
 class TestReActAgentHookDispatch:
     @pytest.mark.asyncio
     async def test_slow_hook_does_not_abort_turn(self):
-        provider = MagicMock()
-        provider.chat = AsyncMock(return_value=LLMResponse(
+        provider = _ScriptedProvider(response=LLMResponse(
             content="ok", finish_reason=FinishReason.STOP.value,
         ))
-        provider.get_default_model = lambda: "mock"
         class SlowHook:
             async def before_turn(self, context):
                 await asyncio.sleep(0.5)

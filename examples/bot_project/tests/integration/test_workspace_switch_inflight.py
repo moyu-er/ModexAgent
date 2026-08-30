@@ -21,7 +21,7 @@ from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.factory import ResourceFactory
-from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.registry import ScopeRegistry
 from modex_agent.workspace.routing import WorkspaceResolver
 from modex_agent.workspace.store import GlobalWorkspaceStore
 
@@ -68,7 +68,7 @@ class _MinimalResourceFactory(ResourceFactory[PoolWorkspaceResources]):
 async def inflight_setup(
     tmp_path: Path,
 ) -> AsyncGenerator[
-    tuple[WorkspaceResolver[PoolWorkspaceResources], WorkspaceRegistry[PoolWorkspaceResources], Path, Path],
+    tuple[WorkspaceResolver[PoolWorkspaceResources], ScopeRegistry[PoolWorkspaceResources], Path, Path],
     None,
 ]:
     """Yield a resolver + registry with two workspaces (A and B) ready for in-flight tests.
@@ -83,7 +83,7 @@ async def inflight_setup(
 
     factory = _MinimalResourceFactory()
     store = GlobalWorkspaceStore(home=home, data_dir_name=".modex")
-    registry: WorkspaceRegistry[PoolWorkspaceResources] = WorkspaceRegistry(
+    registry: ScopeRegistry[PoolWorkspaceResources] = ScopeRegistry(
         home=home,
         data_dir_name=".modex",
         factory=factory,
@@ -106,7 +106,7 @@ async def inflight_setup(
 async def test_inflight_turn_holds_original_resources(
     inflight_setup: tuple[
         WorkspaceResolver[PoolWorkspaceResources],
-        WorkspaceRegistry[PoolWorkspaceResources],
+        ScopeRegistry[PoolWorkspaceResources],
         Path,
         Path,
     ],
@@ -147,7 +147,7 @@ async def test_inflight_turn_holds_original_resources(
 async def test_inflight_resources_object_identity_preserved(
     inflight_setup: tuple[
         WorkspaceResolver[PoolWorkspaceResources],
-        WorkspaceRegistry[PoolWorkspaceResources],
+        ScopeRegistry[PoolWorkspaceResources],
         Path,
         Path,
     ],
@@ -182,7 +182,7 @@ async def test_inflight_resources_object_identity_preserved(
 async def test_switch_does_not_raise_or_block(
     inflight_setup: tuple[
         WorkspaceResolver[PoolWorkspaceResources],
-        WorkspaceRegistry[PoolWorkspaceResources],
+        ScopeRegistry[PoolWorkspaceResources],
         Path,
         Path,
     ],

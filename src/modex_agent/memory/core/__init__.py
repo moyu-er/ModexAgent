@@ -8,6 +8,7 @@ storage contract surface, exported below.
 
 from __future__ import annotations
 
+from modex_agent.memory.core.provider import MemoryProvider
 from modex_agent.memory.core.split_stores import (
     ArchiveStore,
     CursorStore,
@@ -20,6 +21,7 @@ __all__ = [
     "ArchiveStore",
     "CursorStore",
     "KVStore",
+    "MemoryProvider",
     "MemoryStoreBundle",
     "MessageStore",
 ]

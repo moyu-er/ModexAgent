@@ -10,20 +10,25 @@ programmatically — every field must be self-explanatory to an LLM.
 The hook delegates to ``build_agent_comm_message`` from ``message_format.py``
 (convergence — single source of truth for the result markdown format).  The
 ``content`` body carries the subagent's last output; result metadata (status,
-stop reason, issue, output path, trace path) is carried by ``ResultMeta`` and
+stop reason, issue, output path) is carried by ``ResultMeta`` and
 rendered in the header block.
 
-Native (react) subagent — includes output/trace paths::
+Native (react) subagent — includes the output path::
 
     Message from subagent 'explore':
     invocation_id: 638aaa67
     status: success
     Stop reason: completed
     Output: /path/to/OUTPUT_1.md
-    Trace: /path/to/spans.jsonl
 
     Result:
     Exploration complete. Found 3 entry points...
+
+    The task is complete and its result is fully delivered — you don't
+    need to call task again to collect it. The Result text above is a
+    truncated summary; the Output file holds the complete deliverable.
+    To assign this subagent new follow-up work, call task with
+    invocation_id=638aaa67.
 
 External coding subagent — no file artifacts::
 
@@ -35,17 +40,26 @@ External coding subagent — no file artifacts::
     Result:
     Task finished.
 
-On failure an ``Issue:`` line explains the problem and how to resume::
+    The task is complete and its result is fully delivered. To assign
+    this subagent new follow-up work, call task with
+    invocation_id=638aaa67.
+
+On failure an ``Issue:`` line explains the problem::
 
     Message from subagent 'office-expert':
     invocation_id: 638aaa67
     status: failed
     Stop reason: error
-    Issue: Subagent crashed with error: timeout. To continue, send a message with invocation_id=638aaa67.
+    Issue: Subagent crashed with error: timeout. Task is incomplete. Check the subagent's last output for details.
     Output: /path/to/OUTPUT_1.md
-    Trace: /path/to/spans.jsonl
 
     Result:
+
+
+    The task is incomplete. To continue it, call task with
+    target_agent='office-expert', invocation_id='638aaa67', and
+    content=your follow-up instructions — the subagent resumes with its
+    prior context.
 
 Design rationale (ADR-0027 evolution):
 - ``status`` ("success"/"failed") replaces the old ``success`` boolean XML field.
@@ -54,10 +68,10 @@ Design rationale (ADR-0027 evolution):
   ``result.messages`` (not ``result.content``, which is a placeholder on
   non-normal exit paths).  Notifications are truncated to 300 characters;
   native deliverable files preserve the full content.
-- ``issue`` merges the old ``error`` + ``hint`` and appears **only** on
-  failure, keeping the success notification clean.
-- Native subagents keep ``Output:`` / ``Trace:`` lines so the parent can read
-  the full deliverable and trace file.
+- ``issue`` carries failure details and appears **only** on failure, keeping
+  the success notification clean.
+- Native subagents keep the ``Output:`` line so the parent can read the
+  full deliverable.
 - External subagents omit file-based artifacts (no OUTPUT.md concept).  The
   ``Replied:`` line is omitted when ``replied`` is None (the per-session
   send-tracking mechanism does not exist yet; the parent judges the outcome
@@ -74,7 +88,7 @@ from typing import TYPE_CHECKING, Any
 from modex_agent.core.constants import ExecutionStrategyKind, StopReason
 from modex_agent.core.message_utils import sanitize_reminder_content
 from modex_agent.core.types import ReminderKind
-from modex_agent.hook.abc import FinallyGraphHook
+from modex_agent.hook.abc import OutcomeFinallyHook
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -85,15 +99,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SubagentAutoSendHook(FinallyGraphHook):
-    """Always-fire result notification for subagents.
+class SubagentAutoSendHook(OutcomeFinallyHook):
+    """Result notification for subagents — one per logical turn.
 
-    Fires on FINALLY_GRAPH (success, error, cancel, max_iterations — always).
-    Sends a markdown result notification to the parent inbox via
-    ``build_agent_comm_message`` from ``message_format.py``.
+    Fires on the terminal FINALLY_GRAPH leg (success, error, cancel,
+    max_iterations); the suspend leg (``result=None``, approval pending) is
+    skipped by ``OutcomeFinallyHook``. Sends a markdown result notification
+    to the parent inbox via ``build_agent_comm_message`` from
+    ``message_format.py``.
 
-    Native (react) subagents include ``Output:`` and ``Trace:`` file paths so
-    the parent can read the full deliverable.  External coding subagents omit
+    Native (react) subagents include the ``Output:`` file path so the parent
+    can read the full deliverable.  External coding subagents omit
     file artifacts.
     """
 
@@ -119,7 +135,6 @@ class SubagentAutoSendHook(FinallyGraphHook):
         self_name: str = "",
         parent_name: str = "main",
         runtime_dir: Path | None = None,
-        trace_enabled: bool = True,
         execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
         max_result_chars: int = NOTIFY_MAX_RESULT_CHARS,
     ) -> None:
@@ -127,13 +142,12 @@ class SubagentAutoSendHook(FinallyGraphHook):
         self._self_name = self_name
         self._parent_name = parent_name
         self._runtime_dir = runtime_dir or Path(".")
-        self._trace_enabled = trace_enabled
         self._execution_strategy = execution_strategy
         self._max_result_chars = max_result_chars
 
     # -- FINALLY_GRAPH (always fires) ------------------------------------------
 
-    async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None:
+    async def on_outcome(self, ctx: AgentContext, result: AgentResult) -> None:
         if self._tree is None:
             raise RuntimeError(
                 "SubagentAutoSendHook.tree not wired — "
@@ -166,12 +180,8 @@ class SubagentAutoSendHook(FinallyGraphHook):
         except Exception as exc:
             output_path, write_error = None, str(exc)
 
-        trace_path: Path | None = None
-        if self._trace_enabled:
-            trace_path = self._runtime_dir / "trace" / session_id / "spans.jsonl"
-
         success, issue = self._classify(
-            stop_reason, error, invocation_id,
+            stop_reason, error,
             is_external=False,
         )
         if write_error is not None:
@@ -190,7 +200,6 @@ class SubagentAutoSendHook(FinallyGraphHook):
             result_text=notify_text,
             issue=issue,
             stop_reason=stop_reason,
-            trace_path=str(trace_path) if trace_path is not None else None,
             output_path=str(output_path) if output_path is not None else None,
             replied=None,
         )
@@ -206,7 +215,7 @@ class SubagentAutoSendHook(FinallyGraphHook):
         # parent receives the complete deliverable.
         result_text = self._extract_full_result_text(result)
         success, issue = self._classify(
-            stop_reason, error, invocation_id,
+            stop_reason, error,
             is_external=True,
         )
         # replied is None — the Replied: line is omitted from the content.
@@ -223,7 +232,6 @@ class SubagentAutoSendHook(FinallyGraphHook):
             result_text=result_text,
             issue=issue,
             stop_reason=stop_reason,
-            trace_path=None,
             output_path=None,
             replied=replied,
         )
@@ -237,7 +245,6 @@ class SubagentAutoSendHook(FinallyGraphHook):
         result_text: str,
         issue: str,
         stop_reason: str = "",
-        trace_path: str | None = None,
         output_path: str | None = None,
         replied: bool | None = None,
     ) -> str:
@@ -245,7 +252,7 @@ class SubagentAutoSendHook(FinallyGraphHook):
 
         Delegates to ``build_agent_comm_message`` with ``ResultMeta``
         (convergence -- single source of truth).  Result metadata fields
-        (status, stop reason, issue, output, trace, replied) render in the
+        (status, stop reason, issue, output, replied) render in the
         header; ``result_text`` is the body under the ``Result:`` heading.
         """
         from modex_agent.multi_agent.message_format import (
@@ -265,7 +272,6 @@ class SubagentAutoSendHook(FinallyGraphHook):
                 stop_reason=StopReason(stop_reason) if stop_reason else None,
                 issue=issue or None,
                 output_path=output_path,
-                trace_path=trace_path,
                 replied=replied,
             ),
             reply_contract=None,
@@ -349,11 +355,11 @@ class SubagentAutoSendHook(FinallyGraphHook):
     # -- success classification -----------------------------------------------
 
     #: Stop reasons that indicate the turn did NOT complete normally.
-    _NON_NORMAL_STOPS: frozenset[str] = frozenset({
-        "max_iterations",
-        "turn_cancelled",
-        "timeout",
-        "loop_detected",
+    _NON_NORMAL_STOPS: frozenset[StopReason] = frozenset({
+        StopReason.MAX_ITERATIONS,
+        StopReason.TURN_CANCELLED,
+        StopReason.TIMEOUT,
+        StopReason.LOOP_DETECTED,
     })
 
     @classmethod
@@ -361,7 +367,6 @@ class SubagentAutoSendHook(FinallyGraphHook):
         cls,
         stop_reason: str,
         error: str | None,
-        invocation_id: str,
         *,
         is_external: bool,
     ) -> tuple[bool, str]:
@@ -380,31 +385,18 @@ class SubagentAutoSendHook(FinallyGraphHook):
           other non-normal stops are left for the parent to judge based
           on the result text.
 
-        The resume hint does **not** depend on the subagent type — it is
-        advice to the **parent** (the agent receiving this notification).
-        The hook runs on the subagent side and does not know the parent's
-        type, so it uses the tool-agnostic wording "send a message with
-        invocation_id=xxx" (matching the original design).  The parent
-        already knows which communication tool it has.
         """
-        resume = cls._resume_hint(invocation_id)
-
         # --- Hard failures (both kinds) ---
         if error:
-            detail = (
-                "Check the subagent's last output for details."
-                if is_external
-                else "Check the trace for details."
-            )
+            detail = "Check the subagent's last output for details."
             return False, (
-                f"Subagent crashed with error: {error}. Task is incomplete. "
-                f"{detail}{resume}"
+                f"Subagent crashed with error: {error}. Task is incomplete. {detail}"
             )
 
-        if stop_reason == "loop_detected":
+        if stop_reason == StopReason.LOOP_DETECTED:
             return False, (
-                f"Subagent was stuck in a loop (repeating the same output or "
-                f"tool calls). Task is incomplete.{resume}"
+                "Subagent was stuck in a loop (repeating the same output or "
+                "tool calls). Task is incomplete."
             )
 
         # --- Native-only soft failures ---
@@ -413,25 +405,9 @@ class SubagentAutoSendHook(FinallyGraphHook):
         # its work without sending a reply.  Let the parent decide based on
         # the result text.
         if not is_external and stop_reason in cls._NON_NORMAL_STOPS:
-            return False, (
-                f"Subagent stopped with {stop_reason} — task is incomplete."
-                f"{resume}"
-            )
+            return False, f"Subagent stopped with {stop_reason} — task is incomplete."
 
         return True, ""
-
-    @staticmethod
-    def _resume_hint(invocation_id: str) -> str:
-        """Build a resume instruction for the parent agent.
-
-        Tool-agnostic: the hook runs on the subagent side and does not know
-        whether the parent is native (uses ``send_to_agent``) or external
-        (uses ``modexctl send``).  The parent already knows its own tools,
-        so we only state the invocation_id to resume with.
-        """
-        if not invocation_id:
-            return ""
-        return f" To continue, send a message with invocation_id={invocation_id}."
 
     # -- notification ---------------------------------------------------------
 

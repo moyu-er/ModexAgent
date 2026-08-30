@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.media.store import MediaStore
 
 from .enums import TurnCustomKey
 from .models import TurnSnapshot, TurnStateBase
@@ -49,6 +50,7 @@ class AgentRuntimeServices:
     runtime_context_manager: RuntimeContextManager | None = None
     control_channel: InMemoryControlChannel | None = None
     model_info: ModelInfo | None = None
+    media_store: MediaStore | None = None
 
 
 @dataclass

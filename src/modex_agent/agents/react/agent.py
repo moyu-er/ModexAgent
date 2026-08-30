@@ -11,11 +11,11 @@ from typing import Any, Literal
 from modex_agent.agents.react.constants import InterruptReason
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.control.exceptions import (
-    AgentCancelled,
+    AgentCancelledError,
     AgentControlError,
-    AgentTimeout,
+    AgentTimeoutError,
     LoopDetectedError,
-    PolicyViolation,
+    PolicyViolationError,
 )
 from modex_agent.hook import HookPayload, HookPoint
 from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
@@ -82,11 +82,11 @@ def _get_turn_messages(ctx: AgentContext) -> list[dict[str, Any]]:
 
 def _interrupt_reason_from(exc: BaseException) -> InterruptReason:
     """Map a cancel/error exception to a short, non-leaky interrupt category."""
-    if isinstance(exc, AgentCancelled):
+    if isinstance(exc, AgentCancelledError):
         return InterruptReason.USER_STOP
-    if isinstance(exc, AgentTimeout):
+    if isinstance(exc, AgentTimeoutError):
         return InterruptReason.TIMEOUT
-    if isinstance(exc, PolicyViolation):
+    if isinstance(exc, PolicyViolationError):
         return InterruptReason.POLICY
     if isinstance(exc, LoopDetectedError):
         return InterruptReason.LOOP_DETECTED
@@ -98,9 +98,10 @@ def _interrupt_reason_from(exc: BaseException) -> InterruptReason:
 async def _persist_interrupted_partial(ctx: AgentContext, reason: str) -> None:
     """Persist a partially-produced assistant response as an XML-marked message.
 
-    Reads (and clears) the partial content stashed by ``_stream_with_control``
-    when an LLM stream was interrupted mid-flight. Appends an interrupted
-    assistant message to both ``ctx.history`` (memory) and ``message_delta``
+    Reads (and clears) the partial content stashed by the ReactLlmClient
+    event loop when an LLM stream was interrupted mid-flight. Appends an
+    interrupted assistant message to both ``ctx.history`` (memory) and
+    ``message_delta``
     (so ``_get_turn_messages`` mirrors it), keeping memory aligned with the
     transcript. No-op when no partial was captured (normal completion, or an
     interrupt that produced nothing).

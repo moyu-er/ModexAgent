@@ -27,7 +27,6 @@ from .env_builder import ExternalEnvBuilder
 from .events import ExternalEvent
 from .paths import ExternalPaths, ProviderKind
 from .session_store import ExternalSessionMapStore, LocalFileExternalSessionMapStore
-from .subagent_builder import SubagentExternalBuilder
 from .types import (
     BackendResult,
     BackendStatus,
@@ -62,6 +61,4 @@ __all__ = [
     "SessionMapEntry",
     # Per-line emission
     "Emission",
-    # Subagent materialize seam (T5)
-    "SubagentExternalBuilder",
 ]

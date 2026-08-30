@@ -31,13 +31,14 @@ from .events import (
     EmitterConfig,
 )
 from .frontmatter import parse_frontmatter
+from .llm_request import LLMRequest
 from .llm_struct import RuntimeSafetyPolicy
 from .message import (
     ChatMessage,
     ContentFormat,
 )
 from .prompt import SystemPromptPipeline
-from .provider import LLMProvider, StreamingLLMProvider
+from .provider import CallbackStreamProvider, LLMProvider
 from .runtime_context import RuntimeContextManager
 from .session_id import (
     SessionIdFactory,
@@ -56,10 +57,15 @@ from .session_store import (
     SessionStore,
     safe_filename,
 )
-from .tool_call_accumulator import (
-    ToolCallAccumulator,
-    ToolCallChunk,
-    parse_tool_call_chunks_from_delta,
+from .stream_events import (
+    Finish,
+    LLMStreamEvent,
+    ReasoningDelta,
+    ReplayFields,
+    StreamFailure,
+    TextDelta,
+    ToolCallComplete,
+    UsageSnapshot,
 )
 from .tool_manager import (
     InMemoryToolManager,
@@ -110,6 +116,15 @@ __all__ = [
     "TurnTextEvent",
     "TurnToolCallEvent",
     "TurnToolResultEvent",
+    # LLM 流式事件 (LLMStreamEvent 封闭联合)
+    "ReplayFields",
+    "TextDelta",
+    "ReasoningDelta",
+    "ToolCallComplete",
+    "UsageSnapshot",
+    "Finish",
+    "StreamFailure",
+    "LLMStreamEvent",
     # V2 新架构 - 事件和配置
     "AgentEvent",
     "EmitterConfig",
@@ -134,13 +149,9 @@ __all__ = [
     # V2 新架构 - 上下文管理
     "ContextManager",
     "ContextState",
-    # Tool Call Accumulator
-    "ToolCallAccumulator",
-    "ToolCallChunk",
-    "parse_tool_call_chunks_from_delta",
     # 抽象基类
     "LLMProvider",
-    "StreamingLLMProvider",
+    "CallbackStreamProvider",
     # Agent - 当前上下文
     "current_agent_context",
     # 会话 ID
@@ -161,6 +172,7 @@ __all__ = [
     "ChatMessage",
     "ContentFormat",
     # 类型扩展
+    "LLMRequest",
     "LLMResponse",
     "TodoStatus",
     # 运行时结构

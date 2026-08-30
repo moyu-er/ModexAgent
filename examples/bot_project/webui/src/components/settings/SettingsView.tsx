@@ -7,7 +7,7 @@ import { SectionLabel } from "../ui/SectionLabel";
 import { ModelEditor } from "./ModelEditor";
 import { GlobalMcpView } from "./GlobalMcpView";
 import { GlobalSkillsView } from "./GlobalSkillsView";
-import { PoolsView } from "./PoolsView";
+import { ScopeView } from "./ScopeView";
 import { PromptsView } from "./PromptsView";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useToast } from "../ToastContext";
@@ -46,7 +46,7 @@ const CONFIG_GROUP: NavEntry[] = [
 ];
 
 const POOLS_GROUP: NavEntry[] = [
-  { key: "pools", labelKey: "settings.nav.pools" },
+  { key: "scope", labelKey: "settings.nav.scope" },
   { key: "mcp", labelTerm: TERMS.mcp },
   { key: "skills", labelTerm: TERMS.skills },
   { key: "prompts", labelKey: "settings.nav.prompts" },
@@ -59,7 +59,7 @@ const PERSISTED_DOMAINS = new Set<ViewKey>(["im", "model"]);
 const VALID_TABS: ReadonlySet<ViewKey> = new Set([
   "im",
   "model",
-  "pools",
+  "scope",
   "mcp",
   "skills",
   "prompts",
@@ -316,8 +316,8 @@ export function SettingsModal({ open, onClose }: Props) {
                   <GlobalMcpView />
                 ) : view === "skills" ? (
                   <GlobalSkillsView />
-                ) : view === "pools" ? (
-                  <PoolsView onNavigateToPrompts={() => setView("prompts")} />
+                ) : view === "scope" ? (
+                  <ScopeView />
                 ) : view === "prompts" ? (
                   <PromptsView />
                 ) : form && isPersisted ? (

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from modex_agent.agents.summarizer.abc import CoreMemoryConsolidatorBase
 from modex_agent.core.scope import (
@@ -17,8 +18,15 @@ from modex_agent.core.scope import (
 )
 from modex_agent.memory.archive_models import ArchiveChannel
 from modex_agent.memory.core.layers import ArchiveMemoryManager, CoreMemoryManager
-from modex_agent.memory.core.models import ArchiveEntry
+from modex_agent.memory.core.models import ArchiveEntry, CoreMemoryContents
+from modex_agent.memory.hooks import (
+    ConsolidationFinishedPayload,
+    MemoryHookContext,
+    MemoryHookPoint,
+    MemoryHookRunner,
+)
 from modex_agent.memory.registry.base import MemoryStoreRegistry
+from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +51,8 @@ class DreamEngine:
         consolidator: CoreMemoryConsolidatorBase | None = None,
         max_consume_per_run: int = 3,
         per_archive_iterations: int = 10,
+        hook_runner: MemoryHookRunner | None = None,
+        token_estimator: TokenEstimator | None = None,
     ) -> None:
         self.history_manager = history_manager
         self.long_term_manager = long_term_manager
@@ -50,6 +60,8 @@ class DreamEngine:
         self.max_consume_per_run = max_consume_per_run
         self.per_archive_iterations = per_archive_iterations
         self._consolidator = consolidator
+        self._hook_runner = hook_runner
+        self._token_estimator = token_estimator or CharTokenEstimator()
         self._locks: dict[str, asyncio.Lock] = {}
 
     def _get_lock(self, context: MemoryContext) -> asyncio.Lock:
@@ -163,7 +175,14 @@ class DreamEngine:
             invocation_id,
         )
 
-        success = await self._consolidator.consolidate(
+        before_tokens = 0
+        started = time.monotonic()
+        if self._hook_runner is not None:
+            before_tokens = self._estimate_core_tokens(
+                await self.long_term_manager.get_all(context),
+            )
+
+        outcome = await self._consolidator.consolidate(
             archive_ids=archive_ids,
             archive_base=archive_base,
             core_memory_dir=core_memory_dir,
@@ -171,7 +190,7 @@ class DreamEngine:
             invocation_id=invocation_id,
         )
 
-        if success:
+        if outcome.changed:
             final_cursor = max(archive_ids)
             await self._commit_core_memory_cursor(context, final_cursor)
             logger.info(
@@ -180,7 +199,34 @@ class DreamEngine:
                 invocation_id,
             )
 
-        return success
+        if self._hook_runner is not None:
+            after_tokens = self._estimate_core_tokens(
+                await self.long_term_manager.get_all(context),
+            )
+            payload = ConsolidationFinishedPayload(
+                session_id=context.session_id or "",
+                trigger="dream",
+                changed=outcome.changed,
+                consumed_count=len(archive_ids),
+                before_tokens=before_tokens,
+                after_tokens=after_tokens,
+                compression_ratio=(after_tokens / before_tokens if before_tokens else 1.0),
+                usage=outcome.usage,
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+            await self._hook_runner.dispatch(
+                MemoryHookPoint.CONSOLIDATION_FINISHED,
+                MemoryHookContext(
+                    memory_context=context,
+                    consolidation_finished=payload,
+                ),
+            )
+
+        return outcome.changed
+
+    def _estimate_core_tokens(self, contents: CoreMemoryContents) -> int:
+        values = [contents.soul, contents.user, contents.memory, *contents.custom.values()]
+        return sum(self._token_estimator.estimate_text(value) for value in values)
 
     async def _commit_core_memory_cursor(
         self,

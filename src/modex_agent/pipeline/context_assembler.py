@@ -10,7 +10,15 @@ from typing import TYPE_CHECKING, Any
 from modex_agent.core.constants import RuntimeInfoKey
 from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.emitter import AgentResult
+from modex_agent.core.message import (
+    ContentPart,
+    ImageUrl,
+    ImageUrlPart,
+    TextPart,
+    build_media_ref,
+)
 from modex_agent.core.types import InputMessage, MessageRole, ReminderKind
+from modex_agent.media.models import Kind
 from modex_agent.memory.history import (
     ListMessageHistory,
     history_to_list,
@@ -22,7 +30,6 @@ if TYPE_CHECKING:
     from modex_agent.core.capabilities import ModelInfo
     from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
-    from modex_agent.media.media_utils import MediaBlock, MediaProcessor
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.multi_agent.router import RouteResult
     from modex_agent.utils.context_builder import MultiAgentContextBuilder
@@ -33,8 +40,6 @@ async def assemble_context(
     input_msg: InputMessage,
     input_metadata: dict[str, Any],
     sanitized_content: str | None,
-    media_blocks: list[MediaBlock],
-    _media_processor: MediaProcessor | None,
     ctx_mgr: ContextManager,
     route_result: RouteResult | None,
     _is_approval_cmd: bool,
@@ -53,20 +58,24 @@ async def assemble_context(
     """
     source_agent = input_metadata.get("source_agent")
 
-    multimodal_content: str | list[dict[str, Any]] | None
-    # Build multimodal content.
-    # NOTE: mechanism A (native multimodal) is implemented via turn-state
-    # enrichment in ``LLMNode._build_messages`` (ADR-0014 §2/§7), NOT here.
-    # This branch is the dormant MediaProcessor seam retained for the deferred
-    # provider-side renderer (ADR-0013 §10) and is currently unreachable —
-    # ``preprocess`` always returns ``[]``/``None`` for ``media_blocks``.
-    if media_blocks and _media_processor is not None:
-        try:
-            multimodal_content = _media_processor.build_content(
-                sanitized_content or "", media_blocks
-            )
-        except Exception:
-            multimodal_content = sanitized_content
+    # User-message parts carrier: image-kind resolved attachments lower to
+    # [TextPart(sanitized text, 含机制B引用行), ImageUrlPart(media://<aid>), ...]
+    # UNCONDITIONALLY — the carrier is model-agnostic. The media:// references
+    # (never base64) are what persist into history; inject_multimodal applies
+    # the per-request modality gate + budget + resolution at each LLM call, so
+    # a text-only turn degrades to the text + mechanism-B lines and a later
+    # vision turn still sees the images.
+    image_attachments = [
+        a for a in input_msg.attachments_resolved if a.kind is Kind.IMAGE
+    ]
+    multimodal_content: str | list[ContentPart] | None
+    if image_attachments:
+        parts: list[ContentPart] = [TextPart(text=sanitized_content or "")]
+        parts.extend(
+            ImageUrlPart(image_url=ImageUrl(url=build_media_ref(att.id)))
+            for att in image_attachments
+        )
+        multimodal_content = parts
     else:
         multimodal_content = sanitized_content
 

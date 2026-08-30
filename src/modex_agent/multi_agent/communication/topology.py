@@ -19,21 +19,31 @@ class TopologyPolicy:
         sender_kind: AgentCommKind | None,
         target: CommunicationTarget,
         sender_context: AgentContext,
+        *,
+        declared_children: frozenset[str] = frozenset(),
     ) -> str | None:
         """Return error string if forbidden, None if allowed.
 
-        A subagent may only address its parent (a NORMAL agent); both
-        subagent→subagent and subagent→non-parent-NORMAL are rejected. The
-        parent is recovered from ``sender_context.session.parent_session_id``
-        via ``resolve_parent_name``; when it is unavailable the defense is
-        best-effort and the send is allowed.
+        A SUBAGENT sender may address exactly two parties: its parent (a
+        NORMAL agent, recovered from ``sender_context.session.parent_session_id``
+        via ``resolve_parent_name``) for replies/consultation, and its own
+        declared children (``declared_children`` — the per-agent store's
+        direct-child entries, SPEC §3.2) for task dispatch. Any agent with
+        declared children can dispatch, not just main agents; both
+        subagent→subagent-that-is-not-a-declared-child and
+        subagent→non-parent-NORMAL are rejected. When the parent name is
+        unavailable the parent defense is best-effort and the send is
+        allowed. NORMAL senders are unconstrained (peer mesh + dispatch).
         """
         if sender_kind != AgentCommKind.SUBAGENT:
             return None
         if target.kind == AgentCommKind.SUBAGENT:
+            if target.name in declared_children:
+                return None
             return (
-                "Subagents can only reply to peer agents; send subagent-to-"
-                "subagent requests through a peer agent."
+                "Subagents can only reply to peer agents and dispatch their "
+                "own declared children; send subagent-to-subagent requests "
+                "through the owning agent."
             )
         parent_name = resolve_parent_name(sender_context)
         if parent_name is not None and target.name != parent_name:

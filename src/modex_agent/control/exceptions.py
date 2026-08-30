@@ -23,7 +23,7 @@ class AgentControlError(Exception):
         super().__init__(reason)
 
 
-class AgentCancelled(AgentControlError):
+class AgentCancelledError(AgentControlError):
     """External cancellation exception.
 
     Used when external control commands (e.g. user cancel, admin cancel)
@@ -36,7 +36,7 @@ class AgentCancelled(AgentControlError):
         super().__init__(reason)
 
 
-class AgentTimeout(AgentControlError):
+class AgentTimeoutError(AgentControlError):
     """Timeout exception.
 
     Used for turn timeout, tool timeout, or overall run timeout.
@@ -48,7 +48,7 @@ class AgentTimeout(AgentControlError):
         super().__init__(reason)
 
 
-class PolicyViolation(AgentControlError):
+class PolicyViolationError(AgentControlError):
     """Policy violation exception.
 
     Used when pre-configured policies (e.g. token budget, safety policy)

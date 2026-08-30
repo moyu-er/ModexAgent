@@ -8,12 +8,16 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 
 from modex_agent.tools.terminal.backends.base import TerminalBackend
-from modex_agent.tools.terminal.backends.factory import create_pty_backend
+from modex_agent.tools.terminal.backends.factory import (
+    UnsupportedVisibilityForTransport,
+    create_pty_backend,
+)
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.session import TerminalInfo, TerminalSession
 from modex_agent.tools.terminal.types import (
     ShellInfo,
     TerminalVisibility,
+    detect_platform_shell,
 )
 
 logger = logging.getLogger(__name__)
@@ -270,6 +274,100 @@ def create_terminal_manager(
         max_terminals=max_terminals,
         enable_memory_pressure=enable_memory_pressure,
     )
+
+
+def create_terminal_manager_or_none(
+    *,
+    use_terminal: bool,
+    terminal_visibility: bool,
+    pool_name: str,
+    default_cwd: str | None = None,
+) -> TerminalManagerBase | None:
+    """Pool terminal manager with the platform/backend fallback ladder.
+
+    ``use_terminal`` governs exactly one thing (SPEC scope-assembly §5.1):
+    whether the terminal manager — infrastructure — is built. The tool
+    roster (``bash``/``process``/``terminal``) is assembled independently
+    through the TOOL-slot factories; bash degrades to SubprocessTool when
+    no manager exists, process/terminal raise.
+
+    Ladder (real platform logic, not glue — not config-ized): shell
+    detection -> requested-visibility attempt -> fallback visibility ->
+    None (SubprocessTool-only) so the agent still works. Migrated from the
+    BIZ ``builders._build_terminal_manager`` (ADR-0010 two-axis
+    construction; ``terminal_visibility`` True -> VISIBLE, False ->
+    HIDDEN).
+
+    Args:
+        use_terminal: ``False`` -> no manager (logged, info).
+        terminal_visibility: requested visibility axis.
+        pool_name: log-context label only.
+        default_cwd: workspace default cwd for new sessions.
+
+    Returns:
+        A ``TerminalManagerBase``, or ``None`` when terminal support is
+        disabled or every backend is unavailable on this platform.
+    """
+    if not use_terminal:
+        logger.info("Pool '%s': use_terminal=false, skipping terminal tools", pool_name)
+        return None
+
+    shell_info = detect_platform_shell()
+    if shell_info is None:
+        logger.warning(
+            "Pool '%s': no supported shell detected; falling back to SubprocessTool.",
+            pool_name,
+        )
+        return None
+
+    attempts: list[TerminalVisibility] = (
+        [TerminalVisibility.VISIBLE, TerminalVisibility.HIDDEN]
+        if terminal_visibility
+        else [TerminalVisibility.HIDDEN]
+    )
+
+    last_err: Exception | None = None
+    for vis in attempts:
+        try:
+            mgr = create_terminal_manager(
+                shell_info=shell_info,
+                visibility=vis,
+                default_cwd=default_cwd,
+            )
+            logger.info(
+                "Pool '%s': terminal manager created (family=%s, visibility=%s)",
+                pool_name,
+                shell_info.family.value,
+                vis.value,
+            )
+            return mgr
+        except UnsupportedVisibilityForTransport as exc:
+            last_err = exc
+            logger.warning(
+                "Pool '%s': terminal backend (family=%s, visibility=%s) unavailable: %s",
+                pool_name,
+                shell_info.family.value,
+                vis.value,
+                exc,
+            )
+        except Exception as exc:
+            last_err = exc
+            logger.warning(
+                "Pool '%s': terminal backend (family=%s, visibility=%s) failed: %s",
+                pool_name,
+                shell_info.family.value,
+                vis.value,
+                exc,
+            )
+
+    logger.error(
+        "Pool '%s': ALL terminal backends failed (tried %s). Last error: %s. "
+        "Falling back to SubprocessTool only.",
+        pool_name,
+        attempts,
+        last_err,
+    )
+    return None
 
 
 def _make_backend_factory(visibility: TerminalVisibility) -> Callable[[], TerminalBackend]:

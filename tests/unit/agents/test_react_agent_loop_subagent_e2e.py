@@ -1,17 +1,15 @@
 """Subagent loop detection end-to-end: LoopDetectionHook -> ReActAgent.run -> SubagentAutoSendHook -> parent inbox."""
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import FinishReason, StopReason
-from modex_agent.core.emitter import AgentResult
 from modex_agent.core.message import ChatMessage
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import LLMResponse, ToolCall
-from modex_agent.hook import HookErrorPolicy, HookSpec, HookRunner
+from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
 from modex_agent.hook.builtin import SubagentAutoSendHook
 from modex_agent.hook.builtin.loop_detection import LoopDetectionHook
 from modex_agent.memory.history import ListMessageHistory
@@ -60,6 +58,20 @@ class _FakeTree:
         self.delivered.append((key, envelope))
 
 
+class _ScriptedProvider(CallbackStreamProvider):
+    """chat-only scripted mock riding the callback→event bridge."""
+
+    def __init__(self, response: LLMResponse):
+        super().__init__()
+        self._response = response
+
+    def get_default_model(self) -> str:
+        return "mock"
+
+    async def chat_stream(self, messages, *, on_content_delta=None, on_reasoning_delta=None, **kw):
+        return self._response
+
+
 def _make_subagent_ctx(parent_session_id: str = "conv123.main"):
     session = SessionInfo(
         session_id="inv1.scout",
@@ -91,8 +103,10 @@ async def test_subagent_loop_routes_to_parent_inbox():
     """A subagent that hits LOOP_DETECTED must notify its parent, not the user."""
     tree = _FakeTree()
     ctx = _make_subagent_ctx()
-    # Seed a prior assistant step with the same content AND the same tool call,
-    # so the AND-based loop detector fires on the first LLM response.
+    # Seed one prior assistant round with the same tool call. The scripted
+    # provider keeps returning it, so the two-stage detector injects a
+    # reminder once the trailing run hits window_size (2) and force-exits
+    # after observation_rounds (2) more rounds.
     await ctx.history.append(
         ChatMessage(
             role="assistant",
@@ -101,20 +115,16 @@ async def test_subagent_loop_routes_to_parent_inbox():
         )
     )
 
-    provider = MagicMock()
-    provider.chat = AsyncMock(
-        return_value=LLMResponse(
-            content="I am stuck doing the same thing.",
-            finish_reason=FinishReason.STOP.value,
-            tool_calls=[ToolCall(tool_name="read", arguments={"path": "/a"})],
-        )
-    )
-    provider.get_default_model = lambda: "mock"
+    provider = _ScriptedProvider(LLMResponse(
+        content="I am stuck doing the same thing.",
+        finish_reason=FinishReason.STOP.value,
+        tool_calls=[ToolCall(tool_name="read", arguments={"path": "/a"})],
+    ))
     agent = ReActAgent(provider=provider)
 
     ctx.runtime.services.hooks.add(
         HookSpec(
-            hook=LoopDetectionHook(window_size=2, content_similarity_threshold=0.85),
+            hook=LoopDetectionHook(window_size=2, observation_rounds=2),
             on_error=HookErrorPolicy.LOG,
         )
     )
@@ -134,7 +144,7 @@ async def test_subagent_loop_routes_to_parent_inbox():
 
     # ReActAgent should surface LOOP_DETECTED.
     assert result.stop_reason == StopReason.LOOP_DETECTED
-    assert "<loop_detected" in (result.content or "")
+    assert "Loop detected" in (result.content or "")
 
     # SubagentAutoSendHook should route the notification to the parent inbox.
     assert len(tree.delivered) == 1

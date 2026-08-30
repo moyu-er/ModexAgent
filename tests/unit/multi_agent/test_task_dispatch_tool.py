@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from modex_agent.core.agent import AgentContext, current_agent_context
@@ -23,6 +21,7 @@ class _RecordingService:
         self.last_target: CommunicationTarget | None = None
         self.last_content: str | None = None
         self.last_context: AgentContext | None = None
+        self.last_declared_children: frozenset[str] | None = None
 
     async def send_async(
         self,
@@ -31,11 +30,13 @@ class _RecordingService:
         content: str,
         invocation_id: str | None,
         context: AgentContext,
+        declared_children: frozenset[str] | None = None,
     ) -> str:
         self.async_invocation_id = invocation_id
         self.last_target = target
         self.last_content = content
         self.last_context = context
+        self.last_declared_children = declared_children
         return "ok"
 
 
@@ -96,6 +97,13 @@ class TestTaskDispatchToolParams:
         assert "target_agent" in required
         assert "content" in required
         assert "invocation_id" not in required
+
+    def test_invocation_id_description_is_continue_mode_only(self) -> None:
+        tool = _task_tool(CommunicationTargetStore())
+        desc = tool.parameters["properties"]["invocation_id"]["description"]
+        assert desc.startswith("Continue-mode only:")
+        assert "notification or consultation message" in desc
+        assert "Used ONLY to continue" not in desc
 
 
 # -- 3, 4, 12. dynamic schema ------------------------------------------------
@@ -163,6 +171,9 @@ class TestTaskDispatchToolExecute:
         assert service.last_target.name == "office-expert"
         assert service.last_content == "do the thing"
         assert service.last_context is not None
+        # The pool-level service is shared; the tool passes its OWN
+        # store's subagent names as the per-sender topology input.
+        assert service.last_declared_children == frozenset({"office-expert"})
 
     @pytest.mark.asyncio
     async def test_execute_rejects_unknown_target(self) -> None:
@@ -349,3 +360,20 @@ class TestTaskDispatchToolDescription:
         assert "system-reminder" not in lowered
         assert "normal agent" not in lowered
         assert "pass null" not in lowered
+
+    def test_description_documents_dispatch_modes(self) -> None:
+        tool = _task_tool(_store_with_subagent_target())
+        desc = tool.description
+        expected_dispatch_modes = (
+            "Dispatch modes:\n"
+            "1. New task (default) — omit `invocation_id`.\n"
+            "2. Continue a session — pass that subagent's `invocation_id` (from\n"
+            "   its result notification or consultation message) together with\n"
+            "   your follow-up instructions in `content`. The subagent resumes\n"
+            "   with its prior context.\n\n"
+            "Each subagent's result notification states whether its task is\n"
+            "complete and what to do — follow it. Never re-dispatch just to\n"
+            "collect an already-delivered result."
+        )
+
+        assert expected_dispatch_modes in desc

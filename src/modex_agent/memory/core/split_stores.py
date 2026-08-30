@@ -38,7 +38,10 @@ __all__ = [
 
 # Fields stripped before comparing two message dicts for identity.
 # _pinned / _deleted are runtime markers added by load_messages/load_all_messages.
-# reasoning_content / content_format are stripped by ChatMessage.to_dict().
+# reasoning_content is persisted by ChatMessage.to_dict() but excluded from
+# identity matching: rows stored before the passback change lack the field,
+# so signatures must stay insensitive to it. content_format is omitted by
+# to_dict() when PLAIN.
 _META_FIELDS: frozenset[str] = frozenset(
     {
         "_pinned",

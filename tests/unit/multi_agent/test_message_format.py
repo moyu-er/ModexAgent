@@ -59,7 +59,6 @@ def test_result_meta_defaults():
     assert meta.stop_reason is None
     assert meta.issue is None
     assert meta.output_path is None
-    assert meta.trace_path is None
     assert meta.replied is None
 
 
@@ -246,7 +245,6 @@ def test_subagent_result_success_native():
             status=ResultStatus.SUCCESS,
             stop_reason=StopReason.COMPLETED,
             output_path="/output/OUTPUT.md",
-            trace_path="/trace/spans.jsonl",
         ),
     )
     assert "Message from subagent 'worker'" in result
@@ -257,7 +255,7 @@ def test_subagent_result_success_native():
     assert "All tasks finished." in result
     assert "Output: /output/OUTPUT.md" in result
     assert "(written)" not in result
-    assert "Trace: /trace/spans.jsonl" in result
+    assert "Trace:" not in result
     assert "Issue:" not in result
 
 
@@ -272,7 +270,6 @@ def test_subagent_result_failed_with_issue():
             stop_reason=StopReason.ERROR,
             issue="Subagent crashed with error: timeout.",
             output_path="/output/OUTPUT.md",
-            trace_path="/trace/spans.jsonl",
         ),
     )
     assert "status: failed" in result
@@ -385,8 +382,270 @@ def test_subagent_result_no_stop_reason_omits_line():
     assert "Stop reason:" not in result
 
 
+def test_success_completed_with_output_renders_fully_delivered_guidance():
+    expected_guidance = (
+        "The task is complete and its result is fully delivered — you don't\n"
+        "need to call task again to collect it. The Result text above is a\n"
+        "truncated summary; the Output file holds the complete deliverable.\n"
+        "To assign this subagent new follow-up work, call task with\n"
+        "invocation_id=abc12345."
+    )
+
+    result = build_agent_comm_message(
+        source_label=SourceLabel.SUBAGENT,
+        source="worker",
+        content="summary",
+        invocation_id="abc12345",
+        result=ResultMeta(
+            status=ResultStatus.SUCCESS,
+            stop_reason=StopReason.COMPLETED,
+            output_path="/tmp/OUTPUT_1.md",
+        ),
+    )
+
+    assert f"Result:\nsummary\n\n{expected_guidance}" in result
+
+
+def test_success_completed_without_output_renders_delivered_guidance():
+    expected_guidance = (
+        "The task is complete and its result is fully delivered. To assign\n"
+        "this subagent new follow-up work, call task with\n"
+        "invocation_id=abc12345."
+    )
+
+    result = build_agent_comm_message(
+        source_label=SourceLabel.SUBAGENT,
+        source="worker",
+        content="complete result",
+        invocation_id="abc12345",
+        result=ResultMeta(
+            status=ResultStatus.SUCCESS,
+            stop_reason=StopReason.COMPLETED,
+        ),
+    )
+
+    assert expected_guidance in result
+
+
+def test_success_with_issue_renders_deliverable_lost_guidance():
+    expected_guidance = (
+        "The task is complete, but the deliverable file could not be written\n"
+        "(see Issue above) — the Result text is truncated. To retrieve the\n"
+        "subagent's full output, continue the session: call task with\n"
+        "invocation_id=abc12345."
+    )
+
+    result = build_agent_comm_message(
+        source_label=SourceLabel.SUBAGENT,
+        source="worker",
+        content="truncated result",
+        invocation_id="abc12345",
+        result=ResultMeta(
+            status=ResultStatus.SUCCESS,
+            stop_reason=StopReason.COMPLETED,
+            issue="Deliverable file write failed: disk full",
+        ),
+    )
+
+    assert expected_guidance in result
+
+
+def test_success_unclean_stop_renders_judge_guidance():
+    expected_guidance = (
+        "The subagent ended with stop reason 'max_iterations' and did not\n"
+        "report clean completion. Judge from the Result above: if the goal\n"
+        "was met, treat it as final; otherwise continue by calling task with "
+        "invocation_id=abc12345 and refined instructions."
+    )
+
+    result = build_agent_comm_message(
+        source_label=SourceLabel.SUBAGENT,
+        source="worker",
+        content="partial result",
+        invocation_id="abc12345",
+        result=ResultMeta(
+            status=ResultStatus.SUCCESS,
+            stop_reason=StopReason.MAX_ITERATIONS,
+        ),
+    )
+
+    assert expected_guidance in result
+
+
+def test_failed_result_renders_continue_guidance():
+    expected_guidance = (
+        "The task is incomplete. To continue it, call task with\n"
+        "target_agent='worker', invocation_id='abc12345', and\n"
+        "content=your follow-up instructions — the subagent resumes with its\n"
+        "prior context."
+    )
+
+    result = build_agent_comm_message(
+        source_label=SourceLabel.SUBAGENT,
+        source="worker",
+        content="failure summary",
+        invocation_id="abc12345",
+        result=ResultMeta(
+            status=ResultStatus.FAILED,
+            stop_reason=StopReason.ERROR,
+        ),
+    )
+
+    assert expected_guidance in result
+
+
+def test_every_result_state_with_invocation_id_has_actionable_guidance():
+    guidance_markers = (
+        "fully delivered",
+        "could not be written",
+        "did not report clean completion",
+        "The task is incomplete",
+    )
+    stop_reasons = (
+        None,
+        StopReason.COMPLETED,
+        StopReason.ERROR,
+        StopReason.MAX_ITERATIONS,
+    )
+    output_paths = (None, "/tmp/OUTPUT_1.md")
+    issues = (None, "Deliverable file write failed: disk full")
+
+    for status in (ResultStatus.SUCCESS, ResultStatus.FAILED):
+        for stop_reason in stop_reasons:
+            for output_path in output_paths:
+                for issue in issues:
+                    result = build_agent_comm_message(
+                        source_label=SourceLabel.SUBAGENT,
+                        source="worker",
+                        content="result",
+                        invocation_id="abc12345",
+                        result=ResultMeta(
+                            status=status,
+                            stop_reason=stop_reason,
+                            output_path=output_path,
+                            issue=issue,
+                        ),
+                    )
+
+                    assert "invocation_id: abc12345" in result
+                    normalized_result = result.replace("\n", " ")
+                    assert any(marker in normalized_result for marker in guidance_markers)
+                    if status == ResultStatus.SUCCESS and issue is not None:
+                        assert "could not be written" in result
+                        assert "fully delivered" not in result
+
+
+@pytest.mark.parametrize(
+    ("meta", "expected_guidance"),
+    [
+        (
+            ResultMeta(
+                status=ResultStatus.SUCCESS,
+                stop_reason=StopReason.COMPLETED,
+                output_path="/tmp/OUTPUT_1.md",
+            ),
+            (
+                "The task is complete and its result is fully delivered — you don't\n"
+                "need to call task again to collect it. The Result text above is a\n"
+                "truncated summary; the Output file holds the complete deliverable."
+            ),
+        ),
+        (
+            ResultMeta(
+                status=ResultStatus.SUCCESS,
+                stop_reason=StopReason.COMPLETED,
+            ),
+            "The task is complete and its result is fully delivered.",
+        ),
+        (
+            ResultMeta(
+                status=ResultStatus.SUCCESS,
+                stop_reason=StopReason.COMPLETED,
+                issue="Deliverable file write failed: disk full",
+            ),
+            (
+                "The task is complete, but the deliverable file could not be written\n"
+                "(see Issue above) — the Result text is truncated."
+            ),
+        ),
+        (
+            ResultMeta(
+                status=ResultStatus.SUCCESS,
+                stop_reason=StopReason.MAX_ITERATIONS,
+            ),
+            (
+                "The subagent ended with stop reason 'max_iterations' and did not\n"
+                "report clean completion. Judge from the Result above: if the goal\n"
+                "was met, treat it as final."
+            ),
+        ),
+        (
+            ResultMeta(
+                status=ResultStatus.FAILED,
+                stop_reason=StopReason.ERROR,
+            ),
+            "The task is incomplete.",
+        ),
+    ],
+)
+def test_empty_invocation_id_omits_follow_up_guidance(meta, expected_guidance):
+    result = build_agent_comm_message(
+        source_label=SourceLabel.SUBAGENT,
+        source="worker",
+        content="result",
+        invocation_id=None,
+        result=meta,
+    )
+
+    assert result.endswith(expected_guidance)
+    assert "invocation_id=" not in result
+    assert "To assign this subagent" not in result
+    assert "To retrieve the subagent's full output" not in result
+    assert "otherwise continue" not in result
+    assert "To continue it" not in result
+
+
+def test_parent_reply_with_invocation_id_appends_answer_contract():
+    expected_answer_block = (
+        "---\n\n"
+        "To answer this subagent, continue its session: call task with\n"
+        "target_agent='worker', invocation_id='abc12345', and\n"
+        "content=your answer."
+    )
+
+    result = message_format.build_parent_reply_message(
+        source="worker",
+        invocation_id="abc12345",
+        content="What should I do next?",
+    )
+
+    assert result.endswith(expected_answer_block)
+
+
+def test_parent_reply_without_invocation_id_omits_answer_contract():
+    result = message_format.build_parent_reply_message(
+        source="worker",
+        invocation_id=None,
+        content="No session to continue.",
+    )
+
+    assert "To answer this subagent" not in result
+    assert "---" not in result
+
+
+def test_plain_content_message_remains_byte_identical():
+    result = build_agent_comm_message(
+        source_label=SourceLabel.AGENT,
+        source="main",
+        content="hi",
+    )
+
+    assert result == "Message from agent 'main':\n\nContent:\nhi"
+
+
 # ---------------------------------------------------------------------------
-# build_dispatch_message — convergence wrapper (subagent/parent dispatch)
+# build_dispatch_message — convergence wrapper (subagent dispatch only;
+# parent replies use build_parent_reply_message)
 # ---------------------------------------------------------------------------
 
 
@@ -425,7 +684,7 @@ def test_dispatch_native_target_uses_minimal_format():
     assert "modexctl send" not in result
 
 
-def test_dispatch_native_target_none_invocation_id_omits_line():
+def test_dispatch_without_invocation_id_omits_session_identity_and_answer_contract():
     result = build_dispatch_message(
         source="main",
         invocation_id=None,
@@ -433,5 +692,6 @@ def test_dispatch_native_target_none_invocation_id_omits_line():
     )
     assert "Message from agent 'main'" in result
     assert "invocation_id" not in result
+    assert "To answer this subagent" not in result
     assert "Content:" in result
     assert "do work" in result

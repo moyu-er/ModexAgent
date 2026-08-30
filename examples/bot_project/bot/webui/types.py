@@ -21,6 +21,7 @@ from aiohttp import web
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.webui.events import ServerEvent
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.runtime.store import TodoStore, TurnStateStore
 from modex_graph import GraphOutput
 
 logger = logging.getLogger(__name__)
@@ -159,7 +160,7 @@ _SKILL_MAX_FILE_BYTES: int = _SKILL_MAX_FILE_MB * 1024 * 1024
 _SKILL_MAX_TOTAL_BYTES: int = _SKILL_MAX_TOTAL_MB * 1024 * 1024
 
 
-class _SkillUploadFallback(Exception):
+class _SkillUploadFallbackError(Exception):
     """Internal sentinel: multipart upload unavailable, fall back to JSON."""
 
 
@@ -170,10 +171,12 @@ class RuntimeStores:
     Carries the ``TodoStore`` and ``TurnStateStore`` the WebUI endpoints
     should read from, matching the backend the agent writes to. ``None``
     fields signal the endpoint to fall back to its hardcoded file store.
+    The todo store is the pool's ``capability_supply['todo']`` instance —
+    the SAME store the todo tools write through.
     """
 
-    todo_store: Any = None
-    turn_store: Any = None
+    todo_store: TodoStore | None = None
+    turn_store: TurnStateStore | None = None
 
 
 def _skill_relpath(filename: str) -> str | None:
@@ -340,16 +343,34 @@ class WorkspaceIndex(ABC):
         ...
 
 
-# ── Workspace picker script (Windows-only fallback) ────────────────────────
+# ── Workspace picker script (cross-platform) ───────────────────────────────
+#
+# Windows  : tkinter (Tcl/Tk bundled in python-build-standalone Windows build)
+# macOS    : osascript (Darwin build omits Tcl/Tk runtime → tkinter.Tk() fails
+#            with "Can't find a usable init.tcl")
+# Linux    : zenity → kdialog → tkinter (Tcl/Tk may be missing; CLI tools first)
+#
+# Exit contract (consumed by handle_workspace_pick in routes/workspace.py):
+#   stdout=path + exit 0   → selected  → 200 {path, success, cwd}
+#   empty stdout + exit 0  → canceled  → 200 {path: null, success: false}
+#   exit non-zero + stderr → error     → 503 {error}
+#
+# Cancel normalization: osascript/zenity/kdialog all exit 1 on cancel. The
+# script converts this to empty stdout + exit 0 so the backend reports a
+# cancel (not a 503) to the user.
 
 _PICKER_TIMEOUT_S = 600
 
 _PICKER_SCRIPT = """\
-import ctypes
 import platform
 import sys
 
-if platform.system() == "Windows":
+_system = platform.system()
+
+if _system == "Windows":
+    # Windows: python-build-standalone bundles Tcl/Tk runtime, so tkinter
+    # works out of the box. DPI awareness for crisp HiDPI dialogs.
+    import ctypes
     try:
         # 2 = PROCESS_PER_MONITOR_DPI_AWARE
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -358,15 +379,110 @@ if platform.system() == "Windows":
             ctypes.windll.user32.SetProcessDPIAware()
         except Exception:
             pass
+    import tkinter as tk
+    from tkinter import filedialog
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    path = filedialog.askdirectory(mustexist=True)
+    if path:
+        sys.stdout.write(path)
+    root.destroy()
 
-import tkinter as tk
-from tkinter import filedialog
+elif _system == "Darwin":
+    # macOS: python-build-standalone's Darwin build omits the Tcl/Tk runtime
+    # (init.tcl / tcl8.6/library), so tkinter.Tk() raises
+    # "Can't find a usable init.tcl". Use the native osascript folder picker
+    # instead — always available on macOS, no Tcl/Tk dependency.
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", "POSIX path of (choose folder)"],
+            capture_output=True,
+            text=True,
+            timeout=595,
+        )
+        # osascript exit codes:
+        #   0 + stdout=path    → selected
+        #   1 + stderr has -128 → user canceled (userCanceledErr, localized msg)
+        #   non-zero + stderr  → error (permission denied, etc.)
+        # The -128 code is the only reliable cross-localization signal: the
+        # surrounding text is localized ("用户已取消" / "User canceled") but
+        # the "(-128)" suffix is always present.
+        if result.returncode == 0:
+            path = result.stdout.strip()
+            if path:
+                sys.stdout.write(path)
+        elif result.returncode == 1 and "-128" in result.stderr:
+            # user canceled — normalize to empty stdout + exit 0
+            pass
+        else:
+            sys.stderr.write(result.stderr.strip() or "osascript failed")
+            sys.exit(1)
+    except Exception as e:
+        sys.stderr.write(str(e))
+        sys.exit(1)
 
-root = tk.Tk()
-root.withdraw()
-root.attributes("-topmost", True)
-path = filedialog.askdirectory(mustexist=True)
-if path:
-    sys.stdout.write(path)
-root.destroy()
+else:
+    # Linux / other Unix: try GUI folder pickers in order (zenity → kdialog),
+    # fall back to tkinter. python-build-standalone Linux may omit Tcl/Tk,
+    # so tkinter is the last resort, not the default.
+    import shutil
+    import subprocess
+
+    # (tool_name, argv) pairs. Cancel stops the chain; error tries the next.
+    _TOOLS = [
+        ("zenity", ["zenity", "--file-selection", "--directory"]),
+        ("kdialog", ["kdialog", "--getexistingdirectory", "/"]),
+    ]
+
+    _picked = None
+    _canceled = False
+    _last_error = ""
+
+    for _name, _argv in _TOOLS:
+        if not shutil.which(_name):
+            continue
+        try:
+            result = subprocess.run(
+                _argv,
+                capture_output=True,
+                text=True,
+                timeout=595,
+            )
+            # zenity and kdialog share the same convention:
+            #   exit 0 + stdout=path → selected
+            #   exit 1 + empty stdout → user canceled
+            #   other + stderr → error
+            if result.returncode == 0 and result.stdout.strip():
+                _picked = result.stdout.strip()
+                break
+            if result.returncode == 1 and not result.stdout.strip():
+                _canceled = True
+                break
+            _last_error = result.stderr.strip() or (_name + " failed")
+        except Exception as e:
+            _last_error = str(e)
+
+    if _picked is None and not _canceled:
+        # Last resort: tkinter (may fail if Tcl/Tk runtime is missing).
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            path = filedialog.askdirectory(mustexist=True)
+            if path:
+                _picked = path
+            root.destroy()
+        except Exception as e:
+            _last_error = str(e)
+
+    if _picked:
+        sys.stdout.write(_picked)
+    elif _last_error and not _canceled:
+        sys.stderr.write(_last_error)
+        sys.exit(1)
+    # else: user canceled → exit 0 with empty stdout (maps to {path: null})
 """

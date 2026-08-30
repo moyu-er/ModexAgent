@@ -4,22 +4,27 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import bot.eval.agent_harness as agent_harness
 import pytest
 from bot.eval.agent_harness import (
+    _build_score_injector,
+    _eval_observability,
     _WorkspaceTokenNormalizer,
     build_runtime_services,
-    build_tool_manager,
+    build_trace_only_services,
     static_system_prompt,
     wrap_provider,
 )
-from bot.eval.task_spec import EvalToolset
 
+from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.core.agent import AgentContext
 from modex_agent.core.capabilities import ModelCapabilities
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, TextPart
-from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
+from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import (
     InMemoryToolManager,
     Tool,
@@ -29,16 +34,20 @@ from modex_agent.core.tool_manager import (
     ToolResult,
 )
 from modex_agent.core.types import LLMResponse, MessageRole
-from modex_agent.runtime.models import JsonValue
+from modex_agent.ioc.configs.observability import TraceBackend
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.runtime.models import JsonValue, TurnIdentity
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
-from modex_agent.tools.presets import ToolPreset
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_agent.trace.cassette import (
     CassetteCategory,
     CassetteFlushHook,
     CassetteRecorder,
     CassetteReplayEngine,
 )
+from modex_agent.trace.chat_span_hook import ChatSpanHook
+from modex_agent.trace.semconv import GenAiAttr
 
 
 class _ScriptedToolManager(ToolManager):
@@ -76,7 +85,7 @@ class _ScriptedToolManager(ToolManager):
         return self.result
 
 
-class _ScriptedProvider(StreamingLLMProvider):
+class _ScriptedProvider(CallbackStreamProvider):
     def __init__(self, response: LLMResponse) -> None:
         super().__init__()
         self._response = response
@@ -115,55 +124,12 @@ class _RaisingProvider(_ScriptedProvider):
         raise AssertionError("replay must not call the wrapped provider")
 
 
-def _tool_names(manager: ToolManager) -> set[str]:
-    return {description["function"]["name"] for description in manager.get_tool_descriptions()}
+def test_declared_harness_assembly_seam_is_available() -> None:
+    # Given / When
+    assembly_seam = getattr(agent_harness, "assemble_harness_agent", None)
 
-
-def test_build_tool_manager_resolves_preset_membership_and_denies(tmp_path: Path) -> None:
-    none_names = _tool_names(build_tool_manager(tmp_path, EvalToolset.NONE, []))
-    full_names = _tool_names(build_tool_manager(tmp_path, EvalToolset.FULL, []))
-    read_only_names = _tool_names(
-        build_tool_manager(
-            tmp_path,
-            EvalToolset.READ_ONLY,
-            ["bash", "terminal", "process"],
-        )
-    )
-    normalized_read_only = _WorkspaceTokenNormalizer(
-        build_tool_manager(tmp_path, EvalToolset.READ_ONLY, ["bash"]),
-        tmp_path,
-    )
-
-    assert none_names == set()
-    assert {"write", "edit"} <= full_names
-    assert {"write", "edit", "bash", "terminal", "process"}.isdisjoint(read_only_names)
-    assert _tool_names(normalized_read_only) == read_only_names
-
-
-def test_build_tool_manager_uses_shared_preset_seam(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[ToolPreset] = []
-
-    def fake_build_preset_tool_manager(
-        root_provider: WorkspaceRootProvider,
-        preset: ToolPreset,
-    ) -> InMemoryToolManager:
-        assert root_provider.current() == tmp_path.resolve()
-        calls.append(preset)
-        return InMemoryToolManager()
-
-    monkeypatch.setattr(
-        agent_harness,
-        "build_preset_tool_manager",
-        fake_build_preset_tool_manager,
-    )
-
-    manager = build_tool_manager(tmp_path, EvalToolset.READ_ONLY, [])
-
-    assert manager.list_tools() == []
-    assert calls == [ToolPreset.READ_ONLY]
+    # Then
+    assert callable(assembly_seam)
 
 
 async def test_workspace_token_normalizer_rewrites_all_text_parts_only(
@@ -178,15 +144,19 @@ async def test_workspace_token_normalizer_rewrites_all_text_parts_only(
             image,
         ],
     )
-    inner = _ScriptedToolManager(inner_result)
+    inner = MagicMock(spec=Tool)
+    inner.name = "fixture"
+    inner.description = "fixture"
+    inner.parameters = {"type": "object", "properties": {}}
+    inner.config = ToolConfig()
+    inner.execute = AsyncMock(return_value=inner_result)
     normalizer = _WorkspaceTokenNormalizer(inner, workspace)
 
-    result = await normalizer.execute("fixture", {})
+    result = await normalizer.execute()
 
     assert str(workspace) not in result.message_content()
     assert result.message_content() == "before <workspace> middle <workspace> after"
     assert result.content[1] == image
-    assert normalizer.get_tool_descriptions() is inner.descriptions
 
 
 async def test_wrap_provider_records_and_replays_provider_calls(tmp_path: Path) -> None:
@@ -224,7 +194,7 @@ def test_build_runtime_services_registers_production_services(tmp_path: Path) ->
     services = build_runtime_services(tmp_path / "traces")
 
     assert services.hooks is not None
-    assert services.governance is not None
+    assert services.governance is None
     assert isinstance(services.turn_store, InMemoryTurnStateStore)
     assert services.trace_store is not None
     hook_names = {spec.hook.name for spec in services.hooks.hook_specs}
@@ -243,6 +213,79 @@ def test_build_runtime_services_adds_flush_hook_for_recorder(tmp_path: Path) -> 
     assert len(flush_hooks) == 1
 
 
+def test_build_trace_only_services_excludes_governance_and_runtime_hooks(tmp_path: Path) -> None:
+    """build_trace_only_services must register ONLY trace hooks — no governance, loop, checkpoint, or turn_store."""
+    services = build_trace_only_services(tmp_path / "traces")
+
+    assert services.hooks is not None
+    assert services.governance is None, "clean mode must not have governance"
+    assert services.turn_store is None, "clean mode must not have turn_store"
+    assert services.trace_store is not None, "trace store must exist for span writing"
+    hook_names = {spec.hook.name for spec in services.hooks.hook_specs}
+    assert "loop_detection" not in hook_names, "clean mode must not have LoopDetectionHook"
+    assert "checkpoint" not in hook_names, "clean mode must not have CheckpointHook"
+    assert "cassette_flush" not in hook_names, "clean mode must not have CassetteFlushHook"
+    trace_hook_names = {
+        "RootSpanHook", "ChatSpanHook", "ToolSpanHook",
+        "HandoffSpanHook", "ApprovalSpanHook",
+        "AgentStartSpanHook", "IterationSpanHook",
+    }
+    assert trace_hook_names <= hook_names, f"trace hooks missing: {trace_hook_names - hook_names}"
+
+
+@pytest.mark.parametrize("service_builder", [build_runtime_services, build_trace_only_services])
+@pytest.mark.parametrize("model", ["openai/step-3.7-flash", None])
+async def test_service_builder_records_explicit_model_on_chat_span(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    service_builder: Callable[..., AgentRuntimeServices],
+    model: str | None,
+) -> None:
+    # Given
+    monkeypatch.setenv("OTEL_FORMAT", "file")
+    session = SessionInfo.from_str("eval.model.react")
+    identity = TurnIdentity(agent_id="react", session=session, turn_id="turn-1")
+    state = ReActTurnState(
+        identity=identity,
+        agent_kind=AgentKind.REACT,
+        phase=TurnPhase.CREATED,
+    )
+    state.custom[TurnCustomKey.TRACE_ID] = "trace-model"
+    state.custom[TurnCustomKey.ROOT_SPAN_ID] = "root-model"
+    services = service_builder(tmp_path / "traces", model=model)
+    context = AgentContext(
+        system_prompt="eval",
+        history=ListMessageHistory(),
+        tool_manager=InMemoryToolManager(),
+        session=session,
+        max_iterations=1,
+        runtime=AgentRuntime(services=services, state=state),
+        identity=identity,
+        workspace=tmp_path,
+    )
+    assert services.hooks is not None
+    chat_hook = next(
+        spec.hook
+        for spec in services.hooks.hook_specs
+        if isinstance(spec.hook, ChatSpanHook)
+    )
+    request = [ChatMessage(role=MessageRole.USER, content="hello")]
+
+    # When
+    await chat_hook.before_llm(context, request)
+    await chat_hook.after_llm_response(
+        context,
+        LLMResponse(content="done", finish_reason=FinishReason.STOP),
+    )
+
+    # Then
+    assert services.trace_store is not None
+    spans = await services.trace_store.list_by_session(session.session_id)
+    assert len(spans) == 1
+    assert spans[0].attributes.get(GenAiAttr.RESPONSE_MODEL) == model
+    assert (GenAiAttr.RESPONSE_MODEL in spans[0].attributes) is (model is not None)
+
+
 def test_static_system_prompt_is_path_and_time_independent() -> None:
     base = "Base evaluation instructions."
 
@@ -253,3 +296,77 @@ def test_static_system_prompt_is_path_and_time_independent() -> None:
     assert first == second
     assert re.search(r"\b\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2})?", first) is None
     assert re.search(r"(?:[A-Za-z]:[\\/]|/(?:[^/\s]+/)+)", first) is None
+
+
+def test_eval_observability_splits_otel_endpoint_from_ingestion_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OTEL_FORMAT", "otel_http")
+    monkeypatch.setenv("LANGFUSE_HOST", "https://lf.example.invalid")
+    monkeypatch.setenv("LANGFUSE_BASIC_AUTH", "dGVzdA==")
+    monkeypatch.delenv("OTEL_TRACES_ENDPOINT", raising=False)
+
+    config, injector = _eval_observability()
+
+    assert config.otel_endpoint == "http://localhost:4318/v1/traces"
+    assert config.eval_ingestion_url == "https://lf.example.invalid/api/public/ingestion"
+    assert injector is not None
+    assert injector._ingestion_url == "https://lf.example.invalid/api/public/ingestion"
+
+
+def test_eval_observability_otel_endpoint_env_overrides_collector_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OTEL_FORMAT", "otel_http")
+    monkeypatch.setenv("LANGFUSE_HOST", "http://localhost:3000")
+    monkeypatch.setenv("LANGFUSE_BASIC_AUTH", "dGVzdA==")
+    monkeypatch.setenv("OTEL_TRACES_ENDPOINT", "http://collector.example.invalid:4318/v1/traces")
+
+    config, injector = _eval_observability()
+
+    assert config.otel_endpoint == "http://collector.example.invalid:4318/v1/traces"
+    assert injector is not None
+    assert injector._ingestion_url == "http://localhost:3000/api/public/ingestion"
+
+
+def test_build_score_injector_derives_url_when_eval_ingestion_url_none() -> None:
+    injector = _build_score_injector(
+        "https://lf.example.invalid", "dGVzdA==", TraceBackend.OTEL_HTTP,
+    )
+
+    assert injector is not None
+    assert injector._ingestion_url == "https://lf.example.invalid/api/public/ingestion"
+
+
+def test_build_score_injector_prefers_explicit_eval_ingestion_url() -> None:
+    injector = _build_score_injector(
+        "https://lf.example.invalid",
+        "dGVzdA==",
+        TraceBackend.OTEL_HTTP,
+        eval_ingestion_url="https://direct.example.invalid/api/public/ingestion",
+    )
+
+    assert injector is not None
+    assert injector._ingestion_url == "https://direct.example.invalid/api/public/ingestion"
+
+
+def test_trace_only_services_threads_bot_model_price_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    captured: dict[str, Path | None] = {}
+
+    def fake_build_trace_hooks(**kwargs: Any) -> list[Any]:
+        captured["pricebook_yml_path"] = kwargs["pricebook_yml_path"]
+        return []
+
+    monkeypatch.setattr(agent_harness, "build_trace_hooks", fake_build_trace_hooks)
+    monkeypatch.setattr(agent_harness, "build_trace_stores", MagicMock(return_value=None))
+
+    # When
+    build_trace_only_services(tmp_path / "traces")
+
+    # Then
+    expected = Path(agent_harness.__file__).resolve().parents[2] / "config" / "model_prices.yml"
+    assert captured["pricebook_yml_path"] == expected

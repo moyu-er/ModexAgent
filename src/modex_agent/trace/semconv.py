@@ -5,7 +5,7 @@ scattered as raw strings across the OTel store.  Follows the OpenTelemetry
 GenAI semantic conventions (``gen_ai.*`` namespace).
 
 These constants are used by :mod:`modex_agent.trace.otel_store` and
-:mod:`modex_agent.trace.hooks` when constructing OTel-compatible span JSON.
+:mod:`modex_agent.trace.base_hook` when constructing OTel-compatible span JSON.
 """
 
 from __future__ import annotations
@@ -58,6 +58,7 @@ class GenAiAttr(StrEnum):
     # ── Usage ─────────────────────────────────────────────────────────
     USAGE_INPUT_TOKENS = "gen_ai.usage.input_tokens"
     USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
+    USAGE_TOTAL_TOKENS = "gen_ai.usage.total_tokens"
     USAGE_REASONING_TOKENS = "gen_ai.usage.reasoning.output_tokens"
     USAGE_CACHE_READ_INPUT_TOKENS = "gen_ai.usage.cache_read.input_tokens"
     USAGE_CACHE_CREATION_INPUT_TOKENS = "gen_ai.usage.cache_creation.input_tokens"
@@ -105,6 +106,9 @@ class GenAiAttr(StrEnum):
     LANGFUSE_TRACE_NAME = "langfuse.trace.name"
     LANGFUSE_TRACE_INPUT = "langfuse.trace.input"
     LANGFUSE_TRACE_OUTPUT = "langfuse.trace.output"
+    LANGFUSE_TRACE_TAGS = "langfuse.trace.tags"
+    LANGFUSE_ENVIRONMENT = "langfuse.environment"
+    LANGFUSE_VERSION = "langfuse.version"
 
     # ── Langfuse observation-level mapping ────────────────────────────
     # Langfuse maps these to the observation's input/output/model/type fields.

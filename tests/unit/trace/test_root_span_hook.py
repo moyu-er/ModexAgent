@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
@@ -15,6 +17,7 @@ from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.root_span_hook import RootSpanHook
+from modex_agent.trace.score_injector import L2ScoreInjector
 from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
 from modex_agent.trace.session_state import TraceSessionState
 
@@ -81,11 +84,14 @@ async def test_root_span_emitted_once_in_finally_graph(tmp_path: Path) -> None:
 
 
 async def test_root_span_has_error_status_on_failure(tmp_path: Path) -> None:
+    """A terminal failure (``error`` passed to finally_graph) emits an ERROR
+    root span. ``result=None`` WITHOUT ``error`` is the approval-suspend
+    shape, which must NOT emit (covered in test_root_span_hook_injection)."""
     hook, store = _make_hook(tmp_path)
     context = _make_context("session.worker")
 
     await hook.start_node_turn(context)
-    await hook.finally_graph(context, result=None)
+    await hook.finally_graph(context, result=None, error=RuntimeError("boom"))
 
     spans = await store.list_by_session("session.worker")
     assert len(spans) == 1
@@ -133,3 +139,30 @@ async def test_subagent_reuses_parent_trace_id(tmp_path: Path) -> None:
     spans = await store.list_by_session("child.worker")
     assert len(spans) == 1
     assert spans[0].trace_id == "parent-trace-id"
+
+
+async def test_aclose_drains_pending_injections_before_closing_injector(
+    tmp_path: Path,
+) -> None:
+    injector = MagicMock(spec=L2ScoreInjector)
+    pending_finished = asyncio.Event()
+
+    async def finish_pending() -> None:
+        await asyncio.sleep(0)
+        pending_finished.set()
+
+    async def close_injector() -> None:
+        assert pending_finished.is_set()
+
+    injector.aclose = AsyncMock(side_effect=close_injector)
+    hook = RootSpanHook(
+        session=TraceSessionState(),
+        store=OtelSpanTraceStore(base_dir=tmp_path / "traces"),
+        score_injector=injector,
+    )
+    pending = asyncio.create_task(finish_pending())
+    hook._pending_injections.add(pending)
+
+    await hook.aclose()
+
+    injector.aclose.assert_awaited_once_with()

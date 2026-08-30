@@ -8,6 +8,10 @@ spawning a real external CLI.  They verify:
   PATH.
 * A missing provider causes the main agent to be skipped with a warning, leaving
   the pool structurally intact so other pools are unaffected.
+
+The pools are declared as scope declarations (ticket 11) and booted through
+the real declaration road (load → validate → compile) before
+``create_pool``.
 """
 
 from __future__ import annotations
@@ -27,7 +31,6 @@ from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
 from modex_agent.multi_agent.pool_instance import PoolInstance
 
 _BOT_PROJECT = Path(__file__).parent.parent.parent / "examples" / "bot_project"
@@ -35,10 +38,38 @@ if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
 
+def _declared_external_pool(
+    tmp_path: Path, *, provider_kind: str = "opencode"
+) -> object:
+    """Boot a one-agent external pool-as-root declaration through the real
+    production boot and partition its ``DeclaredPoolBuild``."""
+    from bot.service.pool.declaration import boot_scope_declaration, declared_pool_build
+
+    declaration = f"""\
+pool:
+  name: ext_pool
+  agents:
+    ext:
+      description: external main agent
+      execution_strategy: external
+      provider_kind: {provider_kind}
+"""
+    declaration_path = tmp_path / "ext.yml"
+    declaration_path.write_text(declaration, encoding="utf-8")
+    boot = boot_scope_declaration(
+        declaration_path=declaration_path,
+        project_dir=tmp_path,
+        data_dir=tmp_path / "ws" / ".modex",
+        graphs_dirs=(),
+        default_llm_provider="bot_default",
+    )
+    return declared_pool_build(boot, "ext_pool")
+
+
 async def _build_external_pool(
     tmp_path: Path, *, provider_kind: str = "opencode", which_result: str | None
 ) -> PoolInstance:
-    """Call ``create_pool`` for an external pool with ``shutil.which`` mocked."""
+    """Call ``create_pool`` for a declared external pool with ``shutil.which`` mocked."""
     from bot.service.model_choice import ModelChoiceRegistry
     from bot.service.model_config import BotModelConfig
     from bot.service.pool import create_pool
@@ -63,15 +94,7 @@ models:
     (tmp_path / "model.yml").write_text(yml, encoding="utf-8")
     bot_model_config = BotModelConfig.from_yaml(tmp_path / "model.yml")
 
-    pool_spec = PoolSpec(
-        name="ext_pool",
-        main_agent_name="ext",
-        main=MainAgentSpec(
-            agent_name="ext",
-            execution_strategy="external",
-            provider_kind=provider_kind,
-        ),
-    )
+    declared = _declared_external_pool(tmp_path, provider_kind=provider_kind)
     assembly_deps = PoolAssemblyDeps(memory=MemoryConfig())
     broker = InMemoryMessageBroker()
     await broker.start()
@@ -80,9 +103,11 @@ models:
     with patch("bot.service.external_strategy.shutil.which", return_value=which_result):
         pool_instance = await create_pool(
             pool_name="ext_pool",
-            pool_spec=pool_spec,
+            declared=declared,
             assembly_deps=assembly_deps,
             project_dir=tmp_path,
+            workspace_registry=object(),
+            workspace_resources=object(),
             data_dir=target / ".modex",
             broker=broker,
             output_adapter=object(),  # type: ignore[arg-type]
@@ -118,15 +143,7 @@ async def _build_external_pool_no_model(
     target = tmp_path / "ws"
     target.mkdir()
 
-    pool_spec = PoolSpec(
-        name="ext_pool",
-        main_agent_name="ext",
-        main=MainAgentSpec(
-            agent_name="ext",
-            execution_strategy="external",
-            provider_kind="opencode",
-        ),
-    )
+    declared = _declared_external_pool(tmp_path)
     assembly_deps = PoolAssemblyDeps(memory=MemoryConfig())
     broker = InMemoryMessageBroker()
     await broker.start()
@@ -135,9 +152,11 @@ async def _build_external_pool_no_model(
     with patch("bot.service.external_strategy.shutil.which", return_value=which_result):
         pool_instance = await create_pool(
             pool_name="ext_pool",
-            pool_spec=pool_spec,
+            declared=declared,
             assembly_deps=assembly_deps,
             project_dir=tmp_path,
+            workspace_registry=object(),
+            workspace_resources=object(),
             data_dir=target / ".modex",
             broker=broker,
             output_adapter=object(),  # type: ignore[arg-type]

@@ -8,8 +8,11 @@ from abc import ABC, abstractmethod
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 from weakref import WeakValueDictionary
+
+if TYPE_CHECKING:
+    from filelock import BaseFileLock
 
 
 class StorageLock(ABC):
@@ -175,7 +178,13 @@ class AioRWLock(StorageLock):
         return _AioRWLockWriteContext(self, timeout=timeout)
 
 
-_FILE_PROCESS_LOCKS: WeakValueDictionary[str, AioRWLock] = WeakValueDictionary()
+class _FileProcessLock:
+    def __init__(self, file_lock: BaseFileLock) -> None:
+        self.file_lock = file_lock
+        self.process_lock = AioRWLock()
+
+
+_FILE_PROCESS_LOCKS: WeakValueDictionary[str, _FileProcessLock] = WeakValueDictionary()
 _FILE_PROCESS_LOCKS_GUARD: Final = threading.Lock()
 
 
@@ -223,11 +232,13 @@ class FileStorageLock(StorageLock):
             # is_singleton=True deadlocks on cross-instance reentry).
             entry = _FILE_PROCESS_LOCKS.get(lock_key)
             if entry is None:
-                entry = filelock.FileLock(lock_key, thread_local=False)
-                entry._modex_process_lock = AioRWLock()
+                entry = _FileProcessLock(
+                    filelock.FileLock(lock_key, thread_local=False)
+                )
                 _FILE_PROCESS_LOCKS[lock_key] = entry
-            self._lock = entry
-            self._process_lock = entry._modex_process_lock
+            self._entry = entry
+            self._lock = entry.file_lock
+            self._process_lock = entry.process_lock
 
     class _FileLockContext(StorageLockContext):
         def __init__(

@@ -29,7 +29,7 @@ jobs:
           version: "latest"
       - run: uv python install ${{ matrix.python-version }}
       - run: uv venv --python ${{ matrix.python-version }}
-      - run: uv pip install -e ".[dev]"
+      - run: bash scripts/ci_install.sh -e ".[dev]"
       - run: uv run ruff check src/ examples/bot_project/bot/ examples/bot_project/tests/
 
   mypy:
@@ -50,7 +50,7 @@ jobs:
           version: "latest"
       - run: uv python install ${{ matrix.python-version }}
       - run: uv venv --python ${{ matrix.python-version }}
-      - run: uv pip install -e ".[dev]"
+      - run: bash scripts/ci_install.sh -e ".[dev]"
       - run: uv run mypy src/modex_agent/ --ignore-missing-imports
 
   architecture:
@@ -70,5 +70,10 @@ jobs:
           version: "latest"
       - run: uv python install ${{ matrix.python-version }}
       - run: uv venv --python ${{ matrix.python-version }}
-      - run: uv pip install -e ".[dev]"
+      - run: bash scripts/ci_install.sh -e ".[dev]"
+      # Architecture guards include ticket-11's boot-path guard
+      # (test_scope_boot_path_is_importable), which resolves bot.* modules —
+      # bot_project must be installed (same rationale as the Framework UT
+      # job in unit-tests.yml).
+      - run: bash scripts/ci_install.sh -e "examples/bot_project"
       - run: uv run pytest tests/architecture/ -q --tb=short -m "not integration"

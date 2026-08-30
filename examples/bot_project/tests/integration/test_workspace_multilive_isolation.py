@@ -23,7 +23,7 @@ from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.factory import ResourceFactory
-from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.registry import ScopeRegistry
 from modex_agent.workspace.store import GlobalWorkspaceStore
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -65,7 +65,7 @@ class _MinimalResourceFactory(ResourceFactory[PoolWorkspaceResources]):
 @pytest.fixture
 async def isolated_workspaces(
     tmp_path: Path,
-) -> AsyncGenerator[tuple[WorkspaceRegistry[PoolWorkspaceResources], Path, Path], None]:
+) -> AsyncGenerator[tuple[ScopeRegistry[PoolWorkspaceResources], Path, Path], None]:
     """Yield a registry with two materialized workspaces (A and B), brokers started."""
     home = tmp_path
     ws_a = tmp_path / "workspace_a"
@@ -75,7 +75,7 @@ async def isolated_workspaces(
 
     factory = _MinimalResourceFactory()
     store = GlobalWorkspaceStore(home=home, data_dir_name=".modex")
-    registry: WorkspaceRegistry[PoolWorkspaceResources] = WorkspaceRegistry(
+    registry: ScopeRegistry[PoolWorkspaceResources] = ScopeRegistry(
         home=home,
         data_dir_name=".modex",
         factory=factory,
@@ -101,7 +101,7 @@ async def isolated_workspaces(
 
 @pytest.mark.asyncio
 async def test_two_workspaces_have_distinct_resources(
-    isolated_workspaces: tuple[WorkspaceRegistry[PoolWorkspaceResources], Path, Path],
+    isolated_workspaces: tuple[ScopeRegistry[PoolWorkspaceResources], Path, Path],
 ) -> None:
     """Each workspace gets its own broker and its own on-disk skeleton."""
     registry, ws_a, ws_b = isolated_workspaces

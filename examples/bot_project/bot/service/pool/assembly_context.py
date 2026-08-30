@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bot.config.webui_config import build_control_origin
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from modex_agent.control.channel import InMemoryControlChannel
@@ -20,11 +21,13 @@ from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
 from modex_agent.hook import HookRunner
 from modex_agent.multi_agent import SessionRetentionPolicy
+from modex_agent.multi_agent.communication.peer_resolution import PeerLink
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
 from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
+from modex_agent.scope.spec import AgentSpec, PoolSpec
+from modex_agent.workspace.scope_path import ScopePath
 
 if TYPE_CHECKING:
     from bot.kb.provider import KbProvider
@@ -40,6 +43,7 @@ def _build_assembly_context(
     *,
     pool_name: str,
     pool_spec: PoolSpec,
+    peer_links: tuple[PeerLink, ...],
     project_dir: Path,
     data_dir: Path,
     broker: Any,
@@ -72,6 +76,7 @@ def _build_assembly_context(
     return PoolAssemblyContext(
         pool_name=pool_name,
         pool_spec=pool_spec,
+        peer_links=peer_links,
         project_dir=project_dir,
         data_dir=data_dir,
         broker=broker,
@@ -83,6 +88,12 @@ def _build_assembly_context(
         registry=None,  # type: ignore[arg-type]
         workspace_handle=workspace_handle,
         workspace_resolver=workspace_resolver,
+        scope_path=ScopePath(
+            workspace_root=(
+                workspace_handle.current if workspace_handle is not None else project_dir
+            ),
+            pool_name=pool_name,
+        ),
         emitter_factory=emitter_factory,
         app_config=app_config,
         persistence=persistence,
@@ -94,6 +105,7 @@ def _build_assembly_context(
         session_store=session_store,
         bot_model_config=bot_model_config,
         model_choice_registry=model_choice_registry,
+        control_origin=build_control_origin(project_dir / "config"),
         command_processor=command_processor,
         control_channel=control_channel,
         pool_data=pool_data,
@@ -106,29 +118,30 @@ def _build_assembly_context(
     )
 
 
-def _fallback_context_manager(main_spec: MainAgentSpec, system_prompt: str) -> Any:
+def _fallback_context_manager(main_spec: AgentSpec, system_prompt: str) -> Any:
     """A minimal context_manager for tests / non-workspace wiring.
 
     The main agent's real context manager comes from the workspace pool_data;
     this fallback keeps create_pool callable without a workspace (used by
     unit tests that mock the build steps).
 
-    Duplicated from :mod:`bot.service._assembly_helpers` (ticket 6: "Duplicate
-    the tiny helper") because ``create_pool`` needs it for the
-    provider-unavailable path (when the strategy did not produce a context
-    manager) and we do not want ``create_pool`` to import from the strategy
-    module.
+    Duplicated from :class:`bot.service.builders._PoolAssemblyMixin`
+    (ticket 6: "Duplicate the tiny helper") because ``create_pool`` needs it
+    for the provider-unavailable path (when the strategy did not produce a
+    context manager) and we do not want ``create_pool`` to import from the
+    strategy module.
     """
 
     from modex_agent.memory.injection import FullInjectionPolicy
     from modex_agent.memory.system import MemorySystemContextManager
 
     return MemorySystemContextManager(
-        memory_system=None,
-        default_agent_id=main_spec.agent_name,
+        # Test/non-workspace seam: the real memory system comes from
+        # pool_data; the declared type assumes a live DefaultMemorySystem.
+        memory_system=None,  # type: ignore[arg-type]
+        default_agent_id=main_spec.name,
         default_agent_role="main",
         base_system_prompt=system_prompt,
         injection_policy=FullInjectionPolicy(),
-        experience_manager=None,
         roles=list(main_spec.roles),
     )

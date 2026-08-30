@@ -13,7 +13,7 @@ def _entry(**overrides: object) -> PrunedIndexEntry:
         "cleanup_time": 1717500000,
         "cleanup_time_display": "2024-06-04 12:00",
         "message_count": 5,
-        "content_filename": "pruned_001.jsonl",
+        "content_filename": "pruned_001.md",
     }
     defaults.update(overrides)
     return PrunedIndexEntry(**defaults)  # type: ignore[arg-type]
@@ -25,43 +25,29 @@ class TestFilePrunedStorage:
         storage = FilePrunedStorage(tmp_path / "pruned")
         assert storage.has_content() is False
 
-    def test_has_content_true_when_index_has_entries(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_has_content_false_when_only_index(self, tmp_path: pytest.TempPathFactory) -> None:
+        """An index.jsonl file alone is not content — only .md transcripts count."""
         storage = FilePrunedStorage(tmp_path / "pruned")
-        entry = _entry()
-        storage.append_index(entry)
-        # Index entries count as content (supports MD-archive-based pruned)
-        assert storage.has_content() is True
+        storage.save_index([])  # creates index.jsonl but no transcript files
+        assert storage.has_content() is False
 
-    def test_has_content_true_when_index_file_exists(self, tmp_path) -> None:
-        """An index.jsonl file (even empty) counts as content — get_injection_xml
-        handles the empty-valid-entries case internally."""
+    def test_has_content_true_after_md_write(self, tmp_path: pytest.TempPathFactory) -> None:
         storage = FilePrunedStorage(tmp_path / "pruned")
-        storage.save_index([])  # creates index.jsonl but with no entries
-        assert storage.has_content() is True
-
-    def test_has_content_true_after_write(self, tmp_path: pytest.TempPathFactory) -> None:
-        storage = FilePrunedStorage(tmp_path / "pruned")
-        storage.write_pruned("pruned_001.jsonl", [{"role": "user", "content": "hi"}])
+        storage.write_transcript("pruned_001.md", "# Transcript")
         assert storage.has_content() is True
 
     def test_write_and_read_pruned_file(self, tmp_path: pytest.TempPathFactory) -> None:
         storage = FilePrunedStorage(tmp_path / "pruned")
-        messages = [
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "world"},
-        ]
-        storage.write_pruned("pruned_001.jsonl", messages)
-        filepath = tmp_path / "pruned" / "pruned_001.jsonl"
+        text = "# Transcript #1 · topic\n\n---\n\n## [001] user · 08-19 10:31\n\nhello\n\n---\n"
+        storage.write_transcript("pruned_001.md", text)
+        filepath = tmp_path / "pruned" / "pruned_001.md"
         assert filepath.exists()
-        lines = filepath.read_text(encoding="utf-8").strip().splitlines()
-        assert len(lines) == 2
-        assert json.loads(lines[0]) == messages[0]
-        assert json.loads(lines[1]) == messages[1]
+        assert filepath.read_text(encoding="utf-8") == text
 
     def test_append_and_read_index(self, tmp_path: pytest.TempPathFactory) -> None:
         storage = FilePrunedStorage(tmp_path / "pruned")
-        entry_a = _entry(id=1, content_filename="pruned_001.jsonl")
-        entry_b = _entry(id=2, content_filename="pruned_002.jsonl")
+        entry_a = _entry(id=1, content_filename="pruned_001.md")
+        entry_b = _entry(id=2, content_filename="pruned_002.md")
         storage.append_index(entry_a)
         storage.append_index(entry_b)
         entries = storage.read_index()
@@ -84,9 +70,9 @@ class TestFilePrunedStorage:
     def test_prune_oldest_keeps_recent_entries(self, tmp_path: pytest.TempPathFactory) -> None:
         storage = FilePrunedStorage(tmp_path / "pruned")
         for i in range(1, 4):
-            entry = _entry(id=i, content_filename=f"pruned_00{i}.jsonl")
+            entry = _entry(id=i, content_filename=f"pruned_00{i}.md")
             storage.append_index(entry)
-            storage.write_pruned(f"pruned_00{i}.jsonl", [{"role": "user", "content": f"msg{i}"}])
+            storage.write_transcript(f"pruned_00{i}.md", "text")
         storage.prune_oldest(keep_count=2)
         entries = storage.read_index()
         assert len(entries) == 2
@@ -96,35 +82,27 @@ class TestFilePrunedStorage:
     def test_prune_oldest_deletes_files(self, tmp_path: pytest.TempPathFactory) -> None:
         storage = FilePrunedStorage(tmp_path / "pruned")
         for i in range(1, 4):
-            storage.write_pruned(f"pruned_00{i}.jsonl", [{"role": "user"}])
-            storage.append_index(_entry(id=i, content_filename=f"pruned_00{i}.jsonl"))
+            storage.write_transcript(f"pruned_00{i}.md", "text")
+            storage.append_index(_entry(id=i, content_filename=f"pruned_00{i}.md"))
         storage.prune_oldest(keep_count=2)
-        assert not (tmp_path / "pruned" / "pruned_001.jsonl").exists()
-        assert (tmp_path / "pruned" / "pruned_002.jsonl").exists()
-        assert (tmp_path / "pruned" / "pruned_003.jsonl").exists()
+        assert not (tmp_path / "pruned" / "pruned_001.md").exists()
+        assert (tmp_path / "pruned" / "pruned_002.md").exists()
+        assert (tmp_path / "pruned" / "pruned_003.md").exists()
 
     def test_prune_oldest_noop_when_under_limit(self, tmp_path: pytest.TempPathFactory) -> None:
         storage = FilePrunedStorage(tmp_path / "pruned")
-        storage.write_pruned("pruned_001.jsonl", [{"role": "user"}])
-        storage.append_index(_entry(id=1, content_filename="pruned_001.jsonl"))
+        storage.write_transcript("pruned_001.md", "text")
+        storage.append_index(_entry(id=1, content_filename="pruned_001.md"))
         storage.prune_oldest(keep_count=5)
         assert len(storage.read_index()) == 1
-        assert (tmp_path / "pruned" / "pruned_001.jsonl").exists()
+        assert (tmp_path / "pruned" / "pruned_001.md").exists()
 
     def test_creates_directory_on_first_write(self, tmp_path: pytest.TempPathFactory) -> None:
         pruned_dir = tmp_path / "does_not_exist"
         storage = FilePrunedStorage(pruned_dir)
         assert not pruned_dir.exists()
-        storage.write_pruned("pruned_001.jsonl", [{"role": "user", "content": "hi"}])
+        storage.write_transcript("pruned_001.md", "text")
         assert pruned_dir.exists()
-
-    def test_write_pruned_with_empty_messages(self, tmp_path: pytest.TempPathFactory) -> None:
-        storage = FilePrunedStorage(tmp_path / "pruned")
-        storage.write_pruned("pruned_empty.jsonl", [])
-        filepath = tmp_path / "pruned" / "pruned_empty.jsonl"
-        assert filepath.exists()
-        content = filepath.read_text(encoding="utf-8").strip()
-        assert content == ""
 
 
 class TestIndexResilience:

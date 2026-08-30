@@ -1,70 +1,42 @@
-"""AgentTemplateRegistry — loads per-pool subagent templates via PoolStore."""
+"""AgentTemplateRegistry — the seeded per-pool subagent template store.
+
+The scope-declaration road (ticket 07+) constructs the registry pre-seeded
+with in-memory templates built from the compiled declarations; the
+PoolStore disk scan of the legacy ``templates/*.yml`` files died with the
+legacy road (ticket 11 — the declaration is the single template source).
+"""
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 
-from modex_agent.ioc.configs.memory import MemoryConfig
-from modex_agent.multi_agent.pool_config.store import PoolStore
 from modex_agent.multi_agent.template import AgentTemplate
 
 logger = logging.getLogger(__name__)
 
 
 class AgentTemplateRegistry:
-    """Loads per-pool subagent templates through :class:`PoolStore`.
+    """Holds per-pool subagent templates, keyed ``pool_name → agent_name``.
 
     Templates are isolated by pool_name — a template only exists within
-    the pool directory it's defined in. All YAML parsing and validation is
-    delegated to ``PoolStore``; this registry wraps each ``SubagentSpec``
-    into an ``AgentTemplate`` and applies the caller's default subagent memory.
+    the pool that declared it. The registry is seeded from the compiled
+    scope declaration (``declared_pool_build``); there is no disk-scan
+    constructor any more.
     """
 
     def __init__(
         self,
-        pool_store: PoolStore,
         *,
-        default_subagent_memory: MemoryConfig | None = None,
+        seeded: Mapping[str, Mapping[str, AgentTemplate]] | None = None,
     ) -> None:
-        """Init.
-
-        ``default_subagent_memory`` is baked onto EVERY subagent template,
-        unconditionally (spec §9 — sub-minimal, immutable). A template may NOT
-        carry its own ``memory:`` block; the caller's factory is the single
-        source of truth.
-        """
-        self._default_memory = default_subagent_memory
+        """Init."""
         self._templates: dict[str, dict[str, AgentTemplate]] = {}
-        self._load(pool_store)
-
-    def _load(self, pool_store: PoolStore) -> None:
-        for summary in pool_store.list_pools():
-            pool_name = summary.name
-            try:
-                pool_spec = pool_store.read_pool(pool_name)
-            except Exception:
-                logger.exception("Failed to read pool %s", pool_name)
-                continue
-
-            self._templates[pool_name] = {}
-            for sub_spec in pool_spec.subagents:
-                try:
-                    template = AgentTemplate(
-                        spec=sub_spec,
-                        memory=self._default_memory,
-                    )
-                    self._templates[pool_name][template.spec.agent_name] = template
-                    logger.debug(
-                        "Loaded template %s for pool %s",
-                        template.spec.agent_name,
-                        pool_name,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to load template for subagent %s in pool %s",
-                        sub_spec.agent_name,
-                        pool_name,
-                    )
+        if seeded is not None:
+            self._templates = {
+                pool_name: dict(templates)
+                for pool_name, templates in seeded.items()
+            }
 
     def list_templates(self, pool_name: str) -> list[AgentTemplate]:
         return list(self._templates.get(pool_name, {}).values())

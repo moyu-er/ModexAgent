@@ -18,6 +18,7 @@ from modex_agent.agents.react.tool_dedup import StreakDecision, ToolCallDeduplic
 from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.ids import next_call_id
 from modex_agent.core.message import ChatMessage, TextPart
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.types import MessageRole, ToolCall
@@ -88,13 +89,11 @@ class ToolNode(Node[ReActTurnState]):
         tool_calls: list[ToolCall] = last_assistant.tool_calls
         state.current_node = ReActNode.TOOL
 
-        # Canonicalize call_id once, up front: providers may omit it, and
-        # every downstream consumer (TOOL_CALL_START/END events,
-        # ToolCallState, approval requests, history tool messages) must see
-        # the SAME id for a call — otherwise streamed start/end pairs and
-        # persisted call/result records cannot be matched by id.
+        # LLMNode canonicalizes call ids before the assistant message is
+        # written; this re-check is the defensive fallback for paths that
+        # bypass LLMNode (future refactors) — it must never crash a turn.
         tool_calls = [
-            tc if tc.call_id else tc.model_copy(update={"call_id": uuid4().hex})
+            tc if tc.call_id else tc.model_copy(update={"call_id": next_call_id()})
             for tc in tool_calls
         ]
         max_tools = (
@@ -122,7 +121,7 @@ class ToolNode(Node[ReActTurnState]):
             ToolCallState(
                 # Canonicalized above; the fallback only guards against future
                 # refactors breaking that invariant — it must never crash a turn.
-                call_id=tc.call_id or uuid4().hex,
+                call_id=tc.call_id or next_call_id(),
                 tool_name=tc.tool_name,
                 arguments=ToolArguments(values=tc.arguments or {}),
             )
@@ -328,6 +327,13 @@ class ToolNode(Node[ReActTurnState]):
                     error=self._denial_message(decision, tc, state),
                 )
 
+            # Stamp the canonical ToolCall id onto every result path
+            # (normal / dedup-cached / streak-synthetic / denied) so
+            # ToolSpanHook and the training exporter can join tool spans
+            # back to the assistant tool_calls by id.
+            if result.call_id != tc.call_id:
+                result = result.model_copy(update={"call_id": tc.call_id})
+
             await ctx.runtime.emit(GraphReActEvent.TOOL_CALL_END, (tc, result), ctx)
 
             tool_results.append(result)
@@ -337,16 +343,6 @@ class ToolNode(Node[ReActTurnState]):
             state.message_delta.append(
                 MessageDelta(message=tool_msg, source=MessageDeltaSource.TOOL)
             )
-
-            if result.content_blocks and agent_ctx.runtime is not None:
-                from modex_agent.media.tool_media import ToolMediaEntry
-
-                media_cache = state.custom.setdefault(TurnCustomKey.TOOL_MEDIA_CACHE, {})
-                media_cache[tc.call_id or ""] = ToolMediaEntry(
-                    call_id=tc.call_id or "",
-                    tool_name=tc.tool_name,
-                    image_blocks=result.content_blocks,
-                )
 
             if batch is not None:
                 for call_state in batch.calls:

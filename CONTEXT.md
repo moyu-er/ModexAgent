@@ -129,10 +129,10 @@ The hard upper bound, as a fraction of `max_context_tokens`, on how much the kep
 _Avoid_: retention ratio, keep target (target implies soft; this is a hard cap)
 
 **CommandTool** (`bash` tool, `modex_agent.tools.terminal.command_tool.CommandTool`):
-The agent-facing command execution tool for persistent PTY sessions. Orchestrates `Session.primitives` + `poll_until_settled` + `Session.apply_outcome(result)` per ADR-0010 Decision 7 — Session owns state, the Tool owns orchestration. Returns XML `<command_result>` with status (completed / executing / timed_out / paginated / waiting_input / stuck). Falls back to `SubprocessTool` when terminal backends are unavailable. _Avoid_: ShellTool, bash (informal)
+The agent-facing command execution tool for persistent PTY sessions. Orchestrates `poll_until_settled` + `Session.apply_outcome(result)` per ADR-0010 Decision 7 — Session owns state, the Tool owns orchestration. Returns XML `<command_result>` with status (completed / waiting_input / timed_out / rejected); silence never judges failure (ADR-0044). _Avoid_: ShellTool, bash (informal)
 
 **ProcessTool** (`process` tool, `modex_agent.tools.terminal.process_tool.ProcessTool`):
-The agent-facing tool for interacting with a running process inside a persistent PTY session (write / submit / send_keys / paste / interrupt / kill). Same orchestration pattern as CommandTool: `Session.primitives` + `poll_until_settled` + `Session.apply_outcome(result)`. Never used by subagents. _Avoid_: terminal (too generic)
+The agent-facing tool for interacting with the running command inside a persistent PTY session. Write-only: sends one input line (`data`, `submit=true` appends Enter; `submit=false` sends raw bytes) and routes the `^C`/`ctrl+c`/`\x03` interrupt operator to a real Ctrl+C — never typed as text. _Avoid_: terminal (too generic)
 
 **Shell Family** (`ShellFamily`):
 The behavioural class of a shell — bash / zsh / sh / cmd / powershell — embodied by `ShellInfo(family, path, platform)`. ADR-0010 elevates Shell Family to one of two **upstream-visible design axes** for the terminal system (the other is Terminal Visibility). OS is NOT a design axis: it is an implementation fork collapsed entirely into the `TerminalBackend` subclasses. _Avoid_: shell type, terminal type (too generic)
@@ -144,7 +144,15 @@ Whether a human can observe or intervene in the terminal session's window. ADR-0
 Unsupported (transport, visibility) combinations are rejected at the factory (`UnsupportedVisibilityForTransport`) rather than silently falling back. _Avoid_: visible mode, window mode (too vague)
 
 **TerminalTool** (`terminal` tool, `modex_agent.tools.terminal.tool.TerminalTool`):
-The agent-facing tab-management tool (open / close / list / select / history / interrupt). It is the *only* consumer of `TerminalSession.detect_interference` (which reads the `_expected_state` slot set by `set_expected_state(...)`); per ADR-0010 Decision 7, this interference-detection slot is orthogonal to the three slots (`_busy_after_timeout` / `_last_status` / `_command_started_at`) owned by `apply_outcome(result)`, and is therefore preserved when apply_outcome is introduced. _Avoid_: tab manager (informal)
+The agent-facing tab-management tool (open / close / list / select). `bash` and `process` always target the currently selected tab. _Avoid_: tab manager (informal)
+
+**Waiting-Input Advisory**:
+A soft `waiting_input` return from the bash tool after ≥10 s of output silence plus positive stdin-wait evidence (kernel probe on Linux, content/pager markers everywhere). A suggestion the agent judges, never a verdict.
+_Avoid_: stuck detection, input timeout
+
+**Command Deadline**:
+The 480 s per-command budget owned by the terminal manager; on expiry the tab is closed like `terminal close` (default reselects) — in-flight calls return `timed_out`, already-returned advisories are closed by the background watchdog.
+_Avoid_: command timeout (collides with the executor's tool timeout)
 
 **Async-Safety Contract** (ADR-0032 D1):
 The structural rule that every `TerminalBackend` I/O method (`write`, `read_pending`) must be genuinely non-blocking when awaited. Realised by a template-method pattern in `TerminalBackend`: `write` / `read_pending` are concrete and delegate to opt-in hooks `_write_blocking` / `_read_blocking` (default `raise NotImplementedError`), wrapping them in `loop.run_in_executor(None, …)`. Backends with synchronous PTY libraries (winpty-hidden, pexpect) implement the hooks and inherit the template. Backends with native async I/O (visible-windows, post-ADR-0032 D2 — uses `asyncio.StreamWriter` / `StreamReader`) or with a different I/O model (tmux — control-protocol snapshots) override `write` / `read_pending` directly and do not implement the hooks. The hooks are opt-in (not abstract) so neither escape-hatch backend is forced to provide no-op stubs. Enforced by `tests/architecture/test_terminal_async_safety.py`. _Avoid_: async wrapper (too generic), executor pattern (too generic)
@@ -197,7 +205,7 @@ A typed entry in a pool's `CommunicationTargetStore` describing one reachable ag
 _Avoid_: contact, recipient, peer descriptor
 
 **Peer Pool**:
-A pool explicitly configured to exchange messages with another pool, at the business layer. Peer configuration is **bidirectional by invariant** (declaring B as a peer of A requires declaring A as a peer of B, enforced at registration). The framework itself has no "peer pool" concept — it only sees `CommunicationTarget` entries whose `bus_ref` points at another pool's bus. The business layer's assembly discovers configured peers, acquires bus references, and populates each pool's `CommunicationTargetStore` with peer main-agent entries. Defined in ADR-0019.
+A pool explicitly configured to exchange messages with another pool, at the business layer. Peer communication is **root-to-root** — the two trees' main agents are equals (the receiving peer session is a root session, `parent_session_id=null`); a relationship parallel to parent-child dispatch, not a flattening into generic node links. Peer configuration is **bidirectional by invariant** (declaring B as a peer of A requires declaring A as a peer of B, enforced at registration) and same-workspace in v1. The framework itself has no "peer pool" concept — it only sees `CommunicationTarget` entries whose `bus_ref` points at another pool's bus. The business layer's assembly discovers configured peers, acquires bus references, and populates each pool's `CommunicationTargetStore` with peer main-agent entries. Defined in ADR-0019; tree framing per ADR-0042.
 _Avoid_: linked pool, federated pool, neighbour pool
 
 **Session Group**:
@@ -325,7 +333,7 @@ A derived enum (`NATIVE` / `EXTERNAL`) classifying *how* an agent is implemented
 _Avoid_: implementation type (too generic), agent type (collides with older loose usage)
 
 **SubagentSpec**:
-The Pydantic model describing one subagent template inside a pool's `PoolSpec.subagents`. Fields: `agent_name`, `max_steps`, `tool_preset`, `tool_supplements`, `roles`, `system_prompt_mode`, `context_mode` (`fork` / `append` / `none`), `fork_max_messages`, `mcp` (per-agent MCP server selection), `prompt_name` (deferred — declared but not yet consumed by materialize). As of ADR-0027 also carries `execution_strategy: ExecutionStrategyKind` (default `REACT`) and `provider_kind: ProviderKind | None = None` — the same two fields `MainAgentSpec` carries — so a subagent may be implemented either as an in-process ReAct agent (default) or as an external coding CLI. A cross-field `@model_validator` enforces `provider_kind` is set iff `execution_strategy == EXTERNAL`; the same validator is backfilled to `MainAgentSpec`. `SubagentSpec` is `frozen=True, extra="forbid"` per pool-config convergence (ADR-0020).
+The Pydantic model describing one subagent template inside a pool's `PoolSpec.subagents`. Fields: `agent_name`, `max_steps`, `tool_preset`, `roles`, `system_prompt_mode`, `context_mode` (`fork` / `append` / `none`), `fork_max_messages`, `mcp` (per-agent MCP server selection), `prompt_name` (deferred — declared but not yet consumed by materialize). As of ADR-0027 also carries `execution_strategy: ExecutionStrategyKind` (default `REACT`) and `provider_kind: ProviderKind | None = None` — the same two fields `MainAgentSpec` carries — so a subagent may be implemented either as an in-process ReAct agent (default) or as an external coding CLI. A cross-field `@model_validator` enforces `provider_kind` is set iff `execution_strategy == EXTERNAL`; the same validator is backfilled to `MainAgentSpec`. `SubagentSpec` is `frozen=True, extra="forbid"` per pool-config convergence (ADR-0020); the retired list-form tool-package opt-in field died with the capability-bundles migration (ADR-0047) — its surviving face is the `capabilities:` override map on `AgentSpec`.
 _Avoid_: subagent config (too generic), subagent template (that is the `AgentTemplate` runtime object built from a `SubagentSpec`)
 
 **SubagentExternalBuilder**:
@@ -380,6 +388,86 @@ _Avoid_: turn setup (too generic), context builder (collides with TurnContextBui
 An `AgentMessageEnvelope` carrying graph-scheduling metadata (`graph_instance_id`, `source_node_id`, `graph_spec_id`) in its `metadata` map, marking it as produced by a graph-scheduling turn rather than a normal inter-agent message. The consumer stamps the receiver's session with the graph context so the receiver's turn runs with graph-aware configuration (GraphDeliverTool, approval disabled, topology injection, MAX_TURNS). Without this metadata, the receiver runs as a normal-session turn. The metadata is the sole signal distinguishing a graph-scheduling subagent turn from a normal subagent turn — both use the same inbox mechanism.
 _Avoid_: graph message (too generic), graph envelope (collides with AgentMessageEnvelope the type)
 
+**Scope**:
+The sole structural primitive of assembly (ADR-0042): a node in the declared scope tree whose resources, paths, and config defaults resolve along its parent chain. Landed as the frozen `ScopeSpec` model (`modex_agent/scope/spec.py`) with exactly two v1 kinds; the production declaration is one YAML file (`config/scopes/bot.yml`) loaded by `load_scope_declaration` — the legacy `config/pools/` roster is deleted. Workspace and pool are preset scope *kinds* — machinery face is skeleton, data face is configuration — not architecture concepts.
+_Avoid_: layer, container, environment
+
+**Scope Kind**:
+The preset type of a scope (`ScopeKind.WORKSPACE` / `ScopeKind.POOL` in v1): its runtime-machinery binding is fixed skeleton; its contents (resources, nesting, defaults) are declared configuration. A workspace layer (`WorkspaceSpec`) selects the memory backend (`persistence`), path layout (`paths`), and shared MCP server set (`mcp`) and hosts the pool trees — every selection field is `None` = inherit the service-level domain config, so an undeclared deployment keeps today's data layout. A pool (`PoolSpec`) carries one flat agents tree plus peer links; a pool-as-root declaration (no workspace layer) boots the single-home stack.
+_Avoid_: scope type, scope class
+
+**Declaration Tree**:
+The compile-time, config-declared tree of scopes and agents stating who *can* dispatch whom — validated by the two-phase `ScopeTreeValidator` (declaration-shape rules V1-V5/V7/V10/V11 pre-derivation; effective-value rules V6/V9 on the compiler's output) and compiled by the pure `ScopeCompiler` (`compile_scope`) into per-agent `AssemblySpec`s, effective toolsets, and provenance records; never executed. Root-ness is derived (the sole in-degree-0 node), never declared. Counterpart to the runtime-emergent **Session Tree**; the two are never conflated.
+_Avoid_: scope graph, config tree
+
+**Session Tree**:
+The runtime record of who *actually* dispatched whom: SessionTreeManager + SessionTreeStore track parent-child sessions and invocation-id branches as `task` dispatches happen, at any depth. The machine is skeleton (always on, one per pool); only the storage backend is swappable (InMemory / LocalFile / Sqlite).
+_Avoid_: dispatch tree, conversation tree
+
+**Skeleton**:
+The fixed runtime machinery hosting assembled products: InboxPoller, AgentMessageBus, SessionTreeManager, ScopeRegistry (renamed from WorkspaceRegistry by the addressing convergence), PoolRouter (the session→pool dispatch shell; agent→pool ownership is a compile-time declaration lookup, not a runtime scan), state.db lifecycle. Always on, never slot-replaced, never config-swapped — behavior parameters flow through config; machines are architectural constants (ADR-0042). Contrast the 10 swappable component slots (ADR-0041).
+_Avoid_: runtime core, kernel, engine (collides with Graph Engine)
+
+**Context Chain**:
+The layered read-only data surface passed to component factories at assembly: `WorkspaceContext → PoolContext → AgentContext`, each a frozen typed carrier. Implemented as a diamond — `AgentContext(WorkspaceContext, PoolContext, AssemblyContext)` in `plugins/assembly/context.py`, built per assembly by `agent_context_chain`. A factory's signature declares which layers it may read — the type is the capability boundary (in contrast to the reference project's comment-convention host/agent planes). Generalizes `AssemblyContext`; the `SubagentInvocationContext` special case is absorbed and deleted.
+_Avoid_: DI container, factory context, assembly inputs
+
+**Profile**:
+A named defaults macro referenced by scopes and agents; resolution is inheritance + deep merge (framework defaults ← profile ← local declaration), single level (the `ProfileStore` refuses nested references), list fields replaced wholesale, effective-value provenance inspectable (per-field winning layer via `AgentProvenance`; the WebUI bill recomputes from YAML per request — no boot-time cache). Landed as `Profile`/`ProfileStore` with `STANDARD_PROFILES` — the five toolset presets as code-level frozen constants — bound by position-derived toolset selection (root → `full`, non-root → `read_write`). Generalized `tool_preset` (the field is dead; its values live on as position-derived defaults). Profiles carry no `capabilities` — capability choice is not a toolset-preset concept (ADR-0047); the `capabilities:` override map is a local-declaration face only.
+_Avoid_: template (collides with AgentTemplate), preset (collides with tool_preset)
+
+**Canonical Message**:
+The single typed message model (`ChatMessage`) shared by storage, memory, governance, and LLM requests; protocol engines translate it into each wire format at call time. Reasoning state rides on declared fields — never on `model_extra`. Per ADR-0046.
+_Avoid_: unified message, internal message, neutral message model
+
+**Wire Message**:
+The per-protocol request structure (Pydantic) that one protocol engine builds from canonical messages; it exists only for the lifetime of a single request and is never persisted.
+_Avoid_: API message, provider message
+
+**Protocol Engine**:
+One wire-protocol implementation (`LLMProtocol`): request-body building, stream-to-event translation, and provider-quirk parsing (e.g. think-tag extraction). Stateless across requests; all per-request state lives in the translate generator's closure. Per ADR-0046.
+_Avoid_: adapter, provider backend
+
+**Event Stream**:
+The provider-neutral `LLMStreamEvent` sequence (text/reasoning deltas, completed tool calls, usage, finish) — the single streaming primitive of the provider system. `chat_stream` is a fold of the event stream with delta callbacks into one `LLMResponse`. Per ADR-0046.
+_Avoid_: stream chunks, token stream
+
+**Reasoning Replay**:
+The declared assistant-message fields (`reasoning_content`, `reasoning_signature`, `reasoning_item_id`, `reasoning_encrypted_content`) that carry a turn's chain-of-thought state so the next request can pass it back (DeepSeek reasoning_content passback, Anthropic thinking signature, OpenAI Responses item_reference/encrypted_content).
+_Avoid_: thinking passback, CoT state
+
+**Tool Stream Key**:
+The stream-local identifier a provider uses while streaming one tool call (chat/Anthropic block `index`, Responses `item_id`) — always distinct from the final `call_id` that tool results must reference. Keying accumulation on the stream key, never on `call_id`, is the rule that survives interleaved parallel deltas.
+_Avoid_: tool index (ambiguous), call_id (that is the pairing key, not the stream key)
+
+**Capability** (ADR-0047):
+The unit of the 11th `ComponentSlot` (`CAPABILITY`): a plugin-provided bundle that packages components which belong together — tool names (plus same-name tool replacements and tree-derived entries), hook names, prompt sections, a pool-level supply, and per-agent wiring — behind one registration name that is also the declaration key under `capabilities:`. Five phases: `applies`/`contribute`/`bind` run inside `compile_scope` as deterministic pure functions (the spec-hash byte-stability contract covers them); `supply` runs at pool assembly; `assemble` runs per agent at assembly. Contributed names flow into the existing `tools`/`hooks` rosters and resolve through the existing TOOL/HOOK slots — there is no second component-resolution path. Five FW-bundled packages shipped (`aci`, `ast_grep`, `todo`, `experience`, `subagents`); the framework knows only the protocol, never a capability name.
+_Avoid_: plugin (that is the registration unit), feature flag (a capability is a compile-time bundle, not a runtime toggle), supplement (the retired `ToolSupplement` face)
+
+**Auto-Apply** (ADR-0047):
+The enablement face where a capability decides for itself that it applies to an agent: `applies(AgentDeclarationView) -> bool`, a pure predicate over the agent's DECLARED state — tree position (`is_root`/`parent`/`children`/`peers`) plus the agent's own declared fields (e.g. `use_terminal`). Default `False` (pure opt-in). The predicate never reads the final roster or another capability's contributions — that would create an enablement←contribution←enablement cycle and break hash determinism. Landed example: `subagents` (`bool(children) or not is_root or bool(peers)` — participation in the communication topology); the other four bundled packages are opt-in-only.
+_Avoid_: default-on (a framework-hardcoded default set was rejected — the framework must not name capabilities), auto-enable
+
+**Enablement Resolution** (ADR-0047):
+The C0 compile step: effective set = auto-apply face ∆ `capabilities:` override map. A `false` value forces a capability off (beats auto); a config mapping forces it on with that config (beats auto's default config). Explicit override wins in both directions, and the field is never a whole-set declaration. External agents are structurally excluded before resolution — V12 rejects an external agent's explicit non-empty block, V13 rejects a reference to an unregistered capability name at boot (one cycle earlier than slot late-binding).
+_Avoid_: capability lookup, resolution (too generic — many resolvers exist)
+
+**Effective Capability Set** (ADR-0047):
+The per-agent answer to "what capabilities does this agent actually have": the C0 output, recorded in the compile product as `AssemblySpec.capabilities` — `(name, config, binding)` triples — and visible in the scope bill as `AgentProvenance.capabilities` three-state entries (`auto` — predicate hit; `declared` — explicit override; `vetoed` — predicate hit but forced off by `false`), each auto/declared entry carrying the registration's `registration_source` so a silently auto-applied third-party package is auditable. Under override-map semantics no static "declared list" reads as the full set (an auto-applied capability may be present without any declaration mentioning it); the compiled product is the single authority.
+_Avoid_: declared capabilities (that is only the override map), enabled plugins (availability ≠ enablement — installing a plugin enables nothing by itself)
+
+**Anchor** (ADR-0047):
+The C2 contract tying a capability's non-tool components to the survival of specific roster names after the `tools:`/`hooks:` ± merge. Anchors are capability-defined, and the landed shapes differ deliberately: `todo` requires BOTH `todo_write` and `todo_read` to survive and raises `CapabilityError` (boot fail, naming the vetoed anchor and the repair path) when either dies; `experience` anchors its review hook and injection section on the `experience` tool and silently withdraws them when the tool dies (the historical minus-wins shapes — no raise); `subagents` anchors on `task` for child-carrying agents (dual-checked with validator V6). Related mechanism: `bind` may also vouch contributed hook names post-anchor (`CapabilityBinding.hooks`) — the compiler's hook gating keeps a contributed hook only while at least one contributing binding vouches it, while handwritten `hooks:` entries are never removed by gating.
+_Avoid_: gate (too generic), trigger
+
+**Section** (prompt section, ADR-0047):
+A capability-contributed prompt block: `<capability>.<name>` id (e.g. `todo.discipline`) plus an `order`. All sections render inside ONE fixed anchor block in `MemorySystemContextManager.load()` — after fork context, before core memory — sorted by ascending `order`; block POSITION is not configurable (KV-cache prefix stability, the INPUT_STAGE skeleton-order rule). Providers are built by `assemble()` and threaded through the once-only `set_capability_sections` seam; a provider's version must derive from stable data (static sections use a constant version; content-driven sections hash their content) so an unchanged section never re-renders.
+_Avoid_: prompt block (too generic), injection point (collides with the retired unconditional-injection mechanism)
+
+**Capability Supply** (ADR-0047):
+The pool-level object a capability's `supply(PoolSupplyView)` builds — stores, services, background workers — indexed by capability name in the pool's `capability_supply` mapping and built ONLY if the capability is effective on some agent in the pool (dark supply is dead). A supply owning a live task implements the async `start()`/`stop()` lifecycle: pool assembly starts every supply, and both teardown roads stop them. Consumers (TOOL/HOOK factories, `assemble`) type-check loudly — the `require_todo_supply`/`require_experience_supply` helpers raise with the repair path on a missing or wrong-typed supply, so a roster-referenced component is never silently skipped.
+_Avoid_: service locator (a supply is keyed by capability name, not queried by type), DI container, infra (collides with `SupplyInfra`)
+
 ## Relationships
 
 - A **Workspace** owns one or more **Pool Instances**; pool instances are not shared across workspaces.
@@ -388,7 +476,7 @@ _Avoid_: graph message (too generic), graph envelope (collides with AgentMessage
 - **Assembly** turns `AppConfig` (root) into nested `PoolConfig` instances, then into `Pool` runtime objects held by a `Workspace`.
 - A **ReAct Agent** runs on the **Graph Engine**; the graph is the execution substrate, the ReAct agent is one configuration of it (4-node loop). Other tool-using agents (`ArchiveSummarizer`/`KnowledgeConsolidator`/`ExperienceReviewAgent`) inherit `ScopedFileAgent` and internally construct a `ReActAgent` in clean mode, so they indirectly use the Graph Engine. `ExternalAgent` does NOT use the Graph Engine — it drives a subprocess streaming harness directly.
 - A **GraphInterrupt** is raised by a `Node[S]` (via `ctx.interrupt(value)`); the engine propagates it as part of the **GraphBubbleUp** family, the `TurnRunner` catches it for approval, and re-enters the graph after persistence. The Graph Engine's interrupt model is **suspend-without-re-execution** (the node's already-applied state updates persist; resume re-enters at the next iteration).
-- **Terminal Visibility** is the second upstream-visible design axis of the terminal system (alongside **Shell Family**). The OS axis does NOT exist at this level: Windows-vs-Linux is an implementation fork realised inside `TerminalBackend` subclasses. **Two invariants**: (a) the manager layer (`BaseTerminalManager`) is forked ONLY by (Shell Family, Visibility), never by OS or by capability — capabilities are folded inward as default-off flags per ADR-0010 Decision 8; (b) `_expected_state` (set by `set_expected_state(...)`, consumed by `detect_interference` on visible sessions via `TerminalTool`) and the trio `_busy_after_timeout` / `_last_status` / `_command_started_at` (updated by `apply_outcome(...)`) are **two orthogonal state slots** in `TerminalSession` and coexist under ADR-0010 Decision 7 — neither subsumes the other.
+- **Terminal Visibility** is the second upstream-visible design axis of the terminal system (alongside **Shell Family**). The OS axis does NOT exist at this level: Windows-vs-Linux is an implementation fork realised inside `TerminalBackend` subclasses. **Two invariants**: (a) the manager layer (`BaseTerminalManager`) is forked ONLY by (Shell Family, Visibility), never by OS or by capability — capabilities are folded inward as default-off flags per ADR-0010 Decision 8; (b) `apply_outcome(result)` is the single state-event entry point for per-command session state (`_command_started_at`): tools call it after `poll_until_settled` instead of mutating session internals directly (ADR-0010 Decision 7), while the input guard reads the derived `command_status()`.
 - Every inter-agent message flows through one per-pool **Agent Inbox** addressed to a receiver session. The pool's **InboxPoller** is the sole between-turn driver; **single-flight** per session is enforced by an `inflight` task table (no per-session lock). A message arriving mid-turn is **folded into** the running turn (`InboxFlushHook`, inter-agent types only), not turned into a follow-up turn; a human DM (`external_input`) is left for the next between-turn. A subagent instance is **materialized** on the first turn of its session. Both directions — `send_to_agent` (agent→agent `task_request`) and the subagent reply (`SubagentAutoSendHook` → `agent_result`) — converge on one carrier, `bus.send(session_id, envelope)`. Decided in ADR-0015 as revised by the poll-driven redesign.
 
 ## Flagged ambiguities

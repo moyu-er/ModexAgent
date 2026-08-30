@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+from modex_agent.agents.summarizer.outcomes import ConsolidationOutcome
 from modex_agent.core.scope import MemoryAgentRole, MemoryContext, MemoryLayerName, ScopeRecord
 from modex_agent.memory.archive_models import ArchiveChannel
 from modex_agent.memory.consolidation.dream_engine import DreamEngine
@@ -87,7 +88,7 @@ async def test_dream_engine_scan_all_uses_registry_records() -> None:
     )
     archive = DummyArchiveManager()
     mock_consolidator = AsyncMock()
-    mock_consolidator.consolidate.return_value = True
+    mock_consolidator.consolidate.return_value = ConsolidationOutcome(changed=True)
     engine = DreamEngine(
         history_manager=archive,
         long_term_manager=DummyCoreMemoryManager(),

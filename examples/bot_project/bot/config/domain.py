@@ -12,6 +12,7 @@ single sanctioned rule-3 exception in this module (see ``rules/type-safety.md``
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -320,16 +321,30 @@ class RestartMarker:
 
 
 def atomic_write(path: Path, text: str) -> None:
-    """Write ``text`` to ``path`` via a temp file + atomic ``replace``."""
+    """Write ``text`` to ``path`` via a temp file + atomic ``replace``.
+
+    Guarantees the file's mtime strictly advances: ``replace`` may preserve
+    the destination's mtime on Windows, and the system clock granularity
+    (~15.6ms tick) can leave a touched mtime equal to the previous one —
+    mtime-based change detection (:class:`RestartMarker`) would then miss
+    the write. Touch, and when the mtime did not advance, wait out one
+    clock tick and touch again.
+    """
 
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(text, encoding="utf-8")
+    try:
+        before = path.stat().st_mtime
+    except OSError:
+        before = 0.0
     tmp.replace(path)
-    # On some platforms (Windows) ``replace`` may preserve the destination's
-    # mtime. Touch the new file so consumers that compare mtimes can detect
-    # the write.
     path.touch(exist_ok=True)
+    for _ in range(5):
+        if path.stat().st_mtime != before:
+            return
+        time.sleep(0.02)
+        path.touch(exist_ok=True)
 
 
 def _default_loader(path: Path) -> dict[str, Any]:

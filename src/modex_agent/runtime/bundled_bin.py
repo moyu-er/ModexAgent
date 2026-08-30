@@ -151,7 +151,7 @@ def register_public_path(bin_dir: Path, marker: str) -> bool:
         bin_dir: The directory to register.
         marker: Product-specific substring identifying entries to clean.
     """
-    if not _IS_WINDOWS:
+    if sys.platform != "win32":
         return False
 
     try:
@@ -191,7 +191,7 @@ def unregister_public_path(marker: str) -> bool:
 
     On POSIX this is a no-op (returns ``False``).
     """
-    if not _IS_WINDOWS:
+    if sys.platform != "win32":
         return False
 
     try:
@@ -236,7 +236,7 @@ def _broadcast_setting_change() -> None:
     Uses ``SendMessageTimeoutW`` with ``SMTO_ABORTIFHUNG`` to avoid
     blocking if a receiver is unresponsive.
     """
-    if not _IS_WINDOWS:
+    if sys.platform != "win32":
         return
 
     import ctypes

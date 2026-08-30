@@ -10,7 +10,7 @@ governs its open/close lifecycle:
   AFTER all workspaces are evicted (the registry DB is the last to close).
 
 The :attr:`store` property exposes a
-:class:`~modex_agent.persistence.adapters.workspace_registry_store.SqliteWorkspaceRegistryStore`
+:class:`~modex_agent.persistence.adapters.workspace_registry_store.SqliteScopeRegistryStore`
 bound to the manager's connection for workspace CRUD and session->workspace
 routing.
 """
@@ -20,7 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from modex_agent.persistence.adapters.workspace_registry_store import (
-    SqliteWorkspaceRegistryStore,
+    SqliteScopeRegistryStore,
 )
 from modex_agent.persistence.connection import ConnectionManager
 from modex_agent.persistence.migration import DatabaseKind
@@ -31,7 +31,7 @@ class RegistryPersistenceManager:
 
     def __init__(self, db_path: Path) -> None:
         self._connection = ConnectionManager(db_path, DatabaseKind.REGISTRY)
-        self._store = SqliteWorkspaceRegistryStore(self._connection)
+        self._store = SqliteScopeRegistryStore(self._connection)
 
     async def open(self) -> None:
         """Open the registry DB connection and run pending migrations."""
@@ -51,6 +51,6 @@ class RegistryPersistenceManager:
         return self._connection
 
     @property
-    def store(self) -> SqliteWorkspaceRegistryStore:
+    def store(self) -> SqliteScopeRegistryStore:
         """The workspace registry + session-map store bound to this manager."""
         return self._store

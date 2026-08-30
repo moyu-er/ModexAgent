@@ -6,23 +6,29 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.control.exceptions import AgentControlError
-from modex_agent.core.constants import FinishReason, StreamControlAction
+from modex_agent.core.llm_struct import LLMErrorInfo, LLMErrorKind
+from modex_agent.core.stream_events import LLMStreamEvent, StreamFailure
 from modex_agent.interceptor.abc import (
     Interceptor,
     InterceptorScope,
     IterationContext,
+    IterationInterceptor,
     IterationNext,
-    LLMStreamChunk,
     LLMStreamContext,
-    LLMStreamNext,
+    LLMStreamEvents,
+    LLMStreamInterceptor,
     ToolCallContext,
+    ToolCallInterceptor,
     ToolCallNext,
+    TurnInterceptor,
     TurnNext,
+    aclose_llm_stream,
 )
 
 if TYPE_CHECKING:
@@ -125,36 +131,56 @@ class InterceptorChain:
         self,
         ctx: AgentContext,
         call: LLMStreamContext,
-        actual_stream: LLMStreamNext,
-    ) -> AsyncIterator[LLMStreamChunk]:
-        """包裹 LLM 流式调用。
+        actual_stream: LLMStreamEvents,
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """包裹 LLM 事件流（ADR-0046 事件化签名： 事件进，事件出）。
 
-        按洋葱链顺序 yield chunk。控制异常透传。
+        拦截器逐层包裹事件流（索引 0 最外层），逐事件 yield。
+        控制异常（``AgentControlError`` —— 含 ``AgentCancelledError`` 的硬取消
+        语义）与 ``CancelledError`` 原样传播；其他异常转译为一个合成的
+        ``StreamFailure`` 终结事件后终止。
         """
-        chain = self._build_llm_stream_chain(call, actual_stream)
+        resolved = [
+            interceptor
+            for interceptor in self._interceptors
+            if isinstance(interceptor, LLMStreamInterceptor)
+        ]
+        events = actual_stream
+        for interceptor in reversed(resolved):
+            events = interceptor.around_llm_stream(ctx, call, events)
         try:
-            async for chunk in chain(ctx, call):
-                yield chunk
-        except AgentControlError:
+            async for event in events:
+                yield event
+        except (asyncio.CancelledError, AgentControlError):
             raise
         except Exception as e:
             logger.exception("InterceptorChain llm_stream error: %s", e)
-            yield LLMStreamChunk(finish_reason=FinishReason.ERROR, control_action=StreamControlAction.CANCEL)
+            yield StreamFailure(
+                error_info=LLMErrorInfo(
+                    kind=LLMErrorKind.UNKNOWN,
+                    message=f"LLM stream interceptor error: {e}"[:500],
+                )
+            )
+        finally:
+            # Forward close into the wrapped chain so the innermost producer
+            # (e.g. the callback-bridge background task) is released
+            # deterministically on consumer abort.
+            await aclose_llm_stream(events)
 
     # -------------------------------------------------------------------
     # 链构建
     # -------------------------------------------------------------------
-
-    def _resolved(self, scope: InterceptorScope) -> list[Interceptor]:
-        """返回声明了指定 scope 的拦截器列表（保持注册顺序）。"""
-        return [i for i in self._interceptors if scope in i.scopes]
 
     def _build_tool_chain(
         self,
         call: ToolCallContext,
         actual: ToolCallNext,
     ) -> Any:  # noqa: ANN401
-        resolved = self._resolved(InterceptorScope.TOOL_CALL)
+        resolved = [
+            interceptor
+            for interceptor in self._interceptors
+            if isinstance(interceptor, ToolCallInterceptor)
+        ]
 
         async def _dispatch(ctx: AgentContext, c: ToolCallContext) -> ToolResult:
             if not resolved:
@@ -174,7 +200,11 @@ class InterceptorChain:
         return _dispatch
 
     def _build_turn_chain(self, actual: TurnNext) -> Any:  # noqa: ANN401
-        resolved = self._resolved(InterceptorScope.TURN)
+        resolved = [
+            interceptor
+            for interceptor in self._interceptors
+            if isinstance(interceptor, TurnInterceptor)
+        ]
 
         async def _dispatch(ctx: AgentContext) -> AgentResult:
             if not resolved:
@@ -193,7 +223,11 @@ class InterceptorChain:
         return _dispatch
 
     def _build_iteration_chain(self, call: IterationContext, actual: IterationNext) -> Any:  # noqa: ANN401
-        resolved = self._resolved(InterceptorScope.ITERATION)
+        resolved = [
+            interceptor
+            for interceptor in self._interceptors
+            if isinstance(interceptor, IterationInterceptor)
+        ]
 
         async def _dispatch(ctx: AgentContext, c: IterationContext) -> None:
             if not resolved:
@@ -211,38 +245,5 @@ class InterceptorChain:
                 )
 
             await _next(0)
-
-        return _dispatch
-
-    def _build_llm_stream_chain(
-        self,
-        call: LLMStreamContext,
-        actual: LLMStreamNext,
-    ) -> Any:  # noqa: ANN401
-        resolved = self._resolved(InterceptorScope.LLM_STREAM)
-
-        async def _dispatch(
-            ctx: AgentContext,
-            c: LLMStreamContext,
-        ) -> AsyncIterator[LLMStreamChunk]:
-            if not resolved:
-                async for chunk in actual():
-                    yield chunk
-                return
-
-            async def _next(index: int) -> AsyncIterator[LLMStreamChunk]:
-                if index >= len(resolved):
-                    async for chunk in actual():
-                        yield chunk
-                    return
-                async for chunk in resolved[index].around_llm_stream(
-                    ctx,
-                    c,
-                    lambda: _next(index + 1),
-                ):
-                    yield chunk
-
-            async for chunk in _next(0):
-                yield chunk
 
         return _dispatch

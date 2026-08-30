@@ -11,7 +11,7 @@ Pydantic configuration models for every framework component. Each file defines a
 
 | File | Description |
 |------|-------------|
-| `app.py` | `AppConfig` — root configuration aggregating all sub-configs; includes `PathsConfig`, `SessionRetentionConfig`, `MultiAgentConfig`, `WorkspaceConfig`; resolves `${VAR}` env references from YAML |
+| `app.py` | `AppConfig` — root configuration aggregating all sub-configs; includes `PathsConfig`, `SessionRetentionConfig`, `MultiAgentConfig`; resolves `${VAR}` env references from YAML (the `WorkspaceConfig` flag died with ticket 14 — the workspace stack shape is declaration-selected) |
 | `llm.py` | `LLMConfig` — LLM provider settings (model, api_key, base_url, temperature, max_output_tokens) |
 | `memory.py` | `MemoryConfig` — memory subsystem config (short-term, user retention, long-term, archive, core layers with GovernanceConfig). The `MemoryConfig.knowledge` field was renamed to `MemoryConfig.core` per ADR-0035 (the matching Pydantic model `KnowledgeConfig` was renamed to `CoreMemoryConfig`). |
 | `safety.py` | `SafetyConfig` — LLM safety timeouts (`LLMSafetyConfig`: `request_timeout`/`stream_idle_timeout` default `None` — no provider-level timeout, watchdog is sole termination mechanism) and turn safety timeouts (`TurnSafetyConfig`: `agent_run_timeout`=600s per-iteration DispatchDeadline renewal, `tool_timeout`=400s per-invocation tool deadline) |

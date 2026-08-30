@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.scope import MemoryContext
@@ -13,6 +13,9 @@ from modex_agent.memory.archive_models import ArchiveChannel
 from modex_agent.memory.core.models import CoreMemoryContents
 from modex_agent.memory.history import MessageHistory
 from modex_agent.memory.pruned.manager import PrunedManager
+
+if TYPE_CHECKING:
+    from modex_agent.memory.hooks import MemoryHook
 
 
 class MemorySystem(ABC):
@@ -30,6 +33,9 @@ class MemorySystem(ABC):
 
     @abstractmethod
     async def close(self) -> None: ...
+
+    @abstractmethod
+    def add_cleanup_hook(self, hook: MemoryHook) -> None: ...
 
     # -- CRUD -----------------------------------------------------------------
 

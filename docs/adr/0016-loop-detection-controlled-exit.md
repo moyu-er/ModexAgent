@@ -3,7 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-07-07
 - **Revised:** 2026-07-10 — 检测语义由「内容循环 OR 工具循环」改为「内容相似 AND 工具相同」的合取判定（见 §4）。原 OR 方案对正当的重复步骤（多步确认、迭代探查）误报过多；合取要求两个信号在同一段连续窗口上同时成立才介入。
-- **Related:** ADR-0008（审批主 agent 镜像与 sanitizer）、`AgentControlError` 退出模型（`src/modex_agent/control/exceptions.py`）
+- **Revised:** 2026-08-28 — 检测从「`after_llm_response` 合取判定（内容相似 AND 工具相同）、命中即硬断」改为「`before_iteration` 两阶段守护：窗口提醒（system-reminder）→ 观察期 → 受控退出」。内容相似度机制整体移除（误杀正当重复、且对大周期循环无效）；退出时面向用户的内容从 XML 模板改为纯文本。参考实现：deepseek-harness `dsh-repeat-tool-reminder`（advisory-only 守卫，其 README 明确将「升级为阻断式」列为 deferred —— 本设计的第二阶段即该 deferred 项）。详见 §4。
+- **Related:** ADR-0008（审批主 agent 镜像与 sanitizer）、`AgentControlError` 退出模型（`src/modex_agent/control/exceptions.py`）、`ToolCallDeduplicator`（`src/modex_agent/agents/react/tool_dedup.py`）
 
 ## Context
 
@@ -20,7 +21,7 @@
 
 项目已有一套统一的“受控退出”模型：
 
-- `AgentControlError` 是 `AgentCancelled` / `AgentTimeout` / `PolicyViolation` 的公共父类，语义为“受控退出，非普通失败”。
+- `AgentControlError` 是 `AgentCancelledError` / `AgentTimeoutError` / `PolicyViolationError` 的公共父类，语义为“受控退出，非普通失败”。
 - `ReActAgent.run()` 已统一 `except AgentControlError as e:` 处理这一族异常：持久化已收集内容、构造 `AgentResult`、`emit_complete`。
 - `InterceptorChain` 对 `AgentControlError` 一律透传，不做错误转换。
 - `HookRunner.dispatch()` 会吞掉普通 hook 异常（LOG 策略仅记录），但 `asyncio.CancelledError` 透传。
@@ -31,7 +32,7 @@
 
 ### 1. 把循环检测做成一种受控退出异常
 
-新增异常 `LoopDetectedError(AgentControlError)`，与 `AgentCancelled` 同族。让父类 `AgentControlError` 携带**两个可覆盖属性**，统一描述退出时给用户的反馈：
+新增异常 `LoopDetectedError(AgentControlError)`，与 `AgentCancelledError` 同族。让父类 `AgentControlError` 携带**两个可覆盖属性**，统一描述退出时给用户的反馈：
 
 ```python
 class AgentControlError(Exception):
@@ -46,7 +47,7 @@ class AgentControlError(Exception):
         super().__init__(reason)
 ```
 
-`AgentCancelled` / `AgentTimeout` / `PolicyViolation` 保持原 `__init__` 签名不变，仅继承默认属性（`user_content=""`、`stop_reason` 各自定义：`CANCELLED` / `TIMEOUT` / `ERROR`，**只补不破**）。
+`AgentCancelledError` / `AgentTimeoutError` / `PolicyViolationError` 保持原 `__init__` 签名不变，仅继承默认属性（`user_content=""`、`stop_reason` 各自定义：`CANCELLED` / `TIMEOUT` / `ERROR`，**只补不破**）。
 
 新增：
 
@@ -103,111 +104,114 @@ except Exception:
 
 语义正当：`AgentControlError` 是**有意为之的退出信号**，不是 hook 执行错误，不该被 LOG/IGNORE 策略吞掉。
 
-### 4. 检测 Hook：`LoopDetectionHook`
+### 4. 检测 Hook：`LoopDetectionHook`（两阶段守护）
 
-新增 `src/modex_agent/hook/builtin/loop_detection.py`：
-
-```python
-class LoopDetectionHook(AfterLLMResponseHook):
-    """每次 assistant 完整 response 拿到后，无状态检测「内容相似 AND 工具相同」循环。
-    命中即抛 LoopDetectedError，结束当前 turn。
-    """
-```
-
-**无状态**：检测逻辑不在 `ReActTurnState.custom` 存任何计数/fingerprint，每次 `after_llm_response` 独立从历史读取、判断。
-
-#### 输入读取
-
-通过 `await ctx.history.to_list()` 拿到 `list[ChatMessage]`。从末尾向前扫描，构造“当前 turn 的连续 assistant 序列”：
-
-- 跳过（忽略）`role == tool` 的消息（工具结果是 ReAct 中间态，不属于 assistant 输出）。
-- 遇到 `role == user` 立即停止（user 消息标志新 turn 开始，再往前属另一 turn）。
-- 遇到**不含 tool_calls** 的 `role == assistant` 消息也立即停止——它不可能属于「工具重复窗口」，与 user 边界一样终结当前连续段。
-- 只收集**含 tool_calls** 的 `role == assistant` 消息，直到收集到 N 条或窗口被打断。
-
-> 注意：当前刚返回的 response 对应的 assistant 消息此时**尚未** append 到 history（`after_llm_response` 在 `ctx.history.append(assistant_msg)` **之前**调度，见 `nodes/llm.py:149` vs `:183`）。因此待检测序列 = 「history 末尾的连续 assistant 消息」+「本次 response」。Hook 把本次 response 虚拟成一条 assistant 消息补到序列尾部参与比较。
-
-#### 判定规则
-
-设可配置窗口 `N`（默认 **5**，见 §5）。当连续 assistant 消息不足 N 条时，不判定。
-
-**单一判定：内容相似 AND 工具相同（conjunction）**
-
-只有当末尾连续 `N` 条 assistant 步骤**同时**满足两个信号时才判定为循环：
-
-1. **内容相似**：这 N 条的 `content` 两两相似度都 ≥ 阈值 `content_similarity_threshold`（默认 **0.85**），且每条 content 非空（纯空白视为空）。
-2. **工具相同**：这 N 条各自的工具调用集合 fingerprint **完全相同且非空**——即同名、同参数（参数 JSON 按 key 排序归一化）的工具集合逐条重复。
-
-两个信号必须在**同一段连续窗口**上同时成立。仅内容重复（无工具）或仅工具重复（内容各异）都**不**判定为循环——合取大幅降低把正当的重复步骤（多步确认、迭代探查、轮询）误判为死循环的概率。
-
-> 单条 assistant 内重复同名同参工具不算（那是单次决策）；必须**跨多条 assistant 消息**重复才构成循环。
-
-**工具相同的快速预检**：在比较（可能很大的）参数 fingerprint 之前，先比较每条 assistant 的**工具调用数量**。数量不同则一定不匹配，立即跳过——既避免大参数字符串的昂贵比较，也能区分 fingerprint（基于集合、去重）无法区分的重复批次（`[read/a, read/a]` 数量为 2，`[read/a]` 数量为 1）。
-
-**相似度函数**：纯 Python 实现，无外部依赖。采用**截断后的原始字符串**的 **SequenceMatcher.ratio()**（`difflib`，标准库）。输入先截断到固定样本长度（与 XML 输出截断一致，默认 500 字符），避免长上下文下 `SequenceMatcher` 的 O(n²) 开销。空 content 判定用 `.strip()`（纯空白即空）：
+`src/modex_agent/hook/builtin/loop_detection.py`：
 
 ```python
-def _similarity(a: str, b: str) -> float:
-    na = (a or "")[:500]
-    nb = (b or "")[:500]
-    if not na and not nb:
-        return 1.0
-    if not na or not nb:
-        return 0.0
-    return SequenceMatcher(None, na, nb).ratio()
+class LoopDetectionHook(BeforeIterationHook):
+    """每次 LLM 调用前，从历史推导尾部重复轮；两阶段：窗口提醒 → 观察期 → 受控退出。"""
 ```
 
-> 不做大小写/空白归一化：真实循环的近重复文本即便存在大小写/空白差异，相似度也远高于 0.85，不影响判定；省去归一化步骤。阈值在调用方 `content_similarity_threshold` 控制（默认 **0.85**），`_similarity` 只返回 ratio。
+#### 槽位：`before_iteration`（而非 `after_llm_response`）
 
-**工具 fingerprint 与数量**：
+检测移动到 LLM 调用**前**的 hook 槽位，理由：
 
-```python
-def _tool_calls_fingerprint(tool_calls) -> frozenset[tuple[str, str]]:
-    # (tool_name, arguments_json_canonical)。忽略 call_id，忽略顺序。
-    return frozenset(
-        (name, json.dumps(args or {}, sort_keys=True, ensure_ascii=False))
-        for name, args in _extract_tool_pairs(tool_calls)
-    )
+1. **提醒当场生效**：`LLMNode.actual_iteration` 的顺序是 `BEFORE_ITERATION hook → _build_messages → BEFORE_LLM → LLM 调用`。在 `BEFORE_ITERATION` 注入的 system-reminder 会进入**本次**请求（`normalize_agent_messages_for_llm` 将 `system_reminder` role 替换为 `user`）；若放在 `BEFORE_LLM`（messages 已构建）或 `after_llm_response`（本轮已烧完一次响应），提醒要迟到一轮。
+2. **硬断不再浪费一次调用**：退出发生在下一轮 LLM 调用之前。
+3. **与既有注入机制同槽**：`InjectionDrainer`、`InboxFlushHook` 均在 `before_iteration` 注入历史 —— 这是「影响即将发生的 LLM 调用」的既有收敛点。
 
-def _tool_calls_count(tool_calls) -> int:
-    # 与 fingerprint 不同：fingerprint 是集合（去重），count 保留重复。
-    return sum(1 for _ in _extract_tool_pairs(tool_calls))
+#### 信号：尾部重复轮（trailing repeat run）
+
+**一轮（round）** = 一条带 tool_calls 的 assistant 消息。轮身份（identity）= 工具调用批次的 `(frozenset[(tool_name, canonical_args)], 调用数)` —— 名称与参数（JSON 按 key 排序归一化，忽略 call_id 与顺序）完全相同**且**每轮调用数相同（`[read/a, read/a]` 与 `[read/a]` 因此可区分）。批内多工具（`[read/a, ls/b]`）作为整体身份参与比较，批次循环同样可检测。
+
+`_trailing_repeat_run` 反向扫描 history，统计**尾部连续同身份的轮数 L**：
+
+- **唯一的边界是纯 `user` 消息**（`MessageRole.USER` 严格相等）——用户插话改变上下文，跨 user 的重复不是循环。
+- **其余全部透明（跳过、不打断）**：`tool` 结果、`system_reminder`（含本 hook 自己注入的提醒 —— 否则提醒会重置自己的计数）、`agent` 消息、`compact` 标记、无工具的 assistant 文本（「调用→评论→调用」式循环照样累计）。
+- **扫描预算按轮计**（`scan_cap = 2×window_size + 3`，派生不可配）：计数满 `scan_cap` 轮即停止向前扫描。预算只被轮消耗 —— 透明消息不耗预算。防护「无 user 边界」的 history（compaction 可能清掉最后一条 user 消息；跨 run 累积的病态 session）。计数钉在 `scan_cap` 时真实轮数 ≥ 该值（下界）：文案以 "at least N" 措辞，注入锚 clamp 到 `scan_cap - observation_rounds` 保持文本自洽。
+- 尾部出现不同身份的轮即停止。
+
+**跨 run 语义（免费获得）**：subagent 任务派发 / 父回复 / peer 消息 / 完成通知全部经 `build_agent_reminder_record` 落为 `system_reminder` —— 对扫描透明。因此 L 跨 ReAct run（turn）持续累计，而信号本身从**持久化 history 无状态推导**：父 agent 反复 `task()` 同参数派发（大周期循环）、subagent 跨 invocation 循环、进程重启后循环，均可检测；只有人类输入（role=user）或 agent 真正改变行为（换工具/换参数/换批次形状）才会重置。episode 状态是 per-turn 的（见下），丢失只导致一次冗余提醒，永不导致跳过提醒直接退出。
+
+#### 状态机（episode）
+
+per-turn 状态存 `state.custom[TurnCustomKey.LOOP_EPISODE]`（JSON-safe dict `{"fp": str, "rounds": int, "checks": int}`；`rounds` = 注入锚（clamp 后），`checks` = 注入以来同 fp 的检查次数；`_` 前缀 = 瞬态，审批挂起/恢复丢弃它只损失一次重新提醒）。hook 实例保持无状态（hook/AGENTS.md Rule 1）：
+
+```
+每次 before_iteration：
+  (identity, L) = _trailing_repeat_run(history, scan_cap)
+  无尾部轮 / L < window               → 清除 episode（user steer 打断、循环被打破 —— 无条件原谅）
+  episode 存在且 episode.fp != identity → 清除 episode（循环切换）
+
+  L ≥ window 且无 episode            → 阶段一（软）：append system-reminder
+                                        （点名重复调用、轮数、要求换方法/换参数/收尾），
+                                        记录 episode = {fp, rounds: min(L, scan_cap - observation), checks: 0}
+
+  L ≥ window 且 episode.fp == fp → checks += 1：
+      checks < observation_rounds(默认 2)
+                                      → 静默观察（不重复提醒 —— 对同一身份的重复提醒无增量信息）
+      checks ≥ observation_rounds
+                                      → 阶段二（硬）：抛 LoopDetectedError（纯文本 user_content）
 ```
 
-**触发**：合取命中时，Hook 构造英文 XML 说明（见下）并抛 `LoopDetectedError(user_content=xml, loop_type="tool")`。`loop_type` 统一为 `"tool"`（重复工具调用是最具体、可操作的信号）；XML 内容同时描述工具重复与文本近重复。
+要点：
 
-#### XML 反馈内容（英文，写死）
+- **退出数的是「注入后带提醒可见却未悔改的 LLM 决策次数」（checks），不是 L 的绝对增长**。agent 持续重复时每次检查前恰好新增一轮，checks 与 L 严格同步 —— 常规场景时间线与「观察期再容忍 N 轮」完全一致。关键在饱和场景：L 钉在 `scan_cap` 后不再增长，若退出条件是 `L ≥ 锚 + 观察期` 则永远差 2 而哑火（一次性提醒后永久静默的 livelock）；checks 计数不依赖 L 增长，结构性免疫。
+- **观察锚从注入时的真实 L 起算**（跨 run 进入时 L 可能已远超窗口，如 L=15 注入则文本报 "after round 15"），agent 在退出前**必然**在本 run 内见过提醒；L 饱和时锚 clamp 到 `scan_cap - observation`，退出文案的「继续 N 轮」与 checks 一致。
+- **run 跌回窗口以下（user steer、循环被打破）即清除 episode**：同一循环复发重新走完整「提醒→观察」，不存在「steer 之后无新提醒却直接退出」的路径。
+- **先 append 后写状态**：append 失败被 LOG 策略记录、状态未写，下一次迭代自然重试 —— 不会出现「记了账但模型没见过提醒」。
 
-合取命中时只有一种模板（同时描述工具重复与文本近重复）：
+#### 两段文案
+
+**软提醒**（模型可见，`wrap_system_reminder` 包裹后以 `role=system_reminder` 入史，与 LengthGuardHook / TodoContinuationHook 的注入格式一致）：
 
 ```
-<loop_detected type="tool">
-The agent repeated the same tool call(s) with identical arguments and near-identical text N times in a row and appears stuck in a loop.
-Repeated tool(s): {tool_names}
-Last repeated arguments (truncated to 500 chars per call):
-<repeated_calls>
-{escaped_args}
-</repeated_calls>
-Last output (truncated to 500 chars):
-<last_output>
-{escaped_content}
-</last_output>
+Repeated tool call detected:
+- tool call(s): read({"path": "/a"})
+- consecutive rounds: 10
 
-How to break out:
-- Point the agent to different inputs (paths, queries, parameters).
-- Rephrase your request with more specific instructions or constraints.
-- Ask the agent to reconsider whether this tool can make progress.
-- If the task is done, tell the agent to stop.
-</loop_detected>
+The repeated calls are not making progress — this exact call was already
+executed and its result will not change. Do not repeat it again. Inspect
+the latest result and choose a different action, different arguments, or
+finish the task if enough evidence has been gathered.
 ```
 
-> 截断长度 500 字符为写死常量。转义使用 `modex_agent.utils.xml.xml_text`。
+**硬断 user_content**（纯文本，面向用户 —— 用户不解析 XML；`ReActAgent.run` 的 `except AgentControlError` 块将其写入 `AgentResult.content`）：
+
+```
+Loop detected — turn force-ended.
+
+The agent repeated the same tool call(s) for 12 consecutive rounds:
+- tool call(s): read({"path": "/a"})
+
+A system reminder was injected after round 10 telling the agent to change
+approach, but the repetition continued for 2 more rounds. The turn was
+stopped to prevent further wasted calls.
+
+Suggestions: point the agent to different inputs (paths, queries,
+parameters), rephrase the request with more specific instructions, or ask
+whether this tool can still make progress.
+```
+
+#### 与 `ToolCallDeduplicator` 的关系（执行层 streak 守卫）
+
+ToolNode 挂有 per-turn 的 `ToolCallDeduplicator`：单个 `(tool, args)` key 跨相邻工具步骤连续重复时梯度干预（streak 3/5 提醒、8 跳过执行、12 取消 turn，取消走 `phase=CANCELLED` 路由）。两者是**互补而非重复**：
+
+| 维度 | LoopDetectionHook | ToolCallDeduplicator |
+|---|---|---|
+| 检测面 | 批次身份（名称+参数+调用数） | 单 key 相邻出现 |
+| 状态来源 | 持久化 history（跨 run 存活） | per-turn 实例（run 结束即失忆） |
+| 终点语义 | `LoopDetectedError` → LOOP_DETECTED + 纯文本说明 | streak 12 → CANCELLED（无循环说明） |
+| 抓得住 | 跨 run 累积、批内多工具、`[A,A]` vs `[A]` 批次差异 | 相邻单 key 重复（含被 deny 的调用） |
+
+**竞速参数**：默认 `window_size=10 + observation_rounds=2` 使硬断落在第 13 轮的 `before_iteration` —— 先于该轮 LLM 调用与 ToolNode，因此先于 dedup 的第 13 轮 streak-STOP。用户得到的是带说明的 LOOP_DETECTED 退出而非无声 CANCELLED。`observation_rounds=3` 会让 dedup 抢先（第 13 轮 ToolNode），LOOP_DETECTED 在单 run 场景退化为不可达 —— 调参时必须保持 `window_size + observation_rounds + 1 ≤ 13`（dedup STOP 轮）。dedup 的梯度（streak 3 提醒 / 8 跳过）依旧更早介入执行层，两者共存。
 
 #### 安全闸门
 
-- LLM error response（`finish_reason == "error"`）直接 return，不检测（turn 本身就要结束）。
-- 本次 response **无 tool_calls** 直接 return（合取判定需要工具；无工具的 response 不可能开启工具重复窗口）。
-- 不足 N 条直接 return。
+- `enabled=False` 直接返回。
+- 非 ReAct 上下文（`get_react_state(ctx) is None`，如 clean mode）直接返回。
+- LLM error response 不涉及 —— 检测在 LLM 调用之前，不消费 response。
 
 ### 5. 配置
 
@@ -216,20 +220,21 @@ How to break out:
 ```yaml
 hooks:
   loop_detection:
-    enabled: true            # 全局启用（默认 true）
-    window_size: 5           # 连续 N 条 assistant，默认 5
-    content_similarity_threshold: 0.85  # 默认 0.85
+    enabled: true             # 全局启用（默认 true）
+    window_size: 10           # 尾部连续同身份轮数达到即注入提醒，默认 10
+    observation_rounds: 2     # 提醒后再容忍的检查轮数，默认 2
 ```
 
-`window_size` 取值范围 `[2, 8]`，越界 clamp 到范围内并 warn。
+`window_size` 下限 clamp 到 2（无上限 —— 信号从 history 一次线性扫描推导，窗口大不增加复杂度）；`observation_rounds` 下限 clamp 到 0（0 = 提醒后仅一次 LLM 决策机会）；扫描预算 `scan_cap = 2×window_size + 3` 派生自 window，不可配置。
 
-> **v1 实现说明：** 当前版本按 YAGNI 原则，在 `DefaultAgentFactory.create_agent` 中直接以构造函数默认值装配 `LoopDetectionHook()`，未新增 `HooksConfig` YAML 字段。`enabled` / `window_size` / `content_similarity_threshold` 已通过构造函数参数暴露，测试与后续 wiring 可直接覆盖。YAML 可配置性作为未来增强保留。
+> **v1 实现说明：** 当前版本按 YAGNI 原则，在 `DefaultAgentFactory.create_agent` 中直接以构造函数默认值装配 `LoopDetectionHook()`，未新增 `HooksConfig` YAML 字段。`enabled` / `window_size` / `observation_rounds` 已通过构造函数参数暴露，测试与后续 wiring 可直接覆盖。YAML 可配置性作为未来增强保留。
 
-#### 为何默认 N=5
+#### 为何默认 window=10 / observation=2
 
-- 真实工作流中合理的重复并不少见（多步确认、轮询式探查、迭代逼近），窗口太小（2-3）会把正常重复误判成循环、打断正当任务。
-- N=5 要求连续 5 次相同才介入，大幅降低误报；代价是循环多烧几轮，但相对"误中断正当任务"是可接受的小损失。
-- 用户可按 agent 调小（激进，如 2-3）或更大（极保守）。
+- 真实工作流中合理的重复并不少见（多步确认、轮询式探查、迭代逼近）；10 轮连续**同工具同参数同批次形状**的重复几乎不可能是正当行为，旧版 N=5 配合内容相似度的合取虽也保守，但内容相似度会把「每轮都说类似的话但正当地重试」误伤，且完全检测不到跨 run 累积。
+- **必须与两个周边预算联动**（调参约束）：
+  - `window_size + observation_rounds + 1 ≤ 13`：硬断轮必须不晚于 `ToolCallDeduplicator` 的 streak-STOP（第 13 轮），否则 LOOP_DETECTED 退化为不可达（见 §4 竞速参数）。
+  - `window_size + observation_rounds + 1 ≤ max_iterations`（默认 15）：否则硬断被业务层 max-iterations 退出遮蔽（良性退化 —— turn 仍会终止，但用户看到的是 MAX_ITERATIONS 提示而非循环说明）。
 
 ### 6. 注册
 
@@ -239,19 +244,19 @@ hooks:
 
 ### 7. main agent vs subagent 的通知路由
 
-`LoopDetectedError` 抛出后，`ReActAgent.run()` 的 `except AgentControlError` 块构造的 `AgentResult(content=<loop_xml>, stop_reason=LOOP_DETECTED)`，其去向取决于 agent 的 `comm_kind`，**无需在循环检测逻辑里分支**——复用现有通知路由即可：
+`LoopDetectedError` 抛出后，`ReActAgent.run()` 的 `except AgentControlError` 块构造的 `AgentResult(content=<纯文本循环说明>, stop_reason=LOOP_DETECTED)`，其去向取决于 agent 的 `comm_kind`，**无需在循环检测逻辑里分支**——复用现有通知路由即可：
 
 #### main agent（`comm_kind == NORMAL`）
 
-循环 XML 作为 `result.content`，经 `emit_complete(result)` 送达**用户**（WebUI/IM 收到英文 XML 说明）。`TurnOutcomeNotifyHook` 只对 MAX_ITERATIONS/ERROR 发纯文本提示，对 `loop_detected` 不重复打扰——`emit_complete` 已带 XML 内容。符合"用户收到循环说明"。
+纯文本循环说明作为 `result.content`，经 `emit_complete(result)` 送达**用户**（WebUI/IM 收到可直接阅读的说明与建议）。`TurnOutcomeNotifyHook` 只对 MAX_ITERATIONS/ERROR 发纯文本提示，对 `loop_detected` 不重复打扰——`emit_complete` 已带说明内容。符合"用户收到循环说明"。
 
-> **实现验证点**：main agent 路径依赖 `emit_complete(result)` 把 `result.content`（循环 XML）真正回放给用户。流式路径下循环 XML 是在 catch 块新构造的（不是流式已发送的内容），需确认 `StreamingAwareEmitter.emit_complete` 对 `result.content` 非空时的回放语义。若实测发现流式 emitter 在 stream_end 后不再回放 content，则在 `except AgentControlError` 块里显式补一次 `emitter.emit_content(e.user_content)`。测试用例需覆盖此断言。
+> **实现验证点**：main agent 路径依赖 `emit_complete(result)` 把 `result.content`（循环说明）真正回放给用户。流式路径下说明文本是在 catch 块新构造的（不是流式已发送的内容），需确认 `StreamingAwareEmitter.emit_complete` 对 `result.content` 非空时的回放语义。若实测发现流式 emitter 在 stream_end 后不再回放 content，则在 `except AgentControlError` 块里显式补一次 `emitter.emit_content(e.user_content)`。测试用例需覆盖此断言。
 
 #### subagent（`comm_kind == SUBAGENT`）
 
 subagent 的结果**不应直达用户**，而应回到父 agent，由父 agent 决定后续。现有链路已天然支持：
 
-1. subagent `ReActAgent.run()` catch 后构造 `AgentResult(stop_reason=LOOP_DETECTED, content=<loop_xml>)`。
+1. subagent `ReActAgent.run()` catch 后构造 `AgentResult(stop_reason=LOOP_DETECTED, content=<纯文本循环说明>)`。
 2. `finally` 块触发 `SubagentAutoSendHook.finally_turn`：读取 `result.stop_reason`/`result.content`，构造 `<subagent_notification>` XML，经 `agent_bus` 发到**父 agent inbox**。
 
 **问题（必须修）**：`SubagentAutoSendHook._classify_stop` 的非正常退出集合 `_NON_NORMAL_STOPS = {max_iterations, turn_cancelled, timeout}` 不含 `loop_detected`，会导致循环被误判为"正常完成"或"只是没写 OUTPUT.md"，父 agent 收不到明确信号。
@@ -280,12 +285,13 @@ if stop_reason == "loop_detected":
   <is_normal>false</is_normal>
   <hint>Subagent stopped with loop_detected — it was stuck in a loop ...
         To continue, send a message with invocation_id=...</hint>
-  <summary>&lt;loop_detected type="tool"&gt;...&lt;/loop_detected&gt;</summary>
+  <summary>Loop detected — turn force-ended. The agent repeated the same
+        tool call(s) for 12 consecutive rounds ...</summary>
   <artifacts>...</artifacts>
 </subagent_notification>
 ```
 
-`<summary>` 字段已携带循环 XML 的截断内容（`_truncate_content`，上限 1500 字符），父 agent 据此可看到重复的工具调用与近重复文本、最后在重复什么，从而决定是换参数重派、自行接管，还是放弃。
+`<summary>` 字段已携带循环说明的截断内容（`_truncate_content`，上限 1500 字符），父 agent 据此可看到重复的工具调用与参数、提醒已注入仍无效的事实，从而决定是换参数重派、自行接管，还是放弃。
 
 #### 设计要点
 
@@ -297,34 +303,36 @@ if stop_reason == "loop_detected":
 
 ### 正面
 
-- **改动集中**：1 个新 hook + 父类 2 个属性 + runner 1 行透传 + run() 退出块改属性读取 + 1 个新 StopReason。不碰 `LLMNode` / `ToolNode` / `EndNode`。
-- **架构一致**：循环退出与取消/超时/策略违规同族，复用 `AgentControlError` 的统一退出处理，无需新增 catch 分支。
-- **可测**：hook 是纯函数式检测 + 抛异常，可通过 `after_llm_response(ctx, response)` 公共接口做单元测试（构造带连续重复 assistant 的 history）。
-- **用户可感知**：循环发生时用户/WebUI/IM 收到明确的英文 XML 说明与跳出建议。
+- **先软后硬**：绝大多数循环在提醒后即被打破（模型看到点名批评的 system-reminder 后换方法）；硬断是最后手段，且退出时用户收到纯文本说明（哪里循环、提醒过几次、为何终止）。
+- **跨 run 检测免费获得**：信号从持久化 history 无状态推导，agent 间消息全部是透明 role —— 大周期循环（父 agent 反复同参派发）、subagent 跨 invocation 循环、进程重启后的循环均可检测，无需任何持久化新设施。
+- **改动集中**：仅重写 1 个 hook 文件 + 1 个 `TurnCustomKey`；异常模型、runner 透传、run() 退出块、装配点、subagent 通知路由全部复用不动。
+- **可测**：检测是无状态纯函数（`_trailing_repeat_run`）+ 显式 episode 状态机，可通过 `before_iteration(ctx)` 公共接口做单元测试。
 
-### 负面
+### 负面 / 已知局限
 
-- **N=3 仍可能漏判**：交替式循环（A,B,A,B）不会被“连续 N 条相同”捕获。本设计有意只覆盖最常见、最明确的完全重复；交替循环留给后续增强。
-- **SequenceMatcher 相似度**对长文本开销随长度平方级增长；已通过输入截断（500 字符样本）避免长上下文下的性能问题。XML 输出也截断到 500 字符。
-- **全局默认启用**意味着所有 pool 多一次历史扫描 + 相似度计算的开销。历史通常不大，且仅在每轮 assistant 完成后算一次；可接受。关闭开关保留。
-- **chunk 级早期检测不在本 ADR 范围**（用户确认后续再补）。届时可在 `ReactLlmClient` / LLM_STREAM interceptor 增量检测重复片段，复用本 ADR 的相似度函数与 `LoopDetectedError`。
+- **周期 > 1 的轮转循环（A,B,A,B）仍漏判**：尾部连续同身份判定只覆盖完全重复。有意保留（用户确认的简化范围）；周期检测是后续增强。
+- **短 run 逃逸**：若 agent 每 run 只循环 1-2 轮即结束 turn、再被外部反复拉起，每 run 入口都会触发提醒，但单 run 内永远凑不满「注入时 L + 观察期」的退出条件 —— 无限提醒、永不硬断。周边守卫（TodoContinuation 签名反死锁、MAX_TURNS、LengthGuard 10 次上限）各自有界。彻底闭合需要跨 run 的 episode 持久化 —— **已知且有意推迟**（涉及持久化设计）；未来若要闭合，最自然的路径是把 fp 嵌入提醒文本、从 history 推导「已提醒」状态（history 即现成的持久层）。
+- **参数耦合**：`window_size + observation_rounds + 1` 必须同时 ≤ 13（dedup STOP 轮）与 ≤ `max_iterations`（默认 15），否则硬断被遮蔽为良性退化（见 §5）。
+- **每轮一次历史线性扫描（上限 `scan_cap` 轮）**：`before_iteration` 全量 `to_list()`（ScopedMessageHistory 缓存命中，无落盘 IO）+ 有界反向扫描。关闭开关保留。
+- **合法的长程同参轮询**（如 watch 式探查）会在 10+2 轮被终止 —— 与所有循环检测共享的固有取舍；压力阀是 `window_size` / `enabled` 配置。
 
 ## 实现变更清单（实现时核对）
 
 1. `src/modex_agent/core/constants.py` — `StopReason` 新增 `LOOP_DETECTED = "loop_detected"`。
-2. `src/modex_agent/control/exceptions.py` — `AgentControlError` 加 `user_content`/`stop_reason` 类属性默认值；`AgentCancelled`/`AgentTimeout`/`PolicyViolation` 各自 `stop_reason` 默认值；新增 `LoopDetectedError`。
+2. `src/modex_agent/control/exceptions.py` — `AgentControlError` 加 `user_content`/`stop_reason` 类属性默认值；`AgentCancelledError`/`AgentTimeoutError`/`PolicyViolationError` 各自 `stop_reason` 默认值；新增 `LoopDetectedError`。
 3. `src/modex_agent/hook/runner.py` — `dispatch()` 新增 `except AgentControlError: raise` 透传分支。
 4. `src/modex_agent/agents/react/agent.py` — `except AgentControlError` 块改用 `e.user_content` / `e.stop_reason` 构造 `AgentResult`。
-5. `src/modex_agent/hook/builtin/loop_detection.py` — 新增 `LoopDetectionHook` + 相似度/工具 fingerprint 与 count 辅助函数 + 合取判定 + XML 模板。
-6. `src/modex_agent/hook/builtin/__init__.py` — 导出 `LoopDetectionHook`。
-7. `src/modex_agent/ioc/configs/hooks.py` — （未来增强）`HooksConfig` 增 `loop_detection` 子配置（`enabled` / `window_size` / `content_similarity_threshold`）。v1 使用构造函数默认值在 `DefaultAgentFactory` 中装配。
+5. `src/modex_agent/hook/builtin/loop_detection.py` — `LoopDetectionHook` 重写为 `BeforeIterationHook`：`_round_identity` / `_trailing_repeat_run` / `_identity_preview` + episode 状态机 + 两段纯文本文案；删除相似度机制（`_similarity` / `_collect_recent_assistants` / `_build_loop_xml` / 合取判定）。`_canonical_args` / `_extract_tool_pairs` / `_tool_calls_fingerprint` / `_tool_calls_count` 保留复用。
+6. `src/modex_agent/hook/builtin/__init__.py` — 导出 `LoopDetectionHook`（不变）。
+7. `src/modex_agent/ioc/configs/hooks.py` — （未来增强）`HooksConfig` 增 `loop_detection` 子配置（`enabled` / `window_size` / `observation_rounds`）。当前使用构造函数默认值在 `DefaultAgentFactory` 中装配。
 8. pool builder（`examples/bot_project/bot/service/pool_builder.py` 或对应装配点）— v1 通过 `DefaultAgentFactory` 无条件装配 `LoopDetectionHook()`；未来可在此传入配置。
-9. `src/modex_agent/hook/builtin/subagent_auto_send.py` — `_NON_NORMAL_STOPS` 加入 `"loop_detected"`；`_classify_stop` 增加 `loop_detected` 专属 hint 分支，确保 subagent 循环正确路由到父 agent 而非被误判为正常完成。
+9. `src/modex_agent/hook/builtin/subagent_auto_send.py` — `_NON_NORMAL_STOPS` 加入 `"loop_detected"`；`_classify_stop` 增加 `loop_detected` 专属 hint 分支，确保 subagent 循环正确路由到父 agent 而非被误判为正常完成。（首版已落地，本修订不涉及。）
+10. `src/modex_agent/runtime/enums.py` — `TurnCustomKey` 新增 `LOOP_EPISODE = "_loop_episode"`（2026-08-28 修订）。
 
 ### 测试
 
-- 单元：`_similarity` 边界（空串、完全相同、相似、不同）；`_tool_calls_fingerprint` 忽略 call_id、参数顺序无关；`_tool_calls_count` 保留重复（与去重 fingerprint 区分）；`_collect_recent_assistants` 窗口被 user 打断、被无工具 assistant 打断、忽略 tool。
-- hook 集成：构造 history 连续 N 条「相同内容 + 同参工具」→ 抛 `LoopDetectedError` 且 `loop_type=="tool"`、XML 同时含工具名与重复文本；仅相似内容无工具 → 不抛；仅同参工具但内容各异 → 不抛；不足 N 条 / 被 user 打断 → 不抛；LLM error → 不抛。
-- runner 透传：mock hook 抛 `AgentControlError`，`dispatch()` 透传而非吞掉。
-- main agent 退出：`LoopDetectedError` 经 `ReActAgent.run()` 产出 `AgentResult(stop_reason=LOOP_DETECTED, content=<xml>)`，`emit_complete` 送达用户。
+- 单元：`_tool_calls_fingerprint` 忽略 call_id、参数顺序无关；`_tool_calls_count` 保留重复（与去重 fingerprint 区分）；`_trailing_repeat_run` 的边界（user 打断、tool/system_reminder/agent/compact/无工具 assistant 透明、身份切换断 run、批次 vs 单调用、空历史）。
+- hook 状态机：窗口内无动作；窗口命中注入提醒 + 记录 episode；观察期静默（不重复提醒不退出）；观察期满抛 `LoopDetectedError`（纯文本 user_content 含轮数、注入轮、继续轮数、无 XML）；换身份即原谅（episode 清除 + 重新注入）；超过窗口进入（跨 run 场景，注入轮 = 真实 L）；fresh turn 对同一循环重新注入；`observation_rounds=0` / `enabled=False` / 非 ReAct 上下文。
+- runner 透传：mock hook 抛 `AgentControlError`，`dispatch()` 透传而非吞掉（既有测试，不变）。
+- main agent 退出：`LoopDetectedError` 经 `ReActAgent.run()` 产出 `AgentResult(stop_reason=LOOP_DETECTED, content=<纯文本说明>)`，`emit_complete` 送达用户。
 - subagent 路由：subagent `comm_kind` 下 `LoopDetectedError` → `SubagentAutoSendHook` 产出 `status=incomplete`、`stop_reason=loop_detected`、hint 含"stuck in a loop" 的通知，发往**父 inbox**（断言不触发用户 `_notify_user` 路径）。

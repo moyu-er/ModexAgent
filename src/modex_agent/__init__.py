@@ -20,7 +20,7 @@ from .core.emitter import (
     StreamingAwareEmitter,
 )
 from .core.events import AgentEvent, EmitterConfig
-from .core.provider import LLMProvider, StreamingLLMProvider
+from .core.provider import CallbackStreamProvider, LLMProvider
 from .core.tool_manager import (
     InMemoryToolManager,
     Tool,
@@ -57,7 +57,7 @@ __all__ = [
     # 抽象基类
     "Tool",
     "LLMProvider",
-    "StreamingLLMProvider",
+    "CallbackStreamProvider",
     # 事件和配置
     "AgentEvent",
     "EmitterConfig",

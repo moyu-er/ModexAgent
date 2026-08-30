@@ -2,7 +2,7 @@
 
 > ModexAgent harness 改进——缓存命中率、上下文管理、Agent 引导
 > 创建时间：2026-08-04
-> 最后更新：2026-08-07（governance 收敛：Lossy+Microcompact+TokenBudget → ContextBudgetGovernance）
+> 最后更新：2026-08-25（新增决策 #18：usage 锚定，待 LLMProvider 重构后实施）
 
 ---
 
@@ -27,6 +27,7 @@
 | 15 | 压缩提示加诚实约束 | 📋 待办 | — | — |
 | 16 | Provider blocks/prefetch 重复注入修复 | ✅ 已实施（收敛） | 中 | 已通过收敛统一为单一组装路径 |
 | 17 | Governance 收敛：ContextBudgetGovernance | ✅ 已实施 | 最高 | 3 策略→1 策略；token-window prune；详见下方 |
+| 18 | 压缩触发计量与真实请求对齐（usage 锚定） | 📋 待办（LLMProvider 重构后） | 高 | 真实回执锚定 + 增量投影；详见下方 |
 
 ---
 
@@ -357,3 +358,26 @@ class BudgetConfig(BaseModel):
 ```
 
 **compact_msg token_count 打戳**（cleanup.py `_commit_session_phase`）：compact summary 消息现在在 commit 时通过 estimator 打 `token_count`，下次 boundary 计算不再需要临时重算。
+
+---
+
+### 18. 压缩触发计量与真实请求对齐（usage 锚定）— 📋 待办（LLMProvider 重构后）
+
+**问题**：压缩触发线（`check_cleanup_trigger`）只对 session 非系统消息做估算求和，存在系统性盲区与漂移：
+
+- **不计数**：system prompt（15-provider 组装，含 pruned catalog / experience / skills，可达数十 K tokens）、tool definitions、media 注入
+- **估算 tokenizer 偏差**：cl100k 估算与 provider 真实 tokenizer 存在偏差（CJK 下更明显）
+- **请求级裁剪不改计数**：`ContextBudgetGovernance` 占位符替换、media 注入、XML 截断均不修改任何 token 计数 → 计量与真实请求大小 drift
+  - 高估方向（如 governance 替换后仍按原值计数）：浪费窗口余量、过早压缩、多余压缩调用、打断前缀缓存
+  - 低估方向（system+tools 盲区、tokenizer 偏差、media 注入）：真实请求先于触发线打满窗口 → provider 400 context-overflow → 落入 `EmergencyCompactionGovernance` 请求级硬裁剪（无摘要、不落 pruned、不持久化、每迭代重复触发）
+
+**实现方式**（LLMProvider 重构落地后实施）：
+
+- **真实回执锚定 + 增量投影**：每次 LLM 调用返回的 usage（input tokens）作为压力锚点；压力值 = 最近一次真实 input_tokens + 此后新增消息的估算 token 增量
+- 触发判定优先使用锚定值；无锚点（新会话 / resume / 流式响应无 usage）回退现有估算求和
+- 锚点带 model 维度：模型切换即失效，回退估算
+- 落点：`ScopedMessageHistory` 增加内存态 `note_usage()`（零持久化，不改 DB 字段），LLM 调用侧回填；`_is_trigger_condition_met` 优先锚定判定
+- per-message `token_count` 缓存保留（boundary 走查只需相对大小）
+- 该方式一次性覆盖全部 drift 来源（system prompt、tools、governance 替换、media 注入、tokenizer 偏差）——计量对象从"消息理论上多大"变为"真实请求实际多大"
+
+**关联项**（usage 锚定落地后重估）：`EmergencyCompactionGovernance` 触发频率应大幅下降；届时评估将其收敛为「强制触发 `cleanup_session`（真压缩：compact 摘要 + session commit + pruned 落盘）+ 重试」，替代请求级硬裁剪（当前路径裁掉的内容无摘要、不进 pruned catalog、下一迭代全量重建后再次触发，形成 400→裁剪→重试循环）。

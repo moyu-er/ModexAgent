@@ -7,8 +7,10 @@ char-based default; the example bot supplies a tiktoken-backed estimator.
 
 Both estimators count the SAME message fields (content, name, tool_call_id,
 tool_calls JSON) plus a per-message overhead — only the text-to-token
-encoding differs. ``reasoning_content`` is excluded (stripped before
-persistence, so it never occupies the session).
+encoding differs. ``reasoning_content`` is counted on assistant tool-call
+turns only: the provider replays it there (thinking-mode passback), so the
+server bills it as input on every subsequent request; plain-turn reasoning
+is neither replayed nor counted.
 """
 from __future__ import annotations
 
@@ -23,13 +25,23 @@ def message_payload(message: dict[str, Any]) -> str:
     """Concatenate every token-bearing field of a session message dict.
 
     Counts content (str / list-of-parts / other), name, tool_call_id, and
-    tool_calls JSON. ``reasoning_content`` is never present here — it is
-    stripped before persistence — so it is not counted.
+    tool_calls JSON. ``reasoning_content`` is counted only when the provider
+    replays it — assistant tool-call turns (thinking-mode passback), where
+    the server bills it as input on every subsequent request; plain-turn
+    reasoning is not replayed and not counted.
+
+    The reasoning gate mirrors the provider replay rule
+    (``providers.http.formats.openai_compat`` — ``_assistant_message``
+    attaches ``reasoning_content`` only on tool-call turns) by design: if
+    that rule ever changes, this must change in lockstep or the trigger
+    drifts. Both remain heuristics superseded by usage-anchored measurement
+    (docs/design/memory-context-management/decisions.md #18).
     """
     content = message.get("content")
     name = message.get("name")
     tool_call_id = message.get("tool_call_id")
     tool_calls = message.get("tool_calls")
+    reasoning = message.get("reasoning_content")
 
     parts: list[str] = []
 
@@ -54,6 +66,11 @@ def message_payload(message: dict[str, Any]) -> str:
         parts.append(tool_call_id)
     if tool_calls:
         parts.append(json.dumps(tool_calls, ensure_ascii=False))
+    # Mirror the provider's replay rule (thinking-mode passback): reasoning
+    # reaches the API only on assistant tool-call turns, where the server
+    # counts it as input on every subsequent request.
+    if tool_calls and isinstance(reasoning, str) and reasoning:
+        parts.append(reasoning)
 
     return "\n".join(parts)
 

@@ -8,8 +8,8 @@
 Data types, transport channel, and termination exceptions for a runtime control
 plane. This package provides three live things:
 
-- **`AgentControlError` exception hierarchy** — `AgentCancelled`, `AgentTimeout`,
-  `PolicyViolation`. Raised across the hook / interceptor / agent layers; safe to
+- **`AgentControlError` exception hierarchy** — `AgentCancelledError`, `AgentTimeoutError`,
+  `PolicyViolationError`. Raised across the hook / interceptor / agent layers; safe to
   import and raise from anywhere.
 - **`InMemoryControlChannel` + `drain_control_channel()`** — the LIVE mid-turn
   cancellation path for IM `/stop` and the WebUI pause button (see "How
@@ -26,7 +26,7 @@ plane. This package provides three live things:
 
 | File | Description |
 |------|-------------|
-| `exceptions.py` | `AgentControlError` base + `AgentCancelled`, `AgentTimeout`, `PolicyViolation`. **Actively used** — raised across hook/interceptor/agent layers. |
+| `exceptions.py` | `AgentControlError` base + `AgentCancelledError`, `AgentTimeoutError`, `PolicyViolationError`. **Actively used** — raised across hook/interceptor/agent layers. |
 | `types.py` | `ControlCommand` (data), `ControlScope`, `ControlCommandType` (5: `CANCEL_TURN`, `CANCEL_RUN`, `INJECT_USER_MESSAGE`, `APPROVAL_RESPONSE`, `INJECT_STEER`). (The former `ControlEvent` / `ControlEventType` were dead — event bus gone in candidate ④ — and removed in ④b.) |
 | `channel.py` | `ControlChannel` ABC + `InMemoryControlChannel` — session-routed deques with TTL. **Live**: constructed by `BotService` and fed by `/stop` + pause. |
 
@@ -47,12 +47,12 @@ There are two independent cancellation mechanisms:
   `_try_intercept_control` path.
 
 `drain_control_channel()` (`modex_agent/hook/builtin/control_drain.py`) drains
-`{CANCEL_TURN}` at safe points and raises `AgentCancelled` on a turn-matched
+`{CANCEL_TURN}` at safe points and raises `AgentCancelledError` on a turn-matched
 command. The drain is invoked from the ReAct `LLMNode` (before + after the LLM
 call), `ToolNode._execute_batch`, the agent iteration loop, and inside two
 interceptor wrappers registered live in `bot/workspace/wiring.py`:
 `ControlDrainInterceptor` (TOOL_CALL) and `LlmCancelInterceptor` (LLM_STREAM).
-`AgentCancelled` is caught in `ReActAgent.run` → `AgentResult(stop_reason=CANCELLED)`.
+`AgentCancelledError` is caught in `ReActAgent.run` → `AgentResult(stop_reason=CANCELLED)`.
 
 ### (B) Task-based — busy-input INTERRUPT (independent of this package)
 
@@ -100,7 +100,7 @@ never caught by control code.
 ### Working In This Directory
 - The channel + drain ARE live (the `/stop` + pause mechanism). Do not remove them
   without installing a replacement cancel mechanism.
-- `AgentControlError`/`AgentCancelled`/`AgentTimeout`/`PolicyViolation` are safe
+- `AgentControlError`/`AgentCancelledError`/`AgentTimeoutError`/`PolicyViolationError` are safe
   to import and raise from anywhere; they are the durable part of this API.
 - If you add a new producer or consumer of the channel, mind the turn-uuid
   staleness logic in `drain_control_channel()`.

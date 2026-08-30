@@ -72,6 +72,22 @@ def _int_param(request: web.Request, name: str) -> int | web.Response:
 
 
 def _yaml(spec: GraphSpec) -> str:
+    """Serialize a GraphSpec to YAML for API responses (GET spec / PUT spec).
+
+    KNOWN CONTRACT DEBT — deferred convergence (tracked in scope-converge
+    HANDOFF.md §4 Leftovers #5): ``model_dump()`` emits unset optional
+    fields as ``null`` (``state_schema: null``, per-node ``trigger: null``),
+    so API YAML is noisier than the hand-written files in ``config/graphs/``
+    and the noise propagates into saved files via editor round-trips
+    (PUT writes the editor text verbatim). The WebUI YAML parser tolerates
+    these keys (graph-IA fix, 2026-08-20), so this is hygiene, not a bug.
+
+    Planned fix: ``model_dump(mode="json", exclude_none=True)`` — verified
+    round-trip lossless; free-form ``config`` dict nulls preserved (only
+    model fields are dropped); declarative ``state_schema`` blocks fully
+    serialized. Store idempotency is unaffected: ``save_if_changed``
+    compares ``model_dump_json()``, never this output.
+    """
     return yaml.dump(spec.model_dump(mode="json"), sort_keys=False, allow_unicode=True)
 
 

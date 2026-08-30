@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from modex_agent.workspace.control import WorkspaceController
-from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.registry import ScopeRegistry
 from modex_agent.workspace.store import GlobalWorkspaceStore
 
 
@@ -21,7 +21,7 @@ async def test_open_workspace_registers_but_does_not_persist_session_map(tmp_pat
     home.mkdir()
     target = tmp_path / "wsB"
     target.mkdir()
-    reg = WorkspaceRegistry(home=home, data_dir_name=".modex", factory=_FakeFactory(),
+    reg = ScopeRegistry(home=home, data_dir_name=".modex", factory=_FakeFactory(),
                             store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"))
     controller = WorkspaceController(registry=reg, data_dir_name=".modex", enabled=True)
     res = await controller.open_workspace(str(target))

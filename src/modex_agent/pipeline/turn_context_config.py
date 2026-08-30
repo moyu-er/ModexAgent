@@ -6,9 +6,14 @@ Layered configuration across 3 orthogonal dimensions:
     Topology:       normal (main) / subagent
     Mode:           session / graph
 
-Graph mode is the upper layer — it sits above normal/subagent. Subagents in
-graph mode remain atomic agents: they carry ``graph_instance_id`` (for reply
-routing) but never receive graph-exclusive tools/hooks/providers.
+Graph mode is the upper layer — it sits above normal/subagent. Subagents
+dispatched from within a graph turn remain atomic agents: they carry
+``graph_instance_id`` (for reply routing) but never receive graph-exclusive
+tools/hooks/providers. A subagent referenced DIRECTLY as a graph node,
+however, is executing a graph node turn — its session binding carries
+``is_node_execution`` and the configurators below fire for it like any
+graph node (SPEC §4 axis 3: the signal is "does this turn's message carry
+graph metadata", never the agent's comm kind).
 
 Configurator gate matrix (native only; external skips configurator pipeline):
 
@@ -16,17 +21,15 @@ Configurator gate matrix (native only; external skips configurator pipeline):
 |---------------------|-------------------------------------------|-----------------------|
 | GraphContextBinding | graph_instance_id is not None             | All graph turns       |
 | GraphApproval       | graph_instance_id is not None             | All graph turns       |
-| GraphMaxTurns       | is_node_execution and NORMAL              | Graph node main only  |
-| GraphTool           | is_node_execution and NORMAL              | Graph node main only  |
-| GraphTopology       | is_node_execution and NORMAL              | Graph node main only  |
-| GraphKnowledge      | is_node_execution and NORMAL              | Graph node main only  |
+| GraphMaxTurns       | is_node_execution                         | Graph node turns      |
+| GraphTool           | is_node_execution                         | Graph node turns      |
+| GraphTopology       | is_node_execution                         | Graph node turns      |
+| GraphKnowledge      | is_node_execution                         | Graph node turns      |
 
-Examples of graph-exclusive components that fire only on graph node main
-agents: ``GraphWorkflowProvider`` (system prompt), ``KnowledgeHook``
-(before/after turn), ``DeliverRetryHook`` (after turn), ``GraphDeliverTool``,
-``GraphKnowledgeBaseTool``. Each has its own runtime gate (e.g. checking
-``GRAPH_TOPOLOGY_CONTEXT`` state key or deliver tool existence) to exclude
-subagents even when ``graph_context`` is set.
+``is_node_execution`` comes from the session binding store (set by
+``BotAgentNode.execute``), i.e. the graph scheduling signal itself — a
+subagent session dispatched from a graph node never carries it, so such
+subagents stay atomic graph-wise.
 
 Peer communication: in graph mode, ``CommunicationTargetStore`` filters out
 NORMAL (peer) targets — the agent cannot perceive or reach peers. Graph nodes
@@ -41,8 +44,9 @@ See ``docs/design/session-tree/layered-config-matrix.md`` for the full design.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -53,6 +57,12 @@ from modex_agent.multi_agent.tools import SEND_TO_PEER_TOOL_NAME
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.tools.graph_tool_preset import GraphToolPreset
 from modex_graph.context import GraphContext
+
+if TYPE_CHECKING:
+    from modex_agent.multi_agent.session_tree.session_binding import (
+        SessionBindingStore,
+    )
+    from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 
 
 class GraphTurnArtifacts(BaseModel):
@@ -129,6 +139,45 @@ class TurnContextConfigPipeline:
                 configurator.configure(ctx, desc)
 
 
+def wire_graph_turn_config(
+    builder: TurnContextBuilder | None,
+    *,
+    graph_context_resolver: Callable[[int], GraphContext[Any] | None] | None,
+    session_binding_store: SessionBindingStore | None,
+) -> None:
+    """Wire the graph turn-configuration trio onto a turn-context builder.
+
+    Shared convergence point (architecture rule 15): the main pipeline
+    (``_wire_main_pipeline`` in bot business code) AND the subagent
+    materialization path (``AgentTemplate.materialize``) call this one
+    function, so every agent that owns a turn lifecycle — main or
+    lazily-materialized subagent — gets the same graph-mode per-turn
+    configuration (binding store + context resolver + the 6
+    configurators). Without it, a lazy subagent referenced by a graph node
+    could run its graph turn but never receive the ``deliver`` tool
+    (ticket 12).
+
+    No-op when ``builder`` is ``None`` (external agents) or when no
+    ``graph_context_resolver`` is wired (framework tests / graph-less
+    deployments) — mirroring the main-pipeline guard shape.
+    """
+    if builder is None or graph_context_resolver is None:
+        return
+    builder.graph_context_resolver = graph_context_resolver
+    if session_binding_store is not None:
+        builder.session_binding_store = session_binding_store
+    builder.config_pipeline = TurnContextConfigPipeline(
+        [
+            GraphContextBindingConfigurator(),
+            GraphApprovalConfigurator(),
+            GraphMaxTurnsConfigurator(),
+            GraphToolConfigurator(),
+            GraphTopologyConfigurator(),
+            GraphKnowledgeConfigurator(),
+        ]
+    )
+
+
 class GraphContextBindingConfigurator(TurnContextConfigurator):
     """Bind graph instance id and context onto AgentContext for graph turns."""
 
@@ -167,7 +216,7 @@ class GraphMaxTurnsConfigurator(TurnContextConfigurator):
     """
 
     def applies(self, desc: TurnContextDescriptor) -> bool:
-        return desc.is_node_execution and desc.agent_kind == AgentCommKind.NORMAL
+        return desc.is_node_execution
 
     def configure(self, ctx: AgentContext, desc: TurnContextDescriptor) -> None:
         if ctx.runtime is None:
@@ -179,7 +228,7 @@ class GraphToolConfigurator(TurnContextConfigurator):
     """Install graph-scoped tools (deliver + knowledge) on the tool manager."""
 
     def applies(self, desc: TurnContextDescriptor) -> bool:
-        return desc.is_node_execution and desc.agent_kind == AgentCommKind.NORMAL
+        return desc.is_node_execution
 
     def configure(self, ctx: AgentContext, desc: TurnContextDescriptor) -> None:
         if desc.graph_artifacts is None:
@@ -219,7 +268,7 @@ class GraphTopologyConfigurator(TurnContextConfigurator):
     """
 
     def applies(self, desc: TurnContextDescriptor) -> bool:
-        return desc.is_node_execution and desc.agent_kind == AgentCommKind.NORMAL
+        return desc.is_node_execution
 
     def configure(self, ctx: AgentContext, desc: TurnContextDescriptor) -> None:
         if ctx.runtime is None or desc.graph_artifacts is None:
@@ -250,7 +299,7 @@ class GraphKnowledgeConfigurator(TurnContextConfigurator):
     """
 
     def applies(self, desc: TurnContextDescriptor) -> bool:
-        return desc.is_node_execution and desc.agent_kind == AgentCommKind.NORMAL
+        return desc.is_node_execution
 
     def configure(self, ctx: AgentContext, desc: TurnContextDescriptor) -> None:
         if ctx.runtime is None or desc.graph_artifacts is None:

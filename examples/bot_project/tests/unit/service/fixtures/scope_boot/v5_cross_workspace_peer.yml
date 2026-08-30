@@ -1,0 +1,11 @@
+# Boot-failure fixture: a pool declares a peer the workspace does not host
+# (the v1 cross-workspace link shape — N5 refuses it; a future
+# cross-workspace bridge is a validation relaxation + plugin).
+workspace:
+  name: v5_ws
+  pools:
+    alpha:
+      peers: [ghost]
+      agents:
+        alpha:
+          description: alpha root

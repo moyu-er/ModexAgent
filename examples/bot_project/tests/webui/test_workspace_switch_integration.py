@@ -20,14 +20,14 @@ from bot.webui.server import WebUIServer, _new_uuid_prefix
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.workspace.control import WorkspaceController
 from modex_agent.workspace.paths import WorkspacePaths
-from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.registry import ScopeRegistry
 from modex_agent.workspace.routing import WorkspaceResolver
 from modex_agent.workspace.runtime import bind_workspace_root
 from modex_agent.workspace.store import GlobalWorkspaceStore
 
 
 class _FakeFactory:
-    """Minimal factory that satisfies WorkspaceRegistry typing."""
+    """Minimal factory that satisfies ScopeRegistry typing."""
 
     async def materialize(self, ctx):
         return {"t": ctx.target}
@@ -120,7 +120,7 @@ async def test_e2e_switch_workspace_attach_send_transcript_lands_in_ws_dir() -> 
         home.mkdir(parents=True, exist_ok=True)
 
         # Wire workspace control for /cd endpoint
-        registry = WorkspaceRegistry(
+        registry = ScopeRegistry(
             home=home,
             data_dir_name=".modex",
             factory=_FakeFactory(),
@@ -138,8 +138,11 @@ async def test_e2e_switch_workspace_attach_send_transcript_lands_in_ws_dir() -> 
         # Inject pipeline; route its persist write to ws_a via the ctxvar root.
         from tests.webui._pipeline_fixture import attach_default_pipeline
 
-        attach_default_pipeline(
-            server, server._store, inp, workspace_root=ws_a
+        await attach_default_pipeline(
+            server,
+            server._store,
+            inp,
+            workspace_root=ws_a,
         )
 
         client = TestClient(TestServer(server.app))
@@ -216,7 +219,7 @@ async def test_im_message_carries_ws_routes_transcript_to_workspace() -> None:
         ws_a = Path(tmp) / "workspace_a"
         ws_a.mkdir()
 
-        registry = WorkspaceRegistry(
+        registry = ScopeRegistry(
             home=home,
             data_dir_name=".modex",
             factory=_FakeFactory(),
@@ -400,7 +403,7 @@ async def test_im_zero_change_routing() -> None:
         ws_target = Path(tmp) / "target_ws"
         ws_target.mkdir()
 
-        registry = WorkspaceRegistry(
+        registry = ScopeRegistry(
             home=home,
             data_dir_name=".modex",
             factory=_FakeFactory(),

@@ -32,6 +32,9 @@ class GlobalModelConfig(BaseModel):
     temperature: float = 0.7
     max_output_tokens: int = 80000
     interface_format: InterfaceFormat = InterfaceFormat.OPENAI_COMPATIBLE
+    headers: dict[str, str] = Field(default_factory=dict)
+    responses_store: bool = False
+    endpoint_url: str = ""
 
     @model_validator(mode="before")
     @classmethod
@@ -51,4 +54,7 @@ class GlobalModelConfig(BaseModel):
             "max_output_tokens": self.max_output_tokens,
             "capabilities": list(self.capabilities),
             "interface_format": self.interface_format,
+            "headers": dict(self.headers),
+            "responses_store": self.responses_store,
+            "endpoint_url": self.endpoint_url,
         }

@@ -33,6 +33,7 @@ from modex_agent.approval.ui import IMUserInterface
 from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.commands.processor import SlashCommandProcessor
 from modex_agent.core.context import InMemoryContextManager
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager, Tool
 from modex_agent.core.types import InputMessage, LLMResponse, OutputMessage, ToolCall
@@ -53,7 +54,7 @@ pytestmark = pytest.mark.integration
 # --------------------------------------------------------------------------
 
 
-class _Provider:
+class _Provider(CallbackStreamProvider):
     """Script-driven LLM provider: returns one ``LLMResponse`` per call.
 
     Past the end of the script it keeps replaying the last response, so a
@@ -65,19 +66,32 @@ class _Provider:
         self._script = list(script)
         self.calls = 0
 
-    async def chat(self, messages, **kwargs):
+    def get_default_model(self) -> str:
+        return "mock"
+
+    async def chat_stream(
+        self,
+        messages,
+        model=None,
+        temperature=None,
+        max_output_tokens=None,
+        tools=None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
+        **kwargs,
+    ):
         resp = self._script[min(self.calls, len(self._script) - 1)]
         self.calls += 1
         return resp
 
 
-class _ValidatingProvider:
+class _ValidatingProvider(CallbackStreamProvider):
     """Scripted LLM that enforces the OpenAI message-ordering invariant.
 
     Reproduces the production 400 ("an assistant message with 'tool_calls'
     must be followed by tool messages responding to each 'tool_call_id'")
-    at test time: on every ``chat`` it asserts that each assistant message
-    carrying ``tool_calls`` is immediately followed by matching tool
+    at test time: on every ``chat_stream`` it asserts that each assistant
+    message carrying ``tool_calls`` is immediately followed by matching tool
     messages. The plain :class:`_Provider` accepts any history, so it could
     not catch a resume that re-enters at the LLM node with a stale
     tool_calls message and no tool results.
@@ -88,7 +102,20 @@ class _ValidatingProvider:
         self.calls = 0
         self.received: list[list[dict]] = []
 
-    async def chat(self, messages, **kwargs):
+    def get_default_model(self) -> str:
+        return "mock"
+
+    async def chat_stream(
+        self,
+        messages,
+        model=None,
+        temperature=None,
+        max_output_tokens=None,
+        tools=None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
+        **kwargs,
+    ):
         self.received.append([dict(m) for m in messages])
         self._assert_tool_messages_follow_tool_calls(messages)
         resp = self._script[min(self.calls, len(self._script) - 1)]

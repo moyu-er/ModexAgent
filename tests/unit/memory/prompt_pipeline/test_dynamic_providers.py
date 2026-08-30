@@ -164,6 +164,7 @@ async def test_pruned_provider_with_content(tmp_path: Path) -> None:
     assert provider.last_version == "1"
     assert content != ""
     assert "older_topics" in content or "Previous Conversation Transcripts" in content
+    assert 'chars="' in content
 
 
 @pytest.mark.asyncio

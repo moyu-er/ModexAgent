@@ -1,0 +1,19 @@
+{
+  "query": "What is the deployment evidence code?",
+  "target_user_id": "probe-target",
+  "contaminant_user_id": "probe-other",
+  "memories": [
+    {
+      "user_id": "probe-target",
+      "file_name": "MEMORY.md",
+      "content": "Deployment evidence code: ORBIT-731."
+    },
+    {
+      "user_id": "probe-other",
+      "file_name": "MEMORY.md",
+      "content": "Cross-user contamination canary: SCARLET-999."
+    }
+  ],
+  "expected_evidence": ["orbit 731"],
+  "forbidden_evidence": ["scarlet 999"]
+}

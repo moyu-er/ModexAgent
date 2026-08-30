@@ -16,8 +16,10 @@ code change.
 Messages follow the OpenTelemetry GenAI parts-based format: each entry is
 ``{"role": ..., "parts": [<part>, ...]}`` where part shapes include
 ``{"type": "text", "content": ...}``,
-``{"type": "tool_call", "id": ..., "name": ..., "arguments": ...}``, and
-``{"type": "tool_call_response", "id": ..., "response": ...}``.
+``{"type": "reasoning", "content": ...}`` (assistant tool-call turns;
+thinking-mode passback), ``{"type": "tool_call", "id": ..., "name": ...,
+"arguments": ...}``, and ``{"type": "tool_call_response", "id": ...,
+"response": ...}``.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any
 
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage, render_content_part_ref
 from modex_agent.core.types import MessageRole
 from modex_agent.ioc.configs.observability import PromptCaptureMode
 from modex_agent.trace.semconv import GenAiAttr
@@ -115,7 +117,7 @@ class HashPromptCapture(PromptCaptureStrategy):
         if model is not None:
             attrs[GenAiAttr.REQUEST_MODEL] = model
 
-        resolved = _resolve_system_prompt(messages, system_prompt)
+        resolved = _select_system_prompt(messages, system_prompt)
         if resolved is not None:
             attrs[GenAiAttr.SYSTEM_PROMPT_HASH] = hashlib.sha256(
                 resolved.encode("utf-8")
@@ -139,13 +141,15 @@ class SummaryPromptCapture(PromptCaptureStrategy):
     def __init__(
         self,
         *,
-        max_messages: int = 6,
+        max_messages: int = 5,
         max_text_chars: int = 2000,
         max_tool_args_chars: int = 1000,
+        include_reasoning: bool = True,
     ) -> None:
         self._max_messages = max_messages
         self._max_text_chars = max_text_chars
         self._max_tool_args_chars = max_tool_args_chars
+        self._include_reasoning = include_reasoning
 
     def capture(
         self,
@@ -159,7 +163,7 @@ class SummaryPromptCapture(PromptCaptureStrategy):
         if model is not None:
             attrs[GenAiAttr.REQUEST_MODEL] = model
 
-        resolved = _resolve_system_prompt(messages, system_prompt)
+        resolved = _select_system_prompt(messages, system_prompt)
         if resolved is not None:
             attrs[GenAiAttr.SYSTEM_PROMPT_HASH] = hashlib.sha256(
                 resolved.encode("utf-8")
@@ -172,6 +176,7 @@ class SummaryPromptCapture(PromptCaptureStrategy):
             max_text_chars=self._max_text_chars,
             max_tool_args_chars=self._max_tool_args_chars,
             include_system=False,
+            include_reasoning=self._include_reasoning,
         )
         return attrs
 
@@ -187,6 +192,9 @@ class FullPromptCapture(PromptCaptureStrategy):
     and content retention is acceptable.
     """
 
+    def __init__(self, *, include_reasoning: bool = True) -> None:
+        self._include_reasoning = include_reasoning
+
     def capture(
         self,
         messages: Sequence[ChatMessage],
@@ -199,7 +207,7 @@ class FullPromptCapture(PromptCaptureStrategy):
         if model is not None:
             attrs[GenAiAttr.REQUEST_MODEL] = model
 
-        resolved = _resolve_system_prompt(messages, system_prompt)
+        resolved = _select_system_prompt(messages, system_prompt)
         if resolved is not None:
             attrs[GenAiAttr.SYSTEM_INSTRUCTIONS] = resolved
             attrs[GenAiAttr.SYSTEM_PROMPT_HASH] = hashlib.sha256(
@@ -216,17 +224,29 @@ class FullPromptCapture(PromptCaptureStrategy):
             max_text_chars=0,
             max_tool_args_chars=0,
             include_system=True,
+            include_reasoning=self._include_reasoning,
         )
         return attrs
 
 
-def build_prompt_capture(config_value: PromptCaptureMode | str) -> PromptCaptureStrategy:
+def build_prompt_capture(
+    config_value: PromptCaptureMode | str,
+    *,
+    include_reasoning: bool = True,
+) -> PromptCaptureStrategy:
     """Build a :class:`PromptCaptureStrategy` from a config value.
 
     Args:
         config_value: The strategy name from
             :attr:`ObservabilityConfig.prompt_capture`. Accepts a
             :class:`PromptCaptureMode` enum or its string value.
+        include_reasoning: Whether Summary/Full strategies capture the
+            replayed ``reasoning_content`` of assistant tool-call turns as a
+            ``reasoning`` part. Wired from
+            :attr:`ObservabilityConfig.retain_reasoning_content` so the
+            redaction gate suppresses the part at capture time (the store
+            can only strip top-level span attributes, not serialized input
+            JSON). Off/Hash strategies ignore it (no messages captured).
 
     Returns:
         A :class:`PromptCaptureStrategy` instance.
@@ -239,16 +259,16 @@ def build_prompt_capture(config_value: PromptCaptureMode | str) -> PromptCapture
     if config_value == PromptCaptureMode.HASH:
         return HashPromptCapture()
     if config_value == PromptCaptureMode.SUMMARY:
-        return SummaryPromptCapture()
+        return SummaryPromptCapture(include_reasoning=include_reasoning)
     if config_value == PromptCaptureMode.FULL:
-        return FullPromptCapture()
+        return FullPromptCapture(include_reasoning=include_reasoning)
     raise ValueError(
         f"Unknown prompt_capture strategy: {config_value!r}. "
         f"Supported: 'off', 'hash', 'summary', 'full'."
     )
 
 
-def _resolve_system_prompt(
+def _select_system_prompt(
     messages: Sequence[ChatMessage],
     system_prompt: str | None,
 ) -> str | None:
@@ -271,6 +291,7 @@ def _capture_message_parts(
     max_text_chars: int = 2000,
     max_tool_args_chars: int = 1000,
     include_system: bool = False,
+    include_reasoning: bool = True,
 ) -> list[dict[str, object]]:
     """Convert messages to the OTel parts-based format.
 
@@ -284,6 +305,10 @@ def _capture_message_parts(
         include_system: If ``True``, system-role messages are included in
             the output. If ``False``, they are filtered out (system prompt
             is captured separately via hash/instructions).
+        include_reasoning: If ``True``, assistant tool-call turns carrying
+            ``reasoning_content`` capture it as a ``reasoning`` part
+            (mirroring the DeepSeek thinking-mode passback on the wire);
+            ``False`` suppresses the part entirely.
     """
     if include_system:
         relevant: list[ChatMessage] = list(messages)
@@ -304,6 +329,13 @@ def _capture_message_parts(
             parts.append(part)
             captured.append({"role": str(msg.role), "parts": parts})
             continue
+        # Mirrors the provider replay condition (openai_compat
+        # _assistant_message): reasoning_content rides the wire only on
+        # assistant tool-call turns, and precedes text there.
+        if include_reasoning and msg.role == MessageRole.ASSISTANT and msg.tool_calls:
+            reasoning = msg.reasoning_content
+            if reasoning:
+                parts.append({"type": "reasoning", "content": _truncate(reasoning, max_text_chars)})
         text = _content_to_text(msg, max_text_chars)
         if text:
             parts.append({"type": "text", "content": text})
@@ -340,14 +372,11 @@ def _content_to_text(msg: ChatMessage, max_chars: int) -> str:
 
     Returns ``""`` for ``None`` content so callers can decide whether to emit
     a part (empty text is skipped). Multimodal ``list[ContentPart]`` content
-    is JSON-serialized then truncated, preserving the prior capture behavior.
+    is rendered one reference-only line per part before truncation.
     """
     content = msg.content
     if isinstance(content, str):
         return _truncate(content, max_chars)
     if content is None:
         return ""
-    return _truncate(
-        json.dumps([p.model_dump(mode="json") for p in content], ensure_ascii=False),
-        max_chars,
-    )
+    return _truncate("\n".join(render_content_part_ref(part) for part in content), max_chars)

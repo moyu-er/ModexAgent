@@ -8,7 +8,8 @@ temporarily append one word (e.g. ``" EXTRA"``) to the prompt returned by
 fingerprint gate (``prompt_sha256`` mismatch ValueError). SECONDARY
 (conditional): a throwaway monkeypatch of
 ``bot.eval.agent_harness.main_agent_memory`` delegating to
-``bot.config.memory_defaults.main_agent_memory(max_context_tokens=500)`` only
+``modex_agent.memory.presets.main_agent_memory(max_context_tokens=500)``
+only
 turns red on long trajectories -- ``keep_recent=10`` tool results and
 ``min_gain_tokens=20000`` keep short goldens such as ``file-pipeline``
 (3 tool results) green, so use it only with a compaction-sensitive case.
@@ -33,7 +34,14 @@ from bot.eval.task_spec import EvalItemSpec
 
 BOT_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_ROOT = BOT_PROJECT_ROOT / "evals" / "golden"
-GOLDEN_CASES = GoldenReplayRunner.load_suite(GOLDEN_ROOT)
+# The committed golden suite was removed 2026-08-18 pending a v2 rebuild (see
+# evals/README.md "Golden v2 (TODO)"). These gates parametrize over whatever
+# cases exist, so the suite collects only the double-run identity test until
+# cases are committed again — re-enable the workflow's PR/schedule triggers
+# when that happens.
+GOLDEN_CASES = (
+    GoldenReplayRunner.load_suite(GOLDEN_ROOT) if GOLDEN_ROOT.is_dir() else []
+)
 
 
 def _runner(case: GoldenCase) -> GoldenReplayRunner:
@@ -68,7 +76,9 @@ async def test_golden_replay(case: GoldenCase) -> None:
 
 
 async def test_double_run_identity() -> None:
-    case = next(case for case in GOLDEN_CASES if case.name == "file-multi-turn")
+    if not GOLDEN_CASES:
+        pytest.skip("no golden cases committed (v2 pending)")
+    case = GOLDEN_CASES[-1]
 
     first = await _run_case(case)
     second = await _run_case(case)

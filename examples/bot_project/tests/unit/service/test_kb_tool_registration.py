@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from bot.kb.builder import build_default_kb_provider
 from bot.kb.provider import KbProvider
-from bot.service import _assembly_helpers
+from bot.service import builders
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.pool import create_pool
 
@@ -17,9 +17,18 @@ from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
 from modex_agent.persistence.managers import WorkspacePersistenceManager
-from modex_agent.tools.presets import ToolPreset
+
+from ...declaration_driver import build_declared
+
+_POOL_DECLARATION = """\
+pool:
+  name: test-pool
+  agents:
+    main:
+      description: test main agent
+      toolset: none
+"""
 
 
 async def _build_tool_names(
@@ -29,12 +38,6 @@ async def _build_tool_names(
     app_config: AppConfig | None = None,
     persistence: WorkspacePersistenceManager | None = None,
 ) -> list[str]:
-    main_spec = MainAgentSpec(agent_name="main", tool_preset=ToolPreset.NONE)
-    pool_spec = PoolSpec(
-        name="test-pool",
-        main_agent_name="main",
-        main=main_spec,
-    )
     data_dir = tmp_path / ".modex"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -44,9 +47,16 @@ async def _build_tool_names(
     with patch.dict("os.environ", {"MODEXBOT_BIN_DIR": str(bin_dir)}):
         pool_instance = await create_pool(
             pool_name="test-pool",
-            pool_spec=pool_spec,
+            declared=build_declared(
+                _POOL_DECLARATION,
+                project_dir=tmp_path,
+                data_dir=data_dir,
+                pool_name="test-pool",
+            ),
             assembly_deps=PoolAssemblyDeps(),
             project_dir=tmp_path,
+            workspace_registry=object(),
+            workspace_resources=object(),
             data_dir=data_dir,
             broker=broker,
             output_adapter=MagicMock(),
@@ -95,38 +105,21 @@ async def test_kb_tool_not_registered_by_default_through_create_pool(
 async def test_kb_tool_registered_when_register_flag_is_true(
     tmp_path: Path,
 ) -> None:
-    main_spec = MainAgentSpec(agent_name="main", tool_preset=ToolPreset.NONE)
-    PoolSpec(name="test-pool", main_agent_name="main", main=main_spec)
-    data_dir = tmp_path / ".modex"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "modexctl.bat").write_text("@exit /b 0\n", encoding="ascii")
     broker = InMemoryMessageBroker()
     await broker.start()
 
-    app_config = AppConfig.model_validate({"persistence": {"backend": "sqlite"}})
     persistence = WorkspacePersistenceManager(tmp_path / ".modex" / "state.db")
     await persistence.open()
     kb_provider = await build_default_kb_provider(persistence.connection)
 
-    helper = _assembly_helpers._PoolAssemblyMixin()
+    helper = builders._PoolAssemblyMixin()
     try:
         with patch.dict("os.environ", {"MODEXBOT_BIN_DIR": str(bin_dir)}):
-            tm, _, _ = await helper._build_tools(
-                main_spec,
-                PoolAssemblyDeps(),
-                MagicMock(),
-                tmp_path,
-                MagicMock(),
+            tm = await helper._build_tools(
                 "test-pool",
-                data_dir,
-                None,
-                None,
-                transcript_store=None,
-                sessions_dir_provider=None,
-                mcp_registry=None,
-                persistence=persistence,
-                app_config=app_config,
                 kb_provider=kb_provider,
                 register_kb_tool=True,
             )
@@ -150,7 +143,7 @@ def test_task_id_provider_reads_environment(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("MODEX_TASK_ID", "task-123")
 
     # When
-    task_id = _assembly_helpers._make_task_id_provider()()
+    task_id = builders._make_task_id_provider()()
 
     # Then
     assert task_id == "task-123"
@@ -163,7 +156,7 @@ def test_task_id_provider_returns_none_when_environment_is_unset(
     monkeypatch.delenv("MODEX_TASK_ID", raising=False)
 
     # When
-    task_id = _assembly_helpers._make_task_id_provider()()
+    task_id = builders._make_task_id_provider()()
 
     # Then
     assert task_id is None
@@ -176,7 +169,7 @@ def test_task_id_provider_preserves_empty_environment_value(
     monkeypatch.setenv("MODEX_TASK_ID", "")
 
     # When
-    task_id = _assembly_helpers._make_task_id_provider()()
+    task_id = builders._make_task_id_provider()()
 
     # Then
     assert task_id == ""
@@ -187,7 +180,7 @@ def test_session_id_provider_reads_environment(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("MODEX_SESSION_ID", "session-123")
 
     # When
-    session_id = _assembly_helpers._make_session_id_provider()()
+    session_id = builders._make_session_id_provider()()
 
     # Then
     assert session_id == "session-123"
@@ -200,7 +193,7 @@ def test_session_id_provider_returns_none_when_environment_is_unset(
     monkeypatch.delenv("MODEX_SESSION_ID", raising=False)
 
     # When
-    session_id = _assembly_helpers._make_session_id_provider()()
+    session_id = builders._make_session_id_provider()()
 
     # Then
     assert session_id is None
@@ -213,7 +206,7 @@ def test_session_id_provider_preserves_empty_environment_value(
     monkeypatch.setenv("MODEX_SESSION_ID", "")
 
     # When
-    session_id = _assembly_helpers._make_session_id_provider()()
+    session_id = builders._make_session_id_provider()()
 
     # Then
     assert session_id == ""

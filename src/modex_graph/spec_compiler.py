@@ -10,8 +10,9 @@ builds a `Graph` topology, runs `TopologyValidator`, and calls
 `graph.compile()` to produce a `CompiledGraph`.
 
 State is not created here. The compiler validates that `spec.state_class`
-names an injected `GraphState` subclass; the orchestrator creates runtime
-state at `GraphInstance` construction.
+names an injected `GraphState` subclass (or that `spec.state_schema` is
+resolved by the injected `state_schema_compiler`); the orchestrator creates
+runtime state at `GraphInstance` construction.
 
 The returned `CompiledGraph` is typed `CompiledGraph[Any]` because the state
 class is selected from a runtime mapping.
@@ -19,14 +20,14 @@ class is selected from a runtime mapping.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from .compiled_graph import CompiledGraph
 from .constants import GraphNode
 from .graph import Graph
 from .node_factory import NodeRegistry
-from .spec import GraphSpec, NodeSpec
+from .spec import FieldSpec, GraphSpec, NodeSpec
 from .state import GraphState
 from .topology_validator import TopologyValidator
 
@@ -52,7 +53,9 @@ class GraphSpecCompiler:
 
     Steps:
 
-    1. Resolve `spec.state_class` from the injected state-class mapping.
+    1. Resolve state: either `spec.state_class` from the injected
+       state-class mapping, OR `spec.state_schema` via the injected
+       `state_schema_compiler` (SPEC §8.2).
     2. Build `Graph` topology (create `Node` instances via `NodeRegistry`,
        `add_node`, `add_edge` — edges are plain topology).
     3. Run `TopologyValidator` on the spec.
@@ -74,6 +77,8 @@ class GraphSpecCompiler:
         node_registry: NodeRegistry,
         state_classes: Mapping[str, type[GraphState]],
         validator: TopologyValidator | None = None,
+        state_schema_compiler: Callable[[dict[str, FieldSpec]], type[GraphState]]
+        | None = None,
     ) -> None:
         """Initialize the compiler with the required registries.
 
@@ -85,10 +90,19 @@ class GraphSpecCompiler:
             validator: optional `TopologyValidator` override. If `None`,
                 a shared default instance is used. Injecting a custom
                 validator is primarily for tests.
+            state_schema_compiler: optional callable that resolves a
+                declarative `state_schema` dict into a dynamic `GraphState`
+                subclass (SPEC §8.2). Required when compiling a `GraphSpec`
+                that sets `state_schema`; if `None` and the spec uses
+                `state_schema`, `compile()` raises `ValueError`. The actual
+                compilation logic (resolving custom types from
+                `DATA_NAMESPACE`) lives on the modex_agent side —
+                modex_graph only calls the injected callable.
         """
         self._node_registry = node_registry
         self._state_classes = state_classes
         self._validator = validator
+        self._state_schema_compiler = state_schema_compiler
 
     def validate(self, spec: GraphSpec) -> None:
         """Validate topology without materializing graph nodes or edges."""
@@ -102,14 +116,16 @@ class GraphSpecCompiler:
             TopologyError: if topology validation fails.
             KeyError: if a `NodeSpec.node_type` is not registered in the
                 `NodeRegistry`.
-            ValueError: if `spec.state_class` is not in the state-class mapping.
+            ValueError: if `spec.state_class` is not in the state-class
+                mapping, or if `spec.state_schema` is set but no
+                `state_schema_compiler` was injected.
             pydantic.ValidationError: if a `NodeSpec.config` fails
                 validation against the factory's `config_schema()`.
             RoutingError: if `Graph.compile()` finds a structural issue that
                 `TopologyValidator` did not catch (should not happen in
                 practice — the validator is stricter).
         """
-        self._resolve_state_class(spec.state_class)
+        self.resolve_state(spec)
 
         # State type is selected at runtime, so the graph is typed Any.
         graph: Graph[Any] = Graph(name=spec.name)
@@ -147,6 +163,30 @@ class GraphSpecCompiler:
             default_trigger=spec.default_trigger,
         )
         return compiled
+
+    def resolve_state(self, spec: GraphSpec) -> type[GraphState]:
+        """Resolve the state class for a spec via either declared path.
+
+        Dispatches on which of `state_schema` / `state_class` is set (the
+        `GraphSpec` validator guarantees exactly one is). Returns the
+        resolved `GraphState` subclass. `compile()` calls this to validate
+        the spec's state declaration is resolvable; the orchestrator calls
+        it at run time to construct fresh state instances (both
+        `state_class` and `state_schema` specs).
+        """
+        if spec.state_schema is not None:
+            if self._state_schema_compiler is None:
+                raise ValueError(
+                    "GraphSpec.state_schema is set but no state_schema_compiler "
+                    "was injected into GraphSpecCompiler. modex_graph does not "
+                    "contain schema-compilation logic (ADR-0033 D11 / SPEC §8.2); "
+                    "the compiler must be injected from the outside (modex_agent "
+                    "side)."
+                )
+            return self._state_schema_compiler(spec.state_schema)
+        # `state_class` is set (mutual exclusivity guaranteed by GraphSpec).
+        assert spec.state_class is not None  # noqa: S101
+        return self._resolve_state_class(spec.state_class)
 
     def _resolve_state_class(self, name: str) -> type[GraphState]:
         """Resolve a state class name or raise the compiler's validation error."""

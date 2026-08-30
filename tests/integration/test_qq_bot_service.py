@@ -13,10 +13,9 @@ from typing import Any, TypeVar
 import pytest
 
 pytestmark = pytest.mark.integration
-import asyncio
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 # Add framework path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -203,14 +202,22 @@ class TestQQBotServiceIntegration:
 
     @pytest.mark.asyncio
     async def test_react_agent_streaming_vs_non_streaming(self):
-        """Test ReActAgent correctly switches between streaming and non-streaming based on emitter."""
+        """Emitter streaming preference changes emitter delivery, not the provider call path.
+
+        Since the single event loop converged (commit 49860c84), every provider
+        call goes through chat_stream regardless of the emitter's streaming
+        preference; emitter driving is gated at the event dispatch point. What
+        differs is what the emitter receives: per-delta emits during the call
+        (streaming emitter) vs the folded content once at end-of-call
+        (non-streaming emitter).
+        """
         from modex_agent.agents.react import ReActAgent, ReActEvent
         from modex_agent.core.agent import AgentContext
-        from modex_agent.core.provider import StreamingLLMProvider
+        from modex_agent.core.provider import CallbackStreamProvider
         from modex_agent.core.types import LLMResponse
 
         # Create mock provider that tracks which API is called
-        class MockProvider(StreamingLLMProvider):
+        class MockProvider(CallbackStreamProvider):
             def __init__(self):
                 self.chat_stream_called = False
                 self.chat_called = False
@@ -230,6 +237,21 @@ class TestQQBotServiceIntegration:
             def get_default_model(self):
                 return "mock-model"
 
+        # Records HOW content reached the emitter: per-delta or end-of-call.
+        class DeliveryRecorder(_BufferingEmitter[ReActEvent]):
+            def __init__(self):
+                super().__init__()
+                self.deltas: list[str] = []
+                self.full_contents: list[str] = []
+
+            async def emit_delta(self, delta: str) -> None:
+                self.deltas.append(delta)
+                await super().emit_delta(delta)
+
+            async def emit_content(self, full_content: str) -> None:
+                self.full_contents.append(full_content)
+                await super().emit_content(full_content)
+
         provider = MockProvider()
         agent = ReActAgent(provider=provider)
 
@@ -242,8 +264,9 @@ class TestQQBotServiceIntegration:
             session=SessionInfo.from_str("test.agent"),
         )
 
-        # Test streaming mode (emitter wants streaming)
-        class StreamingEmitter(_BufferingEmitter[ReActEvent]):
+        # Test streaming mode (emitter wants streaming): deltas are driven
+        # into the emitter during the event loop.
+        class StreamingEmitter(DeliveryRecorder):
             def wants_streaming(self):
                 return True
 
@@ -251,16 +274,24 @@ class TestQQBotServiceIntegration:
         await agent.run(context, emitter)
         assert provider.chat_stream_called is True
         assert provider.chat_called is False
+        assert emitter.deltas == ["Hello"]
+        assert emitter.full_contents == []
+        assert emitter.get_content() == "Hello"
 
         # Reset
         provider.chat_stream_called = False
         provider.chat_called = False
 
-        # Test non-streaming mode (emitter doesn't want streaming)
-        emitter2 = _BufferingEmitter[ReActEvent]()
+        # Test non-streaming mode (emitter doesn't want streaming): the same
+        # chat_stream call happens, but no per-delta emits — the folded
+        # response is delivered once at end-of-call via emit_content.
+        emitter2 = DeliveryRecorder()
         await agent.run(context, emitter2)
-        assert provider.chat_stream_called is False
-        assert provider.chat_called is True
+        assert provider.chat_stream_called is True
+        assert provider.chat_called is False
+        assert emitter2.deltas == []
+        assert emitter2.full_contents == ["Hello"]
+        assert emitter2.get_content() == "Hello"
 
     def test_output_adapter_send_delta_interface(self):
         """Test that OutputAdapter has the send_delta interface."""
@@ -310,10 +341,21 @@ class TestQQBotServiceIntegration:
         emitter = TestEmitter(adapter, "test_session")
 
         # Create mock provider
+        from modex_agent.core.provider import CallbackStreamProvider
         from modex_agent.core.types import LLMResponse
 
-        class MockProvider:
-            async def chat(self, **kwargs):
+        class MockProvider(CallbackStreamProvider):
+            async def chat_stream(
+                self,
+                messages=None,
+                model=None,
+                temperature=None,
+                max_output_tokens=None,
+                tools=None,
+                on_content_delta=None,
+                on_reasoning_delta=None,
+                **kwargs,
+            ):
                 return LLMResponse(
                     content="Final answer",
                     reasoning_content="My reasoning",
@@ -408,307 +450,6 @@ class TestQQBotServiceIntegration:
         assert prompt.count("<skill name=") > 0  # at least one skill listed
         # Each skill should appear as a single table row, not as multi-line content
         assert prompt.count("<available_skills>") == 1
-
-    @pytest.mark.asyncio
-    async def test_bot_service_pool_mode_bridge_routing(self, tmp_path):
-        """BotService 通过 BrokerBridgeService 正确路由输入/输出。"""
-        import sys
-        from pathlib import Path
-
-        qq_project = Path(__file__).parent.parent.parent / "examples" / "bot_project"
-        if str(qq_project) not in sys.path:
-            sys.path.insert(0, str(qq_project))
-
-        from bot.service.core import BotService
-
-        from modex_agent.core.types import InputMessage, LLMResponse
-        from modex_agent.adapters.platform import StreamingMode
-        from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
-
-        class _MockInputAdapter(InputAdapter):
-            def __init__(self):
-                self._queue = asyncio.Queue()
-                self._running = False
-
-            @property
-            def name(self):
-                return "mock_input"
-
-            async def start(self):
-                self._running = True
-
-            async def stop(self):
-                self._running = False
-
-            def receive(self):
-                async def _gen():
-                    while self._running:
-                        try:
-                            msg = await asyncio.wait_for(self._queue.get(), timeout=0.05)
-                            yield msg
-                        except TimeoutError:
-                            pass
-
-                return _gen()
-
-            async def inject(self, msg: InputMessage):
-                await self._queue.put(msg)
-
-        class _MockOutputAdapter(OutputAdapter):
-            def __init__(self):
-                self.messages: list[tuple[OutputMessage, str]] = []
-
-            @property
-            def name(self):
-                return "mock_output"
-
-            @property
-            def streaming_mode(self):
-                return StreamingMode.NONE
-
-            async def send(self, message: OutputMessage, session_id: str):
-                self.messages.append((message, session_id))
-
-            async def send_delta(self, delta: str, session_id: str, metadata=None):
-                pass
-
-            async def flush_deltas(self, session_id: str):
-                pass
-
-        class _MockProvider:
-            async def chat(self, messages=None, **kwargs):
-                return LLMResponse(content="pong")
-
-            def get_default_model(self):
-                return "mock-model"
-
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config_yaml = config_dir / "bot_config.yml"
-        config_yaml.write_text(
-            """
-llm:
-  model: mock-model
-  api_key: test-key
-  base_url: ""
-  temperature: 0.7
-  max_output_tokens: 100
-
-multi_agent:
-  enabled: false
-
-tools:
-  file_tools:
-    enabled: false
-  shell_tools:
-    enabled: false
-
-mcp:
-  servers: {}
-""",
-            encoding="utf-8",
-        )
-        pools_dir = config_dir / "pools"
-        pools_dir.mkdir()
-        (pools_dir / "main.yml").write_text(
-            """
-llm:
-  model: mock-model
-  api_key: test-key
-  base_url: ""
-  temperature: 0.7
-  max_output_tokens: 100
-
-agents:
-  - name: main
-    role: main
-    system_prompt: "You are a test agent."
-    max_steps: 1
-
-memory:
-  short_term:
-    max_context_tokens: 100
-    budget_ratio: 0.5
-""",
-            encoding="utf-8",
-        )
-
-        input_adapter = _MockInputAdapter()
-        output_adapter = _MockOutputAdapter()
-
-        def _emitter_factory(session_id: str):
-            from modex_agent.agents.react import ReActEvent
-
-            return _BufferingEmitter[ReActEvent]()
-
-        with (
-            patch(
-                "bot.service._assembly_helpers._PoolAssemblyMixin._build_llm_provider",
-                return_value=_MockProvider(),
-            ),
-            patch("bot.service.builders._load_agent_mcp_tools", return_value=([], None)),
-            patch(
-                "bot.service.core.BotService._build_default_provider", return_value=_MockProvider()
-            ),
-        ):
-            service = BotService(
-                config_dir=config_dir,
-                input_adapter=input_adapter,
-                output_adapter=output_adapter,
-                emitter_factory=_emitter_factory,
-            )
-            await service.initialize()
-
-            # 启动 pool 模式（只启动 bridge，不阻塞）
-            start_task = asyncio.create_task(service.start())
-            await asyncio.sleep(0.1)
-
-            # 注入一条消息
-            await input_adapter.inject(
-                InputMessage(content="ping", session=SessionInfo.from_str("s1"))
-            )
-
-            # 等待消息流转
-            for _ in range(50):
-                if output_adapter.messages:
-                    break
-                await asyncio.sleep(0.05)
-
-            assert len(output_adapter.messages) >= 1
-            assert "pong" in output_adapter.messages[0][0].content
-
-            # 停止服务
-            service._shutdown_event.set()
-            await asyncio.wait_for(start_task, timeout=2.0)
-            await service.stop()
-
-    @pytest.mark.asyncio
-    async def test_bot_service_pool_registers_subagent_residents(self, tmp_path):
-        """pool 模式下 initialize 后主 Agent 应为常驻代理，且注册了 send_to_agent 工具。"""
-        import sys
-        from pathlib import Path
-
-        qq_project = Path(__file__).parent.parent.parent / "examples" / "bot_project"
-        if str(qq_project) not in sys.path:
-            sys.path.insert(0, str(qq_project))
-
-        from bot.service.core import BotService
-
-        from modex_agent.core.types import LLMResponse
-        from modex_agent.adapters.platform import StreamingMode
-        from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
-
-        class _MockInputAdapter(InputAdapter):
-            @property
-            def name(self):
-                return "mock_input"
-
-            async def start(self):
-                pass
-
-            async def stop(self):
-                pass
-
-            def receive(self):
-                async def _gen():
-                    if False:
-                        yield None
-
-                return _gen()
-
-        class _MockOutputAdapter(OutputAdapter):
-            @property
-            def name(self):
-                return "mock_output"
-
-            async def send(self, message: OutputMessage, session_id: str):
-                pass
-
-            async def send_delta(self, delta: str, session_id: str, metadata=None):
-                pass
-
-            async def flush_deltas(self, session_id: str):
-                pass
-
-        class _MockProvider:
-            async def chat(self, messages=None, **kwargs):
-                return LLMResponse(content="ok")
-
-            def get_default_model(self):
-                return "mock"
-
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        (config_dir / "bot_config.yml").write_text(
-            """
-llm:
-  model: mock
-  api_key: key
-multi_agent:
-  enabled: true
-tools:
-  file_tools:
-    enabled: false
-  shell_tools:
-    enabled: false
-mcp:
-  servers: {}
-""",
-            encoding="utf-8",
-        )
-        pools_dir = config_dir / "pools"
-        pools_dir.mkdir()
-        (pools_dir / "main.yml").write_text(
-            """
-llm:
-  model: mock
-  api_key: key
-agents:
-  - name: main
-    role: main
-    system_prompt: "test"
-  - name: helper
-    role: subagent
-    system_prompt: "helper"
-memory:
-  short_term:
-    max_context_tokens: 100
-    budget_ratio: 0.5
-""",
-            encoding="utf-8",
-        )
-
-        with (
-            patch(
-                "bot.service._assembly_helpers._PoolAssemblyMixin._build_llm_provider",
-                return_value=_MockProvider(),
-            ),
-            patch("bot.service.builders._load_agent_mcp_tools", return_value=([], None)),
-            patch(
-                "bot.service.core.BotService._build_default_provider", return_value=_MockProvider()
-            ),
-        ):
-            service = BotService(
-                config_dir=config_dir,
-                input_adapter=_MockInputAdapter(),
-                output_adapter=_MockOutputAdapter(),
-                emitter_factory=lambda sid: None,
-            )
-            await service.initialize()
-
-            # Pool should exist and have the main agent as resident
-            pool = service._pools["main"].pool
-            assert pool is not None
-            resident_names = [d.address.name for d in pool.list_agents()]
-            assert "main" in resident_names
-
-            # Main agent should have send_to_agent tool (for communicating with subagents)
-            main_agent = pool.get("main")
-            assert main_agent is not None
-            assert main_agent.pipeline is not None
-            assert "send_to_agent" in main_agent.pipeline.tool_manager.list_tools()
-
-            await service.stop()
 
 
 # Run async tests

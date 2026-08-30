@@ -67,15 +67,12 @@ class AstGrepReplaceTool(Tool):
             "required": ["pattern", "replacement", "language", "path"],
         }
 
-    async def execute(
-        self,
-        pattern: str,
-        replacement: str,
-        language: str,
-        path: str,
-        dry_run: bool = True,
-        **kwargs: object,
-    ) -> str:
+    async def execute(self, **kwargs: Any) -> str:
+        pattern = kwargs["pattern"]
+        replacement = kwargs["replacement"]
+        language = kwargs["language"]
+        path = kwargs["path"]
+        dry_run = kwargs.get("dry_run", True)
         if not is_ast_available():
             return AST_UNAVAILABLE_MSG
 

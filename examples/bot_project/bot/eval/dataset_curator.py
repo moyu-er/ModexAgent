@@ -74,7 +74,7 @@ class DatasetCurator:
         self._auth = base64.b64encode(f"{public_key}:{secret_key}".encode()).decode()
         self._headers = {"Authorization": f"Basic {self._auth}"}
         self._lf = langfuse_client or Langfuse(
-            host=self._host,
+            base_url=self._host,
             public_key=public_key,
             secret_key=secret_key,
         )

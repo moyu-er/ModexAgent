@@ -9,13 +9,15 @@ import difflib
 import logging
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from ...core.capabilities import Modality, ModelCapabilities
-from ...core.message import ImageUrl, ImageUrlPart, TextPart
+from ...core.message import ImageUrl, ImageUrlPart, TextPart, build_media_ref
 from ...core.tool_manager import Tool, ToolResult, get_tool_execution_context
-from ...media.media_utils import build_image_url_block_compressed
+from ...media.media_utils import compress_image
 from ...media.mime import classify_kind, sniff_mime
 from ...media.models import Kind
+from ...media.store import StoredMediaKind
 
 logger = logging.getLogger(__name__)
 
@@ -429,43 +431,63 @@ async def _read_image_as_multimodal(
     file_path: Path,
     mime: str,
 ) -> ToolResult:
-    """Read an image file → compress → return ToolResult with image content.
+    """Read an image file → compress → persist to the media store → reference.
 
     Capability gate: when the current model lacks ``Modality.IMAGE``, returns
-    a brief text result stating the file is an image but visual content is not
-    available.  The capability limitation itself is surfaced via the tool
+    a brief text result stating the file is an image but visual content is
+    not available.  The capability limitation itself is surfaced via the tool
     description (``get_dynamic_schema_for`` adjusts it for text-only models);
     the tool result only states the objective fact — no system diagnosis or
     action advice — so the agent can decide how to proceed.
 
-    When the model is image-capable, the text hint is carried as a
-    :class:`TextPart` in ``content`` and the image as an
-    :class:`ImageUrlPart` (transient — promoted to a synthetic user message
-    by ``enrich_inline_media`` via :class:`SyntheticUserMessageStrategy`,
-    never persisted).
+    When the model is image-capable AND a media store is wired to the tool
+    execution context, the compressed bytes are persisted into the READS
+    subtree (persist-before-return: the ``media://<aid>`` reference handed
+    back is always backed by stored bytes) and the result carries the text
+    hint plus an :class:`ImageUrlPart` holding the reference. The reference —
+    never a data URL — is what persists into history; the injection layer
+    resolves it back to bytes at each LLM call.
+
+    Degradations (always text-only, never a data-URL part): no media store
+    wired, or undecodable image bytes.
     """
     ctx = get_tool_execution_context()
     if ctx is None or not ctx.supports(Modality.IMAGE):
         # Tool results are the agent's observations — not a system log channel.
         # The capability limitation is already surfaced via the tool description
         # (get_dynamic_schema_for adjusts it for text-only models).  The result
-        # should only state the objective fact and let the agent decide what to
-        # do next (skip, ask the user, infer from filename, etc.).  Do NOT put
+        # should only state the objective fact and let the agent decide what
+        # to do next (skip, ask the user, infer from filename, etc.).  Do NOT put
         # system diagnosis ("model lacks IMAGE capability"), file sizes, or
         # action advice ("use a vision-capable model") here — the agent may
         # have called read autonomously, not at the user's request.
         degradation_text = f"Image file: {file_path} ({mime}). Visual content not available."
         return ToolResult.from_text("read", degradation_text)
 
+    if ctx.media_store is None or ctx.session_id is None:
+        return ToolResult.from_text(
+            "read",
+            f"Image file: {file_path}. Visual content not available (no media store wired).",
+        )
+
     try:
         raw = await asyncio.to_thread(file_path.read_bytes)
-        block = build_image_url_block_compressed(raw, mime, str(file_path))
+        compressed = compress_image(raw, mime)
+        if compressed is None:
+            return ToolResult.from_text(
+                "read",
+                f"Image file: {file_path} ({mime}). Visual content not available.",
+            )
+        aid = uuid4().hex
+        ctx.media_store.save(
+            ctx.session_id, aid, compressed.data, kind=StoredMediaKind.READS
+        )
         text_hint = f"[Image read: {file_path} ({mime})]"
         return ToolResult(
             tool_name="read",
             content=[
                 TextPart(text=text_hint),
-                ImageUrlPart(image_url=ImageUrl(url=block["image_url"]["url"])),
+                ImageUrlPart(image_url=ImageUrl(url=build_media_ref(aid))),
             ],
         )
     except Exception as exc:
@@ -505,6 +527,8 @@ class ReadFileTool(Tool):
             "may have changed since your last read.\n"
             "- For large files, read in chunks (offset + limit) rather than tiny "
             "30-line slices. If you need more context, read a larger window.\n"
+            "- When another tool's result points to a saved full-output path, "
+            "read that file in segments for the complete content.\n"
             "- Prefer grep/glob when searching for content or files — read is for "
             "examining a specific known file.\n"
             "- Only accepts file paths — directories are not supported. "
@@ -563,9 +587,10 @@ class ReadFileTool(Tool):
         )
         return schema
 
-    async def execute(
-        self, path: str, offset: int = 0, limit: int = _DEFAULT_LIMIT, **kwargs: Any
-    ) -> str | ToolResult:
+    async def execute(self, **kwargs: Any) -> str | ToolResult:
+        path = kwargs["path"]
+        offset = kwargs.get("offset", 0)
+        limit = kwargs.get("limit", _DEFAULT_LIMIT)
         try:
             file_path = _resolve_path(path)
             if not file_path.exists():
@@ -633,7 +658,9 @@ class WriteFileTool(Tool):
             "required": ["path", "content"],
         }
 
-    async def execute(self, path: str, content: str, **kwargs: Any) -> str | ToolResult:
+    async def execute(self, **kwargs: Any) -> str | ToolResult:
+        path = kwargs["path"]
+        content = kwargs["content"]
         try:
             file_path = _resolve_path(path)
             file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -720,14 +747,11 @@ class EditFileTool(Tool):
             "required": ["path", "old_string", "new_string"],
         }
 
-    async def execute(
-        self,
-        path: str,
-        old_string: str,
-        new_string: str,
-        replace_all: bool = False,
-        **kwargs: Any,
-    ) -> str | ToolResult:
+    async def execute(self, **kwargs: Any) -> str | ToolResult:
+        path = kwargs["path"]
+        old_string = kwargs["old_string"]
+        new_string = kwargs["new_string"]
+        replace_all = kwargs.get("replace_all", False)
         try:
             file_path = _resolve_path(path)
 
@@ -865,7 +889,8 @@ class ListDirTool(Tool):
             "required": ["path"],
         }
 
-    async def execute(self, path: str, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> str:
+        path = kwargs["path"]
         try:
             dir_path = _resolve_path(path)
             if not dir_path.exists():

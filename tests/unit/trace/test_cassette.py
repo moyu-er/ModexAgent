@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -10,9 +12,9 @@ from typing import Any
 import pytest
 
 from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, TextPart
-from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.tool_manager import Tool, ToolConfig, ToolManager, ToolResult
-from modex_agent.core.types import LLMResponse, MessageRole, ToolCall
+from modex_agent.core.types import LLMResponse, MessageRole, TokenUsage, ToolCall
 from modex_agent.ioc.configs.observability import CassetteScope
 from modex_agent.trace.cassette import (
     CassetteCategory,
@@ -28,7 +30,7 @@ from modex_agent.trace.cassette import (
 # ------------------------------------------------------------------
 
 
-class _ScriptedStreamingProvider(StreamingLLMProvider):
+class _ScriptedStreamingProvider(CallbackStreamProvider):
     """Streaming provider that returns a canned response and counts calls."""
 
     def __init__(self, response: LLMResponse, model: str = "test-model") -> None:
@@ -55,7 +57,7 @@ class _ScriptedStreamingProvider(StreamingLLMProvider):
         return self._response
 
 
-class _RaisingProvider(StreamingLLMProvider):
+class _RaisingProvider(CallbackStreamProvider):
     """Provider that raises if chat_stream is ever called."""
 
     def get_default_model(self) -> str:
@@ -145,7 +147,7 @@ class TestLLMRecordReplay:
         response = LLMResponse(
             content="hello world",
             finish_reason="stop",
-            usage={"input": 10, "output": 5},
+            usage={"input_tokens": 10, "output_tokens": 5},
         )
         recording_provider = _ScriptedStreamingProvider(response)
         recorder = CassetteRecorder(tmp_path)
@@ -167,7 +169,170 @@ class TestLLMRecordReplay:
 
         assert replayed.content == "hello world"
         assert replayed.finish_reason == "stop"
-        assert replayed.usage == {"input": 10, "output": 5}
+        assert replayed.usage == TokenUsage(input_tokens=10, output_tokens=5)
+
+    async def test_recorded_request_sanitizes_data_url_parts(self, tmp_path: Path) -> None:
+        """The stored record carries digest placeholders, never base64 bytes.
+
+        The recording key still hashes the ORIGINAL messages, so replay of
+        the same (unsanitized) input hits the sanitized record.
+        """
+        data_url = "data:image/png;base64,aGVsbG8="
+        response = LLMResponse(content="seen", finish_reason="stop")
+        recorder = CassetteRecorder(tmp_path)
+        wrapped = recorder.wrap_provider(_ScriptedStreamingProvider(response))
+
+        messages = [
+            ChatMessage(
+                role=MessageRole.USER,
+                content=[
+                    TextPart(text="look"),
+                    ImageUrlPart(image_url=ImageUrl(url=data_url)),
+                    ImageUrlPart(image_url=ImageUrl(url="media://aid-1")),
+                ],
+            )
+        ]
+        await wrapped.chat_stream(messages=messages)
+
+        entry = recorder.entries[0]
+        recorded_content = entry.data["request"]["messages"][0]["content"]
+        assert recorded_content == [
+            {"type": "text", "text": "look"},
+            {
+                "type": "text",
+                "text": (
+                    "[media sha256="
+                    f"{hashlib.sha256(data_url.encode()).hexdigest()[:16]}, "
+                    f"data:image/png, {len(base64.b64decode('aGVsbG8='))} bytes]"
+                ),
+            },
+            {"type": "image_url", "image_url": {"url": "media://aid-1"}},
+        ]
+        assert "aGVsbG8=" not in json.dumps(entry.data)
+
+    async def test_sanitize_key_face_equals_unsanitized_key(self, tmp_path: Path) -> None:
+        """Key stability: the recorded key is the key of the ORIGINAL messages."""
+        data_url = "data:image/png;base64,aGVsbG8="
+        response = LLMResponse(content="ok", finish_reason="stop")
+        recorder = CassetteRecorder(tmp_path)
+        wrapped = recorder.wrap_provider(_ScriptedStreamingProvider(response))
+
+        messages = [
+            ChatMessage(
+                role=MessageRole.USER,
+                content=[TextPart(text="q"), ImageUrlPart(image_url=ImageUrl(url=data_url))],
+            )
+        ]
+        await wrapped.chat_stream(messages=messages)
+
+        entry = recorder.entries[0]
+        dict_messages = [m.to_dict() for m in messages]
+        assert entry.key == llm_call_key(dict_messages, None, None, None, None, {})
+
+    async def test_sanitize_does_not_mutate_original_messages(self, tmp_path: Path) -> None:
+        """The sanitized copy is a deepcopy — the caller's messages keep the data URL."""
+        data_url = "data:image/png;base64,aGVsbG8="
+        response = LLMResponse(content="ok", finish_reason="stop")
+        recorder = CassetteRecorder(tmp_path)
+        wrapped = recorder.wrap_provider(_ScriptedStreamingProvider(response))
+
+        message = ChatMessage(
+            role=MessageRole.USER,
+            content=[TextPart(text="q"), ImageUrlPart(image_url=ImageUrl(url=data_url))],
+        )
+        await wrapped.chat_stream(messages=[message])
+
+        parts = message.content  # type: ignore[union-attr]
+        assert isinstance(parts[1], ImageUrlPart)
+        assert parts[1].image_url.url == data_url
+
+    async def test_sanitized_record_replays_with_original_request_key(
+        self, tmp_path: Path
+    ) -> None:
+        data_url = "data:image/png;base64,aGVsbG8="
+        response = LLMResponse(content="seen", finish_reason="stop")
+        recorder = CassetteRecorder(tmp_path)
+        wrapped = recorder.wrap_provider(_ScriptedStreamingProvider(response))
+        messages = [
+            ChatMessage(
+                role=MessageRole.USER,
+                content=[
+                    TextPart(text="look"),
+                    ImageUrlPart(image_url=ImageUrl(url=data_url)),
+                ],
+            )
+        ]
+        dict_messages = [message.to_dict() for message in messages]
+        key_before_recording = llm_call_key(dict_messages, None, None, None, None, {})
+
+        await wrapped.chat_stream(messages=messages)
+
+        entry = recorder.entries[0]
+        key_after_sanitizing = llm_call_key(dict_messages, None, None, None, None, {})
+        assert entry.key == key_before_recording == key_after_sanitizing
+        assert entry.data["request"]["messages"] != dict_messages
+        assert data_url not in json.dumps(entry.data["request"]["messages"])
+
+        cassette_dir = recorder.save("trace-sanitized-key-001")
+        engine = CassetteReplayEngine(cassette_dir)
+        engine.load()
+        replay_wrapped = engine.wrap_provider(_RaisingProvider())
+
+        replayed = await replay_wrapped.chat_stream(messages=messages)
+
+        assert replayed.content == "seen"
+        assert engine.misses == 0
+
+    async def test_recorded_request_preserves_media_refs(self, tmp_path: Path) -> None:
+        media_ref = "media://aid-preserved"
+        response = LLMResponse(content="seen", finish_reason="stop")
+        recorder = CassetteRecorder(tmp_path)
+        wrapped = recorder.wrap_provider(_ScriptedStreamingProvider(response))
+        messages = [
+            ChatMessage(
+                role=MessageRole.USER,
+                content=[
+                    TextPart(text="look"),
+                    ImageUrlPart(image_url=ImageUrl(url=media_ref)),
+                ],
+            )
+        ]
+        dict_messages = [message.to_dict() for message in messages]
+
+        await wrapped.chat_stream(messages=messages)
+
+        assert recorder.entries[0].data["request"]["messages"] == dict_messages
+
+    async def test_sanitize_deepcopy_isolates_original_dict_messages(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        data_url = "data:image/png;base64,aGVsbG8="
+        dict_message: dict[str, Any] = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look"},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ],
+        }
+        message = ChatMessage.from_dict(dict_message)
+
+        def return_original_dict(_message: ChatMessage) -> dict[str, Any]:
+            return dict_message
+
+        monkeypatch.setattr(ChatMessage, "to_dict", return_original_dict)
+        recorder = CassetteRecorder(tmp_path)
+        wrapped = recorder.wrap_provider(
+            _ScriptedStreamingProvider(LLMResponse(content="seen", finish_reason="stop"))
+        )
+
+        await wrapped.chat_stream(messages=[message])
+
+        original_image_part = dict_message["content"][1]
+        assert original_image_part["image_url"]["url"] == data_url
+        recorded_image_part = recorder.entries[0].data["request"]["messages"][0][
+            "content"
+        ][1]
+        assert recorded_image_part["type"] == "text"
 
     async def test_replay_preserves_tool_calls(self, tmp_path: Path) -> None:
         response = LLMResponse(
@@ -288,19 +453,19 @@ class TestToolRecordReplay:
         with pytest.raises(KeyError, match="Cassette miss"):
             await replay_wrapped.execute("t", {"a": 2})
 
-    async def test_multimodal_result_round_trips_with_image_blocks(
+    async def test_multimodal_result_round_trips_with_media_parts(
         self, tmp_path: Path
     ) -> None:
         """A ToolResult carrying ImageUrlPart must survive record→save→load→replay.
 
         The cassette promises bit-identical reproducibility (module docstring).
         Multimodal tool results (e.g. ReadFileTool reading an image) store the
-        image as an ImageUrlPart in ``content``; ``content_blocks`` is a
-        @computed_field derived from those parts. If serialization only stores
+        image as an ImageUrlPart in ``content``. If serialization only stores
         ``message_content()`` (the text hint), the replayed result loses the
-        image, ``content_blocks`` returns None, TOOL_MEDIA_CACHE is never
-        populated, and the downstream LLM call key diverges from the recording
-        → KeyError on the next LLM replay. This test locks the invariant.
+        image part, the persisted tool message loses its ``media://``
+        reference, and the downstream LLM call key diverges from the
+        recording → KeyError on the next LLM replay. This test locks the
+        invariant.
         """
         image_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
         result = ToolResult(
@@ -319,10 +484,9 @@ class TestToolRecordReplay:
         arguments = {"path": "photo.png"}
         recorded = await wrapped.execute("read", arguments)
 
-        assert len(recorded.image_blocks) == 1
-        assert recorded.image_blocks[0].image_url.url == image_url
-        assert recorded.content_blocks is not None
-        assert len(recorded.content_blocks) == 1
+        image_parts = [p for p in recorded.content if isinstance(p, ImageUrlPart)]
+        assert len(image_parts) == 1
+        assert image_parts[0].image_url.url == image_url
 
         cassette_dir = recorder.save("trace-img-001")
 
@@ -334,11 +498,9 @@ class TestToolRecordReplay:
 
         assert replayed.tool_name == "read"
         assert replayed.call_id == "img-call-1"
-        assert len(replayed.image_blocks) == 1
-        assert replayed.image_blocks[0].image_url.url == image_url
-        assert replayed.content_blocks is not None
-        assert len(replayed.content_blocks) == 1
-        assert replayed.content_blocks[0]["image_url"]["url"] == image_url
+        replayed_images = [p for p in replayed.content if isinstance(p, ImageUrlPart)]
+        assert len(replayed_images) == 1
+        assert replayed_images[0].image_url.url == image_url
         assert replayed.message_content() == "[Image read: photo.png (image/png)]"
 
 

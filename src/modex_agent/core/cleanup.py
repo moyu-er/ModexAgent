@@ -5,23 +5,24 @@ removing a session's full per-session artifact cascade (DB rows + file
 directories).  The business-layer :class:`SessionGarbageCollector` delegates
 to this ABC instead of doing cleanup directly.
 
-T17 removes ``fork_contexts`` from the per-session artifact list (10 -> 9),
-aligning with T18 which removes fork XML file writing.
+T17 removes ``fork_contexts`` from the per-session artifact list, aligning
+with T18 which removes fork XML file writing.
 
-The default implementation always removes the nine per-session file units and
+The default implementation always removes the ten per-session file units and
 optionally delegates structured-row deletion to a storage-specific capability.
 
-The nine artifact units (fork_contexts removed in T17):
+The ten artifact units (fork_contexts removed in T17):
 
 1. transcript — ``sessions/<pool>/<safe>.jsonl``
 2. index record — ``session_index/<pool>/<safe>.json``
 3. memory session dir — ``memory/<pool>/session/<scope>``
 4. pruned batches dir — ``memory/<pool>/pruned/<scope>``
 5. media uploads dir — ``media/<pool>/uploads/<seg>``
-6. runtime trace dir — ``runtime_state/<pool>/trace/<raw_sid>``
-7. runtime output dir — ``runtime_state/<pool>/output/<raw_sid>``
-8. runtime todos file — ``runtime_state/<pool>/todos/<safe>.json``
-9. runtime turn state dir — ``runtime_state/<pool>/turns/<seg_agent>/<seg_sid>``
+6. media reads dir — ``media/<pool>/reads/<seg>``
+7. runtime trace dir — ``runtime_state/<pool>/trace/<raw_sid>``
+8. runtime output dir — ``runtime_state/<pool>/output/<raw_sid>``
+9. runtime todos file — ``runtime_state/<pool>/todos/<safe>.json``
+10. runtime turn state dir — ``runtime_state/<pool>/turns/<seg_agent>/<seg_sid>``
 """
 
 from __future__ import annotations
@@ -70,10 +71,11 @@ __all__ = [
 ]
 
 _UPLOADS_SUBDIR = "uploads"
+_READS_SUBDIR = "reads"
 
 
 def session_artifact_paths(session_id: str, pool: str, paths: WorkspacePaths) -> list[Path]:
-    """The nine per-session artifact units for *session_id* under *pool*.
+    """The ten per-session artifact units for *session_id* under *pool*.
 
     Each entry is a whole per-session directory or file (never a sub-file
     inside a dir), derived with the same on-disk transform its store uses.
@@ -94,6 +96,7 @@ def session_artifact_paths(session_id: str, pool: str, paths: WorkspacePaths) ->
         paths.memory_dir(pool) / "session" / scope,  # memory messages
         paths.pruned_dir(pool) / scope,  # pruned batches
         paths.media_dir(pool) / _UPLOADS_SUBDIR / seg,  # media uploads
+        paths.media_dir(pool) / _READS_SUBDIR / seg,  # media reads
         paths.runtime_dir(pool, "trace") / session_id,  # trace (raw)
         paths.runtime_dir(pool, "output") / session_id,  # output (raw)
         paths.runtime_dir(pool, "todos")
@@ -246,7 +249,7 @@ class DefaultSessionArtifactCleaner(SessionArtifactCleaner):
     # ------------------------------------------------------------------
 
     def _clean_file_artifacts(self, session_id: str, pool: str) -> tuple[int, int, list[str]]:
-        """Remove all nine file artifact units.
+        """Remove all ten file artifact units.
 
         Order is index-first (Path B from ADR-0018): the existence marker
         goes before the transcript, so a mid-cleanup session vanishes from

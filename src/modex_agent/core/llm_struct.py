@@ -79,8 +79,9 @@ _CONTEXT_OVERFLOW_MARKERS = (
 def is_context_overflow_text(text: str) -> bool:
     """Return True if a lowercased error text indicates a context-window overflow.
 
-    Shared by ``classify_litellm_error`` and ``error_recovery.is_context_overflow_error``
-    so the marker vocabulary stays in one place. Context-overflow errors are never
+    Shared by the direct-HTTP error classifier (providers/http/errors.py)
+    and ``error_recovery.is_context_overflow_error`` so the marker
+    vocabulary stays in one place. Context-overflow errors are never
     retryable — the fix is compaction, not re-sending the same payload.
     """
     import re
@@ -94,53 +95,11 @@ def is_context_overflow_text(text: str) -> bool:
 def is_content_filter_text(text: str) -> bool:
     """Return True if a lowercased error text indicates content moderation.
 
-    Used by both the openai and litellm classifiers so the marker vocabulary
-    stays in one place. Content-moderation errors are never retryable.
+    Used by the direct-HTTP protocol engines' error classification so the
+    marker vocabulary stays in one place. Content-moderation errors are
+    never retryable.
     """
     return any(marker in text for marker in _CONTENT_FILTER_MARKERS)
-
-
-def classify_litellm_error(exc: Exception) -> LLMErrorInfo:
-    """将 LiteLLM / httpx / aiohttp 异常归类为 LLMErrorInfo。
-
-    分类以字符串扫描为主，保持保守：明确不可重试的先判定，
-    其余标记为 UNKNOWN / should_retry=False。
-    """
-    text = str(exc).lower()
-    cls_name = type(exc).__name__.lower()
-    message = str(exc)[:500]
-
-    if is_content_filter_text(text):
-        return LLMErrorInfo(
-            kind=LLMErrorKind.CONTENT_FILTER, message=message, provider="litellm", should_retry=False
-        )
-
-    if is_context_overflow_text(text):
-        return LLMErrorInfo(
-            kind=LLMErrorKind.INVALID_REQUEST,
-            message=message,
-            provider="litellm",
-            should_retry=False,
-        )
-
-    if "timeout" in text or "timeout" in cls_name or "timed out" in text:
-        return LLMErrorInfo(kind=LLMErrorKind.TIMEOUT, message=message, provider="litellm", should_retry=True)
-
-    if "rate" in text and "limit" in text:
-        if any(m in text for m in ("quota", "billing", "insufficient")):
-            return LLMErrorInfo(kind=LLMErrorKind.QUOTA, message=message, provider="litellm", should_retry=False)
-        return LLMErrorInfo(kind=LLMErrorKind.RATE_LIMIT, message=message, provider="litellm", should_retry=True)
-
-    if "auth" in text or "401" in text or "403" in text:
-        return LLMErrorInfo(kind=LLMErrorKind.AUTH, message=message, provider="litellm", should_retry=False)
-
-    if any(code in text for code in ("500", "502", "503", "504")):
-        return LLMErrorInfo(kind=LLMErrorKind.SERVER, message=message, provider="litellm", should_retry=True)
-
-    if "connection" in text or "connect" in cls_name:
-        return LLMErrorInfo(kind=LLMErrorKind.CONNECTION, message=message, provider="litellm", should_retry=True)
-
-    return LLMErrorInfo(kind=LLMErrorKind.UNKNOWN, message=message, provider="litellm", should_retry=False)
 
 
 # ─── Provider 标识 ─────────────────────────────────────────────────────────────
@@ -151,13 +110,12 @@ class LLMProviderKind(StrEnum):
 
     Renamed from ``ProviderKind`` to disambiguate from the coding-agent
     ``ProviderKind`` in ``modex_agent.core.constants`` (PI / OPENCODE).
-    This enum is LLM-provider-only (OpenAI / Anthropic / LiteLLM) and is
-    used solely by ``LLMProviderConfig`` below.
+    This enum is LLM-provider-only (OpenAI / Anthropic) and is used solely
+    by ``LLMProviderConfig`` below.
     """
 
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
-    LITELLM = "litellm"
 
 
 # ─── 安全策略配置 ──────────────────────────────────────────────────────────────
@@ -174,7 +132,7 @@ class LLMTimeoutPolicy(BaseModel):
 
     request_timeout_seconds: float | None = None
     stream_idle_timeout_seconds: float | None = None
-    framework_max_retries: int = 2
+    framework_max_retries: int = 3
     retry_backoff_seconds: tuple[float, ...] = (2.0, 8.0)
 
 
@@ -191,7 +149,7 @@ class TurnTimeoutPolicy(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     agent_run_timeout_seconds: float = 600.0
-    dispatch_timeout_seconds: float = 300.0
+    dispatch_timeout_seconds: float = 600.0
     output_send_timeout_seconds: float = 20.0
     memory_flush_timeout_seconds: float = 30.0
     hook_timeout_seconds: float = 10.0
@@ -212,7 +170,12 @@ class RuntimeSafetyPolicy(BaseModel):
 
 
 class LLMProviderConfig(BaseModel):
-    """LLM Provider 最小配置结构，用于工厂创建。"""
+    """LLM Provider 最小配置结构，用于工厂创建。
+
+    休眠（dormant）配置：新代码勿用，LLM 接入走 ``ioc/configs/llm.py`` 的
+    ``LLMConfig``。本结构不删不改字段保留——其 ``extra_headers`` 即 headers
+    透传的前身证据。
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

@@ -11,6 +11,11 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+if sys.platform == "win32":
+    from subprocess import CREATE_NO_WINDOW as _CREATE_NO_WINDOW
+else:
+    _CREATE_NO_WINDOW = 0
+
 if TYPE_CHECKING:
     from modex_agent.core.message import ContentFormat
 
@@ -78,7 +83,6 @@ class TerminalVisibility(StrEnum):
 class ProcessStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
-    FAILED = "failed"
     KILLED = "killed"
     TIMED_OUT = "timed_out"
 
@@ -87,26 +91,20 @@ class CommandResultStatus(StrEnum):
     """CommandTool return status — used in command_result XML."""
 
     COMPLETED = "completed"
-    EXECUTING = "executing"  # was: running
+    WAITING_INPUT = "waiting_input"
     TIMED_OUT = "timed_out"
-    PAGINATED = "paginated"
-    WAITING_INPUT = "waiting_input"  # was: input_wait
-    STUCK = "stuck"  # new
     REJECTED = "rejected"
 
 
 class TerminalCommandStatus(StrEnum):
-    """Unified terminal status — used by terminal current, CommandTool, and session layer."""
+    """Unified terminal status used by input guards, CommandTool, and the session layer."""
 
     UNKNOWN = "unknown"
     IDLE = "idle"
     EXECUTING = "executing"
-    LONG_RUNNING = "long_running"
     WAITING_INPUT = "waiting_input"
-    STUCK = "stuck"
     COMPLETED = "completed"
     TIMED_OUT = "timed_out"
-    PAGINATED = "paginated"
 
 
 # XML root tag → list of element names whose text content is safe to truncate.
@@ -202,7 +200,7 @@ def _verify_wsl(wsl_path: str) -> bool:
             capture_output=True,
             text=True,
             timeout=5,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            creationflags=_CREATE_NO_WINDOW,
         )
         return result.returncode == 0 and bool(result.stdout.strip())
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
@@ -277,7 +275,10 @@ def detect_platform_shell() -> ShellInfo | None:
             return ShellInfo(family=ShellFamily.POWERSHELL, path=pwsh_path, platform=plat)
         ps_path = shutil.which("powershell") or str(
             Path(os.environ.get("SYSTEMROOT", r"C:\Windows"))
-            / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+            / "System32"
+            / "WindowsPowerShell"
+            / "v1.0"
+            / "powershell.exe"
         )
         if Path(ps_path).is_file():
             return ShellInfo(family=ShellFamily.POWERSHELL, path=ps_path, platform=plat)

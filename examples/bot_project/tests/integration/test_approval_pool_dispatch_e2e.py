@@ -37,6 +37,7 @@ from modex_agent.approval.ui import IMUserInterface
 from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.commands.processor import SlashCommandProcessor
 from modex_agent.core.context import InMemoryContextManager
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager, Tool
 from modex_agent.core.types import InputMessage, LLMResponse, OutputMessage, ToolCall
@@ -79,7 +80,6 @@ def _make_react_pipeline(
     from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
     from modex_agent.pipeline.turn_runner import ReActTurnRunner
     from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-    _UNSET = object()
     if sanitizer is None:
         from modex_agent.utils.sanitizer import ContentSanitizer
         sanitizer = ContentSanitizer.sanitize
@@ -147,23 +147,37 @@ pytestmark = pytest.mark.integration
 # ---------------------------------------------------------------------------
 
 
-class _ValidatingProvider:
+class _ValidatingProvider(CallbackStreamProvider):
     """Scripted LLM enforcing the OpenAI tool-message-ordering invariant.
 
-    On every ``chat`` it asserts each assistant message carrying ``tool_calls``
-    is immediately followed by matching tool messages. This turns the
-    production 400 ("assistant tool_calls must be followed by tool messages")
-    into a test-time assertion failure — the exact regression bug #2 causes
-    when ``approval_decision`` is lost and the suspended tool_calls is re-sent
-    with no tool results.
+    On every ``chat_stream`` it asserts each assistant message carrying
+    ``tool_calls`` is immediately followed by matching tool messages. This
+    turns the production 400 ("assistant tool_calls must be followed by tool
+    messages") into a test-time assertion failure — the exact regression bug
+    #2 causes when ``approval_decision`` is lost and the suspended
+    tool_calls is re-sent with no tool results.
     """
 
     def __init__(self, script: list[LLMResponse]) -> None:
+        super().__init__()
         self._script = list(script)
         self.calls = 0
         self.received: list[list[dict]] = []
 
-    async def chat(self, messages, **kwargs):
+    def get_default_model(self) -> str:
+        return "scripted-test-model"
+
+    async def chat_stream(
+        self,
+        messages,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        tools: list[dict] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
+        **kwargs,
+    ):
         self.received.append([m.to_dict() if hasattr(m, "to_dict") else dict(m) for m in messages])
         self._assert_tool_messages_follow_tool_calls(messages)
         resp = self._script[min(self.calls, len(self._script) - 1)]
@@ -274,7 +288,7 @@ class _PoolRef:
     """PoolRouter's pools value: thin holder for the routing fields + the pool
     itself. ``_route_to_pool`` reads ``.pool.submit_input(...)``."""
 
-    main_agent_name: str
+    root_agent_name: str
     main_address: AgentAddress
     pool: AgentPool
 
@@ -411,9 +425,10 @@ async def _build_stack(
     router = PoolRouter(
         input_adapter=None,  # type: ignore[arg-type]
         broker=broker,
-        pools={"main": _PoolRef(main_agent_name="main", main_address=descriptor.address, pool=pool)},
+        pools={"main": _PoolRef(root_agent_name="main", main_address=descriptor.address, pool=pool)},
         session_store=session_store,
         default_pool="main",
+        agent_pool_ownership={"main": ("main",)},
     )
     return router, pool, instance, turn_store, broker, read_recorded, write_recorded
 

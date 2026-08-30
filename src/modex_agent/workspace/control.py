@@ -13,7 +13,7 @@ from typing import TypeVar
 from modex_agent.workspace.models import CdError, CdResult
 from modex_agent.workspace.parse import parse_user_path
 from modex_agent.workspace.port import WorkspaceControlPort
-from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.registry import ScopeRegistry
 
 R = TypeVar("R")
 
@@ -29,11 +29,11 @@ class WorkspaceController[R](WorkspaceControlPort):
     def __init__(
         self,
         *,
-        registry: WorkspaceRegistry[R],
+        registry: ScopeRegistry[R],
         data_dir_name: str,
         enabled: bool = True,
     ) -> None:
-        self._registry: WorkspaceRegistry[R] = registry
+        self._registry: ScopeRegistry[R] = registry
         self._data_dir_name: str = data_dir_name
         self._enabled: bool = enabled
 

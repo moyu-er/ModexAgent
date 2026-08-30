@@ -1,162 +1,510 @@
-"""Plugin component injection into framework modules.
+"""Plugin(ABC) + PluginRegistrationContext + PluginDiscoveryConfig
++ ComponentRegistryLoader.
 
-Decouples PluginManager from framework internals.
-Each inject_* method is independent and can be called separately.
+Replaces the legacy injection bridge with the new component-factory-based
+plugin system (SPEC §4.5). A plugin declares its config schema and
+registers component factories via ``register(ctx)``; the registration
+context buffers factories and flushes them atomically on clean exit.
 """
+from __future__ import annotations
 
+import hashlib
+import importlib.metadata
+import importlib.util
+import inspect
 import logging
+import sys
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from pathlib import Path
+from typing import ClassVar, cast
 
-from modex_agent.core.skills.manager import SkillManager
-from modex_agent.core.tool_manager import InMemoryToolManager
-from modex_agent.hook import Hook
-from modex_agent.memory.system import MemorySystemContextManager
-from modex_agent.plugins.manager import PluginManager
+from pydantic import BaseModel
+
+from modex_agent.plugins.abc import ComponentFactory, ComponentSlot, PluginSource
+from modex_agent.plugins.capability import Capability
+from modex_agent.plugins.registry import ComponentRegistry
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "Plugin",
+    "PluginRegistrationContext",
+    "PluginDiscoveryConfig",
+    "ComponentRegistryLoader",
+]
 
-class PluginLoader:
-    """Inject collected plugin components into framework modules.
 
-    Usage:
-        loader = PluginLoader(plugin_manager)
-        loader.inject_tools(tool_manager)
-        loader.inject_hooks(pipeline_hooks)
-        await loader.inject_memory_providers(memory_system, init_kwargs={...})
-        loader.inject_skill_sources(skill_manager)
+# ---------------------------------------------------------------------------
+# Plugin ABC
+# ---------------------------------------------------------------------------
+
+
+class Plugin(ABC):
+    """Typed plugin entry point.
+
+    A plugin declares its config schema (``config_model``) and registers
+    component factories via ``register(ctx)``. The registration context
+    buffers factories and flushes them atomically on clean exit
+    (SPEC §4.5).
+
+    Subclasses MUST set ``config_model`` (a frozen Pydantic ``BaseModel``
+    with ``extra="forbid"``) and implement ``register()``.
     """
 
-    def __init__(self, plugin_manager: PluginManager) -> None:
-        self._pm = plugin_manager
+    config_model: ClassVar[type[BaseModel]]
+    api_version: ClassVar[int] = 1
 
-    def inject_tools(self, tool_manager: InMemoryToolManager) -> list[str]:
-        """Inject plugin tools into ToolManager.
+    @abstractmethod
+    def register(self, ctx: PluginRegistrationContext) -> None:
+        """Register component factories into *ctx*.
 
-        Args:
-            tool_manager: InMemoryToolManager instance with register(tool) method.
-
-        Returns:
-            List of successfully injected tool names.
+        Called by ``ComponentRegistryLoader`` during startup. The context
+        manager handles atomicity: if this method raises, all buffered
+        factories are discarded (no half-registration).
         """
-        injected = []
-        for tool, plugin_name in self._pm.tools:
-            try:
-                tool_manager.register(tool)
-                injected.append(tool.name)
-            except Exception as e:
-                logger.warning(
-                    "Failed to inject tool '%s' from plugin '%s': %s",
-                    tool.name,
-                    plugin_name,
-                    e,
+        ...
+
+
+# ---------------------------------------------------------------------------
+# PluginRegistrationContext — collecting facade + context manager
+# ---------------------------------------------------------------------------
+
+
+class PluginRegistrationContext:
+    """Collecting facade + context manager for plugin registration.
+
+    Each ``register_*`` method buffers a ``(slot, name, factory)`` tuple
+    into an internal list. On clean ``__exit__`` (or an explicit
+    :meth:`flush`), all buffered factories are flushed to the registry.
+    On exception from ``register()``, the buffer is discarded — atomicity
+    guarantees no half-registration from a failing plugin (SPEC §4.5).
+
+    ``source`` attributes the registrations to a discovery source
+    (a :class:`PluginSource` value). The flush is
+    source-aware (SPEC §4.1): a same-source duplicate ``(slot, name)``
+    raises ``ValueError`` (a packaging/config error); a cross-source
+    duplicate is resolved by source priority — user > project >
+    entry_points > bundled, nearest-to-user wins (SPEC §3.5 O2). A
+    directly-registered entry (source ``None``) preempts any source.
+
+    The 11 ``register_*`` methods map 1:1 to the 11 ``ComponentSlot``
+    values.
+    """
+
+    def __init__(self, registry: ComponentRegistry, *, source: PluginSource | None = None) -> None:
+        self._registry = registry
+        self._source: PluginSource | None = source
+        # CAPABILITY entries are capability instances, not factories
+        # (SPEC §4) — the one slot whose buffered object is not a
+        # ComponentFactory.
+        self._buffer: list[tuple[ComponentSlot, str, ComponentFactory | Capability]] = []
+
+    def _add(
+        self, slot: ComponentSlot, name: str, component: ComponentFactory | Capability
+    ) -> None:
+        self._buffer.append((slot, name, component))
+
+    # ---- 11 register_* methods (one per ComponentSlot) ----
+
+    def register_tool(self, name: str, factory: ComponentFactory) -> None:
+        self._add(ComponentSlot.TOOL, name, factory)
+
+    def register_hook(self, name: str, factory: ComponentFactory) -> None:
+        self._add(ComponentSlot.HOOK, name, factory)
+
+    def register_memory_system(self, name: str, factory: ComponentFactory) -> None:
+        self._add(ComponentSlot.MEMORY_SYSTEM, name, factory)
+
+    def register_provider(self, name: str, factory: ComponentFactory) -> None:
+        self._add(ComponentSlot.LLM_PROVIDER, name, factory)
+
+    def register_prompt_provider(self, name: str, factory: ComponentFactory) -> None:
+        self._add(ComponentSlot.SYSTEM_PROMPT_PROVIDER, name, factory)
+
+    def register_interceptor(self, name: str, factory: ComponentFactory) -> None:
+        self._add(ComponentSlot.INTERCEPTOR, name, factory)
+
+    def register_command(self, name: str, factory: ComponentFactory) -> None:
+        self._add(ComponentSlot.COMMAND_HANDLER, name, factory)
+
+    def register_execution_strategy(self, name: str, factory: ComponentFactory) -> None:
+        self._add(ComponentSlot.EXECUTION_STRATEGY, name, factory)
+
+    def register_input_stage(self, name: str, factory: ComponentFactory) -> None:
+        self._add(ComponentSlot.INPUT_STAGE, name, factory)
+
+    def register_namespace(self, name: str, factory: ComponentFactory) -> None:
+        self._add(ComponentSlot.DATA_NAMESPACE, name, factory)
+
+    def register_capability(self, name: str, capability: Capability) -> None:
+        """Register a capability INSTANCE under ``(CAPABILITY, name)``.
+
+        Unlike the 10 factory slots, the CAPABILITY slot stores the
+        capability instance itself (SPEC §4) — capabilities participate
+        in compilation, not per-assembly instantiation. Source priority
+        and duplicate semantics are identical to the factory slots.
+        """
+        self._add(ComponentSlot.CAPABILITY, name, capability)
+
+    # ---- context manager protocol ----
+
+    def __enter__(self) -> PluginRegistrationContext:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        if exc[0] is None:
+            self.flush()
+
+    def flush(self) -> None:
+        """Flush all buffered factories to the registry.
+
+        Called on clean context exit, or explicitly by the loader (which
+        isolates ``register()`` failures itself and lets a same-source
+        conflict propagate out of ``load()``). Idempotent: the buffer is
+        drained first, so a plugin that used ``with ctx:`` inside
+        ``register()`` followed by the loader's explicit flush is a no-op
+        on the second call. Two-phase per SPEC §4.1:
+
+        - Phase 1 (validate, no mutation): every buffered entry is checked
+          against the registry AND against the rest of the buffer — a
+          same-source ``(slot, name)`` duplicate raises ``ValueError``
+          before anything is registered, so a conflict never leaves a
+          half-flushed plugin.
+        - Phase 2 (apply): name absent → register (attributed to this
+          context's source); name present → resolved by source priority
+          (SPEC §3.5 O2): an entry from a lower-priority source is
+          overwritten via ``register(overwrite=True)`` + info log (the
+          entry's attribution moves to the new source); an entry from a
+          higher-priority source is skipped + info log; an entry
+          registered directly (source ``None``, on either side) is
+          skipped + warning — direct registrations bypass source
+          semantics.
+        """
+        buffer = self._buffer
+        self._buffer = []
+        if not buffer:
+            return
+
+        seen_in_buffer: set[tuple[ComponentSlot, str]] = set()
+        for slot, name, _factory in buffer:
+            key = (slot, name)
+            existing = self._registry.registration_source(slot, name)
+            in_buffer_dup = key in seen_in_buffer
+            seen_in_buffer.add(key)
+            if self._source is not None and (existing == self._source or in_buffer_dup):
+                raise ValueError(
+                    f"Component {name!r} in slot {slot.value!r} registered "
+                    f"twice from source {self._source.value!r} (SPEC §4.1 "
+                    "same-source conflict)"
                 )
-        if injected:
-            logger.info("Injected %d plugin tools: %s", len(injected), injected)
-        return injected
 
-    def inject_hooks(self, hooks: list[Hook]) -> list[str]:
-        """Append plugin hooks to a hooks list.
-
-        Args:
-            hooks: BotService's pipeline_hooks list.
-
-        Returns:
-            List of injected hook class names.
-        """
-        injected = []
-        for hook, plugin_name in self._pm.hooks:
-            hooks.append(hook)
-            injected.append(f"{type(hook).__name__} (from {plugin_name})")
-        if injected:
-            logger.info("Injected %d plugin hooks: %s", len(injected), injected)
-        return injected
-
-    async def inject_memory_providers(
-        self,
-        memory_system: MemorySystemContextManager,
-        init_kwargs: dict[str, object] | None = None,
-    ) -> list[str]:
-        """Inject plugin MemoryProviders into MemorySystem and initialize them.
-
-        Initialization is delegated to PluginManager.initialize_providers()
-        (which is idempotent), then all available providers are added to
-        the MemorySystem.
-
-        Args:
-            memory_system: MemorySystem instance with add_provider() method.
-            init_kwargs: kwargs passed to provider.initialize().
-
-        Returns:
-            List of successfully injected provider names.
-        """
-        await self._pm.initialize_providers(**(init_kwargs or {}))
-
-        injected: list[str] = []
-        for provider in self._pm.available_providers:
-            try:
-                memory_system.add_provider(provider)
-                injected.append(provider.name)
-                logger.info("Provider '%s' injected into MemorySystem", provider.name)
-            except Exception as e:
+        for slot, name, component in buffer:
+            # The CAPABILITY slot stores capability instances, not
+            # factories (SPEC §4) — the registry's ComponentFactory-typed
+            # store face predates the 11th slot. ``register`` stores the
+            # object verbatim and ``resolve`` returns it unchanged, so
+            # this cast is representation-only: a registered Capability
+            # resolves to itself (identity preserved for the compile-time
+            # consumer).
+            factory = cast("ComponentFactory", component)
+            if name not in self._registry.names(slot):
+                self._registry.register(slot, name, factory, source=self._source)
+                continue
+            existing = self._registry.registration_source(slot, name)
+            if existing is None or self._source is None:
                 logger.warning(
-                    "Failed to add provider '%s' to MemorySystem: %s",
-                    provider.name,
-                    e,
+                    "component %r in slot %r already registered, "
+                    "skipping (direct registration, no source priority)",
+                    name,
+                    slot.value,
                 )
-        return injected
-
-    def inject_memory_system_modifiers(
-        self, memory_system: MemorySystemContextManager
-    ) -> list[str]:
-        """Apply plugin MemorySystem modifiers.
-
-        Modifiers are callbacks that receive a MemorySystem instance and can
-        mutate its internal state (e.g. wrapping managers). Called after
-        MemorySystem.initialize() and before the system is used.
-
-        Args:
-            memory_system: MemorySystem instance.
-
-        Returns:
-            List of applied modifier plugin names.
-        """
-        applied: list[str] = []
-        for modifier, plugin_name in self._pm.memory_system_modifiers:
-            try:
-                modifier(memory_system)
-                applied.append(plugin_name)
+                continue
+            if (
+                PluginSource.SOURCE_PRIORITY[self._source]
+                > PluginSource.SOURCE_PRIORITY[existing]
+            ):
+                self._registry.register(
+                    slot, name, factory, source=self._source, overwrite=True
+                )
                 logger.info(
-                    "Applied memory_system modifier from '%s'",
-                    plugin_name,
+                    "component %r in slot %r overridden by higher-priority "
+                    "source: %s -> %s",
+                    name,
+                    slot.value,
+                    existing.value,
+                    self._source.value,
                 )
-            except Exception as e:
-                logger.warning(
-                    "Failed to apply memory_system modifier from '%s': %s",
-                    plugin_name,
-                    e,
+            else:
+                logger.info(
+                    "component %r in slot %r already registered from "
+                    "higher-priority source %s, skipping (source %s)",
+                    name,
+                    slot.value,
+                    existing.value,
+                    self._source.value,
                 )
-        return applied
 
-    def inject_skill_sources(self, skill_manager: SkillManager) -> list[str]:
-        """Inject plugin SkillSources into SkillManager.
 
-        Args:
-            skill_manager: SkillManager instance with add_source() method.
+# ---------------------------------------------------------------------------
+# PluginDiscoveryConfig — frozen dataclass (rule 11: leaf value object)
+# ---------------------------------------------------------------------------
 
-        Returns:
-            List of successfully injected source identifiers.
+
+@dataclass(frozen=True)
+class PluginDiscoveryConfig:
+    """Typed discovery configuration for ``ComponentRegistryLoader``.
+
+    Drives all plugin discovery — no implicit directory guessing. The
+    loader processes sources in a fixed order (bundled, project, user,
+    entry_points); cross-source name conflicts are resolved by source
+    priority, not processing order — user > project > entry_points >
+    bundled (SPEC §3.5 O2).
+
+    Frozen dataclass (rule 11) — a leaf value object with no behavior.
+    Holds ``Plugin`` instances and ``Path`` objects which are not
+    Pydantic-serializable, so frozen dataclass is preferred over
+    Pydantic ``BaseModel`` (rule 11 vs rule 10 — this config does not
+    cross serialization boundaries).
+    """
+
+    bundled_factories: tuple[Plugin, ...]
+    project_plugin_paths: tuple[Path, ...]
+    user_plugin_path: Path | None = None
+    entry_point_group: str = "modex_agent.plugins"
+
+
+# ---------------------------------------------------------------------------
+# ComponentRegistryLoader — startup loader
+# ---------------------------------------------------------------------------
+
+
+class ComponentRegistryLoader:
+    """Startup loader — discovers plugins and registers their factories.
+
+    Cross-source name conflicts resolve by source priority: user >
+    project > entry_points > bundled (SPEC §3.5 O2) — a higher-priority
+    source overrides, a lower-priority one is skipped (info log).
+
+    Fault isolation: one plugin failure (instantiation or ``register()``)
+    logs an error and continues to the next plugin. A same-source
+    duplicate ``(slot, name)`` is NOT isolated — it raises ``ValueError``
+    out of :meth:`load` (SPEC §4.1: same-source conflicts are config
+    errors).
+
+    Atomicity per plugin: if ``register()`` raises, all buffered
+    factories for that plugin are discarded — no half-registration.
+    """
+
+    @classmethod
+    async def load(
+        cls,
+        registry: ComponentRegistry,
+        discovery: PluginDiscoveryConfig,
+    ) -> None:
+        """Load all plugins from the configured discovery sources.
+
+        Processes sources in priority order. Each plugin is wrapped in
+        a ``PluginRegistrationContext`` for atomicity and a try/except
+        for fault isolation.
         """
-        injected = []
-        for source, plugin_name in self._pm.skill_sources:
+        # 1. Bundled (already-instantiated Plugin instances)
+        for plugin in discovery.bundled_factories:
+            cls._register_one(registry, plugin, source=PluginSource.BUNDLED)
+
+        # 2. Project directories
+        for path in discovery.project_plugin_paths:
+            cls._load_from_directory(registry, path, source=PluginSource.PROJECT)
+
+        # 3. User directory (optional)
+        if discovery.user_plugin_path is not None:
+            cls._load_from_directory(
+                registry, discovery.user_plugin_path, source=PluginSource.USER
+            )
+
+        # 4. Entry points (PyPI)
+        for plugin_cls in cls._discover_entry_points(discovery.entry_point_group):
             try:
-                skill_manager.add_source(source)
-                injected.append(plugin_name)
+                plugin = plugin_cls()
             except Exception as e:
-                logger.warning(
-                    "Failed to inject skill source from '%s': %s",
-                    plugin_name,
+                logger.error(
+                    "Plugin %s from entry_points failed to instantiate: %s",
+                    plugin_cls.__name__,
                     e,
                 )
-        if injected:
-            logger.info("Injected %d plugin skill sources", len(injected))
-        return injected
+                continue
+            cls._register_one(registry, plugin, source=PluginSource.ENTRY_POINTS)
+
+    # ---- internal helpers ----
+
+    @classmethod
+    def _register_one(
+        cls,
+        registry: ComponentRegistry,
+        plugin: Plugin,
+        *,
+        source: PluginSource,
+    ) -> None:
+        """Register one plugin instance.
+
+        Fault isolation covers ``plugin.register()`` only: its exceptions
+        are logged and the plugin's buffered factories are discarded
+        (atomicity — no half-registration). The flush itself is NOT
+        fault-isolated: a same-source duplicate (SPEC §4.1) raises
+        ``ValueError`` out of ``load()`` so the conflicting source is
+        fixed at boot instead of being silently shadowed.
+        """
+        ctx = PluginRegistrationContext(registry, source=source)
+        try:
+            plugin.register(ctx)
+        except Exception as e:
+            logger.error(
+                "Plugin %s from %s failed: %s",
+                type(plugin).__name__,
+                source,
+                e,
+            )
+            return
+        ctx.flush()
+
+    @classmethod
+    def _load_from_directory(
+        cls,
+        registry: ComponentRegistry,
+        directory: Path,
+        *,
+        source: PluginSource,
+    ) -> None:
+        """Scan *directory* for .py files, import Plugin subclasses.
+
+        Non-existent or non-directory paths log a warning and return.
+        Each .py file is imported under a deterministic per-file module
+        name (see :meth:`_import_plugin_classes`); concrete (non-abstract)
+        Plugin subclasses are instantiated and registered.
+        """
+        if not directory.exists():
+            logger.warning("Plugin directory does not exist: %s", directory)
+            return
+
+        if not directory.is_dir():
+            logger.warning("Plugin path is not a directory: %s", directory)
+            return
+
+        for py_file in sorted(directory.glob("*.py")):
+            if py_file.name == "__init__.py":
+                continue
+            plugin_classes = cls._import_plugin_classes(py_file)
+            for plugin_cls in plugin_classes:
+                try:
+                    plugin = plugin_cls()
+                except Exception as e:
+                    logger.error(
+                        "Plugin %s from %s failed to instantiate: %s",
+                        plugin_cls.__name__,
+                        source,
+                        e,
+                    )
+                    continue
+                cls._register_one(registry, plugin, source=source)
+
+    @classmethod
+    def _import_plugin_classes(cls, py_file: Path) -> list[type[Plugin]]:
+        """Import a .py file and return concrete Plugin subclasses.
+
+        The module name is DETERMINISTIC — derived from the resolved file
+        path (sha1 prefix) — so the same file discovered twice (re-scan,
+        path listed twice, overlapping project dirs) maps to ONE
+        ``sys.modules`` entry: the second discovery reuses the
+        already-executed module instead of executing it again under a new
+        name. This keeps Plugin class identity stable (``isinstance`` /
+        ``issubclass``) and stops each scan from leaking a fresh module
+        entry. The ``isinstance`` and ``issubclass`` checks are justified
+        at this extension boundary — dynamic module loading for plugin
+        discovery requires inspecting loaded types (rule 9).
+        """
+        resolved = py_file.resolve()
+        module_name = (
+            f"_modex_discovered_{hashlib.sha1(str(resolved).encode()).hexdigest()[:16]}"
+        )
+        cached = sys.modules.get(module_name)
+        if cached is not None:
+            module = cached
+        else:
+            spec = importlib.util.spec_from_file_location(module_name, py_file)
+            if spec is None or spec.loader is None:
+                logger.warning("Cannot load plugin module from %s", py_file)
+                return []
+
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            try:
+                spec.loader.exec_module(module)
+            except Exception as e:
+                logger.error("Failed to execute plugin module %s: %s", py_file, e)
+                return []
+
+        result: list[type[Plugin]] = []
+        for attr_name in dir(module):
+            obj = getattr(module, attr_name)
+            # isinstance + issubclass justified: extension boundary
+            # (dynamic plugin discovery from loaded modules).
+            if (
+                isinstance(obj, type)
+                and issubclass(obj, Plugin)
+                and obj is not Plugin
+                and not inspect.isabstract(obj)
+            ):
+                result.append(obj)
+        return result
+
+    @classmethod
+    def _discover_entry_points(cls, group: str) -> list[type[Plugin]]:
+        """Discover Plugin classes from PyPI entry points.
+
+        Entry points in *group* should point to Plugin subclasses (e.g.,
+        ``my_plugin = my_package:MyPlugin`` where ``MyPlugin`` is a
+        ``Plugin`` subclass). ``ep.load()`` returns the class; the
+        loader instantiates it.
+
+        Returns an empty list if entry_points() is unavailable or no
+        Plugin subclasses are found.
+        """
+        result: list[type[Plugin]] = []
+        try:
+            eps = importlib.metadata.entry_points()
+            group_eps = eps.select(group=group)
+
+            for ep in group_eps:
+                try:
+                    obj = ep.load()
+                    # isinstance + issubclass justified: extension
+                    # boundary (entry point plugin discovery).
+                    if (
+                        isinstance(obj, type)
+                        and issubclass(obj, Plugin)
+                        and obj is not Plugin
+                        and not inspect.isabstract(obj)
+                    ):
+                        result.append(obj)
+                    else:
+                        logger.warning(
+                            "Entry point %s in group %s is not a Plugin subclass: %r",
+                            ep.name,
+                            group,
+                            obj,
+                        )
+                except Exception as e:
+                    logger.error(
+                        "Entry point %s in group %s failed to load: %s",
+                        ep.name,
+                        group,
+                        e,
+                    )
+        except Exception as e:
+            # entry_points() itself may fail in some environments — the
+            # loader continues with the remaining discovery sources.
+            logger.warning(
+                "Entry point discovery for plugin group %s failed: %s", group, e
+            )
+
+        return result

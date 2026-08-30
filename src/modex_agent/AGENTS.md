@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-22 -->
+<!-- Updated: 2026-08-26 -->
 
 # modex_agent
 
@@ -11,7 +11,7 @@ Core multi-agent framework package (334+ Python files across 25 modules). All ab
 > `control/` package carries the **live** `/stop` + WebUI-pause mechanism:
 > `InMemoryControlChannel` receives `CANCEL_TURN`, `drain_control_channel()`
 > feeds `ControlDrainInterceptor` / `LlmCancelInterceptor`, which raise
-> `AgentCancelled` → `AgentResult(stop_reason=CANCELLED)`. A separate busy-input
+> `AgentCancelledError` → `AgentResult(stop_reason=CANCELLED)`. A separate busy-input
 > INTERRUPT path cancels via `asyncio.Task.cancel()` directly (does not go
 > through the channel). See `control/AGENTS.md`.
 
@@ -39,8 +39,9 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `ioc/` | 2 py | `configs/`, `factories/` | `AppConfig` (Pydantic), 13 typed configs, 8 factory modules (see `ioc/AGENTS.md`) |
 | `approval/` | 6 py | — | Tiered tool approval — tiers, decisions, response parsing (see `approval/AGENTS.md`) |
 | `messaging/` | 4 py | — | `MessageBroker`, `BrokerBridgeService` (see `messaging/AGENTS.md`) |
-| `plugins/` | 5 py | — | Plugin system — `PluginManager`, `PluginContext`, `MemoryProvider` (see `plugins/AGENTS.md`) |
-| `providers/` | 3 py | `shared/` | LLM providers — LiteLLM, OpenAI implementations (see `providers/AGENTS.md`) |
+| `plugins/` | 5 py | `assembly/`, `defaults/capabilities/` | Plugin-unified agent assembly — 11-slot `ComponentRegistry`, `ComponentFactory` ABC, `Plugin` ABC, `AssemblyPipeline` (4 stages), `DefaultPlugin`; the `CAPABILITY` slot hosts capability bundles (ADR-0047) with the five FW-bundled packages in `defaults/capabilities/` (see `plugins/AGENTS.md` and `docs/design/capability-bundles/AUTHOR-GUIDE.md`) |
+| `scope/` | 9 py | — | Scope declaration tree (ADR-0042) — `ScopeSpec`/`AgentSpec` frozen types + YAML loader (incl. the `capabilities:` override map, ADR-0047), position-derived defaults, two-phase `ScopeTreeValidator` (V1-V13), `ProfileStore` + `STANDARD_PROFILES`, pure `ScopeCompiler` (per-agent `AssemblySpec`s + effective toolsets + provenance bill + the C0/C1/C2 capability compile protocol), N2 spec-hash/generation seam (see `scope/AGENTS.md`) |
+| `providers/` | 1 py | `http/` | LLM providers — direct-HTTP event-stream subsystem (http/, ADR-0046: HTTPStreamProvider + protocol engines) (see `providers/AGENTS.md`) |
 | `workspace/` | 13 py | — | `WorkspaceContext` ABC, `DefaultWorkspaceContext` — cd/exit/restore workspace switching with callback notification and persistence (see `workspace/AGENTS.md`) |
 | `input_pipeline/` | 5 py | — | Extensible user-input stage pipeline — `UserInputEnvelope`, `InputStage` ABC, `Continue`/`Terminate`, `UserInputPipeline` (see `input_pipeline/AGENTS.md`) |
 | `trace/` | 4 py | — | Tracing and observability — `TraceStore`, `TraceHooks`, `TraceType` |
@@ -94,7 +95,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 - `pipeline/` — End-to-end orchestration pipeline.
 - `runtime/` — Runtime state and services assembly.
 - `hook/` + `interceptor/` — Extension layers for lifecycle observation and AOP.
-- `control/` — Control transport: the live `/stop` + pause channel (`CANCEL_TURN` → drain → interceptors → `AgentCancelled`); plus `AgentControlError` exceptions. A separate busy-INTERRUPT path uses `asyncio.Task.cancel()` directly.
+- `control/` — Control transport: the live `/stop` + pause channel (`CANCEL_TURN` → drain → interceptors → `AgentCancelledError`); plus `AgentControlError` exceptions. A separate busy-INTERRUPT path uses `asyncio.Task.cancel()` directly.
 - `ioc/` — Dependency injection configuration and factories.
 
 ## Graph Scheduling Convergence
@@ -119,8 +120,7 @@ From `modex_agent`'s perspective:
 - `sandbox/` depends on `core/` (types) only; NOT wired into `tools/` — opt-in capability per ADR-0007.
 
 ### External
-- `openai` — LLM provider
-- `litellm` — LLM provider abstraction
+- `httpx` — direct-HTTP LLM provider transport (ADR-0046)
 - `pydantic` — config models
 - `pyyaml` — frontmatter parsing
 - `pathvalidate` — filename sanitization

@@ -541,13 +541,15 @@ async def test_finally_graph_hook_fires_once_on_exception() -> None:
 
 
 async def test_finally_graph_hook_fires_once_on_cancelled_error() -> None:
-    """Hook fires exactly once with ``result=None`` when ``agent.run`` raises
-    ``CancelledError``.
+    """Hook fires exactly once with a CANCELLED ``AgentResult`` when
+    ``agent.run`` raises ``CancelledError``.
 
     The finally block dispatches ``FINALLY_GRAPH`` (shielded) before
-    re-propagating the cancellation. ``result`` stays ``None`` because the
-    ``CancelledError`` except block emits a CANCELLED result but does NOT
-    assign it to the local ``result`` variable.
+    re-propagating the cancellation. The cancel handler assigns
+    ``AgentResult(stop_reason=CANCELLED)`` before re-raising (mirroring the
+    ReAct cancel path) so ``result=None`` remains reserved for the
+    GraphInterrupt approval-suspend signature — notification hooks skip
+    that leg, but must see the terminal CANCELLED outcome here.
     """
     hook = _StubFinallyGraphHook()
     runner = _make_runner(agent=_CancelAgent(), hook_runner=_hook_runner_with(hook))
@@ -556,7 +558,9 @@ async def test_finally_graph_hook_fires_once_on_cancelled_error() -> None:
         await runner.process_locked(_make_input(), "s1", session=_session())
 
     assert len(hook.calls) == 1
-    assert hook.calls[0][1] is None
+    cancelled = hook.calls[0][1]
+    assert cancelled is not None
+    assert cancelled.stop_reason is StopReason.CANCELLED
 
 
 async def test_finally_graph_hook_no_dispatch_when_hook_runner_none() -> None:

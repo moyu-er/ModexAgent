@@ -1,11 +1,16 @@
 """Re-homed BackgroundTaskRunner (REHOME; purely additive).
 
-Re-homes — FAITHFULLY, logic verbatim — the dream/curator background-task logic
+Re-homes — FAITHFULLY, logic verbatim — the dream background-task logic
 that lived on the old ``Workspace`` class
 (:mod:`bot.workspace.pool_data`). Standalone, testable unit: the
-runner owns its own ``dream_engine`` / ``curators`` / intervals / stop_event,
-driven by already-built :class:`PoolData` (built by
+runner owns its own ``dream_engine`` / interval / stop_event, driven by
+already-built :class:`PoolData` (built by
 :func:`bot.workspace.pool_data.build_pool_data`).
+
+The curator half died with the experience capability's supply face
+(SPEC §8.3 D4): ``ExperienceSupply`` owns the per-pool curator loop now
+— ``ExperienceCapability.supply()`` constructs it, pool assembly starts
+it, pool teardown (``AgentPool.shutdown_all``) stops it.
 """
 
 from __future__ import annotations
@@ -15,27 +20,25 @@ import contextlib
 import logging
 
 from bot.workspace.pool_data import PoolData
-from modex_agent.core.experience import ExperienceCurator
 from modex_agent.memory.consolidation.dream_engine import DreamEngine
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 
 logger = logging.getLogger(__name__)
 
-# Fallback intervals (seconds) when pool config does not specify one.
+# Fallback interval (seconds) when pool config does not specify one.
 # Re-homed verbatim from the old Workspace module.
 _DEFAULT_DREAM_INTERVAL = 1800
-_DEFAULT_CURATOR_INTERVAL = 3600
 
 
 class BackgroundTaskRunner:
-    """Run the workspace dream + per-pool curator background loops.
+    """Run the workspace dream background loop.
 
     Re-homed FAITHFULLY from ``Workspace`` (``_maybe_build_dream`` /
-    ``_build_curators`` / ``start_background_tasks`` /
-    ``stop_background_tasks`` / ``_dream_background_loop`` /
-    ``_curator_background_loop``). Construction builds the dream engine from the
-    first pool with archive + core memory enabled and one curator per pool
-    whose main agent enables experience.
+    ``start_background_tasks`` / ``stop_background_tasks`` /
+    ``_dream_background_loop``). Construction builds the dream engine from the
+    first pool with archive + core memory enabled. The per-pool experience
+    curator loops moved to the experience capability supply
+    (``ExperienceSupply.start``/``stop`` — SPEC §8.3 D4).
     """
 
     def __init__(
@@ -49,12 +52,10 @@ class BackgroundTaskRunner:
         self._assembly_deps: dict[str, PoolAssemblyDeps] = assembly_deps
         self._default_pool_name: str | None = default_pool_name
 
-        # Built eagerly from pool_data (re-home of _maybe_build_dream +
-        # _build_curators). Exposed for lifecycle tests + CUTOVER wiring.
+        # Built eagerly from pool_data (re-home of _maybe_build_dream).
+        # Exposed for lifecycle tests + CUTOVER wiring.
         self.dream_engine: DreamEngine | None = None
         self._dream_interval: int = _DEFAULT_DREAM_INTERVAL
-        self.curators: dict[str, ExperienceCurator] = {}
-        self._curator_intervals: dict[str, int] = {}
 
         # Background-task bookkeeping.
         self._tasks: list[asyncio.Task[None]] = []
@@ -110,35 +111,6 @@ class BackgroundTaskRunner:
             return engine
         return None
 
-    def _build_curators(self) -> None:
-        """Create one :class:`ExperienceCurator` per pool whose main agent
-        enables experience, bound to that pool's already-built ``pool_data``.
-
-        Re-homed verbatim from ``Workspace._build_curators``. Idempotent: pools
-        already in :attr:`curators` are skipped.
-        """
-        for pool_name, deps in self._assembly_deps.items():
-            if pool_name in self.curators:
-                continue
-            exp_cfg = deps.experience
-            if exp_cfg is None or not exp_cfg.enabled:
-                continue
-            pool_data = self._pool_data.get(pool_name)
-            if pool_data is None:
-                continue
-            curator = ExperienceCurator(
-                experience_dir=pool_data.experience_dir,
-                meta_store=pool_data.experience_meta,
-                max_experiences=exp_cfg.max_experiences,
-            )
-            self.curators[pool_name] = curator
-            self._curator_intervals[pool_name] = exp_cfg.curator_interval
-            logger.info(
-                "Workspace ExperienceCurator initialized, pool=%s, interval=%ds",
-                pool_name,
-                exp_cfg.curator_interval,
-            )
-
     # ------------------------------------------------------------------
     # Lifecycle (re-homed from Workspace)
     # ------------------------------------------------------------------
@@ -149,7 +121,7 @@ class BackgroundTaskRunner:
         return self._tasks
 
     async def start(self) -> None:
-        """Build (if needed) and launch the dream + curator background loops.
+        """Build (if needed) and launch the dream background loop.
 
         Re-homed verbatim from ``Workspace.start_background_tasks``. Guards
         against double-start: if tasks are already running this is a no-op.
@@ -159,7 +131,6 @@ class BackgroundTaskRunner:
 
         if self.dream_engine is None:
             self._maybe_build_dream()
-        self._build_curators()
 
         self._stop_event.clear()
 
@@ -168,14 +139,6 @@ class BackgroundTaskRunner:
                 asyncio.create_task(
                     self._dream_loop(self._dream_interval),
                     name="workspace-dream",
-                )
-            )
-        for pool_name, curator in self.curators.items():
-            interval = self._curator_intervals.get(pool_name, _DEFAULT_CURATOR_INTERVAL)
-            self._tasks.append(
-                asyncio.create_task(
-                    self._curator_loop(curator, interval),
-                    name=f"workspace-curator-{pool_name}",
                 )
             )
 
@@ -223,21 +186,3 @@ class BackgroundTaskRunner:
                 break
             except Exception:
                 logger.exception("Workspace DreamEngine background loop error")
-
-    async def _curator_loop(self, curator: ExperienceCurator, interval: int) -> None:
-        """Periodically run ``curator.run`` until stopped.
-
-        Re-homed verbatim from ``Workspace._curator_background_loop``.
-        """
-        while await self._wait_tick(interval):
-            try:
-                result = await curator.run()
-                logger.info(
-                    "Workspace ExperienceCurator: checked=%d evicted=%d",
-                    result.get("checked", 0),
-                    result.get("evicted", 0),
-                )
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                logger.exception("Workspace ExperienceCurator background loop error")

@@ -20,13 +20,32 @@ class LLMConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     model: str = "gpt-4"
-    api_key: str = ""
+    api_key: str = Field(default="", repr=False)
     base_url: str = ""
     temperature: float = 0.7
+    top_p: float = 0.95
     max_output_tokens: int = 80000
     capabilities: ModelCapabilities = Field(default_factory=ModelCapabilities)
     reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
     interface_format: InterfaceFormat = InterfaceFormat.OPENAI_COMPATIBLE
+    headers: dict[str, str] = Field(default_factory=dict, repr=False)
+    responses_store: bool = Field(
+        default=False,
+        description=(
+            "Consumed only by the openai_response format: True replays "
+            "reasoning via item_reference; False sends full content back. "
+            "Default False — third-party Responses endpoints reject "
+            "store=true (ADR-0046 flip condition (c), 2026-08-27)."
+        ),
+    )
+    endpoint_url: str = Field(
+        default="",
+        description=(
+            "Full request URL escape hatch: when non-empty, the provider "
+            "uses it directly as the request URL, bypassing the per-format "
+            "base_url join; empty falls back to the default join."
+        ),
+    )
 
     @field_validator("capabilities", mode="before")
     @classmethod

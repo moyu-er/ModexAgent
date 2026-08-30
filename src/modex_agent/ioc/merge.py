@@ -29,9 +29,10 @@ def deep_merge(
             val = override[key]
             if val is None:
                 continue
-            if isinstance(val, Mapping) and isinstance(base.get(key), Mapping):
+            base_value = base.get(key)
+            if isinstance(val, Mapping) and isinstance(base_value, Mapping):
                 result[key] = deep_merge(
-                    dict(base[key]),
+                    dict(base_value),
                     dict(val),
                 )
             else:

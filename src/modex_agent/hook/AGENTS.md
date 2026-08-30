@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-10 -->
+<!-- Updated: 2026-08-28 | capability-bundles doc sync (ADR-0047) -->
 
 # hook
 
@@ -11,8 +11,8 @@ Lifecycle extension points — lightweight observation and context injection. Ho
 
 | File | Description |
 |------|-------------|
-| `abc.py` | `HookPoint` enum (15 values), `Hook` ABC (with `name` property defaulting to the concrete class name), per-point ABCs organized by 4-level hierarchy (`BeforeGraphHook`/`AfterGraphHook`/`FinallyGraphHook` graph-level, `StartNodeTurnHook`/`EndNodeTurnHook` node-level, `BeforeTurnHook`/`AfterTurnHook` turn-attempt, `BeforeIterationHook`/`AfterIterationHook`/`BeforeToolExecutionHook`/`AfterToolExecutionHook`/`AfterLLMResponseHook`/`BeforeLLMHook`/`AfterApprovalHook` iteration-level, `FinalizeContentHook`), `HookSpec`, `HookPayload`, `HookErrorPolicy` |
-| `runner.py` | `HookRunner` — sequential dispatch with per-hook timeout, error policy (IGNORE/LOG/ABORT), `dispatch_finalize` for sync chain |
+| `abc.py` | `HookPoint` enum (15 values), `Hook` ABC (with `name` property defaulting to the concrete class name), `ClosableHook` ABC (abstract `aclose()` — the contract for hooks that own process-lifetime resources released at pipeline stop), per-point ABCs organized by 4-level hierarchy (`BeforeGraphHook`/`AfterGraphHook`/`FinallyGraphHook` graph-level, `StartNodeTurnHook`/`EndNodeTurnHook` node-level, `BeforeTurnHook`/`AfterTurnHook` turn-attempt, `BeforeIterationHook`/`AfterIterationHook`/`BeforeToolExecutionHook`/`AfterToolExecutionHook`/`AfterLLMResponseHook`/`BeforeLLMHook`/`AfterApprovalHook` iteration-level, `FinalizeContentHook`), `HookSpec`, `HookPayload`, `HookErrorPolicy` |
+| `runner.py` | `HookRunner` — sequential dispatch with per-hook timeout, error policy (IGNORE/LOG/ABORT), `dispatch_finalize` for sync chain, `aclose()` (gathers `ClosableHook.aclose()` across every registered closable hook) |
 | `notification.py` | Hook notification utilities — notification payloads and dispatch helpers for hook lifecycle events |
 | `__init__.py` | Public API re-exports: `Hook`, `HookRunner`, `HookPoint`, `HookSpec`, `HookErrorPolicy`, `HookPayload`, `FinalizeContentHook` |
 
@@ -20,7 +20,7 @@ Lifecycle extension points — lightweight observation and context injection. Ho
 
 | Directory | Purpose |
 |-----------|---------|
-| `builtin/` | Built-in hook implementations — `logging.py`, `runtime_context.py`, `inbox_flush.py`, `subagent_auto_send.py`, `env_injection.py`, `loop_detection.py`, `deliver_retry.py` (`DeliverRetryHook` — `AfterTurnHook`, sets `CONTINUATION_REQUEST` when the agent stops without delivering; covers both normal stop and max-iteration exits), `current_time.py` (`CurrentTimeInjectionHook` — `StartNodeTurnHook`), `todo_continuation.py` (`TodoContinuationHook` — `AfterTurnHook`), `control_drain.py` (interceptors, not hooks), `experience_review.py`. See `hook/builtin/AGENTS.md`. |
+| `builtin/` | Built-in hook implementations — `logging.py`, `runtime_context.py`, `inbox_flush.py`, `subagent_auto_send.py`, `env_injection.py`, `loop_detection.py`, `deliver_retry.py` (`DeliverRetryHook` — `AfterTurnHook`, sets `CONTINUATION_REQUEST` when the agent stops without delivering; covers both normal stop and max-iteration exits), `current_time.py` (`CurrentTimeInjectionHook` — `StartNodeTurnHook`), `todo_continuation.py` (`TodoContinuationHook` — `AfterTurnHook`), `todo_planning_nudge.py` (`TodoPlanningNudgeHook` — `StartNodeTurnHook` + `BeforeIterationHook`, one-shot per-logical-turn planning reminder roster-dispatched via the `todo` capability), `length_guard.py` (`LengthGuardHook` — `AfterLLMResponseHook` + `AfterTurnHook`, recovers degenerate length/empty endings and fails honestly after 10 nudges), `control_drain.py` (interceptors, not hooks), `experience_review.py`. See `hook/builtin/AGENTS.md`. |
 
 ## Four-Level Hook Hierarchy
 
@@ -119,11 +119,11 @@ Graph-level hooks (`BeforeGraphHook` / `AfterGraphHook` / `FinallyGraphHook`) fi
 
 - **Fresh turn**: 全新 user message，graph 从 START 正常走到 END。
 - **续作**: `AfterTurnNode` 的续作门控检测到 `CONTINUATION_REQUEST`，路由回 BEFORE 开始新一轮 turn attempt。Graph 级 hook 不重复触发，turn-attempt 级和 node 级的 END 重新触发。
-- **审批恢复**: `actual_turn()` 被重新调用（re-entry），BEFORE_GRAPH/AFTER_GRAPH/FINALLY_GRAPH 重复触发。StartNode 检测到 `resume_target` 后直接路由到 TOOL，跳过 START_NODE_TURN。Graph 拓扑天然路由 TOOL→LLM→AFTER，④AFTER_TURN 会触发——这是正确行为，AFTER_TURN 上的 hook（DeliverRetryHook/TodoContinuationHook）都是有状态检查的，触发安全。
+- **审批恢复**: `actual_turn()` 被重新调用（re-entry），BEFORE_GRAPH/AFTER_GRAPH/FINALLY_GRAPH 重复触发。StartNode 检测到 `resume_target` 后直接路由到 TOOL，跳过 START_NODE_TURN。Graph 拓扑天然路由 TOOL→LLM→AFTER，④AFTER_TURN 会触发——这是正确行为，AFTER_TURN 上的 hook（DeliverRetryHook/TodoContinuationHook/LengthGuardHook）都是有状态检查的，触发安全。
 
 ### Hook Inventory
 
-#### Built-in Hooks (13 implemented + 1 reserved)
+#### Built-in Hooks (15 implemented + 1 reserved)
 
 | # | Hook | ABC(s) | HookPoint(s) | Description |
 |---|------|--------|--------------|-------------|
@@ -132,22 +132,23 @@ Graph-level hooks (`BeforeGraphHook` / `AfterGraphHook` / `FinallyGraphHook`) fi
 | 3 | `InboxFlushHook` | `StartNodeTurnHook` + `BeforeIterationHook` | ② start_node_turn + before_iteration | Flushes inbox messages to `ctx.history` at fresh-turn start (moved from graph-level to avoid duplicate flush on resume) |
 | 4 | `CurrentTimeInjectionHook` ⭐ | `StartNodeTurnHook` | ② start_node_turn | Injects second-precision current time (IANA timezone name + weekday) as system-reminder at fresh-turn start; replaces the hour-precision `RuntimeProvider` time line |
 | 5 | `ModelChoiceBindHook` | `StartNodeTurnHook` | ② start_node_turn | Binds per-turn model selection (contextvar + model_info override); moved from graph-level to avoid re-bind on resume |
-| 6 | `TraceCollectorHook` | `BeforeGraphHook` + `BeforeLLMHook` + `AfterLLMResponseHook` + `BeforeToolExecutionHook` + `AfterToolExecutionHook` + `AfterApprovalHook` + `BeforeIterationHook` + `AfterIterationHook` + `FinallyGraphHook` | ① before_graph + ⑦ finally_graph + 6 iteration points | Creates root span at turn start, finalizes at turn end; collects OTel/Langfuse spans at every lifecycle point (9 ABCs — the most multi-inherited hook) |
-| 7 | `DeliverRetryHook` | `AfterTurnHook` | ④ after_turn | Injects a deliver-reminder and sets `CONTINUATION_REQUEST` (only when `turn_attempt < MAX_TURNS`) when the agent stops without calling `deliver`. Reminder is always injected so the agent understands why it stopped, even at the turn budget limit. Independent of other AfterTurnHook continuation sources — no OR/AND coordination. Does not set `CONTINUATION_RENEW_MAX_TURNS` (binary signal, no watchdog renewal). Moved from `AfterLLMResponseHook` to `AfterTurnHook` to cover the max-iteration blind spot |
-| 8 | `TodoContinuationHook` ⭐ | `AfterTurnHook` | ④ after_turn | The primary continuation driver — registered first among AfterTurnHook sources. Injects a system-reminder with the full active (pending + in_progress) todo list, sets `CONTINUATION_REQUEST`, and sets `CONTINUATION_RENEW_MAX_TURNS` (watchdog: authorizes the gate to extend `MAX_TURNS` by 1 when the agent is still making progress). Anti-deadlock: caches sha256 signature of active todo content+status in `state.custom[LAST_CONTINUATION_TODO_SIG]`; skips if unchanged since last check (agent made no progress). Clears the cached signature when no active todos remain. Independent of other hooks — no OR/AND coordination |
+| 6 | `DeliverRetryHook` | `AfterTurnHook` | ④ after_turn | Injects a deliver-reminder and sets `CONTINUATION_REQUEST` (only when `turn_attempt < MAX_TURNS`) when the agent stops without calling `deliver`. Reminder is always injected so the agent understands why it stopped, even at the turn budget limit. Independent of other AfterTurnHook continuation sources — no OR/AND coordination. Does not set `CONTINUATION_RENEW_MAX_TURNS` (binary signal, no watchdog renewal). Moved from `AfterLLMResponseHook` to `AfterTurnHook` to cover the max-iteration blind spot |
+| 7 | `TodoContinuationHook` ⭐ | `AfterTurnHook` | ④ after_turn | The primary continuation driver — registered first among AfterTurnHook sources (factory-declared `priority=-1000`). Injects a system-reminder with the full active (pending + in_progress) todo list, sets `CONTINUATION_REQUEST`, and sets `CONTINUATION_RENEW_MAX_TURNS` (watchdog: authorizes the gate to extend `MAX_TURNS` by 1 when the agent is still making progress). Anti-deadlock: caches sha256 signature of active todo content+status in `state.custom[LAST_CONTINUATION_TODO_SIG]`; skips if unchanged since last check (agent made no progress). Clears the cached signature when no active todos remain. Independent of other hooks — no OR/AND coordination. Roster-dispatched via the `todo` capability (ADR-0047): only agents where `capabilities: {todo: {}}` is effective carry the hook |
+| 8 | `LengthGuardHook` | `AfterLLMResponseHook` + `AfterTurnHook` | AFTER_LLM_RESPONSE + ④ after_turn | Recovers degenerate turn endings (finish_reason=length/stop with empty content and zero tool calls, or length with truncated prose): injects a no-thinking nudge system-reminder and sets `CONTINUATION_REQUEST` + `CONTINUATION_RENEW_MAX_TURNS` so the gate re-enters the ReAct loop past `MAX_TURNS`. Counts consecutive degenerate endings in `state.custom[LENGTH_GUARD_NUDGES]` — reset to 0 by any productive LLM response (content or tool calls). After `MAX_NUDGES=10` consecutive degenerate endings with no progress, mutates the turn's `AgentResult` in place to `StopReason.ERROR` (honest failure instead of silent COMPLETED — the v5 harness gap). Tree-agnostic; a compiler position-default roster entry (default priority, pre-built factory) |
 | 9 | `ExperienceReviewHook` | `AfterGraphHook` | ⑥ after_graph | Spawns background conversation-review agent after graph execution; main agent only |
-| 10 | `SubagentAutoSendHook` | `FinallyGraphHook` | ⑦ finally_graph | On subagent turn completion, writes numbered OUTPUT\_\<n\>.md deliverable and notifies parent via bus |
-| 11 | `TurnOutcomeNotifyHook` | `FinallyGraphHook` | ⑦ finally_graph | Sends user-facing notification on max_iterations/error turn outcomes |
-| 12 | `TrainingDataHook` | `FinallyGraphHook` | ⑦ finally_graph | Records training data at graph teardown |
+| 10 | `SubagentAutoSendHook` | `OutcomeFinallyHook` | ⑦ finally_graph | On subagent turn completion, writes numbered OUTPUT\_\<n\>.md deliverable and notifies parent via bus (suspend leg skipped by template-method base) |
+| 11 | `TurnOutcomeNotifyHook` | `OutcomeFinallyHook` | ⑦ finally_graph | Sends user-facing notification on max_iterations/error turn outcomes |
+| 12 | `TrainingDataHook` | `OutcomeFinallyHook` | ⑦ finally_graph | Records training data at graph teardown (suspend leg skipped by template-method base) |
 | 13 | `CassetteFlushHook` | `FinallyGraphHook` | ⑦ finally_graph | Saves cassette recording at graph teardown |
 | 14 | `CheckpointHook` | `AfterIterationHook` | after_iteration | Captures per-iteration checkpoint snapshots |
+| 15 | `TodoPlanningNudgeHook` ⭐ | `StartNodeTurnHook` + `BeforeIterationHook` | ② start_node_turn + before_iteration | One-shot per-logical-turn reminder to plan with `todo_write` — the behavior-level backstop for the `todo.discipline` "## Task Tracking" prompt section. Arms `custom[TODO_NUDGE_PENDING]` at fresh-turn start ONLY (the retired implementation armed per turn-attempt on `before_turn`, double-nudging within one logical turn; fresh-turn arming is the structural fix). `before_iteration` pops the flag, then: gate failure (`todo_write` unregistered, no store, or ANY existing todo item) settles; `USED`/`SHORT_TURN`/`DUE` verdicts from `scan_tool_usage_in_turn` settle/re-arm/inject-once. LLM-visible only; never touches `CONTINUATION_REQUEST`. Roster-dispatched via the `todo` capability (ADR-0047): only agents where `capabilities: {todo: {}}` is effective carry it; `hooks: [-todo_planning_nudge]` surgically removes it |
 | — | `EndNodeTurnHook` | (reserved) | ⑤ end_node_turn | ABC + dispatch entry exist for future extensibility; no concrete hook inherits it yet (by design) |
 
 ⭐ = newly added by hook-architecture-rebuild.
 
 #### Hook Coordination
 
-Hooks at the same HookPoint fire sorted by `HookSpec.priority` (stable sort — same-priority hooks keep registration order). `TodoContinuationHook` is registered with `priority=-1000` via `register_tree_aware_hooks` (`src/modex_agent/hook/wiring.py`) so it runs first among AfterTurnHook sources. AfterTurnHook continuation sources act **independently** — each checks its own trigger condition, injects its own reminder, and sets flags without consulting other hooks. There is no OR/AND coordination between hooks.
+Hooks at the same HookPoint fire sorted by `HookSpec.priority` (stable sort — same-priority hooks keep registration order). `TodoContinuationHook` carries `priority=-1000` declared on its factory (`TodoContinuationHookFactory` in `plugins/defaults/hooks.py`), so it runs first among AfterTurnHook sources; the assembly core's roster dispatch threads the factory priority into the `HookSpec`. AfterTurnHook continuation sources act **independently** — each checks its own trigger condition, injects its own reminder, and sets flags without consulting other hooks. There is no OR/AND coordination between hooks.
 
 ```
 shared_hooks = [
@@ -155,13 +156,21 @@ shared_hooks = [
     KnowledgeHook(),              # ④ AFTER_TURN — independent, sets REQUEST (no RENEW), reminder always injected
     *_collect_run_hooks(...),
 ]
-# Per-pool — register_tree_aware_hooks(hook_runner, tree_manager):
-#   Called by _wire_main_pipeline (main agent) AND AgentTemplate.materialize (subagent)
-TodoContinuationHook(tree=tree_manager)    # ④ AFTER_TURN — priority=-1000, primary driver
-DeliverRetryHook(tree=tree_manager)        # ④ AFTER_TURN — independent, sets REQUEST (no RENEW)
+# Compiler position-default roster rows (SPEC §3.2, every native agent)
+# — dispatched by the assembly core's roster pass, resolved through the
+# HOOK-slot factories (each derives its per-pool deps from the context
+# chain); `hooks: [-name]` vetoes, a declared `+name` dedups:
+DeliverRetryHook(tree=…)                  # ④ AFTER_TURN — priority 0 (factory-derived tree)
+LengthGuardHook()                            # AFTER_LLM_RESPONSE + ④ AFTER_TURN — priority 0 (pre-built)
+NativeEnvInjectionHook(env_spec_template=…)  # ① BEFORE_GRAPH — factory-derived template
+LoopDetectionHook()                          # BEFORE_ITERATION — priority 0 (pre-built; two-stage guard, ADR-0016 r3)
+# Capability-contributed roster entries (ADR-0047) — dispatched by the
+# same roster pass only on agents where the capability is effective:
+TodoContinuationHook(tree=…)     # ④ AFTER_TURN — priority=-1000 (factory-declared), primary driver
+                                 #   contributed by the `todo` capability
 ```
 
-`TodoContinuationHook` gets `priority=-1000` because it is the only hook that sets `CONTINUATION_RENEW_MAX_TURNS` (watchdog renewal), and its reminder (including the active todo list) should land before other hooks' reminders so the agent sees the todo list first. Both hooks are registered via `register_tree_aware_hooks` — the single convergence function called from both `_wire_main_pipeline` (main agent) and `AgentTemplate.materialize` (subagent). They need `tree_manager` for the tree-aware subtree-active check; `tree_manager` is a per-pool resource created in `factory.create_pool`, not available at workspace-level `shared_hooks` build time. For subagents, the tree-aware check is safe: a subagent's subtree is empty (star topology), so `get_active_subtree_nodes` returns only the subagent itself (len=1), and the hook fires normally. `DeliverRetryHook` is a no-op for subagents (no `deliver` tool — the tool check gates it).
+`TodoContinuationHook` gets `priority=-1000` because it is the primary continuation driver and its reminder (including the active todo list) should land before other hooks' reminders so the agent sees the todo list first. It reaches the runner through the roster: the `todo` capability contributes the `todo_continuation` hook name into the compiled hook roster, and the assembly core resolves it through the HOOK slot like any roster entry (ADR-0047; the retired wiring-function todo branch and the runtime tool-registration gate are gone). `DeliverRetryHook` / `LengthGuardHook` / `NativeEnvInjectionHook` / `LoopDetectionHook` reach the runner the same way — as compiler position-default roster rows (SPEC §3.2 hook rows, ADR-0047 W6): the compiler enters their names into every native agent's hook merge base (`hooks: [-name]` vetoes; a declared `+name` dedups; the bill shows a `position_default` origin), and the HOOK-slot factories derive their per-pool construction deps from the assembly context chain — `DeliverRetryHookFactory` reads the tree from `ctx.pool_runtime.session_tree_manager` (the per-pool resource created in `factory.create_pool`), and `NativeEnvInjectionHookFactory` builds the env template from the pool assembly context. `LoopDetectionHook` (two-stage loop guard, ADR-0016 2026-08-28 revision: advisory reminder at `window_size`=10, controlled exit after `observation_rounds`=2 post-injection LLM decisions, episode state in `custom[LOOP_EPISODE]`) is a pre-built default like `LengthGuardHook` — its former direct construction inside `DefaultAgentFactory.create_agent` (`live_hooks`) is deleted; the roster dispatch is the single registration path. The retired code-wired registration (a shared per-pool wiring function called from both `_wire_main_pipeline` and `AgentTemplate.materialize`) is deleted; the roster dispatch is the single registration path. For subagents, the tree-aware check is safe: a subagent's subtree is empty (star topology), so `get_active_subtree_nodes` returns only the subagent itself (len=1), and the hook fires normally. `DeliverRetryHook` is a no-op for subagents (no `deliver` tool — the tool check gates it). `LengthGuardHook` needs no tree — it acts on per-turn LLM state (`custom[LAST_LLM_FINISH_REASON]` / `custom[LENGTH_GUARD_NUDGES]`) — so its factory is a pre-built default. Two hooks set `CONTINUATION_RENEW_MAX_TURNS` (watchdog renewal): `TodoContinuationHook` and `LengthGuardHook`.
 
 The gate in `AfterTurnNode` consumes two one-shot flags:
 - `CONTINUATION_REQUEST` — any hook wants another turn attempt.
@@ -176,15 +185,39 @@ Default `MAX_TURNS` is 3 (set in `TurnContextBuilder.build_runtime_and_context`)
 | `BEFORE_GRAPH` | `before_graph` | Graph | `actual_turn()` entry, once per call | Env injection, model binding |
 | `AFTER_GRAPH` | `after_graph` | Graph | `actual_turn()` exit (all paths) | Experience review, post-turn logging |
 | `FINALLY_GRAPH` | `finally_graph` | Graph | `actual_turn()` teardown (all paths) | Subagent delivery, cassette flush, training data |
+
+### FINALLY_GRAPH `result=None` Contract
+
+`result=None` (with no `error`) is the **GraphInterrupt approval-suspend
+signature** — the turn has NOT ended; it re-enters `actual_turn()` on resume.
+Terminal legs always dispatch a concrete `AgentResult`.
+
+- **Outcome-dependent hooks** (notifications, deliveries, trace tags — side
+  effects that must fire once per logical turn) MUST inherit
+  `OutcomeFinallyHook` and implement `on_outcome`. The template method skips
+  the suspend leg structurally; a subclass can never see a suspend dispatch.
+  This closes the duplicated-subagent-notification bug class (one logical
+  turn → two envelopes with different `message_id`s → inbox dedup cannot
+  collapse them → parent consumes both).
+- **Cleanup hooks** with correct suspend-leg side effects (idempotent flush,
+  e.g. `CassetteFlushHook`) may keep overriding `finally_graph` directly.
+- `RootSpanHook` dispatches with an `error` variant (crash) and therefore
+  uses the shared predicate `is_suspend_leg(result, error)` from
+  `hook/abc.py` — the single authority for this interpretation.
+- The contract is enforced by
+  `tests/unit/hook/test_finally_graph_suspend_contract.py`: every concrete
+  `FinallyGraphHook` subclass in `src/modex_agent` must be classified there
+  (outcome / cleanup), and outcome hooks are asserted silent on
+  `finally_graph(ctx, None)`.
 | `START_NODE_TURN` | `start_node_turn` | Node | `StartNode` entry (fresh turns only) | Current-time injection, per-turn model binding, inbox flush, runtime context tracking |
 | `END_NODE_TURN` | `end_node_turn` | Node | `EndNode` exit (terminal only) | Post-turn observation |
 | `BEFORE_TURN` | `before_turn` | TurnAttempt | `BeforeTurnNode` entry, per attempt | Turn-attempt initialization |
-| `AFTER_TURN` | `after_turn` | TurnAttempt | `AfterTurnNode` exit, per attempt | Deliver retry, todo continuation |
-| `BEFORE_ITERATION` | `before_iteration` | Iteration | Each ReAct loop iteration | Dynamic tool filtering |
+| `AFTER_TURN` | `after_turn` | TurnAttempt | `AfterTurnNode` exit, per attempt | Deliver retry, todo continuation, length guard |
+| `BEFORE_ITERATION` | `before_iteration` | Iteration | Each ReAct loop iteration | Dynamic tool filtering, loop detection (pre-LLM reminder injection) |
 | `AFTER_ITERATION` | `after_iteration` | Iteration | After each iteration | Restore state, checkpoint |
 | `BEFORE_TOOL_EXECUTION` | `before_tool_execution` | Iteration | Before tool batch | Policy guard, logging |
 | `AFTER_TOOL_EXECUTION` | `after_tool_execution` | Iteration | After tool batch | Result transform, logging |
-| `AFTER_LLM_RESPONSE` | `after_llm_response` | Iteration | After LLM response | Output guard, loop detection |
+| `AFTER_LLM_RESPONSE` | `after_llm_response` | Iteration | After LLM response | Output guard, tracing |
 | `BEFORE_LLM` | `before_llm` | Iteration | Before LLM provider call | Prompt capture, timing |
 | `FINALIZE_CONTENT` | `finalize_content` | Iteration | Before final output (sync) | Content formatting |
 | `AFTER_APPROVAL` | `after_approval` | Iteration | After approval decision applied | Approval timing |
@@ -234,6 +267,17 @@ The only acceptable instance attributes are **immutable configuration** injected
 
 Hooks are only active in "full" mode (when `AgentRuntimeServices` is wired).
 
+### Rule 4: Resource-owning hooks implement ClosableHook
+
+A hook that owns a process-lifetime resource (HTTP client, task set, file
+handle) inherits `ClosableHook` and releases it in `aclose()`. The close path
+is single and converged: `AgentPipeline.stop()` → `HookRunner.aclose()` →
+every registered `ClosableHook.aclose()` (gathered), BEFORE `agent.stop()`
+and after per-session cleanup. Owners never call a hook's `aclose()`
+directly. Reference implementation: `RootSpanHook.aclose()` (drains pending
+score injections, then closes the `L2ScoreInjector` resident client — see
+`trace/AGENTS.md`).
+
 ## For AI Agents
 
 - Hooks are for **observation and context injection** — use Interceptors for execution wrapping.
@@ -244,6 +288,7 @@ Hooks are only active in "full" mode (when `AgentRuntimeServices` is wired).
 - `FinalizeContentHook` + `dispatch_finalize` are retained for synchronous content formatting before final output.
 - There are 15 hook points across 4 levels (graph / node / turn-attempt / iteration); a hook implementation only needs to define the methods it cares about (all are optional).
 - `notification.py` provides utilities for hook lifecycle event notifications.
+- `ClosableHook.aclose()` is the only sanctioned teardown for hook-owned resources; `HookRunner.aclose()` gathers them and `AgentPipeline.stop()` invokes it before `agent.stop()` (Rule 4).
 - **Before writing any hook, re-read Rule 1.** If you find yourself reaching for `self._something[session_id]`, stop — use `ctx.runtime.state.custom` instead.
 
 ## Dependencies

@@ -58,9 +58,27 @@ async def test_invalid_choice_falls_back_to_default(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_absent_choice_falls_back_to_default(tmp_path: Path) -> None:
+async def test_absent_choice_writes_nothing(tmp_path: Path) -> None:
+    """No provider/model keys → no RESOLVED_MODEL (the session's registry
+    entry, if any, survives). The default fallback happens at turn time in
+    ModelChoiceBindHook when the registry has no entry either."""
     stage = ModelChoiceStage(_cfg(tmp_path))
     env = UserInputEnvelope(external_id="u", content="hi", channel="websocket")
+    result = await stage.process(env, _ctx())
+    assert result.should_continue()
+    assert RoutingMeta.RESOLVED_MODEL not in env.metadata
+
+
+@pytest.mark.asyncio
+async def test_absent_choice_leaves_no_resolved_model(tmp_path: Path) -> None:
+    """An envelope with NO model selection (the approval-resume rediapch
+    shape — WebUI approvals POST builds the envelope without provider/model)
+    must NOT write RESOLVED_MODEL: EnqueueStage then skips the registry
+    write, so the session's previous choice survives for the resume turn.
+    Writing the default here would silently switch the resumed turn's
+    model/protocol — the cause of the 400 "reasoning_text must be passed
+    back" (stepfun history replayed to a deepseek endpoint)."""
+    stage = ModelChoiceStage(_cfg(tmp_path))
+    env = UserInputEnvelope(external_id="u", content="", channel="websocket")
     await stage.process(env, _ctx())
-    resolved = env.metadata[RoutingMeta.RESOLVED_MODEL]
-    assert resolved.model.name == "M1"
+    assert RoutingMeta.RESOLVED_MODEL not in env.metadata

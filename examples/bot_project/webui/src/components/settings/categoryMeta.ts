@@ -13,16 +13,22 @@ import type { ComponentType } from "react";
 import {
   MessagesSquare,
   Cpu,
-  Boxes,
   Command,
   Sparkles,
   FileText,
+  ListTree,
   type LucideProps,
 } from "lucide-react";
 import type { MessageKey } from "../../i18n";
 import { TERMS } from "../../i18n/terms";
 
-export type ViewKey = "im" | "model" | "pools" | "mcp" | "skills" | "prompts";
+export type ViewKey =
+  | "im"
+  | "model"
+  | "scope"
+  | "mcp"
+  | "skills"
+  | "prompts";
 
 export interface CategoryMeta {
   icon: ComponentType<LucideProps>;
@@ -45,11 +51,11 @@ export const CATEGORY: Record<ViewKey, CategoryMeta> = {
     titleKey: "settings.models.title",
     subKey: "settings.models.sub",
   },
-  pools: {
-    icon: Boxes,
-    catVar: "var(--color-cat-pools)",
-    titleKey: "settings.pools.title",
-    subKey: "settings.pools.sub",
+  scope: {
+    icon: ListTree,
+    catVar: "var(--color-cat-scope)",
+    titleKey: "settings.scope.title",
+    subKey: "settings.scope.sub",
   },
   mcp: {
     icon: Command,

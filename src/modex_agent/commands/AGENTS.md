@@ -39,7 +39,7 @@ Plain input (no leading `/`, or `/` not at start) is passed through to the agent
 | `/approve` | `ApprovalCommandHandler` | `APPROVAL_RESPONSE` (if pending approval, else `NORMAL_QUEUE`) | `APPROVAL_DECISION` | Approves pending tool call(s) via result field. |
 | `/deny` | `ApprovalCommandHandler` | `APPROVAL_RESPONSE` | `APPROVAL_DECISION` | Denies pending tool call(s) via result field. |
 | `/continue` | `ContinueCommandHandler` | `NORMAL_QUEUE` | `CONTINUE_AGENT` | Continues agent without appending user message. |
-| `/stop` | `ControlCommandHandler` | `BYPASS_QUEUE` | `CONTROL_COMMAND` | Build a `ControlCommand(CANCEL_TURN)` and return it as a result field; `InputAdapter._try_intercept_control` sends it into `InMemoryControlChannel`, where the drain path raises `AgentCancelled` → `AgentResult(stop_reason=CANCELLED)`. Notice: "⏹ Agent turn stopped." |
+| `/stop` | `ControlCommandHandler` | `BYPASS_QUEUE` | `CONTROL_COMMAND` | Build a `ControlCommand(CANCEL_TURN)` and return it as a result field; `InputAdapter._try_intercept_control` sends it into `InMemoryControlChannel`, where the drain path raises `AgentCancelledError` → `AgentResult(stop_reason=CANCELLED)`. Notice: "⏹ Agent turn stopped." |
 
 `/cd`, `/exit`, `/pwd` are listed in `BuiltinCommand` but are **not** handled by
 the `SlashCommandProcessor` — they are intercepted earlier in the IM input
@@ -133,7 +133,7 @@ returns it as the result's `control_command` field. The live consumer is
 activity checks it attaches the running turn's UUID, sends the command into
 `InMemoryControlChannel`, and acks the user. From there
 `drain_control_channel()` (safe points in `LLMNode`/`ToolNode` plus
-`ControlDrainInterceptor` / `LlmCancelInterceptor`) raises `AgentCancelled`,
+`ControlDrainInterceptor` / `LlmCancelInterceptor`) raises `AgentCancelledError`,
 caught in `ReActAgent.run` → `AgentResult(stop_reason=CANCELLED)`. The
 separate busy-input INTERRUPT path (`BusyInputMode.INTERRUPT`) cancels via
 `asyncio.Task.cancel()` directly and does not use the channel.

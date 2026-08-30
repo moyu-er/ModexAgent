@@ -32,6 +32,21 @@ ACTIVE_VIEW_PREFIX = (
     "(mark each in_progress when you start it, completed/cancelled when done):"
 )
 
+#: Finish-line guidance appended to the ``todo_write`` result when a
+#: full-replace write completes the plan (>=1 completed item, none active).
+#: Fires exactly at the natural end-of-work moment, where self-review
+#: anchoring (re-reading your own intent instead of the artifact) is the
+#: known failure mode. Not appended to all-cancelled or genuinely empty
+#: lists (no work finished), nor to ``todo_read`` (a status query is not a
+#: completion event).
+FINISHED_VIEW_SUFFIX = (
+    "All tasks completed. Before reporting done: re-verify each deliverable "
+    "against the task statement (paths, formats, constraints). For "
+    "deliverable files, prefer a fresh-eyes subagent review that decodes "
+    "them from the specification — self-review re-reads its own intent, "
+    "not the artifact."
+)
+
 
 def _active_view(items: list[TodoItem]) -> list[dict[str, str]]:
     """Return the active subset (pending + in_progress) as plain dicts, in order.
@@ -52,6 +67,29 @@ def _active_view_text(items: list[TodoItem]) -> str:
     if not active:
         return "[]"
     return f"{ACTIVE_VIEW_PREFIX}\n{json.dumps(active, ensure_ascii=False)}"
+
+
+def _plan_finished(items: list[TodoItem]) -> bool:
+    """True when a full-replace write ends with finished work: the list is
+    non-empty, nothing is still active, and at least one item completed.
+    All-cancelled or empty lists are not finishes (work was dropped or
+    never tracked), so they carry no finish-line reminder.
+    """
+    return bool(items) and not _active_view(items) and any(
+        t.status is TodoStatus.COMPLETED for t in items
+    )
+
+
+def _write_view_text(items: list[TodoItem]) -> str:
+    """``todo_write``'s result: the active view plus the finish-line reminder
+    when this write completed the plan. ``todo_read`` keeps the bare active
+    view — reading a finished list is a status query, not the completion
+    event the reminder addresses.
+    """
+    base = _active_view_text(items)
+    if _plan_finished(items):
+        return f"{base}\n{FINISHED_VIEW_SUFFIX}"
+    return base
 
 
 def _resolve_session_id() -> str | None:
@@ -106,6 +144,8 @@ class TodoWriteTool(Tool):
             "## When to use\n"
             "- The task requires 3+ distinct steps or actions.\n"
             "- The work is non-trivial and benefits from planning.\n"
+            "- You are mid-task and more work remains than expected — "
+            "start tracking now (done steps as `completed`).\n"
             "- The user provides multiple tasks or explicitly asks for a "
             "todo list.\n"
             "\n"
@@ -120,7 +160,14 @@ class TodoWriteTool(Tool):
             "- `cancelled` — no longer needed.\n"
             "\n"
             "## Rules\n"
-            "- Create the full list as `pending` before starting any work.\n"
+            "- Prefer creating the full list as `pending` before starting "
+            "any work; if already underway, snapshot progress (done steps "
+            "as `completed`) and plan the remainder.\n"
+            "- End multi-step plans with an explicit final verification "
+            "step: re-check every deliverable against the task statement "
+            "itself (paths, names, formats, constraints) — not against "
+            "memory. For high-stakes deliverables, make that step a "
+            "fresh-eyes subagent review instead of self-review.\n"
             "- Mark `completed` only after the work is actually done, "
             "including verification. Never based on intent.\n"
             "- Keep exactly one `in_progress` while work remains.\n"
@@ -137,6 +184,8 @@ class TodoWriteTool(Tool):
             "verification\n"
             '- "Rename getCwd -> getCurrentWorkingDirectory across the repo" '
             "-> 15 occurrences in 8 files\n"
+            '- Mid-task: "3 more files need the same fix" -> start '
+            "tracking now, first items marked `completed`\n"
             "Skip it:\n"
             '- "How do I print Hello World in Python?" -> informational\n'
             '- "Add a comment to calculateTotal" -> single edit\n'
@@ -174,7 +223,7 @@ class TodoWriteTool(Tool):
         if err is not None:
             return f"Error: {err}"
         await self._store.save(session_id, items)
-        return _active_view_text(items)
+        return _write_view_text(items)
 
 
 class TodoReadTool(Tool):

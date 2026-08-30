@@ -1,62 +1,93 @@
-"""LoopDetectionHook — detect ReAct loops and force a controlled exit.
+"""LoopDetectionHook — two-stage loop guard: advisory reminder, then controlled exit.
 
-An ``AfterLLMResponseHook``. After each complete LLM response it scans the
-recent assistant messages of the current turn (ignoring ``tool`` messages;
-a ``user`` message ends the window — it starts a new turn). A loop is
-declared only when the last ``window_size`` consecutive assistant steps
-repeat **both** signals together: near-identical content (similarity ≥
-threshold) **and** the same tool(s) with identical arguments. Content-only
-or tool-only repetition does not qualify — the conjunction cuts false
-positives from legitimate repeated steps (confirmations, iterative
-probing). On a hit it raises
-:class:`~modex_agent.control.exceptions.LoopDetectedError`.
+A ``BeforeIterationHook``. Before each LLM call it scans session history
+(backwards, stopping at the first ``user`` message or after ``scan_cap``
+rounds) for a trailing run of assistant rounds that repeat an identical
+tool-call batch — same tool(s)
+with the same canonical arguments, ignoring call ids and order, matched
+together with the per-round call count so duplicate batches
+(``[read/a, read/a]``) differ from single calls (``[read/a]``).
 
-Stateless: every invocation re-reads history and decides independently.
-Routing (main agent → user via emit_complete; subagent → parent via
-SubagentAutoSendHook) is handled by ``comm_kind`` + existing hooks — this
-hook is unaware of main vs subagent.
+Everything except a pure ``user`` message is transparent to the scan: tool
+results, injected system-reminders (including this hook's own), agent
+messages, compaction markers, and tool-less assistant texts are skipped,
+never boundaries. Repetition therefore counts across them — and across
+subagent runs, whose dispatch notifications are system-reminders, giving
+cross-run loop detection for free (the trailing run derives from persisted
+history, not per-turn memory).
+
+The scan budget is counted in rounds, never messages (transparent
+messages interleave freely without consuming it); the cap is
+``2 * window_size + 3``, derived — not configurable. It bounds the
+no-user-boundary case: a compacted history may have no ``user`` message
+at all. When the true trailing run exceeds the cap, the counted value
+pins there — texts then report a lower bound ("at least N") and the
+injection anchor clamps to ``scan_cap - observation_rounds`` to keep the
+exit text arithmetic-coherent.
+
+Stage 1 — soft: when the trailing run reaches ``window_size`` (default 10)
+rounds, a ``<system-reminder>`` naming the repeated call and the round
+count is appended to history before the request is built, so the very
+next LLM call sees it and can change approach.
+
+Stage 2 — hard: the exit counts post-injection LLM decision checks
+(episode ``checks``), not absolute run growth. While the agent keeps
+repeating, each check is preceded by exactly one new matching round, so
+checks grow in lockstep with the run — the normal-case timeline equals
+"observation_rounds more rounds". Keyed on checks rather than on
+``rounds >= anchor + observation`` because a count pinned at the cap
+never grows: an absolute-growth exit would be forever unreachable under
+saturation (one reminder, then silent observation forever — the
+livelock). After ``observation_rounds`` (default 2) checks with the
+reminder visible and unheeded, raise
+:class:`~modex_agent.control.exceptions.LoopDetectedError` with a
+plain-text, user-facing explanation. The existing ``AgentControlError``
+exit path renders it as a LOOP_DETECTED ``AgentResult`` (main agent → user
+via ``emit_complete``; subagent → parent via ``SubagentAutoSendHook``).
+
+Interaction with ``ToolCallDeduplicator`` (ToolNode streak guard): the
+deduplicator escalates on a single repeated key per consecutive tool step
+(remind at streak 3/5, skip at 8, stop at 12). This hook's terminal exit
+fires on round ``window_size + observation_rounds + 1`` = 13 by default —
+at round 13's ``before_iteration``, i.e. before that round's LLM call and
+ToolNode — so the LOOP_DETECTED exit wins the race against the
+deduplicator's round-13 streak stop and the user gets the explanatory
+text instead of a bare CANCELLED. The two detectors have different
+surfaces (batch identity vs per-key streak), so both stay live.
+
+Per-turn episode state — the identity that was reminded, the (clamped)
+run length at injection, and how many checks have passed since — lives in
+``state.custom[TurnCustomKey.LOOP_EPISODE]`` as a JSON-safe dict; the hook
+instance stays stateless (hook/AGENTS.md Rule 1). A run that resets below
+the window (user steer, broken loop) clears the episode: resuming the
+same loop afterwards earns a fresh reminder cycle, never a silent exit.
 
 History stores assistant ``tool_calls`` in OpenAI dict format
 (``{"id","type":"function","function":{"name","arguments": <json str>}}``);
-the in-flight ``LLMResponse.tool_calls`` are ``ToolCall`` dataclasses. The
-helpers here normalize both.
+in-flight ``ToolCall`` dataclasses appear the same way after being appended.
+The helpers here normalize both.
 """
+
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
-from dataclasses import dataclass
-from difflib import SequenceMatcher
+from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.agents.react.state import get_react_state
 from modex_agent.control.exceptions import LoopDetectedError
-from modex_agent.core.constants import FinishReason
-from modex_agent.hook.abc import AfterLLMResponseHook
-from modex_agent.utils.xml import xml_text
+from modex_agent.core.message_utils import wrap_system_reminder
+from modex_agent.core.types import MessageRole
+from modex_agent.hook.abc import BeforeIterationHook
+from modex_agent.runtime.enums import TurnCustomKey
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.message import ChatMessage
-    from modex_agent.core.types import LLMResponse, ToolCall
+    from modex_agent.core.types import ToolCall
 
 
 _TRUNCATE = 500
-_SIMILARITY_SAMPLE_LIMIT = 500
-
-
-def _similarity(a: str, b: str) -> float:
-    """SequenceMatcher ratio between two raw strings.
-
-    Input is truncated to ``_SIMILARITY_SAMPLE_LIMIT`` before comparison to
-    bound ``SequenceMatcher`` cost on long outputs.
-    """
-    na = (a or "")[:_SIMILARITY_SAMPLE_LIMIT]
-    nb = (b or "")[:_SIMILARITY_SAMPLE_LIMIT]
-    if not na and not nb:
-        return 1.0
-    if not na or not nb:
-        return 0.0
-    return SequenceMatcher(None, na, nb).ratio()
 
 
 def _canonical_args(arguments: Any) -> str:
@@ -112,176 +143,213 @@ def _tool_calls_count(tool_calls: list[Any] | None) -> int:
     return sum(1 for _ in _extract_tool_pairs(tool_calls))
 
 
-@dataclass(frozen=True)
-class _AssistantView:
-    """One assistant step as seen by loop detection."""
+def _round_identity(msg: ChatMessage) -> tuple[frozenset[tuple[str, str]], int] | None:
+    """Tool-call identity of one assistant round, or ``None`` if tool-less.
 
-    content: str  # raw content (may be "")
-    tool_fp: frozenset[tuple[str, str]]  # tool-call fingerprint; empty if no tools
-    tool_count: int  # number of tool calls (distinct from fingerprint size)
-
-
-def _view_from_message(msg: ChatMessage) -> _AssistantView:
-    content = msg.content
-    if isinstance(content, list):  # multimodal content blocks
-        content = " ".join(
-            str(b.get("text", "")) for b in content if isinstance(b, dict)
-        )
-    tcs = msg.tool_calls
-    return _AssistantView(
-        content=content or "",
-        tool_fp=_tool_calls_fingerprint(tcs),
-        tool_count=_tool_calls_count(tcs),
-    )
-
-
-def _view_from_response(response: LLMResponse) -> _AssistantView:
-    return _AssistantView(
-        content=response.content or "",
-        tool_fp=_tool_calls_fingerprint(response.tool_calls),
-        tool_count=_tool_calls_count(response.tool_calls),
-    )
-
-
-def _collect_recent_assistants(
-    history_messages: list[ChatMessage],
-    current_response: LLMResponse,
-) -> list[_AssistantView]:
-    """Trailing run of consecutive tool-bearing assistant views of the current
-    turn, oldest→newest, ending with the in-flight response.
-
-    Scans history from the end, skipping ``tool`` messages. The scan stops at
-    the first ``user`` message (which starts a previous turn) **and** at the
-    first assistant step without tool calls — such a step cannot be part of a
-    tool-repeating window, so it ends the run just like a user boundary. The
-    just-returned response is appended as the final view (it is not yet in
-    history when ``after_llm_response`` runs — see ``nodes/llm.py``).
+    The identity is the order-independent ``(name, canonical_args)`` batch
+    fingerprint together with the per-round call count — the count catches
+    duplicate batches the set-based fingerprint alone cannot distinguish.
+    Rounds with no (valid) tool calls are ``None``: they cannot be part of
+    a tool-repeating run.
     """
-    views: list[_AssistantView] = []
-    for msg in reversed(history_messages):
-        role = msg.role
-        if role == "tool":
-            continue
-        if role == "user":
+    fp = _tool_calls_fingerprint(msg.tool_calls)
+    if not fp:
+        return None
+    return fp, _tool_calls_count(msg.tool_calls)
+
+
+def _trailing_repeat_run(
+    messages: Sequence[ChatMessage],
+    scan_cap: int | None = None,
+) -> tuple[tuple[frozenset[tuple[str, str]], int], int] | None:
+    """Trailing run of assistant rounds repeating one identical tool batch.
+
+    Scans backwards and returns ``((fingerprint, count), rounds)`` — the
+    identity of the trailing run and how many consecutive rounds repeat it.
+    ``None`` when the history ends without any tool-bearing assistant round.
+
+    Only a ``user`` message stops the scan. Tool results, system-reminders
+    (framework-injected, including this hook's own reminders), agent
+    messages, compaction markers, and tool-less assistant texts are
+    transparent — skipped, never boundaries — so an agent that pauses to
+    comment (or is nudged mid-loop) and resumes the same call keeps
+    counting. The run ends at the first round whose identity differs from
+    the trailing identity.
+
+    ``scan_cap`` bounds the scan in rounds: counting stops once ``rounds``
+    reaches it, so a returned ``rounds == scan_cap`` means the true run is
+    *at least* that long. Transparent messages never consume the budget.
+    ``None`` scans unbounded.
+    """
+    identity: tuple[frozenset[tuple[str, str]], int] | None = None
+    rounds = 0
+    for msg in reversed(messages):
+        if msg.role == MessageRole.USER:
             break
-        if role == "assistant":
-            view = _view_from_message(msg)
-            if not view.tool_fp:
-                break  # tool-less assistant ends the tool-repeating run
-            views.append(view)
-    views.reverse()
-    views.append(_view_from_response(current_response))
-    return views
+        if msg.role != MessageRole.ASSISTANT:
+            continue
+        round_identity = _round_identity(msg)
+        if round_identity is None:
+            continue
+        if identity is None:
+            identity = round_identity
+            rounds = 1
+        elif round_identity == identity:
+            rounds += 1
+        else:
+            break
+        if scan_cap is not None and rounds >= scan_cap:
+            break
+    if identity is None:
+        return None
+    return identity, rounds
 
 
-def _build_loop_xml(
-    tool_names: str,
-    args_preview: str,
-    last_output: str,
-    window_size: int,
-) -> str:
-    """Combined loop notice: the agent repeated both the same tool call(s)
-    with identical arguments and near-identical text."""
+def _identity_preview(identity: tuple[frozenset[tuple[str, str]], int]) -> str:
+    """Human-readable one-line preview of a round identity.
+
+    ``read({"path": "/a"}); ls({"path": "/b"})`` — calls sorted by
+    ``(name, args)``, truncated to ``_TRUNCATE``. A per-round duplicate
+    batch (more calls than distinct fingerprints) gets a ``×N`` suffix.
+    Used both as the episode key (compared for identity across iterations)
+    and inside the reminder / exit texts.
+    """
+    fp, count = identity
+    calls = "; ".join(f"{name}({args})" for name, args in sorted(fp))
+    suffix = f" ×{count}" if count > len(fp) else ""
+    return f"{calls}{suffix}"[:_TRUNCATE]
+
+
+def _build_reminder_text(preview: str, rounds: int, *, at_least: bool = False) -> str:
+    """Advisory reminder injected as a system-reminder (model-facing).
+
+    ``at_least`` marks a scan-cap-pinned count: the true run is ≥ *rounds*.
+    """
+    rounds_text = f"at least {rounds}" if at_least else str(rounds)
     return (
-        "<loop_detected type=\"tool\">\n"
-        f"The agent repeated the same tool call(s) with identical arguments "
-        f"and near-identical text {window_size} times in a row and appears "
-        "stuck in a loop.\n"
-        f"Repeated tool(s): {tool_names}\n"
-        f"Last repeated arguments (truncated to {_TRUNCATE} chars per call):\n"
-        f"<repeated_calls>\n{xml_text(args_preview)}\n</repeated_calls>\n"
-        f"Last output (truncated to {_TRUNCATE} chars):\n"
-        f"<last_output>\n{xml_text(last_output)}\n</last_output>\n\n"
-        "How to break out:\n"
-        "- Point the agent to different inputs (paths, queries, parameters).\n"
-        "- Rephrase your request with more specific instructions or constraints.\n"
-        "- Ask the agent to reconsider whether this tool can make progress.\n"
-        "- If the task is done, tell the agent to stop.\n"
-        "</loop_detected>"
+        "Repeated tool call detected:\n"
+        f"- tool call(s): {preview}\n"
+        f"- consecutive rounds: {rounds_text}\n\n"
+        "The repeated calls are not making progress — this exact call was "
+        "already executed and its result will not change. Do not repeat it "
+        "again. Inspect the latest result and choose a different action, "
+        "different arguments, or finish the task if enough evidence has "
+        "been gathered."
     )
 
 
-def _detect_loop(
-    views: list[_AssistantView], window_size: int, threshold: float
-) -> bool:
-    """True if the last ``window_size`` consecutive assistant views each carry
-    an identical, non-empty tool fingerprint **and** pairwise-similar,
-    non-empty content.
+def _build_exit_text(
+    preview: str,
+    rounds: int,
+    reminded_at: int,
+    *,
+    at_least: bool = False,
+) -> str:
+    """Plain-text, user-facing explanation for the forced exit (no XML).
 
-    The two signals must repeat together on the *same* continuous window.
-    Content-only or tool-only repetition does not qualify.
+    ``at_least`` marks a scan-cap-pinned count: the true run is ≥ *rounds*.
     """
-    if len(views) < window_size:
-        return False
-    window = views[-window_size:]
-    first_fp = window[0].tool_fp
-    if not first_fp:
-        return False
-    first_count = window[0].tool_count
-    for v in window:
-        if not v.content.strip():
-            return False
-        # Cheap count pre-check: different numbers of tool calls can't match,
-        # and this also catches duplicates the (set-based) fingerprint ignores.
-        if v.tool_count != first_count:
-            return False
-        if v.tool_fp != first_fp:
-            return False
-    for i in range(len(window)):
-        for j in range(i + 1, len(window)):
-            if _similarity(window[i].content, window[j].content) < threshold:
-                return False
-    return True
+    rounds_text = f"at least {rounds}" if at_least else str(rounds)
+    continued = rounds - reminded_at
+    return (
+        "Loop detected — turn force-ended.\n\n"
+        f"The agent repeated the same tool call(s) for {rounds_text} "
+        "consecutive rounds:\n"
+        f"- tool call(s): {preview}\n\n"
+        f"A system reminder was injected after round {reminded_at} telling "
+        "the agent to change approach, but the repetition continued for "
+        f"{continued} more rounds. The turn was stopped to prevent further "
+        "wasted calls.\n\n"
+        "Suggestions: point the agent to different inputs (paths, queries, "
+        "parameters), rephrase the request with more specific instructions, "
+        "or ask whether this tool can still make progress."
+    )
 
 
-class LoopDetectionHook(AfterLLMResponseHook):
-    """Detect ReAct loops after each complete LLM response; force-exit the turn.
+class LoopDetectionHook(BeforeIterationHook):
+    """Two-stage ReAct loop guard: advisory reminder, then controlled exit.
 
-    Stateless. A loop is declared only when the last ``window_size``
-    consecutive assistant steps repeat both signals together: near-identical
-    content (similarity ≥ threshold) **and** the same tool fingerprint.
-    A hit raises ``LoopDetectedError``.
+    The trailing-run signal is stateless (re-derived from history on every
+    iteration, scan bounded to ``2 * window_size + 3`` rounds); only the
+    reminder episode — which identity was reminded, the clamped run length
+    at injection, and the checks since — is per-turn state in
+    ``state.custom[TurnCustomKey.LOOP_EPISODE]``. A changed trailing
+    identity (different tool, different arguments, or a different batch
+    shape) clears the episode unconditionally: breaking out of the reminded
+    loop is always forgiven, and a new loop earns a fresh reminder plus its
+    own observation window before any exit.
     """
 
     def __init__(
         self,
         *,
-        window_size: int = 5,
-        content_similarity_threshold: float = 0.85,
+        window_size: int = 10,
+        observation_rounds: int = 2,
         enabled: bool = True,
     ) -> None:
-        self._window_size = max(2, min(int(window_size), 8))
-        self._threshold = float(content_similarity_threshold)
+        self._window_size = max(2, int(window_size))
+        self._observation_rounds = max(0, int(observation_rounds))
+        self._scan_cap = 2 * self._window_size + 3
         self._enabled = bool(enabled)
 
     @property
     def name(self) -> str:
         return "loop_detection"
 
-    async def after_llm_response(
-        self, ctx: AgentContext, response: LLMResponse
-    ) -> None:
+    async def before_iteration(self, ctx: AgentContext) -> None:
         if not self._enabled:
             return
-        # Safety gate: never act on an LLM error — the turn ends anyway.
-        if response.finish_reason == FinishReason.ERROR.value:
+        state = get_react_state(ctx)
+        if state is None:
             return
-        # AND detection requires tool calls — a tool-less response can never
-        # start a tool-repeating window, so there is nothing to detect.
-        if not response.tool_calls:
+        messages = await ctx.history.to_list()
+        trailing = _trailing_repeat_run(messages, self._scan_cap)
+        if trailing is None:
+            state.custom.pop(TurnCustomKey.LOOP_EPISODE, None)
+            return
+        identity, rounds = trailing
+        preview = _identity_preview(identity)
+
+        episode = state.custom.get(TurnCustomKey.LOOP_EPISODE)
+        if episode is not None and episode.get("fp") != preview:
+            episode = None
+            state.custom.pop(TurnCustomKey.LOOP_EPISODE, None)
+
+        if rounds < self._window_size:
+            # The run reset below the window (user steer, broken loop) —
+            # forgive the episode; a resumed loop re-earns a fresh reminder.
+            state.custom.pop(TurnCustomKey.LOOP_EPISODE, None)
             return
 
-        history_messages = await ctx.history.to_list()
-        views = _collect_recent_assistants(list(history_messages), response)
+        at_least = rounds >= self._scan_cap
 
-        if _detect_loop(views, self._window_size, self._threshold):
-            fp = views[-1].tool_fp
-            names = ", ".join(sorted(name for name, _ in fp)) or "(unknown)"
-            args_preview = "; ".join(f"{n}={a}" for n, a in sorted(fp))[:_TRUNCATE]
-            last_output = views[-1].content[:_TRUNCATE]
-            raise LoopDetectedError(
-                user_content=_build_loop_xml(
-                    names, args_preview, last_output, self._window_size
-                ),
-                loop_type="tool",
+        if episode is None:
+            anchor = min(rounds, self._scan_cap - self._observation_rounds)
+            await ctx.history.append(
+                {
+                    "role": str(MessageRole.SYSTEM_REMINDER),
+                    "content": wrap_system_reminder(
+                        _build_reminder_text(preview, rounds, at_least=at_least)
+                    ),
+                }
             )
+            state.custom[TurnCustomKey.LOOP_EPISODE] = {
+                "fp": preview,
+                "rounds": anchor,
+                "checks": 0,
+            }
+            return
+
+        checks = int(episode.get("checks", 0)) + 1
+        if checks < self._observation_rounds:
+            episode["checks"] = checks
+            return
+        raise LoopDetectedError(
+            user_content=_build_exit_text(
+                preview,
+                rounds,
+                int(episode.get("rounds", self._window_size)),
+                at_least=at_least,
+            ),
+            loop_type="tool",
+        )

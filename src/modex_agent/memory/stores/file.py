@@ -149,7 +149,7 @@ class FileStorage:
             scope_dir = self._scope_dir(scope_key)
             path = self._scope_metadata_path(scope_dir)
             now = now_ms()
-            created_at = now
+            created_at: float = now
             if path.exists():
                 existing = self._read_scope_record(scope_dir)
                 if existing and existing.created_at is not None:

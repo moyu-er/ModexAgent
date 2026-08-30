@@ -12,7 +12,8 @@ Manages the pruned memory catalog — records of cleaned-up session messages tha
 | `__init__.py` | Package init |
 | `manager.py` | `PrunedManager` — orchestrates writing pruned batches, building the index, eviction, and generating injection XML. Shared by cleanup and injection subsystems. Per-session `FilePrunedStorage` created lazily |
 | `models.py` | `PrunedIndexEntry` — frozen dataclass for a single pruned batch. Fields: id, cleanup_time, message_count, content_filename, optional time range and topic. Serialized as JSONL in `index.jsonl` |
-| `storage.py` | `PrunedStorage` ABC + `FilePrunedStorage` — abstract interface and concrete file-based implementation for persisting pruned message batches (JSONL) and their index |
+| `render.py` | `render_transcript()` — pure-function renderer: message dicts → markdown transcript (three-line header + numbered `## [NNN]` message blocks). No IO, no COMPACT filtering — `PrunedManager.write_pruned` owns that invariant |
+| `storage.py` | `PrunedStorage` ABC + `FilePrunedStorage` — abstract interface and concrete file-based implementation for persisting markdown transcripts (`.md`, via `write_transcript`) and their JSONL index |
 
 ## For AI Agents
 
@@ -22,13 +23,14 @@ Manages the pruned memory catalog — records of cleaned-up session messages tha
 - Injection priority: 85 (between core memory=100 and archive=70)
 - The XML catalog points agents to per-session `pruned/{session_id}/` directories for reading full pruned content
 - Storage is session-scoped: one `PrunedManager` instance serves all sessions under a `pruned_base_dir`
+- COMPACT exclusion invariant: `write_pruned` drops COMPACT-role messages at its entry (pruned content = original conversation memory only); an all-COMPACT batch writes no file and no index entry
+- `grep "^## \[" <file>` on a transcript yields a line-numbered message table-of-contents — transcripts are information-dense, read narrow windows instead of whole files
 
 ### Common Patterns
 - `PrunedManager.write_pruned(messages)` — called from `cleanup_session()` after messages are pruned
 - `PrunedManager.get_injection_xml(session_id)` — called during injection to generate pruned catalog XML
-- `PrunedManager.list_entries(session_id)` — list all available pruned batches for a session
 - Index entries are append-only; eviction removes old entries and their associated files
-- `FilePrunedStorage` stores messages as JSONL files and index as `index.jsonl`
+- `FilePrunedStorage.write_transcript` writes rendered markdown transcripts (`.md`); the index stays JSONL as `index.jsonl`
 
 ## Dependencies
 

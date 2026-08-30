@@ -173,7 +173,9 @@ export async function runGraph(
 }
 
 /** Structured topology (§11.3) — compiler-validated nodes/edges/scheduler.
- *  Optional optimization; parseGraphSpecYaml remains the fallback. */
+ *  The canonical source for read-only rendering (list thumbnails, spec detail
+ *  canvas, instance topology); the client-side YAML parser remains only for
+ *  editor draft validation. */
 export async function getTopology(
   workspaceId: string,
   specId: string,

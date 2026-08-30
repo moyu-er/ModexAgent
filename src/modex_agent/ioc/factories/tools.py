@@ -31,6 +31,12 @@ async def connect_mcp(
             the registry owns connection lifecycle. When ``None`` (default),
             today's private-manager path runs byte-for-byte unchanged.
 
+            Assembly-chain contract (ticket 04): callers holding the context
+            chain reach this handle at the WORKSPACE layer
+            (``WorkspaceContext.mcp_registry``) and pass it here — this
+            factory stays decoupled from the chain types; the chain makes
+            the handle reachable, it does not change how connections open.
+
     Returns:
         MCPToolAdapter or None if no MCP servers configured.
     """

@@ -9,7 +9,6 @@ from modex_agent.multi_agent.communication.result import AgentSendResult, format
 
 
 def test_parent_reply_ack_has_anti_redundancy() -> None:
-    """Parent reply ack carries automatic_notification + next_step."""
     result = AgentSendResult(
         target_agent="main",
         target_kind=AgentCommKind.NORMAL,
@@ -21,14 +20,16 @@ def test_parent_reply_ack_has_anti_redundancy() -> None:
 
     ack = format_send_ack(result)
 
-    assert "Reply delivered to 'main'." in ack
-    assert "automatic_notification: true" in ack
-    assert "next_step:" in ack
-    assert "Do NOT call send_to_agent" in ack
+    assert ack == (
+        "Reply delivered to 'main'. The parent agent will process\n"
+        "your reply asynchronously — do not call send_to_agent again for this\n"
+        "reply; end your turn or continue with non-overlapping work."
+    )
+    assert "non-overlapping" in ack
+    assert "do not call send_to_agent again" in ack
 
 
 def test_peer_ack_has_anti_redundancy() -> None:
-    """Peer ack carries next_step + clarifies replies are NOT automatic."""
     result = AgentSendResult(
         target_agent="peer",
         target_kind=AgentCommKind.NORMAL,
@@ -40,12 +41,15 @@ def test_peer_ack_has_anti_redundancy() -> None:
 
     ack = format_send_ack(result)
 
-    assert "Message sent to peer agent 'peer'." in ack
-    assert "next_step:" in ack
-    assert "not automatic" in ack
-    assert "Do NOT call task again" in ack
-    # Peers do NOT auto-notify (ADR-0019 deferred #1)
-    assert "automatic_notification: true" not in ack
+    assert ack == (
+        "Message sent to peer agent 'peer'. This tool is a\n"
+        "communication channel — the peer receives your message, but whether\n"
+        "it replies is up to it. Continue with your own work or end your\n"
+        "turn; do not call task again for this agent."
+    )
+    assert "communication channel" in ack
+    assert "whether it replies is up to it" in ack.replace("\n", " ")
+    assert "do not call task again" in ack
 
 
 @pytest.mark.parametrize(
@@ -122,14 +126,23 @@ def test_subagent_ack_omits_implementation_details() -> None:
 
     ack = format_send_ack(result)
 
+    assert ack == (
+        "Task dispatched to 'worker' — running in background.\n\n"
+        "invocation_id: task-1\n\n"
+        "The result will be delivered to you automatically as a notification\n"
+        "when the subagent finishes. The preferred action is to end your turn\n"
+        "and wait for it; if you continue, choose work that does not overlap\n"
+        "with the subagent's task.\n\n"
+        "Avoid calling task with this invocation_id again until the\n"
+        "notification arrives — the subagent is still working on the current\n"
+        "task."
+    )
     # D1: no "modexctl send"
     assert "modexctl send" not in ack
     # D2: no "inbox notification"
     assert "inbox notification" not in ack
-    # D3: identifies automatic notification and the next step
-    assert "automatic_notification: true" in ack
-    assert "next_step:" in ack
     assert "notification" in ack  # the result arrives as a notification
+    assert "Avoid calling task with this invocation_id" in ack
     # D4: contains invocation_id
     assert result.invocation_id is not None
     assert result.invocation_id in ack
@@ -138,6 +151,29 @@ def test_subagent_ack_omits_implementation_details() -> None:
     # No legacy wording
     assert "tail the Trace" not in ack
     assert "Output:" not in ack
+
+
+def test_subagent_ack_without_invocation_id_omits_id_spacing() -> None:
+    result = AgentSendResult(
+        target_agent="worker",
+        target_kind=AgentCommKind.SUBAGENT,
+        session_id="task-1.worker",
+        invocation_id=None,
+        created_new_task=True,
+    )
+
+    ack = format_send_ack(result)
+
+    assert ack == (
+        "Task dispatched to 'worker' — running in background.\n\n"
+        "The result will be delivered to you automatically as a notification\n"
+        "when the subagent finishes. The preferred action is to end your turn\n"
+        "and wait for it; if you continue, choose work that does not overlap\n"
+        "with the subagent's task.\n\n"
+        "Avoid calling task with this invocation_id again until the\n"
+        "notification arrives — the subagent is still working on the current\n"
+        "task."
+    )
 
 
 def test_native_and_external_subagent_acks_are_identical() -> None:
@@ -160,3 +196,38 @@ def test_native_and_external_subagent_acks_are_identical() -> None:
     )
 
     assert format_send_ack(native) == format_send_ack(external)
+
+
+def test_ack_shapes_omit_legacy_fields_and_separate_subagent_avoidance() -> None:
+    results = (
+        AgentSendResult(
+            target_agent="peer",
+            target_kind=AgentCommKind.NORMAL,
+            session_id="conv-1.peer",
+            invocation_id=None,
+            created_new_task=False,
+            is_peer_send=True,
+        ),
+        AgentSendResult(
+            target_agent="main",
+            target_kind=AgentCommKind.NORMAL,
+            session_id="conv-1.main",
+            invocation_id=None,
+            created_new_task=False,
+            is_peer_send=False,
+        ),
+        AgentSendResult(
+            target_agent="worker",
+            target_kind=AgentCommKind.SUBAGENT,
+            session_id="task-1.worker",
+            invocation_id="task-1",
+            created_new_task=True,
+        ),
+    )
+
+    peer_ack, parent_reply_ack, subagent_ack = tuple(map(format_send_ack, results))
+
+    for ack in (peer_ack, parent_reply_ack, subagent_ack):
+        assert "automatic_notification" not in ack
+        assert "next_step" not in ack
+    assert "\n\nAvoid calling task with this invocation_id" in subagent_ack

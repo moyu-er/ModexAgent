@@ -1,23 +1,27 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent, within, act } from "@testing-library/react";
 import { GraphSpecDetail } from "./GraphSpecDetail";
 import {
   getInstance,
   getSpec,
+  getTopology,
   listInstances,
   runGraph,
   type GraphInstance,
   type GraphSpecResponse,
+  type GraphTopology,
 } from "../../lib/graphsApi";
 
 vi.mock("../../lib/graphsApi", () => ({
   getSpec: vi.fn(),
+  getTopology: vi.fn(),
   listInstances: vi.fn(),
   getInstance: vi.fn(),
   runGraph: vi.fn(),
 }));
 
 const mockGetSpec = vi.mocked(getSpec);
+const mockGetTopology = vi.mocked(getTopology);
 const mockListInstances = vi.mocked(listInstances);
 const mockGetInstance = vi.mocked(getInstance);
 const mockRunGraph = vi.mocked(runGraph);
@@ -45,6 +49,26 @@ const SPEC_RESPONSE: GraphSpecResponse = {
   name: "simple",
   version: "1.0",
   yaml_content: SPEC_YAML,
+};
+
+const TOPOLOGY_DTO: GraphTopology = {
+  spec_id: "42",
+  name: "simple",
+  scheduler: "linear",
+  default_trigger: "on_all_preds",
+  nodes: [
+    {
+      name: "worker",
+      node_type: "agent",
+      config: { agent: "worker", pool: "default" },
+      trigger: null,
+    },
+  ],
+  edges: [
+    { source: "__start__", target: "worker" },
+    { source: "worker", target: "__end__" },
+  ],
+  entry_node: "__start__",
 };
 
 const INSTANCE_LIST_ITEM: GraphInstance = {
@@ -105,6 +129,10 @@ async function openModal(): Promise<HTMLElement> {
   });
   return screen.getByRole("dialog");
 }
+
+beforeEach(() => {
+  mockGetTopology.mockResolvedValue(TOPOLOGY_DTO);
+});
 
 afterEach(() => {
   vi.restoreAllMocks();

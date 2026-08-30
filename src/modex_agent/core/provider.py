@@ -1,14 +1,26 @@
-"""LLM Provider抽象基类"""
+"""LLM Provider抽象基类（事件流原语，ADR-0046）。"""
 
 import asyncio
+import contextlib
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from .constants import FinishReason
+from .llm_request import LLMRequest
+from .llm_struct import LLMErrorInfo, LLMErrorKind
 from .message import ChatMessage
-from .types import LLMResponse, MessageRole
+from .stream_events import (
+    Finish,
+    LLMStreamEvent,
+    ReasoningDelta,
+    StreamFailure,
+    TextDelta,
+    ToolCallComplete,
+    UsageSnapshot,
+)
+from .types import LLMResponse, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -17,24 +29,22 @@ class LLMProvider(ABC):
     """
     LLM提供商抽象基类。
 
-    用于抽象不同LLM提供商的调用方式，支持同步调用。
+    ``stream(request)`` 是唯一流式原语：子类把协议流翻译为
+    ``LLMStreamEvent`` 序列（每个流以恰好一个 Finish/StreamFailure 终结）。
+    ``chat_stream`` 在此为具体实现——把事件流经 EventAssembler 折叠回带
+    增量回调的 ``LLMResponse``；``chat()`` 经内部 chat_stream 重试
+    （max_retries=1）收敛到同一事件流，以获得 prompt cache 收益。
 
     Example:
-        class OpenAIProvider(LLMProvider):
-            def __init__(self, api_key: str):
-                super().__init__()
-                self.client = OpenAI(api_key=api_key)
-
-            async def chat(self, messages: List[Dict], **kwargs) -> LLMResponse:
-                response = await self.client.chat.completions.create(
-                    model=self.get_default_model(),
-                    messages=messages
-                )
-                msg = response.choices[0].message
-                return LLMResponse(content=msg.content)
-
+        class EchoProvider(LLMProvider):
             def get_default_model(self) -> str:
-                return "gpt-4"
+                return "echo-model"
+
+            async def stream(
+                self, request: LLMRequest
+            ) -> AsyncIterator[LLMStreamEvent]:
+                yield TextDelta(text="hello")
+                yield Finish(finish_reason=FinishReason.STOP)
 
     --- Dormant mechanism-A seam (NOT implemented in the current change). ---
     When a ``Modality`` beyond ``TEXT`` is enabled on
@@ -67,28 +77,16 @@ class LLMProvider(ABC):
         self._retry_backoff_seconds = retry_backoff_seconds
 
     @abstractmethod
-    async def chat(
-        self,
-        messages: list[ChatMessage],
-        model: str | None = None,
-        temperature: float = 0.7,
-        max_output_tokens: int | None = None,
-        tools: list[dict] | None = None,
-        **kwargs,
-    ) -> LLMResponse:
+    def stream(self, request: LLMRequest) -> AsyncIterator[LLMStreamEvent]:
         """
-        非流式聊天完成。
+        事件流式聊天完成（唯一流式原语）。
 
         Args:
-            messages: ChatMessage 列表（结构化消息，B6 收敛自 list[dict]）
-            model: 模型名称，None则使用默认模型
-            temperature: 温度参数
-            max_output_tokens: 最大token数
-            tools: 工具定义列表（可选）
-            **kwargs: 其他提供商特定参数
+            request: 规范请求信封（采样参数唯一载体）
 
-        Returns:
-            LLM统一响应结构 LLMResponse
+        Yields:
+            LLMStreamEvent——每个流必须以恰好一个 Finish 或 StreamFailure
+            终结（EventAssembler 终态不变量）。
         """
         pass
 
@@ -97,42 +95,114 @@ class LLMProvider(ABC):
         """获取默认模型名称"""
         pass
 
-    async def complete(self, prompt: str, **kwargs) -> LLMResponse:
-        """
-        完成单个提示词(非对话模式)。
-
-        默认实现将prompt包装为user消息调用chat。
-        子类可以重写以优化性能。
-
-        Args:
-            prompt: 提示词文本
-            **kwargs: 其他参数
-
-        Returns:
-            LLM统一响应结构 LLMResponse
-        """
-        messages = [ChatMessage(role=MessageRole.USER, content=prompt)]
-        return await self.chat(messages, **kwargs)
-
-    async def chat_with_retry(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
-        max_retries: int = 3,
+        on_content_delta: Callable[[str], Any] | None = None,
+        on_reasoning_delta: Callable[[str], Any] | None = None,
         **kwargs,
     ) -> LLMResponse:
-        """调用 chat() 并在遇到临时错误时重试"""
+        """流式聊天完成（事件流的回调折叠）。
+
+        参数合并进 ``LLMRequest``：model 为 None 时取 provider 默认模型（信封 model
+        必填）；temperature/max_output_tokens 透传（None 保持 None，兜底在
+        引擎/config 的 build_body）。kwargs 中只认 ``prompt_cache_key``
+        （提取进 request），其余未知 kwargs 记 ERROR 日志后丢弃、永不进入
+        请求 body。
+
+        Args:
+            messages: ChatMessage 列表（结构化消息，B6 收敛自 list[dict]）
+            model: 模型名称，None则使用默认模型
+            temperature: 温度参数，None 时回退到构造函数/配置中的值
+            max_output_tokens: 最大token数
+            tools: 工具定义列表（可选）
+            on_content_delta: 内容片段回调（支持 async）
+            on_reasoning_delta: 推理片段回调（支持 async）
+            **kwargs: 其他提供商特定参数
+
+        Returns:
+            LLM统一响应结构 LLMResponse（由事件序列组装）
+        """
+        # 延迟导入：providers.http.assembler 依赖 core（模块级会循环）；
+        # core→providers 边界登记见 tests/architecture/test_dependency_tree.py。
+        from modex_agent.providers.http.assembler import EventAssembler
+
+        prompt_cache_key = kwargs.pop("prompt_cache_key", None)
+        for key in kwargs:
+            logger.error("dropping unknown chat_stream kwarg: %s", key)
+        request = LLMRequest(
+            model=model or self.get_default_model(),
+            messages=messages,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            tools=tuple(tools) if tools else (),
+            prompt_cache_key=prompt_cache_key,
+        )
+        assembler = EventAssembler(on_content_delta, on_reasoning_delta)
+        async for event in self.stream(request):
+            await assembler.feed(event)
+        return assembler.result()
+
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        model: str | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        tools: list[dict] | None = None,
+        **kwargs,
+    ) -> LLMResponse:
+        """非流式聊天完成。
+
+        对外行为与旧 LLMProvider.chat() 一致：调用者拿到完整 LLMResponse，
+        无任何 delta 回调。内部经 chat_stream 折叠实现并带一次重试
+        （max_retries=1），以获得 prompt cache 等只有 streaming 模式才有的
+        收益。temperature=None 时回退到构造函数/配置值。
+        """
+        return await self._chat_stream_with_retry(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            tools=tools,
+            on_content_delta=None,
+            on_reasoning_delta=None,
+            max_retries=1,
+            **kwargs,
+        )
+
+    async def _chat_stream_with_retry(
+        self,
+        messages: list[ChatMessage],
+        model: str | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        tools: list[dict] | None = None,
+        max_retries: int = 0,
+        on_content_delta: Callable[[str], Any] | None = None,
+        on_reasoning_delta: Callable[[str], Any] | None = None,
+        **kwargs,
+    ) -> LLMResponse:
+        """调用 chat_stream() 并在遇到临时错误时重试。
+
+        流式路径默认不参与自动重试（max_retries=0）。partial content 可能
+        已通过 on_content_delta 回调发送给用户，重试会造成重复 delta。
+        temperature=None 时回退到构造函数/配置值。
+        """
         return await self._execute_with_retry(
-            self.chat,
+            self.chat_stream,
             messages,
             max_retries,
             model=model,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
             tools=tools,
+            on_content_delta=on_content_delta,
+            on_reasoning_delta=on_reasoning_delta,
             **kwargs,
         )
 
@@ -237,77 +307,22 @@ class LLMProvider(ABC):
         return False
 
 
-class StreamingLLMProvider(LLMProvider):
+class CallbackStreamProvider(LLMProvider):
     """
-    支持流式输出的LLM提供商抽象基类。
+    回调式 provider 的显式适配基类（cassette 录制/回放、委托代理、
+    脚本化测试 provider）。
 
-    继承自LLMProvider，额外支持流式输出。
-    chat() 和 chat_with_retry() 内部使用流式 API 以获得 prompt cache 收益。
+    新 provider 直接在 ``LLMProvider`` 上实现 ``stream()``；本基类为
+    响应级（``chat_stream``）实现而存在——其具体 ``stream()`` 把
+    chat_stream 的回调流桥接为事件流（回调-事件桥接，ADR-0046）。
     """
-
-    async def chat(
-        self,
-        messages: list[ChatMessage],
-        model: str | None = None,
-        temperature: float = 0.7,
-        max_output_tokens: int | None = None,
-        tools: list[dict] | None = None,
-        **kwargs,
-    ) -> LLMResponse:
-        """非流式聊天完成。
-
-        对外行为与 LLMProvider.chat() 完全一致：调用者拿到完整 LLMResponse，
-        无任何 delta 回调。
-        内部使用流式 API 实现（chat_stream_with_retry），以获得 prompt cache
-        等只有 streaming 模式才有的收益。
-        """
-        return await self.chat_stream_with_retry(
-            messages=messages,
-            model=model,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            tools=tools,
-            on_content_delta=None,
-            on_reasoning_delta=None,
-            max_retries=1,
-            **kwargs,
-        )
-
-    async def chat_with_retry(
-        self,
-        messages: list[ChatMessage],
-        model: str | None = None,
-        temperature: float = 0.7,
-        max_output_tokens: int | None = None,
-        tools: list[dict] | None = None,
-        max_retries: int = 3,
-        **kwargs,
-    ) -> LLMResponse:
-        """带重试的非流式聊天完成。
-
-        对外行为与 LLMProvider.chat_with_retry() 完全一致：调用者拿到完整
-        LLMResponse，无任何 delta 回调，失败时按 max_retries 自动重试。
-        内部使用流式 API 实现（chat_stream_with_retry），以获得 prompt cache
-        等只有 streaming 模式才有的收益。
-        """
-        return await self.chat_stream_with_retry(
-            messages=messages,
-            model=model,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            tools=tools,
-            on_content_delta=None,
-            on_reasoning_delta=None,
-            max_retries=max_retries,
-            **kwargs,
-        )
 
     @abstractmethod
     async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         on_content_delta: Callable[[str], Any] | None = None,
@@ -315,16 +330,16 @@ class StreamingLLMProvider(LLMProvider):
         **kwargs,
     ) -> LLMResponse:
         """
-        流式聊天完成。
+        流式聊天完成（回调原语）。
 
         Args:
             messages: ChatMessage 列表（结构化消息，B6 收敛自 list[dict]）
             model: 模型名称
-            temperature: 温度参数
+            temperature: 温度参数，None 时回退到构造函数/配置中的值
             max_output_tokens: 最大token数
             tools: 工具定义列表（可选）
-            on_content_delta: 内容片段回调（支持 async）（支持 async）
-            on_reasoning_delta: 推理片段回调（支持 async）（支持 async）
+            on_content_delta: 内容片段回调（支持 async）
+            on_reasoning_delta: 推理片段回调（支持 async）
             **kwargs: 其他提供商特定参数
 
         Returns:
@@ -332,32 +347,106 @@ class StreamingLLMProvider(LLMProvider):
         """
         pass
 
-    async def chat_stream_with_retry(
-        self,
-        messages: list[ChatMessage],
-        model: str | None = None,
-        temperature: float = 0.7,
-        max_output_tokens: int | None = None,
-        tools: list[dict] | None = None,
-        max_retries: int = 0,
-        on_content_delta: Callable[[str], Any] | None = None,
-        on_reasoning_delta: Callable[[str], Any] | None = None,
-        **kwargs,
-    ) -> LLMResponse:
-        """调用 chat_stream() 并在遇到临时错误时重试。
+    async def stream(self, request: LLMRequest) -> AsyncIterator[LLMStreamEvent]:
+        """把 chat_stream 的回调流桥接为事件流（回调-事件桥接，ADR-0046）。
 
-        流式路径默认不参与自动重试（max_retries=0）。partial content 可能
-        已通过 on_content_delta 回调发送给用户，重试会造成重复 delta。
+        kwargs 面逐项复刻 ReactLlmClient 现行调用（llm_client.py:139-147），
+        刻意不传 ``model=``——cassette 的 llm_call_key 把 model 作为键输入，
+        现客户端从不传，传了会让全部存量 cassette 键失配。
+
+        chat_stream 返回后补译回调流带不到的完整载荷：未流出过的
+        content/reasoning 补发 TextDelta/ReasoningDelta；tool_calls 逐个补发
+        ToolCallComplete（tool_calls 只存在于返回值——不补译则 ReAct 循环对
+        一切桥接路径断掉）；非全零默认 usage 补发 UsageSnapshot；最终以
+        Finish（ERROR 时为 StreamFailure）终结。chat_stream 抛异常时以
+        StreamFailure 终结、不向上抛；CancelledError 翻译为
+        Finish(CANCELLED)。生成器被 aclose 或消费者中断时取消后台任务，
+        不泄漏。
+
+        意义：仅覆写 chat_stream 的回调式 provider（40+ 既有 mock 与委托
+        代理）经由本方法自动获得事件流视图，零迁移。
         """
-        return await self._execute_with_retry(
-            self.chat_stream,
-            messages,
-            max_retries,
-            model=model,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            tools=tools,
-            on_content_delta=on_content_delta,
-            on_reasoning_delta=on_reasoning_delta,
-            **kwargs,
-        )
+        queue: asyncio.Queue[LLMStreamEvent | None] = asyncio.Queue()
+        streamed_text = False
+        streamed_reasoning = False
+
+        async def _on_content_delta(text: str) -> None:
+            nonlocal streamed_text
+            if text:
+                streamed_text = True
+                await queue.put(TextDelta(text=text))
+
+        async def _on_reasoning_delta(text: str) -> None:
+            nonlocal streamed_reasoning
+            if text:
+                streamed_reasoning = True
+                await queue.put(ReasoningDelta(text=text))
+
+        async def _run() -> None:
+            try:
+                response = await self.chat_stream(
+                    messages=request.messages,
+                    temperature=request.temperature,
+                    max_output_tokens=request.max_output_tokens,
+                    tools=list(request.tools) or None,
+                    on_content_delta=_on_content_delta,
+                    on_reasoning_delta=_on_reasoning_delta,
+                    prompt_cache_key=request.prompt_cache_key or "",
+                )
+                if not streamed_text and response.content:
+                    await queue.put(TextDelta(text=response.content))
+                if not streamed_reasoning and response.reasoning_content:
+                    await queue.put(ReasoningDelta(text=response.reasoning_content))
+                for tool_call in response.tool_calls:
+                    await queue.put(
+                        ToolCallComplete(
+                            call_id=tool_call.call_id or "",
+                            tool_name=tool_call.tool_name,
+                            arguments=tool_call.arguments,
+                        )
+                    )
+                if response.usage != TokenUsage():
+                    await queue.put(UsageSnapshot(usage=response.usage))
+                if response.finish_reason == FinishReason.ERROR:
+                    # partial_content 恒空：content 已（经回调增量或上方补译）
+                    # 以 TextDelta 事件送达；assembler 把 partial 拼接到已累积
+                    # 正文之前，这里再带一份 response.content 会翻倍。
+                    await queue.put(
+                        StreamFailure(
+                            error_info=response.error_info
+                            or LLMErrorInfo(
+                                kind=LLMErrorKind.UNKNOWN,
+                                message=(response.error or "LLM stream failed")[:500],
+                            ),
+                            partial_content="",
+                        )
+                    )
+                else:
+                    await queue.put(Finish(finish_reason=response.finish_reason))
+            except asyncio.CancelledError:
+                await queue.put(Finish(finish_reason=FinishReason.CANCELLED))
+            except Exception as exc:
+                await queue.put(
+                    StreamFailure(
+                        error_info=LLMErrorInfo(
+                            kind=LLMErrorKind.UNKNOWN,
+                            message=str(exc)[:500],
+                            should_retry=self._is_transient(exc),
+                        ),
+                        partial_content="",
+                    )
+                )
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(_run())
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield event
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task

@@ -263,7 +263,7 @@ class ExternalAgentBuilder:
 
         Shared by the main-agent path (``ExternalAwareFactory.
         create_agent``) and the subagent path
-        (``BotSubagentExternalBuilder.build``) so the ~40 lines of
+        (``ExternalExecutionStrategy._assemble_subagent``) so the ~40 lines of
         broker-adapter / emitter-factory / turn-runner / pipeline /
         AgentInstance construction live in one place.
 

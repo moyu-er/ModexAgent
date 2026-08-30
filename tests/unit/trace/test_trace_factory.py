@@ -117,3 +117,62 @@ def test_each_hook_wrapped_with_log_policy(tmp_path: Path) -> None:
     specs = _build(TraceSpanMode.FULL, store=store)
     assert all(s.on_error == HookErrorPolicy.LOG for s in specs)
     assert all(isinstance(s, HookSpec) for s in specs)
+
+
+def test_environment_version_tags_threaded_to_hooks(tmp_path: Path) -> None:
+    """build_trace_hooks threads environment/version/tags from config into every hook."""
+    store = OtelSpanTraceStore(base_dir=tmp_path / "traces")
+    config = ObservabilityConfig(
+        trace_backend=TraceBackend.FILE,
+        trace_spans=TraceSpanMode.STANDARD,
+        environment="staging",
+        version="2.1.0",
+        tags=["eval", "math-qa"],
+    )
+    specs = build_trace_hooks(
+        config,
+        model=None,
+        provider_name=None,
+        request_params=None,
+        score_injector=None,
+        store=store,
+    )
+    assert len(specs) > 0
+    for spec in specs:
+        hook = spec.hook
+        assert hook._environment == "staging"  # type: ignore[attr-defined]
+        assert hook._version == "2.1.0"  # type: ignore[attr-defined]
+        assert hook._tags == ["eval", "math-qa"]  # type: ignore[attr-defined]
+
+
+def test_environment_version_tags_default_when_unset(tmp_path: Path) -> None:
+    """When config does not set environment/version/tags, hooks get defaults."""
+    store = OtelSpanTraceStore(base_dir=tmp_path / "traces")
+    specs = _build(TraceSpanMode.MINIMAL, store=store)
+    assert len(specs) == 1
+    hook = specs[0].hook
+    assert hook._environment == "default"  # type: ignore[attr-defined]
+    assert hook._version is None  # type: ignore[attr-defined]
+    assert hook._tags == []  # type: ignore[attr-defined]
+
+
+def test_pricebook_override_path_threads_only_to_root_hook(tmp_path: Path) -> None:
+    # Given
+    store = OtelSpanTraceStore(base_dir=tmp_path / "traces")
+    override_path = tmp_path / "model_prices.yml"
+
+    # When
+    specs = build_trace_hooks(
+        _config(TraceSpanMode.FULL),
+        model=None,
+        provider_name=None,
+        request_params=None,
+        score_injector=None,
+        store=store,
+        pricebook_yml_path=override_path,
+    )
+
+    # Then
+    root = specs[0].hook
+    assert isinstance(root, RootSpanHook)
+    assert root._pricebook_yml_path == override_path

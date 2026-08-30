@@ -32,6 +32,13 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict
 
+if sys.platform == "win32":
+    from signal import SIGBREAK as _SIGBREAK
+    from subprocess import CREATE_NEW_PROCESS_GROUP as _CREATE_NEW_PROCESS_GROUP
+else:
+    _SIGBREAK = signal.SIGTERM
+    _CREATE_NEW_PROCESS_GROUP = 0
+
 _IS_WINDOWS: Final[bool] = sys.platform == "win32"
 _IS_POSIX: Final[bool] = sys.platform != "win32"
 
@@ -231,7 +238,7 @@ async def spawn_process_group(
         stdin=stdin,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        creationflags=_CREATE_NEW_PROCESS_GROUP,
         limit=limit,
     )
 
@@ -373,7 +380,7 @@ def register_signal_handlers() -> None:
 
     _sigs = [signal.SIGTERM, signal.SIGINT]
     if _IS_WINDOWS:
-        _sigs.append(signal.SIGBREAK)
+        _sigs.append(_SIGBREAK)
     for sig in _sigs:
         prev = signal.getsignal(sig)
         if prev == signal.SIG_DFL or prev is None:

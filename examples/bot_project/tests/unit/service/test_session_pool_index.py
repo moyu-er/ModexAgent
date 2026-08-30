@@ -27,7 +27,6 @@ from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
 from modex_agent.multi_agent.session_tree.models import (
     NodeVersionStatus,
     SessionTreeRecord,
@@ -48,7 +47,17 @@ from modex_agent.multi_agent.session_tree.store_tree import (
 )
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.pipeline.adapters import OutputAdapter
-from modex_agent.tools.presets import ToolPreset
+
+from ...declaration_driver import build_declared
+
+_POOL_DECLARATION = """\
+pool:
+  name: indexed-pool
+  agents:
+    main:
+      description: indexed test main
+      toolset: none
+"""
 
 _NOW = 1_700_000_000_000
 
@@ -203,11 +212,6 @@ async def test_pool_of_consistent_across_backends(
 async def test_create_pool_registers_tree_stores_in_index(tmp_path: Path) -> None:
     pool_name = "indexed-pool"
     output_adapter = MagicMock(spec=OutputAdapter)
-    pool_spec = PoolSpec(
-        name=pool_name,
-        main_agent_name="main",
-        main=MainAgentSpec(agent_name="main", tool_preset=ToolPreset.NONE),
-    )
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "modexctl.bat").write_text("@exit /b 0\n", encoding="ascii")
@@ -220,9 +224,16 @@ async def test_create_pool_registers_tree_stores_in_index(tmp_path: Path) -> Non
         with patch.dict("os.environ", {"MODEXBOT_BIN_DIR": str(bin_dir)}):
             pool_instance = await create_pool(
                 pool_name=pool_name,
-                pool_spec=pool_spec,
+                declared=build_declared(
+                    _POOL_DECLARATION,
+                    project_dir=tmp_path,
+                    data_dir=tmp_path / ".modex",
+                    pool_name=pool_name,
+                ),
                 assembly_deps=PoolAssemblyDeps(),
                 project_dir=tmp_path,
+                workspace_registry=object(),
+                workspace_resources=object(),
                 data_dir=tmp_path / ".modex",
                 broker=broker,
                 output_adapter=output_adapter,

@@ -1,10 +1,10 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-22 | Updated: 2026-07-12 -->
+<!-- Generated: 2026-06-22 | Updated: 2026-08-28 (capability-bundles doc sync, ADR-0047) -->
 
 # prompt_pipeline
 
 ## Purpose
-System prompt pipeline — an ordered, versioned collection of `SystemPromptProvider` instances. Each provider contributes one section of the system prompt (base personality, runtime metadata, workspace info, todo discipline, remote-agent reply contract, etc.). Supports caching, version-based refresh, and ordered assembly into the final system prompt string.
+System prompt pipeline — an ordered, versioned collection of `SystemPromptProvider` instances. Each provider contributes one section of the system prompt (base personality, runtime metadata, workspace info, etc.). Supports caching, version-based refresh, and ordered assembly into the final system prompt string. Capability-bundle sections (ADR-0047) ride the same `SystemPromptProvider` ABC through the capability-section anchor in `memory/system.py`.
 
 ## Key Files
 | File | Description |
@@ -27,8 +27,13 @@ System prompt pipeline — an ordered, versioned collection of `SystemPromptProv
 | `RuntimeProvider` | hourly | Always | Runtime metadata |
 | `ProviderBlocksProvider` | blocks hash | Provider blocks configured | Custom prompt blocks |
 | `ProviderPrefetchProvider` | prefetch hash | Prefetch configured | Prefetched context |
-| `TodoAwareSystemPromptProvider` | `todo-enabled` / `no-todo` | Agent owns `todo_read` + `todo_write` tools | Task-discipline reminder |
-| `AgentCommunicationSystemPromptProvider` | `comm:<fragments>` / `comm:none` | `send_to_peer`/`send_to_agent` tools have targets matching sub-module conditions | Composite provider with 3 internal sub-modules: peer reply contract (targets with `tree_ref`, via `send_to_peer`), subagent dispatch contract (NON-subagent + `task` tool registered, guides LLM to use `task` for new dispatch and continuation), subagent consultation contract (SUBAGENT kind, via `send_to_agent`). Version is `"comm:"` + `|`-joined sub-module fragments; content joins applying sections. |
+
+The retired composite communication provider (peer reply contract, subagent consultation contract, delegation guidance — runtime tool-registration gated) migrated to the `subagents` capability package (ADR-0047): the three briefs are now the capability sections `subagents.delegation` (order=40), `subagents.consultation` (order=41), and `subagents.peer` (order=42), rendered through the capability-section anchor of `MemorySystemContextManager.load()` and gated at compile time (declared children / non-root / root-with-peers). The peer section reads the live root store at render time, so its version follows the remote-name set.
+
+The retired tool-gated todo provider ("## Task Tracking") migrated to the
+`todo` capability package — `TodoCapability.assemble` wires the byte-identical
+static section through the capability-section anchor of
+`MemorySystemContextManager.load()` (ADR-0047 / SPEC §8.2).
 
 ## For AI Agents
 
@@ -38,8 +43,9 @@ System prompt pipeline — an ordered, versioned collection of `SystemPromptProv
 - Providers are ordered by their position in the pipeline list (not by priority)
 - `BasePromptProvider` is static (version="static") — never refreshes
 - `RuntimeProvider` refreshes hourly based on the current datetime hour
-- Gated providers (Todo, AgentCommunication) emit empty content when their
-  condition is unmet — no-op for agents that don't own the relevant tools
+- Gated providers emit empty content when their condition is unmet — no-op
+  for agents that don't own the relevant data (the capability section
+  providers in `plugins/defaults/capabilities/` follow the same pattern)
 
 ### Common Patterns
 - Create providers, add them to a `SystemPromptPipeline` in the desired order, call `pipeline.get_content()` to get the assembled system prompt
@@ -54,7 +60,5 @@ System prompt pipeline — an ordered, versioned collection of `SystemPromptProv
 ### Internal
 - `modex_agent.core.prompt` — `SystemPromptProvider`, `SystemPromptPipeline`
 - `modex_agent.utils.timezone` — `get_user_timezone`
-- `modex_agent.core.tool_manager` — `ToolManager` (for Todo + PeerComm providers)
-- `modex_agent.multi_agent.tools` — `TaskDispatchTool`, `SendToAgentTool`, `CommunicationTarget` (for PeerComm + Consultation providers)
 
 <!-- MANUAL -->

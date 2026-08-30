@@ -10,7 +10,7 @@ Concrete implementations of the three memory layer managers — Session, Archive
 | File | Description |
 |------|-------------|
 | `__init__.py` | Package init |
-| `config.py` | Configuration dataclasses — `SessionMemoryConfig` (max_messages, scope), `ArchiveMemoryConfig` (max_entries, cursor_name, scope), `CoreMemoryConfig` (renamed from `KnowledgeMemoryConfig` per ADR-0035; scope, default_files paths, max_changelog_entries), and `MemoryLayerConfigSet` + `StorageFactory` type alias |
+| `config.py` | Configuration dataclasses — `SessionMemoryConfig` (scope; the count-based `max_messages` cap was removed per ADR-0009 — token compression is the only size governor), `ArchiveMemoryConfig` (max_entries, cursor_name, scope), `CoreMemoryConfig` (renamed from `KnowledgeMemoryConfig` per ADR-0035; scope, default_files paths, max_changelog_entries), and `MemoryLayerConfigSet` + `StorageFactory` type alias |
 | `session.py` | `ScopedSessionMemoryManager` — session layer that resolves storage through `StorageFactory`, delegates to core `SessionMemoryManager` ABC |
 | `archive.py` | `ScopedArchiveMemoryManager` — archive layer with coordinate model (`archive_id` monotonic counter), CONTEXT/CORE channel management (channel renamed from KNOWLEDGE per ADR-0035), cursor tracking via `.archive_state.json` |
 | `core.py` | `ScopedCoreMemoryManager` (renamed from `knowledge.py` / `ScopedKnowledgeMemoryManager` per ADR-0035) — Core Memory layer backed by markdown files (SOUL.md, USER.md, MEMORY.md). Supports auto-consolidation when file exceeds token threshold |

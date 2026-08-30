@@ -35,20 +35,20 @@ class TestFilenameGeneration:
     def test_both_times_present(self, manager: PrunedManager, now: datetime) -> None:
         start = datetime(2024, 6, 1, 9, 30, tzinfo=TZ)
         end = datetime(2024, 6, 2, 14, 45, tzinfo=TZ)
-        result = manager._generate_filename(start, end, now)
-        assert result == "pruned_2024-06-01_09.30-2024-06-02_14.45.jsonl"
+        result = manager._generate_filename(start, end, now, 7)
+        assert result == "pruned_2024-06-01_09.30.00-2024-06-02_14.45.00_7.md"
 
     def test_start_missing(self, manager: PrunedManager, now: datetime) -> None:
-        result = manager._generate_filename(None, datetime(2024, 6, 2, 14, 45, tzinfo=TZ), now)
-        assert result == "pruned_2024-06-03_10.00.jsonl"
+        result = manager._generate_filename(None, datetime(2024, 6, 2, 14, 45, tzinfo=TZ), now, 7)
+        assert result == "pruned_2024-06-03_10.00.00_7.md"
 
     def test_end_missing(self, manager: PrunedManager, now: datetime) -> None:
-        result = manager._generate_filename(datetime(2024, 6, 1, 9, 30, tzinfo=TZ), None, now)
-        assert result == "pruned_2024-06-03_10.00.jsonl"
+        result = manager._generate_filename(datetime(2024, 6, 1, 9, 30, tzinfo=TZ), None, now, 7)
+        assert result == "pruned_2024-06-03_10.00.00_7.md"
 
     def test_both_missing(self, manager: PrunedManager, now: datetime) -> None:
-        result = manager._generate_filename(None, None, now)
-        assert result == "pruned_2024-06-03_10.00.jsonl"
+        result = manager._generate_filename(None, None, now, 7)
+        assert result == "pruned_2024-06-03_10.00.00_7.md"
 
 
 class TestWritePruned:
@@ -125,6 +125,47 @@ class TestWritePruned:
         entries = storage.read_index()
         assert entries[0].start_time_display == "2024-06-01 09:00"
 
+    @pytest.mark.asyncio()
+    async def test_compact_messages_excluded(self, manager: PrunedManager, pruned_base_dir, now: datetime) -> None:
+        msgs = [
+            {"role": "user", "content": "question", "created_at": datetime(2024, 6, 1, 9, 0, tzinfo=TZ)},
+            {"role": "compact", "content": "internal compact summary", "created_at": datetime(2024, 6, 1, 9, 2, tzinfo=TZ)},
+            {"role": "tool", "content": "tool output", "tool_call_id": "call_1", "created_at": datetime(2024, 6, 1, 9, 5, tzinfo=TZ)},
+        ]
+        await manager.write_pruned(msgs, "mixed batch", now, session_id=SID)
+        storage = manager._get_storage(SID)
+        entries = storage.read_index()
+        assert len(entries) == 1
+        assert entries[0].message_count == 2
+        text = (pruned_base_dir / SID / entries[0].content_filename).read_text(encoding="utf-8")
+        assert "## [001] user" in text
+        assert "## [002] tool" in text
+        assert "compact" not in text
+
+    @pytest.mark.asyncio()
+    async def test_all_compact_batch_skipped(self, manager: PrunedManager, pruned_base_dir, now: datetime) -> None:
+        msgs = [
+            {"role": "compact", "content": "summary one", "created_at": datetime(2024, 6, 1, 9, 0, tzinfo=TZ)},
+            {"role": "compact", "content": "summary two", "created_at": datetime(2024, 6, 1, 9, 5, tzinfo=TZ)},
+        ]
+        await manager.write_pruned(msgs, "all compact", now, session_id=SID)
+        storage = manager._get_storage(SID)
+        assert storage.read_index() == []
+        assert manager.get_version(session_id=SID) == "0"
+        assert not (pruned_base_dir / SID).exists()
+
+    @pytest.mark.asyncio()
+    async def test_content_chars_matches_written_file(self, manager: PrunedManager, pruned_base_dir, now: datetime) -> None:
+        msgs = _messages([
+            datetime(2024, 6, 1, 9, 0, tzinfo=TZ),
+            datetime(2024, 6, 1, 9, 5, tzinfo=TZ),
+        ])
+        await manager.write_pruned(msgs, "chars check", now, session_id=SID)
+        storage = manager._get_storage(SID)
+        entries = storage.read_index()
+        path = pruned_base_dir / SID / entries[0].content_filename
+        assert entries[0].content_chars == len(path.read_text(encoding="utf-8"))
+
 
 class TestEviction:
 
@@ -151,8 +192,22 @@ class TestEviction:
         await mgr.write_pruned(msgs2, "batch2", now, session_id=SID)
         await mgr.write_pruned(msgs3, "batch3", now, session_id=SID)
         session_dir = pruned_base_dir / SID
-        content_files = [f for f in session_dir.iterdir() if f.suffix == ".jsonl" and f.name != "index.jsonl"]
+        content_files = [f for f in session_dir.iterdir() if f.suffix == ".md"]
         assert len(content_files) == 2
+
+    @pytest.mark.asyncio()
+    async def test_same_messages_yield_distinct_files(self, pruned_base_dir, now: datetime) -> None:
+        """Identical batches get distinct filenames via the entry-id suffix —
+        no same-name clobbering, so eviction never leaves dangling entries."""
+        mgr = PrunedManager(pruned_base_dir=pruned_base_dir)
+        msgs = _messages([datetime(2024, 6, 1, 9, 0, tzinfo=TZ)])
+        await mgr.write_pruned(msgs, "same batch", now, session_id=SID)
+        await mgr.write_pruned(msgs, "same batch", now, session_id=SID)
+        await mgr.write_pruned(msgs, "same batch", now, session_id=SID)
+        session_dir = pruned_base_dir / SID
+        content_files = [f for f in session_dir.iterdir() if f.suffix == ".md"]
+        assert len(content_files) == 3
+        assert len(mgr._get_storage(SID).read_index()) == 3
 
     @pytest.mark.asyncio()
     async def test_under_limit_no_eviction(self, manager: PrunedManager, pruned_base_dir, now: datetime) -> None:
@@ -240,6 +295,9 @@ class TestInjectionXml:
         assert xml.strip().endswith(f"</{PrunedTag.CONTAINER.value}>")
         assert "### Previous Conversation Transcripts" in xml
         assert "index.jsonl" in xml
+        assert "information-dense" in xml
+        assert 'grep -n "^## \\["' in xml
+        assert 'chars="' in xml
 
     @pytest.mark.asyncio()
     async def test_contains_absolute_path(self, manager: PrunedManager, pruned_base_dir, now: datetime) -> None:

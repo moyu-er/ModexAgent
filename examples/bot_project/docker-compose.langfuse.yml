@@ -1,6 +1,6 @@
 services:
   langfuse-web:
-    image: docker.xuanyuan.run/langfuse/langfuse:4.0.0-rc.3
+    image: docker.xuanyuan.run/langfuse/langfuse:4.11.0
     container_name: modex-langfuse-web
     ports:
       - "3000:3000"
@@ -36,7 +36,7 @@ services:
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
       DISABLE_SIGNUP: "false"
       NEXT_PUBLIC_LANGFUSE_RUN_NEXT_INIT: "false"
-      NODE_OPTIONS: "--max-old-space-size=1024"
+      NODE_OPTIONS: "--max-old-space-size=896"
     depends_on:
       langfuse-db:
         condition: service_healthy
@@ -46,12 +46,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    memswap_limit: 1024m
+    memswap_limit: 1152m
     deploy:
       resources:
         limits:
           cpus: '1.0'
-          memory: 1024M
+          memory: 1152M
           pids: 200
         reservations:
           cpus: '0.25'
@@ -64,7 +64,7 @@ services:
     restart: unless-stopped
 
   langfuse-worker:
-    image: docker.xuanyuan.run/langfuse/langfuse-worker:4.0.0-rc.3
+    image: docker.xuanyuan.run/langfuse/langfuse-worker:4.11.0
     container_name: modex-langfuse-worker
     environment:
       NEXTAUTH_URL: "http://localhost:3000"
@@ -94,7 +94,7 @@ services:
       REDIS_PORT: "6379"
       REDIS_AUTH: "myredissecret"
       TELEMETRY_ENABLED: "false"
-      NODE_OPTIONS: "--max-old-space-size=448"
+      NODE_OPTIONS: "--max-old-space-size=640"
     depends_on:
       langfuse-db:
         condition: service_healthy
@@ -104,16 +104,42 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    memswap_limit: 448m
+    memswap_limit: 864m
     deploy:
       resources:
         limits:
           cpus: '0.75'
-          memory: 448M
+          memory: 864M
           pids: 200
         reservations:
           cpus: '0.25'
           memory: 96M
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  otel-collector:
+    image: docker.xuanyuan.run/otel/opentelemetry-collector-contrib:0.158.0
+    container_name: modex-otel-collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      LANGFUSE_BASIC_AUTH: "${LANGFUSE_BASIC_AUTH:-}"
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "127.0.0.1:4318:4318"
+    depends_on:
+      langfuse-web:
+        condition: service_started
+    memswap_limit: 128m
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
     logging:
       driver: local
       options:
@@ -172,6 +198,12 @@ services:
       CLICKHOUSE_DB: default
       CLICKHOUSE_USER: clickhouse
       CLICKHOUSE_PASSWORD: clickhouse
+      # Shrink jemalloc retention: thread stacks + allocator tcaches otherwise
+      # pin hundreds of MiB (THP rounds every touched stack to 2MiB pages;
+      # narenas:2 + 5s decay returns freed pages to the OS quickly). Verified
+      # bootable in isolation — the earlier startup deadlock came from capping
+      # max_thread_pool_size, not from this.
+      MALLOC_CONF: "narenas:2,dirty_decay_ms:5000,muzzy_decay_ms:5000,thp:never"
     volumes:
       - langfuse_clickhouse_data:/var/lib/clickhouse
       - langfuse_clickhouse_logs:/var/log/clickhouse-server
@@ -184,12 +216,12 @@ services:
       timeout: 5s
       retries: 20
       start_period: 30s
-    memswap_limit: 1024m
+    memswap_limit: 1g
     deploy:
       resources:
         limits:
           cpus: '1.0'
-          memory: 1024M
+          memory: 1G
           pids: 1024
         reservations:
           cpus: '0.25'
@@ -228,7 +260,7 @@ services:
           pids: 100
         reservations:
           cpus: '0.10'
-          memory: 64M
+          memory: 32M
     logging:
       driver: local
       options:
@@ -267,6 +299,43 @@ services:
         max-file: "3"
     restart: unless-stopped
 
+  # One-shot retention provisioning: ClickHouse TTL (6 trace tables) + MinIO
+  # events/ ILM. Runs to completion on every `up -d`, then exits (restart: "no")
+  # - steady-state memory budget is unaffected (64M cap applies only during
+  #   the boot window). Manual re-run:
+  #   docker compose -f docker-compose.langfuse.yml up -d langfuse-retention-init
+  langfuse-retention-init:
+    image: docker.xuanyuan.run/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: modex-langfuse-retention-init
+    entrypoint: ["/bin/sh", "/etc/langfuse-retention/init.sh"]
+    environment:
+      RETENTION_DAYS: "180"
+      CLICKHOUSE_USER: "clickhouse"
+      CLICKHOUSE_PASSWORD: "clickhouse"
+      MINIO_ROOT_USER: "minio"
+      MINIO_ROOT_PASSWORD: "miniosecret"
+    volumes:
+      - ./langfuse-retention-init.sh:/etc/langfuse-retention/init.sh:ro
+    depends_on:
+      langfuse-web:
+        condition: service_started
+      clickhouse:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    memswap_limit: 64m
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: "no"
+
 volumes:
   langfuse_pgdata:
   langfuse_clickhouse_data:
@@ -283,11 +352,41 @@ configs:
           <uncompressed_cache_size>16777216</uncompressed_cache_size>
           <mmap_cache_size>8388608</mmap_cache_size>
 
-          <!-- Memory: let cgroup be the sole hard limit, no internal cap -->
+          <!-- Thread pools: default background_schedule_pool_size=512 spawns
+               512 idle scheduler threads (~1.3MiB THP'd stack each ≈ 700MiB
+               anon). Shrink ONLY this pool — do NOT lower max_thread_pool_size
+               (global pool): named pools borrow threads from it on demand, and
+               capping the global pool starves startup into an all-futex
+               deadlock (verified live 2026-08-18: 76 threads, all futex,
+               never binds ports). -->
+          <background_schedule_pool_size>16</background_schedule_pool_size>
+
+          <!-- Memory: cgroup is the sole hard ceiling (ratio 1.0 → internal
+               limit = container limit). Do NOT add an explicit
+               max_server_memory_usage below the cgroup cap: the resident
+               binary/shared-lib pages alone form a ~450MiB RSS floor
+               (measured: anon only 85MiB of 532MiB RSS), so a 600MiB cap
+               left ~70MiB for merges — boot-time merges failed in a retry
+               loop and startup deadlocked before binding ports (verified
+               live 2026-08-18). Bloat is controlled by shrinking thread
+               pools + allocator settings instead, which brought idle anon
+               from ~930MiB (692 threads) to ~85MiB (76 threads). -->
           <max_server_memory_usage_to_ram_ratio>1.0</max_server_memory_usage_to_ram_ratio>
 
           <!-- Logging: reduce noise -->
           <logger>
               <level>warning</level>
           </logger>
+
+          <!-- Data retention: opt out of system log tables Langfuse never reads
+               (trace_log was 1.4 GiB / 70M rows and the query profiler writes to
+               it continuously; async_metric_log 688M rows). query_log, part_log
+               and error_log stay enabled per Langfuse docs. Source:
+               https://langfuse.com/self-hosting/configuration/scaling#clickhouse-system-log-tables -->
+          <trace_log remove="1"/>
+          <text_log remove="1"/>
+          <opentelemetry_span_log remove="1"/>
+          <asynchronous_metric_log remove="1"/>
+          <metric_log remove="1"/>
+          <latency_log remove="1"/>
       </clickhouse>

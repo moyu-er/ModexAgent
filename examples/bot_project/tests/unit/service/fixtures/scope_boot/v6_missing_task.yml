@@ -1,0 +1,11 @@
+# Boot-failure fixture: the root declares a child but wholesale-replaces
+# its tools without `task` (V6, phase 2 — the child subtree would be
+# unreachable).
+pool:
+  name: orphaned
+  agents:
+    root:
+      tools:
+      - read
+      agents:
+        leaf: {}

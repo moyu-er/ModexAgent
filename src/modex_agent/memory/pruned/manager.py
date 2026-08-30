@@ -11,7 +11,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from modex_agent.core.types import MessageRole
 from modex_agent.memory.pruned.models import PrunedIndexEntry
+from modex_agent.memory.pruned.render import render_transcript
 from modex_agent.memory.tags import PrunedTag
 from modex_agent.utils.timezone import get_user_timezone
 from modex_agent.utils.xml import xml_attr, xml_text
@@ -57,20 +59,37 @@ class PrunedManager:
         *,
         session_id: str = "",
     ) -> None:
+        """Write a pruned batch as a markdown transcript and index it.
+
+        COMPACT-role messages are framework-generated summaries, not original
+        conversation memory — they are excluded here, at the entry point. An
+        all-COMPACT batch is skipped entirely (no file, no index entry).
+        """
         storage = self._get_storage(session_id)
-        start, end = self._extract_time_range(pruned_messages)
-        filename = self._generate_filename(start, end, cleanup_time)
-        resolved_topic = self._resolve_topic(topic, start, end, cleanup_time, len(pruned_messages))
-        serializable = self._serialize_messages(pruned_messages)
-        storage.write_pruned(filename, serializable)
-        entry = self._build_index_entry(
-            pruned_messages,
-            resolved_topic,
-            cleanup_time,
-            filename,
-            start,
-            end,
-            session_id,
+        original = [
+            m for m in pruned_messages if str(m.get("role", "")) != str(MessageRole.COMPACT)
+        ]
+        if not original:
+            return
+        start, end = self._extract_time_range(original)
+        next_id = max((e.id for e in storage.read_index()), default=0) + 1
+        resolved_topic = self._resolve_topic(topic, start, end, cleanup_time, len(original))
+        filename = self._generate_filename(start, end, cleanup_time, next_id)
+        text = render_transcript(next_id, resolved_topic, original, start, end)
+        storage.write_transcript(filename, text)
+        display_fmt = "%Y-%m-%d %H:%M"
+        entry = PrunedIndexEntry(
+            id=next_id,
+            cleanup_time=int(cleanup_time.timestamp()),
+            cleanup_time_display=cleanup_time.strftime(display_fmt),
+            message_count=len(original),
+            content_filename=filename,
+            start_time=int(start.timestamp()) if start is not None else 0,
+            end_time=int(end.timestamp()) if end is not None else 0,
+            start_time_display=start.strftime(display_fmt) if start is not None else "",
+            end_time_display=end.strftime(display_fmt) if end is not None else "",
+            topic=resolved_topic,
+            content_chars=len(text),
         )
         storage.append_index(entry)
         storage.prune_oldest(self._max_files)
@@ -84,12 +103,17 @@ class PrunedManager:
         tt = PrunedTag.TRANSCRIPT.value
         heading = (
             "### Previous Conversation Transcripts\n\n"
-            "The directory below stores complete transcripts of **previous** conversations "
-            f"(not the current one). The `<{PrunedTag.HISTORY.value}>` section is a partial "
-            "preview — read `index.jsonl` for the full catalog (topic, time range, message "
-            "count), then read the specific transcript files when you need context from a "
-            "prior conversation. Transcripts are read-only; you may update topic "
-            "descriptions in `index.jsonl`.\n\n"
+            "The directory below stores complete transcripts of previous conversations\n"
+            "(not the current one). The <history> section is a partial preview — read\n"
+            "index.jsonl for the full catalog (topic, time range, message count, size),\n"
+            "then read specific transcripts when needed.\n\n"
+            "Transcripts are information-dense: each file holds an entire pruned\n"
+            "conversation, and tool-result blocks can be very large. NEVER read a whole\n"
+            "file. Use this discipline:\n"
+            '1. grep -n "^## \\[" <file> — message table-of-contents with line numbers\n'
+            "2. read a narrow offset/limit window around the messages you need\n"
+            "3. grep keywords first when hunting a specific detail (error text, path)\n"
+            "Transcripts are read-only; you may update topic descriptions in index.jsonl.\n\n"
         )
         lines: list[str] = [
             heading,
@@ -115,7 +139,7 @@ class PrunedManager:
                     topic = topic[:200] + "..."
                 lines.append(
                     f'    <{tt} time="{xml_attr(time_range)}"'
-                    f' messages="{e.message_count}">'
+                    f' messages="{e.message_count}" chars="{e.content_chars}">'
                     f"\n{xml_text(topic)}\n"
                     f"</{tt}>"
                 )
@@ -155,57 +179,17 @@ class PrunedManager:
             self._storages[session_id] = FilePrunedStorage(self._base_dir / safe)
         return self._storages[session_id]
 
-    @staticmethod
-    def _serialize_messages(messages: list[dict]) -> list[dict]:
-        result: list[dict] = []
-        for msg in messages:
-            out: dict = {}
-            for k, v in msg.items():
-                if isinstance(v, datetime):
-                    out[k] = v.isoformat()
-                else:
-                    out[k] = v
-            result.append(out)
-        return result
-
     def _generate_filename(
         self,
         start: datetime | None,
         end: datetime | None,
         cleanup_time: datetime,
+        next_id: int,
     ) -> str:
-        fmt = "%Y-%m-%d_%H.%M"
+        fmt = "%Y-%m-%d_%H.%M.%S"
         if start is not None and end is not None:
-            return f"pruned_{start.strftime(fmt)}-{end.strftime(fmt)}.jsonl"
-        return f"pruned_{cleanup_time.strftime(fmt)}.jsonl"
-
-    def _build_index_entry(
-        self,
-        pruned_messages: list[dict],
-        topic: str,
-        cleanup_time: datetime,
-        filename: str,
-        start: datetime | None,
-        end: datetime | None,
-        session_id: str,
-    ) -> PrunedIndexEntry:
-        display_fmt = "%Y-%m-%d %H:%M"
-        # Derive per-session monotonic id
-        storage = self._get_storage(session_id)
-        existing = storage.read_index()
-        next_id = max((e.id for e in existing), default=0) + 1
-        return PrunedIndexEntry(
-            id=next_id,
-            cleanup_time=int(cleanup_time.timestamp()),
-            cleanup_time_display=cleanup_time.strftime(display_fmt),
-            message_count=len(pruned_messages),
-            content_filename=filename,
-            start_time=int(start.timestamp()) if start is not None else 0,
-            end_time=int(end.timestamp()) if end is not None else 0,
-            start_time_display=start.strftime(display_fmt) if start is not None else "",
-            end_time_display=end.strftime(display_fmt) if end is not None else "",
-            topic=topic,
-        )
+            return f"pruned_{start.strftime(fmt)}-{end.strftime(fmt)}_{next_id}.md"
+        return f"pruned_{cleanup_time.strftime(fmt)}_{next_id}.md"
 
     def _resolve_topic(
         self,

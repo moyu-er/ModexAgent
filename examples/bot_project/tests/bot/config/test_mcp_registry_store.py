@@ -17,7 +17,6 @@ if str(_BOT_PROJECT) not in sys.path:
 from bot.config.mcp_registry import (
     delete_server,
     read_registry,
-    server_used_by,
     upsert_server,
     write_registry,
 )
@@ -156,91 +155,3 @@ class TestUpsertDelete:
         assert "a" not in read_registry(p)
 
 
-# ─── server_used_by ──────────────────────────────────────────────────────────
-
-
-def _seed_pool_with_mcp(
-    base: Path,
-    pool: str,
-    main_agent: str,
-    main_mcp: list[str],
-    subagents: dict[str, list[str]] | None = None,
-) -> None:
-    """Seed a pool with the FLAT pool.yml shape (top-level main-agent mcp list)."""
-    pool_dir = base / "config" / "pools" / pool
-    pool_dir.mkdir(parents=True, exist_ok=True)
-    (pool_dir / "templates").mkdir(exist_ok=True)
-    import yaml
-
-    (pool_dir / "pool.yml").write_text(
-        yaml.safe_dump(
-            {"main_agent_name": main_agent, "mcp": main_mcp},
-        ),
-        encoding="utf-8",
-    )
-    for sub_name, sub_mcp in (subagents or {}).items():
-        (pool_dir / "templates" / f"{sub_name}.yml").write_text(
-            yaml.safe_dump({"agent_name": sub_name, "mcp": sub_mcp}),
-            encoding="utf-8",
-        )
-
-
-def _seed_pool_with_legacy_agents_mcp(
-    base: Path, pool: str, main_agent: str, main_mcp: list[str]
-) -> None:
-    """Seed the LEGACY `agents:` block shape (pre-flat schema) — fallback path."""
-    pool_dir = base / "config" / "pools" / pool
-    pool_dir.mkdir(parents=True, exist_ok=True)
-    import yaml
-
-    (pool_dir / "pool.yml").write_text(
-        yaml.safe_dump(
-            {"agents": [{"name": main_agent, "role": "main", "mcp": main_mcp}]},
-        ),
-        encoding="utf-8",
-    )
-
-
-class TestServerUsedBy:
-    def test_finds_main_agent_reference_flat(self, tmp_path: Path) -> None:
-        # Flat pool.yml: top-level mcp list belongs to the main agent.
-        _seed_pool_with_mcp(tmp_path, "main", "main", ["playwright", "fetch"])
-        used = server_used_by("playwright", tmp_path / "config" / "pools")
-        assert ("main", "main") in used
-
-    def test_finds_main_agent_reference_legacy_agents_block(self, tmp_path: Path) -> None:
-        # Legacy `agents:` shape is still honored as a fallback.
-        _seed_pool_with_legacy_agents_mcp(tmp_path, "main", "main", ["playwright"])
-        used = server_used_by("playwright", tmp_path / "config" / "pools")
-        assert ("main", "main") in used
-
-    def test_main_agent_name_defaults_to_pool_dir(self, tmp_path: Path) -> None:
-        # No main_agent_name → attribute to the pool/dir name.
-        pool_dir = tmp_path / "config" / "pools" / "default"
-        pool_dir.mkdir(parents=True)
-        import yaml
-
-        (pool_dir / "pool.yml").write_text(
-            yaml.safe_dump({"mcp": ["playwright"]}), encoding="utf-8"
-        )
-        used = server_used_by("playwright", tmp_path / "config" / "pools")
-        assert ("default", "default") in used
-
-    def test_finds_subagent_reference(self, tmp_path: Path) -> None:
-        _seed_pool_with_mcp(
-            tmp_path,
-            "coding",
-            "coding",
-            [],
-            {"scout": ["playwright"], "worker": []},
-        )
-        used = server_used_by("playwright", tmp_path / "config" / "pools")
-        assert ("coding", "scout") in used
-        assert ("coding", "worker") not in used
-
-    def test_no_references_returns_empty(self, tmp_path: Path) -> None:
-        _seed_pool_with_mcp(tmp_path, "main", "main", ["other"])
-        assert server_used_by("playwright", tmp_path / "config" / "pools") == []
-
-    def test_missing_pools_dir_returns_empty(self, tmp_path: Path) -> None:
-        assert server_used_by("x", tmp_path / "nope") == []

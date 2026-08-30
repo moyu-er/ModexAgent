@@ -38,12 +38,14 @@ class TestPrunedIndexEntry:
             start_time_display="2024-06-04 09:13",
             end_time_display="2024-06-04 11:43",
             topic="API integration debugging",
+            content_chars=12345,
         )
         assert entry.start_time == 1717490000
         assert entry.end_time == 1717499000
         assert entry.start_time_display == "2024-06-04 09:13"
         assert entry.end_time_display == "2024-06-04 11:43"
         assert entry.topic == "API integration debugging"
+        assert entry.content_chars == 12345
 
     def test_frozen(self) -> None:
         entry = PrunedIndexEntry(
@@ -68,10 +70,12 @@ class TestPrunedIndexEntry:
             start_time_display="2024-06-04 09:13",
             end_time_display="2024-06-04 11:43",
             topic="database migration",
+            content_chars=12345,
         )
         serialized = json.dumps(original.to_dict())
         restored = PrunedIndexEntry.from_dict(json.loads(serialized))
         assert restored == original
+        assert restored.content_chars == 12345
 
     def test_from_dict_missing_optional_fields(self) -> None:
         data = {
@@ -88,6 +92,7 @@ class TestPrunedIndexEntry:
         assert entry.start_time_display == ""
         assert entry.end_time_display == ""
         assert entry.topic == ""
+        assert entry.content_chars == 0
 
     def test_from_dict_extra_fields_ignored(self) -> None:
         data = {

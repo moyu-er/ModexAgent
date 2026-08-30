@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from .adapters.base import SandboxAdapter
@@ -44,7 +45,7 @@ class PlatformFallbackChain:
 
 _DEFAULT_CHAIN = PlatformFallbackChain()
 
-_ADAPTERS = {
+_ADAPTERS: dict[SandboxType, Callable[[SandboxConfig | None], SandboxAdapter]] = {
     SandboxType.LANDLOCK: LandlockSandbox,
     SandboxType.SUBPROCESS: SubprocessSandbox,
     SandboxType.DOCKER: DockerSandbox,
@@ -55,7 +56,7 @@ _ADAPTERS = {
 def list_available_adapters() -> list[str]:
     available = []
     for sandbox_type, cls in _ADAPTERS.items():
-        adapter = cls()
+        adapter = cls(None)
         if adapter.is_available:
             available.append(sandbox_type.value)
     return available

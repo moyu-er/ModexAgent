@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from modex_agent.control.channel import InMemoryControlChannel
+from modex_agent.control.exceptions import AgentCancelledError
 from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
-from modex_agent.control.exceptions import AgentCancelled
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.hook.builtin.control_drain import (
     ControlDrainInterceptor,
@@ -49,7 +49,7 @@ class TestDrainControlChannel:
         await channel.send(cmd)
         ctx = _FakeContext(session_id="sess-1:main", turn_uuid="abc123")
 
-        with pytest.raises(AgentCancelled) as exc:
+        with pytest.raises(AgentCancelledError) as exc:
             await drain_control_channel(channel, ctx, turn_uuid="abc123")
         assert "/stop" in str(exc.value)
 
@@ -83,7 +83,7 @@ class TestDrainControlChannel:
         await channel.send(cmd)
         ctx = _FakeContext(session_id="sess-3:main", turn_uuid="abc")
 
-        with pytest.raises(AgentCancelled):
+        with pytest.raises(AgentCancelledError):
             await drain_control_channel(channel, ctx, turn_uuid="abc")
 
     @pytest.mark.asyncio
@@ -99,7 +99,7 @@ class TestDrainControlChannel:
             await channel.send(cmd)
         ctx = _FakeContext(session_id="sess-multi:main", turn_uuid="match")
 
-        with pytest.raises(AgentCancelled):
+        with pytest.raises(AgentCancelledError):
             await drain_control_channel(channel, ctx, turn_uuid="match")
         # All drained
         remaining = await channel.peek(ControlScope(session_id="sess-multi:main"))
@@ -131,7 +131,7 @@ class TestControlDrainInterceptor:
         from unittest.mock import AsyncMock
         next_call = AsyncMock()
 
-        with pytest.raises(AgentCancelled):
+        with pytest.raises(AgentCancelledError):
             await interceptor.around_tool_call(ctx, mock_call, next_call)
 
         # next_call should NOT have been called
@@ -143,7 +143,7 @@ class TestControlDrainInterceptor:
         interceptor = ControlDrainInterceptor(channel=channel)
         ctx = _FakeContext(session_id="sess-clean:main", turn_uuid="turn-1")
 
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import AsyncMock, MagicMock
         mock_call = MagicMock()
         mock_call.tool_call = MagicMock()
         mock_call.tool_call.call_id = "call-1"
@@ -171,14 +171,14 @@ class TestLlmCancelInterceptor:
             yield MagicMock(content_delta=" world")
 
         chunks = []
-        async for chunk in interceptor.around_llm_stream(ctx, mock_call, _stream):
+        async for chunk in interceptor.around_llm_stream(ctx, mock_call, _stream()):
             chunks.append(chunk)
 
         assert len(chunks) == 2
 
     @pytest.mark.asyncio
     async def test_cancel_command_mid_stream(self):
-        """/stop during LLM streaming — AgentCancelled propagates immediately,
+        """/stop during LLM streaming — AgentCancelledError propagates immediately,
         aborting the stream before any chunks are yielded to the caller.
         This is a "hard cancel": the exception prevents subsequent tool
         calls from executing."""
@@ -202,8 +202,8 @@ class TestLlmCancelInterceptor:
             yield MagicMock(content_delta="chunk2")
 
         chunks = []
-        with pytest.raises(AgentCancelled) as exc:
-            async for chunk in interceptor.around_llm_stream(ctx, mock_call, _stream):
+        with pytest.raises(AgentCancelledError) as exc:
+            async for chunk in interceptor.around_llm_stream(ctx, mock_call, _stream()):
                 chunks.append(chunk)
 
         assert "/stop" in str(exc.value)
@@ -256,7 +256,7 @@ class TestEndToEndStopFlow:
         # Consumer side: same session_id in canonical form
         ctx = _FakeContext(session_id=canonical, turn_uuid="t1")
 
-        with pytest.raises(AgentCancelled):
+        with pytest.raises(AgentCancelledError):
             await drain_control_channel(channel, ctx, turn_uuid="t1")
 
     @pytest.mark.asyncio
@@ -294,7 +294,7 @@ class TestAllConsumersIndependentlyStop:
         )
         await channel.send(cmd)
         ctx = _FakeContext(session_id="s:main", turn_uuid="t1")
-        with pytest.raises(AgentCancelled):
+        with pytest.raises(AgentCancelledError):
             await drain_control_channel(channel, ctx, turn_uuid="t1")
 
     @pytest.mark.asyncio
@@ -308,10 +308,13 @@ class TestAllConsumersIndependentlyStop:
         await channel.send(cmd)
         interceptor = ControlDrainInterceptor(channel=channel)
         ctx = _FakeContext(session_id="s:main", turn_uuid="t1")
-        from unittest.mock import MagicMock, AsyncMock
-        call = MagicMock(); call.tool_call = MagicMock(); call.tool_call.call_id = "c1"
+        from unittest.mock import AsyncMock, MagicMock
+
+        call = MagicMock()
+        call.tool_call = MagicMock()
+        call.tool_call.call_id = "c1"
         next_call = AsyncMock()
-        with pytest.raises(AgentCancelled):
+        with pytest.raises(AgentCancelledError):
             await interceptor.around_tool_call(ctx, call, next_call)
         next_call.assert_not_called()
 
@@ -334,8 +337,8 @@ class TestAllConsumersIndependentlyStop:
             yield MagicMock(content_delta="c2")
 
         chunks = []
-        with pytest.raises(AgentCancelled):
-            async for chunk in interceptor.around_llm_stream(ctx, call, _stream):
+        with pytest.raises(AgentCancelledError):
+            async for chunk in interceptor.around_llm_stream(ctx, call, _stream()):
                 chunks.append(chunk)
         assert len(chunks) == 0
 

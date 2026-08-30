@@ -9,7 +9,7 @@ AOP onion-chain layer wrapping call boundaries. Interceptors form recursive clos
 ## Key Files
 | File | Description |
 |------|-------------|
-| `abc.py` | `Interceptor` ABC (not Protocol), `InterceptorScope` (9 defined, 4 active: TOOL_CALL/TURN/ITERATION/LLM_STREAM), context types (`ToolCallContext`, `TurnContext`, `IterationContext`, `LLMStreamContext`, `LLMStreamChunk`). `LLMStreamChunk` fields are now typed: `finish_reason: FinishReason | None`, `control_action: StreamControlAction | None` (B6). `LLMRequest`/`LLMCallContext`/`LLMStreamContext.messages` is now `Sequence[ChatMessage]` (B6). next-call signatures |
+| `abc.py` | `Interceptor` ABC (not Protocol), `InterceptorScope` (9 defined, 4 active: TOOL_CALL/TURN/ITERATION/LLM_STREAM), context types (`ToolCallContext`, `TurnContext`, `IterationContext`, `LLMCallContext`, `LLMStreamContext`). `LLMStreamEvents` is the event-stream alias `AsyncIterator[LLMStreamEvent]` (ADR-0046); `aclose_llm_stream()` closes a generator stream deterministically. `LLMRequest`/`LLMCallContext`/`LLMStreamContext.messages` is now `Sequence[ChatMessage]` (B6). next-call signatures |
 | `chain.py` | `InterceptorChain[R]` -- recursive closure builder per scope, `has_scope()` check, exception handling (AgentControlError propagates, generic -> ToolResult) |
 | `__init__.py` | Public API exports |
 

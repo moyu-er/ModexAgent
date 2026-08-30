@@ -87,6 +87,13 @@ class Hook(ABC):  # noqa: B024
         return type(self).__name__
 
 
+class ClosableHook(Hook):
+    """Hook that owns process-lifetime resources released at pipeline stop."""
+
+    @abstractmethod
+    async def aclose(self) -> None: ...
+
+
 class BeforeGraphHook(Hook):
     """Graph-level hook — fires once per actual_turn() call.
 
@@ -118,12 +125,48 @@ class FinallyGraphHook(Hook):
 
     ⚠️ Approval resume re-enters actual_turn(), causing this hook to fire again.
     Avoid mutating ctx.history — use StartNodeTurnHook or BeforeTurnHook instead.
+
+    ``result=None`` is the GraphInterrupt (approval suspend) signature: the
+    turn has NOT ended and will re-enter actual_turn() on resume. Hooks whose
+    side effects must fire once per logical turn (notifications, deliveries)
+    should inherit OutcomeFinallyHook instead of guarding manually.
     """
 
     _hook_point = HookPoint.FINALLY_GRAPH
 
     @abstractmethod
     async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None: ...
+
+
+class OutcomeFinallyHook(FinallyGraphHook):
+    """Template-method base for outcome-dependent FINALLY_GRAPH hooks.
+
+    ``finally_graph`` skips the suspend leg (``result is None``) and only
+    calls ``on_outcome`` for terminal legs — the safety default that removes
+    the interpretation of ``None`` from every consumer. Forgetting the guard
+    becomes structurally impossible: a subclass never sees a suspend dispatch.
+    """
+
+    async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None:
+        if result is None:
+            return
+        await self.on_outcome(ctx, result)
+
+    @abstractmethod
+    async def on_outcome(self, ctx: AgentContext, result: AgentResult) -> None: ...
+
+
+def is_suspend_leg(result: AgentResult | None, error: Exception | None = None) -> bool:
+    """Whether a FINALLY_GRAPH dispatch is the approval-suspend leg.
+
+    ``result is None`` with no ``error`` is the GraphInterrupt signature: the
+    turn has not ended and re-enters actual_turn() on resume. A terminal leg
+    always carries a concrete ``AgentResult``; a genuine crash dispatches
+    ``error`` alongside ``result=None``. The single authority for this
+    interpretation — RootSpanHook uses it directly because it also handles
+    the error variant and cannot inherit the template method.
+    """
+    return result is None and error is None
 
 
 class StartNodeTurnHook(Hook):

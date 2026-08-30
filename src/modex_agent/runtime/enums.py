@@ -146,34 +146,41 @@ class TurnCustomKey(StrEnum):
     # The parent agent's handoff span ID, stored on the child's turn state
     # so the child can reference the specific handoff span that spawned it.
     HANDOFF_SPAN_ID = "handoff_span_id"
-    # Resolved image-kind Attachment records for the current turn (ADR-0014 §3 /
-    # OpenSpec native-multimodal-inline unit 3). Path-only VOs (path/mime/kind/
-    # name/size) — never bytes. Read by the inline renderer (unit 4) to bind
-    # vision blocks; base64 is materialized lazily in unit 5.
-    INLINE_ATTACHMENTS = "inline_attachments"
-    # Per-turn cache of already-rendered image content blocks keyed by the
-    # attachment id (ADR-0014 §5 / OpenSpec native-multimodal-inline unit 5).
-    # Value: dict[str, list[dict]] mapping att.id -> the 2-element caption +
-    # image_url block list, so base64 is encoded once per turn and reused
-    # across ReAct iterations. Lives only in turn state — never persisted.
-    INLINE_IMAGE_CACHE = "_inline_image_cache"
-    # Per-turn cache of image content blocks produced by TOOLS (e.g. ReadFileTool
-    # reading an image file), keyed by tool_call_id. Mirrors INLINE_IMAGE_CACHE
-    # (which is keyed by attachment id for user-uploaded attachments). Value:
-    # dict[str, ToolMediaEntry] mapping call_id -> entry (carries tool_name +
-    # image_blocks for per-call attribution in the synthetic user message).
-    # Lives only in turn state — never persisted. Read by enrich_inline_media
-    # which delegates to a ToolResultMediaStrategy (default
-    # SyntheticUserMessageStrategy — Path B) to inject a synthetic user message
-    # after tool results.
-    TOOL_MEDIA_CACHE = "_tool_media_cache"
+    # TrajectoryMetrics for the finished turn, derived by RootSpanHook from
+    # the TraceSessionState scalar counters at finally_graph (BEFORE
+    # clear_trace pops the counters bucket). Value: the frozen
+    # TrajectoryMetrics model. Read by eval-side turn aggregation so it
+    # never reads spans back from the trace store.
+    TRAJECTORY_METRICS = "trajectory_metrics"
     CONTINUATION_REQUEST = "_continuation_request"
     # One-shot flag: a hook with progress-driven continuation (currently only
     # TodoContinuationHook) authorizes the gate to renew MAX_TURNS past the
     # current upper bound.  Gate pops this alongside CONTINUATION_REQUEST and
     # increments MAX_TURNS by 1 only once regardless of how many hooks set it.
     CONTINUATION_RENEW_MAX_TURNS = "_continuation_renew_max_turns"
+    # FinishReason of the last LLM response in this turn, recorded by
+    # LengthGuardHook.after_llm_response (StrEnum value — JSON-safe) and read
+    # by LengthGuardHook.after_turn to detect degenerate endings.
+    LAST_LLM_FINISH_REASON = "last_llm_finish_reason"
+    # Consecutive degenerate-ending counter maintained by LengthGuardHook.
+    # Incremented on each degenerate ending, reset to 0 by any productive
+    # LLM response (content or tool calls). Exhaustion at MAX_NUDGES.
+    LENGTH_GUARD_NUDGES = "length_guard_nudges"
+    # Loop-detection episode for the current turn, maintained by
+    # LoopDetectionHook.before_iteration. Value: {"fp": str, "rounds": int} —
+    # the tool-call identity (canonical preview string) that triggered the
+    # advisory reminder, and the trailing-run length at injection. Cleared
+    # whenever the trailing identity changes (loop broken / switched);
+    # consumed when the same identity persists observation_rounds past the
+    # injection (hard exit). Transient: an approval suspend/resume dropping
+    # it only costs one re-reminder.
+    LOOP_EPISODE = "_loop_episode"
     LAST_CONTINUATION_TODO_SIG = "_last_continuation_todo_sig"
+    # One-shot arm flag: the todo planning nudge may fire once per logical
+    # turn. Armed by TodoPlanningNudgeHook.start_node_turn (fresh turns only
+    # — continuation attempts and approval resume never re-arm), popped by
+    # before_iteration on first evaluation. Value: bool.
+    TODO_NUDGE_PENDING = "_todo_nudge_pending"
     GRAPH_DELIVER_COUNT = "_graph_deliver_count"
     MAX_TURNS = "_max_turns"
     # Per-turn counter for graph knowledge base read actions (read/grep).

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from bot.workspace.dispatch import WorkspaceMessageDispatcher
 
-from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.registry import ScopeRegistry
 from modex_agent.workspace.routing import WorkspaceResolver
 from modex_agent.workspace.runtime import resolve_workspace_root
 from modex_agent.workspace.store import GlobalWorkspaceStore
@@ -18,7 +18,7 @@ from ._stubs import StubFactory, StubResources
 def _resolver(tmp_path: Path) -> tuple[WorkspaceResolver[StubResources], Path]:
     home = tmp_path / "proj"
     home.mkdir()
-    registry = WorkspaceRegistry(
+    registry = ScopeRegistry(
         home=home, data_dir_name=".modex",
         factory=StubFactory(), store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
     )

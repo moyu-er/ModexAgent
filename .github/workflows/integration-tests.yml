@@ -32,8 +32,8 @@ jobs:
           version: "latest"
       - run: uv python install 3.13
       - run: uv venv --python 3.13
-      - run: uv pip install -e ".[dev,llm,ast,terminal]"
-      - run: uv pip install -e "examples/bot_project"
+      - run: bash scripts/ci_install.sh -e ".[dev,ast,terminal]"
+      - run: bash scripts/ci_install.sh -e "examples/bot_project"
       - name: Run E2E integration tests
         run: |
           uv run pytest examples/bot_project/tests/integration/ \
@@ -42,3 +42,25 @@ jobs:
         if: always()
         run: |
           echo "::notice::E2E tests that skip indicate missing TEST_LLM_* secrets in repo settings."
+
+  fw-integration-slot-gates:
+    name: FW Integration Tests + Slot Gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      UV_PYTHON: "3.13"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - run: uv python install 3.13
+      - run: uv venv --python 3.13
+      - run: bash scripts/ci_install.sh -e ".[dev,ast,terminal]"
+      - run: bash scripts/ci_install.sh -e "examples/bot_project"
+      - name: Run framework integration tests (red anchors T-P1..T-P4 + E2E)
+        run: |
+          uv run pytest tests/integration/ -q --tb=short -m integration
+      - name: Run slot gates (16 mechanical gates)
+        run: |
+          uv run python scripts/verify_slot_gates.py --check

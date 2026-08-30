@@ -1,0 +1,27 @@
+arms:
+  default:
+    strip_peers: true
+    pools:
+      target_pool:
+        strip_mcp: true
+        tools_remove:
+          - experience
+  benchmark:
+    strip_peers: true
+    pools:
+      target_pool:
+        # Subagent topology is inherited from the target pool's declaration
+        # (bot.yml); this arm keeps only its own deviations (prompt, core
+        # memory off, tool removals). single_agent (keep_agents=[root]) stays
+        # available for a dedicated ablation arm if ever needed.
+        strip_mcp: true
+        tools_remove:
+          - process
+          - terminal
+          - experience
+        memory:
+          core_enabled: false
+        system_prompt:
+          provider: file_prompt
+          path: agents/benchmark.md
+

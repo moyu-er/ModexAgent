@@ -1,0 +1,159 @@
+{
+  "fixture": {
+    "nested": {
+      "root": [
+        {
+          "tool": "task",
+          "origin": "derived_task",
+          "targets": [
+            "mid"
+          ]
+        }
+      ],
+      "mid": [
+        {
+          "tool": "task",
+          "origin": "derived_task",
+          "targets": [
+            "leaf"
+          ]
+        },
+        {
+          "tool": "send_to_agent",
+          "origin": "derived_send_to_agent",
+          "targets": [
+            "root"
+          ]
+        }
+      ],
+      "leaf": [
+        {
+          "tool": "send_to_agent",
+          "origin": "derived_send_to_agent",
+          "targets": [
+            "mid"
+          ]
+        }
+      ]
+    },
+    "peered": {
+      "root2": [
+        {
+          "tool": "send_to_peer",
+          "origin": "derived_send_to_peer",
+          "targets": [
+            "nested"
+          ]
+        }
+      ]
+    }
+  },
+  "shipped": {
+    "default": {
+      "default": [
+        {
+          "tool": "task",
+          "origin": "derived_task",
+          "targets": [
+            "office-expert"
+          ]
+        },
+        {
+          "tool": "send_to_peer",
+          "origin": "derived_send_to_peer",
+          "targets": [
+            "opencode",
+            "review"
+          ]
+        }
+      ],
+      "office-expert": [
+        {
+          "tool": "send_to_agent",
+          "origin": "derived_send_to_agent",
+          "targets": [
+            "default"
+          ]
+        }
+      ]
+    },
+    "coder": {
+      "orchestrator": [
+        {
+          "tool": "task",
+          "origin": "derived_task",
+          "targets": [
+            "explore",
+            "general"
+          ]
+        }
+      ],
+      "explore": [
+        {
+          "tool": "send_to_agent",
+          "origin": "derived_send_to_agent",
+          "targets": [
+            "orchestrator"
+          ]
+        }
+      ],
+      "general": [
+        {
+          "tool": "send_to_agent",
+          "origin": "derived_send_to_agent",
+          "targets": [
+            "orchestrator"
+          ]
+        }
+      ]
+    },
+    "review": {
+      "reviewer": [
+        {
+          "tool": "task",
+          "origin": "derived_task",
+          "targets": [
+            "explore",
+            "general"
+          ]
+        },
+        {
+          "tool": "send_to_peer",
+          "origin": "derived_send_to_peer",
+          "targets": [
+            "default"
+          ]
+        }
+      ],
+      "explore": [
+        {
+          "tool": "send_to_agent",
+          "origin": "derived_send_to_agent",
+          "targets": [
+            "reviewer"
+          ]
+        }
+      ],
+      "general": [
+        {
+          "tool": "send_to_agent",
+          "origin": "derived_send_to_agent",
+          "targets": [
+            "reviewer"
+          ]
+        }
+      ]
+    },
+    "opencode": {
+      "opencode": [
+        {
+          "tool": "send_to_peer",
+          "origin": "derived_send_to_peer",
+          "targets": [
+            "default"
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -11,11 +11,11 @@ Four test groups:
    set ``_modex_env`` internally and call ``SubprocessExecutor.execute()``.
    Each task's subprocess receives its own env; no cross-talk.
 
-2. **并发隔离 (CommandTool)** — two concurrent asyncio.Tasks each set
-   ``_current_session_id`` + ``_modex_env`` internally and call
-   ``CommandTool.execute()`` on a shared ``BaseTerminalManager``. Two
-   independent sessions are created; each backend's ``start()`` receives
-   different env.
+2. **CommandTool 会话路由** — ``CommandTool.execute()`` always targets the
+   manager's DEFAULT tab (commit 545d4f78 retired the per-session-id
+   routing). Concurrent tasks share that one session; ``_modex_env``
+   overrides reach the backend's ``start()`` env exactly once, and the
+   main context stays clean.
 
 3. **fallback 安全** — without any contextvar set, both SubprocessExecutor
    and CommandTool behave exactly as before the env-injection wiring:
@@ -275,29 +275,24 @@ async def test_subprocess_executor_concurrent_isolation(
     assert _modex_env.get() is None
 
 
-# ── Group 2: 并发隔离 (CommandTool) ──
+# ── Group 2: CommandTool 会话路由（default tab 契约） ──
 
 
-async def test_command_tool_concurrent_isolation(
+async def test_command_tool_routes_to_default_session(
     _clean_contextvars: None,
 ) -> None:
-    """Two concurrent asyncio.Tasks each set ``_current_session_id`` +
-    ``_modex_env`` and call ``CommandTool.execute()`` on a shared
-    ``BaseTerminalManager``.
+    """CommandTool always targets the manager's DEFAULT tab (``get_default``,
+    commit 545d4f78) — the per-session-id terminal routing of the original
+    env-injection design no longer exists, so concurrent tasks share one
+    session (the input guard serializes them; the loser is rejected, not
+    corrupted).
 
-    Each Task's contextvar copy is isolated (``asyncio.create_task`` copies
-    context). Task A uses sid-a + task-a, Task B uses sid-b + task-b. Both
-    share the same ``BaseTerminalManager`` + ``CommandTool`` instance (tools
-    are stateless — safe to share per design doc: "工具实例共享但无状态").
-
-    After concurrent execution:
-    - Two independent sessions exist (name="sid-a" and name="sid-b")
-    - Each session's backend received different env in ``start()``
-
-    Verifies design doc "并发安全验证 场景 1" (env-injection.md:183-189):
-    ``CommandTool → get_or_create(sid_X) → tab_X → start(env=env_X)``.
+    What remains of the env-injection contract here:
+    - ``_modex_env`` overrides reach the backend's ``start()`` env exactly
+      once — whichever task won the start race, never a merge of both.
+    - Task context copies are discarded — the main context stays clean.
     """
-    manager, _backends = _make_backend_collecting_manager()
+    manager, backends = _make_backend_collecting_manager()
     registry = ProcessRegistry()
     tool = CommandTool(
         manager=manager,
@@ -338,32 +333,20 @@ async def test_command_tool_concurrent_isolation(
     ):
         await asyncio.gather(task_a(), task_b())
 
-    # Two independent sessions created by concurrent tasks.
-    session_a = manager.get("sid-a")
-    session_b = manager.get("sid-b")
-    assert session_a is not None
-    assert session_b is not None
-    assert session_a.name == "sid-a"
-    assert session_b.name == "sid-b"
-    assert session_a is not session_b
+    # Both tasks routed to the single default tab — no per-sid sessions.
+    assert manager.list_names() == ["default"]
 
-    # Each session's backend received the correct env in start().
-    # Private access: concurrent creation makes list-order → session mapping non-deterministic.
-    backend_a = session_a._backend
-    backend_b = session_b._backend
-    assert isinstance(backend_a, _FakeBackend)
-    assert isinstance(backend_b, _FakeBackend)
-    assert backend_a.start_calls, "expected start() on sid-a backend"
-    assert backend_b.start_calls, "expected start() on sid-b backend"
+    # One backend, started once, carrying exactly one task's env — no
+    # cross-contamination (never both MODEX_TASK_ID values).
+    assert len(backends) == 1
+    assert len(backends[0].start_calls) == 1
+    env = backends[0].start_calls[0].env
+    assert env is not None
+    assert env["MODEX_TASK_ID"] in {"task-a", "task-b"}
+    assert [k for k in env if k.startswith("MODEX_")] == ["MODEX_TASK_ID"]
 
-    env_a = backend_a.start_calls[0].env
-    env_b = backend_b.start_calls[0].env
-    assert env_a is not None
-    assert env_b is not None
-    assert env_a["MODEX_TASK_ID"] == "task-a"
-    assert env_b["MODEX_TASK_ID"] == "task-b"
-    # Different envs — no cross-contamination.
-    assert env_a != env_b
+    # Task context copies were discarded on exit — main context untouched.
+    assert _modex_env.get() is None
 
     # Main context untouched — tasks' context copies were discarded.
     assert _modex_env.get() is None

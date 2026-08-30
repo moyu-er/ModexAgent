@@ -1,8 +1,13 @@
-"""WorkspaceRegistry — holds WorkspaceContexts + lazily-cached resources (R).
+"""ScopeRegistry — holds WorkspaceContexts + lazily-cached resources (R).
 
 Replaces the single-active ``_active`` value: many workspaces live concurrently,
 each lazily materialized on first use and cached by resolved target path.
 Generic over ``R`` so the package stays business-agnostic.
+
+The scope-generic name (ticket 15, SPEC §5.3): the workspace stays the only
+materialization layer, so the registry's entries remain workspaces
+(persistence still owned by :class:`ScopeRegistryStore` /
+:class:`WorkspaceRecord`).
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ from modex_agent.workspace.record import WorkspaceRecord
 R = TypeVar("R")
 
 
-class WorkspaceRegistryStore(ABC):
+class ScopeRegistryStore(ABC):
     """Persistence backend for known workspaces (T14 deepening).
 
     Enriched successor to the legacy ``RegistryStore``: stores structured
@@ -74,7 +79,7 @@ class WorkspaceRegistryStore(ABC):
     # ------------------------------------------------------------------
     # Legacy compat — derived from the abstract methods above.
     # Retained until T23 removes the RegistryStore alias and migrates the
-    # last call sites (WorkspaceRegistry.__init__ / get_or_open).
+    # last call sites (ScopeRegistry.__init__ / get_or_open).
     # ------------------------------------------------------------------
 
     async def load_known_targets(self) -> list[Path]:
@@ -115,10 +120,10 @@ class WorkspaceRegistryStore(ABC):
 
 
 #: Deprecated alias retained until T23 removes the last import sites.
-RegistryStore = WorkspaceRegistryStore
+RegistryStore = ScopeRegistryStore
 
 
-class WorkspaceRegistry[R]:
+class ScopeRegistry[R]:
     """Holds WorkspaceContexts keyed by resolved target + lazily-cached ``R``."""
 
     def __init__(
@@ -127,13 +132,13 @@ class WorkspaceRegistry[R]:
         home: Path,
         data_dir_name: str,
         factory: ResourceFactory[R],
-        store: WorkspaceRegistryStore,
+        store: ScopeRegistryStore,
         max_materialized: int | None = None,
     ) -> None:
         self._home: Path = Path(home).resolve()
         self._data_dir_name: str = data_dir_name
         self._factory: ResourceFactory[R] = factory
-        self._store: WorkspaceRegistryStore = store
+        self._store: ScopeRegistryStore = store
         self._max_materialized: int | None = max_materialized
         self._home_context: WorkspaceContext = WorkspaceContext.from_target(
             home, data_dir_name=data_dir_name, home=home

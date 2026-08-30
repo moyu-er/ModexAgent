@@ -2,9 +2,10 @@
 
 Registered first among AfterTurnHook continuation sources so its reminder
 (including the active todo list) lands before other hooks' reminders.  It is
-the only hook that sets ``CONTINUATION_RENEW_MAX_TURNS`` — the watchdog
-signal that authorizes the gate to extend ``MAX_TURNS`` past the current
-upper bound when the agent is still making progress on its todos.
+one of the two hooks that set ``CONTINUATION_RENEW_MAX_TURNS`` (the other is
+``LengthGuardHook``) — the watchdog signal that authorizes the gate to
+extend ``MAX_TURNS`` past the current upper bound while the agent is still
+making progress (todos here, degenerate-ending recovery there).
 """
 
 from __future__ import annotations
@@ -20,8 +21,7 @@ from modex_agent.core.message_utils import wrap_system_reminder
 from modex_agent.core.types import MessageRole, TodoStatus
 from modex_agent.hook.abc import AfterTurnHook
 from modex_agent.runtime.enums import TurnCustomKey
-from modex_agent.runtime.store import TodoItem
-from modex_agent.tools.standard.todo_tool import TodoReadTool
+from modex_agent.runtime.store import TodoItem, TodoStore
 
 if TYPE_CHECKING:
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
@@ -35,6 +35,13 @@ def _active_todo_hash(active: list[TodoItem]) -> str:
 class TodoContinuationHook(AfterTurnHook):
     """Request continuation when active todo tasks remain after a turn attempt.
 
+    Exists only where the ``todo`` capability is effective — the roster
+    dispatch constructs it (``TodoContinuationHookFactory``), so
+    enablement is compile-time knowledge; the historical runtime
+    tool-registration gate died with that migration. The remaining gate
+    is the ``todo_store`` constructor argument; the todo list itself is
+    read from the injected store, never from a tool.
+
     Each hook acts independently — no OR/AND coordination with other
     AfterTurnHook continuation sources.  This hook:
       1. Reads active (pending + in_progress) todos.
@@ -43,12 +50,17 @@ class TodoContinuationHook(AfterTurnHook):
          returns (deadlock: no progress made).
       4. Otherwise — injects a ``<system-reminder>`` with the full active
           todo list, sets ``CONTINUATION_REQUEST``, and sets
-         ``CONTINUATION_RENEW_MAX_TURNS`` (watchdog: authorizes the gate to
-         extend MAX_TURNS by 1 when the agent is still making progress).
+         ``CONTINUATION_RENEW_MAX_TURNS`` (watchdog: authorizes the gate
+          to extend MAX_TURNS by 1 when the agent is still making progress).
     """
 
-    def __init__(self, tree: SessionTreeManager | None = None) -> None:
+    def __init__(
+        self,
+        tree: SessionTreeManager | None = None,
+        todo_store: TodoStore | None = None,
+    ) -> None:
         self._tree = tree
+        self._todo_store = todo_store
 
     @property
     def name(self) -> str:
@@ -58,14 +70,8 @@ class TodoContinuationHook(AfterTurnHook):
         if result.stop_reason in (StopReason.TURN_CANCELLED, StopReason.ERROR):
             return
 
-        tool_manager = ctx.tool_manager
-        if tool_manager is None:
+        if self._todo_store is None:
             return
-        read_tool = tool_manager.get_tool("todo_read")
-        if not isinstance(read_tool, TodoReadTool):
-            return
-        # Tech debt: private attr. Future: add todo_store to AgentRuntimeServices.
-        todo_store = read_tool._store
 
         react_state = get_react_state(ctx)
         if react_state is None:
@@ -80,7 +86,7 @@ class TodoContinuationHook(AfterTurnHook):
                 if len(active_subtree) > 1:
                     return
 
-        todos = await todo_store.get(str(ctx.session))
+        todos = await self._todo_store.get(str(ctx.session))
         active = [
             todo
             for todo in todos

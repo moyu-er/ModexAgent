@@ -125,7 +125,8 @@ class TestChatMessageReasoningContent:
     """ChatMessage 是纯粹的数据结构，思维链清理在业务层（ReActAgent）处理。
 
     from_dict() 保留原始字段（包括 reasoning_content 和 think 标签）；
-    to_dict() 负责序列化安全，排除 reasoning_content。
+    to_dict() 持久化 reasoning_content（thinking-mode passback 依赖它在
+    compaction / 重启后存活），provider 层负责条件性回放。
     """
 
     def test_from_dict_preserves_reasoning_content(self):
@@ -154,14 +155,14 @@ class TestChatMessageReasoningContent:
         # from_dict 保留 content 中的 think 标签（清理在业务层做）
         assert msg.content == "<think>reasoning</think>actual content"
 
-    def test_to_dict_excludes_reasoning_content(self):
+    def test_to_dict_persists_reasoning_content(self):
         from modex_agent.core.message import ChatMessage
 
         msg = ChatMessage(role="assistant", content="hello")
         # Simulate extra field via model_extra
         msg.__pydantic_extra__ = {"reasoning_content": "secret"}
         d = msg.to_dict()
-        assert "reasoning_content" not in d
+        assert d["reasoning_content"] == "secret"
         assert d["content"] == "hello"
 
     def test_coerce_dict_preserves_raw_content(self):

@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import ssl
 import urllib.request
 from functools import lru_cache
 from pathlib import Path
@@ -84,6 +85,20 @@ def _writable_cache_path() -> Path:
     return base / BLOB_FILENAME
 
 
+def _ssl_context() -> ssl.SSLContext:
+    """TLS context for the blob download, backed by certifi's CA bundle.
+
+    uv-managed python-build-standalone interpreters ship no system CA store,
+    so the default context fails certificate verification. certifi is already
+    in the dependency closure; fall back to system CAs when it is unavailable.
+    """
+    try:
+        import certifi
+    except ImportError:
+        return ssl.create_default_context()
+    return ssl.create_default_context(cafile=certifi.where())
+
+
 def _download_to(target: Path) -> None:
     """Download the canonical blob to ``target`` atomically, in binary (no EOL translation)."""
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -92,6 +107,7 @@ def _download_to(target: Path) -> None:
         with urllib.request.urlopen(
             urllib.request.Request(DOWNLOAD_URL, headers={"User-Agent": _USER_AGENT}),
             timeout=_DOWNLOAD_TIMEOUT,
+            context=_ssl_context(),
         ) as resp, open(tmp, "wb") as out:
             shutil.copyfileobj(resp, out)
         os.replace(tmp, target)

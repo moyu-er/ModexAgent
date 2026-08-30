@@ -8,26 +8,25 @@ commands from InMemoryControlChannel.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 from modex_agent.control.types import ControlCommandType, ControlScope
+from modex_agent.core.tool_manager import ToolResult
+from modex_agent.interceptor.abc import (
+    LLMStreamContext,
+    LLMStreamEvents,
+    LLMStreamInterceptor,
+    ToolCallContext,
+    ToolCallInterceptor,
+    ToolCallNext,
+    aclose_llm_stream,
+)
 
 if TYPE_CHECKING:
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.agent import AgentContext
-
-from collections.abc import AsyncIterator
-
-from modex_agent.core.tool_manager import ToolResult
-from modex_agent.interceptor.abc import (
-    LLMStreamChunk,
-    LLMStreamContext,
-    LLMStreamInterceptor,
-    LLMStreamNext,
-    ToolCallContext,
-    ToolCallInterceptor,
-    ToolCallNext,
-)
+    from modex_agent.core.stream_events import LLMStreamEvent
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,7 @@ async def drain_control_channel(
 
     Drains ALL matching commands at once from the channel (atomic, destructive).
     For each command:
-    - If command's turn_uuid matches → execute action (e.g., raise AgentCancelled)
+    - If command's turn_uuid matches → execute action (e.g., raise AgentCancelledError)
     - If command's turn_uuid does NOT match → consume (discard) silently
     - If no turn_uuid in command payload → execute (backward-compatible defense)
 
@@ -58,7 +57,7 @@ async def drain_control_channel(
         False if no commands were found.
 
     Raises:
-        AgentCancelled: When a CANCEL_TURN command matches the current turn.
+        AgentCancelledError: When a CANCEL_TURN command matches the current turn.
     """
     if channel is None:
         return False
@@ -80,11 +79,7 @@ async def drain_control_channel(
         cmd_type_name = cmd.type.value if hasattr(cmd.type, "value") else str(cmd.type)
 
         # Stale command: turn_uuid mismatch
-        if (
-            turn_uuid is not None
-            and cmd_turn_uuid is not None
-            and cmd_turn_uuid != turn_uuid
-        ):
+        if turn_uuid is not None and cmd_turn_uuid is not None and cmd_turn_uuid != turn_uuid:
             logger.debug(
                 "Control: discarding stale %s cmd_uuid=%s current_uuid=%s",
                 cmd_type_name,
@@ -100,9 +95,9 @@ async def drain_control_channel(
                 str(ctx.session),
                 turn_uuid,
             )
-            from modex_agent.control.exceptions import AgentCancelled
+            from modex_agent.control.exceptions import AgentCancelledError
 
-            raise AgentCancelled("User requested /stop")
+            raise AgentCancelledError("User requested /stop")
 
     return True
 
@@ -110,7 +105,7 @@ async def drain_control_channel(
 class ControlDrainInterceptor(ToolCallInterceptor):
     """Drains control channel before each tool call.
 
-    If CANCEL_TURN matches, AgentCancelled propagates through the
+    If CANCEL_TURN matches, AgentCancelledError propagates through the
     interceptor chain, causing the ReAct graph to exit via AgentControlError
     propagation (InterceptorChain.around_tool_call re-raises AgentControlError).
     """
@@ -137,11 +132,13 @@ class ControlDrainInterceptor(ToolCallInterceptor):
 
 
 class LlmCancelInterceptor(LLMStreamInterceptor):
-    """Drains control channel during LLM streaming.
+    """Drains control channel during LLM streaming (event stream).
 
-    Checks for CANCEL_TURN before each chunk. If a matching CANCEL_TURN
-    is found, AgentCancelled propagates immediately — aborting the stream
-    and causing the ReAct graph to exit via AgentControlError propagation.
+    Checks for CANCEL_TURN before each yielded event. If a matching
+    CANCEL_TURN is found, AgentCancelledError propagates immediately —
+    aborting the stream and causing the ReAct graph to exit via
+    AgentControlError propagation (the ReactLlmClient event loop's except
+    block turns it into an INTERRUPTED_PARTIAL stash before re-raising).
     This is a "hard cancel": the command is consumed destructively and the
     exception prevents any subsequent tool calls from executing.
 
@@ -162,12 +159,15 @@ class LlmCancelInterceptor(LLMStreamInterceptor):
         self,
         ctx,
         call: LLMStreamContext,
-        next_stream: LLMStreamNext,
-    ) -> AsyncIterator[LLMStreamChunk]:
-        async for chunk in next_stream():
-            await drain_control_channel(
-                self._channel,
-                ctx,
-                turn_uuid=ctx.current_turn_uuid,
-            )
-            yield chunk
+        events: LLMStreamEvents,
+    ) -> AsyncIterator[LLMStreamEvent]:
+        try:
+            async for event in events:
+                await drain_control_channel(
+                    self._channel,
+                    ctx,
+                    turn_uuid=ctx.current_turn_uuid,
+                )
+                yield event
+        finally:
+            await aclose_llm_stream(events)

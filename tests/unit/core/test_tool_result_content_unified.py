@@ -2,8 +2,8 @@
 
 Covers the post-migration ``content: list[ContentPart]`` source of truth:
 ``from_text`` factory, mixed TextPart/ImageUrlPart content, ``message_content()``
-rendering, ``image_blocks`` / ``content_blocks`` computed views, and back-compat
-for empty / error-only results.
+rendering, image-part access via ``content``, and back-compat for empty /
+error-only results.
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ class TestMessageContentRendering:
         assert r.message_content() == xml
 
 
-class TestImageBlocks:
+class TestImageParts:
     def test_returns_only_image_parts(self):
         r = ToolResult(
             tool_name="read",
@@ -79,52 +79,17 @@ class TestImageBlocks:
                 ImageUrlPart(image_url=ImageUrl(url="data:image/png;base64,abc")),
             ],
         )
-        assert len(r.image_blocks) == 1
-        assert r.image_blocks[0].image_url.url == "data:image/png;base64,abc"
+        image_parts = [p for p in r.content if isinstance(p, ImageUrlPart)]
+        assert len(image_parts) == 1
+        assert image_parts[0].image_url.url == "data:image/png;base64,abc"
 
     def test_empty_when_no_images(self):
         r = ToolResult.from_text("t", "text only")
-        assert r.image_blocks == []
-
-
-class TestContentBlocksComputed:
-    def test_returns_wire_dicts_for_images(self):
-        r = ToolResult(
-            tool_name="read",
-            content=[
-                TextPart(text="hint"),
-                ImageUrlPart(image_url=ImageUrl(url="data:image/png;base64,abc")),
-            ],
-        )
-        blocks = r.content_blocks
-        assert blocks is not None
-        assert len(blocks) == 1
-        assert blocks[0]["type"] == "image_url"
-        assert blocks[0]["image_url"]["url"] == "data:image/png;base64,abc"
-
-    def test_none_when_no_images(self):
-        r = ToolResult.from_text("t", "text only")
-        assert r.content_blocks is None
-
-    def test_includes_detail_when_set(self):
-        r = ToolResult(
-            tool_name="read",
-            content=[
-                ImageUrlPart(image_url=ImageUrl(url="data:image/png;base64,abc", detail="high")),
-            ],
-        )
-        blocks = r.content_blocks
-        assert blocks is not None
-        assert blocks[0]["image_url"]["detail"] == "high"
+        assert [p for p in r.content if isinstance(p, ImageUrlPart)] == []
 
 
 class TestRoundTrip:
-    """Pydantic round-trip under ``extra="forbid"`` with computed fields.
-
-    The ``_strip_computed_fields`` before-validator strips ``image_blocks`` /
-    ``content_blocks`` (which ``@computed_field`` serializes into
-    ``model_dump``) so ``extra="forbid"`` doesn't reject them on re-validation.
-    """
+    """Pydantic round-trip under ``extra="forbid"`` — only declared fields."""
 
     def test_tool_result_model_dump_round_trip(self):
         original = ToolResult(
@@ -137,8 +102,16 @@ class TestRoundTrip:
             execution_time=1.5,
         )
         dumped = original.model_dump()
-        assert "image_blocks" in dumped
-        assert "content_blocks" in dumped
+        assert set(dumped) == {
+            "tool_name",
+            "error",
+            "execution_time",
+            "call_id",
+            "overflow_processed",
+            "content_format",
+            "truncatable_paths",
+            "content",
+        }
 
         restored = ToolResult.model_validate(dumped)
         assert restored.tool_name == "read"
@@ -147,7 +120,6 @@ class TestRoundTrip:
         assert isinstance(restored.content[0], TextPart)
         assert isinstance(restored.content[1], ImageUrlPart)
         assert restored.content[1].image_url.url == "data:image/png;base64,abc"
-        assert restored.image_blocks == original.image_blocks
 
     def test_tool_result_json_round_trip(self):
         original = ToolResult.from_text("bash", "hello world", call_id="c1")

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from bot.service._runtime_builders import _build_main_command_processor
+from bot.service.builders import _build_main_command_processor
 from bot.service.core import BotService
 
 from modex_agent.commands.processor import SlashCommandProcessor

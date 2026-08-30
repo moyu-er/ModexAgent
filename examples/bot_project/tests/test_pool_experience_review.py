@@ -101,9 +101,9 @@ class TestExperienceReviewHookExecution:
         agent._react_agent = MagicMock()
         agent._react_agent.run = _mock_run
 
-        with patch("modex_agent.hook.runner.HookRunner") as MockRunner:
+        with patch("modex_agent.hook.runner.HookRunner") as mock_runner_cls:
             mock_runner = MagicMock()
-            MockRunner.return_value = mock_runner
+            mock_runner_cls.return_value = mock_runner
 
             await agent.review(
                 conversation_snapshot="[user]: hello\n[assistant]: hi",

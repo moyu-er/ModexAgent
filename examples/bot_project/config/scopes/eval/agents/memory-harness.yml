@@ -1,0 +1,14 @@
+pool:
+  name: memory-harness
+  agents:
+    react:
+      # Eval single-agent harnesses never ran the pool wiring that carried
+      # these hooks — veto the position-default rows to pin the prior
+      # hook-less assembly (roster reproducibility for recorded cassettes).
+      hooks: [-deliver_retry, -length_guard, -native_env]
+      toolset: read_write
+      memory:
+        archive_enabled: true
+        core_enabled: true
+        session:
+          max_context_tokens: 32000

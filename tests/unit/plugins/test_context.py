@@ -1,117 +1,146 @@
-"""Tests for PluginContext component collection."""
+"""TDD tests for the assembly pipeline context types.
+
+Written FIRST to drive the implementation of
+``src/modex_agent/plugins/assembly/context.py`` (task 2 of the
+scope-converge implementation plan). Asserts the exact field contract for
+``PoolRuntimeDeps`` and ``AssemblyContext``:
+field names, required vs optional, frozen immutability, and missing-argument
+TypeError behavior.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+from unittest.mock import MagicMock
 
 import pytest
 
-from modex_agent.hook import Hook
-from modex_agent.core.skills.source import SkillSource
-from modex_agent.core.tool_manager import Tool
-from modex_agent.plugins.abc import MemoryProvider
-from modex_agent.plugins.context import PluginContext
+from modex_agent.plugins.assembly import context as assembly_context
+from modex_agent.plugins.assembly.context import (
+    AssemblyContext,
+    PoolRuntimeDeps,
+)
+
+# ---- PoolRuntimeDeps ----
 
 
-class FakeTool(Tool):
-    def __init__(self, name: str):
-        self._name = name
-        super().__init__(name=name, description="fake", parameters={})
+class TestPoolRuntimeDeps:
+    def test_is_dataclass(self) -> None:
+        assert dataclasses.is_dataclass(PoolRuntimeDeps)
 
-    async def execute(self, **kwargs):
-        return "ok"
+    def test_field_names_exact(self) -> None:
+        expected = {
+            "session_tree_manager",
+            "control_channel",
+            "notification_service",
+            "binding_store",
+            "pool_assembly_ctx",
+            "root_provider",
+            "mcp_registry",
+            "emitter_factory",
+            "terminal_manager",
+            "process_registry",
+            "interceptor_chain",
+            "command_processor",
+            "persistent_bash",
+            "capability_supply",
+        }
+        actual = {f.name for f in dataclasses.fields(PoolRuntimeDeps)}
+        assert actual == expected
+
+    def test_session_tree_manager_optional(self) -> None:
+        """session_tree_manager defaults to None (built after pipeline runs)."""
+        instance = PoolRuntimeDeps()
+        assert instance.session_tree_manager is None
+
+    def test_optional_fields_default_none(self) -> None:
+        instance = PoolRuntimeDeps()
+        assert instance.control_channel is None
+        assert instance.notification_service is None
+        assert instance.binding_store is None
+        assert instance.pool_assembly_ctx is None
+        assert instance.session_tree_manager is None
+        assert instance.root_provider is None
+        assert instance.mcp_registry is None
+        assert instance.emitter_factory is None
+        assert instance.terminal_manager is None
+
+    def test_frozen_immutability(self) -> None:
+        instance = PoolRuntimeDeps(session_tree_manager=MagicMock())
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            instance.root_provider = MagicMock()  # type: ignore[misc]
 
 
-class FakeHook:
-    pass
+# ---- AssemblyContext ----
 
 
-class FakeProvider(MemoryProvider):
-    @property
-    def name(self):
-        return "fake"
+class TestAssemblyContext:
+    def test_is_dataclass(self) -> None:
+        assert dataclasses.is_dataclass(AssemblyContext)
 
-    async def initialize(self, **kwargs):
-        pass
+    def test_field_names_exact(self) -> None:
+        expected = {
+            "registry",
+            "workspace_registry",
+            "workspace_ctx",
+            "workspace_resources",
+            "workspace_spec",
+            "pool_runtime",
+            "infra",
+            "llm_provider",
+        }
+        actual = {f.name for f in dataclasses.fields(AssemblyContext)}
+        assert actual == expected
 
-    async def shutdown(self):
-        pass
+    def test_missing_required_fields_raises_type_error(self) -> None:
+        """Adversarial probe: omitting required fields raises TypeError."""
+        with pytest.raises(TypeError):
+            AssemblyContext()  # type: ignore[call-arg]
 
-    async def add(self, messages, context):
-        return {"status": "ok"}
+    def test_registry_is_required_no_default(self) -> None:
+        field = {f.name: f for f in dataclasses.fields(AssemblyContext)}["registry"]
+        assert field.default is dataclasses.MISSING
 
-    async def search(self, query, context, limit=5, filters=None):
-        return []
+    def test_workspace_registry_is_optional(self) -> None:
+        field = {f.name: f for f in dataclasses.fields(AssemblyContext)}["workspace_registry"]
+        assert field.default is None
 
+    def test_workspace_ctx_is_required_no_default(self) -> None:
+        field = {f.name: f for f in dataclasses.fields(AssemblyContext)}["workspace_ctx"]
+        assert field.default is dataclasses.MISSING
 
-class FakeSource(SkillSource):
-    @property
-    def name(self) -> str:
-        return "fake_source"
+    def test_optional_fields_default_none(self) -> None:
+        sentinel = MagicMock()
+        instance = AssemblyContext(
+            registry=sentinel,
+            workspace_registry=sentinel,
+            workspace_ctx=sentinel,
+        )
+        assert instance.workspace_resources is None
+        assert instance.pool_runtime is None
 
-    async def list_skills(self):
-        return []
+    def test_resolution_context_places_resolution_dependencies(self) -> None:
+        registry = MagicMock()
+        workspace_ctx = MagicMock()
+        pool_runtime = PoolRuntimeDeps(session_tree_manager=MagicMock())
 
-    async def load_skill(self, name: str):
-        return None
+        instance = assembly_context.resolution_context(
+            registry,
+            workspace_ctx,
+            pool_runtime,
+        )
 
+        assert instance.registry is registry
+        assert instance.workspace_ctx is workspace_ctx
+        assert instance.pool_runtime is pool_runtime
+        assert instance.workspace_registry is None
 
-class TestPluginContext:
-    """PluginContext collection tests."""
-
-    def test_init(self):
-        ctx = PluginContext(plugin_name="test")
-        assert ctx.name == "test"
-
-    def test_get_config(self):
-        ctx = PluginContext(plugin_name="test", config={"key": "value"})
-        assert ctx.get_config("key") == "value"
-        assert ctx.get_config("missing") is None
-        assert ctx.get_config("missing", "default") == "default"
-
-    def test_register_tool(self):
-        ctx = PluginContext(plugin_name="test")
-        tool = FakeTool("my_tool")
-        ctx.register_tool(tool)
-        collected = ctx.collect()
-        assert len(collected["tools"]) == 1
-        assert collected["tools"][0].name == "my_tool"
-
-    def test_register_hook(self):
-        ctx = PluginContext(plugin_name="test")
-        hook = FakeHook()
-        ctx.register_hook(hook)
-        collected = ctx.collect()
-        assert len(collected["hooks"]) == 1
-        assert isinstance(collected["hooks"][0], FakeHook)
-
-    def test_register_memory_provider(self):
-        ctx = PluginContext(plugin_name="test")
-        provider = FakeProvider()
-        ctx.register_memory_provider(provider)
-        collected = ctx.collect()
-        assert len(collected["memory_providers"]) == 1
-        assert collected["memory_providers"][0].name == "fake"
-
-    def test_register_skill_source(self):
-        ctx = PluginContext(plugin_name="test")
-        source = FakeSource()
-        ctx.register_skill_source(source)
-        collected = ctx.collect()
-        assert len(collected["skill_sources"]) == 1
-        assert isinstance(collected["skill_sources"][0], FakeSource)
-
-    def test_collect_isolated(self):
-        """Each PluginContext instance is independent."""
-        ctx1 = PluginContext(plugin_name="p1")
-        ctx2 = PluginContext(plugin_name="p2")
-        ctx1.register_tool(FakeTool("t1"))
-        ctx2.register_tool(FakeTool("t2"))
-        assert len(ctx1.collect()["tools"]) == 1
-        assert len(ctx2.collect()["tools"]) == 1
-        assert ctx1.collect()["tools"][0].name == "t1"
-        assert ctx2.collect()["tools"][0].name == "t2"
-
-    def test_collect_returns_copies(self):
-        """collect() returns copies to prevent external mutation."""
-        ctx = PluginContext(plugin_name="test")
-        ctx.register_tool(FakeTool("t1"))
-        collected1 = ctx.collect()
-        collected2 = ctx.collect()
-        assert collected1["tools"] is not collected2["tools"]
+    def test_frozen_immutability(self) -> None:
+        sentinel = MagicMock()
+        instance = AssemblyContext(
+            registry=sentinel,
+            workspace_registry=sentinel,
+            workspace_ctx=sentinel,
+        )
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            instance.pool_runtime = PoolRuntimeDeps(session_tree_manager=sentinel)  # type: ignore[misc]

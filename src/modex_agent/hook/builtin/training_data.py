@@ -2,17 +2,19 @@
 
 Fires at ``HookPoint.FINALLY_GRAPH`` (the single point where the final
 ``StopReason``, the total ReAct iteration count, and the full LLM token usage
-are all known). Computes a single boolean — *is this turn usable as training
-data?* — and persists it as a dedicated ``training_tag`` span via
-:meth:`OtelSpanTraceStore.save_span` so the OTel span export can attach the
-``gen_ai.training.relevant`` attribute.
+are all known) — except on an approval suspend (``result=None``), where it
+emits nothing (see :meth:`TrainingDataHook.finally_graph`). Computes a single
+boolean — *is this turn usable as training data?* — and persists it as a
+dedicated ``training_tag`` span via :meth:`OtelSpanTraceStore.save_span` so
+the OTel span export can attach the ``gen_ai.training.relevant`` attribute.
 
 L1 rules (write-time, microsecond cost — one ``save_span`` call):
 
 1. ``result.stop_reason`` indicates failure/cancellation → ``False``
 2. ``react_state.iteration`` exceeds ``max_iterations`` → ``False``
-3. Total token usage (sum of ``input_tokens`` + ``output_tokens`` across
-   every ``chat`` span in the trace) exceeds ``max_tokens`` → ``False``
+3. Total token usage (input + output, from the turn's stashed
+   :class:`~modex_agent.trace.scoring.TrajectoryMetrics`) exceeds
+   ``max_tokens`` → ``False``
 4. Otherwise → ``True``
 
 The factory wires this hook only when ``training_relevant=true``; an
@@ -28,9 +30,9 @@ from typing import TYPE_CHECKING
 
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.core.constants import StopReason
-from modex_agent.hook.abc import FinallyGraphHook
+from modex_agent.hook.abc import OutcomeFinallyHook
 from modex_agent.runtime.enums import TurnCustomKey
-from modex_agent.trace.otel_store import OtelSpanTraceStore
+from modex_agent.trace.scoring import TrajectoryMetrics
 from modex_agent.trace.semconv import GenAiAttr, SpanKind, SpanName, SpanStatusCode
 from modex_agent.trace.store import SpanModel, SpanStatus
 
@@ -64,12 +66,13 @@ _NON_TRAINING_STOP_REASONS: frozenset[StopReason] = frozenset(
 )
 
 
-class TrainingDataHook(FinallyGraphHook):
+class TrainingDataHook(OutcomeFinallyHook):
     """Tag a turn's trace with the ``gen_ai.training.relevant`` attribute.
 
-    Stateless across turns: every ``finally_graph`` invocation re-reads the
+    Stateless across turns: every ``on_outcome`` invocation re-reads the
     ``ReActTurnState`` from ``ctx.runtime.state`` and the trace store from
     ``ctx.runtime.services.trace_store``, so pool-mode session reuse is safe.
+    The suspend leg (``result=None``) is skipped by ``OutcomeFinallyHook``.
     """
 
     def __init__(
@@ -85,7 +88,13 @@ class TrainingDataHook(FinallyGraphHook):
     def name(self) -> str:
         return "training_data"
 
-    async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None:
+    async def on_outcome(self, ctx: AgentContext, result: AgentResult) -> None:
+        """Tag the turn's trace. Emitting nothing at suspend is load-bearing:
+        the training exporter accepts a trajectory on ANY
+        ``training_relevant=true`` tag, so a suspend-time ``true`` would
+        permanently mark a turn that later terminal-finalizes as
+        failed/cancelled/over-budget.
+        """
         react_state = get_react_state(ctx)
         if react_state is None:
             return
@@ -96,7 +105,7 @@ class TrainingDataHook(FinallyGraphHook):
         if trace_store is None:
             return
 
-        relevant = await self._compute_relevant(ctx, react_state, result, trace_store)
+        relevant = self._compute_relevant(ctx, react_state, result)
 
         trace_id = _trace_id(ctx)
         span = _build_training_tag_span(
@@ -116,56 +125,44 @@ class TrainingDataHook(FinallyGraphHook):
                 exc_info=True,
             )
 
-    async def _compute_relevant(
+    def _compute_relevant(
         self,
         ctx: AgentContext,
         react_state: ReActTurnState,
-        result: AgentResult | None,
-        trace_store: OtelSpanTraceStore,
+        result: AgentResult,
     ) -> bool:
         # L1 rule 1: stop_reason indicates failure/cancel.
-        if result is not None and result.stop_reason in _NON_TRAINING_STOP_REASONS:
+        if result.stop_reason in _NON_TRAINING_STOP_REASONS:
             return False
         # L1 rule 2: iteration count exceeds training_max_iterations.
         if react_state.iteration > self._max_iterations:
             return False
         # L1 rule 3: total token usage exceeds training_max_tokens.
-        total_tokens = await self._sum_llm_tokens(ctx, trace_store)
-        return total_tokens <= self._max_tokens
+        return self._sum_llm_tokens(ctx) <= self._max_tokens
 
-    async def _sum_llm_tokens(
-        self,
-        ctx: AgentContext,
-        trace_store: OtelSpanTraceStore,
-    ) -> int:
-        """Sum ``input_tokens`` + ``output_tokens`` across all ``chat`` spans."""
-        trace_id = _trace_id(ctx)
-        try:
-            spans = await trace_store.list_by_trace_id(trace_id)
-        except Exception:
-            logger.warning(
-                "TrainingDataHook failed to query spans for token sum",
-                exc_info=True,
-            )
-            return 0
-        total = 0
-        for span in spans:
-            if span.name != SpanName.CHAT.value:
-                continue
-            attrs = span.attributes
-            total += _as_int(attrs.get(GenAiAttr.USAGE_INPUT_TOKENS)) + _as_int(
-                attrs.get(GenAiAttr.USAGE_OUTPUT_TOKENS)
-            )
-        return total
+    def _sum_llm_tokens(self, ctx: AgentContext) -> int:
+        """Sum input+output tokens from the turn's stashed trajectory metrics.
+
+        ``RootSpanHook.finally_graph`` runs before this hook (registration
+        order, priority 0) and stashes the counters-derived metrics into the
+        turn state BEFORE ``clear_trace`` pops the counters bucket, so the
+        stash is the only surviving per-turn token source. A missing stash
+        (no root hook ran) counts as zero.
+        """
+        assert ctx.runtime is not None
+        stashed = ctx.runtime.state.custom.get(TurnCustomKey.TRAJECTORY_METRICS)
+        if isinstance(stashed, TrajectoryMetrics):
+            return stashed.total_input_tokens + stashed.total_output_tokens
+        return 0
 
 
-# ── module-private helpers (mirror TraceCollectorHook's access patterns) ─────
+# ── module-private helpers (mirror BaseTraceHook's access patterns) ─────────────
 
 
 def _trace_id(ctx: AgentContext) -> str:
     """Return existing trace_id from turn state, or generate a new one.
 
-    Matches :class:`modex_agent.trace.hooks.TraceCollectorHook._trace_id` so
+    Matches :meth:`modex_agent.trace.base_hook.BaseTraceHook._trace_id` so
     both hooks share the same per-turn trace identifier.
     """
     if ctx.runtime is None:
@@ -221,18 +218,3 @@ def _build_training_tag_span(
         attributes=attrs,
         status=SpanStatus(code=SpanStatusCode.OK),
     )
-
-
-def _as_int(value: object) -> int:
-    """Coerce a span-attribute token value to int; non-numeric → 0.
-
-    ``bool`` is explicitly rejected (it subclasses ``int`` in Python) so a
-    stray ``True`` does not silently count as 1 token.
-    """
-    if isinstance(value, bool):
-        return 0
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    return 0

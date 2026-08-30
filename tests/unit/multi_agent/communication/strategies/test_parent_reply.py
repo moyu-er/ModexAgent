@@ -184,11 +184,39 @@ class TestParentReplyStrategy:
         assert envelope.message_type == AgentMessageType.AGENT_MESSAGE
         assert envelope.invocation_id is None
 
+    def test_build_envelope_appends_answer_contract_for_subagent_sender(self) -> None:
+        strategy = ParentReplyStrategy(_make_deps())
+        req = _make_request(parent_session_id="conv-1.main")
+        session = strategy.build_session(req, "")
+
+        envelope = strategy.build_envelope(req, session, "")
+        xml = envelope.payload["content"]
+
+        assert (
+            "---\n\n"
+            "To answer this subagent, continue its session: call task with\n"
+            "target_agent='worker', invocation_id='conv-1', and\n"
+            "content=your answer."
+        ) in xml
+
+    def test_build_envelope_omits_answer_contract_for_normal_sender(self) -> None:
+        strategy = ParentReplyStrategy(_make_deps())
+        req = _make_request(comm_kind=AgentCommKind.NORMAL, parent_session_id=None)
+        session = strategy.build_session(req, "")
+
+        envelope = strategy.build_envelope(req, session, "")
+        xml = envelope.payload["content"]
+
+        assert "---" not in xml
+        assert "To answer" not in xml
+
     def test_build_envelope_external_target_uses_minimal_format(self) -> None:
         """When parent is external (e.g. opencode pool main), the reply XML
         must NOT carry a reply contract. ParentReplyStrategy delegates to
-        build_dispatch_message, which never injects one -- the reply is
-        auto-delivered, and the contract would cause a double reply."""
+        build_parent_reply_message, which never injects one -- the reply is
+        auto-delivered, and the contract would cause a double reply. The
+        session-answer block (--- + "To answer this subagent") IS expected:
+        it tells the parent how to continue the consultation."""
         from modex_agent.core.constants import ExecutionStrategyKind
 
         strategy = ParentReplyStrategy(_make_deps())
@@ -211,10 +239,10 @@ class TestParentReplyStrategy:
         envelope = strategy.build_envelope(req, session, "")
         xml = envelope.payload["content"]
 
-        assert "---" not in xml
         assert "To reply" not in xml
         assert "modexctl send" not in xml
         assert "WARNING" not in xml
+        assert "To answer this subagent" in xml
 
     def test_build_envelope_native_target_uses_minimal_format(self) -> None:
         from modex_agent.core.constants import ExecutionStrategyKind

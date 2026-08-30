@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-10 -->
+<!-- Updated: 2026-08-26 -->
 
 # react
 
@@ -19,8 +19,9 @@ approval suspend/resume, and integration points for hooks, interceptors, and con
 | `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy`, and `ReActRuntimeStateCodec`. |
 | `builder.py` | `ReActAgentBuilder` -- `build_agent()` + `build_emitter_factory()` from `AgentDescriptor`. |
 | `approval.py` | *(removed — migrated to `modex_agent.approval.runtime`)* |
-| `llm_client.py` | `ReactLlmClient` — the ReAct LLM caller; `call()` picks the control-draining stream (when an LLM_STREAM-scope interceptor chain is present), plain stream, or non-streaming path, and preserves the `INTERRUPTED_PARTIAL` contract on mid-stream interrupt. |
+| `llm_client.py` | `ReactLlmClient` — the ReAct LLM caller; single event loop (ADR-0046): `call()` drives one pass over `provider.stream(request)` for every provider — stream-native providers yield real event streams, `CallbackStreamProvider` implementations ride the callback→event bridge (LLMStreamEvents fed into an `EventAssembler`). The LLM_STREAM-scope interceptor chain wraps the event iterator (events in, events out). Emitter driving happens at the event dispatch point, gated on `emitter.wants_streaming()`. Mid-stream interrupt stashes `INTERRUPTED_PARTIAL` into turn state; a bridge-translated `Finish(CANCELLED)` re-enters the lifecycle as `CancelledError`. |
 | `error_recovery.py` | Provider error recovery for `ReactLlmClient` — on context-length / payload-too-large errors applies emergency compaction (drop middle messages, keep system + recent tail) and retries with the trimmed list. |
+| `media_injection.py` | `inject_multimodal(messages, ctx)` — copy-on-write resolution of persisted `media://` parts at the LLM boundary (input history never mutated). Per-part modality gate (`content_part_modality` — unsupported modalities drop with ERROR); two-pass budget (framework constants: 8 parts / 6MB decoded bytes, oldest-first offload to `[media offloaded: <aid>]` placeholders); `media://` resolution via `runtime.services.media_store` with a `(id(store), session_id, aid)` weakref-guarded cache; no store / missing / corrupt bytes degrade to `[media unavailable: <aid>]` placeholders with ERROR — a broken image never fails the LLM call. |
 | `message_builder.py` | Pure helpers constructing `ChatMessage` structs (tool results, assistant content) — no sanitization logic; callers own thinking-chain cleanup. |
 | `injection_drainer.py` | `InjectionDrainer` — consumes the per-turn injection queue into history (extracted from `ReActAgent._drain_injections`). |
 | `tool_executor.py` | `ToolExecutor` — runs a tool call through the interceptor chain with the mandatory `ToolTimeoutInterceptor` composed innermost (per-invocation deadline on every ReAct path). |
@@ -28,7 +29,7 @@ approval suspend/resume, and integration points for hooks, interceptors, and con
 | `constants.py` | `ReActNode`, `ReActHookPoint` (11 values: iteration-level + turn-attempt `BEFORE_TURN`/`AFTER_TURN` + node-level `START_NODE_TURN`/`END_NODE_TURN`), `ReActScope`, `ReActEvent`, `InterruptReason` (B1) StrEnums. |
 | `nodes/start.py` | `StartNode` -- routes to BEFORE (fresh) or TOOL (resume from approval). Dispatches `START_NODE_TURN` hook on fresh-turn path only (not on resume). |
 | `nodes/before_turn.py` | `BeforeTurnNode` -- increments `turn_attempt`, resets `iteration = 0`, dispatches `BEFORE_TURN` hook, routes to LLM. |
-| `nodes/llm.py` | `LLMNode` -- calls LLM, handles streaming, dispatches hooks/interceptors via `ctx.runtime.*`, emits iteration events. |
+| `nodes/llm.py` | `LLMNode` -- calls LLM, handles streaming, dispatches hooks/interceptors via `ctx.runtime.*`, emits iteration events. `_build_messages()` applies governance, then coerces to `list[ChatMessage]` and returns `inject_multimodal(typed, ctx)` — media resolution happens after governance, before the provider. |
 | `nodes/tool.py` | `ToolNode` -- classify all -> suspend for approval via `ctx.interrupt(tx)` -> batch execute -> route. |
 | `nodes/after_turn.py` | `AfterTurnNode` -- constructs `AgentResult`, writes `state.result`, dispatches `AFTER_TURN` hook (with `{"result": result}` payload), then consumes `CONTINUATION_REQUEST` + `CONTINUATION_RENEW_MAX_TURNS` one-shot flags to decide continuation. Routes to BEFORE/END. Watchdog: when RENEW is set and `turn_attempt >= MAX_TURNS`, gate increments `MAX_TURNS` by 1. Default `MAX_TURNS` is 3. No hardcoded deliver-reminder (migrated to `DeliverRetryHook`). |
 | `nodes/end.py` | `EndNode` -- reads `state.result` (raises `RuntimeError` if None), emits completion events, dispatches `END_NODE_TURN` hook. |
@@ -77,9 +78,9 @@ hand-off between `LLMNode` and `ToolNode`/`AfterTurnNode` — was deleted
 `LLMNode` uses a `nonlocal response` closure variable (declared in
 `execute()` scope) instead of `state.llm_response` to carry the LLM
 output out of the `actual_iteration()` closure — no state read-back
-needed. `reasoning_content` is an undeclared extra on `ChatMessage`
-(`extra="allow"`), accessed via `getattr(last_assistant,
-"reasoning_content", None)`.
+needed. `reasoning_content` (with `reasoning_signature` /
+`reasoning_item_id` / `reasoning_encrypted_content`) are declared
+`ChatMessage` fields (ADR-0046), accessed via plain attribute reads.
 
 This resolves the "ReAct shared-state communication" debt recorded in
 ADR-0034 D7. Hook timing is unchanged — deliver-ization rewired data

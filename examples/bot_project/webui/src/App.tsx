@@ -78,7 +78,7 @@ const AppShell: FC = () => {
       .then((loaded) => {
         if (cancelled) return;
         const m: Record<string, string> = {};
-        for (const p of loaded) m[p.name] = p.main_agent_name;
+        for (const p of loaded) m[p.name] = p.root_agent_name;
         setPoolAgentMap(m);
       })
       .catch(() => {});

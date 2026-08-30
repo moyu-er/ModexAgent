@@ -28,7 +28,7 @@ from pydantic import Field
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.llm_struct import LLMErrorInfo  # noqa: F401 — needed for model_rebuild()
-from modex_agent.core.message import ChatMessage  # noqa: F401 — needed for model_rebuild()
+from modex_agent.core.message import ChatMessage, ContentPart  # noqa: F401 — needed for model_rebuild()
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import LLMResponse, MessageRole
 from modex_agent.runtime.codec import RuntimeStateCodec, RuntimeStateCodecConfig
@@ -276,6 +276,20 @@ class ReActSnapshotPolicy(SnapshotPolicy):
 # =========================================================================
 
 
+def _encode_content(
+    content: str | list[ContentPart] | None,
+) -> str | list[dict[str, Any]] | None:
+    """JSON-ready form of ``ChatMessage.content``.
+
+    Parts lists must be dumped here: the sqlite turn-state adapter serializes
+    the codec payload with ``json.dumps(..., default=str)``, which would
+    stringify raw pydantic part objects into Python reprs (poison data).
+    """
+    if content is None or isinstance(content, str):
+        return content
+    return [part.model_dump(mode="json") for part in content]
+
+
 class ReActRuntimeStateCodec(RuntimeStateCodec):
     """Codec that round-trips ReAct snapshot payloads.
 
@@ -343,7 +357,7 @@ class ReActRuntimeStateCodec(RuntimeStateCodec):
         msg = md.message
         return {
             "role": msg.role,
-            "content": msg.content,
+            "content": _encode_content(msg.content),
             "source": md.source.value,
             "provider_payload": dict(md.provider_payload) if md.provider_payload else None,
             "tool_calls": [tc.model_dump(mode="json") for tc in msg.tool_calls]
@@ -351,6 +365,14 @@ class ReActRuntimeStateCodec(RuntimeStateCodec):
             else None,
             "tool_call_id": msg.tool_call_id,
             "name": msg.name,
+            # Reasoning replay fields (ADR-0046): an approval-suspended turn
+            # resumes from this snapshot; DeepSeek's Responses endpoint
+            # rejects a resumed request whose assistant tool-call turn lost
+            # its reasoning state.
+            "reasoning_content": msg.reasoning_content,
+            "reasoning_signature": msg.reasoning_signature,
+            "reasoning_item_id": msg.reasoning_item_id,
+            "reasoning_encrypted_content": msg.reasoning_encrypted_content,
         }
 
     def _decode_message_delta(self, data: Mapping[str, JsonValue]) -> MessageDelta:
@@ -372,6 +394,12 @@ class ReActRuntimeStateCodec(RuntimeStateCodec):
                 tool_calls=tool_calls,
                 tool_call_id=data.get("tool_call_id"),  # type: ignore[arg-type]
                 name=data.get("name"),  # type: ignore[arg-type]
+                reasoning_content=data.get("reasoning_content"),  # type: ignore[arg-type]
+                reasoning_signature=data.get("reasoning_signature"),  # type: ignore[arg-type]
+                reasoning_item_id=data.get("reasoning_item_id"),  # type: ignore[arg-type]
+                reasoning_encrypted_content=data.get(  # type: ignore[arg-type]
+                    "reasoning_encrypted_content"
+                ),
             ),
             source=MessageDeltaSource(str(data["source"])),
             provider_payload=data.get("provider_payload"),  # type: ignore[arg-type]

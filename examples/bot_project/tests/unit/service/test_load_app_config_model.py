@@ -27,7 +27,7 @@ def _write_config(tmp_path: Path) -> Path:
     pools.mkdir(parents=True)
     (pools / "pool.yml").write_text(
         "name: main\n"
-        "main_agent_name: main\n"
+        "root_agent_name: main\n"
         "memory:\n  session: {max_token_ratio: 0.8}\n"
         "agents:\n  - {name: main, role: main, max_steps: 5}\n",
         encoding="utf-8",
@@ -49,7 +49,9 @@ def test_load_app_config_injects_bot_model_config(tmp_path: Path) -> None:
     assert svc._bot_model_config is not None
     assert isinstance(svc._bot_model_config, BotModelConfig)
     resolved = svc._bot_model_config.default_resolved()
-    assert resolved.model.model == "m1"
+    # Prefixed model names load VERBATIM (no stripping — user ruling
+    # 2026-08-26); the legacy url: alias still maps to base_url.
+    assert resolved.model.model == "openai/m1"
     assert resolved.provider.api_key == "KEY"
     assert resolved.provider.base_url == "https://u/v"
     assert resolved.provider.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
@@ -66,7 +68,7 @@ def test_pre_supplied_app_config_still_applies_bot_model_config(tmp_path: Path) 
         app_config=pre_loaded,
     )
     assert svc._bot_model_config is not None
-    assert svc._bot_model_config.default_resolved().model.model == "m1"
+    assert svc._bot_model_config.default_resolved().model.model == "openai/m1"
     assert (
         svc._bot_model_config.default_resolved().provider.interface_format
         == InterfaceFormat.OPENAI_COMPATIBLE

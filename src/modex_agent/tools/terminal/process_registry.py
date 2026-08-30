@@ -14,21 +14,6 @@ StreamName = Literal["stdout", "stderr"]
 
 
 @dataclass
-class OutputVelocity:
-    chunks_in_window: int = 0
-    is_active: bool = False
-
-
-@dataclass
-class RunningSessionRuntime:
-    stdin_writable: bool
-    waiting_for_input: bool
-    idle_ms: int
-    last_output_at: float
-    output_velocity: OutputVelocity = field(default_factory=OutputVelocity)
-
-
-@dataclass
 class ProcessSession:
     id: str
     terminal: str
@@ -36,6 +21,7 @@ class ProcessSession:
     pid: int | None
     cwd: str | None
     started_at: float
+    deadline_at: float
     status: ProcessStatus = ProcessStatus.RUNNING
     stdin_writable: bool = True
     last_output_at: float = field(default_factory=time.time)
@@ -53,7 +39,6 @@ class ProcessSession:
     timed_out: bool = False
     failure_kind: str | None = None
     cursor_key_mode: CursorKeyMode = CursorKeyMode.UNKNOWN
-    _output_timestamps: list[float] = field(default_factory=list)
 
 
 class ProcessRegistry:
@@ -73,6 +58,7 @@ class ProcessRegistry:
             pid=pid,
             cwd=cwd,
             started_at=time.time(),
+            deadline_at=time.monotonic() + self._config.command_deadline_seconds,
             max_output_chars=self._config.max_output_chars,
             pending_max_output_chars=self._config.pending_max_output_chars,
         )
@@ -112,10 +98,11 @@ class ProcessRegistry:
         return existed
 
     def append_output(self, session_id: str, stream: StreamName, chunk: str) -> None:
-        session = self._running[session_id]
+        session = self._running.get(session_id)
+        if session is None:
+            return
         now = time.time()
         session.last_output_at = now
-        session._output_timestamps.append(now)
         session.total_output_chars += len(chunk)
         pending = session.pending_stdout if stream == "stdout" else session.pending_stderr
         pending.append(chunk)
@@ -159,43 +146,16 @@ class ProcessRegistry:
         self._finished[session_id] = session
         return session
 
-    def running_runtime(self, session_id: str) -> RunningSessionRuntime | None:
+    def refresh_deadline(self, session_id: str) -> None:
+        session = self._running.get(session_id)
+        if session is not None:
+            session.deadline_at = time.monotonic() + self._config.command_deadline_seconds
+
+    def idle_ms(self, session_id: str) -> int | None:
         session = self._running.get(session_id)
         if session is None:
             return None
-        now = time.time()
-        idle_ms = max(0, int((now - session.last_output_at) * 1000))
-        velocity = self._compute_velocity(session, now)
-
-        # Formal idle threshold detection
-        formal_waiting = session.stdin_writable and idle_ms >= self._config.input_wait_idle_ms
-
-        # Tiered idle detection
-        if session._output_timestamps:
-            threshold = self._config.active_idle_threshold_ms
-        else:
-            threshold = self._config.initial_idle_threshold_ms
-
-        early_waiting = session.stdin_writable and not velocity.is_active and idle_ms >= threshold
-
-        return RunningSessionRuntime(
-            stdin_writable=session.stdin_writable,
-            waiting_for_input=formal_waiting or early_waiting,
-            idle_ms=idle_ms,
-            last_output_at=session.last_output_at,
-            output_velocity=velocity,
-        )
-
-    def _compute_velocity(self, session: ProcessSession, now: float) -> OutputVelocity:
-        window = self._config.output_velocity_window_s
-        cutoff = now - window
-        timestamps = [t for t in session._output_timestamps if t >= cutoff]
-        count = len(timestamps)
-        is_active = count >= self._config.output_velocity_active_threshold
-        # Prune old timestamps to avoid unbounded growth
-        if len(session._output_timestamps) > 100:
-            session._output_timestamps = timestamps
-        return OutputVelocity(chunks_in_window=count, is_active=is_active)
+        return max(0, int((time.time() - session.last_output_at) * 1000))
 
     def prune_finished(self) -> None:
         cutoff = time.time() - (self._config.finished_ttl_ms / 1000)

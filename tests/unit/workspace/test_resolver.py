@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modex_agent.workspace.registry import WorkspaceRegistry
-from modex_agent.workspace.store import GlobalWorkspaceStore
+from modex_agent.workspace.registry import ScopeRegistry
 from modex_agent.workspace.routing import WorkspaceResolver
-from ._stubs import StubFactory, StubResources
+from modex_agent.workspace.store import GlobalWorkspaceStore
+
+from ._stubs import StubFactory
 
 
 async def test_resolve_home_returns_home_context_and_resources(tmp_path: Path) -> None:
-    reg = WorkspaceRegistry(
+    reg = ScopeRegistry(
         home=tmp_path, data_dir_name=".modex",
         factory=StubFactory(), store=GlobalWorkspaceStore(home=tmp_path, data_dir_name=".modex"),
     )
@@ -24,7 +25,7 @@ async def test_resolve_home_returns_home_context_and_resources(tmp_path: Path) -
 async def test_resolve_workspace_targets_given_workspace(tmp_path: Path) -> None:
     target = tmp_path / "wsB"
     target.mkdir()
-    reg = WorkspaceRegistry(
+    reg = ScopeRegistry(
         home=tmp_path, data_dir_name=".modex",
         factory=StubFactory(), store=GlobalWorkspaceStore(home=tmp_path, data_dir_name=".modex"),
     )

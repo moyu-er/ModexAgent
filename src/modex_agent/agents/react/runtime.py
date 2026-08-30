@@ -229,7 +229,7 @@ class ReactGraphRuntime(GraphRuntime):
 
         Calls the existing ``drain_control_channel`` helper with the
         ``AgentContext`` extracted from ``ctx.user_data``. Raises
-        ``AgentCancelled`` if a ``CANCEL_TURN`` command is pending.
+        ``AgentCancelledError`` if a ``CANCEL_TURN`` command is pending.
         """
         if self._control_channel is None:
             return

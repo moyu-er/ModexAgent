@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from modex_agent.agents.react.message_builder import build_tool_message
+from modex_agent.core.message import TextPart
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.media.media_utils import (
     ImageHandler,
@@ -325,14 +326,19 @@ class TestIsTransient:
 
 
 class TestBuildToolMessage:
-    """验证 build_tool_message 不截断结果，正确传递 XML 元数据。"""
+    """验证 build_tool_message 不截断结果，正确传递 XML 元数据。
+
+    The message content now carries ``result.content`` parts verbatim
+    (ImageUrlParts hold persisted media:// references); parts-free results
+    degrade to the rendered text with the single-space provider floor.
+    """
 
     def test_short_result_not_truncated(self):
         from modex_agent.core.tool_manager import ToolResult
 
         result = ToolResult.from_text("test", "short output")
         msg = build_tool_message(result)
-        assert msg.content == "short output"
+        assert msg.content == [TextPart(text="short output")]
 
     def test_long_result_not_truncated(self):
         from modex_agent.core.tool_manager import ToolResult
@@ -340,8 +346,8 @@ class TestBuildToolMessage:
         long_content = "x" * 30000
         result = ToolResult.from_text("test", long_content)
         msg = build_tool_message(result)
-        assert msg.content == long_content
-        assert len(msg.content) == 30000
+        assert msg.content == [TextPart(text=long_content)]
+        assert len(msg.content[0].text) == 30000
 
     def test_error_not_truncated(self):
         from modex_agent.core.tool_manager import ToolResult

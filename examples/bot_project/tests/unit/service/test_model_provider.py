@@ -101,22 +101,45 @@ def test_real_provider_baked_per_resolved_model(tmp_path: Path) -> None:
     resolved model's temperature/max_output_tokens, so BotModelProvider doesn't
     forward them."""
     from modex_agent.ioc.factories.llm import create_llm_provider
-    from modex_agent.providers.openai_provider import OpenAIProvider
+    from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
+    from modex_agent.providers.http.provider import HTTPStreamProvider
 
     cfg = _cfg(tmp_path)
     resolved = cfg.resolve("A", "M1")
     assert resolved is not None
     real = create_llm_provider(cfg.synthesize_llm_config(resolved))
-    assert isinstance(real, OpenAIProvider)
+    assert isinstance(real, HTTPStreamProvider)
+    assert isinstance(real._protocol, OpenAICompatProtocol)
     assert real._model == "m1"
     assert real._temperature == 0.3
-    assert real._max_output_tokens == 1000
+    assert real._cfg.max_output_tokens == 1000
 
 
 def test_get_default_model(tmp_path: Path) -> None:
     prov = BotModelProvider(_cfg(tmp_path))
     assert prov.get_default_model() == "m1"
     assert prov.model == "m1"
+
+
+def test_aclose_closes_cached_http_providers_and_clears_cache(tmp_path: Path) -> None:
+    from modex_agent.providers.http.provider import HTTPStreamProvider
+
+    cfg = _cfg(tmp_path)
+    resolved = cfg.resolve("A", "M1")
+    assert resolved is not None
+
+    async def go() -> None:
+        prov = BotModelProvider(cfg)
+        real = prov._real_provider(resolved)
+        assert isinstance(real, HTTPStreamProvider)
+        assert not real._client.is_closed
+        # A non-HTTP cached provider (legacy SDK shape, no aclose) is skipped.
+        prov._cache[("a", "m2")] = _FakeReal()  # type: ignore[assignment]
+        await prov.aclose()
+        assert prov._cache == {}
+        assert real._client.is_closed
+
+    asyncio.run(go())
 
 
 _PREFIX_YML = """
@@ -156,9 +179,10 @@ class _BakedFakeReal:
         return LLMResponse(content="ok", finish_reason=FinishReason.STOP.value)
 
 
-def test_provider_model_not_overridden_by_routing_prefix(tmp_path: Path) -> None:
-    """The model identifier stored in config is already bare; create_llm_provider
-    bakes it into OpenAIProvider and BotModelProvider must not override it."""
+def test_provider_model_not_overridden_by_call_site_model_kwarg(tmp_path: Path) -> None:
+    """create_llm_provider bakes the config's model name verbatim into the
+    real provider; BotModelProvider never forwards a model kwarg, so the
+    framework ABC's model argument can never override the resolved model."""
     prov = BotModelProvider(_prefix_cfg(tmp_path))
     fake = _BakedFakeReal(baked_model="step-3.7-flash")
     prov._cache[("step", "step-3.7-flash")] = fake  # type: ignore[attr-defined]
@@ -167,7 +191,5 @@ def test_provider_model_not_overridden_by_routing_prefix(tmp_path: Path) -> None
         return await prov.chat_stream(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
 
     asyncio.run(go())
-    assert fake.received_model_kwarg != "openai/step-3.7-flash", (
-        f"routing prefix leaked into provider model= ({fake.received_model_kwarg!r})"
-    )
+    assert fake.received_model_kwarg == "NOT_PASSED"
     assert fake.api_model == "step-3.7-flash"

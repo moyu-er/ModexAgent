@@ -8,15 +8,15 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import sys
 import time
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.agent import AgentCommKind, AgentContext, current_agent_context
+from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.capabilities import Modality, ModelInfo
 from modex_agent.core.constants import (
     _NO_DIR_SENTINEL,
@@ -35,49 +35,10 @@ from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.utils.timezone import get_user_timezone
 
 if TYPE_CHECKING:
-    from modex_agent.core.tool_manager import ToolManager
     from modex_agent.memory.core.system import MemorySystem
     from modex_agent.memory.pruned.manager import PrunedManager
 
 logger = logging.getLogger(__name__)
-
-_TODO_TASK_DISCIPLINE_PROMPT = """\
-## Task Tracking
-
-You own `todo_write` and `todo_read`. Use them frequently — if you skip
-planning, you will forget tasks, and that is unacceptable.
-
-**Plan first, then execute.** When a task has 3+ steps, call `todo_write`
-with ALL items as `pending` before doing any work. Never create items
-already marked `completed` — that defeats the purpose of tracking.
-
-**Update at every transition.** The instant you start an item, mark it
-`in_progress`. The instant you finish one — before any prose summary —
-mark it `completed` and promote the next `pending` to `in_progress`.
-Describing work as done in prose while the list still shows `in_progress`
-is the most common mistake.
-
-**Never end with stale work.** Do not end your turn while `pending` or
-`in_progress` items remain, unless blocked or waiting on the user. If
-blocked, keep `in_progress` and add a `pending` item for the blocker.
-
-On resume / "continue" / "try again": call `todo_read` first, then
-continue the `in_progress` item.
-
-Worked example:
-
-  user: "Run the tests and fix any failures"
-
-  todo_write: [Run tests: pending] [Fix failures: pending]
-  todo_write: [Run tests: in_progress] [Fix failures: pending]
-  (run tests; 3 failures found)
-  todo_write: [Run tests: completed] [Fix A: in_progress] [Fix B: pending] [Fix C: pending]
-  (fix A)
-  todo_write: [Run tests: completed] [Fix A: completed] [Fix B: in_progress] [Fix C: pending]
-  (fix B, fix C)
-  todo_write: [Run tests: completed] [Fix A: completed] [Fix B: completed] [Fix C: completed]
-  "Done — 3 failures fixed, tests green."
-"""
 
 
 class BasePromptProvider(SystemPromptProvider):
@@ -94,240 +55,132 @@ class BasePromptProvider(SystemPromptProvider):
         return self._base_prompt
 
 
-class TodoAwareSystemPromptProvider(SystemPromptProvider):
-    """Task-discipline reminder injected only when the agent owns todo tools.
+_CGROUP_V2_ROOT = Path("/sys/fs/cgroup")
+_CGROUP_V1_ROOT = Path("/sys/fs/cgroup")
 
-    The version is binary and stable per agent (``todo-enabled`` or ``no-todo``),
-    so agents with the same tool set share the same cached prefix. Content is
-    gated independently of version so a ``no-todo`` agent emits nothing.
+# v1 reports "unlimited" as a value near PAGE_COUNTER_MAX (~2^63) instead of
+# a sentinel string; anything at or above 2^50 bytes is safely in that zone.
+_CGROUP_MEMORY_UNLIMITED_BYTES = 1 << 50
+
+
+def _read_cgroup_file(path: Path) -> str | None:
+    """Best-effort read of one cgroup control file; None on any failure."""
+    try:
+        return path.read_text().strip()
+    except (OSError, ValueError):
+        return None
+
+
+def _cgroup_cpu_quota() -> int | None:
+    """Effective CPU-core limit from cgroup v2 (or None when unlimited/absent).
+
+    Reads /sys/fs/cgroup/cpu.max ("max 100000" = unlimited; "Q P" = Q/P
+    cores, ceil). Falls back to cpu.max.effective when present (parent
+    clamps). Tolerates cgroup v1 paths (/sys/fs/cgroup/cpu/cpu.cfs_quota_us
+    + cpu.cfs_period_us) as a second chance. Any read/parse failure → None.
     """
+    for name in ("cpu.max", "cpu.max.effective"):
+        raw = _read_cgroup_file(_CGROUP_V2_ROOT / name)
+        if raw is None:
+            continue
+        parts = raw.split()
+        if len(parts) < 2 or parts[0] == "max":
+            continue  # unlimited at this level — an ancestor may still clamp
+        try:
+            quota_us, period_us = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        if quota_us > 0 and period_us > 0:
+            return (quota_us + period_us - 1) // period_us  # ceil division
+    quota_raw = _read_cgroup_file(_CGROUP_V1_ROOT / "cpu" / "cpu.cfs_quota_us")
+    period_raw = _read_cgroup_file(_CGROUP_V1_ROOT / "cpu" / "cpu.cfs_period_us")
+    if quota_raw is None or period_raw is None:
+        return None
+    try:
+        quota_us, period_us = int(quota_raw), int(period_raw)
+    except ValueError:
+        return None
+    if quota_us <= 0 or period_us <= 0:  # v1 unlimited quota is -1
+        return None
+    return (quota_us + period_us - 1) // period_us
 
-    def __init__(self, tool_manager: ToolManager | None) -> None:
-        super().__init__()
-        self._tool_manager = tool_manager
 
-    def _has_todo_tools(self) -> bool:
-        if self._tool_manager is None:
-            return False
-        return self._tool_manager.is_registered("todo_read") and (
-            self._tool_manager.is_registered("todo_write")
-        )
+def _cgroup_memory_limit_mib() -> int | None:
+    """Memory limit in MiB from cgroup v2 memory.max (v1: memory.limit_in_bytes).
 
-    async def _fetch_version(self) -> str:
-        return "todo-enabled" if self._has_todo_tools() else "no-todo"
-
-    async def _fetch_content(self) -> str:
-        return _TODO_TASK_DISCIPLINE_PROMPT if self._has_todo_tools() else ""
-
-
-class _CommSubProvider(ABC):
-    """Internal strategy object for ``AgentCommunicationSystemPromptProvider``.
-
-    Each sub-module contributes one communication-context section. Sub-modules
-    are NOT independent ``SystemPromptProvider`` instances — the composite
-    provider owns the version/cache contract and delegates content/version
-    computation to its sub-modules.
+    "max" or a value >= ~1<<50 (v1 "unlimited" sentinel) → None. Missing/
+    unreadable → None.
     """
+    raw = _read_cgroup_file(_CGROUP_V2_ROOT / "memory.max")
+    if raw is None:
+        raw = _read_cgroup_file(_CGROUP_V1_ROOT / "memory" / "memory.limit_in_bytes")
+    if raw is None or raw == "max":
+        return None
+    try:
+        limit_bytes = int(raw)
+    except ValueError:
+        return None
+    if limit_bytes >= _CGROUP_MEMORY_UNLIMITED_BYTES:
+        return None
+    return limit_bytes // (1024 * 1024)
 
-    @abstractmethod
-    def applies(self) -> bool:
-        """Return True if this sub-module's section should be emitted."""
 
-    @abstractmethod
-    def version_part(self) -> str:
-        """Return the version fragment for this sub-module."""
-
-    @abstractmethod
-    def content(self) -> str:
-        """Return the prompt section content (empty if N/A)."""
+def _effective_cpu_count() -> int:
+    """cpu quota when set, else os.cpu_count() (physical view)."""
+    quota = _cgroup_cpu_quota()
+    if quota is not None:
+        return quota
+    return os.cpu_count() or 1
 
 
-class _PeerCommSubProvider(_CommSubProvider):
-    """Remote-agent reply contract — moved from the deleted
-    ``PeerCommunicationSystemPromptProvider``.
+def _physical_memory_mib() -> int:
+    """Usable RAM in MiB; 0 when it cannot be determined.
 
-    Fires when the agent owns ``send_to_peer`` AND at least one target is a
-    remote agent (a ``CommunicationTarget`` whose ``tree_ref`` is set — the
-    target does not share this agent's bus, so there is no implicit reply
-    path). For those targets the agent's ordinary output is invisible and a
-    reply is only possible via ``send_to_peer``.
+    Container-aware: the cgroup memory limit when set (the kernel-enforced
+    truth the process actually runs under), else the physical view
+    (sysconf → ctypes → psutil). On Windows the cgroup paths never exist,
+    so the ctypes path is unchanged.
+
+    A machine-level constant — deliberately NOT part of
+    ``RuntimeProvider._fetch_version`` (more stable than the hourly
+    timestamp already there, so no cache churn).
     """
+    cgroup_limit = _cgroup_memory_limit_mib()
+    if cgroup_limit is not None:
+        return cgroup_limit
+    if sys.platform == "win32":
+        import ctypes
 
-    def __init__(self, tool_manager: ToolManager | None) -> None:
-        self._tool_manager = tool_manager
+        class _MemoryStatusEx(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
 
-    def _remote_target_names(self) -> list[str]:
-        if self._tool_manager is None:
-            return []
-        tool = self._tool_manager.get_tool("send_to_peer")
-        if tool is None:
-            return []
-        from modex_agent.multi_agent.tools import SendToPeerTool
-
-        if not isinstance(tool, SendToPeerTool):
-            return []
-        return sorted(t.name for t in tool.list_targets() if t.tree_ref is not None)
-
-    def applies(self) -> bool:
-        return bool(self._remote_target_names())
-
-    def version_part(self) -> str:
-        names = self._remote_target_names()
-        return "peer:" + ",".join(names)
-
-    def content(self) -> str:
-        names = self._remote_target_names()
-        if not names:
-            return ""
-        name_list = "\n".join(f"  - {name}" for name in names)
-        return (
-            "## Communicating With Remote Agents\n\n"
-            "Some agents you can reach via `send_to_peer` cannot see anything "
-            "you produce normally — not this reply, not your reasoning, not your "
-            "tool output. For these agents the ONLY way they ever hear from you "
-            "is a `send_to_peer` call aimed at them.\n\n"
-            "Agents that require explicit sends:\n"
-            f"{name_list}\n\n"
-            "Replies are OPTIONAL. Only call `send_to_peer` back when the sender "
-            "actually needs your response — do NOT acknowledge just to be polite, "
-            "and do NOT ping-pong. If the incoming message does not require action "
-            "from you, end your turn without replying.\n"
-        )
-
-
-class _SubagentDispatchSubProvider(_CommSubProvider):
-    """[DEPRECATED] Main-agent subagent dispatch contract.
-
-    Effective information was fully covered by TaskDispatchTool.description;
-    the NEED_DECISION/PROGRESS_UPDATE prefix contract was unfulfilled
-    (subagents were never instructed to use these prefixes in final results).
-    Retained for reference.
-
-    Originally fired when the agent was NOT a subagent (``comm_kind`` is
-    ``None`` or ``NORMAL``) AND the agent owned the ``task`` tool AND at
-    least one target was a subagent (``kind == SUBAGENT``). Main agents
-    were constructed with ``comm_kind=None`` (the default), so the check
-    used ``== SUBAGENT`` rather than ``!= NORMAL`` to treat ``None`` as
-    main/normal.
-    """
-
-    def __init__(
-        self,
-        tool_manager: ToolManager | None,
-        comm_kind: AgentCommKind | None,
-    ) -> None:
-        self._tool_manager = tool_manager
-        self._comm_kind = comm_kind
-
-    def _subagent_target_names(self) -> list[str]:
-        if self._tool_manager is None:
-            return []
-        tool = self._tool_manager.get_tool("task")
-        if tool is None:
-            return []
-        from modex_agent.multi_agent.tools import TaskDispatchTool
-
-        if not isinstance(tool, TaskDispatchTool):
-            return []
-        return sorted(t.name for t in tool.list_targets() if t.kind == AgentCommKind.SUBAGENT)
-
-    def applies(self) -> bool:
-        return False
-
-    def version_part(self) -> str:
-        names = self._subagent_target_names()
-        return "dispatch:" + ",".join(names)
-
-    def content(self) -> str:
-        return (
-            "## Dispatching Subagents\n\n"
-            "Subagents cannot see anything you output directly. To assign a NEW task,\n"
-            "use the `task` tool — its `content` parameter carries the full task\n"
-            "description, and the tool guides you to construct a high-quality prompt.\n\n"
-            "To CONTINUE an existing subagent session (e.g. after receiving a\n"
-            "NEED_DECISION response), use `task` with the `invocation_id`\n"
-            "from the prior task result.\n\n"
-            "After dispatching, end your turn — the notification resumes you with the\n"
-            "result when the subagent finishes.\n\n"
-            "Subagents surface structured prefixes in their delivered result:\n"
-            "- `NEED_DECISION: <question>` — needs your decision. Continue the session\n"
-            "  (task with same invocation_id) with your answer.\n"
-            "- `PROGRESS_UPDATE: <info>` — informational, no action needed.\n"
-        )
-
-
-class _SubagentConsultationSubProvider(_CommSubProvider):
-    """SUBAGENT consultation contract — ask parent for input via
-    ``send_to_agent``.
-
-    Fires when ``comm_kind == SUBAGENT``.
-    """
-
-    def __init__(
-        self,
-        tool_manager: ToolManager | None,
-        comm_kind: AgentCommKind | None,
-    ) -> None:
-        self._tool_manager = tool_manager
-        self._comm_kind = comm_kind
-
-    def applies(self) -> bool:
-        return self._comm_kind == AgentCommKind.SUBAGENT
-
-    def version_part(self) -> str:
-        return "consult"
-
-    def content(self) -> str:
-        return (
-            "## Consulting Your Parent\n\n"
-            "Use `send_to_agent` only to ask your parent a question or request a "
-            "decision when you cannot proceed without input. Do not use it to report "
-            "results or progress."
-        )
-
-
-class AgentCommunicationSystemPromptProvider(SystemPromptProvider):
-    """Composite provider for agent-communication context.
-
-    Replaces the deleted ``PeerCommunicationSystemPromptProvider`` with a
-    two-part contract whose applicability depends on the agent's topology
-    (``comm_kind``) and the shape of its ``send_to_agent`` target set:
-
-    - ``_PeerCommSubProvider`` — remote-agent reply contract (peer targets
-      whose ``tree_ref`` is set).
-    - ``_SubagentConsultationSubProvider`` — SUBAGENT consultation contract
-      (ask parent for input via ``send_to_agent``).
-
-    The deprecated ``_SubagentDispatchSubProvider`` is retained in the module
-    but no longer instantiated — its effective content was fully covered by
-    ``TaskDispatchTool.description``.
-
-    The composite provider owns the version/cache contract; sub-modules are
-    internal strategy objects that contribute version fragments and content
-    sections. Version is ``"comm:"`` + ``|``-joined fragments of all applying
-    sub-modules (``"comm:none"`` if none apply); content is ``\\n\\n``-joined
-    sections of all applying sub-modules, empty strings skipped (``""`` if
-    none apply).
-    """
-
-    def __init__(
-        self,
-        tool_manager: ToolManager | None,
-        comm_kind: AgentCommKind | None,
-    ) -> None:
-        super().__init__()
-        self._sub_providers: list[_CommSubProvider] = [
-            _PeerCommSubProvider(tool_manager),
-            _SubagentConsultationSubProvider(tool_manager, comm_kind),
-        ]
-
-    async def _fetch_version(self) -> str:
-        parts = [sub.version_part() for sub in self._sub_providers if sub.applies()]
-        return "comm:" + "|".join(parts) if parts else "comm:none"
-
-    async def _fetch_content(self) -> str:
-        sections = [sub.content() for sub in self._sub_providers if sub.applies()]
-        return "\n\n".join(s for s in sections if s)
+        status = _MemoryStatusEx()
+        status.dwLength = ctypes.sizeof(_MemoryStatusEx)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return int(status.ullTotalPhys) // (1024 * 1024)
+    else:
+        try:
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            page_count = os.sysconf("SC_PHYS_PAGES")
+        except (ValueError, OSError):
+            pass
+        else:
+            return (page_size * page_count) // (1024 * 1024)
+    try:
+        import psutil
+    except ImportError:
+        return 0
+    return int(psutil.virtual_memory().total) // (1024 * 1024)
 
 
 class RuntimeProvider(SystemPromptProvider):
@@ -356,10 +209,24 @@ class RuntimeProvider(SystemPromptProvider):
             "darwin": "macOS",
             "linux": "Linux",
         }.get(platform_raw, platform_raw)
+        cpu = _effective_cpu_count()
+        mem_mib = _physical_memory_mib()
         lines = [
             "## Runtime",
             f"Platform: {platform_name}",
+            f"CPU cores: {cpu}",
         ]
+        if mem_mib > 0:
+            lines.extend(
+                [
+                    f"Memory: {mem_mib} MiB",
+                    "Memory is a hard limit: never let combined allocations of "
+                    "concurrent commands approach it — exceeding it gets the "
+                    "whole process killed (OOM) with all work lost. CPU cores "
+                    "are a guide: matching worker count to cores suits CPU-bound "
+                    "work, but IO-bound tasks may sensibly run more.",
+                ]
+            )
         dir_line = format_working_directory_line(self._working_directory)
         if dir_line is not None:
             lines.append(dir_line)
@@ -759,20 +626,21 @@ class ForkContextProvider(SystemPromptProvider):
 class GraphWorkflowProvider(SystemPromptProvider):
     """Graph workflow guidance — deliver-tool routing instructions.
 
-    Fires only when the agent is a graph node main agent (``is_node_execution``
-    + ``graph_context`` both set). This is the upper layer: graph mode sits
-    above the normal/subagent split, so subagents — even in graph mode —
-    never receive graph workflow content. They are atomic agents whose
-    results flow back to the parent graph node.
+    Fires only on a graph node execution (``is_node_execution`` +
+    ``graph_context`` both set), regardless of the agent's comm kind (SPEC
+    §4 axis 3 — a lazy subagent referenced directly as a graph node gets
+    the same guidance as a main node). Subagents dispatched from within a
+    graph turn are excluded: their session binding carries no
+    ``is_node_execution`` and they never have the topology key — they are
+    atomic agents whose results flow back to the parent graph node.
 
     In normal sessions ``graph_context`` is ``None`` so version is
     ``no-graph`` and content is empty — the pipeline skips it entirely.
 
     Gate: ``_is_graph_node_execution(ctx)`` checks ``graph_context`` is set
     AND ``GRAPH_TOPOLOGY_CONTEXT`` state key exists (set only by
-    ``GraphTopologyConfigurator`` whose gate is ``is_node_execution and
-    NORMAL``). This excludes subagents who have ``graph_context`` but no
-    topology key.
+    ``GraphTopologyConfigurator`` whose gate is ``is_node_execution``).
+    This excludes subagents who have ``graph_context`` but no topology key.
 
     Configuration matrix (see ``docs/design/session-tree/layered-config-matrix.md``):
 
@@ -781,7 +649,8 @@ class GraphWorkflowProvider(SystemPromptProvider):
     | native main session   | empty (no-graph)      |
     | native main graph     | full content          |
     | native sub session    | empty                 |
-    | native sub graph      | empty (excluded)      |
+    | native sub, dispatched from graph node | empty |
+    | native sub AS graph node (lazy leaf)    | full  |
     | external (any)        | not used (no pipeline)|
     """
 
@@ -801,13 +670,15 @@ class GraphWorkflowProvider(SystemPromptProvider):
         custom = _graph_node_custom_state(ctx)
         if custom is None:
             return ""
-        parts: list[str] = ["## Graph Node Context\n",
-                            "### Workflow Guidance\n\n",
-                            "You are a node in a graph workflow. Your regular text "
-                            "output is NOT delivered to anyone — only the `deliver` "
-                            "tool routes your work to downstream nodes.\n\n"
-                            "You MUST call `deliver` before finishing. Check the "
-                            "`deliver` tool for available targets and their roles.\n\n"]
+        parts: list[str] = [
+            "## Graph Node Context\n",
+            "### Workflow Guidance\n\n",
+            "You are a node in a graph workflow. Your regular text "
+            "output is NOT delivered to anyone — only the `deliver` "
+            "tool routes your work to downstream nodes.\n\n"
+            "You MUST call `deliver` before finishing. Check the "
+            "`deliver` tool for available targets and their roles.\n\n",
+        ]
 
         has_agent = custom.get(TurnCustomKey.GRAPH_DOWNSTREAM_HAS_AGENT, False)
         has_end = custom.get(TurnCustomKey.GRAPH_DOWNSTREAM_HAS_END, False)
@@ -896,18 +767,20 @@ def _get_agent_context() -> AgentContext | None:
 
 
 def _graph_node_custom_state(ctx: AgentContext | None) -> dict[str, Any] | None:
-    """Custom turn-state mapping for a graph node main-agent execution.
+    """Custom turn-state mapping for a graph node execution.
 
     Graph mode is the upper layer: it requires both ``graph_context`` (the
     graph runtime is active) and the ``GRAPH_TOPOLOGY_CONTEXT`` state key
     (set only by ``GraphTopologyConfigurator`` whose gate is
-    ``is_node_execution and agent_kind == NORMAL``). Subagents — even in
-    graph mode — never have the topology key, so they are excluded.
+    ``is_node_execution``). Subagents dispatched from within a graph turn
+    never have the topology key, so they are excluded; a subagent
+    referenced directly as a graph node does (SPEC §4 axis 3 — the signal
+    is the session binding's graph metadata, not the agent kind).
 
     Returns ``ctx.runtime.state.custom`` — the mapping that carries every
     graph turn key (topology, node description, downstream flags, knowledge
-    dir) — or ``None`` when this turn is not a graph node main agent
-    execution. A non-None return also implies ``ctx.runtime.state`` is
+    dir) — or ``None`` when this turn is not a graph node execution. A
+    non-None return also implies ``ctx.runtime.state`` is
     non-None, so callers get narrowed access without re-checking.
     """
     if ctx is None or ctx.graph_context is None:

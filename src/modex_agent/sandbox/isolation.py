@@ -30,6 +30,7 @@ import platform
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -344,6 +345,7 @@ class IsolationManager:
         import platform as _platform
 
         system = _platform.system()
+        providers: list[Callable[[IsolationConfig], IsolationProvider]]
         if system == "Linux":
             providers = [BubblewrapProvider]
         elif system == "Darwin":
@@ -353,8 +355,8 @@ class IsolationManager:
         else:
             providers = [BubblewrapProvider, SandboxExecProvider, WindowsIsolationProvider]
 
-        for ProviderCls in providers:
-            provider = ProviderCls(self.config)
+        for provider_cls in providers:
+            provider = provider_cls(self.config)
             if provider.is_available():
                 self._provider = provider
                 logger.info(f"Selected isolation provider: {provider.get_name()}")

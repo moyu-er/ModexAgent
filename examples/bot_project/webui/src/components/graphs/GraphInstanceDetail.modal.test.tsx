@@ -5,9 +5,10 @@
 // (spec name · version chip · status badge · Pause/Resume/Stop), full-size
 // TopologyCanvas, context sidebar (NodeDetailPanel / InstanceSummary +
 // EventTimeline), and the inline deliver panel. useGraphExecution is mocked
-// to return controlled state; getSpec is mocked to return YAML that
-// parseGraphSpecYaml parses for real (testing the real spec→topology→canvas
-// pipeline). Every test opens the modal via the header "Topology" button.
+// to return controlled state; getSpec is mocked for name/version and
+// getTopology is mocked to return a DTO that topologyFromApi maps for real
+// (testing the real topology-endpoint→model→canvas pipeline). Every test
+// opens the modal via the header "Topology" button.
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent, within, act } from "@testing-library/react";
@@ -15,6 +16,7 @@ import { GraphInstanceDetail } from "./GraphInstanceDetail";
 import { useGraphExecution } from "../../hooks/useGraphExecution";
 import {
   getSpec,
+  getTopology,
   getInvocations,
   invokeInstance,
   deliverToNode,
@@ -23,6 +25,7 @@ import {
   stopGraph,
   type GraphInstance,
   type GraphSpecResponse,
+  type GraphTopology,
 } from "../../lib/graphsApi";
 import { ToastProvider } from "../ToastContext";
 
@@ -32,6 +35,7 @@ vi.mock("../../hooks/useGraphExecution", () => ({
 
 vi.mock("../../lib/graphsApi", () => ({
   getSpec: vi.fn(),
+  getTopology: vi.fn(),
   getInvocations: vi.fn(),
   invokeInstance: vi.fn(),
   deliverToNode: vi.fn(),
@@ -42,6 +46,7 @@ vi.mock("../../lib/graphsApi", () => ({
 
 const mockUseGraphExecution = vi.mocked(useGraphExecution);
 const mockGetSpec = vi.mocked(getSpec);
+const mockGetTopology = vi.mocked(getTopology);
 const mockGetInvocations = vi.mocked(getInvocations);
 const mockInvokeInstance = vi.mocked(invokeInstance);
 const mockDeliverToNode = vi.mocked(deliverToNode);
@@ -79,6 +84,28 @@ const SPEC_RESPONSE: GraphSpecResponse = {
   name: "review_workflow",
   version: "1.0",
   yaml_content: SPEC_YAML,
+};
+
+const TOPOLOGY_DTO: GraphTopology = {
+  spec_id: "review_wf",
+  name: "review_workflow",
+  scheduler: "parallel",
+  default_trigger: "on_all_preds",
+  nodes: [
+    {
+      name: "designer",
+      node_type: "agent",
+      config: { agent: "designer", pool: "review" },
+      trigger: null,
+    },
+    { name: "implementer", node_type: "function", config: {}, trigger: null },
+  ],
+  edges: [
+    { source: "__start__", target: "designer" },
+    { source: "designer", target: "implementer" },
+    { source: "implementer", target: "__end__" },
+  ],
+  entry_node: "__start__",
 };
 
 function makeInstance(overrides: Partial<GraphInstance> = {}): GraphInstance {
@@ -158,6 +185,7 @@ async function openModal(props?: Parameters<typeof renderDetail>[0]): Promise<HT
 beforeEach(() => {
   mockUseGraphExecution.mockReset();
   mockGetSpec.mockReset();
+  mockGetTopology.mockReset();
   mockGetInvocations.mockReset();
   mockInvokeInstance.mockReset();
   mockDeliverToNode.mockReset();
@@ -167,6 +195,7 @@ beforeEach(() => {
 
   mockHook();
   mockGetSpec.mockResolvedValue(SPEC_RESPONSE);
+  mockGetTopology.mockResolvedValue(TOPOLOGY_DTO);
   mockGetInvocations.mockResolvedValue([]);
   mockInvokeInstance.mockResolvedValue({
     graph_instance_id: "12345",

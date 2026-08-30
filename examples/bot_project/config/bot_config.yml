@@ -1,7 +1,7 @@
 # ============================================================
 # bot_config.yml — Shared infrastructure only
 #
-# Each agent pool is configured in config/pools/{name}.yml.
+# Agent pools are declared in the scope declaration (config/scopes/bot.yml).
 # This file holds only cross-cutting concerns.
 # ============================================================
 
@@ -15,7 +15,9 @@ safety:
   turn:
     agent_run_timeout: 600.0
     hook_timeout: 10.0
-    tool_timeout: 400.0
+    # tool_timeout intentionally unset — the framework default
+    # (DefaultValues.TOOL_TIMEOUT_SECONDS, 540s) applies. It must stay
+    # strictly above the persistent bash session's own 480s deadline.
 
 # ---- Paths ----
 paths:
@@ -30,8 +32,10 @@ webui:
   host: "0.0.0.0"
 
 # ---- Workspace (multi-live) ----
-workspace:
-  enabled: true
+# Ticket 14: the workspace.enabled flag is dead. The stack shape is
+# selected by the scope declaration's form (config/scopes/bot.yml):
+# a workspace-layer declaration boots multi-live; its absence
+# (pool-as-root or no declaration) boots the single-workspace deployment.
 
 # ---- Multi-agent ----
 multi_agent:
@@ -41,35 +45,44 @@ multi_agent:
     ttl_seconds: 86400
     cleanup_interval_seconds: 1800
 
-# ---- Plugins (OFF by default) ----
-plugins:
-  enabled: false
-
 # ---- Observability ----
 observability:
   run_logging: true
   level: "INFO"
-  # Trace Path (A) — OTel span format (default: file).
-  # "file" writes spans.jsonl (OTel-compatible spans).
-  # "off" disables all trace emission. "otel_http" requires [observability] extra.
-  trace_backend: "${OTEL_FORMAT:-file}"
-  otel_endpoint: "${LANGFUSE_HOST:-http://localhost:3000}/api/public/otel/v1/traces"
+  # Trace Path (A) — OTel HTTP collector path (default: otel_http).
+  # "otel_http" exports to the collector. "file" is the dormant legacy fallback
+  # that writes spans.jsonl (OTel-compatible spans). "off" disables all trace emission.
+  trace_backend: "${OTEL_FORMAT:-otel_http}"
+  otel_endpoint: "${OTEL_TRACES_ENDPOINT:-http://localhost:4318/v1/traces}"
+  eval_ingestion_url: "${LANGFUSE_HOST:-http://localhost:3000}/api/public/ingestion"
   otel_service_name: "modex-bot"
   otel_headers:
     Authorization: "Basic ${LANGFUSE_BASIC_AUTH:-}"
     x-langfuse-ingestion-version: "4"
   retain_reasoning_content: true
   # Prompt capture scope: off | hash | summary | full
-  # "full" captures complete system prompt + tool definitions for eval/training.
+  # "full" (default) — exact prompt inspection/reproduction on Langfuse: the
+  # system prompt rides gen_ai.system_instructions and every message (system
+  # included) rides the chat input. "summary" keeps only the last-5-messages
+  # window with system reduced to hash+length — system disappears from the
+  # Langfuse generation Input view (observed after e6464278 flipped the
+  # default; restored here).
   prompt_capture: "${PROMPT_CAPTURE:-full}"
   # Span emission tier: minimal | standard | full
   # "full" includes agent.start (system prompt + tools) + iteration spans.
   trace_spans: "${TRACE_SPANS:-full}"
+  # ── Training-data collection flags — env-overridable ──
   # Capture tool definitions in agent.start span (Langfuse metadata).
-  capture_tools: true
+  capture_tools: "${CAPTURE_TOOLS:-true}"
   # Layer 1 eval: inject L2 heuristic scores to Langfuse on each turn finish.
-  # Requires trace_backend=otel_http + reachable Langfuse. Default: false.
-  eval_score_injection: false
+  # Requires trace_backend=otel_http + reachable Langfuse.
+  eval_score_injection: "${EVAL_SCORE_INJECTION:-true}"
+  # Langfuse trace segmentation (optional, env-driven).
+  # environment: dev / staging / production — filters traces by deployment context.
+  # version: application or prompt version — for A/B testing and trace grouping.
+  # tags: comma-separated custom tags (e.g. "eval,math-qa").
+  environment: "${LANGFUSE_ENVIRONMENT:-default}"
+  version: "${LANGFUSE_VERSION:-}"
   #
   # Langfuse integration (self-hosted v4, OTLP-native):
   # 1. Deploy Langfuse via Docker Compose (see docs/langfuse-deployment.md).
@@ -79,14 +92,14 @@ observability:
   # checkpoint_per_iteration: true
   # cassette_enabled: false
   # cassette_scope: "default"       # default / full
-  # Training Data Derivation:
-  # training_relevant: false
+  # Training Data Derivation (env-overridable):
+  # training_relevant: "${TRAINING_RELEVANT:-false}"
   # training_max_iterations: 20
   # training_max_tokens: 100000
 
 # ---- Eval Harness (Layer 2, opt-in via [eval] extra) ----
 # Run via: python -m bot.eval.cli <curate|run|compare>
-# Requires langfuse (pip install -e ".[eval]") + a model provider extra (e.g. [llm]).
+# Requires langfuse (pip install -e ".[eval]").
 # eval:
 #   dataset_name: "react-baseline"
 #   max_concurrency: 5

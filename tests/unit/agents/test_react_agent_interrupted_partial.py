@@ -1,6 +1,6 @@
 """Tests for persisting partial assistant content when an LLM stream is interrupted.
 
-The partial-stash WRITE (in ReactLlmClient._stream_with_control) is tested at
+The partial-stash WRITE (in ReactLlmClient's event loop) is tested at
 tests/unit/agents/react/test_llm_client.py. This file keeps the agent-level
 concerns: the interrupt-reason mapping and the run()-level READ/persist
 (_persist_interrupted_partial) that consumes the stashed partial.
@@ -16,9 +16,9 @@ from modex_agent.agents.react.agent import (
 )
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.control.exceptions import (
-    AgentCancelled,
-    AgentTimeout,
-    PolicyViolation,
+    AgentCancelledError,
+    AgentTimeoutError,
+    PolicyViolationError,
 )
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionInfo
@@ -53,13 +53,13 @@ def _make_ctx():
 
 class TestInterruptReasonMapping:
     def test_user_stop_for_agent_cancelled(self):
-        assert _interrupt_reason_from(AgentCancelled()) == "user_stop"
+        assert _interrupt_reason_from(AgentCancelledError()) == "user_stop"
 
     def test_timeout_for_agent_timeout(self):
-        assert _interrupt_reason_from(AgentTimeout()) == "timeout"
+        assert _interrupt_reason_from(AgentTimeoutError()) == "timeout"
 
     def test_policy_for_policy_violation(self):
-        assert _interrupt_reason_from(PolicyViolation()) == "policy"
+        assert _interrupt_reason_from(PolicyViolationError()) == "policy"
 
     def test_cancelled_for_asyncio_cancelled(self):
         assert _interrupt_reason_from(asyncio.CancelledError()) == "cancelled"

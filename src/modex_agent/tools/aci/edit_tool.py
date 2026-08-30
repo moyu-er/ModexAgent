@@ -29,6 +29,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from modex_agent.core.tool_manager import ToolResult
 from modex_agent.tools.lint import LintIssue, LintRegistry
 from modex_agent.tools.standard.file_tool import EditFileTool
 
@@ -57,14 +58,11 @@ class AciEditTool(EditFileTool):
         super().__init__()
         self._lint_registry = lint_registry
 
-    async def execute(
-        self,
-        path: str,
-        old_string: str,
-        new_string: str,
-        replace_all: bool = False,
-        **kwargs: Any,  # noqa: ANN401  — matches parent EditFileTool.execute signature
-    ) -> str | Any:  # noqa: ANN401
+    async def execute(self, **kwargs: Any) -> str | ToolResult:
+        path = kwargs["path"]
+        old_string = kwargs["old_string"]
+        new_string = kwargs["new_string"]
+        replace_all = kwargs.get("replace_all", False)
         # Delegate to the parent EditFileTool.execute — it handles all
         # the edit logic (fuzzy matching, quote preservation, encoding,
         # replace_all, error cases, file creation via empty old_string).
@@ -73,7 +71,6 @@ class AciEditTool(EditFileTool):
             old_string=old_string,
             new_string=new_string,
             replace_all=replace_all,
-            **kwargs,
         )
 
         # Lint only runs on successful edits that return a string.

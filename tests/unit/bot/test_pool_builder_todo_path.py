@@ -1,79 +1,112 @@
-"""Behavioral tests for the pool builder todo wiring.
+"""Pool todo wiring through the declaration compiler (tickets 05/11).
 
-These verify that the todo store is created with the correct pool-aware path
-and that todo tools are registered when the main agent's tool_supplements
-includes the todo supplement.
+The todo store is the ``todo`` capability's pool-level supply
+(``TodoCapability.supply`` — the T11 convergence; the retired BIZ
+``build_pool_todo_store`` and the typed ``pool_runtime.todo_store`` /
+``AgentMaterializeDeps.todo_store`` carriers died with it); the todo
+TOOLS are declaration-resolved — ``capabilities: {todo: {}}`` contributes
+``todo_write``/``todo_read`` into the compiled AssemblySpec's merge base
+(the T10 migration), resolved through the TOOL-slot factories against
+``capability_supply['todo']``.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 
 pytest.importorskip("aiohttp")  # transitive: ReactExecutionStrategy → web_ui_service → aiohttp
 
-from bot.service.react_strategy import ReactExecutionStrategy
-
-from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.specs import MainAgentSpec
+from modex_agent.plugins.capability import PoolSupplyAgentEntry, PoolSupplyView
+from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.defaults.capabilities.todo import TodoCapability, TodoSupply
+from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.runtime.store import JsonFileTodoStore
-from modex_agent.tools.presets import ToolSupplement
+from modex_agent.scope.compiler import compile_scope
+from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
+from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.workspace.paths import WorkspacePaths
 
 
-@pytest.mark.asyncio
-async def test_build_tools_registers_todo_tools_and_pool_todo_store(
-    tmp_path: Path,
-) -> None:
-    pool_name = "main"
-    data_dir = tmp_path / "data"
-    expected_todo_dir = data_dir / "runtime_state" / pool_name / "todos"
+def _workspace_ctx(root: Path) -> WorkspaceContext:
+    return WorkspaceContext(target=root, paths=WorkspacePaths(root=root / ".modex"), is_home=False)
 
-    main_spec = MainAgentSpec(
-        agent_name="main",
-        tool_supplements=[ToolSupplement.TODO],
-    )
-    assembly_deps = PoolAssemblyDeps()
-    strategy = ReactExecutionStrategy()
 
-    tool_manager, _mcp_manager, todo_store = await strategy._build_tools(
-        main_spec=main_spec,
-        assembly_deps=assembly_deps,
-        terminal_manager=None,
-        project_dir=tmp_path,
-        output_adapter=AsyncMock(),
+def _registry() -> ComponentRegistry:
+    """A registry carrying the FW defaults (the todo capability lives in
+    DefaultPlugin — the production registration face)."""
+    registry = ComponentRegistry()
+    ctx = PluginRegistrationContext(registry)
+    DefaultPlugin().register(ctx)
+    ctx.flush()
+    return registry
+
+
+def _view(pool_name: str = "main", **kwargs: object) -> PoolSupplyView:
+    return PoolSupplyView(
         pool_name=pool_name,
-        data_dir=data_dir,
-        pool_data=None,
-        root_provider=None,
+        entries=(PoolSupplyAgentEntry(agent_name="main", config={}),),
+        **kwargs,  # type: ignore[arg-type]
     )
 
-    assert isinstance(todo_store, JsonFileTodoStore)
-    assert todo_store._base_dir == expected_todo_dir
-    assert tool_manager.is_registered("todo_read")
-    assert tool_manager.is_registered("todo_write")
 
-
-@pytest.mark.asyncio
-async def test_build_tools_without_todo_supplement_does_not_register_todo_tools(
+def test_todo_supply_uses_pool_runtime_dir_when_pool_data_present(
     tmp_path: Path,
 ) -> None:
-    main_spec = MainAgentSpec(agent_name="main", tool_supplements=[])
-    assembly_deps = PoolAssemblyDeps()
-    strategy = ReactExecutionStrategy()
+    """Parity with the retired ``build_pool_todo_store``: the workspace's
+    pool_data runtime dir wins when present."""
+    runtime_dir = tmp_path / "ws" / "runtime_state" / "main"
 
-    tool_manager, _mcp_manager, _todo_store = await strategy._build_tools(
-        main_spec=main_spec,
-        assembly_deps=assembly_deps,
-        terminal_manager=None,
-        project_dir=tmp_path,
-        output_adapter=AsyncMock(),
-        pool_name="main",
-        data_dir=tmp_path / "data",
-        pool_data=None,
-        root_provider=None,
+    supply = TodoCapability().supply(_view(runtime_dir=runtime_dir, data_dir=tmp_path / "data"))
+
+    assert isinstance(supply, TodoSupply)
+    assert isinstance(supply.store, JsonFileTodoStore)
+    assert supply.store._base_dir == runtime_dir / "todos"  # noqa: SLF001
+
+
+def test_todo_supply_falls_back_to_data_dir_path_without_pool_data(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+
+    supply = TodoCapability().supply(_view(data_dir=data_dir))
+
+    assert isinstance(supply, TodoSupply)
+    assert isinstance(supply.store, JsonFileTodoStore)
+    assert supply.store._base_dir == data_dir / "runtime_state" / "main" / "todos"  # noqa: SLF001
+
+
+def _compiled_tools(*agents: AgentSpec) -> dict[str, list[str]]:
+    """Compile a single-pool declaration and return agent_name → tools."""
+    spec = ScopeSpec(kind=ScopeKind.POOL, pool=PoolSpec(name="p", agents=list(agents)))
+    compilation = compile_scope(spec, workspace_ctx=_workspace_ctx(Path(".")), registry=_registry())
+    return {a.provenance.agent: a.spec.tools for a in compilation.agents}
+
+
+def test_todo_capability_contributes_compiled_tool_names_for_main_agent() -> None:
+    """A main agent declaring ``capabilities: {todo: {}}`` carries the todo
+    tool names in its compiled spec — Stage 4 resolves them through
+    TodoToolFactory against the pool store."""
+    tools = _compiled_tools(AgentSpec(name="main", capabilities={"todo": {}}))
+
+    assert "todo_write" in tools["main"]
+    assert "todo_read" in tools["main"]
+
+
+def test_subagent_todo_capability_contributes_compiled_tool_names() -> None:
+    tools = _compiled_tools(
+        AgentSpec(name="main"),
+        AgentSpec(name="helper", parent="main", capabilities={"todo": {}}),
     )
 
-    assert not tool_manager.is_registered("todo_read")
-    assert not tool_manager.is_registered("todo_write")
+    assert "todo_write" in tools["helper"]
+    assert "todo_read" in tools["helper"]
+
+
+def test_no_todo_capability_carries_no_todo_tool_names() -> None:
+    tools = _compiled_tools(AgentSpec(name="main"))
+
+    assert "todo_write" not in tools["main"]
+    assert "todo_read" not in tools["main"]

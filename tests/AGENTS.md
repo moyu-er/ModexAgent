@@ -16,7 +16,7 @@ The `tests/` directory mirrors the `src/modex_agent/` package structure with uni
 | `unit/` | Unit tests mirroring `src/modex_agent/` package structure (21+ sub-modules) |
 | `framework/` | Framework-level tests — tool/MCP/terminal integration (real wiring, not mocked) |
 | `architecture/` | AST-guard tests enforcing architectural invariants (ADR-0006 dependency tiers, no back-refs, dead-code-gone, god-object-gone, module seams preserved). Each test is an ADR gate — `EXPECTED_OFFENDERS` sets shrink to empty as fixes land; the assertion stays strict. |
-| `conformance/` | Parametrized file↔SQLite backend equivalence suites (ADR-0023) — one file per split-store/runtime-state ABC (`MessageStore`, `KVStore`, `CursorStore`, `ArchiveStore`, `InboxMQ`, `PoolRoutingStore`, `ExternalSessionMapStore`, `WorkspaceRegistryStore`, `ApprovalAuditStore`, `TurnStateStore`, `TodoStore`, `SessionStore`). Proves `PersistenceBackend.FILE`/`SQLITE` behave identically. |
+| `conformance/` | Parametrized file↔SQLite backend equivalence suites (ADR-0023) — one file per split-store/runtime-state ABC (`MessageStore`, `KVStore`, `CursorStore`, `ArchiveStore`, `InboxMQ`, `PoolRoutingStore`, `ExternalSessionMapStore`, `ScopeRegistryStore` (file name still says "workspace registry"), `ApprovalAuditStore`, `TurnStateStore`, `TodoStore`, `SessionStore`). Proves `PersistenceBackend.FILE`/`SQLITE` behave identically. |
 | `integration/` | Integration tests across multiple modules — `experience/`, `memory/`, `multi_agent/`, `bot_project/`. Excluded by default (`-m 'not integration'`); run explicitly with `-m integration`. |
 
 > `tests_ext/` is declared in `pyproject.toml` `testpaths` but does not exist on disk — it is a reserved external/downstream test surface.

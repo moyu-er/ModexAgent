@@ -1,0 +1,11 @@
+# Boot-failure fixture: a NON-ROOT agent declares approval (V9, phase 2 —
+# approval eligibility is positional; a subagent that approves its own risky
+# tools would bypass the human gate).
+pool:
+  name: v9_pool
+  agents:
+    root:
+      agents:
+        sub:
+          approval:
+            enabled: true

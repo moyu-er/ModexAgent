@@ -1,7 +1,7 @@
 """Recent workspace tracking — convenience for workspace switching.
 
 .. deprecated:: T14
-    Use :meth:`modex_agent.workspace.registry.WorkspaceRegistryStore.list_workspaces`
+    Use :meth:`modex_agent.workspace.registry.ScopeRegistryStore.list_workspaces`
     with ``order_by="last_active"`` instead.  This module is retained for
     backward compatibility until T23 removes it.
 
@@ -54,7 +54,7 @@ class RecentWorkspaces:
 
     .. deprecated:: T14
         Superseded by
-        :class:`modex_agent.workspace.registry.WorkspaceRegistryStore.list_workspaces`.
+        :class:`modex_agent.workspace.registry.ScopeRegistryStore.list_workspaces`.
         T23 will remove this class.
 
     Paths are deduplicated; the most recently visited path appears first.
@@ -63,7 +63,7 @@ class RecentWorkspaces:
     def __init__(self, data_dir: Path) -> None:
         warnings.warn(
             "RecentWorkspaces is deprecated since T14; use "
-            "WorkspaceRegistryStore.list_workspaces(order_by='last_active') "
+            "ScopeRegistryStore.list_workspaces(order_by='last_active') "
             "instead. T23 will remove this class.",
             DeprecationWarning,
             stacklevel=2,

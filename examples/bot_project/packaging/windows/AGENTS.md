@@ -126,9 +126,11 @@ packaging/windows/
 
 ## For AI Agents
 
-- The installer size is dominated by the Python runtime (~437 MB uncompressed,
-  ~130 MB after Inno Setup LZMA). `litellm` and its tokenizer data are the
-  largest single contributors — future optimization target.
+- The installer size is dominated by the bundled Python runtime and the
+  remaining third-party deps. With the legacy LLM SDK (~123 MB of tokenizer
+  data) gone, the largest remaining contributors are the office/media skill
+  stack (Pillow, lxml, PDF tooling) and cryptography — future optimization
+  target.
 - `build.bat --skip-fe` reuses the existing `webui/dist` — use it when only
   backend/packaging changes were made.
 - After modifying Rust code, step 5 recompiles (~1-2 min). After modifying

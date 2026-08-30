@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-07-17 -->
+<!-- Updated: 2026-08-28 -->
 
 # docs
 
@@ -10,11 +10,15 @@ Documentation index for the ModexAgent project — ADRs, design docs, and agent 
 ```
 docs/
 ├── AGENTS.md              ← this file (docs index)
-├── adr/                   ← Architecture Decision Records (ADR-0001 ~ 0036)
+├── adr/                   ← Architecture Decision Records (ADR-0001 ~ 0047)
 │   ├── history/            ← Historical/superseded ADRs
 │   └── AGENTS.md          ← ADR index + conventions
 ├── design/                ← Feature design docs (PRD per feature; completed tickets in _archive/)
 │   ├── _archive/                      ← Superseded PRDs + completed tickets
+│   ├── capability-bundles/            (ADR-0047, implemented 2026-08-28) capability bundles — SPEC, author guide
+│   ├── llm-provider/                  (ADR-0046) LLM provider protocol engines — PRD
+│   ├── scope-converge/                (ADR-0041) plugin/assembly SPEC, errata, handoff
+│   ├── scope-assembly/                (ADR-0042/0043, implemented 2026-08-22) scope declaration tree + unified assembly SPEC, issues, closure matrix
 │   ├── graph-orchestration/           (ADR-0033/0034)
 │   ├── static-graph-scheduling/       (ADR-0036)
 │   ├── modexctl-control-plane/        (ADR-0035)
@@ -40,7 +44,7 @@ docs/
 
 | Document | Location | Description |
 |----------|----------|-------------|
-| ADR index | `adr/` | 36 Architecture Decision Records (ADR-0001~0036) — see `adr/AGENTS.md` for the full index |
+| ADR index | `adr/` | 47 Architecture Decision Records (ADR-0001~0047) — see `adr/AGENTS.md` for the full index |
 | Bot local setup | `bot-local-setup.md` | Step-by-step bot setup from source (prerequisites, venv, config, troubleshooting) |
 | Issue tracker | `agents/issue-tracker.md` | Issues live as local markdown under `docs/design/<feature>/` |
 | Triage labels | `agents/triage-labels.md` | Canonical triage label vocabulary |
@@ -55,12 +59,16 @@ Each feature has a directory under `design/<feature-slug>/` containing:
 
 | Feature | ADR | Key files |
 |---------|-----|-----------|
+| Capability bundles (11th slot, five-phase protocol, five bundled packages migrated split-brain; implemented 2026-08-28) | ADR-0047 | SPEC.md, AUTHOR-GUIDE.md |
+| LLM provider protocol engines (ADR-0046) | 0046 | PRD.md |
+| Scope unified assembly (declaration tree, context chain, convergence waves; implemented 2026-08-22, tickets 01-19 closed) | ADR-0042/0043 | SPEC.md (§13 errata + ADR anchor audit), issues/01-19, closure-matrix.md |
 | Graph orchestration (persistence, external control) | ADR-0033/0034 | distributed-persistence.md, external-control.md, backlog.md, future-capabilities.md, state-consistency.md |
 | Static graph scheduling | ADR-0036 | PRD.md, todo.md, closure-map.md |
 | modexctl Control Plane | ADR-0035 | PRD.md, contract.md, decisions.md, glossary.md, issues/ |
 | Phase 1 persistence schema optimization | ADR-0028/0029/0030/0031 | PRD.md |
 | External coding subagent | ADR-0027 | PRD.md |
 | Agent observability | ADR-0024 | PRD.md |
+| OTel-only tracing + collector (implemented 2026-08-17) | ADR-0024 | otel-collector/PRD.md |
 | Hybrid persistence | ADR-0023 | PRD.md, sqlite-deployment-and-lifecycle.md, webui-transcript-sqlite.md |
 | External coding agent integration | ADR-0022 | spec.md, glossary.md, child-session-capture.md |
 | Model reasoning effort | ADR-0021 | PRD.md |

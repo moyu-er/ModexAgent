@@ -9,10 +9,10 @@ Provides:
 
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.control.exceptions import (
-    AgentCancelled,
+    AgentCancelledError,
     AgentControlError,
-    AgentTimeout,
-    PolicyViolation,
+    AgentTimeoutError,
+    PolicyViolationError,
 )
 from modex_agent.control.graph_control import (
     GraphControlService,
@@ -30,10 +30,10 @@ from modex_agent.control.types import (
 
 __all__ = [
     # Exceptions
-    "AgentCancelled",
+    "AgentCancelledError",
     "AgentControlError",
-    "AgentTimeout",
-    "PolicyViolation",
+    "AgentTimeoutError",
+    "PolicyViolationError",
     # Types
     "ControlCommand",
     "ControlCommandType",

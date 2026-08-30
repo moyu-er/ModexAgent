@@ -19,7 +19,7 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig, StreamingAwareEmitter
 from modex_agent.core.events import AgentEvent
-from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.memory.history import ListMessageHistory
@@ -94,18 +94,18 @@ def _make_runtime():
     return AgentRuntime(services=AgentRuntimeServices(), state=state)
 
 
-class MockNonStreamingProvider:
-    """Mock LLMProvider for non-streaming tests (does not inherit from LLMProvider)."""
-
-    async def chat(self, messages, **kwargs):
-        return LLMResponse(content="Non-streaming response")
+class MockNonStreamingProvider(CallbackStreamProvider):
+    """Callback-style mock: only chat_stream is overridden (bridge path)."""
 
     def get_default_model(self):
         return "mock-model"
 
+    async def chat_stream(self, messages, on_content_delta=None, on_reasoning_delta=None, **kwargs):
+        return LLMResponse(content="Non-streaming response")
 
-class MockStreamingProvider(StreamingLLMProvider):
-    """Mock StreamingLLMProvider for testing."""
+
+class MockStreamingProvider(CallbackStreamProvider):
+    """Mock CallbackStreamProvider for testing."""
 
     def __init__(self):
         self._stream_content = None
@@ -325,7 +325,7 @@ class TestReActAgentUnifiedLoop:
         async def mock_chat(*args, **kwargs):
             return LLMResponse(content="Hello from non-streaming")
 
-        non_streaming_provider.chat = mock_chat
+        non_streaming_provider.chat_stream = mock_chat
         agent = ReActAgent(provider=non_streaming_provider)
 
         result = await agent.run(context, emitter)
@@ -342,7 +342,7 @@ class TestReActAgentUnifiedLoop:
                 reasoning_content="Let me calculate... 20 + 22 = 42",
             )
 
-        non_streaming_provider.chat = mock_chat
+        non_streaming_provider.chat_stream = mock_chat
         agent = ReActAgent(provider=non_streaming_provider)
 
         result = await agent.run(context, emitter)
@@ -356,7 +356,7 @@ class TestReActAgentUnifiedLoop:
         async def mock_chat(*args, **kwargs):
             return LLMResponse(content="Complete response")
 
-        non_streaming_provider.chat = mock_chat
+        non_streaming_provider.chat_stream = mock_chat
         agent = ReActAgent(provider=non_streaming_provider)
 
         await agent.run(context, emitter)
@@ -382,7 +382,7 @@ class TestReActAgentUnifiedLoop:
         async def mock_chat(*args, **kwargs):
             return LLMResponse(content="Complete response")
 
-        non_streaming_provider.chat = mock_chat
+        non_streaming_provider.chat_stream = mock_chat
         from modex_agent.hook import HookRunner, HookSpec, HookErrorPolicy
         context.runtime.services.hooks = HookRunner([
             HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.LOG)
@@ -412,7 +412,7 @@ class TestReActAgentUnifiedLoop:
             else:
                 return LLMResponse(content="It's sunny in Beijing")
 
-        non_streaming_provider.chat = mock_chat
+        non_streaming_provider.chat_stream = mock_chat
         context.tool_manager.execute = AsyncMock(return_value=ToolResult.from_text("weather", "Sunny, 25C"))
         agent = ReActAgent(provider=non_streaming_provider)
 
@@ -423,7 +423,7 @@ class TestReActAgentUnifiedLoop:
         assert len(result.messages) == 3
 
     @pytest.mark.asyncio
-    async def test_non_streaming_not_using_chat_stream(self, non_streaming_provider, context, emitter):
+    async def test_non_streaming_not_using_chat(self, non_streaming_provider, context, emitter):
         chat_called = False
         chat_stream_called = False
 
@@ -438,14 +438,17 @@ class TestReActAgentUnifiedLoop:
             return LLMResponse(content="Response")
 
         non_streaming_provider.chat = mock_chat
-        # _BufferingEmitter wants_streaming returns False by default
+        non_streaming_provider.chat_stream = mock_chat_stream
+        # _BufferingEmitter wants_streaming returns False by default — the
+        # single event loop still reaches the provider via the bridge's
+        # chat_stream, never via chat().
         assert emitter.wants_streaming() is False
         agent = ReActAgent(provider=non_streaming_provider)
 
         await agent.run(context, emitter)
 
-        assert chat_called is True
-        assert chat_stream_called is False
+        assert chat_called is False
+        assert chat_stream_called is True
 
     @pytest.mark.asyncio
     async def test_non_streaming_max_iterations(self, non_streaming_provider, context, emitter):
@@ -457,7 +460,7 @@ class TestReActAgentUnifiedLoop:
                 tool_calls=[ToolCall(tool_name="dummy", arguments={}, call_id="call_1")],
             )
 
-        non_streaming_provider.chat = mock_chat
+        non_streaming_provider.chat_stream = mock_chat
         context.tool_manager.execute = AsyncMock(return_value=ToolResult.from_text("dummy", "done"))
         agent = ReActAgent(provider=non_streaming_provider)
 
@@ -469,7 +472,7 @@ class TestReActAgentUnifiedLoop:
         async def mock_chat(*args, **kwargs):
             raise ValueError("API error")
 
-        non_streaming_provider.chat = mock_chat
+        non_streaming_provider.chat_stream = mock_chat
         agent = ReActAgent(provider=non_streaming_provider)
 
         result = await agent.run(context, emitter)
@@ -481,7 +484,7 @@ class TestReActAgentUnifiedLoop:
         async def mock_chat(*args, **kwargs):
             return LLMResponse(content="Simple response")
 
-        non_streaming_provider.chat = mock_chat
+        non_streaming_provider.chat_stream = mock_chat
         agent = ReActAgent(provider=non_streaming_provider)
 
         result = await agent.run(context, emitter)
@@ -571,7 +574,7 @@ class TestReActAgentRegression:
         async def mock_chat(*args, **kwargs):
             return LLMResponse(content="Full response")
 
-        non_streaming_provider.chat = mock_chat
+        non_streaming_provider.chat_stream = mock_chat
 
         class TrackingEmitter(_BufferingEmitter[ReActEvent]):
             def __init__(self):
@@ -699,7 +702,7 @@ class TestReActAgentCheckpoint:
         async def mock_chat(*args, **kwargs):
             return LLMResponse(content="Final answer")
 
-        non_streaming_provider.chat = mock_chat
+        non_streaming_provider.chat_stream = mock_chat
 
         agent = ReActAgent(provider=non_streaming_provider)
         await agent.run(context, emitter)
@@ -716,7 +719,7 @@ class TestReActAgentCheckpoint:
         async def mock_chat(*args, **kwargs):
             raise ValueError("LLM failure")
 
-        non_streaming_provider.chat = mock_chat
+        non_streaming_provider.chat_stream = mock_chat
 
         agent = ReActAgent(provider=non_streaming_provider)
         result = await agent.run(context, emitter)

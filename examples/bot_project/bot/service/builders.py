@@ -1,4 +1,9 @@
-"""Agent builder mixin for BotService — tool registration, memory, descriptors.
+"""Agent build helpers — tool registration, memory, descriptors, runtime builders.
+
+Hosts the ``AgentBuilderMixin`` for BotService, the shared
+``_PoolAssemblyMixin`` for the execution strategies, tool/MCP builders,
+and the runtime builders (hook runner / control channel / command
+processor).
 
 All tool registration methods use Tool objects directly (code-passed).
 No tool configuration is read from YAML/config dicts.
@@ -7,43 +12,86 @@ No tool configuration is read from YAML/config dicts.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from bot.plugins.integration import PluginIntegration
 from bot.scope import BotRecordScope
+from modex_agent.control.channel import InMemoryControlChannel
+from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_store import SessionStore
 from modex_agent.core.skills import SkillManager
-from modex_agent.core.tool_manager import Tool
+from modex_agent.core.tool_manager import (
+    InMemoryToolManager,
+    Tool,
+    ToolManagerConfig,
+)
+from modex_agent.hook.abc import Hook
 from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.ioc.configs.observability import CassetteScope
+from modex_agent.memory.injection import FullInjectionPolicy
+from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import AgentMessageBus
 from modex_agent.multi_agent.pool_router import PoolRoutingStore
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.pipeline.adapters import OutputAdapter
-from modex_agent.workspace.registry import WorkspaceRegistryStore
+from modex_agent.plugins.abc import ComponentSlot
+from modex_agent.plugins.assembly.context import AgentContext as ComponentAgentContext
+from modex_agent.scope.spec import AgentSpec
+from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.workspace.registry import ScopeRegistryStore
 
 if TYPE_CHECKING:
+    from bot.kb.provider import KbProvider
+    from bot.service.pool.declaration import DeclaredPoolBuild
+    from bot.workspace.handle import WorkspaceResolverCell
+    from modex_agent.commands.processor import SlashCommandProcessor
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.hook.runner import HookRunner
     from modex_agent.memory.registry import MemoryStoreRegistry
     from modex_agent.persistence.managers import (
         RegistryPersistenceManager,
         WorkspacePersistenceManager,
     )
+    from modex_agent.plugins.registry import ComponentRegistry
     from modex_agent.runtime.codec import RuntimeStateCodecRegistry
-    from modex_agent.tools.mcp.registry import McpConnectionRegistry
 
 logger = logging.getLogger(__name__)
 
 
-def resolve_system_prompt(agent_name: str, project_dir: Path) -> str:
-    """Resolve system prompt: agents/{name}.md if exists, else empty string."""
-    md_path = project_dir / "agents" / f"{agent_name}.md"
-    if md_path.exists():
-        return md_path.read_text(encoding="utf-8")
-    return ""
+async def resolve_declared_root_prompt(
+    declared: DeclaredPoolBuild,
+    project_dir: Path,
+    registry: ComponentRegistry,
+) -> str:
+    """Resolve the compiled root's declared system-prompt provider."""
+    spec = declared.root.spec
+    prompt_config = dict(spec.system_prompt_config)
+    if "path" in prompt_config:
+        prompt_path = Path(prompt_config["path"])
+        if not prompt_path.is_absolute():
+            prompt_config["path"] = str(project_dir / prompt_path)
+    workspace = WorkspaceContext(
+        target=project_dir,
+        paths=WorkspacePaths(root=project_dir / ".modex"),
+        is_home=False,
+    )
+    factory = registry.resolve(ComponentSlot.SYSTEM_PROMPT_PROVIDER, spec.system_prompt_provider)
+    config = factory.config_model.model_validate(prompt_config)
+    provider: SystemPromptProvider = await factory.create(
+        config,
+        ComponentAgentContext(
+            registry=registry,
+            workspace_ctx=workspace,
+            agent_name=spec.agent_name,
+            spec=spec,
+        ),
+    )
+    return await provider.get_or_refresh()
 
 
 # ── Standard tool builders (code objects, no config) ──
@@ -55,15 +103,6 @@ def _make_file_tools() -> list[Tool]:
     return [ReadFileTool(), WriteFileTool(), EditFileTool(), ListDirTool()]
 
 
-def _make_shell_tool(
-    terminal_manager: Any | None = None,
-    timeout: int = 90,
-) -> Tool:
-    from modex_agent.tools.terminal import SubprocessTool, create_subprocess_executor
-
-    return SubprocessTool(executor=create_subprocess_executor(), timeout=timeout)
-
-
 def _make_search_tools() -> list[Tool]:
     from modex_agent.tools.standard import GlobTool, SearchFilesTool
 
@@ -71,101 +110,6 @@ def _make_search_tools() -> list[Tool]:
 
 
 # ── MCP tool helpers ──
-
-
-async def _load_agent_mcp_tools(
-    agent_name: str,
-    selection: list[str],
-    project_dir: Path,
-    *,
-    mcp_registry: McpConnectionRegistry | None = None,
-) -> tuple[list[Tool], Any | None]:
-    """Load MCP tools for an agent from its registry selection.
-
-    Resolves ``selection`` (server names) against ``config/mcp/registry.json``
-    via :mod:`bot.config.mcp_registry`, then connects and adapts the tools.
-
-    When ``mcp_registry`` is given (ADR-0017 Task 5a, main-agent path), the
-    selection is obtained from the shared :class:`McpConnectionRegistry` as a
-    :class:`SharedMcpBackend` facade — no private ``MCPClientManager`` is built,
-    and no ``registry.json`` is read here (the registry already holds the full
-    server map). When ``mcp_registry`` is ``None``, today's per-pool path runs
-    byte-for-byte (resolve → ``MCPClientManager`` → ``initialize``).
-
-    Returns ``(tools, mcp_manager)`` — the manager must be kept alive for
-    connection lifecycle. Both ``MCPClientManager`` and ``SharedMcpBackend``
-    are ``McpBackend`` and expose ``release()``, so teardown is uniform.
-    """
-    from modex_agent.tools.mcp_adapter import acquire_mcp_tools
-
-    if not selection:
-        return [], None
-
-    # ── Shared-registry branch (ADR-0017): acquire a facade, no per-pool connect ──
-    if mcp_registry is not None:
-        try:
-            backend = await mcp_registry.acquire(selection)
-        except Exception as exc:  # noqa: BLE001 - fail-soft: MCP must never break the pool
-            logger.warning("Agent %s: shared MCP acquire failed: %s", agent_name, exc)
-            return [], None
-
-        # Diagnostic: reveal which shared-registry servers were READY at this
-        # acquisition. Empty here ⇒ empty tools below. MCP availability is the
-        # READY-snapshot at materialization time, so this line is the key signal
-        # for "MCP missing after workspace switch" (home vs non-home differ only
-        # in WHEN they acquire — a server that dropped in between is absent).
-        logger.info(
-            "Agent %s: shared MCP acquire connected_servers=%s (selection=%s)",
-            agent_name,
-            backend.connected_servers,
-            selection,
-        )
-
-        tools = await acquire_mcp_tools(backend, tool_timeout=60)
-        logger.info(
-            "Agent %s: %d MCP tools loaded from selection %s",
-            agent_name,
-            len(tools),
-            selection,
-        )
-        return tools, backend
-
-    # ── Legacy per-pool branch (flag-off / non-registry world): byte-for-byte ──
-    from bot.config.mcp_registry import resolve_agent_mcp_servers
-    from modex_agent.ioc.configs.app import _resolve_env_in
-    from modex_agent.tools.mcp import MCPClientManager
-
-    registry_path = project_dir / "config" / "mcp" / "registry.json"
-    try:
-        servers = resolve_agent_mcp_servers(selection, registry_path)
-    except Exception as e:
-        logger.warning("Agent %s: MCP selection %s resolve failed: %s", agent_name, selection, e)
-        return [], None
-
-    if not servers:
-        return [], None
-
-    try:
-        servers = _resolve_env_in(servers)
-        manager = MCPClientManager(config=servers)
-        await manager.initialize()
-
-        if not manager.connected_servers:
-            logger.warning("Agent %s: MCP config loaded but no servers connected", agent_name)
-            return [], manager
-
-        tools = await acquire_mcp_tools(manager, tool_timeout=60)
-        logger.info(
-            "Agent %s: %d MCP tools loaded from selection %s",
-            agent_name,
-            len(tools),
-            selection,
-        )
-        return tools, manager
-
-    except Exception as e:
-        logger.warning("Failed to load MCP tools for agent %s: %s", agent_name, e)
-        return [], None
 
 
 class AgentBuilderMixin:
@@ -185,8 +129,6 @@ class AgentBuilderMixin:
     broker: InMemoryMessageBroker | None
     agent_bus: AgentMessageBus | None
 
-    plugin_integration: PluginIntegration | None
-
     # Subagent caches
     _subagent_skill_managers: dict[str, SkillManager]
     _subagent_memory_systems: dict[str, Any]
@@ -200,6 +142,209 @@ class AgentBuilderMixin:
     def _project_dir(self) -> Path:
         """Project root directory. Implemented by BotService."""
         raise NotImplementedError
+
+
+# ── Pool assembly helpers (shared by both execution strategies) ──
+
+
+def _make_task_id_provider() -> Callable[[], str | None]:
+    """从 env 拿 taskId。图调度时 env 已注入 (graphInstanceId)。
+    非 graph 场景 env 无 MODEX_TASK_ID → None = 无 task 隔离。"""
+
+    def _provider() -> str | None:
+        return os.environ.get("MODEX_TASK_ID")
+
+    return _provider
+
+
+def _make_session_id_provider() -> Callable[[], str | None]:
+    """从 env 拿 sessionId。有值 = 按 session 隔离; 无值 = 无 session 隔离。"""
+
+    def _provider() -> str | None:
+        return os.environ.get("MODEX_SESSION_ID")
+
+    return _provider
+
+
+class _PoolAssemblyMixin:
+    """Private mixin hosting the build helpers both strategies need.
+
+    The helpers are byte-for-byte the implementations that lived in
+    ``pool_builder.py`` before ADR-0025 ticket 6. They are private
+    (underscore-prefixed) instance methods so strategies call
+    ``self._build_*(...)``.
+
+    The mixin is NOT a strategy: it does not inherit from
+    :class:`ExecutionStrategy` and is never registered. Concrete strategies
+    combine it with :class:`ExecutionStrategy` via multiple inheritance.
+    """
+
+    # ── Tools ────────────────────────────────────────────────────────────
+
+    async def _build_tools(
+        self,
+        pool_name: str,
+        *,
+        kb_provider: KbProvider | None = None,
+        register_kb_tool: bool = False,
+    ) -> InMemoryToolManager:
+        """Build the main agent's base tool manager.
+
+        Tool assembly is fully roster-driven (scope-assembly ticket 05 +
+        ticket 10): every tool — preset tools, supplements (bash/edit/aci/
+        todo/experience), the communication entries, the terminal trio,
+        and per-agent MCP tools — is registered by Stage 4 through the
+        TOOL-slot factories / the FW MCP loader reading the context chain,
+        on top of the empty base manager this builder returns. The only
+        builder-registered tool is the opt-in KB tool.
+        """
+        tm = InMemoryToolManager(config=ToolManagerConfig())
+
+        # KB tool — KbProvider is built but KbTool is NOT registered to any
+        # agent yet.  The tool implementation, CLI command, and REST route are
+        # fully functional; agents access KB via `modexctl kb` (external) or
+        # the REST endpoint directly.  To enable in-process agent usage, set
+        # register_kb_tool=True (or remove the guard) once the feature has
+        # been validated in production.
+        if kb_provider is not None and register_kb_tool:
+            from bot.tools.kb import KbTool
+
+            task_id_provider = _make_task_id_provider()
+            session_id_provider = _make_session_id_provider()
+            tm.register(KbTool(kb_provider, task_id_provider, session_id_provider))
+            logger.info("Pool '%s': kb tool registered", pool_name)
+
+        logger.info(
+            "Pool '%s': ToolManager ready (%d tools total)", pool_name, len(tm.list_tools())
+        )
+        return tm
+
+    # ── Skill manager ────────────────────────────────────────────────────
+
+    def _build_skill_manager(
+        self, root_agent_name: str, project_dir: Path, pool_name: str
+    ) -> Any | None:
+        """Convention: skills/{pool_name}/{agent_name}/."""
+        directories = [project_dir / "skills" / pool_name / root_agent_name]
+
+        logger.info(
+            "Pool '%s': scanning skills: %s (exists=%s)",
+            pool_name,
+            [str(d) for d in directories],
+            [d.exists() for d in directories],
+        )
+        found = [d for d in directories if d.resolve().exists()]
+        if not found:
+            logger.warning("Pool '%s': no skill directories found", pool_name)
+            return None
+
+        from modex_agent.core.skills import (
+            DefaultSkillBuilder,
+            DirectorySkillCache,
+            FileSkillSource,
+            SkillManager,
+        )
+
+        source = FileSkillSource(
+            directories=found,
+            cache=True,
+            layout="directory",
+            skill_filename="SKILL.md",
+        )
+        cache = DirectorySkillCache(directories=found, layout="directory")
+        builder = DefaultSkillBuilder(base_path=project_dir)
+        mgr = SkillManager(source=source, builder=builder, cache=cache)
+        return mgr
+
+    # ── Cassette config ──────────────────────────────────────────────────
+
+    def _resolve_cassette_config(
+        self, app_config: AppConfig | None, data_dir: Path
+    ) -> tuple[bool, CassetteScope, Path]:
+        base_dir = data_dir / "cassette"
+        if app_config is None or app_config.observability is None:
+            return False, CassetteScope.DEFAULT, base_dir
+        return (
+            app_config.observability.cassette_enabled,
+            app_config.observability.cassette_scope,
+            base_dir,
+        )
+
+    # ── Fallback context manager ─────────────────────────────────────────
+
+    def _fallback_context_manager(self, main_spec: AgentSpec, system_prompt: str) -> Any:
+        """A minimal context_manager for tests / non-workspace wiring.
+
+        The main agent's real context manager comes from the workspace pool_data;
+        this fallback keeps create_pool callable without a workspace (used by
+        unit tests that mock the build steps).
+        """
+        return MemorySystemContextManager(
+            # Test/non-workspace seam: the real memory system comes from
+            # pool_data; the declared type assumes a live DefaultMemorySystem.
+            memory_system=None,  # type: ignore[arg-type]
+            default_agent_id=main_spec.name,
+            default_agent_role="main",
+            base_system_prompt=system_prompt,
+            injection_policy=FullInjectionPolicy(),
+            roles=list(main_spec.roles),
+        )
+
+    # ── Cell sessions dir ────────────────────────────────────────────────
+
+    def _cell_sessions_dir(self, cell: WorkspaceResolverCell | None) -> Path | None:
+        """Resolve the workspace sessions dir from a resolver cell.
+
+        Returns ``None`` when the cell is not yet materialized so callers fall
+        back to the ctxvar-based resolution path.
+        """
+        if cell is None:
+            return None
+        try:
+            return cell.resolve_workspace().ctx.paths.sessions_dir
+        except RuntimeError:
+            return None
+
+
+# ── Runtime builders (hook runner / control channel / command processor) ──
+
+
+def _build_hook_runner(hooks: list[Hook[Any]]) -> HookRunner[Any]:  # type: ignore[type-arg]
+    """Build a HookRunner from the provided hooks."""
+    from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
+
+    runner = HookRunner()
+    for hook in hooks:
+        runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
+    return runner
+
+
+def _build_control_channel(
+    existing: InMemoryControlChannel | None,
+) -> InMemoryControlChannel:
+    """Build the control channel for control commands.
+
+    Reuses the existing channel when already set (idempotent), otherwise
+    creates a fresh :class:`InMemoryControlChannel`.
+    """
+    if existing is None:
+        return InMemoryControlChannel()
+    return existing
+
+
+def _build_main_command_processor() -> SlashCommandProcessor:
+    """Build the slash command processor.
+
+    Wires the default builtin handlers.  Workspace commands (/cd,
+    /exit, /pwd) are handled directly by the IM input pipeline
+    (``EnvironmentControlStage``) so they are removed from the
+    processor — this avoids self-blocking where the command's own
+    dispatch would appear as an "active agent" in pool mode.
+    """
+    from modex_agent.commands.handlers import build_default_builtin_handlers
+    from modex_agent.commands.processor import SlashCommandProcessor
+
+    return SlashCommandProcessor(handlers=list(build_default_builtin_handlers()))
 
 
 # ── T26: Persistence backend factory selection ──
@@ -316,22 +461,6 @@ def build_external_session_map_store(
     return LocalFileExternalSessionMapStore(ExternalPaths(workspace_dir))
 
 
-def build_todo_store(
-    app_config: AppConfig | None,
-    persistence: WorkspacePersistenceManager | None,
-    todo_dir: Path,
-    scope: RecordScope,
-) -> Any:
-    if _is_sqlite(app_config, persistence):
-        assert persistence is not None
-        from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
-
-        return SqliteTodoStore(persistence.connection, scope)
-    from modex_agent.runtime.store import JsonFileTodoStore
-
-    return JsonFileTodoStore(todo_dir)
-
-
 def build_memory_registry(
     app_config: AppConfig | None,
     persistence: WorkspacePersistenceManager | None,
@@ -355,7 +484,7 @@ def build_workspace_registry_store(
     registry_persistence: RegistryPersistenceManager | None,
     home: Path,
     data_dir_name: str,
-) -> WorkspaceRegistryStore:
+) -> ScopeRegistryStore:
     if _is_sqlite(app_config, registry_persistence):
         assert registry_persistence is not None
         return registry_persistence.store

@@ -29,6 +29,7 @@ import {
   deliverToNode,
   getInvocations,
   getSpec,
+  getTopology,
   invokeInstance,
   pauseGraph,
   resumeGraph,
@@ -62,9 +63,9 @@ import { edgeKey, layoutGraph } from "./topology/layout";
 import {
   GRAPH_NODE_END,
   GRAPH_NODE_START,
-  parseGraphSpecYaml,
   type ParsedGraphTopology,
 } from "./yaml/parseGraphSpec";
+import { topologyFromApi } from "./topologyFromApi";
 import { NodeDetailPanel } from "./detail/NodeDetailPanel";
 import { InstanceSummary } from "./detail/InstanceSummary";
 import { EventTimeline } from "./detail/EventTimeline";
@@ -186,15 +187,14 @@ export const GraphInstanceDetail: FC<GraphInstanceDetailProps> = ({
     if (!specId) return;
     let cancelled = false;
     setLoadError(null);
-    getSpec(workspaceId, specId)
-      .then((spec) => {
+    Promise.all([
+      getSpec(workspaceId, specId),
+      getTopology(workspaceId, specId),
+    ])
+      .then(([spec, topo]) => {
         if (cancelled) return;
         setSpecInfo({ name: spec.name, version: spec.version });
-        try {
-          setTopology(parseGraphSpecYaml(spec.yaml_content));
-        } catch {
-          setTopology(null);
-        }
+        setTopology(topologyFromApi(topo));
       })
       .catch((err) => {
         if (!cancelled) setLoadError(formatGraphApiError(err));

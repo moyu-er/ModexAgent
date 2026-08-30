@@ -102,7 +102,8 @@ class TestHandlerEndToEnd:
     async def test_handler_returns_truncated_text_with_file_notice(
         self, handler: ToolResultOverflowHandler,
     ) -> None:
-        content = "data-" + ("X" * 60_000)
+        # default max_chars=50_000 → head 5_000 / tail 7_500 (10%/15%), 47_505 elided
+        content = "H" * 20_000 + "M" * 10_005 + "T" * 30_000
         notice, ref = await handler.store_overflow(
             session_id="sid_main",
             tool_call_id="call_handler_1",
@@ -110,9 +111,13 @@ class TestHandlerEndToEnd:
             content=content,
         )
 
-        assert notice.startswith(content[:50_000])
-        assert notice.endswith(
-            f"[Full output ({len(content)} chars total) saved to: {ref.dir_path}/full.txt]"
+        lines = notice.split("\n")
+        assert len(lines) == 4
+        assert lines[0] == "H" * 5_000
+        assert lines[2] == "T" * 7_500
+        assert "OUTPUT ELIDED: 47505 chars" in lines[1]
+        assert lines[3].startswith(
+            f"[Full output ({len(content)} chars total) saved to: {ref.dir_path}/full.txt"
         )
         assert not notice.startswith("<")
 
@@ -137,16 +142,31 @@ class TestHandlerEndToEnd:
     async def test_handler_marks_notice_with_saved_output_path(
         self, handler: ToolResultOverflowHandler,
     ) -> None:
-        content = "Z" * 50000
+        # exactly at the 50_000 budget → nothing elided, text unchanged
+        content = "Z" * 50_000
         notice, ref = await handler.store_overflow(
             session_id="sid_short",
             tool_call_id="call_short",
             tool_name="search",
             content=content,
         )
-        assert notice.startswith(content)
-        assert f"{ref.dir_path}/full.txt" in notice
+        assert notice == content
         assert ref.total_chars == 50000
+
+    @pytest.mark.asyncio
+    async def test_handler_over_budget_notice_points_to_saved_output_path(
+        self, handler: ToolResultOverflowHandler,
+    ) -> None:
+        content = "Z" * 60_000
+        notice, ref = await handler.store_overflow(
+            session_id="sid_over",
+            tool_call_id="call_over",
+            tool_name="search",
+            content=content,
+        )
+        assert notice.startswith("Z" * 5_000)
+        assert f"saved to: {ref.dir_path}/full.txt" in notice
+        assert ref.total_chars == 60000
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

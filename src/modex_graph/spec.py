@@ -77,6 +77,37 @@ class EdgeSpec(BaseModel):
     target: str
 
 
+class FieldSpec(BaseModel):
+    """Declarative shape of one state field — the envelope of a state schema.
+
+    `FieldSpec` describes ONLY the field shape: its type, optional item type
+    for list fields, and an optional initial value. The dict key in
+    `GraphSpec.state_schema` IS the field name — `FieldSpec` deliberately
+    has NO `name` field (SPEC §8.2 revised: "FieldSpec 无 name 字段，dict
+    键即名").
+
+    `type` is a plain `str` (not an enum): modex_graph is framework-agnostic
+    and cannot know the valid type universe. The injected
+    `state_schema_compiler` (on `GraphSpecCompiler`) resolves type names —
+    built-in primitives like `"string"`/`"int"`/`"list"` plus custom types
+    resolved from `DATA_NAMESPACE` on the modex_agent side (Task 27).
+
+    Fields:
+    - `type`: type name string (e.g. `"string"`, `"int"`, `"list"`,
+      `"my_plugin_data_type"`). Validated by the injected compiler, not here.
+    - `item_type`: for `type == "list"`, the element type name. `None` for
+      non-list fields or untyped lists.
+    - `initial`: optional initial value. `None` means "no initial value
+      specified" (the compiler decides the default).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: str
+    item_type: str | None = None
+    initial: Any | None = None
+
+
 class GraphSpec(BaseModel):
     """Declarative graph specification — fully serializable, the persistence unit.
 
@@ -86,8 +117,17 @@ class GraphSpec(BaseModel):
     GraphEngine`. `GraphSpecCompiler` and `TopologyValidator` are P2 (out
     of scope here).
 
-    `state_class` names a `GraphState` subclass in the compiler's injected
-    state-class mapping.
+    State is declared in ONE of two mutually exclusive ways:
+
+    - `state_class: str | None` — names a `GraphState` subclass registered
+      in the compiler's injected state-class mapping (existing path).
+    - `state_schema: dict[str, FieldSpec] | None` — declarative field
+      shapes; the compiler's injected `state_schema_compiler` resolves the
+      schema into a dynamic `GraphState` subclass (SPEC §8.2). modex_graph
+      only carries the envelope; the compiler lives on the modex_agent side
+      (Task 27) so modex_graph stays framework-agnostic.
+
+    Exactly one of `state_class` / `state_schema` must be set.
 
     Basic structural validation is done here (no duplicate node names, at
     least one node, at least one entry edge from `GraphNode.START`). Full
@@ -100,12 +140,30 @@ class GraphSpec(BaseModel):
     name: str
     nodes: list[NodeSpec] = Field(default_factory=list)
     edges: list[EdgeSpec] = Field(default_factory=list)
-    state_class: str
+    state_class: str | None = None
+    state_schema: dict[str, FieldSpec] | None = None
     scheduler: SchedulerKind = SchedulerKind.LINEAR
     version: str = "1.0"
     metadata: dict[str, Any] = Field(default_factory=dict)
     max_iterations: int = 25
     default_trigger: NodeTrigger = NodeTrigger.ON_ALL_PREDS
+
+    @model_validator(mode="after")
+    def _validate_state_exclusivity(self) -> GraphSpec:
+        """`state_class` and `state_schema` are mutually exclusive; one required."""
+        if self.state_schema is not None and self.state_class is not None:
+            raise ValueError(
+                "GraphSpec.state_schema and state_class are mutually exclusive. "
+                "Use state_schema for declarative state shape (compiled via "
+                "state_schema_compiler) OR state_class for a registered "
+                "GraphState subclass name."
+            )
+        if self.state_schema is None and self.state_class is None:
+            raise ValueError(
+                "GraphSpec must specify either state_class (registered name) "
+                "or state_schema (declarative field shape)."
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_structure(self) -> GraphSpec:
@@ -172,4 +230,4 @@ class GraphSpec(BaseModel):
         return self
 
 
-__all__ = ["EdgeSpec", "GraphSpec", "NodeSpec"]
+__all__ = ["EdgeSpec", "FieldSpec", "GraphSpec", "NodeSpec"]

@@ -234,6 +234,54 @@ class TestEndNode:
 
 class TestLLMNode:
     @pytest.mark.asyncio
+    async def test_canonicalizes_missing_call_id_before_consumers(
+        self, make_runtime, make_graph_ctx, make_response
+    ):
+        """Provider omitted call_id: the AFTER_LLM_RESPONSE hook payload and
+        the assistant history message must both carry the same minted id."""
+        async def _mock_call(messages, ctx):
+            return make_response(
+                content=None,
+                tool_calls=[
+                    ToolCall(tool_name="search", arguments={}),  # provider omitted id
+                    ToolCall(tool_name="read", arguments={}, call_id="provider-id"),
+                ],
+            )
+
+        llm_client = _make_llm_client()
+        llm_client.call = _mock_call  # type: ignore[method-assign]
+        node = LLMNode(llm_client, InjectionDrainer())
+
+        runtime = make_runtime()
+        ctx = make_graph_ctx(runtime=runtime)
+        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
+
+        hook_payloads: list = []
+        original_dispatch = ctx.runtime.dispatch_hook
+
+        async def _spy(hook_point, _ctx, data=None):
+            if data is not None and "response" in data:
+                hook_payloads.append(data["response"])
+            return await original_dispatch(hook_point, _ctx, data)
+
+        ctx.runtime.dispatch_hook = _spy  # type: ignore[method-assign]
+
+        await node.run(ctx)
+
+        assistant = ctx.agent_ctx.history.msgs[-1]
+        minted_id = assistant.tool_calls[0].call_id
+        assert minted_id is not None
+        assert minted_id.startswith("call_")
+        assert minted_id.removeprefix("call_").isdigit()
+        # Provider-supplied ids pass through untouched.
+        assert assistant.tool_calls[1].call_id == "provider-id"
+        # The AFTER_LLM_RESPONSE hook saw the same canonicalized ids.
+        assert hook_payloads, "AFTER_LLM_RESPONSE hook never fired"
+        assert hook_payloads[-1].tool_calls[0].call_id == minted_id
+        assert hook_payloads[-1].tool_calls[1].call_id == "provider-id"
+
+    @pytest.mark.asyncio
     async def test_routes_to_tool_on_has_tool_calls(
         self, make_runtime, make_graph_ctx, make_response
     ):
@@ -485,6 +533,67 @@ class TestToolNode:
 
         delivers = ctx.coordinator.collect_consumable_delivers(ReActNode.AFTER, 0)
         assert [record.content for record in delivers] == [None]
+
+    @pytest.mark.asyncio
+    async def test_every_result_path_carries_canonical_call_id(
+        self, make_runtime, make_coordinator
+    ):
+        """Allowed, denied, and stale-dedup-cached results are all stamped
+        with the ToolCall's canonical id before leaving the node."""
+        from modex_agent.agents.react.tool_dedup import ToolCallDeduplicator
+
+        tool_executor = ToolExecutor()
+
+        async def _mock_execute(tc, ctx):
+            # Executor result deliberately carries no (or a stale) call_id —
+            # ToolNode must overwrite it with the canonical one.
+            return ToolResult.from_text(tc.tool_name, "ok", call_id="stale-id")
+
+        tool_executor.execute = _mock_execute  # type: ignore[method-assign]
+        node = ToolNode(tool_executor, deduplicator=ToolCallDeduplicator())
+
+        tc1 = ToolCall(tool_name="t1", arguments={}, call_id="c1")
+        tc2 = ToolCall(tool_name="t2", arguments={}, call_id="c2")
+
+        from modex_agent.approval.runtime import ApprovalRuntime
+
+        runtime = make_runtime()
+        runtime.state.iteration = 1
+        runtime.services.approval = ApprovalRuntime(
+            classifier=type(
+                "_Cls",
+                (),
+                {"classify": lambda s, tc, c: "normal" if tc.tool_name == "t1" else "hardline"},
+            )(),  # type: ignore[arg-type]
+        )
+        emitter = _MockEmitter()
+        agent_ctx = AgentContext(
+            system_prompt="test",
+            history=ListMessageHistory(),
+            tool_manager=InMemoryToolManager(),
+            identity=runtime.state.identity,
+            runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
+        )
+        ctx = ReActGraphContext(
+            state=runtime.state,  # type: ignore[arg-type]
+            runtime=ReactGraphRuntime(emitter=emitter),  # type: ignore[arg-type]
+            user_data=agent_ctx,
+            coordinator=make_coordinator(),
+        )
+        history = _MockHistory()
+        ctx.agent_ctx.history = history  # type: ignore[assignment]
+        await history.append(
+            ChatMessage(role=MessageRole.ASSISTANT, content="", tool_calls=[tc1, tc2])
+        )
+
+        await node.run(ctx)
+
+        ends = [d for e, d in emitter.events if e == ReActEvent.TOOL_CALL_END]
+        assert [result.call_id for _tc, result in ends] == ["c1", "c2"]
+        # History tool messages pair with the same canonical ids.
+        tool_msgs = [m for m in history.msgs if m.role == MessageRole.TOOL]
+        assert [m.tool_call_id for m in tool_msgs] == ["c1", "c2"]
 
     @pytest.mark.asyncio
     async def test_exceeds_max_tools_routes_to_after(

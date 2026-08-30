@@ -60,5 +60,5 @@ def setup_logging() -> None:
     file_handler.setFormatter(logging.Formatter(detailed_format))
     root_logger.addHandler(file_handler)
 
-    for name in ["asyncio", "LiteLLM", "litellm", "botpy", "mcp", "httpx", "httpcore", "urllib3"]:
+    for name in ["asyncio", "botpy", "mcp", "httpx", "httpcore", "urllib3"]:
         logging.getLogger(name).setLevel(logging.WARNING)

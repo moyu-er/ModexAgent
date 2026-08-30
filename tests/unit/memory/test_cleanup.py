@@ -9,13 +9,15 @@ from typing import Any
 import pytest
 
 from modex_agent.agents.summarizer.abc import ArchiveGenerator
+from modex_agent.agents.summarizer.outcomes import CompactionOutcome
+from modex_agent.agents.summarizer.session_compactor import SessionCompactorAgent
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.archive_models import ArchiveDocuments, ArchiveGenerationResult
 from modex_agent.memory.cleanup import (
     CleanupResult,
-    check_cleanup_trigger,
     _compute_boundary,
+    check_cleanup_trigger,
     cleanup_session,
 )
 from modex_agent.memory.core.layers import MemoryLayerSet, SessionMemoryManager
@@ -703,7 +705,7 @@ class TestTriggerAndCleanup:
 
         # Add messages to trigger token pressure: 20 msgs = 200 tokens, line 80 -> triggers
         msgs = []
-        for i in range(20):
+        for _i in range(20):
             msgs.append(_user_msg("x" * 500))
         await _add_messages(session, context, msgs)
 
@@ -1060,7 +1062,9 @@ class TestKeepResanitized:
         # No orphan tool_call without result (except possibly last open)
         for i, m in enumerate(remaining):
             if m.role == "assistant" and m.tool_calls:
-                call_ids = {tc["id"] if isinstance(tc, dict) else tc.id for tc in m.tool_calls}
+                call_ids = {
+                    tc["id"] if isinstance(tc, dict) else tc.call_id for tc in m.tool_calls
+                }
                 # Check each call_id has a matching tool result
                 for cid in call_ids:
                     has_result = any(
@@ -1224,7 +1228,7 @@ class TestArchiveAgentIntegration:
         # Archive was attempted but failed
         assert len(agent.calls) == 1
         # Pruned index should have been populated via fallback
-        entries = pruned_mgr._get_storage(context.session_id).read_index()
+        entries = pruned_mgr._get_storage(context.session_id or "").read_index()
         assert len(entries) >= 1
 
     @pytest.mark.asyncio
@@ -1419,7 +1423,7 @@ class TestArchiveSuccessPrunedContent:
         assert result.messages_pruned > 0
 
         # Pruned index must have entries
-        pruned_storage = pruned_mgr._get_storage(context.session_id)
+        pruned_storage = pruned_mgr._get_storage(context.session_id or "")
         entries = pruned_storage.read_index()
         assert len(entries) >= 1
 
@@ -1437,9 +1441,7 @@ class TestArchiveSuccessPrunedContent:
     async def test_pruned_content_contains_raw_messages(
         self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
-        """Pruned content file must contain the raw pruned messages (JSONL)."""
-        import json
-
+        """Pruned content file must contain the raw pruned messages (markdown transcript)."""
         from modex_agent.memory.pruned.manager import PrunedManager
 
         layer_set = _make_layer_set(registry)
@@ -1469,7 +1471,7 @@ class TestArchiveSuccessPrunedContent:
             pruned_manager=pruned_mgr,
         )
 
-        pruned_storage = pruned_mgr._get_storage(context.session_id)
+        pruned_storage = pruned_mgr._get_storage(context.session_id or "")
         entries = pruned_storage.read_index()
         assert len(entries) >= 1
 
@@ -1478,13 +1480,12 @@ class TestArchiveSuccessPrunedContent:
         content_path = Path(pruned_storage.get_directory_path()) / entry.content_filename
         assert content_path.exists()
 
-        # Raw messages must be readable as JSONL
-        raw_lines = content_path.read_text(encoding="utf-8").strip().split("\n")
-        assert len(raw_lines) > 0
-        parsed = [json.loads(line) for line in raw_lines]
+        # Transcript is a rendered markdown file with numbered message blocks
+        assert content_path.suffix == ".md"
+        text = content_path.read_text(encoding="utf-8")
+        assert "## [001]" in text
         # At least one user message from our input should be in the pruned content
-        user_contents = [m.get("content", "") for m in parsed if m.get("role") == "user"]
-        assert any("unique-content-" in c for c in user_contents), (
+        assert "unique-content-" in text, (
             "Pruned content should contain raw user messages from the pruned session region"
         )
 
@@ -1522,7 +1523,7 @@ class TestArchiveSuccessPrunedContent:
             pruned_manager=pruned_mgr,
         )
 
-        pruned_storage = pruned_mgr._get_storage(context.session_id)
+        pruned_storage = pruned_mgr._get_storage(context.session_id or "")
         entries = pruned_storage.read_index()
         assert len(entries) >= 1
 
@@ -1623,7 +1624,7 @@ class TestResolvedStoragePropagation:
 
         assert result.triggered is True
 
-        pruned_storage = pruned_mgr._get_storage(context.session_id)
+        pruned_storage = pruned_mgr._get_storage(context.session_id or "")
         entries = pruned_storage.read_index()
         assert len(entries) >= 1
 
@@ -1668,7 +1669,7 @@ class TestResolvedStoragePropagation:
 
         assert result.triggered is True
 
-        pruned_storage = pruned_mgr._get_storage(context.session_id)
+        pruned_storage = pruned_mgr._get_storage(context.session_id or "")
         entries = pruned_storage.read_index()
         assert len(entries) >= 1
 
@@ -1710,7 +1711,7 @@ class TestResolvedStoragePropagation:
 
         assert result.triggered is True
 
-        pruned_storage = pruned_mgr._get_storage(context.session_id)
+        pruned_storage = pruned_mgr._get_storage(context.session_id or "")
         entries = pruned_storage.read_index()
         assert len(entries) >= 1
 
@@ -1806,7 +1807,7 @@ class TestResolvedStoragePropagation:
 # ---------------------------------------------------------------------------
 
 
-class _StubCompactor:
+class _StubCompactor(SessionCompactorAgent):
     """Minimal SessionCompactorAgent stand-in.
 
     Records calls, returns a fixed structured summary, and reuses the real
@@ -1823,19 +1824,15 @@ class _StubCompactor:
         previous_summary: str | None = None,
         *,
         session_id: str = "session-compactor",
-    ) -> str:
+    ) -> CompactionOutcome:
         self.calls.append(
             {"messages": list(messages), "previous_summary": previous_summary, "session_id": session_id}
         )
-        return self._summary
+        return CompactionOutcome(summary=self._summary)
 
     @staticmethod
-    def extract_topic(summary: str) -> str | None:
-        from modex_agent.agents.summarizer.session_compactor import (
-            SessionCompactorAgent,
-        )
-
-        return SessionCompactorAgent.extract_topic(summary)
+    def extract_topic(summary: str, max_chars: int = 200) -> str | None:
+        return SessionCompactorAgent.extract_topic(summary, max_chars)
 
 
 _COMPACT_SUMMARY = (

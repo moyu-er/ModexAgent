@@ -5,12 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Final
 
-if TYPE_CHECKING:
-    from modex_agent.runtime.store import TodoStore
-
-from modex_agent.core.tool_manager import Tool
+from modex_agent.core.tool_manager import InMemoryToolManager, Tool
 from modex_agent.tools.standard import (
     EditFileTool,
     GlobTool,
@@ -158,88 +155,61 @@ def get_preset_tools(
         if root_provider is not None:
             wrapped = wrap_standard_tools([bash_tool], root_provider)
             if not wrapped:
-                raise RuntimeError(
-                    "wrap_standard_tools returned empty list for bash tool"
-                )
+                raise RuntimeError("wrap_standard_tools returned empty list for bash tool")
             bash_tool = wrapped[0]
         tools.append(bash_tool)
 
     return tools
 
 
-class ToolSupplement(StrEnum):
-    """Additive tool group layered on top of a base ToolPreset.
+def build_preset_tool_manager(
+    root_provider: WorkspaceRootProvider,
+    preset: ToolPreset,
+) -> InMemoryToolManager:
+    """Build an InMemoryToolManager populated with the tools for a preset.
 
-    Unlike ToolPreset (one-of), supplements are multi-select and combine.
-    The ACI supplement is special: it produces an ``AciEditTool`` with the
-    same name (``"edit"``) as the standard ``EditFileTool``. When
-    registered after the preset tools, ``ToolManager.register`` overwrites
-    the preset's EditFileTool by name — a drop-in upgrade, not an addition.
+    Tools are wrapped with the given root_provider so relative paths resolve
+    against the workspace root instead of process CWD.
     """
+    tools = get_preset_tools(preset, root_provider=root_provider)
+    manager = InMemoryToolManager()
+    for tool in tools:
+        manager.register(tool)
+    return manager
 
-    AST_GREP = "ast_grep"  # ast_grep_search + ast_grep_replace
-    TODO = "todo"  # todo_read + todo_write
-    ACI = "aci"  # replaces edit with AciEditTool (post-edit lint feedback)
+
+#: Hook name bound to the experience capability's review hook (single
+#: authority): ``plugins/defaults/hooks.py`` registers the review hook
+#: under it and the ``experience`` capability package contributes it into
+#: hook rosters.
+EXPERIENCE_REVIEW_HOOK_NAME: Final = "experience_review"
 
 
-def _make_ast_grep_tools() -> list[Tool]:
+def make_ast_grep_tools() -> list[Tool]:
+    """Create the AST search/replace tool pair (registry names
+    ``ast_grep_search`` / ``ast_grep_replace``).
+
+    Consumer: ``plugins/defaults/tools.py`` registers the instances under
+    their own names; the ``ast_grep`` capability package
+    (``plugins/defaults/capabilities/ast_grep.py``) contributes those
+    names into rosters.
+    """
     from modex_agent.tools.ast import AstGrepReplaceTool, AstGrepSearchTool
 
     return [AstGrepSearchTool(), AstGrepReplaceTool()]
 
 
-def _make_aci_tools() -> list[Tool]:
-    """Create ACI-enhanced edit tool that replaces the standard EditFileTool.
+def make_aci_edit_tool() -> Tool:
+    """Create the ACI-enhanced edit tool (registry name ``aci_edit``).
 
-    Produces a single ``AciEditTool`` (name=``"edit"``) with post-edit lint
-    feedback. When registered after preset tools, ``ToolManager.register``
-    overwrites the preset's ``EditFileTool`` by name — drop-in upgrade.
+    Produces one ``AciEditTool`` (LLM-facing name ``"edit"``) with
+    post-edit lint feedback — a drop-in upgrade of ``EditFileTool``.
+    Consumer: ``plugins/defaults/tools.py`` registers the instance under
+    the ``aci_edit`` registry name; the ``aci`` capability package
+    (``plugins/defaults/capabilities/aci.py``) contributes that name into
+    rosters with the ``edit ← aci_edit`` O3 replacement.
     """
     from modex_agent.tools.aci.edit_tool import AciEditTool
     from modex_agent.tools.lint import default_lint_registry
 
-    return [AciEditTool(default_lint_registry)]
-
-
-def _make_todo_tools(todo_store: TodoStore) -> list[Tool]:
-    from modex_agent.tools.standard import TodoReadTool, TodoWriteTool
-
-    return [TodoWriteTool(todo_store), TodoReadTool(todo_store)]
-
-
-SUPPLEMENT_FACTORIES: dict[ToolSupplement, Callable[[], list[Tool]]] = {
-    ToolSupplement.AST_GREP: _make_ast_grep_tools,
-    ToolSupplement.ACI: _make_aci_tools,
-}
-
-
-def get_supplement_tools(
-    supplements: list[ToolSupplement],
-    *,
-    root_provider: WorkspaceRootProvider | None = None,
-    todo_store: TodoStore | None = None,
-) -> list[Tool]:
-    """Return deduped tool instances for the given additive supplements."""
-    seen: set[str] = set()
-    out: list[Tool] = []
-    for sup in supplements:
-        if sup == ToolSupplement.TODO:
-            if todo_store is None:
-                raise ValueError("ToolSupplement.TODO requires a todo_store")
-            for tool in _make_todo_tools(todo_store):
-                if tool.name in seen:
-                    continue
-                seen.add(tool.name)
-                out.append(tool)
-            continue
-        for tool in SUPPLEMENT_FACTORIES[sup]():
-            if tool.name in seen:
-                continue
-            seen.add(tool.name)
-            out.append(tool)
-    if root_provider is not None and out:
-        wrapped = wrap_standard_tools(out, root_provider)
-        if not wrapped:
-            raise RuntimeError("wrap_standard_tools returned empty for supplements")
-        out = wrapped
-    return out
+    return AciEditTool(default_lint_registry)

@@ -45,6 +45,7 @@ from modex_agent.approval.ui import IMUserInterface
 from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.core.context import InMemoryContextManager
 from modex_agent.core.emitter import EmitterConfig
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager, Tool
 from modex_agent.core.types import InputMessage, LLMResponse, OutputMessage, ToolCall
@@ -148,14 +149,28 @@ pytestmark = pytest.mark.integration
 # --------------------------------------------------------------------------
 
 
-class _Provider:
+class _Provider(CallbackStreamProvider):
     """Scripted LLM: one response per call, replays the last past the end."""
 
     def __init__(self, script: list[LLMResponse]) -> None:
+        super().__init__()
         self._script = list(script)
         self.calls = 0
 
-    async def chat(self, messages, **kwargs):
+    def get_default_model(self) -> str:
+        return "scripted-test-model"
+
+    async def chat_stream(
+        self,
+        messages,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        tools: list[dict] | None = None,
+        on_content_delta=None,
+        on_reasoning_delta=None,
+        **kwargs,
+    ):
         resp = self._script[min(self.calls, len(self._script) - 1)]
         self.calls += 1
         return resp

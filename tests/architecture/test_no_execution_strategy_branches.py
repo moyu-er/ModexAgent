@@ -17,10 +17,6 @@ branching — per ADR-0025 D5):
 - `subagent_validator.py` — runtime subagent registration validation.
 - `pool_config/specs.py` — Pydantic `@model_validator` cross-field validation
   (provider_kind set iff execution_strategy == EXTERNAL).
-- `template.py` — T5 subagent materialize dispatch (delegates to
-  `subagent_external_builder.build()` when target strategy is
-  EXTERNAL). Same runtime construction-dispatch category as
-  `factory.py._get_builder`.
 - `communication/strategies/subagent_dispatch.py` — `SubagentDispatchStrategy.build_result`
   selects ack field shape (output_path/trace_dir omitted for external targets)
   based on `req.target.execution_strategy`. Same per-target runtime category
@@ -51,23 +47,27 @@ _PIPELINE = _FRAMEWORK_SRC / "pipeline" / "pipeline.py"
 # - pool_config/specs.py — Pydantic @model_validator cross-field validation
 #   (provider_kind set iff execution_strategy == EXTERNAL). Same
 #   validation category as subagent_validator.py; not assembly branching.
-# - template.py — T5 subagent materialize dispatch: when the spec's
-#   execution_strategy is EXTERNAL, materialize delegates to
-#   deps.subagent_external_builder.build() instead of
-#   agent_factory.create_agent(). Same runtime construction-dispatch category
-#   as factory.py._get_builder; the react path is byte-for-byte unchanged.
 # - communication/strategies/subagent_dispatch.py — build_result picks ack
 #   field shape (output_path/trace_dir omitted for external targets) based on
 #   req.target.execution_strategy. Same per-target runtime category as
 #   peer_normal.py; added with ADR-0027 (external coding subagent).
+# - template.py — materialize's early dispatch of EXTERNAL subagents to
+#   ExecutionStrategy.assemble_sub (ADR-0025 D5 runtime dispatch category;
+#   the react path below it is the default). Restored with the direct
+#   subagent construction path (SPEC Errata-5).
 _ALLOWED_EXECUTION_STRATEGY_FILES = {
+    _FRAMEWORK_SRC / "multi_agent" / "template.py",
     _FRAMEWORK_SRC / "multi_agent" / "communication" / "strategies" / "peer_normal.py",
     _FRAMEWORK_SRC / "multi_agent" / "factory.py",
     _FRAMEWORK_SRC / "multi_agent" / "subagent_validator.py",
     _FRAMEWORK_SRC / "multi_agent" / "execution_strategy.py",
     _FRAMEWORK_SRC / "multi_agent" / "pool_config" / "specs.py",
-    _FRAMEWORK_SRC / "multi_agent" / "template.py",
     _FRAMEWORK_SRC / "multi_agent" / "communication" / "strategies" / "subagent_dispatch.py",
+    # scope/spec.py: the AgentSpec model validator enforcing the
+    # provider_kind ↔ external pairing — a runtime validation site (D5
+    # category), not an assembly branch (ticket 02; allowlist gap found
+    # during ticket 09's gate run).
+    _FRAMEWORK_SRC / "scope" / "spec.py",
 }
 
 # Patterns that indicate strategy-specific assembly branching (forbidden).

@@ -13,6 +13,9 @@ from modex_agent.multi_agent.pool_router import PoolRoutingStore
 from modex_agent.persistence.adapters.session_store import SqliteSessionStore
 from modex_agent.persistence.connection import ConnectionNotOpenError
 from modex_agent.persistence.managers import WorkspacePersistenceManager
+from modex_agent.plugins.abc import ComponentSlot
+from modex_agent.plugins.defaults.prompt import FilePromptProviderFactory
+from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.workspace.context import WorkspaceContext
 
 
@@ -31,9 +34,14 @@ def _service(home: Path, app_config: AppConfig) -> MagicMock:
     service._transcript_store = None
     service._output_adapter_factory = None
     service._on_subagent_created = None
+    service._component_registry = ComponentRegistry()
+    service._component_registry.register(
+        ComponentSlot.SYSTEM_PROMPT_PROVIDER,
+        "file_prompt",
+        FilePromptProviderFactory(),
+    )
     service.control_channel = MagicMock()
     service.command_processor = MagicMock()
-    service._collect_run_hooks.return_value = []
     service._build_hook_runner.return_value = MagicMock()
     return service
 
@@ -50,9 +58,12 @@ async def test_home_resources_borrow_home_manager_and_use_sqlite_session_store(
     service._home_persistence = manager
     ctx = WorkspaceContext.from_target(home, data_dir_name=".modex", home=home)
 
-    with patch("bot.workspace.wiring.resources.PoolStore") as pool_store_type:
-        pool_store_type.return_value.list_pools.return_value = []
-        resources = await _build_resources(service, ctx)
+    scopes_dir = home / "config" / "scopes"
+    scopes_dir.mkdir(parents=True, exist_ok=True)
+    (scopes_dir / "bot.yml").write_text(
+        "workspace:\n  name: empty\n  pools: {}\n", encoding="utf-8"
+    )
+    resources = await _build_resources(service, ctx)
 
     try:
         assert resources.persistence is manager
@@ -81,9 +92,12 @@ async def test_non_home_resources_own_and_close_workspace_manager(
     service = _service(home, app_config)
     ctx = WorkspaceContext.from_target(target, data_dir_name=".modex", home=home)
 
-    with patch("bot.workspace.wiring.resources.PoolStore") as pool_store_type:
-        pool_store_type.return_value.list_pools.return_value = []
-        resources = await _build_resources(service, ctx)
+    scopes_dir = home / "config" / "scopes"
+    scopes_dir.mkdir(parents=True, exist_ok=True)
+    (scopes_dir / "bot.yml").write_text(
+        "workspace:\n  name: empty\n  pools: {}\n", encoding="utf-8"
+    )
+    resources = await _build_resources(service, ctx)
 
     assert resources.persistence is not None
     assert resources.owns_persistence is True
@@ -108,15 +122,22 @@ async def test_incomplete_pool_stop_keeps_owned_workspace_manager_open(
     app_config = AppConfig.model_validate({"persistence": {"backend": "sqlite"}})
     service = _service(home, app_config)
     ctx = WorkspaceContext.from_target(target, data_dir_name=".modex", home=home)
-    with patch("bot.workspace.wiring.resources.PoolStore") as pool_store_type:
-        pool_store_type.return_value.list_pools.return_value = []
-        resources = await _build_resources(service, ctx)
+    scopes_dir = home / "config" / "scopes"
+    scopes_dir.mkdir(parents=True, exist_ok=True)
+    (scopes_dir / "bot.yml").write_text(
+        "workspace:\n  name: empty\n  pools: {}\n", encoding="utf-8"
+    )
+    resources = await _build_resources(service, ctx)
     pool_instance = MagicMock()
     pool_instance.terminal_manager = None
     pool_instance.mcp_manager = None
     pool_instance.pool.shutdown_all = AsyncMock(return_value=False)
     pool_instance.broker_bridge.stop = AsyncMock()
     resources.pools["retryable"] = pool_instance
+    trace_store = MagicMock()
+    pool_data_entry = MagicMock()
+    pool_data_entry.trace_store = trace_store
+    resources.pool_data["retryable"] = pool_data_entry
     assert resources.persistence is not None
     connection = resources.persistence.connection
 
@@ -124,11 +145,13 @@ async def test_incomplete_pool_stop_keeps_owned_workspace_manager_open(
     with pytest.raises(RuntimeError, match="pool shutdown incomplete"):
         await _stop_resources(resources)
     assert await connection.query_value("SELECT 1", int) == 1
+    trace_store.close.assert_not_called()
 
     pool_instance.pool.shutdown_all.return_value = True
     await _stop_resources(resources)
     with pytest.raises(ConnectionNotOpenError):
         await connection.query_value("SELECT 1", int)
+    trace_store.close.assert_called_once()
 
 
 async def test_cancelled_pool_stop_cleans_non_persistence_and_propagates(
@@ -142,9 +165,12 @@ async def test_cancelled_pool_stop_cleans_non_persistence_and_propagates(
     app_config = AppConfig.model_validate({"persistence": {"backend": "sqlite"}})
     service = _service(home, app_config)
     ctx = WorkspaceContext.from_target(target, data_dir_name=".modex", home=home)
-    with patch("bot.workspace.wiring.resources.PoolStore") as pool_store_type:
-        pool_store_type.return_value.list_pools.return_value = []
-        resources = await _build_resources(service, ctx)
+    scopes_dir = home / "config" / "scopes"
+    scopes_dir.mkdir(parents=True, exist_ok=True)
+    (scopes_dir / "bot.yml").write_text(
+        "workspace:\n  name: empty\n  pools: {}\n", encoding="utf-8"
+    )
+    resources = await _build_resources(service, ctx)
     pool_instance = MagicMock()
     pool_instance.terminal_manager = None
     pool_instance.mcp_manager = None
@@ -183,11 +209,8 @@ async def test_session_registry_loads_before_pool_creation(tmp_path: Path) -> No
             '{"session_id":"existing.main","session_prefix":"existing","agent_id":"main"}',
         ),
     )
-    pool_spec = MagicMock()
-    pool_spec.name = "default"
-    pool_spec.peers = []
     created_pool = MagicMock()
-    created_pool.main_agent_name = "main"
+    created_pool.root_agent_name = "main"
     created_pool.pool._agents = {}
     created_pool.pool.shutdown_all = AsyncMock(return_value=True)
     created_pool.broker_bridge.start = AsyncMock()
@@ -203,14 +226,18 @@ async def test_session_registry_loads_before_pool_creation(tmp_path: Path) -> No
         assert loaded.agent_name == "main"
         return created_pool
 
+    scopes_dir = home / "config" / "scopes"
+    scopes_dir.mkdir(parents=True, exist_ok=True)
+    (scopes_dir / "bot.yml").write_text(
+        "workspace:\n  name: w\n  pools:\n    main:\n      agents:\n        main:\n"
+        "          description: registry test root\n",
+        encoding="utf-8",
+    )
     with (
-        patch("bot.workspace.wiring.resources.PoolStore") as pool_store_type,
         patch("bot.workspace.wiring.resources.build_pool_data", new=AsyncMock(return_value=MagicMock())),
         patch("bot.service.pool.create_pool", side_effect=create_pool),
         patch("bot.workspace.wiring.resources.BackgroundTaskRunner") as background_type,
     ):
-        pool_store_type.return_value.list_pools.return_value = [pool_spec]
-        pool_store_type.return_value.read_pool.return_value = pool_spec
         background_type.return_value.start = AsyncMock()
         background_type.return_value.stop = AsyncMock()
         resources = await _build_resources(service, ctx)
@@ -236,8 +263,12 @@ async def test_failed_non_home_build_closes_acquired_resources(tmp_path: Path) -
     broker.start = AsyncMock()
     broker.stop = AsyncMock()
 
+    scopes_dir = home / "config" / "scopes"
+    scopes_dir.mkdir(parents=True, exist_ok=True)
+    (scopes_dir / "bot.yml").write_text(
+        "workspace:\n  name: empty\n  pools: {}\n", encoding="utf-8"
+    )
     with (
-        patch("bot.workspace.wiring.resources.PoolStore") as pool_store_type,
         patch(
             "modex_agent.persistence.managers.WorkspacePersistenceManager",
             return_value=manager,
@@ -248,12 +279,11 @@ async def test_failed_non_home_build_closes_acquired_resources(tmp_path: Path) -
             new=AsyncMock(return_value=MagicMock()),
         ),
         patch(
-            "bot.workspace.wiring.pool_wiring._build_workspace_interceptor_chain",
+            "bot.workspace.wiring.resources.build_tool_overflow_interceptor_chain",
             side_effect=RuntimeError("assembly failed"),
         ),
         pytest.raises(RuntimeError, match="assembly failed"),
     ):
-        pool_store_type.return_value.list_pools.return_value = []
         await _build_resources(service, ctx)
 
     broker.stop.assert_awaited_once()

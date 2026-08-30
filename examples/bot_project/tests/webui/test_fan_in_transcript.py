@@ -27,6 +27,10 @@ from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
 from modex_agent.pipeline.adapters import InputAdapter
+from tests.input_pipeline.assembly_support import (
+    TEST_ASSEMBLY_CTX,
+    TEST_COMPONENT_REGISTRY,
+)
 
 
 def _sid(agent: str, conv: str) -> str:
@@ -191,7 +195,12 @@ async def test_im_pipeline_persists_qq_message() -> None:
 
     enqueued: list[InputMessage] = []
     ctx = _make_pipeline_ctx(store, enqueued)
-    pipe = build_im_pipeline(skill_registry=_NoSkillRegistry(), known_pools={"main", "coding"})
+    pipe = await build_im_pipeline(
+        registry=TEST_COMPONENT_REGISTRY,
+        ctx=TEST_ASSEMBLY_CTX,
+        skill_registry=_NoSkillRegistry(),
+        known_pools={"main", "coding"},
+    )
 
     env = UserInputEnvelope(
         external_id="qq_user_123",
@@ -222,7 +231,12 @@ async def test_im_pipeline_persists_discord_message() -> None:
 
     enqueued: list[InputMessage] = []
     ctx = _make_pipeline_ctx(store, enqueued)
-    pipe = build_im_pipeline(skill_registry=_NoSkillRegistry(), known_pools={"main"})
+    pipe = await build_im_pipeline(
+        registry=TEST_COMPONENT_REGISTRY,
+        ctx=TEST_ASSEMBLY_CTX,
+        skill_registry=_NoSkillRegistry(),
+        known_pools={"main"},
+    )
 
     env = UserInputEnvelope(
         external_id="discord_session_1",
@@ -248,7 +262,12 @@ async def test_im_pipeline_persists_message_with_attachments() -> None:
 
     enqueued: list[InputMessage] = []
     ctx = _make_pipeline_ctx(store, enqueued)
-    pipe = build_im_pipeline(skill_registry=_NoSkillRegistry(), known_pools={"main"})
+    pipe = await build_im_pipeline(
+        registry=TEST_COMPONENT_REGISTRY,
+        ctx=TEST_ASSEMBLY_CTX,
+        skill_registry=_NoSkillRegistry(),
+        known_pools={"main"},
+    )
 
     env = UserInputEnvelope(
         external_id="tg_chat_456",
@@ -272,7 +291,12 @@ async def test_im_pipeline_persists_multiple_sequential() -> None:
 
     enqueued: list[InputMessage] = []
     ctx = _make_pipeline_ctx(store, enqueued)
-    pipe = build_im_pipeline(skill_registry=_NoSkillRegistry(), known_pools={"main"})
+    pipe = await build_im_pipeline(
+        registry=TEST_COMPONENT_REGISTRY,
+        ctx=TEST_ASSEMBLY_CTX,
+        skill_registry=_NoSkillRegistry(),
+        known_pools={"main"},
+    )
 
     for text in ("first question", "second question", "third question"):
         env = UserInputEnvelope(external_id="user_1", content=text, channel="qq")
@@ -308,7 +332,12 @@ async def test_im_pipeline_skips_control_commands() -> None:
         enqueue_message=enqueued.append,
         command_adapter=cmd_adapter,
     )
-    pipe = build_im_pipeline(skill_registry=_NoSkillRegistry(), known_pools={"main"})
+    pipe = await build_im_pipeline(
+        registry=TEST_COMPONENT_REGISTRY,
+        ctx=TEST_ASSEMBLY_CTX,
+        skill_registry=_NoSkillRegistry(),
+        known_pools={"main"},
+    )
 
     env = UserInputEnvelope(external_id="u1", content="/stop", channel="qq")
     await pipe.handle(env, ctx)

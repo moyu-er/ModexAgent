@@ -13,8 +13,10 @@ from modex_agent.agents.react.context import ReActGraphContext
 from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.constants import FinishReason
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.core.types import LLMResponse
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
@@ -34,9 +36,7 @@ type StateFactory = Callable[[], ReActTurnState]
 type CoordinatorFactory = Callable[[], GraphPersistenceCoordinator]
 type RuntimeFactory = Callable[[], AgentRuntime]
 type GraphContextFactory = Callable[[AgentRuntime | None, ReActTurnState | None], ReActGraphContext]
-type ResponseFactory = Callable[
-    [str | None, str | None, list[ToolCall] | None, str, str | None], Any
-]
+type ResponseFactory = Callable[..., LLMResponse]
 
 
 class _AutoRegCoord(GraphPersistenceCoordinator):
@@ -152,17 +152,19 @@ def make_response() -> ResponseFactory:
         tool_calls: list[ToolCall] | None = None,
         finish_reason: str = "stop",
         error: str | None = None,
-    ) -> Any:
-        return type(
-            "_MockResponse",
-            (),
-            {
-                "content": content,
-                "reasoning_content": reasoning_content,
-                "tool_calls": tool_calls if tool_calls is not None else [],
-                "finish_reason": finish_reason,
-                "error": error,
-            },
-        )()
+        reasoning_signature: str | None = None,
+        reasoning_item_id: str | None = None,
+        reasoning_encrypted_content: str | None = None,
+    ) -> LLMResponse:
+        return LLMResponse(
+            content=content,
+            reasoning_content=reasoning_content,
+            tool_calls=tool_calls if tool_calls is not None else [],
+            finish_reason=FinishReason(finish_reason),
+            error=error,
+            reasoning_signature=reasoning_signature,
+            reasoning_item_id=reasoning_item_id,
+            reasoning_encrypted_content=reasoning_encrypted_content,
+        )
 
     return factory

@@ -1,12 +1,8 @@
-"""Tests for AgentMaterializeDeps — the value object bundling subagent-construction deps."""
-
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+import dataclasses
 from pathlib import Path
 from unittest.mock import MagicMock
-
-import pytest
 
 from modex_agent.core.constants import ReasoningEffort
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
@@ -39,7 +35,7 @@ def test_constructs_with_required_fields() -> None:
     assert deps.llm_temperature == 0.7
 
 
-def test_is_frozen() -> None:
+def test_is_regular_runtime_object() -> None:
     deps = AgentMaterializeDeps(
         agent_factory=MagicMock(),
         pool=MagicMock(),
@@ -47,8 +43,10 @@ def test_is_frozen() -> None:
         broker=MagicMock(),
         tree=MagicMock(spec=SessionTreeManager),
     )
-    with pytest.raises(FrozenInstanceError):
-        deps.llm_model = "x"  # type: ignore[misc]
+    deps.llm_model = "x"
+
+    assert not dataclasses.is_dataclass(deps)
+    assert deps.llm_model == "x"
 
 
 def test_optional_fields_default_none() -> None:
@@ -61,6 +59,7 @@ def test_optional_fields_default_none() -> None:
     )
     assert deps.project_dir is None
     assert deps.on_subagent_created is None
+    assert deps.default_llm_provider == "default"
 
 
 def test_context_fork_builder_defaults_none_and_settable() -> None:
@@ -85,7 +84,7 @@ def test_context_fork_builder_defaults_none_and_settable() -> None:
     assert deps_set.context_fork_builder is fork_builder
 
 
-def test_workspace_path_resolver_defaults_none_and_settable() -> None:
+def test_scope_path_defaults_none_and_settable() -> None:
     deps_default = AgentMaterializeDeps(
         agent_factory=MagicMock(),
         pool=MagicMock(),
@@ -93,7 +92,7 @@ def test_workspace_path_resolver_defaults_none_and_settable() -> None:
         broker=MagicMock(),
         tree=MagicMock(spec=SessionTreeManager),
     )
-    assert deps_default.workspace_path_resolver is None
+    assert deps_default.scope_path is None
 
     resolver = MagicMock()
     deps_set = AgentMaterializeDeps(
@@ -102,9 +101,9 @@ def test_workspace_path_resolver_defaults_none_and_settable() -> None:
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
         tree=MagicMock(spec=SessionTreeManager),
-        workspace_path_resolver=resolver,
+        scope_path=resolver,
     )
-    assert deps_set.workspace_path_resolver is resolver
+    assert deps_set.scope_path is resolver
 
 
 def test_mcp_registry_defaults_none_and_settable() -> None:
@@ -150,7 +149,7 @@ def test_llm_reasoning_effort_defaults_to_none_and_settable() -> None:
     assert deps_set.llm_reasoning_effort == ReasoningEffort.HIGH
 
 
-def test_subagent_external_builder_defaults_none_and_settable() -> None:
+def test_execution_strategy_defaults_none_and_settable() -> None:
     deps_default = AgentMaterializeDeps(
         agent_factory=MagicMock(),
         pool=MagicMock(),
@@ -158,18 +157,18 @@ def test_subagent_external_builder_defaults_none_and_settable() -> None:
         broker=MagicMock(),
         tree=MagicMock(spec=SessionTreeManager),
     )
-    assert deps_default.subagent_external_builder is None
+    assert deps_default.execution_strategy is None
 
-    builder = MagicMock()
+    strategy = MagicMock()
     deps_set = AgentMaterializeDeps(
         agent_factory=MagicMock(),
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
         tree=MagicMock(spec=SessionTreeManager),
-        subagent_external_builder=builder,  # type: ignore[arg-type]
+        execution_strategy=strategy,  # type: ignore[arg-type]
     )
-    assert deps_set.subagent_external_builder is builder
+    assert deps_set.execution_strategy is strategy
 
 
 def test_control_origin_defaults_empty_and_settable() -> None:

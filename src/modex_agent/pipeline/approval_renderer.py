@@ -141,7 +141,8 @@ class ApprovalRenderer:
 
     async def _drain(self, session_id: str) -> None:
         pending = self._approval_pending.pop(session_id, [])
-        if pending and self._on_drain is None:
+        on_drain = self._on_drain
+        if pending and on_drain is None:
             logger.warning(
                 "ApprovalRenderer: _on_drain is None, dropping %d buffered messages for %s",
                 len(pending),
@@ -149,4 +150,5 @@ class ApprovalRenderer:
             )
             return
         for msg in pending:
-            asyncio.create_task(self._on_drain(msg))  # type: ignore[misc]
+            if on_drain is not None:
+                asyncio.ensure_future(on_drain(msg))

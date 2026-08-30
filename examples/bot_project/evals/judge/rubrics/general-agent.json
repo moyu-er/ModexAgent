@@ -1,0 +1,30 @@
+{
+  "name": "general-agent",
+  "rubrics": [
+    {
+      "criterion": "task_completion",
+      "description": "The agent's final answer completes every explicit requirement of the task.",
+      "weight": 0.35
+    },
+    {
+      "criterion": "empirical_verification",
+      "description": "The agent verifies its claimed results with relevant tests, checks, or direct inspection and reports the observed evidence.",
+      "weight": 0.2
+    },
+    {
+      "criterion": "instruction_following",
+      "description": "The agent follows every explicit process constraint and avoids all prohibited or out-of-scope work.",
+      "weight": 0.2
+    },
+    {
+      "criterion": "grounded_reporting",
+      "description": "The agent reports only outcomes supported by available evidence and identifies any unverified or failed checks.",
+      "weight": 0.15
+    },
+    {
+      "criterion": "efficiency",
+      "description": "The agent completes the task without avoidable work, redundant actions, or unnecessary changes.",
+      "weight": 0.1
+    }
+  ]
+}

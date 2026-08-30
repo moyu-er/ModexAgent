@@ -1,4 +1,4 @@
-"""Tests for LLM error types, classification, and timeout response builder."""
+"""Tests for LLM error types and timeout response builder."""
 
 import pytest
 
@@ -10,7 +10,6 @@ from modex_agent.core.llm_struct import (
     RuntimeSafetyPolicy,
     TurnTimeoutPolicy,
     build_timeout_response,
-    classify_litellm_error,
 )
 from modex_agent.core.types import LLMResponse
 
@@ -59,7 +58,6 @@ class TestProviderKind:
     def test_provider_kinds(self):
         assert LLMProviderKind.OPENAI.value == "openai"
         assert LLMProviderKind.ANTHROPIC.value == "anthropic"
-        assert LLMProviderKind.LITELLM.value == "litellm"
 
 
 class TestSafetyPolicyDefaults:
@@ -91,53 +89,3 @@ class TestBuildTimeoutResponse:
         )
         assert resp.content == "partial reply..."
         assert resp.finish_reason == "error"
-
-
-class TestClassifyLitellmError:
-    def test_timeout_error(self):
-        exc = Exception("Request timed out")
-        info = classify_litellm_error(exc)
-        assert info.kind == LLMErrorKind.TIMEOUT
-        assert info.should_retry is True
-
-    def test_rate_limit_error(self):
-        exc = Exception("429 rate limit exceeded")
-        info = classify_litellm_error(exc)
-        assert info.kind == LLMErrorKind.RATE_LIMIT
-        assert info.should_retry is True
-
-    def test_auth_error(self):
-        exc = Exception("401 unauthorized")
-        info = classify_litellm_error(exc)
-        assert info.kind == LLMErrorKind.AUTH
-        assert info.should_retry is False
-
-    def test_connection_error(self):
-        exc = Exception("connection reset by peer")
-        info = classify_litellm_error(exc)
-        assert info.kind == LLMErrorKind.CONNECTION
-        assert info.should_retry is True
-
-    def test_server_error_500(self):
-        exc = Exception("500 internal server error")
-        info = classify_litellm_error(exc)
-        assert info.kind == LLMErrorKind.SERVER
-        assert info.should_retry is True
-
-    def test_server_error_503(self):
-        exc = Exception("503 service unavailable")
-        info = classify_litellm_error(exc)
-        assert info.kind == LLMErrorKind.SERVER
-        assert info.should_retry is True
-
-    def test_unknown_error(self):
-        exc = Exception("something completely unexpected")
-        info = classify_litellm_error(exc)
-        assert info.kind == LLMErrorKind.UNKNOWN
-        assert info.should_retry is False
-
-    def test_classify_preserves_message(self):
-        msg = "Connection timeout after 30s"
-        exc = Exception(msg)
-        info = classify_litellm_error(exc)
-        assert msg in info.message or info.message == str(exc)

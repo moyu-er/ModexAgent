@@ -8,11 +8,12 @@ import tempfile
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, TypedDict, Unpack
+from typing import Any, Literal, TypedDict, Unpack
 from unittest.mock import MagicMock
 
+import bot.eval.experiment_runner as experiment_runner
 import pytest
-from bot.eval.experiment_runner import EvalRunner
+from bot.eval.experiment_runner import EvalRunner, _span_tool_stats
 from bot.eval.task_output import EvalTaskOutput, ToolStats, TurnRecord
 from langfuse import Langfuse
 
@@ -20,12 +21,18 @@ from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.constants import FinishReason, StopReason
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import LLMResponse, MessageRole, ToolCall
-from modex_agent.runtime.models import JsonValue
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.runtime.models import JsonValue, TurnIdentity
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.trace.scoring import TrajectoryMetrics
 
 
-class _ScriptedProvider(StreamingLLMProvider):
+class _ScriptedProvider(CallbackStreamProvider):
     def __init__(
         self,
         responses: list[LLMResponse],
@@ -121,6 +128,33 @@ async def test_dict_with_turns_uses_v2_and_legacy_query_keeps_old_shape() -> Non
         "stop_reason": "completed",
         "error": None,
     }
+
+
+async def test_legacy_task_uses_clean_trace_services(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: the clean-mode services seam used by v2 returns a known runtime bundle.
+    services = AgentRuntimeServices()
+    trace_dirs: list[Path] = []
+
+    def build_services(trace_dir: Path, *, model: str | None = None) -> AgentRuntimeServices:
+        trace_dirs.append(trace_dir)
+        assert model == "openai/test-model"
+        return services
+
+    monkeypatch.setattr(experiment_runner, "build_trace_only_services", build_services)
+    provider = _ScriptedProvider([_response("legacy")])
+    runner = EvalRunner(provider=provider, system_prompt="eval", model="openai/test-model")
+
+    # When: a curated legacy item runs through the single-turn path.
+    await runner.task(item=_item({"query": "hello"}, item_id="legacy"))
+
+    # Then: its context owns the shared trace services and temporary trace directory lifecycle.
+    context = provider.contexts[0]
+    assert context.runtime is not None
+    assert context.runtime.services is services
+    assert len(trace_dirs) == 1
+    assert not trace_dirs[0].exists()
 
 
 async def test_multi_turn_uses_fresh_context_and_runtime_with_shared_history() -> None:
@@ -234,8 +268,7 @@ async def test_world_command_exit_records_matching_and_wrong_codes() -> None:
 
     assert [result["passed"] for result in output["world_results"]] == [True, False]
     assert all(
-        result["assertion"].startswith("command_exit:")
-        for result in output["world_results"]
+        result["assertion"].startswith("command_exit:") for result in output["world_results"]
     )
 
 
@@ -259,7 +292,9 @@ async def test_world_setup_rejects_paths_outside_workspace(
     absolute_target = tmp_path / "absolute.txt"
     resolved_unsafe_path = str(absolute_target) if unsafe_path == "{absolute}" else unsafe_path
     outside_target = absolute_target if unsafe_path == "{absolute}" else tmp_path / "evil.txt"
-    runner = EvalRunner(provider=_ScriptedProvider([_response("must not run")]), system_prompt="eval")
+    runner = EvalRunner(
+        provider=_ScriptedProvider([_response("must not run")]), system_prompt="eval"
+    )
 
     output = await runner.task(
         item=_item(
@@ -275,6 +310,7 @@ async def test_world_setup_rejects_paths_outside_workspace(
     assert output["stop_reason"] == "error"
     assert output["error"]
     assert output["turns_executed"] == 0
+    assert output["tool_stats"]["source"] == "metrics", "error output must use metrics source"
     assert not outside_target.exists()
 
 
@@ -300,7 +336,7 @@ async def test_expected_stop_mismatch_is_recorded() -> None:
     assert output["turn_records"][0]["stop_reason"] == "error"
 
 
-async def test_clean_tool_stats_count_error_tool_messages() -> None:
+async def test_clean_tool_stats_count_error_tool_spans() -> None:
     provider = _ScriptedProvider(
         [
             _tool_response("missing_tool", {}),
@@ -323,10 +359,134 @@ async def test_clean_tool_stats_count_error_tool_messages() -> None:
         "total": 1,
         "errors": 1,
         "success_rate": 0.0,
-        "reasoning_depth": 0.0,
-        "trajectory_compactness": 0.0,
-        "source": "messages",
+        "source": "metrics",
     }
+
+
+@pytest.mark.parametrize("mode", ["clean", "production"])
+async def test_runner_threads_explicit_model_to_mode_services(
+    mode: Literal["clean", "production"],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    captured_models: list[str | None] = []
+
+    def fake_build_trace_only_services(
+        trace_dir: Path,
+        *,
+        model: str | None = None,
+    ) -> AgentRuntimeServices:
+        _ = trace_dir
+        captured_models.append(model)
+        return AgentRuntimeServices()
+
+    def fake_build_runtime_services(
+        trace_dir: Path,
+        recorder: None = None,
+        *,
+        model: str | None = None,
+    ) -> AgentRuntimeServices:
+        _ = trace_dir, recorder
+        captured_models.append(model)
+        return AgentRuntimeServices()
+
+    monkeypatch.setattr(
+        experiment_runner,
+        "build_trace_only_services",
+        fake_build_trace_only_services,
+    )
+    monkeypatch.setattr(
+        experiment_runner,
+        "build_runtime_services",
+        fake_build_runtime_services,
+    )
+    runner = EvalRunner(
+        provider=_ScriptedProvider([_response("done")]),
+        system_prompt="eval",
+        mode=mode,
+        model="openai/step-3.7-flash",
+    )
+
+    # When
+    output = await runner.task(
+        item=_item({"id": "model", "turns": [{"user": "hello"}], "toolset": "none"})
+    )
+
+    # Then
+    assert output["output"] == "done"
+    assert captured_models == ["openai/step-3.7-flash"]
+
+
+def _turn_metrics(tool_calls: int, error_tools: int) -> TrajectoryMetrics:
+    return TrajectoryMetrics(
+        tool_success_rate=(tool_calls - error_tools) / tool_calls if tool_calls > 0 else 1.0,
+        tool_call_count=tool_calls,
+        error_tool_count=error_tools,
+        iteration_count=0,
+        llm_call_count=0,
+        total_input_tokens=0,
+        total_output_tokens=0,
+        total_reasoning_tokens=0,
+        api_latency_avg_s=0.0,
+        cache_hit_rate=0.0,
+        response_token_ratio=0.0,
+        has_reasoning=False,
+    )
+
+
+def _turn_context(
+    session: SessionInfo,
+    turn_id: str,
+    stash: TrajectoryMetrics | None,
+) -> AgentContext:
+    state = ReActTurnState(
+        identity=TurnIdentity(agent_id="react", session=session, turn_id=turn_id),
+        agent_kind=AgentKind.REACT,
+        phase=TurnPhase.CREATED,
+    )
+    if stash is not None:
+        state.custom[TurnCustomKey.TRAJECTORY_METRICS] = stash
+    return AgentContext(
+        system_prompt="eval",
+        history=ListMessageHistory(),
+        tool_manager=InMemoryToolManager(),
+        session=session,
+        max_iterations=1,
+        runtime=AgentRuntime(services=AgentRuntimeServices(), state=state),
+    )
+
+
+def test_span_tool_stats_sums_stashed_metrics_across_turn_contexts() -> None:
+    session = SessionInfo.from_str("eval.stats.react")
+    contexts = [
+        _turn_context(session, "turn-1", _turn_metrics(2, 1)),
+        _turn_context(session, "turn-2", _turn_metrics(1, 1)),
+    ]
+
+    stats = _span_tool_stats(contexts)
+
+    assert stats == ToolStats(total=3, errors=2, success_rate=1 / 3, source="metrics")
+
+
+def test_span_tool_stats_skips_turns_without_stash() -> None:
+    session = SessionInfo.from_str("eval.mixed.react")
+    contexts = [
+        _turn_context(session, "turn-1", _turn_metrics(2, 0)),
+        _turn_context(session, "turn-2", None),
+    ]
+
+    stats = _span_tool_stats(contexts)
+
+    assert stats == ToolStats(total=2, errors=0, success_rate=1.0, source="metrics")
+
+
+def test_span_tool_stats_without_stash_yields_zero_stats() -> None:
+    session = SessionInfo.from_str("eval.off.react")
+    contexts = [_turn_context(session, "turn-1", None)]
+
+    stats = _span_tool_stats(contexts)
+
+    assert stats == ToolStats(total=0, errors=0, success_rate=1.0, source="metrics")
 
 
 def test_run_archives_teed_item_outputs(tmp_path: Path) -> None:
@@ -370,3 +530,21 @@ def test_run_archives_teed_item_outputs(tmp_path: Path) -> None:
             "output": dataset.output,
         }
     ]
+
+
+def test_run_uses_exact_experiment_name_as_sdk_run_name() -> None:
+    # Given: a Langfuse dataset whose experiment call is recorded locally.
+    dataset = MagicMock()
+    client = MagicMock(spec=Langfuse)
+    client.get_dataset.return_value = dataset
+    runner = EvalRunner(
+        provider=_ScriptedProvider([]),
+        system_prompt="eval",
+        langfuse_client=client,
+    )
+
+    # When: an experiment is started with the clean CLI name.
+    runner.run(dataset_name="dataset-a", experiment_name="experiment-a")
+
+    # Then: the SDK receives the same explicit run name and cannot suffix it.
+    assert dataset.run_experiment.call_args.kwargs["run_name"] == "experiment-a"

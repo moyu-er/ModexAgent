@@ -23,6 +23,7 @@ import { IconButton } from "../ui/IconButton";
 import { Button } from "../ui/Button";
 import { Label } from "../ui/Label";
 import { SectionLabel } from "../ui/SectionLabel";
+import { KeyValueEditor } from "../ui/KeyValueEditor";
 import {
   ChevronRightIcon,
   PlusIcon,
@@ -41,6 +42,7 @@ interface ModelEntry {
   model: string;
   capabilities: string[];
   temperature: number;
+  top_p?: number | null;
   max_output_tokens: number;
   reasoning_effort: string;
 }
@@ -51,6 +53,8 @@ interface Provider {
   base_url: string;
   interface_format: string;
   api_key: SecretMaskValue | SecretWrite;
+  headers?: Record<string, string>;
+  endpoint_url?: string;
   models_url?: string | null;
   models: ModelEntry[];
 }
@@ -81,6 +85,7 @@ const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"] 
 
 const INTERFACE_FORMAT_DEFS: { value: string; labelKey: MessageKey }[] = [
   { value: "openai_compatible", labelKey: "settings.models.ifOpenai" },
+  { value: "openai_response", labelKey: "settings.models.ifOpenaiResponse" },
   { value: "anthropic", labelKey: "settings.models.ifAnthropic" },
 ];
 
@@ -205,6 +210,8 @@ export function ModelEditor({ values, onChange }: Props) {
         base_url: "",
         interface_format: "openai_compatible",
         api_key: { has_value: false },
+        headers: {},
+        endpoint_url: "",
         models: [],
       },
     ]);
@@ -318,6 +325,16 @@ export function ModelEditor({ values, onChange }: Props) {
   const handleBaseUrlChange = useCallback(
     (pi: number, v: string) =>
       updateProviders(providers.map((q, i) => (i === pi ? { ...q, base_url: v } : q))),
+    [providers],
+  );
+  const handleHeadersChange = useCallback(
+    (pi: number, headers: Record<string, string>) =>
+      updateProviders(providers.map((q, i) => (i === pi ? { ...q, headers } : q))),
+    [providers],
+  );
+  const handleEndpointUrlChange = useCallback(
+    (pi: number, v: string) =>
+      updateProviders(providers.map((q, i) => (i === pi ? { ...q, endpoint_url: v } : q))),
     [providers],
   );
   const handleInterfaceFormatChange = useCallback(
@@ -532,6 +549,22 @@ export function ModelEditor({ values, onChange }: Props) {
                           />
                         </div>
                         <div className="sm:col-span-2">
+                          <KeyValueEditor
+                            label={t("settings.models.headers")}
+                            helper={t("settings.models.headersHelper")}
+                            entries={p.headers ?? {}}
+                            onChange={(headers) => handleHeadersChange(pi, headers)}
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <Input
+                            label={t("settings.models.endpointUrl")}
+                            value={p.endpoint_url ?? ""}
+                            placeholder={t("settings.models.endpointUrlPlaceholder")}
+                            onChange={(e) => handleEndpointUrlChange(pi, e.target.value)}
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
                           <DropdownPanel
                             label={t("settings.models.interfaceFormat")}
                             options={INTERFACE_FORMAT_OPTIONS}
@@ -718,6 +751,21 @@ export function ModelEditor({ values, onChange }: Props) {
                                   onChange={(e) =>
                                     updateModel(pi, mi, {
                                       temperature: Number(e.target.value),
+                                    })
+                                  }
+                                />
+                                <Input
+                                  label={t("settings.models.topP")}
+                                  type="number"
+                                  step="0.05"
+                                  placeholder={t("settings.models.topPPlaceholder")}
+                                  value={m.top_p ?? ""}
+                                  onChange={(e) =>
+                                    updateModel(pi, mi, {
+                                      top_p:
+                                        e.target.value === ""
+                                          ? null
+                                          : Number(e.target.value),
                                     })
                                   }
                                 />

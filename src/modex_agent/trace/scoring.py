@@ -1,7 +1,7 @@
-"""Agent trajectory scoring — L2 heuristics for eval and training data derivation.
+"""Agent trajectory metrics — L2 observability for eval and training data derivation.
 
 Extracted from training_exporter.py to share between:
-- TrainingDataExporter (SFT/DPO export scoring)
+- TrainingDataExporter (SFT/DPO export)
 - L2ScoreInjector (Langfuse score injection, Layer 1 eval)
 """
 
@@ -10,22 +10,67 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.trace.pricing import PerModelUsage
 from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
 from modex_agent.trace.store import SpanModel
 
 # ── Data models ────────────────────────────────────────────────────────
 
 
-class TrajectoryScore(BaseModel):
-    """L2 heuristic scores for one trajectory."""
+class TrajectoryMetrics(BaseModel):
+    """Direction-clear observability metrics for one agent trajectory.
+
+    Every field has an unambiguous "good" direction (high, low, or neutral)
+    so downstream eval and training code can filter/rank without ad-hoc
+    weight combinations.
+
+    Fields:
+        tool_success_rate: non-error execute_tool / total execute_tool
+            (0-1; 1.0 when no tool spans). high=good.
+        tool_call_count: count of execute_tool spans. neutral reference.
+        error_tool_count: execute_tool spans with ERROR status. low=good.
+        iteration_count: count of iteration.start spans. In STANDARD/MINIMAL
+            tier (no iteration spans) this is 0. low=good.
+        llm_call_count: count of chat spans. neutral reference.
+        total_input_tokens: sum of gen_ai.usage.input_tokens from chat spans
+            only (NOT from invoke_agent root span — cumulative usage would
+            double-count). high=cost.
+        total_output_tokens: sum of gen_ai.usage.output_tokens from chat
+            spans only. high=cost.
+        total_reasoning_tokens: sum of gen_ai.usage.reasoning.output_tokens
+            from chat spans. 0 for non-reasoning models (GPT-4o, Claude,
+            DeepSeek-V3). neutral (cost reference, not quality).
+        api_latency_avg_s: average wall-clock duration of chat spans
+            (end_time - start_time). 0.0 when no chat spans. low=good.
+        cache_hit_rate: cache_read_input_tokens / (input_tokens +
+            cache_read_input_tokens) — TokenUsage.input_tokens is the UNCACHED
+            count, so the prompt total is uncached + cached. 0.0 when total
+            input is 0. high=good.
+        response_token_ratio: output / (input + output) tokens.
+            0.0 when total is 0. neutral.
+        has_reasoning: total_reasoning_tokens > 0. neutral (model
+            capability indicator).
+        per_model_usage: additive four-bucket usage grouped by chat-span
+            response model for local turn-cost reduction.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     tool_success_rate: float
-    reasoning_depth: int
-    trajectory_compactness: float
+    tool_call_count: int
+    error_tool_count: int
+    iteration_count: int
+    llm_call_count: int
+    total_input_tokens: int
+    total_output_tokens: int
+    total_reasoning_tokens: int
+    api_latency_avg_s: float
+    cache_hit_rate: float
+    response_token_ratio: float
+    has_reasoning: bool
+    per_model_usage: PerModelUsage = Field(default_factory=PerModelUsage)
 
 
 # ── Scalar helpers (internal) ──────────────────────────────────────────
@@ -87,7 +132,11 @@ def extract_final_response(spans: list[SpanModel]) -> str:
     """Extract the final assistant response from a trajectory.
 
     Uses the last ``chat`` span's ``gen_ai.output.messages`` (the one without
-    tool_calls).  Falls back to the last ``chat`` span's content.
+    tool_calls).  Falls back to the ``invoke_agent`` root span's
+    ``langfuse.observation.output`` attribute (set by ``RootSpanHook`` to
+    ``result.content``) when no tool-call-free chat span is found (the
+    max-iterations case).  Returns ``""`` if that attribute is also missing
+    or empty.
     """
     chat_spans = [s for s in spans if s.name == SpanName.CHAT.value]
     # Prefer the last chat span without tool_calls (the final answer).
@@ -98,15 +147,17 @@ def extract_final_response(spans: list[SpanModel]) -> str:
         content = extract_output_text(s.attributes)
         if content:
             return content
-    # Fallback: last chat span content of any kind.
-    for s in reversed(chat_spans):
-        content = extract_output_text(s.attributes)
-        if content:
-            return content
+    # Fallback: invoke_agent root span's observation output (max-iterations case).
+    for s in reversed(spans):
+        if s.name != SpanName.INVOKE_AGENT.value:
+            continue
+        output = s.attributes.get(GenAiAttr.LANGFUSE_OBSERVATION_OUTPUT.value)
+        if isinstance(output, str) and output:
+            return output
     return ""
 
 
-# ── Scoring ────────────────────────────────────────────────────────────
+# ── Metrics ────────────────────────────────────────────────────────────
 
 
 def compute_root_subtrees(spans: list[SpanModel]) -> dict[str, list[SpanModel]]:
@@ -134,58 +185,60 @@ def compute_root_subtrees(spans: list[SpanModel]) -> dict[str, list[SpanModel]]:
     return subtrees
 
 
-def compute_score(spans: list[SpanModel]) -> TrajectoryScore:
-    """Compute L2 heuristic scores for a trajectory.
+def compute_metrics(spans: list[SpanModel]) -> TrajectoryMetrics:
+    """Compute direction-clear observability metrics for a trajectory.
 
-    - ``tool_success_rate``: non-error ``execute_tool`` spans / total
-    - ``reasoning_depth``: sum of ``reasoning_tokens`` from ``chat`` spans
-    - ``trajectory_compactness``: final response length / total tokens
+    Token usage is summed from ``chat`` spans only — NOT from the
+    ``invoke_agent`` root span, which carries cumulative usage that would
+    double-count.
     """
     tool_spans = [s for s in spans if s.name == SpanName.EXECUTE_TOOL.value]
-    total_tools = len(tool_spans)
-    successful_tools = sum(1 for s in tool_spans if not _span_status_is_error(s))
-    tool_success_rate = successful_tools / total_tools if total_tools > 0 else 1.0
-
     chat_spans = [s for s in spans if s.name == SpanName.CHAT.value]
-    reasoning_depth = 0
-    total_tokens = 0
-    for s in chat_spans:
-        attrs = s.attributes
-        reasoning_depth += _as_int(attrs.get(GenAiAttr.USAGE_REASONING_TOKENS.value))
-        total_tokens += _as_int(attrs.get(GenAiAttr.USAGE_INPUT_TOKENS.value)) + _as_int(
-            attrs.get(GenAiAttr.USAGE_OUTPUT_TOKENS.value)
-        )
 
-    final_content = extract_final_response(spans)
-    final_len = len(final_content)
-    trajectory_compactness = final_len / total_tokens if total_tokens > 0 else 0.0
+    total_tools = len(tool_spans)
+    error_tools = sum(1 for s in tool_spans if _span_status_is_error(s))
+    tool_success_rate = (total_tools - error_tools) / total_tools if total_tools > 0 else 1.0
 
-    return TrajectoryScore(
+    total_input_tokens = sum(
+        _as_int(s.attributes.get(GenAiAttr.USAGE_INPUT_TOKENS.value)) for s in chat_spans
+    )
+    total_output_tokens = sum(
+        _as_int(s.attributes.get(GenAiAttr.USAGE_OUTPUT_TOKENS.value)) for s in chat_spans
+    )
+    total_reasoning_tokens = sum(
+        _as_int(s.attributes.get(GenAiAttr.USAGE_REASONING_TOKENS.value)) for s in chat_spans
+    )
+
+    durations = [s.end_time - s.start_time for s in chat_spans if s.end_time is not None]
+    api_latency_avg_s = sum(durations) / len(durations) if durations else 0.0
+
+    cache_read_tokens = sum(
+        _as_int(s.attributes.get(GenAiAttr.USAGE_CACHE_READ_INPUT_TOKENS.value)) for s in chat_spans
+    )
+    # Span input_tokens is the UNCACHED count, so the prompt total the cache
+    # served a fraction of is uncached + cached.
+    cache_hit_rate = (
+        cache_read_tokens / (total_input_tokens + cache_read_tokens)
+        if total_input_tokens + cache_read_tokens > 0
+        else 0.0
+    )
+
+    total_tokens = total_input_tokens + total_output_tokens
+    response_token_ratio = total_output_tokens / total_tokens if total_tokens > 0 else 0.0
+
+    iteration_count = sum(1 for s in spans if s.name == SpanName.ITERATION_START.value)
+
+    return TrajectoryMetrics(
         tool_success_rate=tool_success_rate,
-        reasoning_depth=reasoning_depth,
-        trajectory_compactness=trajectory_compactness,
+        tool_call_count=total_tools,
+        error_tool_count=error_tools,
+        iteration_count=iteration_count,
+        llm_call_count=len(chat_spans),
+        total_input_tokens=total_input_tokens,
+        total_output_tokens=total_output_tokens,
+        total_reasoning_tokens=total_reasoning_tokens,
+        api_latency_avg_s=api_latency_avg_s,
+        cache_hit_rate=cache_hit_rate,
+        response_token_ratio=response_token_ratio,
+        has_reasoning=total_reasoning_tokens > 0,
     )
-
-
-def overall_score(score: TrajectoryScore) -> float:
-    """Combine L2 heuristics into a single 0.0–1.0 score for DPO gap filtering."""
-    normalized_reasoning = min(score.reasoning_depth / 1000.0, 1.0)
-    normalized_compactness = min(max(score.trajectory_compactness, 0.0), 1.0)
-    return (
-        0.5 * max(0.0, min(score.tool_success_rate, 1.0))
-        + 0.3 * normalized_reasoning
-        + 0.2 * normalized_compactness
-    )
-
-
-def score_to_rating(score: float) -> int:
-    """Map a 0.0–1.0 overall score to a 1–5 rating."""
-    if score >= 0.8:
-        return 5
-    if score >= 0.6:
-        return 4
-    if score >= 0.4:
-        return 3
-    if score >= 0.2:
-        return 2
-    return 1

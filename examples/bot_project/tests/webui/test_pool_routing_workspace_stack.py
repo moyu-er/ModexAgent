@@ -37,9 +37,13 @@ from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
 from modex_agent.workspace.context import WorkspaceContext
-from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.registry import ScopeRegistry
 from modex_agent.workspace.routing import WorkspaceResolver
 from modex_agent.workspace.store import GlobalWorkspaceStore
+from tests.input_pipeline.assembly_support import (
+    TEST_ASSEMBLY_CTX,
+    TEST_COMPONENT_REGISTRY,
+)
 
 
 class _NoSkillRegistry(SkillRegistry):
@@ -70,10 +74,10 @@ def _minimal_resources(
     ctx.paths.mkdir_skeleton()
     broker = InMemoryMessageBroker()
     main_pool = MagicMock()
-    main_pool.main_agent_name = "main"
+    main_pool.root_agent_name = "main"
     main_pool.main_address = AgentAddress(kind="agent", name="main")
     coding_pool = MagicMock()
-    coding_pool.main_agent_name = "coding"
+    coding_pool.root_agent_name = "coding"
     coding_pool.main_address = AgentAddress(kind="agent", name="coding")
     pool_router = PoolRouter(
         input_adapter=MagicMock(),
@@ -83,6 +87,7 @@ def _minimal_resources(
         if shared_pool_store is not None
         else PoolSessionStore(data_dir=ctx.paths.root),
         default_pool="main",
+        agent_pool_ownership={"main": ("main",), "coding": ("coding",)},
     )
     return PoolWorkspaceResources(
         target=target,
@@ -157,7 +162,7 @@ async def test_non_home_workspace_routes_to_coding_with_shared_store() -> None:
         shared_store = PoolSessionStore(data_dir=home / ".modex")
 
         factory = _MinimalFactory(home=home, shared_pool_store=shared_store)
-        registry = WorkspaceRegistry(
+        registry = ScopeRegistry(
             home=home,
             data_dir_name=".modex",
             factory=factory,
@@ -189,8 +194,11 @@ async def test_non_home_workspace_routes_to_coding_with_shared_store() -> None:
         server.set_pool_switch_callback(home_resources.pool_router.set_pool)
         server.set_pool_resolver(home_resources.pool_router._session_store.get_pool)
 
-        pipe = build_webui_pipeline(
-            skill_registry=_NoSkillRegistry(), bot_model_config=_bot_model_config()
+        pipe = await build_webui_pipeline(
+            registry=TEST_COMPONENT_REGISTRY,
+            ctx=TEST_ASSEMBLY_CTX,
+            skill_registry=_NoSkillRegistry(),
+            bot_model_config=_bot_model_config(),
         )
         server.set_input_pipeline(pipe)
         # Production wiring: pipeline ctx uses the shared store.
@@ -257,7 +265,7 @@ async def test_home_workspace_coding_conversation_routes_to_coding() -> None:
 
         shared_store = PoolSessionStore(data_dir=home / ".modex")
         factory = _MinimalFactory(home=home, shared_pool_store=shared_store)
-        registry = WorkspaceRegistry(
+        registry = ScopeRegistry(
             home=home,
             data_dir_name=".modex",
             factory=factory,
@@ -286,8 +294,11 @@ async def test_home_workspace_coding_conversation_routes_to_coding() -> None:
         server.set_pool_switch_callback(home_resources.pool_router.set_pool)
         server.set_pool_resolver(home_resources.pool_router._session_store.get_pool)
 
-        pipe = build_webui_pipeline(
-            skill_registry=_NoSkillRegistry(), bot_model_config=_bot_model_config()
+        pipe = await build_webui_pipeline(
+            registry=TEST_COMPONENT_REGISTRY,
+            ctx=TEST_ASSEMBLY_CTX,
+            skill_registry=_NoSkillRegistry(),
+            bot_model_config=_bot_model_config(),
         )
         server.set_input_pipeline(pipe)
         ctx = BotInputContext(

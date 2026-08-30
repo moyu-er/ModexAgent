@@ -1,0 +1,27 @@
+# Ticket 12 E2E graph: references the nested tree's LEAF agent — a
+# never-dispatched lazy subagent (inbox-driven cold start, SPEC §4 axis 3).
+name: nested_leaf_flow
+version: "1.0"
+state_class: default
+scheduler: parallel
+max_iterations: 15
+default_trigger: on_all_preds
+metadata:
+  description: >-
+    A single-node graph whose agent node is the nested tree's lazy leaf.
+    The leaf cold-starts from its template on first deliver and returns
+    its result via the graph deliver tool.
+nodes:
+  - name: leaf
+    node_type: agent
+    config:
+      agent: leaf
+      pool: main-pool
+      description: >-
+        Leaf node of the nested declaration tree. Process the input and
+        deliver the final answer to __end__.
+edges:
+  - source: __start__
+    target: leaf
+  - source: leaf
+    target: __end__

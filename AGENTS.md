@@ -2,7 +2,7 @@
 
 ## Project Layout
 
-`src/modex_agent/` is the reusable agent framework (src layout, ADR-0003). `src/modex_graph/` is the standalone graph engine (ADR-0033). Key framework areas: `agents/react/` (ReAct runtime), `agents/external/` (Pi/OpenCode harness), `memory/` (three-layer), `persistence/` (hybrid SQLite+file, ADR-0023), `multi_agent/` (star-topology), `pipeline/`, `hook/`+`interceptor/`+`control/` (three-layer runtime), `tools/`, `approval/`, `sandbox/`, `media/`, `commands/`. See `src/modex_agent/AGENTS.md` for the exhaustive module table (26 modules).
+`src/modex_agent/` is the reusable agent framework (src layout, ADR-0003). `src/modex_graph/` is the standalone graph engine (ADR-0033). Key framework areas: `agents/react/` (ReAct runtime), `agents/external/` (Pi/OpenCode harness), `memory/` (three-layer), `persistence/` (hybrid SQLite+file, ADR-0023), `multi_agent/` (star-topology), `scope/` (scope declaration/validation/compile/bill, ADR-0042), `plugins/` (11-slot component registry + capability bundles, ADR-0047 — bundled tool/hook/section/supply sets are `Capability` packages enabled per agent via the `capabilities:` declaration map), `pipeline/`, `hook/`+`interceptor/`+`control/` (three-layer runtime), `tools/`, `approval/`, `sandbox/`, `media/`, `commands/`. See `src/modex_agent/AGENTS.md` for the exhaustive module table (27 modules).
 
 `examples/bot_project/` is the primary end-to-end reference (Pool mode, WebUI React frontend, QQ + Telegram adapters). Framework-generic behavior in `src/modex_agent/`; business wiring in `examples/`.
 
@@ -80,6 +80,10 @@ Detailed rules in `rules/type-safety.md` and `rules/architecture.md`. Read befor
 2. **No backward-compatibility shims for code just written.** If the old path is wrong, remove it; if it's right, converge to it. Do not add deprecation aliases, "fall back to old behavior if X is None" guards, or parallel implementations for code you just wrote. Convergence may require touching more files than a minimal patch — that is the cost of correctness in a high-complexity codebase.
 
    Example: adding `parent_modex_session_id` to `ExternalSessionMapStore` when `SessionInfo.parent_session_id` already stores the same relationship in `SessionStore` is a redundant parallel path. The correct fix is to remove the redundant field, not to keep both "for compatibility".
+
+3. **One lifecycle, one convergence mechanism.** Session-tree quiesce (`SessionTreeManager.wait_quiesce`) is the single turn-completion contract — bot graph nodes AND eval harbor entries alike. Never hand-roll a parallel completion tracker: a single-signal `asyncio.Event` waiter is structurally fragile (one missed emission hangs the process until an external kill — observed in tb21-all-v6, where cleanly completed turns hung 17–22 minutes to the wall clock with artifacts unwritten). Ad-hoc timeouts and retry loops at call sites are equally forbidden: transient-failure handling belongs to the owning layer (provider retry, linkage retry, dispatch watchdog). If a wait can hang, fix the signal source — never fence the symptom locally.
+
+4. **Don't introduce mechanisms casually; reuse the unified one.** Before adding any timeout, retry, watchdog, or fallback, find the owning layer's existing handling for that failure class and extend it there. A local `wait_for`/`sleep`/`while True` wrapper around someone else's hang is a patch, not a fix — it hides the signal-source defect and diverges behavior across callers.
 
 ## Testing Rules
 

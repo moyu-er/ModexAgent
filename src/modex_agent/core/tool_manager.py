@@ -13,11 +13,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
-from modex_agent.core.message import ContentFormat, ContentPart, ImageUrlPart, TextPart
+from modex_agent.core.message import ContentFormat, ContentPart, TextPart
 from modex_agent.core.tool import DynamicSchemaProvider
+from modex_agent.media.store import MediaStore
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class ToolExecutionContext(BaseModel):
     workspace_root: Path | None = None
     tool_call_id: str | None = None
     session_id: str | None = None
+    media_store: MediaStore | None = None
 
     def supports(self, modality: Modality) -> bool:
         """Conservative modality check for tools running in this context.
@@ -216,8 +218,8 @@ class ToolResult(BaseModel):
 
     Content is the source of truth: ``content: list[ContentPart]`` holds
     TextPart / ImageUrlPart produced by the tool. ``message_content()``
-    renders the LLM-facing text (joined TextParts); ``image_blocks`` and
-    ``content_blocks`` expose image parts for multimodal consumers.
+    renders the LLM-facing text (joined TextParts); multimodal consumers
+    read the parts from ``content`` directly.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
@@ -230,42 +232,6 @@ class ToolResult(BaseModel):
     content_format: ContentFormat | None = None
     truncatable_paths: list[str] | None = None
     content: list[ContentPart] = Field(default_factory=list)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _strip_computed_fields(cls, data: Any) -> Any:
-        if isinstance(data, dict):
-            data.pop("image_blocks", None)
-            data.pop("content_blocks", None)
-        return data
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def image_blocks(self) -> list[ImageUrlPart]:
-        """ImageUrl parts extracted from ``content``, for multimodal consumers."""
-        return [part for part in self.content if isinstance(part, ImageUrlPart)]
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def content_blocks(self) -> list[dict[str, Any]] | None:
-        """OpenAI wire-format dicts for image parts in ``content``.
-
-        Computed from :attr:`image_blocks` for back-compat with consumers
-        that expect ``[{"type": "image_url", "image_url": {"url": ...}}]``.
-        ``None`` when there are no image parts.
-        """
-        if not self.image_blocks:
-            return None
-        blocks: list[dict[str, Any]] = []
-        for part in self.image_blocks:
-            block: dict[str, Any] = {
-                "type": "image_url",
-                "image_url": {"url": part.image_url.url},
-            }
-            if part.image_url.detail is not None:
-                block["image_url"]["detail"] = part.image_url.detail
-            blocks.append(block)
-        return blocks
 
     @classmethod
     def from_text(cls, tool_name: str, text: str, **kwargs: Any) -> ToolResult:

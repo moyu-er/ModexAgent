@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Final
 from modex_agent.core import AgentCommKind
 from modex_agent.core.constants import StopReason
 from modex_agent.core.types import OutputMessageType
-from modex_agent.hook.abc import FinallyGraphHook
+from modex_agent.hook.abc import OutcomeFinallyHook
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -48,19 +48,18 @@ class AgentNotificationService:
             logger.exception("send_notice failed: session=%s", session_id)
 
 
-class TurnOutcomeNotifyHook(FinallyGraphHook):
+class TurnOutcomeNotifyHook(OutcomeFinallyHook):
     """Notifies the user on the two silent abnormal-end cases for main agents:
     a real exception, or hitting the iteration cap.
 
-    Scope is intentionally narrow — many other abnormal ends ALREADY notify the
-    user through their own path, so this hook must NOT duplicate them:
+    Scope is intentionally narrow — many other abnormal ends ALREADY notify
+    the user through their own path, so this hook must NOT duplicate them:
 
     - Pause / cancel (CANCELLED, TURN_CANCELLED): the control channel already
       acks the user and ``emit_complete`` fires.
     - Approval suspension (GraphInterrupt): ``turn_runner`` already renders the
-      approval prompt. GraphInterrupt is re-raised out of ``ReActAgent.run``,
-      so FINALLY_GRAPH sees the *initial* result ``stop_reason=ERROR`` with
-      ``error=None``; requiring ``result.error`` to be truthy excludes it.
+      approval prompt. The suspend leg (``result=None``) never reaches
+      ``on_outcome`` — skipped by ``OutcomeFinallyHook``.
     - Normal completion.
 
     Only fires for NORMAL main agents; subagent outcomes go through
@@ -80,8 +79,8 @@ class TurnOutcomeNotifyHook(FinallyGraphHook):
     def __init__(self, notification_service: AgentNotificationService | None = None) -> None:
         self._svc = notification_service
 
-    async def finally_graph(self, ctx: AgentContext, result: AgentResult | None) -> None:
-        if self._svc is None or result is None:
+    async def on_outcome(self, ctx: AgentContext, result: AgentResult) -> None:
+        if self._svc is None:
             return
         if ctx.comm_kind == AgentCommKind.SUBAGENT:
             return
@@ -90,11 +89,11 @@ class TurnOutcomeNotifyHook(FinallyGraphHook):
             text = self._MAX_ITERATIONS_NOTICE
         elif reason == StopReason.ERROR and result.error:
             # A real error (exception / LLM error). The ``result.error`` check
-            # excludes the GraphInterrupt false-positive (initial result has
-            # stop_reason=ERROR but error=None).
+            # excludes the pre-turn default ``AgentResult(stop_reason=ERROR)``
+            # with ``error=None`` (e.g. legacy crash paths).
             text = self._ERROR_NOTICE
         else:
-            # COMPLETED / CANCELLED / TURN_CANCELLED / TIMEOUT / approval
-            # suspension — all either normal or already user-notified.
+            # COMPLETED / CANCELLED / TURN_CANCELLED / TIMEOUT — all either
+            # normal or already user-notified.
             return
         await self._svc.send_notice(str(ctx.session), text)

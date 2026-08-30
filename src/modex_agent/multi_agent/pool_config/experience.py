@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class ExperienceConfig(BaseModel):
-    """Experience review / curator configuration."""
+    """Experience review / curator configuration.
+
+    Doubles as the ``experience`` capability's config face (validated at
+    compile time from the ``capabilities: {experience: {...}}`` override).
+    ``enabled`` is the BIZ pool-deps field (the derived-enablement signal
+    threaded to ``build_pool_data``); as a capability knob it is inert —
+    enablement is the capability's PRESENCE in the compile product, never
+    a config value.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     enabled: bool = False
     min_messages: int = 10  # minimum messages before review can trigger

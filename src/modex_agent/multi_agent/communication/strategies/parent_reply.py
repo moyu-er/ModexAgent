@@ -9,7 +9,7 @@ from modex_agent.messaging.broker import AddressKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.strategies.base import SendRequest, SendStrategy
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
-from modex_agent.multi_agent.message_format import build_dispatch_message
+from modex_agent.multi_agent.message_format import build_parent_reply_message
 from modex_agent.multi_agent.message_type import AgentMessageType
 
 
@@ -21,10 +21,10 @@ class ParentReplyStrategy(SendStrategy):
     uses ``AGENT_MESSAGE`` type. Orchestration is inherited from
     :meth:`SendStrategy.execute`.
 
-    Note: in-pool NORMAL→NORMAL sends are routed here as a fallback
-    because each pool has exactly one main agent, so this path is
-    effectively unreachable for NORMAL senders in v1 (ADR-0019 §
-    "Strategy #4 deferred").
+    Note: a NORMAL target without ``tree_ref`` is structurally the
+    subagent's parent under the declaration tree — every pool has exactly
+    one root (V3), so same-pool NORMAL→NORMAL does not exist; cross-pool
+    peers always carry ``tree_ref`` and route to PeerNormalStrategy.
     """
 
     def normalize_invocation_id(self, req: SendRequest) -> str | None:
@@ -59,7 +59,7 @@ class ParentReplyStrategy(SendStrategy):
         if req.context.comm_kind == AgentCommKind.SUBAGENT:
             envelope_invocation_id = parent_sid.session_id_prefix
 
-        content = build_dispatch_message(
+        content = build_parent_reply_message(
             source=effective_source.name,
             invocation_id=envelope_invocation_id,
             content=req.content,

@@ -126,13 +126,10 @@ class GlobTool(Tool):
             "required": ["pattern"],
         }
 
-    async def execute(
-        self,
-        pattern: str,
-        path: str = ".",
-        limit: int = _DEFAULT_LIMIT,
-        **kwargs: Any,
-    ) -> str:
+    async def execute(self, **kwargs: Any) -> str:
+        pattern = kwargs["pattern"]
+        path = kwargs.get("path", ".")
+        limit = kwargs.get("limit", _DEFAULT_LIMIT)
         if isinstance(limit, str):
             limit = int(limit)
 

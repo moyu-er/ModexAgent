@@ -69,8 +69,6 @@ async def test_agent_envelope_metadata_reaches_system_reminder_history() -> None
         input_msg,
         input_msg.metadata,
         input_msg.content,
-        [],
-        None,
         InMemoryContextManager(),
         None,
         False,

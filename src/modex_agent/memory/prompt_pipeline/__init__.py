@@ -1,7 +1,6 @@
 """System prompt pipeline — versioned, per-section refreshable prompt assembly."""
 
 from modex_agent.memory.prompt_pipeline.providers import (
-    AgentCommunicationSystemPromptProvider,
     ArchiveProvider,
     BasePromptProvider,
     CoreMemoryProvider,
@@ -16,7 +15,6 @@ from modex_agent.memory.prompt_pipeline.providers import (
 )
 
 __all__ = [
-    "AgentCommunicationSystemPromptProvider",
     "ArchiveProvider",
     "BasePromptProvider",
     "ExperienceProvider",

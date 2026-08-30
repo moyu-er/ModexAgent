@@ -1,0 +1,19 @@
+## Experiences
+
+Saved problem-solving patterns from past sessions.  Use the **experience** tool (action=read/write/edit/list/rename) to manage them.
+
+<available_experiences>
+  <experience name="alpha-deployment" directory="<ROOT>\experiences\pool\main\alpha-deployment" tags="deployment,docker" scenario="When rolling out the compose stack on a fresh host">
+    <description><![CDATA[
+Deploying with "docker compose" — mind the & <env> escaping
+]]></description>
+  </experience>
+  <experience name="beta-empty-optional-fields" directory="<ROOT>\experiences\pool\main\beta-empty-optional-fields" scenario="None">
+    <description>None</description>
+  </experience>
+  <experience name="gamma-unicode-quotes" directory="<ROOT>\experiences\pool\main\gamma-unicode-quotes" tags="terminal,pexpect,win32" scenario="交互式终端程序卡住等待输入时">
+    <description><![CDATA[
+终端交互需要 pexpect — em-dash & “smart quotes”
+]]></description>
+  </experience>
+</available_experiences>

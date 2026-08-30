@@ -30,7 +30,9 @@ async def test_ws_send_message_with_ws_payload_sets_workspace() -> None:
         )
         server.set_workspace_index(store)
         from tests.webui._pipeline_fixture import attach_default_pipeline
-        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+        await attach_default_pipeline(
+            server, store, input_adapter, workspace_root=workspace_root
+        )
 
         # Wrap pipeline to capture the result for assertion
         captured_results: list = []
@@ -86,7 +88,9 @@ async def test_ws_send_message_without_ws_payload_falls_back_to_home() -> None:
         )
         server.set_workspace_index(store)
         from tests.webui._pipeline_fixture import attach_default_pipeline
-        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+        await attach_default_pipeline(
+            server, store, input_adapter, workspace_root=workspace_root
+        )
 
         # Wrap pipeline to capture the result for assertion
         captured_results: list = []
@@ -144,7 +148,9 @@ async def test_ws_send_message_with_relative_ws_payload_resolves() -> None:
         )
         server.set_workspace_index(store)
         from tests.webui._pipeline_fixture import attach_default_pipeline
-        attach_default_pipeline(server, store, input_adapter, workspace_root=home)
+        await attach_default_pipeline(
+            server, store, input_adapter, workspace_root=home
+        )
 
         # Wrap pipeline to capture the result for assertion
         captured_results: list = []
@@ -195,7 +201,7 @@ async def test_ws_send_message_attachment_only_empty_content_not_dropped() -> No
     """
     from modex_agent.workspace.paths import WorkspacePaths
 
-    _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 40
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 40
     with tempfile.TemporaryDirectory() as tmp:
         workspace_root = Path(tmp)
         input_adapter = WebSocketInputAdapter()
@@ -206,7 +212,9 @@ async def test_ws_send_message_attachment_only_empty_content_not_dropped() -> No
         )
         server.set_workspace_index(store)
         from tests.webui._pipeline_fixture import attach_default_pipeline
-        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+        await attach_default_pipeline(
+            server, store, input_adapter, workspace_root=workspace_root
+        )
 
         captured: list = []
         original_handle = server._input_pipeline.handle
@@ -223,7 +231,7 @@ async def test_ws_send_message_attachment_only_empty_content_not_dropped() -> No
         staging = workspace_root / ".modex" / "media" / "main" / "_tmp"
         staging.mkdir(parents=True, exist_ok=True)
         staged = staging / "abc123"
-        staged.write_bytes(_PNG)
+        staged.write_bytes(png)
 
         client = TestClient(TestServer(server.app))
         await client.start_server()

@@ -11,10 +11,10 @@ from modex_agent.ioc.factories.memory import create_memory, _build_memory_layer_
 
 def _make_provider():
     """Create a mock LLMProvider with get_default_model()."""
-    from modex_agent.core.provider import LLMProvider
+    from modex_agent.core.provider import CallbackStreamProvider
 
-    class MockProvider(LLMProvider):
-        async def chat(self, messages, **kwargs):
+    class MockProvider(CallbackStreamProvider):
+        async def chat_stream(self, messages, *, on_content_delta=None, on_reasoning_delta=None, **kwargs):
             from modex_agent.core.types import LLMResponse
             return LLMResponse(content="ok")
 

@@ -282,6 +282,45 @@ export async function pickWorkspace(): Promise<PickWorkspaceResult> {
   return resp.json() as Promise<PickWorkspaceResult>;
 }
 
+export interface CreateWorkspaceResult {
+  success: boolean;
+  name: string;
+  path: string;
+  cwd?: string;
+  notice?: string;
+}
+
+/**
+ * Create a workspace at runtime (ticket 17): the backend writes the
+ * per-workspace declaration, boots its pools, and returns the new
+ * workspace's path. Throws Error(body.error) when the creation is
+ * rejected (invalid name, name taken, boot failure).
+ */
+export async function createWorkspace(
+  name: string,
+  backend: string | null,
+): Promise<string> {
+  const resp = await fetch(`${API_BASE}/workspace/create`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, backend }),
+  });
+  if (!resp.ok) {
+    let message = `workspace create failed (${resp.status})`;
+    try {
+      const body = (await resp.json()) as { error?: string };
+      if (body && typeof body.error === "string" && body.error) {
+        message = body.error;
+      }
+    } catch {
+      // Non-JSON error body — keep the generic message.
+    }
+    throw new Error(message);
+  }
+  const result = (await resp.json()) as CreateWorkspaceResult;
+  return result.path;
+}
+
 // ── Attachments (ADR-0013) ──────────────────────────────────────────────────
 
 /** Fetch the active MediaConfig limits for composer pre-validation. */

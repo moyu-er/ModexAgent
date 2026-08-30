@@ -8,6 +8,7 @@ from modex_agent.tools.terminal.managers import (
     BaseTerminalManager,
     TerminalManagerBase,
     create_terminal_manager,
+    create_terminal_manager_or_none,
 )
 from modex_agent.tools.terminal.process_registry import ProcessRegistry
 from modex_agent.tools.terminal.process_tool import ProcessTool
@@ -21,6 +22,7 @@ from modex_agent.tools.terminal.subprocess_tool import (
     create_subprocess_executor,
 )
 from modex_agent.tools.terminal.tool import TerminalAction, TerminalTool
+from modex_agent.tools.terminal.watchdog import TerminalWatchdog
 
 __all__ = [
     "BaseTerminalManager",
@@ -38,6 +40,8 @@ __all__ = [
     "TerminalManagerBase",
     "TerminalSession",
     "TerminalTool",
+    "TerminalWatchdog",
     "create_subprocess_executor",
     "create_terminal_manager",
+    "create_terminal_manager_or_none",
 ]

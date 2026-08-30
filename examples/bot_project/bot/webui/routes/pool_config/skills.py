@@ -27,7 +27,7 @@ from bot.webui.routes.pool_config import (
 )
 from bot.webui.types import (
     _skill_relpath,
-    _SkillUploadFallback,
+    _SkillUploadFallbackError,
 )
 
 if TYPE_CHECKING:
@@ -77,7 +77,7 @@ async def upload_skill_multipart(request: web.Request, server: WebUIServer) -> w
         reader = await request.multipart()
     except Exception as exc:  # noqa: BLE001 - not multipart / parser error
         logger.debug("skill upload: multipart unavailable (%s) -- falling back", exc)
-        raise _SkillUploadFallback() from exc
+        raise _SkillUploadFallbackError() from exc
     async for part in reader:
         if part.name == "name":
             try:
@@ -108,7 +108,7 @@ async def upload_skill_multipart(request: web.Request, server: WebUIServer) -> w
             {"error": "validation", "fields": {"name": ["required"]}}, status=400
         )
     if not items:
-        raise _SkillUploadFallback()
+        raise _SkillUploadFallbackError()
     result = _materialize_skill_files(items)
     if isinstance(result, web.Response):
         return result

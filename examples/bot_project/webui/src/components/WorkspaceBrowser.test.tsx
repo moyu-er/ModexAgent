@@ -6,6 +6,7 @@ import * as api from "../lib/api";
 vi.mock("../lib/api", () => ({
   pickWorkspace: vi.fn(),
   changeWorkspace: vi.fn(),
+  createWorkspace: vi.fn(),
   ApiError: class ApiError extends Error {
     readonly status: number;
     readonly statusText: string;
@@ -22,6 +23,7 @@ vi.mock("../lib/api", () => ({
 
 const mockedPickWorkspace = vi.mocked(api.pickWorkspace);
 const mockedChangeWorkspace = vi.mocked(api.changeWorkspace);
+const mockedCreateWorkspace = vi.mocked(api.createWorkspace);
 
 const noop = (): void => {};
 
@@ -177,6 +179,71 @@ describe("WorkspaceBrowser", () => {
     it("does not render recent section when list is empty", () => {
       const { body } = renderBrowser({ recentWorkspaces: [] });
       expect(body.textContent).not.toContain("Recent");
+    });
+  });
+
+  describe("create workspace", () => {
+    it("creates with the trimmed name and switches to the returned path", async () => {
+      mockedCreateWorkspace.mockResolvedValue("/proj/subworkspace/alpha");
+      const onChanged = vi.fn();
+      const onClose = vi.fn();
+      const { getByLabelText, getByText } = renderBrowser({ onChanged, onClose });
+
+      fireEvent.change(getByLabelText("workspace-name"), {
+        target: { value: "  alpha  " },
+      });
+      fireEvent.click(getByText("Create"));
+
+      await waitFor(() => {
+        expect(mockedCreateWorkspace).toHaveBeenCalledWith("alpha", null);
+        expect(onChanged).toHaveBeenCalledWith("/proj/subworkspace/alpha");
+        expect(onClose).toHaveBeenCalled();
+      });
+    });
+
+    it("passes the selected backend through", async () => {
+      mockedCreateWorkspace.mockResolvedValue("/proj/subworkspace/beta");
+      const { getByLabelText, getByText } = renderBrowser();
+
+      fireEvent.change(getByLabelText("workspace-name"), {
+        target: { value: "beta" },
+      });
+      fireEvent.change(getByLabelText("Storage"), { target: { value: "sqlite" } });
+      fireEvent.click(getByText("Create"));
+
+      await waitFor(() => {
+        expect(mockedCreateWorkspace).toHaveBeenCalledWith("beta", "sqlite");
+      });
+    });
+
+    it("surfaces the backend error and stays open", async () => {
+      mockedCreateWorkspace.mockRejectedValue(
+        new Error("a workspace named 'alpha' already exists"),
+      );
+      const onChanged = vi.fn();
+      const onClose = vi.fn();
+      const { getByLabelText, getByText, body } = renderBrowser({
+        onChanged,
+        onClose,
+      });
+
+      fireEvent.change(getByLabelText("workspace-name"), {
+        target: { value: "alpha" },
+      });
+      fireEvent.click(getByText("Create"));
+
+      await waitFor(() => {
+        expect(body.textContent).toContain("already exists");
+      });
+      expect(onChanged).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it("Create button is disabled for an empty name", () => {
+      const { getByText } = renderBrowser();
+      const button = getByText("Create").closest("button");
+      expect(button).not.toBeNull();
+      expect(button?.hasAttribute("disabled")).toBe(true);
     });
   });
 

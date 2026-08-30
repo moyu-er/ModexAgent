@@ -302,11 +302,25 @@ def test_max_turns_applies_for_normal_node_execution() -> None:
     assert configurator.applies(desc) is True
 
 
-def test_max_turns_does_not_apply_for_subagent() -> None:
-    # Given
+def test_max_turns_applies_for_subagent_node_execution() -> None:
+    # Given — a lazy subagent leaf referenced directly as a graph node
+    # (SPEC §4 axis 3): the gate is the graph scheduling signal carried by
+    # the session binding, never the agent's comm kind.
     configurator = GraphMaxTurnsConfigurator()
     desc = make_graph_descriptor(
         agent_kind=AgentCommKind.SUBAGENT, is_node_execution=True
+    )
+
+    # When / Then
+    assert configurator.applies(desc) is True
+
+
+def test_max_turns_does_not_apply_for_subagent_dispatched_from_graph() -> None:
+    # Given — a subagent dispatched from within a graph turn: its session
+    # binding carries no node-execution signal, so it stays atomic.
+    configurator = GraphMaxTurnsConfigurator()
+    desc = make_graph_descriptor(
+        agent_kind=AgentCommKind.SUBAGENT, is_node_execution=False
     )
 
     # When / Then
@@ -361,11 +375,25 @@ def test_tool_applies_for_normal_node_execution() -> None:
     assert configurator.applies(desc) is True
 
 
-def test_tool_does_not_apply_for_subagent() -> None:
-    # Given
+def test_tool_applies_for_subagent_node_execution() -> None:
+    # Given — a lazy subagent leaf referenced directly as a graph node
+    # (SPEC §4 axis 3): the gate is the graph scheduling signal carried by
+    # the session binding, never the agent's comm kind.
     configurator = GraphToolConfigurator()
     desc = make_graph_descriptor(
         agent_kind=AgentCommKind.SUBAGENT, is_node_execution=True
+    )
+
+    # When / Then
+    assert configurator.applies(desc) is True
+
+
+def test_tool_does_not_apply_for_subagent_dispatched_from_graph() -> None:
+    # Given — a subagent dispatched from within a graph turn: its session
+    # binding carries no node-execution signal, so it stays atomic.
+    configurator = GraphToolConfigurator()
+    desc = make_graph_descriptor(
+        agent_kind=AgentCommKind.SUBAGENT, is_node_execution=False
     )
 
     # When / Then
@@ -447,11 +475,25 @@ def test_topology_applies_for_normal_node_execution() -> None:
     assert configurator.applies(desc) is True
 
 
-def test_topology_does_not_apply_for_subagent() -> None:
-    # Given
+def test_topology_applies_for_subagent_node_execution() -> None:
+    # Given — a lazy subagent leaf referenced directly as a graph node
+    # (SPEC §4 axis 3): the gate is the graph scheduling signal carried by
+    # the session binding, never the agent's comm kind.
     configurator = GraphTopologyConfigurator()
     desc = make_graph_descriptor(
         agent_kind=AgentCommKind.SUBAGENT, is_node_execution=True
+    )
+
+    # When / Then
+    assert configurator.applies(desc) is True
+
+
+def test_topology_does_not_apply_for_subagent_dispatched_from_graph() -> None:
+    # Given — a subagent dispatched from within a graph turn: its session
+    # binding carries no node-execution signal, so it stays atomic.
+    configurator = GraphTopologyConfigurator()
+    desc = make_graph_descriptor(
+        agent_kind=AgentCommKind.SUBAGENT, is_node_execution=False
     )
 
     # When / Then
@@ -536,11 +578,25 @@ def test_knowledge_applies_for_normal_node_execution() -> None:
     assert configurator.applies(desc) is True
 
 
-def test_knowledge_does_not_apply_for_subagent() -> None:
-    # Given
+def test_knowledge_applies_for_subagent_node_execution() -> None:
+    # Given — a lazy subagent leaf referenced directly as a graph node
+    # (SPEC §4 axis 3): the gate is the graph scheduling signal carried by
+    # the session binding, never the agent's comm kind.
     configurator = GraphKnowledgeConfigurator()
     desc = make_graph_descriptor(
         agent_kind=AgentCommKind.SUBAGENT, is_node_execution=True
+    )
+
+    # When / Then
+    assert configurator.applies(desc) is True
+
+
+def test_knowledge_does_not_apply_for_subagent_dispatched_from_graph() -> None:
+    # Given — a subagent dispatched from within a graph turn: its session
+    # binding carries no node-execution signal, so it stays atomic.
+    configurator = GraphKnowledgeConfigurator()
+    desc = make_graph_descriptor(
+        agent_kind=AgentCommKind.SUBAGENT, is_node_execution=False
     )
 
     # When / Then

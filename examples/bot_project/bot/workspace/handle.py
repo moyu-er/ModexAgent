@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.pool_router import PoolRouter, PoolRoutingStore
     from modex_agent.orchestration import GraphOrchestrator
     from modex_agent.persistence.managers import WorkspacePersistenceManager
+    from modex_agent.plugins.registry import ComponentRegistry
     from modex_graph import GraphOutput, GraphOutputAdapter
 
 
@@ -129,6 +130,7 @@ class PoolWorkspaceResources(WorkspaceResources):
     transcript_store: WorkspaceScopedTranscriptStore | None = None
     workspace_transcript_store: TranscriptStore | None = None
     kb_provider: KbProvider | None = None
+    component_registry: ComponentRegistry | None = None
     graph_orchestrator: GraphOrchestrator | None = None
     graph_output_adapter: GraphOutputAdapter | None = None
     graph_event_store: dict[int, list[GraphOutput]] | None = None

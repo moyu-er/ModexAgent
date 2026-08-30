@@ -1,11 +1,11 @@
-import { useState, useCallback, useRef, type FC } from "react";
+import { useState, useCallback, useRef, type FC, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, FolderPlus } from "lucide-react";
 import { XIcon } from "./ui/icons";
 import { Button } from "./ui/Button";
 import { IconButton } from "./ui/IconButton";
 import { useT } from "../i18n";
-import { pickWorkspace, changeWorkspace, ApiError } from "../lib/api";
+import { pickWorkspace, changeWorkspace, createWorkspace, ApiError } from "../lib/api";
 
 export interface RecentWorkspace {
   path: string;
@@ -19,6 +19,8 @@ export interface WorkspaceBrowserProps {
   recentWorkspaces?: RecentWorkspace[];
 }
 
+const BACKEND_OPTIONS = ["", "sqlite", "file"] as const;
+
 export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
   open,
   onClose,
@@ -29,6 +31,9 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
   const t = useT();
   const [picking, setPicking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [newName, setNewName] = useState("");
+  const [newBackend, setNewBackend] = useState<string>("");
+  const [creating, setCreating] = useState(false);
   const cancelledRef = useRef(false);
 
   const handleClose = useCallback((): void => {
@@ -82,6 +87,24 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
     [applySwitchResult, t],
   );
 
+  const handleCreate = useCallback(async (): Promise<void> => {
+    const name = newName.trim();
+    if (!name || creating) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const path = await createWorkspace(name, newBackend || null);
+      // Creation already assembled the workspace server-side; switching is
+      // the same routing-pointer move a picked folder makes.
+      onChanged(path);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t("workspace.networkError"));
+    } finally {
+      setCreating(false);
+    }
+  }, [newName, newBackend, creating, onChanged, onClose, t]);
+
   if (!open) return null;
 
   // Render via a portal at document.body so the modal escapes the Sidebar,
@@ -128,6 +151,50 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
               {t("workspace.openFolderHint")}
             </span>
           </button>
+
+          <div className="flex flex-col gap-1.5">
+            <p className="text-xs font-semibold uppercase tracking-wide text-mute">
+              {t("workspace.createWorkspace")}
+            </p>
+            <div className="flex items-center gap-2">
+              <FolderPlus size={16} className="shrink-0 text-brand" aria-hidden="true" />
+              <input
+                type="text"
+                value={newName}
+                placeholder={t("workspace.namePlaceholder")}
+                aria-label={t("workspace.namePlaceholder")}
+                onChange={(e): void => setNewName(e.target.value)}
+                onKeyDown={(e): void => {
+                  if (e.key === "Enter") void handleCreate();
+                }}
+                className="min-w-0 flex-1 rounded-sm border border-hairline bg-canvas px-2 py-1.5 font-mono text-xs text-ink placeholder:text-faint focus:border-brand focus:outline-none"
+              />
+              <select
+                value={newBackend}
+                aria-label={t("workspace.backendLabel")}
+                onChange={(e): void => setNewBackend(e.target.value)}
+                className="shrink-0 rounded-sm border border-hairline bg-canvas px-1.5 py-1.5 text-xs text-body focus:border-brand focus:outline-none"
+              >
+                {BACKEND_OPTIONS.map((option): ReactNode => (
+                  <option key={option} value={option}>
+                    {option === "" ? t("workspace.backendInherit") : option}
+                  </option>
+                ))}
+              </select>
+              <Button
+                type="button"
+                onClick={(): Promise<void> => handleCreate()}
+                disabled={!newName.trim() || creating || picking}
+                variant="secondary"
+                size="sm"
+              >
+                {creating ? t("workspace.creating") : t("workspace.createButton")}
+              </Button>
+            </div>
+            <p className="text-xs text-mute">
+              {t("workspace.createWorkspaceHint")}
+            </p>
+          </div>
 
           {error && (
             <p className="text-xs text-error" role="alert">

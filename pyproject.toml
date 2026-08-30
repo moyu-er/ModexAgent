@@ -64,10 +64,13 @@ dev = [
   "pytest>=7.0.0",
   "pytest-asyncio>=0.21.0",
   "pytest-cov>=4.0.0",
-  "ruff>=0.1.0",
+  # Pinned exact: CI installs this unpinned-from-lockfile (fresh resolve per
+  # run), and a floating ruff made Code Quality flip red on unchanged code
+  # when a new ruff release added rules. Bump deliberately, then fix what
+  # the new version flags.
+  "ruff==0.12.0",
   "mypy>=1.0.0",
 ]
-llm = ["litellm>=1.82.6", "openai>=2.20.0,<3"]
 sandbox = ["docker>=6.0.0", "e2b-code-interpreter>=0.1.0"]
 gateway = ["qq-botpy>=1.2.0", "python-dotenv>=1.0.0", "aiohttp>=3.9.0", "questionary>=2.0.0", "python-telegram-bot>=20.0"]
 skills = [
@@ -95,7 +98,9 @@ observability = [
   "opentelemetry-sdk>=1.28",
   "opentelemetry-exporter-otlp-proto-http>=1.28",
 ]
-all = ["ModexAgent[llm,sandbox,gateway,skills,terminal,ast]"]
+# Dev-only eval toolchain extra; must never join `all` or user installers (eval-integration MAP).
+harbor = ["harbor>=0.21"]
+all = ["ModexAgent[sandbox,gateway,skills,terminal,ast]"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/modex_agent"]
@@ -114,12 +119,13 @@ asyncio_mode = "auto"
 # importlib mode derives each test module's name from its full path, so
 # same-basename files in different dirs (e.g. several test_models.py) no longer
 # collide, and test dirs without __init__.py coexist with packaged ones.
-# `-m "not integration"`: integration tests hit real external services (LLM
-# API, network) and are inherently non-deterministic; keep the default run
-# deterministic. Run them explicitly with `pytest -m integration`.
-addopts = "-v --tb=short --import-mode=importlib -m 'not integration'"
+# Integration and live tests hit real external services and are inherently
+# non-deterministic; keep the default run deterministic.
+addopts = "-v --tb=short --import-mode=importlib -m 'not integration and not live'"
 markers = [
   "integration: marks tests as integration tests (run explicitly with '-m integration'; deselected from the default run)",
+  "live: requires local Langfuse stack",
+  "memory_metrics_ci: deterministic memory metric and scoped replay regression slice",
 ]
 
 [tool.ruff]
@@ -131,8 +137,20 @@ target-version = "py312"
 # ANN produced 81% of historical noise (673/826) without catching real bugs.
 # E402 ignored: conditional/deferred imports are a deliberate pattern in
 # several modules (env-gated imports, lazy imports inside functions).
+# B027 ignored: optional no-op hooks in ABCs are a deliberate framework
+# pattern (Agent.stop, ContentEmitter.flush, PlatformAdapter.start, ...) —
+# @abstractmethod would force every subclass to override them, and
+# NotImplementedError would break the no-op default contract.
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
-ignore = ["E501", "E402"]
+ignore = ["E501", "E402", "B027"]
+
+[tool.ruff.lint.per-file-ignores]
+# Win32 API mirrors: identifiers (STD_OUTPUT_HANDLE, SMALL_RECT,
+# HWND_BROADCAST, WM_SETTINGCHANGE, ...) intentionally keep their MSDN
+# spelling for cross-referencing the Windows API docs — PEP 8 casing here
+# would hurt greppability, not help it.
+"src/modex_agent/tools/terminal/backends/visible_windows_host.py" = ["N806", "N801"]
+"src/modex_agent/runtime/bundled_bin.py" = ["N806"]
 
 [tool.mypy]
 python_version = "3.12"

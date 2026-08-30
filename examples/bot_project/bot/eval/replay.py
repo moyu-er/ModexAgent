@@ -14,8 +14,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from bot.eval.agent_harness import (
-    _WorkspaceTokenNormalizer,
-    build_tool_manager,
+    assemble_harness_agent,
+    build_trace_only_services,
     static_system_prompt,
 )
 from bot.eval.experiment_runner import EvalRunner
@@ -23,7 +23,7 @@ from bot.eval.task_output import EvalTaskOutput, ToolStats, TurnRecord, WorldRes
 from bot.eval.task_spec import EvalItemSpec
 from modex_agent.core.constants import StopReason
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import LLMProvider
+from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.tool_manager import ToolManager
 from modex_agent.core.types import LLMResponse
 from modex_agent.trace.cassette import (
@@ -82,7 +82,7 @@ class _EvalItem:
         self.input = spec.model_dump(mode="json")
 
 
-class _OfflineProvider(LLMProvider):
+class _OfflineProvider(CallbackStreamProvider):
     def __init__(self, model: str) -> None:
         super().__init__()
         self._model = model
@@ -90,7 +90,7 @@ class _OfflineProvider(LLMProvider):
     def get_default_model(self) -> str:
         return self._model
 
-    async def chat(
+    async def chat_stream(
         self,
         messages: list[ChatMessage],
         model: str | None = None,
@@ -201,13 +201,25 @@ class GoldenReplayRunner:
 
         with tempfile.TemporaryDirectory(prefix=f"modex-golden-{case.name}-") as raw_workspace:
             workspace = Path(raw_workspace)
-            tool_manager = _WorkspaceTokenNormalizer(
-                build_tool_manager(workspace, spec.toolset, spec.deny_tools),
-                workspace,
+            fingerprint_services = build_trace_only_services(
+                workspace / ".fingerprint-trace",
+                model=self._config.model,
             )
+            assembled = await assemble_harness_agent(
+                workspace=workspace,
+                data_dir=workspace / ".fingerprint-runtime",
+                provider=_OfflineProvider(self._config.model),
+                toolset=spec.toolset,
+                deny_tools=spec.deny_tools,
+                runtime_services=fingerprint_services,
+                governance_enabled=False,
+            )
+            tool_manager = assembled.tool_manager
             system_prompt = static_system_prompt(self._config.system_prompt)
             constructed = _fingerprint(self._config, system_prompt, tool_manager)
             self.check_fingerprint(case, constructed)
+            await assembled.instance.stop()
+            await assembled.memory_system.close()
 
             engine = CassetteReplayEngine(cassette_dir)
             engine.load()

@@ -1,11 +1,11 @@
-"""TDD tests for WorkspaceRegistryStore ABC + WorkspaceRecord (T14).
+"""TDD tests for ScopeRegistryStore ABC + WorkspaceRecord (T14).
 
 Tests the deepened registry store seam:
 
 - ``WorkspaceRecord`` — frozen Pydantic model carrying workspace identity +
   metadata (workspace_id, target_path, display_name, created_at, last_active,
   is_home, metadata_json).
-- ``WorkspaceRegistryStore`` — ABC with enriched methods:
+- ``ScopeRegistryStore`` — ABC with enriched methods:
   ``list_workspaces(order_by, limit)``, ``upsert_workspace(record)``,
   ``delete_workspace(target_path)``, ``get_workspace(target_path)``.
   Legacy ``load_known_targets`` / ``save_known_targets`` are retained as
@@ -26,7 +26,7 @@ from pydantic import ValidationError
 from modex_agent.workspace.record import WorkspaceRecord
 from modex_agent.workspace.registry import (
     RegistryStore,
-    WorkspaceRegistryStore,
+    ScopeRegistryStore,
 )
 from modex_agent.workspace.store import GlobalWorkspaceStore
 
@@ -186,17 +186,17 @@ class TestWorkspaceRecordModel:
 
 
 # ---------------------------------------------------------------------------
-# WorkspaceRegistryStore ABC
+# ScopeRegistryStore ABC
 # ---------------------------------------------------------------------------
 
 
-class TestWorkspaceRegistryStoreABC:
+class TestScopeRegistryStoreABC:
     def test_cannot_instantiate_abstract(self) -> None:
         with pytest.raises(TypeError):
-            WorkspaceRegistryStore()
+            ScopeRegistryStore()
 
     def test_subclass_must_implement_all_four_methods(self) -> None:
-        class Incomplete(WorkspaceRegistryStore):
+        class Incomplete(ScopeRegistryStore):
             async def list_workspaces(
                 self, order_by: str = "last_active", limit: int = 20
             ) -> list[WorkspaceRecord]:
@@ -206,10 +206,10 @@ class TestWorkspaceRegistryStoreABC:
             Incomplete()
 
     def test_registry_store_is_deprecated_alias(self) -> None:
-        assert RegistryStore is WorkspaceRegistryStore
+        assert RegistryStore is ScopeRegistryStore
 
     def test_full_implementation_instantiates(self) -> None:
-        class Complete(WorkspaceRegistryStore):
+        class Complete(ScopeRegistryStore):
             async def list_workspaces(
                 self, order_by: str = "last_active", limit: int = 20
             ) -> list[WorkspaceRecord]:
@@ -225,7 +225,7 @@ class TestWorkspaceRegistryStoreABC:
                 return None
 
         store = Complete()
-        assert isinstance(store, WorkspaceRegistryStore)
+        assert isinstance(store, ScopeRegistryStore)
 
 
 # ---------------------------------------------------------------------------

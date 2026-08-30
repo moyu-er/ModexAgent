@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .guard import CommandSeverity, GuardMatch, GuardResult
+from .guard import CommandGuard, CommandSeverity, GuardMatch, GuardResult
 
 
 @dataclass
@@ -15,7 +15,7 @@ class PathTraversalConfig:
     enabled: bool = True
 
 
-class PathTraversalGuard:
+class PathTraversalGuard(CommandGuard):
     """Detect path traversal sequences in command strings."""
 
     def __init__(self, config: PathTraversalConfig | None = None) -> None:

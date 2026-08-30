@@ -14,6 +14,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.agents.summarizer.outcomes import ConsolidationOutcome
+
 if TYPE_CHECKING:
     from modex_agent.memory.archive_models import ArchiveGenerationResult
     from modex_agent.memory.prompts import PromptRegistry
@@ -82,7 +84,7 @@ class CoreMemoryConsolidatorBase(ABC):
         *,
         max_iterations: int | None = None,
         invocation_id: str = "",
-    ) -> bool:
+    ) -> ConsolidationOutcome:
         """Read knowledge.md from archives and update core memory files.
 
         Args:
@@ -94,6 +96,6 @@ class CoreMemoryConsolidatorBase(ABC):
             invocation_id: Caller-supplied UUID for trace correlation.
 
         Returns:
-            ``True`` if the agent ran successfully, ``False`` otherwise.
+            Consolidation status and operation-local LLM usage.
         """
         ...

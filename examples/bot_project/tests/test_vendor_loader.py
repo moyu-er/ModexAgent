@@ -6,6 +6,8 @@ committed blob, and the real blob is the source of canonical bytes.
 """
 from __future__ import annotations
 
+import ssl
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -114,3 +116,43 @@ def test_download_with_bad_checksum_raises(
 
     with pytest.raises(RuntimeError, match="failed its checksum"):
         load_cl100k()
+
+
+def test_download_to_verifies_tls_against_certifi_cas(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The blob download hands urlopen a certifi-backed SSL context.
+
+    uv-managed pythons ship no system CA store, so a default context fails
+    certificate verification. Zero network: urlopen is patched out.
+    """
+    certifi = pytest.importorskip("certifi")
+
+    class _FakeResponse:
+        def read(self, size: int = -1) -> bytes:
+            return b""
+
+        def __enter__(self) -> _FakeResponse:
+            return self
+
+        def __exit__(self, *exc_info: object) -> None:
+            return None
+
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(
+        request: object, *, timeout: int, context: ssl.SSLContext
+    ) -> _FakeResponse:
+        captured["timeout"] = timeout
+        captured["context"] = context
+        return _FakeResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    vl._download_to(tmp_path / vl.BLOB_FILENAME)
+
+    assert captured["timeout"] == vl._DOWNLOAD_TIMEOUT
+    context = captured["context"]
+    assert isinstance(context, ssl.SSLContext)
+    expected = ssl.create_default_context(cafile=certifi.where())
+    assert context.get_ca_certs() == expected.get_ca_certs()

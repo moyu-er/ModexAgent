@@ -1,0 +1,25 @@
+# Ticket 12 E2E declaration: a three-level tree (root → mid → leaf), a
+# bidirectional peer link to another pool's root, and a graph referencing
+# the (never-dispatched, lazy) leaf — all in ONE config (issues/12 AC f).
+workspace:
+  name: nested-e2e
+  pools:
+    main-pool:
+      peers:
+      - peer-pool
+      agents:
+        root:
+          description: root agent of the nested tree
+          agents:
+            mid:
+              description: middle agent with the leaf as its direct child
+              agents:
+                leaf:
+                  description: leaf agent referenced by the graph
+                  toolset: read_only
+    peer-pool:
+      peers:
+      - main-pool
+      agents:
+        peerroot:
+          description: the peer pool's root agent

@@ -73,7 +73,9 @@ async def test_ws_send_message_echoes_user_message() -> None:
         )
         server.set_workspace_index(store)
         from tests.webui._pipeline_fixture import attach_default_pipeline
-        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+        await attach_default_pipeline(
+            server, store, input_adapter, workspace_root=workspace_root
+        )
         client = TestClient(TestServer(server.app))
         await client.start_server()
         try:
@@ -115,7 +117,9 @@ async def test_ws_send_message_passes_attachments_into_envelope() -> None:
         )
         server.set_workspace_index(store)
         from tests.webui._pipeline_fixture import attach_default_pipeline
-        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+        await attach_default_pipeline(
+            server, store, input_adapter, workspace_root=workspace_root
+        )
 
         # Wrap the pipeline's handle() to capture the envelope that reaches the
         # ingest stage, so the assertion is deterministic without wiring a
@@ -200,7 +204,9 @@ async def test_ws_send_message_drops_local_path_outside_staging() -> None:
         )
         server.set_workspace_index(store)
         from tests.webui._pipeline_fixture import attach_default_pipeline
-        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+        await attach_default_pipeline(
+            server, store, input_adapter, workspace_root=workspace_root
+        )
 
         # An in-staging file is the legitimate upload path; an outside-staging
         # file simulates the attacker's traversal target. Both exist on disk so
@@ -285,7 +291,9 @@ async def test_ws_send_message_echo_carries_resolved_attachments() -> None:
         )
         server.set_workspace_index(store)
         from tests.webui._pipeline_fixture import attach_default_pipeline
-        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+        await attach_default_pipeline(
+            server, store, input_adapter, workspace_root=workspace_root
+        )
 
         # The fixture wires no MediaStore, so the ingest stage no-ops and
         # resolved_attachments stays empty. Simulate a successful ingest by
@@ -356,7 +364,9 @@ async def test_ws_pause_sends_cancel_turn() -> None:
         )
         server.set_workspace_index(store)
         from tests.webui._pipeline_fixture import attach_default_pipeline
-        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+        await attach_default_pipeline(
+            server, store, input_adapter, workspace_root=workspace_root
+        )
         client = TestClient(TestServer(server.app))
         await client.start_server()
         try:
@@ -399,7 +409,9 @@ async def test_ws_pause_reports_error_when_not_handled() -> None:
         )
         server.set_workspace_index(store)
         from tests.webui._pipeline_fixture import attach_default_pipeline
-        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+        await attach_default_pipeline(
+            server, store, input_adapter, workspace_root=workspace_root
+        )
         client = TestClient(TestServer(server.app))
         await client.start_server()
         try:
@@ -665,7 +677,7 @@ async def test_ws_send_message_uses_stored_pool() -> None:
     pool_store = MagicMock()
     pool_store.get = lambda key, default=None: "coding"
     pool_store.set = MagicMock()
-    attach_default_pipeline(
+    await attach_default_pipeline(
         server, store, input_adapter, pool_session_store=pool_store, workspace_root=data_dir
     )
 
@@ -756,7 +768,7 @@ async def test_pool_mapping_persistence_across_restart() -> None:
     )
     server1.set_session_store(session_store1)
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(
+    await attach_default_pipeline(
         server1,
         store,
         input_adapter,
@@ -860,7 +872,7 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
     server.set_session_store(session_store)
 
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(
+    await attach_default_pipeline(
         server,
         store,
         input_adapter,

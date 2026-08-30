@@ -10,7 +10,7 @@ The facade is the single entry point for ``POST /api/control/send`` and
    (set at boot, not re-read from disk per request).
 5. For ``send``: resolves target from ``CommunicationTargetStore`` (with
    main-agent fallback), checks invocation existence via SessionRegistry,
-   dispatches via ``AgentCommunicationService._send()``.
+   dispatches via the pool communication service's ``_send()``.
 6. For ``history``: authorizes the target (caller may only read own
    sessions or registered subagents'), then resolves ``MessageStore``
    (native) or ``TranscriptStore`` (external) based on execution_strategy.
@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from bot.control.history import project_history_messages, project_transcript_history
@@ -45,14 +46,13 @@ from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.memory.core.split_stores import MessageStore
 from modex_agent.multi_agent.communication.result import AgentSendResult
-from modex_agent.multi_agent.communication.service import AgentCommunicationService
 from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.tools import CommunicationTarget
 
 logger = logging.getLogger(__name__)
 
 #: Resolve a workspace root to its ``PoolWorkspaceResources`` bundle.
-#: In production this is ``WorkspaceRegistry.get_or_open`` + ``materialize``.
+#: In production this is ``ScopeRegistry.get_or_open`` + ``materialize``.
 WorkspaceResolver = Callable[[Path], Awaitable[PoolWorkspaceResources]]
 
 #: Resolve a ``BotRecordScope`` + ``PoolWorkspaceResources`` to the
@@ -73,12 +73,11 @@ TranscriptStoreProvider = Callable[
 ]
 
 #: Resolve ``PoolWorkspaceResources`` + pool_name to the pool's
-#: :class:`AgentCommunicationService`. The production provider reads
-#: ``resources.pools[pool_name].communication_service``; tests return a
-#: mock service directly.
-CommunicationServiceProvider = Callable[
-    [PoolWorkspaceResources, str], Awaitable[AgentCommunicationService]
-]
+#: communication service router. The production provider reads
+#: ``resources.pools[pool_name].communication_service`` (the framework
+#: capability-supply face, opaque at this layer); tests return a mock
+#: service directly.
+CommunicationServiceProvider = Callable[[PoolWorkspaceResources, str], Awaitable[Any]]
 
 
 class ControlFacadeError(Exception):
@@ -98,7 +97,7 @@ class BotControlFacade:
     """Application orchestrator for the control API.
 
     Dependencies are injected as callbacks so the facade is testable in
-    isolation (Seam 1) without constructing a full ``WorkspaceRegistry`` +
+    isolation (Seam 1) without constructing a full ``ScopeRegistry`` +
     memory system.
     """
 
@@ -168,7 +167,7 @@ class BotControlFacade:
         self._validate_history_target(caller, pool_instance)
 
         target_agent = self._resolve_target_agent(caller)
-        if target_agent == pool_instance.main_agent_name:
+        if target_agent == pool_instance.root_agent_name:
             execution_strategy = pool_instance.main_execution_strategy
         else:
             target = pool_instance.target_store.get(target_agent)
@@ -243,8 +242,8 @@ class BotControlFacade:
 
         Resolves workspace, validates the caller's pool, rejects self-send,
         resolves the target from the live ``CommunicationTargetStore``,
-        constructs a minimal :class:`AgentContext`, and calls
-        :meth:`AgentCommunicationService._send`.
+        constructs a minimal :class:`AgentContext`, and calls the pool
+        communication service's ``_send``.
         """
         caller = request.caller
 
@@ -289,9 +288,9 @@ class BotControlFacade:
         # 5. Resolve target from the live CommunicationTargetStore.
         target = pool_instance.target_store.get(request.target_agent)
         if target is None:
-            if request.target_agent == pool_instance.main_agent_name:
+            if request.target_agent == pool_instance.root_agent_name:
                 target = CommunicationTarget(
-                    name=pool_instance.main_agent_name,
+                    name=pool_instance.root_agent_name,
                     kind=AgentCommKind.NORMAL,
                     pool_name=caller.pool,
                     execution_strategy=pool_instance.main_execution_strategy,
@@ -367,7 +366,7 @@ class BotControlFacade:
             graph_instance_id=request.graph_instance_id,
         )
 
-        # 8. Call AgentCommunicationService._send().
+        # 8. Call the pool communication service's `_send()`.
         if self._communication_service_provider is None:
             raise ControlFacadeError(
                 503,

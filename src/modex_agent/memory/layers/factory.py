@@ -12,6 +12,7 @@ from modex_agent.core.scope import (
 )
 from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.memory.core.split_stores import MemoryStoreBundle
+from modex_agent.memory.hooks import MemoryHookRunner
 from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
 from modex_agent.memory.layers.config import (
     ArchiveMemoryConfig,
@@ -22,6 +23,7 @@ from modex_agent.memory.layers.config import (
 from modex_agent.memory.layers.core import ScopedCoreMemoryManager
 from modex_agent.memory.layers.session import ScopedSessionMemoryManager
 from modex_agent.memory.registry import MemoryStoreRegistry
+from modex_agent.memory.token_estimator import TokenEstimator
 
 
 class MemoryLayerFactory:
@@ -32,6 +34,8 @@ class MemoryLayerFactory:
         *,
         registry: MemoryStoreRegistry,
         config: MemoryLayerConfigSet,
+        hook_runner: MemoryHookRunner | None = None,
+        token_estimator: TokenEstimator | None = None,
     ) -> MemoryLayerSet:
         """Build a MemoryLayerSet from a MemoryLayerConfigSet."""
         session_manager = ScopedSessionMemoryManager(
@@ -43,8 +47,19 @@ class MemoryLayerFactory:
         archive_manager = MemoryLayerFactory._maybe_build(
             registry, config.archive, MemoryLayerName.ARCHIVE, ScopedArchiveMemoryManager
         )
-        core_memory_manager = MemoryLayerFactory._maybe_build(
-            registry, config.core, MemoryLayerName.CORE, ScopedCoreMemoryManager
+        core_memory_manager = (
+            ScopedCoreMemoryManager(
+                MemoryLayerFactory._storage_factory(
+                    registry,
+                    MemoryLayerName.CORE,
+                    config.core.scope,
+                ),
+                config.core,
+                hook_runner=hook_runner,
+                token_estimator=token_estimator,
+            )
+            if config.core is not None
+            else None
         )
         return MemoryLayerSet(
             session=session_manager,
@@ -72,10 +87,17 @@ class MemoryLayerFactory:
         registry: MemoryStoreRegistry,
         config: MemoryLayerConfigSet | None = None,
         llm_provider: LLMProvider | None = None,
+        hook_runner: MemoryHookRunner | None = None,
+        token_estimator: TokenEstimator | None = None,
     ) -> MemoryLayerSet:
         _ = llm_provider
         config = config or MemoryLayerConfigSet()
-        return MemoryLayerFactory.build(registry=registry, config=config)
+        return MemoryLayerFactory.build(
+            registry=registry,
+            config=config,
+            hook_runner=hook_runner,
+            token_estimator=token_estimator,
+        )
 
     @staticmethod
     def session_only(

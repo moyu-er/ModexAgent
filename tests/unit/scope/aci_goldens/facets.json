@@ -1,0 +1,785 @@
+{
+  "captured_on": "pre-aci-capability HEAD (tool_supplements face)",
+  "shapes": {
+    "baseline": {
+      "root": {
+        "roster": [
+          "read",
+          "write",
+          "ls",
+          "grep",
+          "glob",
+          "bash",
+          "task",
+          "aci_edit"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "edit",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ls",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "grep",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "glob",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "task",
+            "origin": "derived_task",
+            "replaces": null,
+            "targets": [
+              "sub"
+            ]
+          },
+          {
+            "tool": "aci_edit",
+            "origin": "supplement",
+            "replaces": "edit",
+            "targets": []
+          }
+        ],
+        "replacements": [
+          {
+            "default_tool": "edit",
+            "replacement_tool": "aci_edit",
+            "supplement": "aci"
+          }
+        ]
+      },
+      "sub": {
+        "roster": [
+          "read",
+          "write",
+          "edit",
+          "ls",
+          "grep",
+          "glob",
+          "bash",
+          "send_to_agent"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "edit",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ls",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "grep",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "glob",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "send_to_agent",
+            "origin": "derived_send_to_agent",
+            "replaces": null,
+            "targets": [
+              "root"
+            ]
+          }
+        ],
+        "replacements": []
+      }
+    },
+    "wholesale": {
+      "root": {
+        "roster": [
+          "read",
+          "write",
+          "bash",
+          "aci_edit"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "local_tools",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "local_tools",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "edit",
+            "origin": "local_tools",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "local_tools",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "aci_edit",
+            "origin": "supplement",
+            "replaces": "edit",
+            "targets": []
+          }
+        ],
+        "replacements": [
+          {
+            "default_tool": "edit",
+            "replacement_tool": "aci_edit",
+            "supplement": "aci"
+          }
+        ]
+      },
+      "sub": {
+        "roster": [
+          "read",
+          "write",
+          "edit",
+          "ls",
+          "grep",
+          "glob",
+          "bash",
+          "send_to_agent"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "edit",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ls",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "grep",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "glob",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "send_to_agent",
+            "origin": "derived_send_to_agent",
+            "replaces": null,
+            "targets": [
+              "root"
+            ]
+          }
+        ],
+        "replacements": []
+      }
+    },
+    "wholesale_noedit": {
+      "root": {
+        "roster": [
+          "read",
+          "write",
+          "aci_edit"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "local_tools",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "local_tools",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "aci_edit",
+            "origin": "supplement",
+            "replaces": null,
+            "targets": []
+          }
+        ],
+        "replacements": []
+      },
+      "sub": {
+        "roster": [
+          "read",
+          "write",
+          "edit",
+          "ls",
+          "grep",
+          "glob",
+          "bash",
+          "send_to_agent"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "edit",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ls",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "grep",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "glob",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "send_to_agent",
+            "origin": "derived_send_to_agent",
+            "replaces": null,
+            "targets": [
+              "root"
+            ]
+          }
+        ],
+        "replacements": []
+      }
+    },
+    "plus_addition": {
+      "root": {
+        "roster": [
+          "read",
+          "write",
+          "ls",
+          "grep",
+          "glob",
+          "bash",
+          "task",
+          "web_search",
+          "aci_edit"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "edit",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ls",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "grep",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "glob",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "task",
+            "origin": "derived_task",
+            "replaces": null,
+            "targets": [
+              "sub"
+            ]
+          },
+          {
+            "tool": "web_search",
+            "origin": "local_tools",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "aci_edit",
+            "origin": "supplement",
+            "replaces": "edit",
+            "targets": []
+          }
+        ],
+        "replacements": [
+          {
+            "default_tool": "edit",
+            "replacement_tool": "aci_edit",
+            "supplement": "aci"
+          }
+        ]
+      },
+      "sub": {
+        "roster": [
+          "read",
+          "write",
+          "edit",
+          "ls",
+          "grep",
+          "glob",
+          "bash",
+          "send_to_agent"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "edit",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ls",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "grep",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "glob",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "send_to_agent",
+            "origin": "derived_send_to_agent",
+            "replaces": null,
+            "targets": [
+              "root"
+            ]
+          }
+        ],
+        "replacements": []
+      }
+    },
+    "minus_edit": {
+      "root": {
+        "roster": [
+          "read",
+          "write",
+          "ls",
+          "grep",
+          "glob",
+          "bash",
+          "task",
+          "aci_edit"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ls",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "grep",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "glob",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "task",
+            "origin": "derived_task",
+            "replaces": null,
+            "targets": [
+              "sub"
+            ]
+          },
+          {
+            "tool": "aci_edit",
+            "origin": "supplement",
+            "replaces": null,
+            "targets": []
+          }
+        ],
+        "replacements": []
+      },
+      "sub": {
+        "roster": [
+          "read",
+          "write",
+          "edit",
+          "ls",
+          "grep",
+          "glob",
+          "bash",
+          "send_to_agent"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "edit",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ls",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "grep",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "glob",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "send_to_agent",
+            "origin": "derived_send_to_agent",
+            "replaces": null,
+            "targets": [
+              "root"
+            ]
+          }
+        ],
+        "replacements": []
+      }
+    },
+    "minus_aci_edit": {
+      "root": {
+        "roster": [
+          "read",
+          "write",
+          "ls",
+          "grep",
+          "glob",
+          "bash",
+          "task",
+          "aci_edit"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "edit",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ls",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "grep",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "glob",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "task",
+            "origin": "derived_task",
+            "replaces": null,
+            "targets": [
+              "sub"
+            ]
+          },
+          {
+            "tool": "aci_edit",
+            "origin": "supplement",
+            "replaces": "edit",
+            "targets": []
+          }
+        ],
+        "replacements": [
+          {
+            "default_tool": "edit",
+            "replacement_tool": "aci_edit",
+            "supplement": "aci"
+          }
+        ]
+      },
+      "sub": {
+        "roster": [
+          "read",
+          "write",
+          "edit",
+          "ls",
+          "grep",
+          "glob",
+          "bash",
+          "send_to_agent"
+        ],
+        "provenance_tools": [
+          {
+            "tool": "read",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "write",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "edit",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "ls",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "grep",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "glob",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "bash",
+            "origin": "preset",
+            "replaces": null,
+            "targets": []
+          },
+          {
+            "tool": "send_to_agent",
+            "origin": "derived_send_to_agent",
+            "replaces": null,
+            "targets": [
+              "root"
+            ]
+          }
+        ],
+        "replacements": []
+      }
+    }
+  }
+}

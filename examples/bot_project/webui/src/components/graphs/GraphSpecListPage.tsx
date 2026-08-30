@@ -1,12 +1,13 @@
 // GraphSpecListPage — spec list for the current workspace (GET /api/graphs/specs).
-// Each row renders a MiniTopology thumbnail (parsed from the spec YAML) + spec
+// Each row renders a MiniTopology thumbnail (from the topology endpoint) + spec
 // name + version + node count / scheduler / trigger mode. Clicking a row opens
 // the spec detail view. (PRD §6.3)
 
 import { useEffect, useState, type FC } from "react";
 import { ChevronRight, Pencil } from "lucide-react";
-import { getSpec, getSpecs, type GraphSpecSummary } from "../../lib/graphsApi";
-import { parseGraphSpecYaml, type ParsedGraphTopology } from "./yaml/parseGraphSpec";
+import { getSpecs, getTopology, type GraphSpecSummary } from "../../lib/graphsApi";
+import type { ParsedGraphTopology } from "./yaml/parseGraphSpec";
+import { topologyFromApi } from "./topologyFromApi";
 import { MiniTopology } from "./topology/MiniTopology";
 import { useT } from "../../i18n";
 import { Button } from "../ui/Button";
@@ -41,20 +42,18 @@ export const GraphSpecListPage: FC<GraphSpecListPageProps> = ({
       .then((loaded) => {
         if (cancelled) return;
         setSpecs(loaded);
-        // Parallel-fetch each spec's YAML and parse the topology. Parse
-        // failures produce a null entry — MiniTopology is simply omitted for
-        // that row, the list itself is never blocked.
+        // Parallel-fetch each spec's structured topology (§11.3 endpoint —
+        // server-serialized from GraphSpec, immune to model field additions).
+        // Fetch/map failures produce a null entry — MiniTopology is simply
+        // omitted for that row, the list itself is never blocked.
         loaded.forEach((spec) => {
-          getSpec(workspaceId, spec.spec_id)
-            .then((resp) => {
+          getTopology(workspaceId, spec.spec_id)
+            .then((topo) => {
               if (cancelled) return;
-              let topo: ParsedGraphTopology | null;
-              try {
-                topo = parseGraphSpecYaml(resp.yaml_content);
-              } catch {
-                topo = null;
-              }
-              setTopologies((prev) => ({ ...prev, [spec.spec_id]: topo }));
+              setTopologies((prev) => ({
+                ...prev,
+                [spec.spec_id]: topologyFromApi(topo),
+              }));
             })
             .catch(() => {
               if (cancelled) return;

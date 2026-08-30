@@ -41,6 +41,9 @@ describe("GraphNode", () => {
       ["delay", "timer"],
       ["human_input", "user"],
       ["graph", "workflow"],
+      // Scope 声明层级(票据16)
+      ["workspace", "layers"],
+      ["pool", "boxes"],
     ];
     for (const [nodeType, iconName] of cases) {
       const { container, unmount } = renderNode(
@@ -52,9 +55,9 @@ describe("GraphNode", () => {
       expect(icon?.getAttribute("width")).toBe("14");
       unmount();
     }
-    // 映射表自身与五种功能类型一一对应
+    // 映射表自身与五种功能类型 + 两个 scope 层级一一对应
     expect(Object.keys(NODE_TYPE_ICONS).sort()).toEqual(
-      ["agent", "delay", "function", "graph", "human_input"].sort(),
+      ["agent", "delay", "function", "graph", "human_input", "pool", "workspace"].sort(),
     );
   });
 

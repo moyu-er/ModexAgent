@@ -1,14 +1,35 @@
 from __future__ import annotations
 
+import socket
+from ipaddress import ip_address
+
 import pytest
 
-from modex_agent.sandbox.guard import CommandSeverity, GuardMatch, GuardResult
+from modex_agent.sandbox.guard import CommandSeverity, GuardMatch
 from modex_agent.sandbox.guard_network import (
     NetworkGuard,
     NetworkGuardConfig,
     configure_ssrf_whitelist,
     validate_url_target,
 )
+
+
+def _public_dns_hijacked(hostname: str) -> bool:
+    """True when ``hostname`` resolves to a private/loopback address.
+
+    Some dev machines resolve public hostnames (example.com et al.) to a
+    local proxy address; the SSRF guard then correctly blocks what the test
+    expects to pass. That is an environment property, not a guard defect —
+    skip in that case instead of failing.
+    """
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except OSError:
+        return True
+    return any(
+        (addr := ip_address(info[4][0])).is_private or addr.is_loopback
+        for info in infos
+    )
 
 
 class TestNetworkGuardBlocked:
@@ -65,6 +86,8 @@ class TestNetworkGuardAllowed:
         return NetworkGuard()
 
     def test_public_allowed(self, guard: NetworkGuard) -> None:
+        if _public_dns_hijacked("example.com"):
+            pytest.skip("example.com resolves to a private address on this host")
         result = guard.check("curl http://example.com")
         assert result.allowed
         assert result.matches == ()
@@ -117,6 +140,8 @@ class TestNetworkGuardMultipleUrls:
     """Commands with multiple URLs."""
 
     def test_multiple_urls_one_blocked(self) -> None:
+        if _public_dns_hijacked("example.com"):
+            pytest.skip("example.com resolves to a private address on this host")
         guard = NetworkGuard()
         result = guard.check("curl http://example.com http://127.0.0.1")
         assert not result.allowed
@@ -127,6 +152,8 @@ class TestNetworkGuardMultipleUrls:
         assert "127.0.0.1" in match.description
 
     def test_multiple_urls_all_public(self) -> None:
+        if _public_dns_hijacked("example.com") or _public_dns_hijacked("google.com"):
+            pytest.skip("public hostnames resolve to private addresses on this host")
         guard = NetworkGuard()
         result = guard.check("curl http://example.com http://google.com")
         assert result.allowed
@@ -160,6 +187,8 @@ class TestValidateUrlTarget:
     """Direct tests for validate_url_target function."""
 
     def test_public_url_ok(self) -> None:
+        if _public_dns_hijacked("example.com"):
+            pytest.skip("example.com resolves to a private address on this host")
         ok, error = validate_url_target("http://example.com")
         assert ok is True
         assert error == ""

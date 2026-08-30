@@ -231,7 +231,7 @@ async def test_send_without_client_pool_does_not_rewrite_prefix_route(
     pool_store = _new_pool_store(tmp_path)
     server.set_pool_resolver(lambda _prefix: _OWNING_POOL)
     server.set_pool_switch_callback(lambda _prefix, _pool: None)
-    attach_default_pipeline(
+    await attach_default_pipeline(
         server,
         transcript_store,
         input_adapter,
@@ -268,7 +268,7 @@ async def test_send_without_client_pool_routes_to_existing_tree_pool(
     )
     pool_store = _new_pool_store(tmp_path)
     server.set_pool_resolver(pool_store.get_pool)
-    attach_default_pipeline(
+    await attach_default_pipeline(
         server,
         transcript_store,
         input_adapter,

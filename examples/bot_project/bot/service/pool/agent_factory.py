@@ -15,11 +15,12 @@ from typing import TYPE_CHECKING, Any
 from bot.service.external_strategy import ExternalAwareFactory
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
+from modex_agent.ioc.configs.observability import TraceBackend
 from modex_agent.multi_agent import DefaultAgentFactory
 
 if TYPE_CHECKING:
     from bot.workspace.handle import WorkspaceResolverCell
+    from modex_agent.media.store import MediaStore
     from modex_agent.multi_agent.session_tree.session_binding import (
         SessionBindingStore,
     )
@@ -64,9 +65,9 @@ def _resolve_trace_enabled(app_config: AppConfig | None) -> bool:
 def _cell_sessions_dir(cell: WorkspaceResolverCell | None) -> Path | None:
     """Resolve the workspace sessions dir from a resolver cell.
 
-    Duplicated from :mod:`bot.service._assembly_helpers` (ticket 6: "Duplicate
-    the tiny helper") because ``_build_agent_factory`` uses it for the emitter
-    factory wrapper.
+    Duplicated from :class:`bot.service.builders._PoolAssemblyMixin`
+    (ticket 6: "Duplicate the tiny helper") because ``_build_agent_factory``
+    uses it for the emitter factory wrapper.
     """
     if cell is None:
         return None
@@ -90,11 +91,10 @@ def _build_agent_factory(
     pool_name: str,
     emitter_factory: Callable | None,
     *,
+    media_store_resolver: Callable[[], MediaStore] | None = None,
     external_deps: dict[str, Any] | None = None,
-    observability_config: ObservabilityConfig | None = None,
     session_registry: SessionRegistry | None = None,
     session_binding_store: SessionBindingStore | None = None,
-    trace_store: Any | None = None,
 ) -> DefaultAgentFactory:
     if external_deps is not None:
         factory: DefaultAgentFactory = ExternalAwareFactory(
@@ -108,10 +108,8 @@ def _build_agent_factory(
             default_interceptor_chain=shared_interceptor_chain,
             control_channel=control_channel,
             external_deps=external_deps,
-            observability_config=observability_config,
             session_registry=session_registry,
             session_binding_store=session_binding_store,
-            trace_store=trace_store,
         )
     else:
         factory = DefaultAgentFactory(
@@ -124,8 +122,7 @@ def _build_agent_factory(
             default_hook_runner=shared_hook_runner,
             default_interceptor_chain=shared_interceptor_chain,
             control_channel=control_channel,
-            observability_config=observability_config,
-            trace_store=trace_store,
+            session_registry=session_registry,
         )
 
     _orig_create = factory.create_agent
@@ -140,6 +137,9 @@ def _build_agent_factory(
                 turn_runner.set_pool_context(
                     workspace_manager=workspace_resolver, pool_name=pool_name
                 )
+            builder = turn_runner.turn_context_builder
+            if builder is not None and media_store_resolver is not None:
+                builder.media_store_resolver = media_store_resolver
         return instance
 
     factory.create_agent = _create_with_emitter  # type: ignore[method-assign]

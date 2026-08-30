@@ -15,7 +15,7 @@ import pytest
 
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.record import WorkspaceRecord
-from modex_agent.workspace.registry import RegistryStore, WorkspaceRegistry
+from modex_agent.workspace.registry import RegistryStore, ScopeRegistry
 from modex_agent.workspace.routing import WorkspaceResolver
 
 
@@ -32,7 +32,7 @@ class _FakeFactory:
 
 def _build_resolver(home: Path, data_dir_name: str = ".modex"):
     store = _InMemoryRegistryStore()
-    registry: WorkspaceRegistry = WorkspaceRegistry(
+    registry: ScopeRegistry = ScopeRegistry(
         home=home, data_dir_name=data_dir_name, factory=_FakeFactory(), store=store
     )
     return registry, WorkspaceResolver(registry=registry)

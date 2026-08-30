@@ -4,9 +4,10 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.media.models import Attachment
@@ -15,7 +16,7 @@ from ..adapters.platform import StreamingMode
 from ..core.constants import DefaultValues
 from ..core.types import InputMessage, OutputMessage
 from ..pipeline.adapters import InputAdapter, OutputAdapter
-from .broker import Address, BrokerMessage, MessageBroker
+from .broker import Address, AddressKind, BrokerMessage, MessageBroker
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,23 @@ def approval_decision_from_payload(payload: dict[str, Any]) -> Any:
     return ApprovalDecisionInput.from_dict(payload.get("approval_decision"))
 
 
+def metadata_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Rebuild free-form ``InputMessage.metadata`` from a broker payload.
+
+    ``submit_input`` serializes the full ``InputMessage`` via
+    :class:`BrokerInputPayload`; without parsing it back here the free-form
+    metadata (e.g. harness trace ids) is silently dropped in transit — the
+    same field-drift failure class as ``approval_decision``. Returns ``{}``
+    for payloads that do not carry a valid ``BrokerInputPayload`` metadata
+    mapping (inter-agent envelopes keep their metadata on the envelope, not
+    the payload).
+    """
+    try:
+        return dict(BrokerInputPayload.model_validate(payload).metadata)
+    except ValidationError:
+        return {}
+
+
 def attachments_resolved_from_payload(payload: dict[str, Any]) -> list[Attachment]:
     """Rebuild the gate-accepted inbound Attachment records from a broker payload.
 
@@ -208,7 +226,7 @@ def build_input_broker_message(msg: InputMessage, recipient: Address) -> BrokerM
     )
     return BrokerMessage(
         payload=payload.model_dump(exclude_none=True),
-        sender=Address(kind="channel", name=msg.source or "unknown"),
+        sender=Address(kind=AddressKind.CHANNEL, name=msg.source or "unknown"),
         recipient=recipient,
         headers={
             "channel": msg.channel,
@@ -315,13 +333,13 @@ class BrokerBridgeService:
         self._restart_max_retries = restart_max_retries
         self._restart_backoff_seconds = restart_backoff_seconds
         self._restart_max_window_seconds = restart_max_window_seconds
-        self._tasks: list[asyncio.Task] = []
+        self._tasks: list[asyncio.Task[None]] = []
         self._bridge_specs: dict[str, Callable[[], Coroutine[Any, Any, None]]] = {}
         self._restart_counts: dict[str, int] = {}
         self._restart_first_fail_time: dict[str, float] = {}
         self._stopping = False
 
-    def _bridge_done_callback(self, task: asyncio.Task, name: str) -> None:
+    def _bridge_done_callback(self, task: asyncio.Task[None], name: str) -> None:
         """Record exception from completed bridge task; optionally schedule restart."""
         if task.cancelled():
             return
@@ -365,7 +383,7 @@ class BrokerBridgeService:
             self._restart_max_retries,
         )
         restart_task = loop.create_task(self._restart_bridge_after_delay(name, delay))
-        restart_task.add_done_callback(lambda _: self._prune_done_tasks())
+        restart_task.add_done_callback(self._prune_done_tasks)
         self._add_task(restart_task)
 
     async def _restart_bridge_after_delay(self, name: str, delay: float) -> None:
@@ -380,15 +398,15 @@ class BrokerBridgeService:
             return
         logger.info("Restarting bridge task %s", name)
         task = asyncio.create_task(spec())
-        task.add_done_callback(lambda t, n=name: self._bridge_done_callback(t, n))
+        task.add_done_callback(partial(self._bridge_done_callback, name=name))
         self._add_task(task)
 
-    def _add_task(self, task: asyncio.Task) -> None:
+    def _add_task(self, task: asyncio.Task[None]) -> None:
         """Add a task and prune completed ones to keep the list clean."""
         self._tasks = [t for t in self._tasks if not t.done()]
         self._tasks.append(task)
 
-    def _prune_done_tasks(self) -> None:
+    def _prune_done_tasks(self, _task: asyncio.Task[None]) -> None:
         """Remove completed tasks from the tasks list."""
         self._tasks = [t for t in self._tasks if not t.done()]
 
@@ -397,16 +415,16 @@ class BrokerBridgeService:
         for adapter, addr in self.input_bindings.items():
             await adapter.start()
             bridge_name = f"input:{adapter.name}"
-            self._bridge_specs[bridge_name] = lambda a=adapter, ad=addr: self._bridge_input(a, ad)
+            self._bridge_specs[bridge_name] = partial(self._bridge_input, adapter, addr)
             task = asyncio.create_task(self._bridge_specs[bridge_name]())
-            task.add_done_callback(lambda t, n=bridge_name: self._bridge_done_callback(t, n))
+            task.add_done_callback(partial(self._bridge_done_callback, name=bridge_name))
             self._add_task(task)
         for route in self.output_routes:
             if route.match_topic:
                 bridge_name = f"output:{route.match_topic}"
-                self._bridge_specs[bridge_name] = lambda r=route: self._bridge_output_topic(r)
+                self._bridge_specs[bridge_name] = partial(self._bridge_output_topic, route)
                 task = asyncio.create_task(self._bridge_specs[bridge_name]())
-                task.add_done_callback(lambda t, n=bridge_name: self._bridge_done_callback(t, n))
+                task.add_done_callback(partial(self._bridge_done_callback, name=bridge_name))
                 self._add_task(task)
             elif route.match_kind:
                 raise NotImplementedError(

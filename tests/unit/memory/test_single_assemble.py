@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from modex_agent.memory.hooks import MemoryHookRunner
 from modex_agent.memory.injection.archive import ArchiveInjectionConfig
 from modex_agent.memory.system import MemorySystemContextManager
 
@@ -39,6 +40,7 @@ def _make_mock_system() -> MagicMock:
     mock_system.prefetch_memories = AsyncMock(return_value=None)
     mock_system.get_history = AsyncMock(return_value=[])
     mock_system.create_message_history = MagicMock(return_value=MagicMock())
+    mock_system.hook_runner = MemoryHookRunner()
     # Explicitly set to None so duck-typed attribute checks work correctly
     # (MagicMock auto-creates attributes, which would fool hasattr checks).
     mock_system.pruned_manager = None

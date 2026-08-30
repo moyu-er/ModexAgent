@@ -6,9 +6,11 @@ timeouts (≤8s per command, ≤25s per test) and guaranteed cleanup.
 
 Every test in this directory is skipped on non-Windows platforms.
 """
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import shutil
 import sys
 from collections.abc import AsyncIterator
@@ -44,8 +46,11 @@ def _git_bash() -> str | None:
     if not git:
         return None
     git_dir = Path(git).resolve().parent
-    for cand in [git_dir / "bash.exe", git_dir.parent / "bin" / "bash.exe",
-                 git_dir.parent / "usr" / "bin" / "bash.exe"]:
+    for cand in [
+        git_dir / "bash.exe",
+        git_dir.parent / "bin" / "bash.exe",
+        git_dir.parent / "usr" / "bin" / "bash.exe",
+    ]:
         if cand.is_file():
             return str(cand)
     return None
@@ -54,6 +59,7 @@ def _git_bash() -> str | None:
 def _wsl_bash() -> str | None:
     """WSL bash if the WSL echo round-trips successfully."""
     import subprocess
+
     bash = r"C:\Windows\System32\bash.exe"
     if not Path(bash).is_file():
         return None
@@ -107,11 +113,8 @@ def visibility(request: pytest.FixtureRequest) -> TerminalVisibility:
 @pytest.fixture
 async def cfg() -> AsyncIterator[TerminalRuntimeConfig]:
     cfg_obj = TerminalRuntimeConfig(
-        default_command_timeout_seconds=int(_COMMAND_TIMEOUT_S),
-        command_tool_outer_timeout_seconds=int(_COMMAND_TIMEOUT_S) + 4,
-        default_yield_ms=300,
+        command_deadline_seconds=int(_COMMAND_TIMEOUT_S),
         prompt_stabilize_ms=200,
-        no_output_timeout_ms=8_000,
         # Idle-based input-wait detection threshold. Tests use a long value
         # so a freshly-started ``sleep 60`` (no output yet) is not
         # misclassified as waiting for input. ``read -s`` is detected by the
@@ -123,7 +126,9 @@ async def cfg() -> AsyncIterator[TerminalRuntimeConfig]:
 
 
 @pytest.fixture
-async def tools(visibility: TerminalVisibility, cfg: TerminalRuntimeConfig) -> AsyncIterator[ToolsBundle]:
+async def tools(
+    visibility: TerminalVisibility, cfg: TerminalRuntimeConfig
+) -> AsyncIterator[ToolsBundle]:
     """Build the three tools for the requested visibility. Closes all tabs on teardown."""
     shell_path = _pick_shell()
     if shell_path is None:
@@ -164,13 +169,13 @@ async def tools(visibility: TerminalVisibility, cfg: TerminalRuntimeConfig) -> A
         )
     finally:
         for name in manager.list_names():
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(manager.close(name), timeout=3.0)
-            except TimeoutError:
-                pass
 
 
-async def run_command(bundle: ToolsBundle, command: str, timeout: float = _PROCESS_TIMEOUT_S) -> str:
+async def run_command(
+    bundle: ToolsBundle, command: str, timeout: float = _PROCESS_TIMEOUT_S
+) -> str:
     """Run a command via CommandTool with a hard outer timeout."""
     return await asyncio.wait_for(bundle.command.execute(command=command), timeout=timeout)
 
@@ -183,7 +188,13 @@ async def wait_for_idle(tools: ToolsBundle, timeout: float = 5.0) -> None:
     """
     await wait_for_status(
         tools,
-        frozenset({TerminalCommandStatus.IDLE, TerminalCommandStatus.UNKNOWN, TerminalCommandStatus.COMPLETED}),
+        frozenset(
+            {
+                TerminalCommandStatus.IDLE,
+                TerminalCommandStatus.UNKNOWN,
+                TerminalCommandStatus.COMPLETED,
+            }
+        ),
         timeout=timeout,
     )
 
@@ -214,22 +225,6 @@ async def wait_for_status(
     raise AssertionError(
         f"session did not reach {sorted(t.value for t in targets)} within {timeout}s (last={last.value})"
     )
-
-
-async def current_text(tools: ToolsBundle) -> str:
-    """Invoke ``terminal current`` and return its raw output (incl. cursor/output XML)."""
-    return await tools.terminal.execute(action="current")
-
-
-async def drain_current(tools: ToolsBundle, needle: str, *, attempts: int = 30, delay: float = 0.3) -> str:
-    """Repeatedly ``terminal current`` until ``needle`` appears (case-sensitive)."""
-    last = ""
-    for _ in range(attempts):
-        last = await current_text(tools)
-        if needle in last:
-            return last
-        await asyncio.sleep(delay)
-    return last
 
 
 def output_of(xml_or_text: str, marker: str) -> bool:

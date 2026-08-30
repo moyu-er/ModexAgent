@@ -142,10 +142,6 @@ class ToolDefinition:
             },
         }
 
-    def to_litellm_format(self) -> dict[str, Any]:
-        """转换为LiteLLM工具格式(与OpenAI相同)"""
-        return self.to_openai_format()
-
 
 # 工具函数类型
 ToolFunction = Callable[..., Any]
@@ -464,7 +460,7 @@ def _type_hint_to_param_type(type_hint: Any) -> ToolParameterType:
         # 处理 Optional[X] = Union[X, None]
         if origin is Union and len(args) == 2 and type(None) in args:
             # 获取非 None 的类型
-            inner_type = args[0] if args[1] is type(None) else args[1]
+            inner_type = next(arg for arg in args if arg is not type(None))
             return _type_hint_to_param_type(inner_type)
         # 处理 List[X]
         elif origin in (list, list):
@@ -474,13 +470,13 @@ def _type_hint_to_param_type(type_hint: Any) -> ToolParameterType:
             return ToolParameterType.OBJECT
 
     # 基本类型
-    if base_type == str:
+    if base_type is str:
         return ToolParameterType.STRING
-    elif base_type == int:
+    elif base_type is int:
         return ToolParameterType.INTEGER
-    elif base_type == float:
+    elif base_type is float:
         return ToolParameterType.NUMBER
-    elif base_type == bool:
+    elif base_type is bool:
         return ToolParameterType.BOOLEAN
     elif base_type in (list, list):
         return ToolParameterType.ARRAY

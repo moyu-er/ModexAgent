@@ -5,7 +5,7 @@ import contextlib
 import logging
 import sys
 import time
-from collections.abc import Coroutine, Iterator
+from collections.abc import Awaitable, Callable, Coroutine, Iterator
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -129,15 +129,21 @@ class AgentPool(AgentRegistry):
         # ── ADR-0015 D5 fork-context cleanup (set by Task 2.9 wiring) ──
         self._context_fork_builder: ContextForkBuilder | None = None
         # ── Per-poll InboxPoller (Task 7): attached by create_pool; started
-        #    after materialize-deps injection; stopped in shutdown_all. ──
+        # after materialize-deps injection; stopped in shutdown_all. ──
         self._poller: InboxPoller | None = None
+        # ── Per-pool background-worker stops (capability supply lifecycle,
+        #    SPEC §8.3 D4): attached by PoolAssembleStage; awaited FIRST in
+        #    shutdown_all. ──
+        self._background_stops: list[Callable[[], Awaitable[None]]] = []
         self._valid_transitions: dict[AgentState, set[AgentState]] = {
             AgentState.INITIALIZING: {AgentState.IDLE, AgentState.ERROR, AgentState.SHUTTING_DOWN},
             AgentState.IDLE: {AgentState.WORKING, AgentState.ERROR, AgentState.SHUTTING_DOWN},
             AgentState.WORKING: {AgentState.IDLE, AgentState.ERROR, AgentState.SHUTTING_DOWN},
             AgentState.ERROR: {AgentState.IDLE, AgentState.SHUTTING_DOWN},
             AgentState.SHUTTING_DOWN: {AgentState.SHUTDOWN},
-            AgentState.SHUTDOWN: set(),
+            # Unseen agents default to SHUTDOWN in ``_transition``, and a
+            # shut-down agent may be re-registered — both enter via INITIALIZING.
+            AgentState.SHUTDOWN: {AgentState.INITIALIZING},
         }
         self._cleanup_task = asyncio.create_task(self._cleanup_stale_sessions())
 
@@ -188,6 +194,21 @@ class AgentPool(AgentRegistry):
     def attach_poller(self, poller: InboxPoller) -> None:
         """Attach this pool's InboxPoller (created by create_pool wiring)."""
         self._poller = poller
+
+    # ── Per-pool background-worker stops (capability supply lifecycle, SPEC §8.3 D4) ──
+
+    def attach_background_stop(self, stop: Callable[[], Awaitable[None]]) -> None:
+        """Register a pool-scoped background worker's stop callback.
+
+        Pool assembly (``PoolAssembleStage``) attaches the capability
+        supplies' shared stop right after starting their background
+        workers (e.g. the experience curator loop); ``shutdown_all``
+        awaits it before stopping the turn machinery — the same
+        pool-owned lifecycle the per-pool InboxPoller rides. The callback
+        must be idempotent (it may also fire through the assembly
+        pipeline's cleanup-on-failure road).
+        """
+        self._background_stops.append(stop)
 
     @property
     def session_registry(self) -> SessionRegistry | None:
@@ -564,14 +585,6 @@ class AgentPool(AgentRegistry):
     def get(self, name: str) -> AgentInstance | None:
         return self._agents.get(name)
 
-    def serves_agent(self, name: str) -> bool:
-        """True if ``name`` is a registered main agent or a subagent template."""
-        if self._agents.get(name) is not None:
-            return True
-        if self._template_registry is not None and self._pool_name is not None:
-            return self._template_registry.get_template(self._pool_name, name) is not None
-        return False
-
     def get_descriptor(self, name: str) -> AgentDescriptor | None:
         instance = self._agents.get(name)
         return instance.descriptor if instance else None
@@ -662,9 +675,7 @@ class AgentPool(AgentRegistry):
         one async seam, no parallel eviction paths.
         """
         if self._tree is None:
-            raise RuntimeError(
-                "AgentPool.tree not wired before session eviction"
-            )
+            raise RuntimeError("AgentPool.tree not wired before session eviction")
         with contextlib.suppress(Exception):
             await self._tree.on_session_evicted(session_id)
         agent_name = self._session_agents.get(session_id)
@@ -859,6 +870,17 @@ class AgentPool(AgentRegistry):
     async def _shutdown_all_once(self, timeout: float) -> bool:
         if self._cleanup_task is not None:
             self._cleanup_task.cancel()
+        # Capability-supply background workers (e.g. the experience curator
+        # loop) stop FIRST — the position the retired workspace-level
+        # background runner held in the bot's teardown order.
+        for stop in reversed(self._background_stops):
+            try:
+                await stop()
+            except Exception:
+                logger.warning(
+                    "Background worker stop failed; continuing pool shutdown",
+                    exc_info=True,
+                )
         # Task 7: stop the per-pool InboxPoller so no new between-turn
         # cycles start while agents are being torn down.
         await self.stop_poller()

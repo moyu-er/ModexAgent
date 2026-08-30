@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -128,10 +129,11 @@ _NORMAL_PARAMS: dict[str, Any] = {
         "invocation_id": {
             "type": ["string", "null"],
             "description": (
-                "Task continuation id. Use the `task` tool for first dispatch; pass null "
-                "only as a fallback to create a fresh session. The tool result includes an "
-                "invocation_id to pass back for follow-ups in the same task. The target's "
-                "session_id is '{invocation_id}.{target_agent}'."
+                "Task continuation id. Use the `task` tool for new dispatches; pass\n"
+                "the invocation_id carried by that subagent's notification or\n"
+                "consultation message to continue its session. Pass null only as a\n"
+                "fallback to create a fresh session. The target's session_id is\n"
+                "'{invocation_id}.{target_agent}'."
             ),
         },
     },
@@ -230,11 +232,20 @@ class CommunicationTargetStore:
             targets = [t for t in targets if t.kind != AgentCommKind.NORMAL]
         return targets
 
-    def list_subagents(self) -> list[CommunicationTarget]:
+    def list_subagents(self) -> builtins.list[CommunicationTarget]:
         """Return only SUBAGENT targets (visible in both session and graph mode)."""
         return [t for t in self.list() if t.kind == AgentCommKind.SUBAGENT]
 
-    def list_peers(self) -> list[CommunicationTarget]:
+    def subagent_names(self) -> frozenset[str]:
+        """Names of the SUBAGENT targets — the derived direct children.
+
+        A clean-typed accessor: the sender-side topology defense reads
+        this (its ``declared_children`` input, ticket 12)."""
+        return frozenset(
+            t.name for t in self.list() if t.kind == AgentCommKind.SUBAGENT
+        )
+
+    def list_peers(self) -> builtins.list[CommunicationTarget]:
         """Return only NORMAL (peer) targets.
 
         Empty in graph mode — ``list()`` filters NORMAL targets when
@@ -511,9 +522,9 @@ _TASK_PARAMS: dict[str, Any] = {
         "invocation_id": {
             "type": "string",
             "description": (
-                "Optional. Used ONLY to continue an existing subagent session — "
-                "pass the invocation_id returned by a prior task result. "
-                "Omit this parameter entirely for a new subagent task."
+                "Continue-mode only: the invocation_id carried by that subagent's\n"
+                "notification or consultation message. Omit entirely (or pass null)\n"
+                "to dispatch a new task."
             ),
         },
     },
@@ -522,6 +533,10 @@ _TASK_PARAMS: dict[str, Any] = {
 
 
 SEND_TO_PEER_TOOL_NAME = "send_to_peer"
+
+SEND_TO_AGENT_TOOL_NAME = "send_to_agent"
+"""The subagent→parent consultation tool's registration name — the derived
+entry the ScopeCompiler injects for every non-root node (SPEC §5.2)."""
 
 
 _PEER_PARAMS: dict[str, Any] = {
@@ -546,13 +561,17 @@ _PEER_PARAMS: dict[str, Any] = {
 
 
 class TaskDispatchTool(Tool):
-    """Dispatch a task to a subagent — the main agent's work-delegation tool.
+    """Dispatch a task to a declared child — the work-delegation tool.
 
-    Dispatches new subagent tasks (omit ``invocation_id``) and continues
-    existing subagent sessions (pass ``invocation_id``). Strictly
-    subagent-scoped: peer communication is a separate concern handled by
-    :class:`SendToPeerTool`, so the LLM cannot conflate delegation with
-    cross-agent messaging.
+    Held by ANY agent with declared children (the root main agent and
+    mid-level agents of a nested tree alike — SPEC §3.2); the target list
+    is the holder's per-agent store entries, i.e. exactly its DIRECT
+    children (grandchildren are the child's own dispatch surface, and
+    leaves hold no ``task`` tool at all). Dispatches new subagent tasks
+    (omit ``invocation_id``) and continues existing subagent sessions
+    (pass ``invocation_id``). Strictly subagent-scoped: peer communication
+    is a separate concern handled by :class:`SendToPeerTool`, so the LLM
+    cannot conflate delegation with cross-agent messaging.
 
     TODO — subagent lifecycle management tools (not yet implemented):
 
@@ -614,6 +633,12 @@ class TaskDispatchTool(Tool):
             "output stay local. Dispatch is asynchronous — the result arrives as a",
             "notification when the subagent finishes, in a later turn.",
             "",
+            "When to use this tool:",
+            "- Any complex, self-contained sub-goal — even if each step is",
+            "  trivial (installing a toolchain, pinning down an unfamiliar API).",
+            "  Your context is the scarce resource; the full spec is in your",
+            '  system prompt under "Delegating To Subagents".',
+            "",
             "When NOT to use this tool:",
             "- If you want to read a specific file, use the read tool directly — it's faster",
             "- If you are searching for a specific pattern, use grep or glob directly",
@@ -630,14 +655,11 @@ class TaskDispatchTool(Tool):
             "   cannot wait, but avoid working on the same files or topics as the subagent.",
             "4. The subagent's result is returned to you only — relay a concise summary to",
             "   the user if needed.",
-            "5. Construct a high-quality subagent task with:",
-            "   - TASK: What exactly to do (concrete objective, not a topic)",
-            "   - CONTEXT: Relevant file paths, patterns, constraints",
-            "   - SCOPE: Write code or just research (search/read/analyze)",
-            "   - OUTPUT: Exactly what to return in the final reply",
-            "   - VERIFICATION: How to verify (e.g., test commands)",
-            "   - BOUNDARIES: What NOT to do, out-of-scope items",
-            "6. The subagent's output should generally be trusted.",
+            "5. Write a high-quality brief in `content` — cover all six elements",
+            "   (TASK / CONTEXT / SCOPE / OUTPUT / VERIFICATION / BOUNDARIES); the full",
+            '   spec is in your system prompt under "Delegating To Subagents".',
+            "6. Trust subagent results, but verify before relying on them — run the",
+            "   brief's VERIFICATION step or spot-check the change yourself.",
             "",
             'A one-line task like "fix the bug" is insufficient — the result quality',
             "is directly proportional to your prompt quality.",
@@ -654,9 +676,19 @@ class TaskDispatchTool(Tool):
             "Subagents are specialized workers you dispatch tasks to. They start"
             " with a fresh context and run autonomously — they cannot see your"
             " conversation, reasoning, or prior tool results. Everything they"
-            " need must be in `content`. Omit `invocation_id` for a new task;"
-            " pass a prior `invocation_id` to continue an existing session."
+            " need must be in `content`."
         )
+        lines.append("")
+        lines.append("Dispatch modes:")
+        lines.append("1. New task (default) — omit `invocation_id`.")
+        lines.append("2. Continue a session — pass that subagent's `invocation_id` (from")
+        lines.append("   its result notification or consultation message) together with")
+        lines.append("   your follow-up instructions in `content`. The subagent resumes")
+        lines.append("   with its prior context.")
+        lines.append("")
+        lines.append("Each subagent's result notification states whether its task is")
+        lines.append("complete and what to do — follow it. Never re-dispatch just to")
+        lines.append("collect an already-delivered result.")
         lines.append("")
         lines.append("Available subagents:")
         for t in subagent_targets:
@@ -729,11 +761,15 @@ class TaskDispatchTool(Tool):
                 f"Available subagents: {available}"
             )
 
+        # The pool-level service is shared pool-wide; the sender's own
+        # declared children (this tool's store) are the per-sender
+        # topology input.
         return await self._service.send_async(
             target=target,
             content=content,
             invocation_id=invocation_id,
             context=context,
+            declared_children=self._store.subagent_names(),
         )
 
 
@@ -776,8 +812,8 @@ class SendToPeerTool(Tool):
             "assign tasks to. It has its own conversation context and its own",
             "responsibilities, which you cannot see or control. This tool is for",
             "communication and coordination only, never for task delegation.",
-            "Messages are asynchronous: a peer may or may not reply, and there is",
-            "no guaranteed result.",
+            "Messages are asynchronous — this is a communication channel: the",
+            "peer receives your message, but whether it replies is up to it.",
             "",
             "If you want a concrete piece of work done, prefer dispatching a",
             "subagent with the `task` tool instead. A subagent is a worker you",
