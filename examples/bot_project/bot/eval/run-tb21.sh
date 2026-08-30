@@ -122,11 +122,22 @@ docker network prune -f >/dev/null 2>&1 || true
 # --- transiently); all attempts failing means the network is truly down.
 WARMUP_TRIES=3
 
+# pipidx probes the EFFECTIVE install index, not a hardcoded mirror: the
+# trial's uv/pip install resolves --index-url from MODEX_PIP_INDEX (forwarded
+# into the trial container; default mirrors bot/eval/harbor/agent.py
+# DEFAULT_PIP_INDEX). A stale override (tb21-all-v8 attempt3, 2026-08-30:
+# MODEX_PIP_INDEX=pypi.org leaked from the launching shell) must gate on its
+# own index — the green aliyun probe did not cover it and every install died.
+IDX_URL="${MODEX_PIP_INDEX:-https://mirrors.aliyun.com/pypi/simple/}"
+
 probe_egress() {
-    docker run --rm curlimages/curl:latest sh -c '
-for t in "https://api.deepseek.com/v1/models|llm" "https://pypi.org/simple/|pypi" "http://archive.ubuntu.com/ubuntu/dists/noble/InRelease|apt" "https://astral.sh|uv"; do
+    # uvdist: full 21MB tarball download — the exact transfer the TB verifiers
+    # die on (curl(18) partial file) when a VPN node flap truncates a
+    # large-file HTTPS transfer. A homepage probe (astral.sh) never catches it.
+    docker run --rm -e IDX_URL="$IDX_URL" curlimages/curl:latest sh -c '
+for t in "https://api.deepseek.com/v1/models|llm" "$IDX_URL|pipidx" "http://archive.ubuntu.com/ubuntu/dists/noble/InRelease|apt" "https://github.com/astral-sh/uv/releases/download/0.9.5/uv-x86_64-unknown-linux-gnu.tar.gz|uvdist"; do
     url="${t%%|*}"; name="${t##*|}"
-    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$url")
+    code=$(curl -sL -o /dev/null -w "%{http_code} %{size_download}" --max-time 90 "$url")
     echo "$name=$code"
 done' 2>/dev/null || true
 }
@@ -136,13 +147,25 @@ TRY=1
 while [ "$TRY" -le "$WARMUP_TRIES" ]; do
     log "warm-up: probing container egress (attempt $TRY/$WARMUP_TRIES)"
     PROBE="$(probe_egress)"
-    echo "$PROBE" | while IFS= read -r line; do
+    # name=<code> <bytes>: uvdist must transfer the FULL tarball (21370871
+    # bytes), not merely return HTTP 200 — a truncated transfer fails the
+    # gate even with a 200 code.
+    NORMALIZED="$(echo "$PROBE" | awk '
+        $1 ~ /^(llm|pipidx|apt|uvdist)=[0-9]+$/ {
+            split($1, kv, "="); name = kv[1]; code = kv[2]
+            if (name == "uvdist" && code == "200" && $2 != "21370871") {
+                print name "=" code "truncated(" $2 "B)"
+            } else { print name "=" code }
+            next
+        }
+        { print }')"
+    echo "$NORMALIZED" | while IFS= read -r line; do
         if [ -n "$line" ]; then
             log "warm-up probe: $line"
         fi
     done
-    BAD="$(echo "$PROBE" | grep -Ev '^(llm|pypi|apt|uv)=(200|401)$' | grep -E '=' || true)"
-    COUNT="$(echo "$PROBE" | grep -cE '^(llm|pypi|apt|uv)=[0-9]+$' || true)"
+    BAD="$(echo "$NORMALIZED" | grep -Ev '^(llm=(200|401)|pipidx=200|apt=200|uvdist=200)$' | grep -E '=' || true)"
+    COUNT="$(echo "$NORMALIZED" | grep -cE '^(llm|pipidx|apt|uvdist)=[0-9]+$' || true)"
     if [ -z "$BAD" ] && [ "${COUNT:-0}" -eq 4 ]; then
         PROBE_OK=1
         break

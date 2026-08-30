@@ -9,7 +9,7 @@ from typing import Final, assert_never
 from pydantic import BaseModel, ConfigDict, Field
 
 MODEX_PIP_INDEX: Final = "MODEX_PIP_INDEX"
-DEFAULT_PIP_INDEX: Final = "https://pypi.org/simple"
+DEFAULT_PIP_INDEX: Final = "https://mirrors.aliyun.com/pypi/simple/"
 SOURCE_TAR_CONTAINER_PATH: Final = "/tmp/modex-src.tar.gz"
 INSTALL_ROOT: Final = "/opt/modex"
 VENV_ROOT: Final = f"{INSTALL_ROOT}/venv"

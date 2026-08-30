@@ -123,15 +123,34 @@ docker network prune -f | Out-Null
 # --- transiently); all attempts failing means the network is truly down.
 $warmupTries = 3
 
+# pipidx probes the EFFECTIVE install index, not a hardcoded mirror: the
+# trial's uv/pip install resolves --index-url from MODEX_PIP_INDEX (forwarded
+# into the trial container; default mirrors bot/eval/harbor/agent.py
+# DEFAULT_PIP_INDEX). A stale override (tb21-all-v8 attempt3, 2026-08-30:
+# MODEX_PIP_INDEX=pypi.org leaked from the launching shell) must gate on its
+# own index — the green aliyun probe did not cover it and every install died.
+$idxUrl = if ($env:MODEX_PIP_INDEX) { $env:MODEX_PIP_INDEX } else { "https://mirrors.aliyun.com/pypi/simple/" }
+
 function Invoke-Probe {
-    docker run --rm curlimages/curl:latest sh -c 'for t in "https://api.deepseek.com/v1/models|llm" "https://pypi.org/simple/|pypi" "http://archive.ubuntu.com/ubuntu/dists/noble/InRelease|apt" "https://astral.sh|uv"; do url="${t%%|*}"; name="${t##*|}"; code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$url"); echo "$name=$code"; done' 2>$null
+    # uvdist: full 21MB tarball download — the exact transfer the TB verifiers
+    # die on (curl(18) partial file) when a VPN node flap truncates a
+    # large-file HTTPS transfer. A homepage probe (astral.sh) never catches it.
+    docker run --rm -e IDX_URL="$idxUrl" curlimages/curl:latest sh -c 'for t in "https://api.deepseek.com/v1/models|llm" "$IDX_URL|pipidx" "http://archive.ubuntu.com/ubuntu/dists/noble/InRelease|apt" "https://github.com/astral-sh/uv/releases/download/0.9.5/uv-x86_64-unknown-linux-gnu.tar.gz|uvdist"; do url="${t%%|*}"; name="${t##*|}"; code=$(curl -sL -o /dev/null -w "%{http_code} %{size_download}" --max-time 90 "$url"); echo "$name=$code"; done' 2>$null
 }
 $probeOk = $false
 for ($try = 1; $try -le $warmupTries; $try++) {
     Log "warm-up: probing container egress (attempt $try/$warmupTries)"
-    $probeLines = @(Invoke-Probe | Where-Object { $_ -match "^[a-z]+=\d+$" })
+    # name=<code> <bytes>: the uvdist probe must transfer the full tarball
+    # (21370871 bytes) — "200 21370871" — not merely return HTTP 200. Any
+    # truncated/partial transfer fails the gate even with a 200 code.
+    $probeLines = @(Invoke-Probe | ForEach-Object {
+        if ($_ -match '^([a-z]+)=(\d+) (\d+)$') {
+            $n = $matches[1]; $c = $matches[2]; $b = [long]$matches[3]
+            if ($n -eq 'uvdist' -and $c -eq '200' -and $b -ne 21370871) { "$n=$($c)truncated($($b)B)" } else { "$n=$c" }
+        } elseif ($_ -match '^([a-z]+)=(\d+)$') { $_ }
+    })
     $probeLines | ForEach-Object { Log "warm-up probe: $_" }
-    $bad = @($probeLines | Where-Object { $_ -notmatch "=(200|401)$" })
+    $bad = @($probeLines | Where-Object { $_ -notmatch "^(llm=(200|401)|pipidx=200|apt=200|uvdist=200)$" })
     if ($bad.Count -eq 0 -and $probeLines.Count -eq 4) { $probeOk = $true; break }
     Log "warm-up probe attempt $try failed: $($bad -join ', ')"
 }
