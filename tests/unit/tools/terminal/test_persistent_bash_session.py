@@ -329,6 +329,54 @@ async def test_interrupt_variants_translated():
 
 
 _FAKE_SSH_SHELL = __file__.rsplit("/", 1)[0] + "/_fake_ssh_shell.py"
+_FAKE_APT_HOOK = __file__.rsplit("/", 1)[0] + "/_fake_apt_hook.py"
+
+
+@pytest.mark.skipif(
+    not _probe_available(), reason="apt-transient suppression needs the Linux probe"
+)
+async def test_transient_raw_juggle_completes_without_takeover():
+    """THE tb21-all-v8 regression: apt/dpkg's debconf frontend flips the
+    tty raw for ~0.7s at configure time while apt-get itself (not reading
+    stdin) still owns the foreground. Mode evidence alone (CHILD_RAW +
+    quiet + prior output) misread that transient as an interactive
+    takeover; the early WAITING return then let the NEXT command's wrapper
+    die inside the still-running apt, and the 480s deadline kill interrupted
+    dpkg mid-configure — poisoning the verifier's own apt. A raw-mode child
+    that the kernel probe shows is NOT blocked reading terminal input must
+    keep collecting until its END marker."""
+    tool = PersistentBashTool(timeout_seconds=10)
+    try:
+        out = await tool.execute(
+            command=f"echo unpacking; python3 {_FAKE_APT_HOOK} 1.2; echo after-hook"
+        )
+        assert "unpacking" in out
+        assert "after-hook" in out
+        assert "[hint:" not in out
+        assert await tool.execute(command="echo healthy") == "healthy"
+    finally:
+        await tool.close()
+
+
+async def test_takeover_still_fires_for_stdin_reading_raw_child():
+    """The suppression must not swallow REAL takeovers: a child that sets
+    raw mode and blocks reading stdin (ssh/REPL/pager shape) still returns
+    the shell-kind WAITING hint promptly."""
+    tool = PersistentBashTool(timeout_seconds=8)
+    bash_input = BashInputTool(tool.manager)
+    try:
+        started = monotonic()
+        out = await tool.execute(
+            command='python3 -c "import sys, tty; tty.setraw(0); sys.stdin.read(1)"'
+        )
+        elapsed = monotonic() - started
+        assert "[hint:" in out
+        assert elapsed < 5.0
+        resumed = await bash_input.execute(line="q")
+        assert "[hint:" not in resumed
+        assert await tool.execute(command="echo healthy") == "healthy"
+    finally:
+        await tool.close()
 
 
 async def test_bash_passes_through_after_remote_login():

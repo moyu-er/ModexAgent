@@ -38,6 +38,26 @@ _POOL_AGENT_MODE: Final = "pool"
 # Pool manifest ships the full bot/ tree, so its pip closure (aiohttp, rich)
 # needs a wider install budget than the bare tier's 600s default.
 POOL_INSTALL_SECONDS: Final = 900
+# Trial containers resolve apt sources to archive/security.ubuntu.com and
+# deb.debian.org — all routed through the VPN tunnel, where concurrent
+# apt downloads (8 trials racing) both crawl and get truncated mid-flight,
+# leaving `dpkg --configure -a` broken for the verifier (observed: 4 tasks
+# poisoned in one window, tb21-all-v8). Rewriting to the aliyun mirror puts
+# apt traffic on the DIRECT route, bypassing the tunnel entirely. Plain
+# HTTP (not HTTPS): task images ship stale ca-certificates that fail the
+# aliyun TLS chain, and apt verifies repository metadata via GPG signatures,
+# so HTTP is safe here. Handles both source formats: the legacy one-line
+# .list and Ubuntu 24.04's deb822 .sources (URIs: lines). Idempotent,
+# best-effort: a failed rewrite is no worse than the previous status quo.
+_APT_MIRROR_SETUP: Final = (
+    "sed -i.bak -E 's|http://(archive\\|security)\\.ubuntu\\.com/ubuntu/?|"
+    "http://mirrors.aliyun.com/ubuntu/|g; "
+    "s|http://deb\\.debian\\.org/debian-security/?|http://mirrors.aliyun.com/debian-security/|g; "
+    "s|http://deb\\.debian\\.org/debian/?|http://mirrors.aliyun.com/debian/|g; "
+    "s|http://security\\.debian\\.org/debian-security/?|http://mirrors.aliyun.com/debian-security/|g' "
+    "/etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null "
+    "|| true"
+)
 
 
 class ModexHarborInstallError(RuntimeError):
@@ -56,6 +76,18 @@ class ModexHarborAgent(BaseInstalledAgent):
 
     @override
     async def install(self, environment: BaseEnvironment) -> None:
+        # Apt mirror rewrite FIRST — before any probe or install command can
+        # trigger an apt transaction over the VPN tunnel. Best-effort: never
+        # blocks the install waterfall.
+        mirror_result = await environment.exec(
+            command=f"sh -c {_APT_MIRROR_SETUP!r}", user="root"
+        )
+        if mirror_result.return_code != 0:
+            self.logs_dir.joinpath("apt-mirror-setup.log").write_text(
+                f"exit={mirror_result.return_code}\n{mirror_result.stderr or ''}",
+                encoding="utf-8",
+            )
+
         async def probe(argv: tuple[str, ...]) -> bool:
             result = await environment.exec(command=shlex.join(argv), user="root")
             return result.return_code == 0

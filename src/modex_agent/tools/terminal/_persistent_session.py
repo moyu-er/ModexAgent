@@ -38,9 +38,12 @@ Kernel terminal-state and stdin-wait detection:
   PS1 token closes an otherwise unmarked transaction only under
   ``SHELL_READLINE``, or when terminal-state evidence is unavailable.
   ``CHILD_RAW`` identifies interactive takeover after 0.75 seconds of quiet,
-  three consecutive 25 ms read-loop observations, and real output owned by the
-  current command; it returns a shell-kind WAITING result that accepts command
-  passthrough.
+  three consecutive 25 ms read-loop observations, real output owned by the
+  current command, and — where the Linux probe exists — a positive
+  stdin-wait probe (the foreground group blocks reading terminal input;
+  batch terminal juggling such as debconf's raw-mode configure transient
+  fails this test and keeps collecting). It returns a shell-kind WAITING
+  result that accepts command passthrough.
 * **Empty-evidence gate**: zero real output for THIS command (a START marker
   alone is not output) never settles on terminal-mode or output-shape evidence.
   The Linux ``/proc`` probe is the sole zero-output authority.
@@ -1064,11 +1067,24 @@ class PersistentShellSession:
                 and now - idle_since >= _TAKEOVER_QUIET_S
                 and _has_real_output(accum, pending)
             ):
-                self._waiting_shell = True
-                self._pending = pending
-                self._phase = _Phase.WAITING
-                self._wait_tail = accum.text[-256:]
-                return _with_hint(self._finalize(accum, pending, None), _SHELL_HINT)
+                # CHILD_RAW + quiet alone over-fires: batch commands with a
+                # terminal juggle transient (apt/dpkg's debconf frontend
+                # flips the tty raw for ~0.7s at configure time) present
+                # the identical signature — the early WAITING return let
+                # the next wrapper die inside the still-running apt and the
+                # 480s kill interrupted dpkg mid-configure (tb21-all-v8
+                # poisoned verifiers). A real interactive program (ssh,
+                # REPL, pager) BLOCKS reading terminal input; that kernel
+                # fact is separable, so takeover requires the positive
+                # stdin-wait probe where the probe exists. Probe-less hosts
+                # keep the mode-only contract.
+                if not probe_usable or await self._probe_stdin_wait():
+                    self._waiting_shell = True
+                    self._pending = pending
+                    self._phase = _Phase.WAITING
+                    self._wait_tail = accum.text[-256:]
+                    return _with_hint(self._finalize(accum, pending, None), _SHELL_HINT)
+                consecutive_raw = 0
             # The Linux /proc probe is the sole zero-output authority.
             if probe_usable and now >= next_probe_at:
                 next_probe_at = now + _STDIN_PROBE_INTERVAL_S
