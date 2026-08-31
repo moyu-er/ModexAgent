@@ -13,11 +13,18 @@ safety:
     max_retries: 1
     retry_backoff: [2.0, 8.0]
   turn:
-    agent_run_timeout: 600.0
     hook_timeout: 10.0
     # tool_timeout intentionally unset — the framework default
     # (DefaultValues.TOOL_TIMEOUT_SECONDS, 540s) applies. It must stay
     # strictly above the persistent bash session's own 480s deadline.
+  # deadline — unified watchdog tuning (chunk renewals, sliding ceiling,
+  # watchdog poll interval). Defaults shown; phase margin derives as
+  # 2 × watchdog_poll_seconds so inner phase deadlines always fire before
+  # the outer watchdog.
+  deadline:
+    chunk_renew_seconds: 3.0
+    max_ahead_seconds: 1200.0
+    watchdog_poll_seconds: 5.0
 
 # ---- Paths ----
 paths:

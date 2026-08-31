@@ -109,10 +109,10 @@ class TestCompileValidation:
         assert compiled.entry_node == GraphNode.START
         assert compiled.max_iterations == 50
 
-    def test_max_iterations_default_100(self) -> None:
+    def test_max_iterations_default_unlimited(self) -> None:
         g: Graph[CounterState] = Graph()
         g.add_node("a", _NoOpNode())
         g.add_edge(GraphNode.START, "a")
         g.add_edge("a", GraphNode.END)
         compiled = g.compile()
-        assert compiled.max_iterations == 100
+        assert compiled.max_iterations is None

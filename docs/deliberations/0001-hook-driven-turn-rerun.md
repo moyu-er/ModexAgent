@@ -254,7 +254,7 @@ async def actual_turn():
 
 1. **BEFORE_TURN fires per turn attempt** — this is a behavior change. `InboxFlushHook` (drains inbox before each iteration) is also `BeforeIterationHook`, so mid-turn inbox draining is unaffected. `RuntimeContextHook` resets context per turn — per-attempt reset is semantically correct for continuation. `ModelChoiceBindHook` re-binds model choice — per-attempt is correct. **All verified safe.**
 
-2. **`max_iterations` interaction** — `state.iteration` resets to 0 in BeforeTurnNode. Each turn attempt gets a fresh iteration budget. `compile(max_iterations=N)` is the engine safety net — should be set to `business_max * MAX_TURNS` to allow for continuations. Example: business max 25, MAX_TURNS 3 → compile with 75.
+2. **`max_iterations` interaction** — `state.iteration` resets to 0 in BeforeTurnNode. Each turn attempt gets a fresh iteration budget. `compile(max_iterations=N)` engine safety net no longer applies — the engine default is unlimited and the `LLMNode` business gate is the sole iteration cap (no compile-time formula to keep in sync with runtime `MAX_TURNS` renewal).
 
 3. **Graph cycle detection** — `build_react_graph()` uses `cycle_detection="warn"`. The `AFTER → BEFORE` edge creates a cycle (same category as `TOOL → LLM`). Warning is expected and acceptable.
 

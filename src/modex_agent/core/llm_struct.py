@@ -8,7 +8,7 @@ import logging
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .constants import DefaultValues, FinishReason, ReasoningEffort
 
@@ -139,21 +139,55 @@ class LLMTimeoutPolicy(BaseModel):
 class TurnTimeoutPolicy(BaseModel):
     """单个 Turn 各阶段超时配置。
 
-    ``agent_run_timeout_seconds`` is the per-iteration renewal amount passed
-    to ``DispatchDeadline.renew()`` after each LLM iteration (nodes/llm.py).
-    It is NOT a hard ceiling on total turn duration — the sliding ceiling
-    (``DispatchDeadline.max_ahead_seconds``) governs that. See
-    ``runtime/dispatch.py`` for the full timeout architecture.
+    ``dispatch_timeout_seconds`` is the no-progress budget for LLM and
+    external turns: the initial ``DispatchDeadline`` amount set at dispatch
+    start, re-asserted at each LLM call entry, and the watchdog expiry when
+    no phase declaration or activity renewal keeps it alive. Phase-level
+    budgets (``tool_timeout`` / ``hook_timeout`` / flush+send) declare their
+    own amounts into the deadline at entry — see ``runtime/dispatch.py``
+    for the full protocol.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    agent_run_timeout_seconds: float = 600.0
     dispatch_timeout_seconds: float = 600.0
     output_send_timeout_seconds: float = 20.0
     memory_flush_timeout_seconds: float = 30.0
     hook_timeout_seconds: float = 10.0
     tool_timeout_seconds: float = DefaultValues.TOOL_TIMEOUT_SECONDS
+
+
+class DeadlinePolicy(BaseModel):
+    """Unified dispatch-deadline (watchdog) tuning knobs.
+
+    Collects the former hardcoded constants of ``DispatchDeadline`` and the
+    pool watchdog so every timeout path (react + external) converges on one
+    configuration. The derived phase margin ``2 × watchdog_poll_seconds``
+    guarantees an inner phase deadline always fires before the outer
+    watchdog (poll granularity bounds watchdog wake latency).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chunk_renew_seconds: float = Field(
+        default=3.0,
+        description="Renewal amount per LLM stream chunk / external provider event.",
+    )
+    max_ahead_seconds: float = Field(
+        default=1200.0,
+        description=(
+            "Sliding forward ceiling for a single renew(); a panic fuse against "
+            "unit bugs (e.g. timeout*1000). Must exceed every phase budget + margin."
+        ),
+    )
+    watchdog_poll_seconds: float = Field(
+        default=5.0,
+        description="Pool watchdog poll interval; phase margin derives as 2× this.",
+    )
+
+    @property
+    def phase_margin_seconds(self) -> float:
+        return 2.0 * self.watchdog_poll_seconds
 
 
 class RuntimeSafetyPolicy(BaseModel):
@@ -167,6 +201,31 @@ class RuntimeSafetyPolicy(BaseModel):
 
     llm: LLMTimeoutPolicy = Field(default_factory=LLMTimeoutPolicy)
     turn: TurnTimeoutPolicy = Field(default_factory=TurnTimeoutPolicy)
+    deadline: DeadlinePolicy = Field(default_factory=DeadlinePolicy)
+
+    @model_validator(mode="after")
+    def _validate_phase_budgets(self) -> "RuntimeSafetyPolicy":
+        margin = self.deadline.phase_margin_seconds
+        ceiling = self.deadline.max_ahead_seconds
+        turn = self.turn
+        budgets: tuple[tuple[str, float], ...] = (
+            ("tool_timeout_seconds", turn.tool_timeout_seconds),
+            ("hook_timeout_seconds", turn.hook_timeout_seconds),
+            (
+                "output_send+memory_flush",
+                turn.output_send_timeout_seconds + turn.memory_flush_timeout_seconds,
+            ),
+        )
+        if turn.dispatch_timeout_seconds > 0:
+            budgets += (("dispatch_timeout_seconds", turn.dispatch_timeout_seconds),)
+        for name, budget in budgets:
+            if budget + margin > ceiling:
+                raise ValueError(
+                    f"deadline.max_ahead_seconds ({ceiling}) must be >= "
+                    f"{name} ({budget}) + phase margin ({margin}) — the "
+                    f"watchdog ceiling would clip phase declarations."
+                )
+        return self
 
 
 class LLMProviderConfig(BaseModel):

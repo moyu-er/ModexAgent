@@ -188,6 +188,28 @@ class TestLinearSchedulerExecution:
         with pytest.raises(GraphRecursionError, match="max_iterations=5"):
             await scheduler.run_async(ctx, mode=BootstrapMode.FRESH)
 
+    async def test_max_iterations_default_is_unlimited(self) -> None:
+        class CountDownNode(Node[CounterState]):
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
+                ctx.state.count += 1
+                target = "inf" if ctx.state.count < 150 else GraphNode.END
+                self.deliver(None, target, ctx)
+                return None
+
+        g: Graph[CounterState] = Graph()
+        g.add_node("inf", CountDownNode())
+        g.add_edge(GraphNode.START, "inf")
+        g.add_edge("inf", "inf")
+        g.add_edge("inf", GraphNode.END)
+        compiled = g.compile()
+        assert compiled.max_iterations is None
+        ctx = make_ctx(CounterState(count=0))
+        scheduler = LinearScheduler(compiled)
+        result = await scheduler.run_async(ctx, mode=BootstrapMode.FRESH)
+        assert result.count == 150
+
 
 class TestLinearSchedulerTopologyEnforcement:
     """G3: LinearScheduler validates deliver targets against declared edges.

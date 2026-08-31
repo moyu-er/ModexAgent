@@ -1037,7 +1037,7 @@ class TestBotAgentNodeExecute:
 
 
 class TestReActAgentCompileBudget:
-    async def test_compile_budget_scales_with_runtime_max_turns(
+    async def test_compile_sets_no_engine_max_iterations(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -1075,7 +1075,7 @@ class TestReActAgentCompileBudget:
 
         await ReActAgent(provider=MagicMock()).run(context, MagicMock())
 
-        graph_builder.compile.assert_called_once_with(max_iterations=70)
+        graph_builder.compile.assert_called_once_with()
 
 
 class TestBotAgentNodeFactory:

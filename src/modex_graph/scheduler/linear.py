@@ -86,7 +86,10 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
 
         while True:
             ctx.control.check()
-            if iteration >= self.graph.max_iterations:
+            if (
+                self.graph.max_iterations is not None
+                and iteration >= self.graph.max_iterations
+            ):
                 raise GraphRecursionError(
                     f"Graph exceeded max_iterations={self.graph.max_iterations} "
                     f"(last node: {current!r}). This is an abnormal exit — "

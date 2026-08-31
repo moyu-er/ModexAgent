@@ -34,6 +34,7 @@ from modex_agent.hook.abc import (
     HookSpec,
     StartNodeTurnHook,
 )
+from modex_agent.runtime.dispatch import renew_dispatch_deadline
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -47,6 +48,9 @@ logger = logging.getLogger(__name__)
 
 # 默认超时：每个 hook 方法调用的最大时间（秒）
 _DEFAULT_HOOK_TIMEOUT = 10.0
+
+# Watchdog 阶段预算 margin（与 DeadlinePolicy 默认一致：2 × 默认 5s poll）
+_PHASE_MARGIN_SECONDS = 10.0
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +276,15 @@ class HookRunner:
             Exception: HookErrorPolicy.ABORT 时会抛出
         """
         timeout = hook_timeout if hook_timeout is not None else _DEFAULT_HOOK_TIMEOUT
+        # Watchdog protocol: declare the hook batch's full budget (per-hook
+        # timeout × registered hooks for this point + margin) so the outer
+        # pool watchdog never fires before the inner per-hook wait_for.
+        applicable = [
+            spec
+            for spec in self._hook_specs
+            if isinstance(spec.hook, _HOOK_DISPATCH[hook_point][0])
+        ]
+        renew_dispatch_deadline(timeout * max(len(applicable), 1) + _PHASE_MARGIN_SECONDS)
         hook_kwargs = dict(payload.data) if payload else {}
 
         entry = _HOOK_DISPATCH.get(hook_point)

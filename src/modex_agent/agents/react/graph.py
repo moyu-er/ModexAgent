@@ -3,7 +3,8 @@
 Per ADR-0033 D9 + D13 Stage 4: replaces the old ``ReActGraph(Graph)`` class
 (which subclassed the deleted ``modex_agent.core.graph.Graph``). The new
 builder returns a ``modex_graph.Graph[ReActTurnState]`` ready for
-``.compile(max_iterations=...)`` + ``GraphEngine``.
+``.compile()`` (engine limit is opt-in; ReAct does not set it) +
+``GraphEngine``.
 
 The topology uses 6 ReAct nodes and plain topology edges. The entry edge
 ``add_edge(GraphNode.START, ReActNode.START)``
@@ -44,11 +45,11 @@ def build_react_graph(
 ) -> Graph[ReActTurnState]:
     """Construct the ReAct 6-node graph topology on the new ``modex_graph`` engine.
 
-    Returns a mutable ``Graph[ReActTurnState]`` — the caller is expected to
-    ``.compile(max_iterations=...)`` it before constructing a ``GraphEngine``.
-    Per ADR-0033 D9.3 the engine-level ``max_iterations`` is a panic safety
-    net (larger than the business max); the business-level max is enforced
-    by ``LLMNode`` delivering to ``ReActNode.AFTER``.
+    Returns a mutable ``Graph[ReActTurnState]`` — the caller compiles it
+    (``.compile()``; ReAct sets no engine ``max_iterations`` — the sole
+    iteration cap is the ``LLMNode`` business gate, and the pool watchdog
+    is the sole time-based termination) before constructing a
+    ``GraphEngine``.
 
     Edges declare topology only — routing is deliver-only. Nodes call
     ``deliver(content, target, ctx)`` at runtime to route to the next node.

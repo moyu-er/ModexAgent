@@ -65,6 +65,7 @@ from modex_agent.core.turn_events import (
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
+from modex_agent.runtime.dispatch import renew_dispatch_deadline
 from modex_agent.workspace.runtime import is_workspace_root_bound, resolve_workspace_root
 
 from .backend_provider import BackendProvider, TurnContext
@@ -522,6 +523,10 @@ class ExternalAgent(Agent[ExternalEvent]):
         accumulator = _EmissionAccumulator()
 
         async def on_emission(emission: Emission) -> None:
+            # Provider event = activity signal for the pool watchdog (same
+            # protocol as ReAct stream chunks: every event renews by the
+            # deadline's default amount, chunk_renew_seconds).
+            renew_dispatch_deadline()
             await self._handle_emission(emission, emitter, accumulator, turn_ctx)
 
         # Borrow a backend for this turn. PoolScopedBackendProvider returns

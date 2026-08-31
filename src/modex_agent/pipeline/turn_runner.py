@@ -57,6 +57,7 @@ from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner_abc import TurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+from modex_agent.runtime.dispatch import renew_dispatch_deadline
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.runtime.models import TurnSnapshot
 from modex_agent.workspace.runtime import bind_workspace_root
@@ -368,6 +369,15 @@ class ReActTurnRunner(TurnRunner):
             raise
 
         finally:
+            # Watchdog protocol: the turn's tail (memory flush + session-end
+            # hooks) owns its own budgets — declare them into the deadline so
+            # a healthy finishing turn is never killed mid-flush by the
+            # watchdog (the last chunk renewal alone may not cover them).
+            renew_dispatch_deadline(
+                turn.memory_flush_timeout_seconds
+                + turn.hook_timeout_seconds
+                + self._safety.deadline.phase_margin_seconds
+            )
             # Clean up session task tracking
             self._registry.unregister_turn(session_id)
             await _safe_flush(ctx_mgr, session_id, timeout=turn.memory_flush_timeout_seconds)

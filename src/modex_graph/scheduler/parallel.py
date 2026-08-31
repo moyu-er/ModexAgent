@@ -57,8 +57,9 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
       happen after `Node.run()` promotes the source's staged outputs.
     - `GraphNode.END` dispatch records terminal reachability, then follows
       normal trigger admission and executes the registered END node.
-    - `max_iterations`: global per-instance-execution counter; raises
-      `GraphRecursionError` on overflow.
+    - `max_iterations`: opt-in safety net (default `None` = unlimited) —
+      global per-instance-execution counter; raises
+      `GraphRecursionError` on overflow when set.
     - Trigger modes: `ON_ALL_PREDS` (gated by reachability BFS) and
       `ON_RECEIVE` (immediate, no reachability gating; serialized per-node
       — concurrent ON_RECEIVE dispatches to a node with an in-flight
@@ -269,8 +270,11 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         """
         instance = self._instances[instance_id]
 
-        # Engine-level safety net (per-instance-execution counting).
-        if self._iteration_count >= self.graph.max_iterations:
+        # Opt-in engine-level safety net (per-instance-execution counting).
+        if (
+            self.graph.max_iterations is not None
+            and self._iteration_count >= self.graph.max_iterations
+        ):
             raise GraphRecursionError(
                 f"Graph exceeded max_iterations={self.graph.max_iterations} "
                 f"(last instance: {instance_id!r}). This is an abnormal exit — "

@@ -21,18 +21,26 @@ class LLMSafetyConfig(BaseModel):
 class TurnSafetyConfig(BaseModel):
     """Per-turn safety timeouts.
 
-    ``agent_run_timeout``: per-iteration DispatchDeadline renewal amount (not
-    a hard turn ceiling). See runtime/dispatch.py for the sliding ceiling design.
-    ``tool_timeout``: per-invocation tool execution deadline (ToolTimeoutInterceptor).
-    Defaults to ``DefaultValues.TOOL_TIMEOUT_SECONDS`` — the single source of
-    truth; it must stay strictly ABOVE ``PersistentShellSession``'s own 480s
-    deadline so the session's graceful timeout path (partial output + reset
-    notice) is reachable before the executor's blind cancel.
+    ``tool_timeout``: per-invocation tool execution deadline
+    (ToolTimeoutInterceptor), also declared into the dispatch deadline at
+    tool entry (own budget + margin) so the watchdog never races the inner
+    deadline. Defaults to ``DefaultValues.TOOL_TIMEOUT_SECONDS`` — the
+    single source of truth; it must stay strictly ABOVE
+    ``PersistentShellSession``'s own 480s deadline so the session's
+    graceful timeout path (partial output + reset notice) is reachable
+    before the executor's blind cancel.
     """
 
-    agent_run_timeout: float = 600.0
     hook_timeout: float = 10.0
     tool_timeout: float = DefaultValues.TOOL_TIMEOUT_SECONDS
+
+
+class DeadlineSafetyConfig(BaseModel):
+    """Dispatch-deadline (watchdog) tuning knobs — see DeadlinePolicy."""
+
+    chunk_renew_seconds: float = 3.0
+    max_ahead_seconds: float = 1200.0
+    watchdog_poll_seconds: float = 5.0
 
 
 class SafetyConfig(BaseModel):
@@ -40,3 +48,4 @@ class SafetyConfig(BaseModel):
 
     llm: LLMSafetyConfig = LLMSafetyConfig()
     turn: TurnSafetyConfig = TurnSafetyConfig()
+    deadline: DeadlineSafetyConfig = DeadlineSafetyConfig()

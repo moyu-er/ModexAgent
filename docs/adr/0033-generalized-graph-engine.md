@@ -143,7 +143,7 @@ The graph engine has three structural defects that block generalization:
   (`add_conditional_edges(src, path_fn)` returning str | list[str] |
   list[Task]) — `Task` accepted as a return value but executed sequentially
   in Phase a
-- Cycle guard: configurable `max_iterations` + `GraphRecursionError`
+- Cycle guard: opt-in `max_iterations` (default `None` = unlimited — business layers own their lifecycle; the pool watchdog is the time-based termination) + `GraphRecursionError` on overflow when set
 - Graph-is-a-Node **type-level** support (`Graph` is a subclass of `Node`)
   but not exercised by any Phase-a consumer (wiring for Phase c)
 - Architecture guard test: `core/graph/` must not import any `modex_agent`
@@ -1013,7 +1013,7 @@ together; Stage 5 is independent.
 **Stage 4 — ReAct switches to `modex_graph` engine; old `core/graph/` deleted.**
 
 - `ReActAgent.run()` constructs new `Graph` (via
-  `build_react_graph().compile(max_iterations=...)`), new `GraphEngine`,
+  `build_react_graph().compile()` — no engine limit; the `LLMNode` business gate is the sole iteration cap), new `GraphEngine`,
   new `GraphContext` with `ReactGraphRuntime` + `user_data=agent_ctx`.
 - `engine.run(ctx)` → `engine.run_async(graph_ctx)`.
 - Old `src/modex_agent/core/graph/` directory is deleted. Architecture

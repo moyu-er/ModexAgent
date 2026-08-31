@@ -10,7 +10,7 @@ models, and owns provider resources through one lifecycle interface.
 
 ## Architecture
 
-- `ExternalAgent` owns turn orchestration and retryable agent stop.
+- `ExternalAgent` owns turn orchestration and retryable agent stop. Every provider emission (`on_emission`) renews the pool dispatch deadline by `chunk_renew_seconds` — external turns share the same watchdog activity-renewal protocol as ReAct stream chunks.
 - `StreamingProviderBackend` is the execution and cleanup seam. Upper layers
   call `execute_streaming()` and `close()` without branching on provider kind.
 - `OpenCodeServerManager` is a process-wide singleton that owns the shared

@@ -23,7 +23,8 @@ Per ADR-0033 D3 + D6 + D7 + D9.3 (unchanged):
 - `run(ctx) -> S` — sync entry. Wraps `run_async` in `asyncio.run`. For
   standalone scripts / CLI / REPL usage.
 - `GraphBubbleUp` exceptions are NEVER swallowed — propagated to the caller.
-- `max_iterations` safety net: exceeding raises `GraphRecursionError`.
+- Opt-in `max_iterations` safety net: when set, exceeding it raises
+  `GraphRecursionError` (default `None` = unlimited).
 - `run_async` is stateless across calls — always starts from `entry_node`.
 
 Returns `ctx.state` (the final state). The terminal node writes its result

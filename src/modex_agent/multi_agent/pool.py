@@ -495,6 +495,8 @@ class AgentPool(AgentRegistry):
             if dispatch_timeout > 0:
                 deadline = DispatchDeadline(
                     initial_timeout=dispatch_timeout,
+                    max_ahead_seconds=self._safety.deadline.max_ahead_seconds,
+                    default_renew_seconds=self._safety.deadline.chunk_renew_seconds,
                 )
                 token = current_dispatch_deadline.set(deadline)
                 dispatch_task = asyncio.ensure_future(coro)
@@ -560,25 +562,22 @@ class AgentPool(AgentRegistry):
             ):
                 self._transition(agent_name, AgentState.IDLE, reason="dispatch_idle")
 
-    # watchdog 最大轮询间隔：避免 sleep(remaining) 一次睡太久，
-    # 导致对 renew() 的响应延迟过大。
-    _WATCHDOG_POLL_INTERVAL: float = 5.0
-
     async def _dispatch_watchdog(
         self,
         task: asyncio.Task[None],
         deadline: DispatchDeadline,
     ) -> None:
         """监控 dispatch task 的可续期 deadline。过期则取消 task。"""
+        # 每轮最多睡 watchdog_poll_seconds（DeadlinePolicy），避免
+        # sleep(remaining) 一次睡太久，导致对 renew() 的响应延迟过大。
+        poll_interval = self._safety.deadline.watchdog_poll_seconds
         try:
             while not task.done():
                 remaining = deadline.remaining
                 if remaining <= 0:
                     task.cancel()
                     return
-                # 每轮最多睡 _WATCHDOG_POLL_INTERVAL，确保 renew() 后
-                # 不需要等太久就能被感知到。
-                await asyncio.sleep(min(remaining, self._WATCHDOG_POLL_INTERVAL))
+                await asyncio.sleep(min(remaining, poll_interval))
         except asyncio.CancelledError:
             return
 

@@ -314,7 +314,7 @@ def _write_minimal_config(project_dir: Path) -> None:
         """
 safety:
   llm: {request_timeout: 45.0, stream_idle_timeout: 90.0, max_retries: 1, retry_backoff: [2.0, 8.0]}
-  turn: {agent_run_timeout: 60.0, hook_timeout: 10.0, tool_timeout: 30.0}
+  turn: {hook_timeout: 10.0, tool_timeout: 30.0}
 paths:
   data_dir_name: ".modex"
 """,
