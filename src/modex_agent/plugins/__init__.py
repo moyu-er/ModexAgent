@@ -5,7 +5,8 @@ system (SPEC §4-§6). Submodules:
 
 - ``abc`` — ``ComponentSlot``, ``AgentType``, ``HookRunnerKind``,
   ``PluginSource`` and the factory hierarchy (``ComponentFactory``,
-  ``SimpleFactory``, ``HookFactory``, ``ReactHookFactory``,
+  ``SimpleFactory`` (singleton semantics), ``PrototypeFactory``
+  (per-assembly construction), ``HookFactory``, ``ReactHookFactory``,
   ``MemoryHookFactory``).
 - ``capability`` — the capability-bundle protocol (ADR-0047):
   ``Capability``, ``CapabilitySupply``, ``CapabilityConfig`` and the
@@ -33,6 +34,7 @@ from modex_agent.plugins.abc import (
     HookRunnerKind,
     MemoryHookFactory,
     PluginSource,
+    PrototypeFactory,
     ReactHookFactory,
     SimpleFactory,
 )
@@ -115,6 +117,7 @@ __all__ = [
     "PoolSupplyAgentEntry",
     "PoolSupplyView",
     "PromptSectionSpec",
+    "PrototypeFactory",
     "ReactHookFactory",
     "SimpleFactory",
     "ToolReplacementSpec",

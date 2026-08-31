@@ -22,9 +22,20 @@ from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import compile_scope
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
+from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.scope_path import ScopePath
+
+
+class _StaticRootProvider(WorkspaceRootProvider):
+    """Static workspace root — matches the deps' scope_path.workspace_root."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+
+    def current(self) -> Path:
+        return self._root
 
 
 async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
@@ -82,6 +93,7 @@ async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
         llm_model="gpt-4o",
         llm_provider=MagicMock(),
         project_dir=None,  # skip prompt file read + MCP + skills
+        root_provider=_StaticRootProvider(Path("/ws")),
         component_registry=registry,
         pool_assembly_ctx=pool_assembly,
         capability_supply={"subagents": SubagentsSupply(service=MagicMock())},
@@ -126,6 +138,110 @@ def test_legacy_preset_tool_manager_helper_is_removed() -> None:
     from modex_agent.multi_agent import template
 
     assert not hasattr(template, "build_preset_tool_manager")
+
+
+def test_send_to_agent_fallback_registration_is_removed() -> None:
+    """Death grep: the materialize-time baked ``send_to_agent`` fallback
+    is gone — the derived entry from the ``subagents`` capability is the
+    single registration road (SPEC §5.2)."""
+    from modex_agent.multi_agent import template
+
+    assert not hasattr(template, "_register_send_to_agent")
+
+
+@pytest.mark.asyncio
+async def test_materialize_without_any_workspace_source_raises():
+    """The workspace-root derivation chain (scope_path → root_provider)
+    raises loudly when ALL sources are absent — the old silent
+    ``Path(".")`` fallback masked missing workspace wiring."""
+    deps, _factory = await _make_deps()
+    deps.project_dir = None
+    deps.root_provider = None
+    deps.scope_path = None
+    template = _compiled_template("scout")
+    parent = SessionIdFactory().create(agent_name="main")
+
+    with pytest.raises(ValueError, match=r"scope_path or root_provider"):
+        await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
+
+
+def test_subagent_workspace_root_prefers_scope_path_over_project_dir():
+    """Workspace identity comes from the scope path, NEVER the static
+    project dir: production threads both (service project dir + live
+    workspace scope path) and the workspace must win for non-home
+    workspaces (project_dir-first picked the bot project for every
+    workspace — the review's Issue 1)."""
+    from modex_agent.multi_agent.template import _subagent_workspace_root
+
+    deps = AgentMaterializeDeps(
+        agent_factory=MagicMock(),
+        pool=MagicMock(),
+        session_factory=SessionIdFactory(),
+        broker=MagicMock(),
+        tree=MagicMock(spec=SessionTreeManager),
+        project_dir=Path("/bot/project/dir"),
+        scope_path=ScopePath(workspace_root=Path("/live/workspace"), pool_name="main"),
+        root_provider=_StaticRootProvider(Path("/provider/root")),
+    )
+
+    assert _subagent_workspace_root(deps) == Path("/live/workspace")
+
+    deps.scope_path = None
+    assert _subagent_workspace_root(deps) == Path("/provider/root")
+
+    deps.root_provider = None
+    with pytest.raises(ValueError, match=r"scope_path or root_provider"):
+        _subagent_workspace_root(deps)
+
+
+@pytest.mark.asyncio
+async def test_materialize_threads_workspace_resources_onto_subagent_chain():
+    """The deps-threaded workspace bundle reaches the subagent's assembly
+    context (the review's Issue 2: subagent chains carried no workspace
+    layer, so workspace-scoped factories like the bot ``kb`` tool could
+    never resolve for subagents). Observed by wrapping
+    ``assemble_native_agent`` — the native road's single assembly entry —
+    and reading ``workspace_resources`` off the context it receives."""
+    import modex_agent.plugins.assembly.native_core as native_core_module
+
+    captured: dict[str, object] = {}
+    real = native_core_module.assemble_native_agent
+
+    async def _capturing(spec: object, registry: object, inputs: object, **kwargs: object):
+        ctx = kwargs.get("ctx")
+        captured["resources"] = getattr(ctx, "workspace_resources", "MISSING")
+        return await real(spec, registry, inputs, **kwargs)  # type: ignore[arg-type]
+
+    with patch.object(
+        native_core_module, "assemble_native_agent", side_effect=_capturing
+    ):
+        deps, _factory = await _make_deps()
+        bundle = object()
+        deps.workspace_resources = bundle
+        template = _compiled_template("scout")
+        parent = SessionIdFactory().create(agent_name="main")
+        await template.materialize(
+            parent_session=parent, invocation_id="inv1", deps=deps
+        )
+
+    assert captured["resources"] is bundle
+
+
+@pytest.mark.asyncio
+async def test_materialize_subagent_send_to_agent_veto_is_respected():
+    """Veto regression anchor: a declaration vetoing the derived
+    ``send_to_agent`` (``tools: [-send_to_agent]``) materializes a
+    subagent WITHOUT the tool. The retired materialize-time fallback used
+    to re-register the tool unconditionally, silently defeating the
+    user's veto."""
+    deps, factory = await _make_deps()
+    template = _compiled_template("scout", tools=["-send_to_agent"])
+    parent = SessionIdFactory().create(agent_name="main")
+
+    await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
+
+    tm = factory.create_agent.call_args.kwargs["tool_manager"]
+    assert tm.get_tool("send_to_agent") is None
 
 
 @pytest.mark.asyncio
@@ -400,6 +516,7 @@ async def test_materialize_external_injects_emitter_factory_into_turn_runner():
         tree=MagicMock(spec=SessionTreeManager),
         strategy_registry=strategy_registry,
         emitter_factory=sentinel_emitter_factory,
+        scope_path=ScopePath(workspace_root=Path("/ws"), pool_name="main"),
         component_registry=_empty_component_registry(),
     )
     template = _compiled_template(
@@ -551,6 +668,7 @@ async def test_materialize_external_skips_emitter_injection_when_deps_emitter_no
         tree=MagicMock(spec=SessionTreeManager),
         strategy_registry=strategy_registry,
         emitter_factory=None,
+        scope_path=ScopePath(workspace_root=Path("/ws"), pool_name="main"),
         component_registry=_empty_component_registry(),
     )
     template = _compiled_template(
@@ -656,6 +774,7 @@ async def test_materialize_subagent_bash_roster_gets_bash_input_companion():
         BashInputTool,
         PersistentBashTool,
     )
+    from modex_agent.tools.workspace_scoped import WorkspaceScopedTool
 
     deps, factory = await _make_deps()
     template = _compiled_template("scout")
@@ -668,6 +787,11 @@ async def test_materialize_subagent_bash_roster_gets_bash_input_companion():
 
     tm = factory.create_agent.call_args.kwargs["tool_manager"]
     bash = tm.get_tool("bash")
+    # The deps carry a root_provider, so assembly wraps the roster bash in
+    # a WorkspaceScopedShellTool — the type assertion targets the inner
+    # tool (production shape: subagent bash IS workspace-scoped).
+    if isinstance(bash, WorkspaceScopedTool):
+        bash = bash.inner
     assert isinstance(bash, PersistentBashTool)
     companion = tm.get_tool("bash_input")
     assert isinstance(companion, BashInputTool)
@@ -683,6 +807,7 @@ async def test_materialize_subagent_bash_without_pty_host_gets_no_companion():
     SubprocessTool — no companion may register (structural pairing is
     PersistentBashTool-only)."""
     from modex_agent.tools.terminal.subprocess_tool import SubprocessTool
+    from modex_agent.tools.workspace_scoped import WorkspaceScopedTool
 
     deps, factory = await _make_deps()
     template = _compiled_template("scout")
@@ -694,7 +819,11 @@ async def test_materialize_subagent_bash_without_pty_host_gets_no_companion():
         await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
 
     tm = factory.create_agent.call_args.kwargs["tool_manager"]
-    assert isinstance(tm.get_tool("bash"), SubprocessTool)
+    bash = tm.get_tool("bash")
+    # Workspace-scoped wrapper (see the companion test): assert the inner.
+    if isinstance(bash, WorkspaceScopedTool):
+        bash = bash.inner
+    assert isinstance(bash, SubprocessTool)
     assert tm.get_tool("bash_input") is None
 
 

@@ -437,7 +437,6 @@ async def _assemble_resources(
             mcp_registry=service._mcp_registry,
             persistence=persistence,
             app_config=app_config,
-            kb_provider=resources.kb_provider,
             strategy_registry=service._strategy_registry,
             session_pool_index=session_pool_index,
             workspace_registry=service.workspace_stack.registry

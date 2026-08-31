@@ -1,212 +1,152 @@
-from __future__ import annotations
+"""KbTool registration — the factory road (the builder flag road is dead).
 
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
-from bot.kb.builder import build_default_kb_provider
-from bot.kb.provider import KbProvider
-from bot.service import builders
-from bot.service.model_choice import ModelChoiceRegistry
-from bot.service.pool import create_pool
-
-from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.hook import HookRunner
-from modex_agent.interceptor.chain import InterceptorChain
-from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-from modex_agent.multi_agent import SessionRetentionPolicy
-from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.persistence.managers import WorkspacePersistenceManager
-
-from ...declaration_driver import build_declared
-
-_POOL_DECLARATION = """\
-pool:
-  name: test-pool
-  agents:
-    main:
-      description: test main agent
-      toolset: none
+The ``kb`` tool ships REGISTERED-but-UNREFERENCED: ``KbToolFactory``
+lives in the TOOL slot; enabling it for an agent is a declaration concern
+(``tools: [+kb]``), and the factory resolves the workspace's
+``KbProvider`` from the context chain at assembly time. The retired
+``register_kb_tool`` builder flag (a parallel enable path outside the
+roster system) is deleted — death-grepped below.
 """
 
+from __future__ import annotations
 
-async def _build_tool_names(
-    tmp_path: Path,
-    kb_provider: KbProvider | None,
-    *,
-    app_config: AppConfig | None = None,
-    persistence: WorkspacePersistenceManager | None = None,
-) -> list[str]:
-    data_dir = tmp_path / ".modex"
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    (bin_dir / "modexctl.bat").write_text("@exit /b 0\n", encoding="ascii")
-    broker = InMemoryMessageBroker()
-    await broker.start()
-    with patch.dict("os.environ", {"MODEXBOT_BIN_DIR": str(bin_dir)}):
-        pool_instance = await create_pool(
-            pool_name="test-pool",
-            declared=build_declared(
-                _POOL_DECLARATION,
-                project_dir=tmp_path,
-                data_dir=data_dir,
-                pool_name="test-pool",
-            ),
-            assembly_deps=PoolAssemblyDeps(),
-            project_dir=tmp_path,
-            workspace_registry=object(),
-            workspace_resources=object(),
-            data_dir=data_dir,
-            broker=broker,
-            output_adapter=MagicMock(),
-            safety=RuntimeSafetyPolicy(),
-            retention=SessionRetentionPolicy(),
-            im_ui=MagicMock(),
-            shared_hooks=[],
-            shared_hook_runner=HookRunner(),
-            shared_interceptor_chain=InterceptorChain(),
-            bot_model_config=None,
-            model_choice_registry=ModelChoiceRegistry(),
-            app_config=app_config,
-            persistence=persistence,
-            kb_provider=kb_provider,
-        )
-    try:
-        return pool_instance.tool_manager.list_tools()
-    finally:
-        await pool_instance.pool.shutdown_all()
-        await broker.stop()
+from unittest.mock import MagicMock
+
+import pytest
+from bot.kb.provider import KbProvider
+from bot.tools.kb import KbTool
+from bot.workspace.handle import PoolWorkspaceResources
+from plugins.bot_hooks import BotHooksPlugin, KbToolFactory
+
+from modex_agent.plugins.abc import ComponentSlot
+from modex_agent.plugins.assembly.context import WorkspaceContext
+from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.plugins.registry import ComponentRegistry
 
 
-@pytest.mark.asyncio
-async def test_kb_tool_not_registered_by_default_through_create_pool(
-    tmp_path: Path,
+def _registered() -> ComponentRegistry:
+    registry = ComponentRegistry()
+    with PluginRegistrationContext(registry) as ctx:
+        BotHooksPlugin().register(ctx)
+    return registry
+
+
+def _resources(kb_provider: KbProvider | None) -> PoolWorkspaceResources:
+    """Minimal real bundle — the factory type-checks the resources against
+    PoolWorkspaceResources (rule 6: typed access at the bot boundary)."""
+    import pathlib
+
+    from modex_agent.workspace.context import WorkspaceContext as WsCtx
+    from modex_agent.workspace.paths import WorkspacePaths
+
+    root = pathlib.Path("/tmp/kb-test-ws")
+    return PoolWorkspaceResources(
+        target=root,
+        ctx=WsCtx(target=root, paths=WorkspacePaths(root=root), is_home=False),
+        overflow_store=MagicMock(),
+        session_index_store=MagicMock(),
+        broker=MagicMock(),
+        kb_provider=kb_provider,
+    )
+
+
+def _ws_ctx(kb_provider: KbProvider | None) -> WorkspaceContext:
+    return WorkspaceContext(
+        workspace_ctx=MagicMock(),
+        workspace_resources=_resources(kb_provider),
+    )
+
+
+def test_kb_factory_registered_in_tool_slot() -> None:
+    factory = _registered().resolve(ComponentSlot.TOOL, "kb")
+    assert isinstance(factory, KbToolFactory)
+
+
+async def test_kb_factory_builds_tool_from_workspace_provider() -> None:
+    factory = _registered().resolve(ComponentSlot.TOOL, "kb")
+
+    tool = await factory.create(factory.config_model(), _ws_ctx(MagicMock(spec=KbProvider)))
+
+    assert isinstance(tool, KbTool)
+    assert tool.name == "kb"
+
+
+async def test_kb_factory_missing_provider_is_actionable() -> None:
+    factory = _registered().resolve(ComponentSlot.TOOL, "kb")
+
+    with pytest.raises(ValueError, match=r"KbProvider"):
+        await factory.create(factory.config_model(), _ws_ctx(None))
+
+
+async def test_kb_factory_missing_resources_is_actionable() -> None:
+    factory = _registered().resolve(ComponentSlot.TOOL, "kb")
+    ctx = WorkspaceContext(workspace_ctx=MagicMock())
+
+    with pytest.raises(ValueError, match=r"KbProvider"):
+        await factory.create(factory.config_model(), ctx)
+
+
+async def test_kb_tool_task_id_provider_reads_environment(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    app_config = AppConfig.model_validate({"persistence": {"backend": "sqlite"}})
-    persistence = WorkspacePersistenceManager(tmp_path / ".modex" / "state.db")
-    await persistence.open()
-    kb_provider = await build_default_kb_provider(persistence.connection)
-
-    try:
-        tool_names = await _build_tool_names(
-            tmp_path,
-            kb_provider,
-            app_config=app_config,
-            persistence=persistence,
-        )
-    finally:
-        await persistence.close()
-
-    assert "kb" not in tool_names
-
-
-@pytest.mark.asyncio
-async def test_kb_tool_registered_when_register_flag_is_true(
-    tmp_path: Path,
-) -> None:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    (bin_dir / "modexctl.bat").write_text("@exit /b 0\n", encoding="ascii")
-    broker = InMemoryMessageBroker()
-    await broker.start()
-
-    persistence = WorkspacePersistenceManager(tmp_path / ".modex" / "state.db")
-    await persistence.open()
-    kb_provider = await build_default_kb_provider(persistence.connection)
-
-    helper = builders._PoolAssemblyMixin()
-    try:
-        with patch.dict("os.environ", {"MODEXBOT_BIN_DIR": str(bin_dir)}):
-            tm = await helper._build_tools(
-                "test-pool",
-                kb_provider=kb_provider,
-                register_kb_tool=True,
-            )
-        assert "kb" in tm.list_tools()
-    finally:
-        await persistence.close()
-        await broker.stop()
-
-
-@pytest.mark.asyncio
-async def test_kb_tool_not_registered_when_provider_is_absent(tmp_path: Path) -> None:
-    # Given / When
-    tool_names = await _build_tool_names(tmp_path, None)
-
-    # Then
-    assert "kb" not in tool_names
-
-
-def test_task_id_provider_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Given
+    factory = _registered().resolve(ComponentSlot.TOOL, "kb")
     monkeypatch.setenv("MODEX_TASK_ID", "task-123")
 
-    # When
-    task_id = builders._make_task_id_provider()()
-
-    # Then
-    assert task_id == "task-123"
+    tool = await factory.create(factory.config_model(), _ws_ctx(MagicMock(spec=KbProvider)))
+    assert tool.name == "kb"
+    assert tool._task_id_provider() == "task-123"  # noqa: SLF001
 
 
-def test_task_id_provider_returns_none_when_environment_is_unset(
+async def test_kb_tool_identity_prefers_per_turn_contextvar(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Given
-    monkeypatch.delenv("MODEX_TASK_ID", raising=False)
+    """The identity closures read the per-turn ContextVar channel FIRST —
+    the native runtime's real identity source (os.environ is unset for
+    native agents and wrong under concurrent turns)."""
+    from modex_agent.runtime.env_context import _current_session_id, _modex_env
 
-    # When
-    task_id = builders._make_task_id_provider()()
+    factory = _registered().resolve(ComponentSlot.TOOL, "kb")
+    monkeypatch.setenv("MODEX_TASK_ID", "stale-env-task")  # must NOT win
+    monkeypatch.setenv("MODEX_SESSION_ID", "stale-env-session")
 
-    # Then
-    assert task_id is None
+    token_env = _modex_env.set({"MODEX_TASK_ID": "graph-42"})
+    token_session = _current_session_id.set("sess-live")
+    try:
+        tool = await factory.create(
+            factory.config_model(), _ws_ctx(MagicMock(spec=KbProvider))
+        )
+        assert tool._task_id_provider() == "graph-42"  # noqa: SLF001
+        assert tool._session_id_provider() == "sess-live"  # noqa: SLF001
+    finally:
+        _modex_env.reset(token_env)
+        _current_session_id.reset(token_session)
 
 
-def test_task_id_provider_preserves_empty_environment_value(
+async def test_kb_tool_identity_falls_back_to_environ(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Given
-    monkeypatch.setenv("MODEX_TASK_ID", "")
+    """No ContextVar set (e.g. the modexctl/CLI subprocess context) — the
+    closures fall back to os.environ."""
+    factory = _registered().resolve(ComponentSlot.TOOL, "kb")
+    monkeypatch.setenv("MODEX_TASK_ID", "cli-task-9")
 
-    # When
-    task_id = builders._make_task_id_provider()()
-
-    # Then
-    assert task_id == ""
-
-
-def test_session_id_provider_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Given
-    monkeypatch.setenv("MODEX_SESSION_ID", "session-123")
-
-    # When
-    session_id = builders._make_session_id_provider()()
-
-    # Then
-    assert session_id == "session-123"
+    tool = await factory.create(factory.config_model(), _ws_ctx(MagicMock(spec=KbProvider)))
+    assert tool._task_id_provider() == "cli-task-9"  # noqa: SLF001
 
 
-def test_session_id_provider_returns_none_when_environment_is_unset(
+async def test_kb_tool_session_id_provider_reads_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Given
+    factory = _registered().resolve(ComponentSlot.TOOL, "kb")
     monkeypatch.delenv("MODEX_SESSION_ID", raising=False)
 
-    # When
-    session_id = builders._make_session_id_provider()()
-
-    # Then
-    assert session_id is None
+    tool = await factory.create(factory.config_model(), _ws_ctx(MagicMock(spec=KbProvider)))
+    assert tool._session_id_provider() is None  # noqa: SLF001
 
 
-def test_session_id_provider_preserves_empty_environment_value(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Given
-    monkeypatch.setenv("MODEX_SESSION_ID", "")
+def test_kb_builder_flag_road_is_dead() -> None:
+    """Death grep: the builder flag + its private env helpers are gone."""
+    from bot.service import builders
 
-    # When
-    session_id = builders._make_session_id_provider()()
-
-    # Then
-    assert session_id == ""
+    assert not hasattr(builders, "_make_task_id_provider")
+    assert not hasattr(builders, "_make_session_id_provider")

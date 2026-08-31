@@ -30,7 +30,6 @@ from modex_agent.scope.spec import AgentSpec, PoolSpec
 from modex_agent.workspace.scope_path import ScopePath
 
 if TYPE_CHECKING:
-    from bot.kb.provider import KbProvider
     from bot.webui.transcript_store import TranscriptStore
     from bot.workspace.handle import (
         WorkspaceHandle,
@@ -69,7 +68,6 @@ def _build_assembly_context(
     control_channel: InMemoryControlChannel | None,
     pool_data: PoolDataSnapshot | None,
     transcript_store: TranscriptStore | None,
-    kb_provider: KbProvider | None,
     assembly_deps: PoolAssemblyDeps,
 ) -> PoolAssemblyContext:
     """Build the frozen :class:`PoolAssemblyContext` passed to ``strategy.assemble``."""
@@ -110,7 +108,6 @@ def _build_assembly_context(
         control_channel=control_channel,
         pool_data=pool_data,
         transcript_store=transcript_store,
-        kb_provider=kb_provider,
         on_session_start=None,
         on_session_end=None,
         router=None,

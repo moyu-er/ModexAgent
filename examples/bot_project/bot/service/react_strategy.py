@@ -113,10 +113,7 @@ class ReactExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategy):
 
             root_provider = WorkspaceHandleRootProvider(workspace_handle)
 
-        tool_manager: ToolManager = await self._build_tools(
-            pool_name,
-            kb_provider=ctx.kb_provider,
-        )
+        tool_manager: ToolManager = await self._build_tools(pool_name)
         # The bash slot is NOT built or registered here: the roster owns it.
         # Stage 4 resolves the compiled ``bash`` entry through the FW
         # BashToolFactory (CommandTool with a terminal manager / the pool's

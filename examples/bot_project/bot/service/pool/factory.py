@@ -117,7 +117,6 @@ if TYPE_CHECKING:
     # TYPE_CHECKING keeps the import graph acyclic. Runtime references
     # (``WorkspaceHandleRootProvider``) are imported lazily inside
     # ``create_pool`` for the same reason.
-    from bot.kb.provider import KbProvider
     from bot.webui.transcript_store import TranscriptStore
     from bot.workspace.handle import (
         WorkspaceHandle,
@@ -227,7 +226,6 @@ async def create_pool(
     mcp_registry: McpConnectionRegistry | None = None,
     persistence: Any | None = None,
     app_config: Any | None = None,
-    kb_provider: KbProvider | None = None,
     strategy_registry: ExecutionStrategyRegistry | None = None,
     # Per-workspace session→pool attribution index; the tree/node stores built
     # below register into it.
@@ -353,7 +351,6 @@ async def create_pool(
         control_channel=control_channel,
         pool_data=pool_data,
         transcript_store=transcript_store,
-        kb_provider=kb_provider,
         assembly_deps=assembly_deps,
     )
 
@@ -714,6 +711,7 @@ async def create_pool(
         context_fork_builder=context_fork_builder,
         scope_path=scope_path,
         workspace_manager=workspace_resolver,
+        workspace_resources=workspace_resources,
         mcp_registry=mcp_registry,
         execution_strategy=strategy,
         strategy_registry=registry,

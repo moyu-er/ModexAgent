@@ -1,18 +1,22 @@
 """Default tool factories for preset tools and capability-backed extras.
 
-Stateless preset and ast_grep tools use ``SimpleFactory``. Todo,
-experience, and bash tools use runtime factories because their
-construction depends on pool-scoped runtime objects (the capability
-supplies' TodoStore / experience dir + meta store, terminal manager). Preset names project from
-``ToolPreset``; the capability-backed names (``aci_edit``,
-``ast_grep_*``, ``todo_*``, ``experience``) are registered under their
-own names for their capability packages to contribute into rosters.
-The ACI edit upgrade is registered under ``aci_edit`` so the ``aci``
-capability package can contribute it into rosters with the
-``edit ← aci_edit`` O3 replacement (``edit`` stays the plain EditFileTool
-for agents without the capability); the ast_grep search/replace pair is
-registered under its own names for the ``ast_grep`` capability package
-(tools-only contribution, no replacement).
+The stateless standard tools (read/write/edit/ls/glob/grep/web_*,
+aci_edit, ast_grep_*) use ``PrototypeFactory`` — a fresh instance per
+assembly, so no agent ever shares a mutable ``Tool`` instance (a shared
+instance would leak ``register(tool, config)`` mutations and future
+per-tool config across agents/pools/workspaces). Todo, experience, and
+bash tools use runtime factories because their construction depends on
+pool-scoped runtime objects (the capability supplies' TodoStore /
+experience dir + meta store, terminal manager). The capability-backed
+names (``aci_edit``, ``ast_grep_*``, ``todo_*``, ``experience``) are
+registered under their own names for their capability packages to
+contribute into rosters. The ACI edit upgrade is registered under
+``aci_edit`` so the ``aci`` capability package can contribute it into
+rosters with the ``edit ← aci_edit`` O3 replacement (``edit`` stays the
+plain EditFileTool for agents without the capability); the ast_grep
+search/replace pair is registered under its own names for the
+``ast_grep`` capability package (tools-only contribution, no
+replacement).
 
 Communication tools (task/send_to_peer/send_to_agent) live in
 :mod:`modex_agent.plugins.defaults.communication` as TOOL-slot factories
@@ -24,20 +28,28 @@ registration — is deleted; the derived entries are the only road.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.tool_manager import Tool
 from modex_agent.memory.tools.experience import ExperienceTool
-from modex_agent.plugins.abc import ComponentFactory, SimpleFactory
+from modex_agent.plugins.abc import ComponentFactory, PrototypeFactory
 from modex_agent.plugins.assembly.context import PoolContext, PoolRuntimeDeps
 from modex_agent.plugins.defaults.capabilities.todo import require_todo_supply
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.tools.presets import (
-    ToolPreset,
-    get_preset_tools,
     make_aci_edit_tool,
-    make_ast_grep_tools,
+    make_ast_grep_replace_tool,
+    make_ast_grep_search_tool,
+)
+from modex_agent.tools.standard import (
+    EditFileTool,
+    GlobTool,
+    ListDirTool,
+    ReadFileTool,
+    SearchFilesTool,
+    WriteFileTool,
 )
 from modex_agent.tools.standard.todo_tool import TodoReadTool, TodoWriteTool
 from modex_agent.tools.terminal import (
@@ -52,6 +64,7 @@ from modex_agent.tools.terminal.persistent_bash import (
     PersistentBashTool,
     persistent_bash_supported,
 )
+from modex_agent.tools.web import WebReaderTool, WebSearchTool
 
 __all__ = ["ToolConfig", "register_default_tools"]
 
@@ -62,6 +75,27 @@ class ToolConfig(BaseModel):
     """Empty config for default tool factories."""
 
     model_config = {"frozen": True, "extra": "forbid"}
+
+
+_STANDARD_TOOL_BUILDERS: dict[str, Callable[[], Tool]] = {
+    "read": ReadFileTool,
+    "write": WriteFileTool,
+    "edit": EditFileTool,
+    "ls": ListDirTool,
+    "glob": GlobTool,
+    "grep": SearchFilesTool,
+    "web_search": WebSearchTool,
+    "web_reader": WebReaderTool,
+    "aci_edit": make_aci_edit_tool,
+    "ast_grep_search": make_ast_grep_search_tool,
+    "ast_grep_replace": make_ast_grep_replace_tool,
+}
+"""Registry name → zero-arg builder for the stateless standard tools.
+
+The set is the union of every ``ToolPreset`` expansion plus the
+capability-backed upgrades (``aci_edit`` / ``ast_grep_*``); ``bash``
+is absent — its roster name resolves through the terminal-aware
+``BashToolFactory`` below."""
 
 
 def _pool_terminal_pair(
@@ -92,6 +126,13 @@ def _fallback_persistent_bash(pool_runtime: PoolRuntimeDeps | None) -> Tool:
     pool's workspace when known. Hosts without a POSIX pty (Windows) get
     the stateless :class:`SubprocessTool` instead — the persistent shell
     cannot spawn there.
+
+    ``initial_cwd`` is a birth parameter, not per-call resolution: the
+    shell's own ``cd`` state must survive across calls, so the root is
+    read once at assembly. A ``None`` root provider spawns the shell in
+    the process CWD — that path exists for bare test contexts only;
+    production assemblies always carry a root_provider (PoolAssembleStage
+    fills it).
     """
     if not persistent_bash_supported():
         logger.warning(
@@ -253,18 +294,13 @@ class ExperienceToolFactory(ComponentFactory):
 
 
 def register_default_tools(ctx: PluginRegistrationContext) -> None:
-    """Register the dynamically projected preset tool union plus the
-    runtime and capability-backed tool factories."""
-    # Presets iterate FIRST so a later registration colliding with a
-    # preset name cannot shadow the preset implementation ("edit" stays
-    # the plain EditFileTool; the ACI upgrade is registered under its own
-    # name).
-    seen: dict[str, Tool] = {}
-    for preset in ToolPreset:
-        for tool in get_preset_tools(preset):
-            seen.setdefault(tool.name, tool)
-    for name, tool in seen.items():
-        ctx.register_tool(name, SimpleFactory(instance=tool, config_model=ToolConfig))
+    """Register the stateless standard tools plus the runtime and
+    capability-backed tool factories."""
+    # Stateless standard tools: prototype semantics — one fresh instance
+    # per assembly. A preset-union-derived singleton here previously
+    # shared one mutable Tool object across every agent/pool/workspace.
+    for name, builder in _STANDARD_TOOL_BUILDERS.items():
+        ctx.register_tool(name, PrototypeFactory(builder, config_model=ToolConfig))
 
     # Bash: a runtime factory (terminal-manager aware), registered under the
     # name preset expansion emits (scope.derivation._expand_preset_tool_names).
@@ -276,20 +312,6 @@ def register_default_tools(ctx: PluginRegistrationContext) -> None:
     # need interactive input). Both share the pool-unique ProcessRegistry.
     ctx.register_tool("process", ProcessToolFactory())
     ctx.register_tool("terminal", TerminalToolFactory())
-
-    # ACI edit upgrade: distinct registry name so the ``aci`` capability
-    # (plugins/defaults/capabilities/aci.py) can contribute it into rosters
-    # with the ``edit ← aci_edit`` O3 replacement; the tool's own
-    # LLM-facing name stays "edit".
-    ctx.register_tool(
-        "aci_edit", SimpleFactory(instance=make_aci_edit_tool(), config_model=ToolConfig)
-    )
-
-    # ast_grep pair: the ``ast_grep`` capability
-    # (plugins/defaults/capabilities/ast_grep.py) contributes these registry
-    # names into rosters; the tools resolve through the regular TOOL slot.
-    for tool in make_ast_grep_tools():
-        ctx.register_tool(tool.name, SimpleFactory(instance=tool, config_model=ToolConfig))
 
     # Todo pair: the ``todo`` capability
     # (plugins/defaults/capabilities/todo.py) contributes these registry

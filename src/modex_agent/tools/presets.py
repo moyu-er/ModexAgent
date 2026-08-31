@@ -189,14 +189,34 @@ def make_ast_grep_tools() -> list[Tool]:
     """Create the AST search/replace tool pair (registry names
     ``ast_grep_search`` / ``ast_grep_replace``).
 
-    Consumer: ``plugins/defaults/tools.py`` registers the instances under
-    their own names; the ``ast_grep`` capability package
-    (``plugins/defaults/capabilities/ast_grep.py``) contributes those
-    names into rosters.
+    Consumer: ``plugins/defaults/tools.py`` registers the tools under
+    their own names via the per-name builders; this paired face serves
+    the tests that assert the pair's shape. Delegates to the per-name
+    builders — one construction path.
     """
-    from modex_agent.tools.ast import AstGrepReplaceTool, AstGrepSearchTool
+    return [make_ast_grep_search_tool(), make_ast_grep_replace_tool()]
 
-    return [AstGrepSearchTool(), AstGrepReplaceTool()]
+
+def make_ast_grep_search_tool() -> Tool:
+    """Create the AST search tool (registry name ``ast_grep_search``).
+
+    Single-tool face for per-name registration (``PrototypeFactory``
+    builders are one tool each).
+    """
+    from modex_agent.tools.ast import AstGrepSearchTool
+
+    return AstGrepSearchTool()
+
+
+def make_ast_grep_replace_tool() -> Tool:
+    """Create the AST replace tool (registry name ``ast_grep_replace``).
+
+    Single-tool face for per-name registration (``PrototypeFactory``
+    builders are one tool each).
+    """
+    from modex_agent.tools.ast import AstGrepReplaceTool
+
+    return AstGrepReplaceTool()
 
 
 def make_aci_edit_tool() -> Tool:

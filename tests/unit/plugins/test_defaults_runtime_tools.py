@@ -5,11 +5,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
+from modex_agent.plugins.abc import ComponentSlot, PrototypeFactory
 from modex_agent.plugins.assembly.context import (
     AgentContext,
-    AssemblyContext,
-    PoolContext,
     PoolRuntimeDeps,
 )
 from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
@@ -53,7 +51,7 @@ def _ctx(todo_store: TodoStore | None) -> AgentContext:
 def test_todo_factory_is_registered_with_frozen_empty_config(name: str) -> None:
     factory = _registry().resolve(ComponentSlot.TOOL, name)
 
-    assert not isinstance(factory, SimpleFactory)
+    assert not isinstance(factory, PrototypeFactory)
     assert factory.config_model is ToolConfig
     assert factory.config_model.model_config.get("frozen") is True
     assert factory.config_model.model_config.get("extra") == "forbid"
@@ -87,12 +85,11 @@ def test_aci_registered_under_distinct_name_plain_edit_wins() -> None:
     registry = _registry()
 
     plain = registry.resolve(ComponentSlot.TOOL, "edit")
-    assert isinstance(plain, SimpleFactory)
-    assert not isinstance(plain._instance, AciEditTool)  # noqa: SLF001
+    assert not isinstance(plain.probe(), AciEditTool)
 
     aci = registry.resolve(ComponentSlot.TOOL, "aci_edit")
-    assert isinstance(aci, SimpleFactory)
-    assert isinstance(aci._instance, AciEditTool)  # noqa: SLF001
+    assert isinstance(aci.probe(), AciEditTool)
+    assert aci.probe().name == "edit"
 
 
 @pytest.mark.asyncio
@@ -308,7 +305,8 @@ async def test_trio_factories_without_terminal_raise_actionable_error(
 async def test_ast_grep_factory_is_registered_and_creates_actual_name(name: str) -> None:
     factory = _registry().resolve(ComponentSlot.TOOL, name)
 
-    assert isinstance(factory, SimpleFactory)
+    assert isinstance(factory, PrototypeFactory)
     assert factory.config_model is ToolConfig
     tool = await factory.create(ToolConfig(), _ctx(None))
     assert tool.name == name
+    assert factory.probe().name == name

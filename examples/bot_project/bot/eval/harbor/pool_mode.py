@@ -220,7 +220,6 @@ async def execute_pool_entry(
             mcp_registry=None,
             persistence=assembly.persistence,
             app_config=assembly.app_config,
-            kb_provider=None,
             strategy_registry=None,
             session_pool_index=SessionPoolIndex(),
             workspace_registry=None,

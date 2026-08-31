@@ -156,9 +156,13 @@ def test_main_agent_search_tools_wrapped_when_root_provider_given(tmp_path: Path
 
 
 async def test_subagent_tool_manager_uses_workspace_root_provider(tmp_path: Path) -> None:
-    """Verify that AgentTemplate._build_tool_manager passes root_provider to
-    get_preset_tools (the tool-manager build moved here from
-    AgentCommunicationService in ADR-0015 D5)."""
+    """The subagent tool manager starts EMPTY: every tool — preset tools,
+    the derived communication entries, per-agent MCP — registers on it by
+    the roster road in ``assemble_native_agent`` (TOOL-slot factories
+    reading the context chain), never by ``_build_tool_manager`` itself.
+    Workspace scoping of the roster tools is asserted by the wrap tests
+    above (``wrap_standard_tools`` + the materialize-path tests in the
+    framework suite)."""
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
     from modex_agent.multi_agent.template import AgentTemplate
     from modex_agent.scope.spec import AgentSpec
@@ -188,13 +192,7 @@ async def test_subagent_tool_manager_uses_workspace_root_provider(tmp_path: Path
         assembly_spec=MagicMock(mcp_servers=()),
         component_ctx=MagicMock(),
     )
-    tools = tm.list_tools()
-    assert len(tools) > 0
-    for name in tools:
-        tool = tm.get_tool(name)
-        assert tool is not None
-        if tool.name in {"read", "grep", "find", "ls"}:
-            assert isinstance(tool, WorkspaceScopedFileTool), f"{tool.name} should be scoped"
+    assert tm.list_tools() == []
 
 
 # ── Tests: main-agent tool manager workspace scoping ────────────────────

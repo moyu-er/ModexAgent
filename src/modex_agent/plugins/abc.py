@@ -16,6 +16,7 @@ Design constraints:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from enum import StrEnum, nonmember
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -184,11 +185,20 @@ class ComponentFactory(ABC):
 
 
 class SimpleFactory(ComponentFactory):
-    """Factory wrapping a pre-built instance.
+    """Factory returning a pre-built SINGLETON instance.
 
-    ``create()`` ignores config and ctx, returns the wrapped instance.
-    Useful for registering built-in components through the same
-    factory pipeline as plugin-provided ones.
+    ``create()`` ignores config and ctx and returns the SAME wrapped
+    instance to every resolver — sharing is intentional singleton
+    semantics (e.g. stateless hooks, execution-strategy classes, test
+    provider injection). Because the shared instance is visible to every
+    agent/pool/workspace that resolves the name, the component must be
+    safe to share: stateless, or state whose sharing is the point.
+
+    The shared instance is exposed for introspection via :meth:`probe`.
+    For per-assembly construction instead, use :class:`PrototypeFactory`
+    — singleton-vs-prototype is the factory's private decision, and the
+    TOOL slot's framework defaults use prototype semantics (a shared
+    mutable ``Tool`` instance would leak config mutations across agents).
 
     ``config_model`` is set per-instance (each ``SimpleFactory``
     wraps a different component type) rather than at class definition
@@ -218,6 +228,61 @@ class SimpleFactory(ComponentFactory):
     async def create(self, config: BaseModel, ctx: AssemblyContext) -> Any:  # noqa: ARG002
         """Return the pre-built instance. Ignores config and ctx."""
         return self._instance
+
+    def probe(self) -> Any:
+        """Return the wrapped instance for synchronous introspection.
+
+        Split-brain manifests and registration audits read the instance
+        (e.g. a Tool's LLM-facing name) without paying an ``await``.
+        """
+        return self._instance
+
+
+class PrototypeFactory(ComponentFactory):
+    """Factory constructing a FRESH instance on every ``create()``.
+
+    The builder callable receives no arguments (zero-arg construction);
+    per-assembly differentiation that needs config or the context chain
+    belongs in a dedicated :class:`ComponentFactory` subclass, not here.
+    The builder is invoked once per resolution, so every agent assembly
+    gets its own instance — no shared mutable state, no cross-agent
+    config leakage through ``register(tool, config)``.
+
+    Pair with :class:`SimpleFactory` (singleton semantics) as the two
+    off-the-shelf instantiations; dedicated factory subclasses own the
+    cases between them (differentiated construction with internal
+    reuse, e.g. ``BashToolFactory`` returning the pool's shared
+    persistent shell).
+
+    ``config_model`` is set per-instance (each ``PrototypeFactory``
+    produces a different component type) rather than at class
+    definition time.
+    """
+
+    def __init__(
+        self,
+        builder: Callable[[], Any],
+        config_model: type[BaseModel],
+    ) -> None:
+        self._builder = builder
+        # config_model is declared as ClassVar on the parent;
+        # PrototypeFactory overrides it per-instance because it produces
+        # arbitrary component types with different config schemas.
+        self.config_model = config_model  # type: ignore[misc]
+
+    async def create(self, config: BaseModel, ctx: AssemblyContext) -> Any:  # noqa: ARG002
+        """Build and return a fresh instance. Ignores config and ctx."""
+        return self._builder()
+
+    def probe(self) -> Any:
+        """Return a throwaway instance for synchronous introspection.
+
+        Builds via the same builder ``create()`` uses — a separate
+        instance, never the one an assembly receives. Manifests and
+        audits read observable attributes (e.g. a Tool's LLM-facing
+        name) from it and discard it.
+        """
+        return self._builder()
 
 
 class HookFactory(ComponentFactory):

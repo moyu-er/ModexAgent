@@ -26,6 +26,7 @@ from modex_agent.plugins.abc import (
     HookFactory,
     HookRunnerKind,
     MemoryHookFactory,
+    PrototypeFactory,
     ReactHookFactory,
     SimpleFactory,
 )
@@ -173,6 +174,51 @@ class TestSimpleFactory:
     def test_config_model_accessible(self) -> None:
         factory = SimpleFactory(instance=object(), config_model=_DummyConfig)
         assert factory.config_model is _DummyConfig
+
+    def test_probe_returns_wrapped_instance(self) -> None:
+        marker = object()
+        factory = SimpleFactory(instance=marker, config_model=_DummyConfig)
+        assert factory.probe() is marker
+
+
+# ---- PrototypeFactory ----
+
+
+class TestPrototypeFactory:
+    def test_is_component_factory_subclass(self) -> None:
+        assert issubclass(PrototypeFactory, ComponentFactory)
+
+    def test_create_is_async(self) -> None:
+        assert inspect.iscoroutinefunction(PrototypeFactory.create)
+
+    async def test_create_returns_builder_product(self) -> None:
+        marker = object()
+        factory = PrototypeFactory(builder=lambda: marker, config_model=_DummyConfig)
+        result = await factory.create(_DummyConfig(), ctx=None)  # type: ignore[arg-type]
+        assert result is marker
+
+    async def test_create_builds_fresh_instance_per_call(self) -> None:
+        """Prototype semantics: two resolutions never share an instance —
+        the cross-agent config-leakage guard."""
+        factory = PrototypeFactory(builder=object, config_model=_DummyConfig)
+        first = await factory.create(_DummyConfig(), ctx=None)  # type: ignore[arg-type]
+        second = await factory.create(_DummyConfig(), ctx=None)  # type: ignore[arg-type]
+        assert first is not second
+
+    async def test_create_ignores_config_and_ctx(self) -> None:
+        factory = PrototypeFactory(builder=object, config_model=_DummyConfig)
+        result = await factory.create(None, None)  # type: ignore[arg-type]
+        assert result is not None
+
+    def test_config_model_accessible(self) -> None:
+        factory = PrototypeFactory(builder=object, config_model=_DummyConfig)
+        assert factory.config_model is _DummyConfig
+
+    def test_probe_returns_builder_product_not_create_state(self) -> None:
+        factory = PrototypeFactory(builder=object, config_model=_DummyConfig)
+        probed = factory.probe()
+        assert probed is not None
+        assert probed is not factory.probe()
 
 
 # ---- HookFactory (abstract, extends ComponentFactory) ----

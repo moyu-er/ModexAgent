@@ -223,9 +223,14 @@ retired list-form supplement field. Both paths are deleted — the retired
 field now fails loader validation as an unknown key: **custom scope
 declarations must add `capabilities: {experience: {}}` to keep experience
 after upgrading** — the shipped `config/scopes/bot.yml` already carries it on
-the three native main agents. The same applies to the IM file-send tool:
-declare `tools: [+send_file_to_user]` (the shipped declaration does). An
-agent that references an experience component without the capability
+the three native main agents. The same opt-in semantics apply to the IM
+file-send tool: declare `tools: [+send_file_to_user]` on the agents that
+need it (the shipped declaration ships WITHOUT the reference — enabling it
+is the user's choice, not a factory default; the registered factory
+resolves it whenever referenced). The `kb` tool follows the same rule:
+`KbToolFactory` is registered in the TOOL slot reading the workspace's
+`KbProvider` from the context chain; enable per agent via `tools: [+kb]`.
+An agent that references an experience component without the capability
 effective (e.g. a bare `tools: [+experience]` roster entry) fails loudly at
 the factory — the supply is built only for capability-effective pools, and
 there is no silent scratch-directory fallback.
