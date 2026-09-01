@@ -310,7 +310,7 @@ def roster_source_map(
         llm_name = name
         if registry is not None:
             factory = registry.resolve(ComponentSlot.TOOL, name)
-            if isinstance(factory, (SimpleFactory, PrototypeFactory)):
+            if isinstance(factory, SimpleFactory | PrototypeFactory):
                 instance_name = getattr(factory.probe(), "name", None)
                 if isinstance(instance_name, str):
                     llm_name = instance_name

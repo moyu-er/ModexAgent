@@ -139,6 +139,28 @@ class TestBase64SanitizeTransformer:
         assert result["content"] == "[media: tool_output.png]"
         assert result["metadata"]["media_info"][0]["type"] == "image"
 
+    async def test_string_with_inline_base64_data_uri(self):
+        """字符串内嵌 base64 data URI 也要被检测替换（迁移自 media 遗留测试）。"""
+        transformer = Base64SanitizeTransformer()
+        msg = {
+            "role": "tool",
+            "content": "Here is the image: data:image/png;base64,iVBORw0KGgoAAAANSUhEUg== end",
+        }
+        result = await transformer.transform_message(msg)
+        assert "[media: base64_data]" in result["content"]
+        assert "data:image/png" not in result["content"]
+        assert "Here is the image:" in result["content"]
+
+    async def test_multiple_inline_base64_uris_in_string(self):
+        """一个字符串里的多个 data URI 全部替换（迁移自 media 遗留测试）。"""
+        transformer = Base64SanitizeTransformer()
+        msg = {
+            "role": "tool",
+            "content": "img1: data:image/png;base64,abc== img2: data:image/jpeg;base64,def==",
+        }
+        result = await transformer.transform_message(msg)
+        assert result["content"].count("[media: base64_data]") == 2
+
     async def test_image_without_meta_path(self):
         """无 _meta.path 的图片使用 [media: (unknown)] 回退。"""
         transformer = Base64SanitizeTransformer()

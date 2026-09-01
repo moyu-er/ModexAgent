@@ -33,10 +33,6 @@ from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
-from tests.input_pipeline.assembly_support import (
-    TEST_ASSEMBLY_CTX,
-    TEST_COMPONENT_REGISTRY,
-)
 
 # Media-lifecycle layer (user-message parts carrier + LLM-boundary injection):
 # the carrier (context_assembler) persists media:// reference parts on the user
@@ -66,6 +62,10 @@ from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.workspace.runtime import bind_workspace_root
+from tests.input_pipeline.assembly_support import (
+    TEST_ASSEMBLY_CTX,
+    TEST_COMPONENT_REGISTRY,
+)
 
 # A REAL 1x1 PNG (decodable) so the media lifecycle can compress/resolve it.
 _PNG = (

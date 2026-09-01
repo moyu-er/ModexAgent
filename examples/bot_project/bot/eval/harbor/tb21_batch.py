@@ -324,7 +324,7 @@ def _write_report(checkpoint: Path, evidence_dir: Path, total: int) -> Path:
     failed = [r for r in rows if r.get("reward") == 0.0]
     errored = [r for r in rows if r.get("reward") is None]
     spent_values = [
-        float(r["spent_usd"]) for r in rows if isinstance(r.get("spent_usd"), (int, float))
+        float(r["spent_usd"]) for r in rows if isinstance(r.get("spent_usd"), int | float)
     ]
     input_values = [r["input_tokens"] for r in rows if isinstance(r.get("input_tokens"), int)]
     output_values = [r["output_tokens"] for r in rows if isinstance(r.get("output_tokens"), int)]
