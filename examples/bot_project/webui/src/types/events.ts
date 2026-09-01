@@ -70,6 +70,7 @@ export interface ToolCallEndEvent extends ServerEvent {
   result_summary: string;
   turn_id: string;
   call_id: string;
+  seq?: number;
 }
 
 export interface TurnEndEvent extends ServerEvent {

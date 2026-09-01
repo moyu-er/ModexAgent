@@ -627,6 +627,16 @@ class BotService(AgentBuilderMixin):
                         return uuid
         return None
 
+    def _cancel_active_turn(self, session_id: str) -> bool:
+        """Cancel the running turn for *session_id* in its owning pool."""
+        for resources in self._iter_workspace_resources():
+            for pi in resources.pools.values():
+                for inst in pi.pool.iter_instances():
+                    pipeline = inst.pipeline
+                    if pipeline is not None and pipeline.cancel_active_turn(session_id):
+                        return True
+        return False
+
     # ------------------------------------------------------------------ #
     # Start / Stop
     # ------------------------------------------------------------------ #
@@ -653,6 +663,7 @@ class BotService(AgentBuilderMixin):
                 output_adapter=self.output_adapter,
                 session_checker=self._is_session_active,
                 turn_uuid_getter=self._get_active_turn_uuid,
+                turn_canceller=self._cancel_active_turn,
             )
 
             await self.input_adapter.start()

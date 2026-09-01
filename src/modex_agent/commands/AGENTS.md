@@ -131,12 +131,12 @@ When a pending approval exists, `/continue` returns a `NOTICE` ("A pending appro
 returns it as the result's `control_command` field. The live consumer is
 `InputAdapter._try_intercept_control` (`pipeline/adapters.py`): after dedup /
 activity checks it attaches the running turn's UUID, sends the command into
-`InMemoryControlChannel`, and acks the user. From there
-`drain_control_channel()` (safe points in `LLMNode`/`ToolNode` plus
-`ControlDrainInterceptor` / `LlmCancelInterceptor`) raises `AgentCancelledError`,
-caught in `ReActAgent.run` → `AgentResult(stop_reason=CANCELLED)`. The
-separate busy-input INTERRUPT path (`BusyInputMode.INTERRUPT`) cancels via
-`asyncio.Task.cancel()` directly and does not use the channel.
+`InMemoryControlChannel`, actively cancels the registered turn task to wake a
+long-running await, and acks the user. ToolNode converges the resulting outer
+cancellation through worker cleanup and `<tool_cancelled>` synthesis; ordinary
+safe points still drain the command for turn-UUID validation. The separate
+busy-input INTERRUPT path also uses `asyncio.Task.cancel()` but does not enqueue
+a channel command.
 `modex_agent/control/AGENTS.md` is authoritative for this flow.
 
 <!-- MANUAL: -->

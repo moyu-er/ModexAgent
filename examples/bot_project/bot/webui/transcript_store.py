@@ -237,7 +237,19 @@ def _materialize_events(events: list[ServerEvent]) -> list[MaterializedTurn]:
         group_sorted = sorted(group, key=lambda e: e.timestamp)
         blocks: list[dict[str, object]] = []
         attachments: list[dict[str, object]] = []
-        tool_calls: dict[str, dict[str, object]] = {}
+        tool_calls = {
+            evt.call_id: {"tool": evt.tool_name, "args": evt.args}
+            for evt in group_sorted
+            if isinstance(evt, ToolCallEvent)
+        }
+        sequenced_tool_results = iter(
+            evt
+            for _seq, _position, evt in sorted(
+                (evt.seq, position, evt)
+                for position, evt in enumerate(group_sorted)
+                if isinstance(evt, ToolResultEvent) and evt.seq is not None
+            )
+        )
         started_at: int = group_sorted[0].timestamp
 
         for evt in group_sorted:
@@ -248,12 +260,9 @@ def _materialize_events(events: list[ServerEvent]) -> list[MaterializedTurn]:
                 blocks.append({"kind": "reasoning", "text": evt.text})
             elif isinstance(evt, AssistantTextEvent):
                 blocks.append({"kind": "text", "text": evt.text})
-            elif isinstance(evt, ToolCallEvent):
-                tool_calls[evt.call_id] = {
-                    "tool": evt.tool_name,
-                    "args": evt.args,
-                }
             elif isinstance(evt, ToolResultEvent):
+                if evt.seq is not None:
+                    evt = next(sequenced_tool_results)
                 entry = tool_calls.get(evt.call_id, {})
                 block: dict[str, object] = {
                     "kind": "tool",

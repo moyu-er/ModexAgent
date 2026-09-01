@@ -256,6 +256,66 @@ async def test_materialize_text_and_tool_turn() -> None:
     assert blocks[1] == {"kind": "tool", "tool": "read_file", "args": {"path": "/x"}, "result": "content"}
 
 
+async def test_materialize_single_batch_tools_in_model_sequence() -> None:
+    store = _make_store()
+    for call_id, seq, timestamp in [("B", 1, 100), ("A", 0, 200)]:
+        await store.append("conv.main", ToolCallEvent(
+            session_id="conv.main", agent_name="main", turn_id="t1",
+            call_id=call_id, tool_name=call_id, timestamp=timestamp))
+        await store.append("conv.main", ToolResultEvent(
+            session_id="conv.main", agent_name="main", turn_id="t1",
+            call_id=call_id, tool_name=call_id, result=call_id,
+            seq=seq, timestamp=timestamp + 1))
+
+    turns = await store.load_materialized_by_prefix("conv")
+
+    assert [block["tool"] for block in turns[0].blocks] == ["A", "B"]
+
+
+async def test_materialize_two_batches_in_turn_wide_model_sequence() -> None:
+    store = _make_store()
+    completed = [
+        ("batch1-B", 1, 100),
+        ("batch1-A", 0, 200),
+        ("batch2-D", 3, 300),
+        ("batch2-C", 2, 400),
+    ]
+    for call_id, seq, timestamp in completed:
+        await store.append("conv.main", ToolCallEvent(
+            session_id="conv.main", agent_name="main", turn_id="t1",
+            call_id=call_id, tool_name=call_id, timestamp=timestamp))
+        await store.append("conv.main", ToolResultEvent(
+            session_id="conv.main", agent_name="main", turn_id="t1",
+            call_id=call_id, tool_name=call_id, result=call_id,
+            seq=seq, timestamp=timestamp + 1))
+
+    turns = await store.load_materialized_by_prefix("conv")
+
+    assert [block["tool"] for block in turns[0].blocks] == [
+        "batch1-A",
+        "batch1-B",
+        "batch2-C",
+        "batch2-D",
+    ]
+
+
+async def test_materialize_legacy_tool_result_stays_in_timestamp_slot() -> None:
+    store = _make_store()
+    completed = [("B", 1, 100), ("legacy", None, 200), ("A", 0, 300)]
+    for call_id, seq, timestamp in completed:
+        await store.append("conv.main", ToolCallEvent(
+            session_id="conv.main", agent_name="main", turn_id="t1",
+            call_id=call_id, tool_name=call_id, timestamp=timestamp))
+        await store.append("conv.main", ToolResultEvent(
+            session_id="conv.main", agent_name="main", turn_id="t1",
+            call_id=call_id, tool_name=call_id, result=call_id,
+            seq=seq, timestamp=timestamp + 1))
+
+    turns = await store.load_materialized_by_prefix("conv")
+
+    assert [block["tool"] for block in turns[0].blocks] == ["A", "legacy", "B"]
+
+
 async def test_materialize_multiple_turns_sorted() -> None:
     store = _make_store()
     await store.append("conv.main", TurnStartEvent(

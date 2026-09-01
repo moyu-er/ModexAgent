@@ -50,6 +50,7 @@ class InputAdapter(ABC):
         self._ctrl_output_adapter: OutputAdapter | None = None
         self._session_checker: Callable[[str], bool] | None = None
         self._turn_uuid_getter: Callable[[str], str | None] | None = None
+        self._turn_canceller: Callable[[str], bool] | None = None
         # Set by configure_input_pipeline (default impl); overrides may use
         # different attr names.
         self._input_pipeline: UserInputPipeline | None = None
@@ -118,6 +119,7 @@ class InputAdapter(ABC):
         output_adapter: OutputAdapter | None = None,
         session_checker: Callable[[str], bool] | None = None,
         turn_uuid_getter: Callable[[str], str | None] | None = None,
+        turn_canceller: Callable[[str], bool] | None = None,
     ) -> None:
         """Configure control command interception.
 
@@ -130,6 +132,7 @@ class InputAdapter(ABC):
         self._ctrl_output_adapter = output_adapter
         self._session_checker = session_checker
         self._turn_uuid_getter = turn_uuid_getter
+        self._turn_canceller = turn_canceller
 
     async def _try_intercept_control(self, text: str, session_id: str) -> bool:
         """Try to handle *text* as a control command.  Returns True if handled.
@@ -222,6 +225,14 @@ class InputAdapter(ABC):
                 return True
 
         await channel.send(cmd_result.control_command)
+
+        # The control channel is also drained at lifecycle safe points, but a
+        # long-running tool may not reach another safe point for minutes. Wake
+        # the registered turn task so ToolNode can cancel its active workers
+        # immediately and converge through the same cancellation-result path.
+        canceller = self._turn_canceller
+        if canceller is not None:
+            canceller(session_id)
 
         # Ack
         if cmd_result.notice and output:

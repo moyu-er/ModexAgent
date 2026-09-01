@@ -9,11 +9,13 @@ import pytest
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
 from bot.webui.emitter import CompositeEmitter, WebBotEmitter
 from bot.webui.events import (
+    ToolResultEvent,
     WebUIEventType,
 )
 from bot.webui.transcript_store import JSONLTranscriptStore
 
 from modex_agent.agents.react.agent import ReActEvent
+from modex_agent.agents.react.constants import ToolCallEndPayload
 from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.types import ToolCall
@@ -184,10 +186,15 @@ async def test_tool_call_events_persisted_incrementally() -> None:
         tc = ToolCall(tool_name="read_file", arguments={"path": "/x"}, call_id="call_0")
         result = ToolResult.from_text("read_file", "content")
         await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
-        await emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
+        await emitter.emit(
+            ReActEvent.TOOL_CALL_END,
+            ToolCallEndPayload(tool_call=tc, result=result, seq=7),
+        )
         events = await store.load("conv1.main")
         assert any(e.event == WebUIEventType.TOOL_CALL.value for e in events)
         assert any(e.event == WebUIEventType.TOOL_RESULT.value for e in events)
+        tool_result = next(e for e in events if isinstance(e, ToolResultEvent))
+        assert tool_result.seq == 7
 
 
 @pytest.mark.asyncio
@@ -204,7 +211,10 @@ async def test_tool_call_events_stream_matching_call_id() -> None:
     tc = ToolCall(tool_name="read_file", arguments={"path": "/x"}, call_id="call_0")
     result = ToolResult.from_text("read_file", "content")
     await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
-    await emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
+    await emitter.emit(
+        ReActEvent.TOOL_CALL_END,
+        ToolCallEndPayload(tool_call=tc, result=result, seq=7),
+    )
     q = input_adapter.get_delta_queue("conv1.main", None)
     assert q is not None
     start_env = q.get_nowait()
@@ -213,6 +223,30 @@ async def test_tool_call_events_stream_matching_call_id() -> None:
     assert start_env.payload["call_id"] == "call_0"
     assert end_env.event_type == WebUIEventType.TOOL_CALL_END.value
     assert end_env.payload["call_id"] == "call_0"
+    assert end_env.payload["seq"] == 7
+
+
+@pytest.mark.asyncio
+async def test_tool_call_end_without_call_id_omits_wire_field() -> None:
+    input_adapter = WebSocketInputAdapter()
+    output_adapter = WebSocketOutputAdapter(input_adapter)
+    emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig())
+    input_adapter.register_connection("conv1.main", None)
+    tool_call = ToolCall(tool_name="read_file", arguments={})
+
+    await emitter.emit(
+        ReActEvent.TOOL_CALL_END,
+        ToolCallEndPayload(
+            tool_call=tool_call,
+            result=ToolResult.from_text("read_file", "content"),
+            seq=0,
+        ),
+    )
+
+    queue = input_adapter.get_delta_queue("conv1.main", None)
+    assert queue is not None
+    envelope = queue.get_nowait()
+    assert "call_id" not in envelope.payload
 
 
 @pytest.mark.asyncio
