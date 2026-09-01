@@ -2,25 +2,35 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
-from typing import Any
+from collections import Counter
+from dataclasses import dataclass
 from uuid import uuid4
 
 from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
 from modex_agent.agents.react.constants import (
     ReActHookPoint,
     ReActNode,
+    ToolCallEndPayload,
 )
 from modex_agent.agents.react.context import get_agent_ctx
 from modex_agent.agents.react.message_builder import build_tool_message
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.agents.react.tool_dedup import StreakDecision, ToolCallDeduplicator
+from modex_agent.agents.react.tool_dedup import (
+    StreakAction,
+    StreakDecision,
+    ToolCallDeduplicator,
+)
 from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
+from modex_agent.control.exceptions import AgentCancelledError
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.constants import DefaultValues
 from modex_agent.core.ids import next_call_id
 from modex_agent.core.message import ChatMessage, TextPart
-from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.tool_manager import ExecutionMode, ToolResult
 from modex_agent.core.types import MessageRole, ToolCall
 from modex_agent.runtime.enums import (
     ApprovalDenyPolicy,
@@ -46,6 +56,30 @@ from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _SettledResult:
+    result: ToolResult
+
+
+@dataclass(frozen=True, slots=True)
+class _SettledCancellation:
+    error: AgentCancelledError | asyncio.CancelledError
+
+
+@dataclass(frozen=True, slots=True)
+class _SettledFailure:
+    error: Exception
+
+
+type _SettledSlot = _SettledResult | _SettledCancellation | _SettledFailure
+
+
+@dataclass(frozen=True, slots=True)
+class _ToolSegment:
+    mode: ExecutionMode
+    indices: tuple[int, ...]
 
 
 class ToolNode(Node[ReActTurnState]):
@@ -296,9 +330,247 @@ class ToolNode(Node[ReActTurnState]):
         decisions = self._normalize_batch_decisions(decisions)
         state = ctx.state
         agent_ctx = get_agent_ctx(ctx)
+        batch = state.active_tool_batch()
+        if batch is not None:
+            self._apply_decisions_to_batch(batch, decisions)
+        next_seq = state.custom.get(TurnCustomKey.TOOL_SEQ_COUNTER, 0)
+        seq_for_index = {
+            index: next_seq + index for index in range(len(tool_calls))
+        }
+        state.custom[TurnCustomKey.TOOL_SEQ_COUNTER] = next_seq + len(tool_calls)
+        slots: list[_SettledSlot | None] = [None] * len(tool_calls)
+        leader_for_index = list(range(len(tool_calls)))
+        followers: dict[int, list[int]] = {}
+        streak_actions: dict[int, StreakAction] = {}
+        completed_indices: set[int] = set()
+        active_indices: set[int] = set()
+        cancellation_cleanup_indices: set[int] = set()
+        completion_queue: asyncio.Queue[int] = asyncio.Queue()
+        committed_results: list[ToolResult] = []
+        commit_cursor = 0
 
         if self._deduplicator is not None:
             self._deduplicator.begin_step()
+
+        async def commit_ready() -> None:
+            nonlocal commit_cursor
+            while commit_cursor < len(tool_calls):
+                if commit_cursor not in completed_indices:
+                    break
+                match slots[commit_cursor]:
+                    case _SettledResult(result=result):
+                        tc = tool_calls[commit_cursor]
+                        if result.call_id != tc.call_id:
+                            msg = f"tool result call_id mismatch for {tc.tool_name}"
+                            raise RuntimeError(msg)
+                        tool_msg = build_tool_message(result, tc.call_id)
+                        await agent_ctx.history.append(tool_msg)
+                        state.message_delta.append(
+                            MessageDelta(message=tool_msg, source=MessageDeltaSource.TOOL)
+                        )
+                        committed_results.append(result)
+                        commit_cursor += 1
+                    case None | _SettledCancellation() | _SettledFailure():
+                        break
+
+        async def settle_result(
+            index: int,
+            result: ToolResult,
+            *,
+            status: ToolCallStatus | None = None,
+            propagate_followers: bool = True,
+            register_result: bool = False,
+        ) -> None:
+            tc = tool_calls[index]
+            stamped = (
+                result
+                if result.call_id == tc.call_id
+                else result.model_copy(update={"call_id": tc.call_id})
+            )
+            slots[index] = _SettledResult(stamped)
+            completed_indices.add(index)
+            if batch is not None:
+                call_state = batch.calls[index]
+                call_state.result = stamped
+                call_state.status = status or (
+                    ToolCallStatus.COMPLETED
+                    if stamped.error is None
+                    else ToolCallStatus.FAILED
+                )
+            await ctx.runtime.emit(
+                GraphReActEvent.TOOL_CALL_END,
+                ToolCallEndPayload(
+                    tool_call=tc,
+                    result=stamped,
+                    seq=seq_for_index[index],
+                ),
+                ctx,
+            )
+            if register_result and self._deduplicator is not None:
+                self._deduplicator.register_result(
+                    tc.tool_name,
+                    tc.arguments or {},
+                    stamped,
+                )
+            if propagate_followers:
+                for follower_index in followers.get(index, []):
+                    follower = tool_calls[follower_index]
+                    follower_result = stamped.model_copy(
+                        update={"call_id": follower.call_id}
+                    )
+                    await settle_result(
+                        follower_index,
+                        follower_result,
+                        status=status,
+                        propagate_followers=False,
+                    )
+            await commit_ready()
+
+        def cancelled_result(index: int) -> ToolResult:
+            tc = tool_calls[index]
+            text = "<tool_cancelled>Tool call cancelled.</tool_cancelled>"
+            tool = agent_ctx.tool_manager.get_tool(tc.tool_name)
+            if tool is not None and tool.cancel_note:
+                text = f"{text}\n{tool.cancel_note}"
+            return ToolResult.from_text(tc.tool_name, text, call_id=tc.call_id)
+
+        async def worker(index: int) -> None:
+            active_indices.add(index)
+            try:
+                if batch is not None:
+                    batch.calls[index].status = ToolCallStatus.EXECUTING
+                tc = tool_calls[index]
+                result = await self._tool_executor.execute(tc, agent_ctx)
+                streak_action = streak_actions.get(index)
+                if (
+                    streak_action is not None
+                    and streak_action.action == StreakDecision.REMIND
+                ):
+                    existing = result.message_content()
+                    appended = (
+                        f"{existing}\n{streak_action.reminder}"
+                        if existing
+                        else streak_action.reminder
+                    )
+                    result = result.model_copy(update={"content": [TextPart(text=appended)]})
+                slots[index] = _SettledResult(result)
+            except AgentCancelledError as error:
+                slots[index] = _SettledCancellation(error)
+                cancellation_cleanup_indices.add(index)
+            except asyncio.CancelledError as error:
+                slots[index] = _SettledCancellation(error)
+                cancellation_cleanup_indices.add(index)
+            except Exception as error:  # noqa: BLE001
+                slots[index] = _SettledFailure(error)
+            finally:
+                active_indices.discard(index)
+                completion_queue.put_nowait(index)
+
+        async def handle_settled(indices: list[int]) -> tuple[bool, Exception | None]:
+            cancellation_seen = False
+            first_failure: Exception | None = None
+            for index in indices:
+                match slots[index]:
+                    case _SettledResult(result=result):
+                        await settle_result(index, result, register_result=True)
+                    case _SettledCancellation():
+                        cancellation_seen = True
+                    case _SettledFailure(error=error):
+                        if batch is not None:
+                            batch.calls[index].status = ToolCallStatus.FAILED
+                        if first_failure is None:
+                            first_failure = error
+                    case None:
+                        msg = f"tool worker {index} settled without an outcome"
+                        raise RuntimeError(msg)
+            return cancellation_seen, first_failure
+
+        async def invoke_on_cancel(indices: set[int]) -> None:
+            for index in sorted(indices):
+                tool = agent_ctx.tool_manager.get_tool(tool_calls[index].tool_name)
+                if tool is None:
+                    continue
+                try:
+                    await tool.on_cancel()
+                except Exception:  # noqa: BLE001
+                    logger.exception("Tool on_cancel failed for %s", tool.name)
+
+        async def drain_failure(
+            in_flight: dict[int, asyncio.Task[None]],
+            first_failure: Exception,
+        ) -> None:
+            while in_flight:
+                index = await completion_queue.get()
+                task = in_flight.pop(index)
+                await task
+                try:
+                    cancellation_seen, _ = await handle_settled([index])
+                    if cancellation_seen:
+                        cleanup_indices = set(cancellation_cleanup_indices)
+                        await invoke_on_cancel(cleanup_indices)
+                        cancellation_cleanup_indices.difference_update(cleanup_indices)
+                except Exception:  # noqa: BLE001
+                    logger.exception("Tool worker failed while draining batch failure")
+            if batch is not None:
+                if batch.operation_id:
+                    state.update_operation(batch.operation_id, OperationStatus.FAILED)
+                batch.status = ToolBatchStatus.FAILED
+            state.phase = TurnPhase.FAILED
+            raise first_failure
+
+        async def cancel_in_flight(
+            in_flight: dict[int, asyncio.Task[None]],
+        ) -> None:
+            # A worker cancelled between create_task() and its first step
+            # never runs its finally block, so it never queues a completion
+            # entry. Settle strictly from the task map (every cancelled task
+            # is awaitable to completion) — waiting on queue entries that no
+            # task will produce would hang the unified cancellation path.
+            for task in in_flight.values():
+                task.cancel()
+            for index in sorted(in_flight):
+                await in_flight[index]
+                if index in completed_indices:
+                    continue
+                match slots[index]:
+                    case _SettledResult(result=result):
+                        await settle_result(index, result, register_result=True)
+                    case _SettledCancellation() | _SettledFailure() | None:
+                        continue
+            in_flight.clear()
+            while not completion_queue.empty():
+                completion_queue.get_nowait()
+            cleanup_indices = active_indices | cancellation_cleanup_indices
+            await invoke_on_cancel(cleanup_indices)
+            cancellation_cleanup_indices.difference_update(cleanup_indices)
+            for index in range(len(tool_calls)):
+                if index not in completed_indices:
+                    await settle_result(
+                        index,
+                        cancelled_result(index),
+                        status=ToolCallStatus.CANCELLED,
+                        propagate_followers=False,
+                    )
+
+        async def finish_cancelled() -> None:
+            if self._deduplicator is not None:
+                self._deduplicator.end_step()
+            if batch is not None:
+                if batch.operation_id:
+                    state.update_operation(batch.operation_id, OperationStatus.CANCELLED)
+                batch.status = ToolBatchStatus.CANCELLED
+            state.phase = TurnPhase.CANCELLED
+            await ctx.runtime.dispatch_hook(
+                ReActHookPoint.AFTER_TOOL_EXECUTION,
+                ctx,
+                data={"results": committed_results},
+            )
+            await ctx.runtime.emit(
+                GraphReActEvent.ITERATION_END,
+                {"iteration": state.iteration, "has_tool_calls": True},
+                ctx,
+            )
+            self.deliver(None, ReActNode.AFTER, ctx)
 
         await ctx.runtime.emit(
             GraphReActEvent.PROGRESS,
@@ -310,52 +582,179 @@ class ToolNode(Node[ReActTurnState]):
             ctx,
             data={"tool_calls": tool_calls},
         )
-        await ctx.runtime.drain_control(ctx)
+        try:
+            await ctx.runtime.drain_control(ctx)
+        except AgentCancelledError:
+            await cancel_in_flight({})
+            await finish_cancelled()
+            return None
 
-        batch = state.active_tool_batch()
         denied_encountered = False
-        dedup_stop = False
-        tool_results: list[Any] = []
-        for tc, decision in zip(tool_calls, decisions, strict=False):
-            if decision == ApprovalDecision.ALLOWED:
-                result, stop = await self._execute_single(tc, agent_ctx)
-                if stop:
-                    dedup_stop = True
-            else:
-                result = ToolResult(
-                    tool_name=tc.tool_name,
-                    error=self._denial_message(decision, tc, state),
-                )
+        if self._deduplicator is not None:
+            name_counts = Counter(tc.tool_name for tc in tool_calls)
+            grouped_leaders: dict[tuple[str, ApprovalDecision], int] = {}
+            for index, (tc, decision) in enumerate(
+                zip(tool_calls, decisions, strict=False)
+            ):
+                if name_counts[tc.tool_name] < 2:
+                    continue
+                key = self._deduplicator.make_key(tc.tool_name, tc.arguments or {})
+                group_key = (key, decision)
+                leader = grouped_leaders.get(group_key)
+                if leader is None:
+                    grouped_leaders[group_key] = index
+                    continue
+                leader_for_index[index] = leader
+                followers.setdefault(leader, []).append(index)
 
-            # Stamp the canonical ToolCall id onto every result path
-            # (normal / dedup-cached / streak-synthetic / denied) so
-            # ToolSpanHook and the training exporter can join tool spans
-            # back to the assistant tool_calls by id.
-            if result.call_id != tc.call_id:
-                result = result.model_copy(update={"call_id": tc.call_id})
-
-            await ctx.runtime.emit(GraphReActEvent.TOOL_CALL_END, (tc, result), ctx)
-
-            tool_results.append(result)
-
-            tool_msg = build_tool_message(result, tc.call_id)
-            await agent_ctx.history.append(tool_msg)
-            state.message_delta.append(
-                MessageDelta(message=tool_msg, source=MessageDeltaSource.TOOL)
-            )
-
-            if batch is not None:
-                for call_state in batch.calls:
-                    if call_state.call_id == tc.call_id:
-                        call_state.result = result
-                        call_state.status = (
-                            ToolCallStatus.COMPLETED
-                            if result.error is None
-                            else ToolCallStatus.FAILED
-                        )
-
+        streak_stop = False
+        for index, (tc, decision) in enumerate(
+            zip(tool_calls, decisions, strict=False)
+        ):
+            if leader_for_index[index] != index:
+                continue
             if decision in (ApprovalDecision.DENIED, ApprovalDecision.PREEMPTED):
                 denied_encountered = True
+                await settle_result(
+                    index,
+                    ToolResult(
+                        tool_name=tc.tool_name,
+                        error=self._denial_message(decision, tc, state),
+                    ),
+                )
+                continue
+            if self._deduplicator is None:
+                continue
+            streak_action = self._deduplicator.check_streak(
+                tc.tool_name,
+                tc.arguments or {},
+            )
+            streak_actions[index] = streak_action
+            match streak_action.action:
+                case StreakDecision.CONTINUE | StreakDecision.REMIND:
+                    continue
+                case StreakDecision.SKIP:
+                    await settle_result(
+                        index,
+                        ToolResult.from_text(tc.tool_name, streak_action.reminder),
+                        register_result=True,
+                    )
+                case StreakDecision.STOP:
+                    await settle_result(
+                        index,
+                        ToolResult.from_text(tc.tool_name, streak_action.reminder),
+                        propagate_followers=False,
+                        register_result=True,
+                    )
+                    streak_stop = True
+                    break
+
+        if streak_stop:
+            await cancel_in_flight({})
+            await finish_cancelled()
+            return None
+
+        segments: list[_ToolSegment] = []
+        parallel_indices: list[int] = []
+        for index, tc in enumerate(tool_calls):
+            if leader_for_index[index] != index or slots[index] is not None:
+                continue
+            tool = agent_ctx.tool_manager.get_tool(tc.tool_name)
+            mode = tool.execution_mode if tool is not None else ExecutionMode.EXCLUSIVE
+            match mode:
+                case ExecutionMode.PARALLEL:
+                    parallel_indices.append(index)
+                case ExecutionMode.EXCLUSIVE:
+                    if parallel_indices:
+                        segments.append(
+                            _ToolSegment(
+                                mode=ExecutionMode.PARALLEL,
+                                indices=tuple(parallel_indices),
+                            )
+                        )
+                        parallel_indices = []
+                    segments.append(
+                        _ToolSegment(mode=ExecutionMode.EXCLUSIVE, indices=(index,))
+                    )
+        if parallel_indices:
+            segments.append(
+                _ToolSegment(
+                    mode=ExecutionMode.PARALLEL,
+                    indices=tuple(parallel_indices),
+                )
+            )
+
+        configured_max = (
+            agent_ctx.runtime.state.custom.get(TurnCustomKey.MAX_PARALLEL_TOOL_CALLS)
+            if agent_ctx.runtime is not None
+            else None
+        )
+        if configured_max is None:
+            max_parallel = DefaultValues.MAX_PARALLEL_TOOL_CALLS
+        elif (
+            isinstance(configured_max, bool)
+            or not isinstance(configured_max, int)
+            or configured_max < 1
+        ):
+            msg = "max_parallel_tool_calls must be an integer >= 1"
+            raise ValueError(msg)
+        else:
+            max_parallel = configured_max
+
+        for segment_index, segment in enumerate(segments):
+            if segment_index > 0:
+                try:
+                    await ctx.runtime.drain_control(ctx)
+                except AgentCancelledError:
+                    await cancel_in_flight({})
+                    await finish_cancelled()
+                    return None
+            limit = max_parallel if segment.mode == ExecutionMode.PARALLEL else 1
+            next_to_start = 0
+            in_flight: dict[int, asyncio.Task[None]] = {}
+            try:
+                while next_to_start < len(segment.indices) or in_flight:
+                    while (
+                        next_to_start < len(segment.indices)
+                        and len(in_flight) < limit
+                    ):
+                        index = segment.indices[next_to_start]
+                        task = asyncio.create_task(worker(index))
+                        in_flight[index] = task
+                        next_to_start += 1
+                    settled_index = await completion_queue.get()
+                    task = in_flight[settled_index]
+                    await task
+                    in_flight.pop(settled_index)
+                    cancellation_seen = False
+                    first_failure: Exception | None = None
+                    try:
+                        cancellation_seen, first_failure = await handle_settled(
+                            [settled_index]
+                        )
+                    except Exception as error:  # noqa: BLE001
+                        await drain_failure(in_flight, error)
+                    if first_failure is not None:
+                        await drain_failure(in_flight, first_failure)
+                    if cancellation_seen:
+                        await cancel_in_flight(in_flight)
+                        await finish_cancelled()
+                        return None
+            except asyncio.CancelledError:
+                # `/stop`, WebUI pause, and busy-input interruption wake the
+                # owning turn task. Converge that active cancellation with the
+                # channel/streak path so tool-owned resources are interrupted
+                # and every pending tool_call receives a result message.
+                await cancel_in_flight(in_flight)
+                with contextlib.suppress(AgentCancelledError):
+                    await ctx.runtime.drain_control(ctx)
+                await finish_cancelled()
+                return None
+            finally:
+                for task in in_flight.values():
+                    task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.gather(*in_flight.values(), return_exceptions=True)
 
         if self._deduplicator is not None:
             self._deduplicator.end_step()
@@ -370,18 +769,13 @@ class ToolNode(Node[ReActTurnState]):
         await ctx.runtime.dispatch_hook(
             ReActHookPoint.AFTER_TOOL_EXECUTION,
             ctx,
-            data={"results": tool_results},
+            data={"results": committed_results},
         )
         await ctx.runtime.emit(
             GraphReActEvent.ITERATION_END,
             {"iteration": state.iteration, "has_tool_calls": True},
             ctx,
         )
-
-        if dedup_stop:
-            state.phase = TurnPhase.CANCELLED
-            self.deliver(None, ReActNode.AFTER, ctx)
-            return None
 
         if denied_encountered:
             # EXTENSION POINT: whether denial cancels the ReAct turn is
@@ -400,57 +794,6 @@ class ToolNode(Node[ReActTurnState]):
 
         self.deliver(None, ReActNode.LLM, ctx)
         return None
-
-    async def _execute_single(
-        self,
-        tc: ToolCall,
-        agent_ctx: AgentContext,
-    ) -> tuple[ToolResult, bool]:
-        """Execute a single allowed tool call, applying dedup logic.
-
-        When a :class:`ToolCallDeduplicator` is configured:
-        1. Same-step dedup — if an identical call was already executed
-           in this step, reuse the cached result.
-        2. Cross-step streak — check the streak before executing. At
-           high streaks the call is skipped (synthetic result) or the
-           turn is stopped.
-
-        Returns:
-            A ``(ToolResult, should_stop)`` tuple. *should_stop* is
-            ``True`` only when the streak threshold for force-cancelling
-            the turn has been reached.
-        """
-        args = tc.arguments or {}
-        if self._deduplicator is not None:
-            cached = self._deduplicator.check_same_step(tc.tool_name, args)
-            if cached is not None:
-                return cached, False
-
-            streak_action = self._deduplicator.check_streak(tc.tool_name, args)
-
-            if streak_action.action == StreakDecision.STOP:
-                result = ToolResult.from_text(tc.tool_name, streak_action.reminder)
-                self._deduplicator.register_result(tc.tool_name, args, result)
-                return result, True
-
-            if streak_action.action == StreakDecision.SKIP:
-                result = ToolResult.from_text(tc.tool_name, streak_action.reminder)
-                self._deduplicator.register_result(tc.tool_name, args, result)
-                return result, False
-
-        # Execute the tool call
-        result = await self._tool_executor.execute(tc, agent_ctx)
-
-        if self._deduplicator is not None:
-            if streak_action.action == StreakDecision.REMIND:
-                existing = result.message_content()
-                appended = (
-                    f"{existing}\n{streak_action.reminder}" if existing else streak_action.reminder
-                )
-                result = result.model_copy(update={"content": [TextPart(text=appended)]})
-            self._deduplicator.register_result(tc.tool_name, args, result)
-
-        return result, False
 
     @staticmethod
     def _denial_message(

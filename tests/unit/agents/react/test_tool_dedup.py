@@ -1,8 +1,10 @@
-"""Unit tests for ToolCallDeduplicator — same-step dedup and cross-step streak detection."""
-
 from __future__ import annotations
 
-from modex_agent.agents.react.tool_dedup import StreakAction, ToolCallDeduplicator
+from modex_agent.agents.react.tool_dedup import (
+    StreakAction,
+    StreakDecision,
+    ToolCallDeduplicator,
+)
 from modex_agent.core.tool_manager import ToolResult
 
 # ---------------------------------------------------------------------------
@@ -24,7 +26,7 @@ def _simulate_consecutive_steps(
 
     Returns the StreakAction from the final step's ``check_streak`` call.
     """
-    action = StreakAction(action="continue")
+    action = StreakAction(action=StreakDecision.CONTINUE)
     for _ in range(count):
         dedup.begin_step()
         action = dedup.check_streak(tool_name, args)
@@ -69,50 +71,6 @@ class TestMakeKey:
         k1 = ToolCallDeduplicator.make_key("tool_a", {"x": 1})
         k2 = ToolCallDeduplicator.make_key("tool_b", {"x": 1})
         assert k1 != k2
-
-
-# ---------------------------------------------------------------------------
-# Same-step dedup
-# ---------------------------------------------------------------------------
-
-
-class TestSameStepDedup:
-    def test_same_step_dedup(self):
-        dedup = ToolCallDeduplicator()
-        dedup.begin_step()
-
-        result1 = _result("first")
-        dedup.register_result("tool", {"a": 1}, result1)
-
-        cached = dedup.check_same_step("tool", {"a": 1})
-        assert cached is result1
-
-    def test_same_step_no_dedup_different_args(self):
-        dedup = ToolCallDeduplicator()
-        dedup.begin_step()
-
-        dedup.register_result("tool", {"a": 1}, _result("first"))
-
-        cached = dedup.check_same_step("tool", {"a": 2})
-        assert cached is None
-
-    def test_same_step_no_dedup_different_tool(self):
-        dedup = ToolCallDeduplicator()
-        dedup.begin_step()
-
-        dedup.register_result("tool_a", {"a": 1}, _result("first"))
-
-        cached = dedup.check_same_step("tool_b", {"a": 1})
-        assert cached is None
-
-    def test_same_step_cleared_on_begin_step(self):
-        dedup = ToolCallDeduplicator()
-        dedup.begin_step()
-        dedup.register_result("tool", {"a": 1}, _result("first"))
-
-        dedup.begin_step()
-        cached = dedup.check_same_step("tool", {"a": 1})
-        assert cached is None
 
 
 # ---------------------------------------------------------------------------
@@ -244,28 +202,6 @@ class TestStreakDetection:
 
 
 class TestFullLifecycle:
-    def test_same_step_dedul_within_streak(self):
-        """Same-step dedup and streak detection work together."""
-        dedup = ToolCallDeduplicator()
-
-        # Build a streak of 3 steps
-        _simulate_consecutive_steps(dedup, "tool", {"a": 1}, count=3)
-
-        # Step 4: two identical calls in same step
-        dedup.begin_step()
-
-        # First call — streak=3, REMIND
-        action = dedup.check_streak("tool", {"a": 1})
-        assert action.action == "remind"
-        r1 = _result("first")
-        dedup.register_result("tool", {"a": 1}, r1)
-
-        # Second call — same step dedup returns cached
-        cached = dedup.check_same_step("tool", {"a": 1})
-        assert cached is r1
-
-        dedup.end_step()
-
     def test_progression_through_all_tiers(self):
         """Verify streak progresses through all action tiers."""
         dedup = ToolCallDeduplicator()

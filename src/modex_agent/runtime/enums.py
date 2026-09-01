@@ -223,3 +223,13 @@ class TurnCustomKey(StrEnum):
     # read by GraphWorkflowProvider to conditionally render the Final
     # Reply deliver pattern.
     GRAPH_DOWNSTREAM_HAS_END = "_graph_downstream_has_end"
+    # Parallel-scheduler rolling-pool ceiling for this turn (int, ADR-0048
+    # D2). Optional per-turn override of DefaultValues.MAX_PARALLEL_TOOL_CALLS;
+    # 1 = exact serial execution (regression escape hatch).
+    MAX_PARALLEL_TOOL_CALLS = "max_parallel_tool_calls"
+    # Turn-scoped monotonic tool-call seq counter (int, ADR-0048 G2-b):
+    # assigned in model order at scheduling time, carried on TOOL_CALL_END,
+    # persisted with the TrEvent so transcript materialization can restore
+    # model order regardless of completion order. Turn-scoped (not
+    # batch-scoped) so a turn with multiple batches stays globally ordered.
+    TOOL_SEQ_COUNTER = "_tool_seq_counter"

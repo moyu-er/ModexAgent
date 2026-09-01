@@ -328,6 +328,7 @@ class TestSummarizerTrajectoryEmitter:
         import json
 
         from modex_agent.agents.react.agent import ReActEvent
+        from modex_agent.agents.react.constants import ToolCallEndPayload
         from modex_agent.agents.summarizer.emitter import SummarizerTrajectoryEmitter
 
         trace_path = tmp_path / "trace.jsonl"
@@ -345,7 +346,11 @@ class TestSummarizerTrajectoryEmitter:
             await emitter.emit(ReActEvent.TOOL_CALL_START, ToolCall(tool_name="write", arguments={"path": "/tmp/f.txt"}))
             await emitter.emit(
                 ReActEvent.TOOL_CALL_END,
-                (ToolCall(tool_name="write", arguments={}), ToolResult.from_text("write", "ok")),
+                ToolCallEndPayload(
+                    tool_call=ToolCall(tool_name="write", arguments={}),
+                    result=ToolResult.from_text("write", "ok"),
+                    seq=0,
+                ),
             )
             from modex_agent.core.emitter import AgentResult
             await emitter.emit_complete(AgentResult(content="done", stop_reason="completed"))

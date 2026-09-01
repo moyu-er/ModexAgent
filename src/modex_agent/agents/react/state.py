@@ -28,7 +28,10 @@ from pydantic import Field
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.llm_struct import LLMErrorInfo  # noqa: F401 — needed for model_rebuild()
-from modex_agent.core.message import ChatMessage, ContentPart  # noqa: F401 — needed for model_rebuild()
+from modex_agent.core.message import (  # noqa: F401 — needed for model_rebuild()
+    ChatMessage,
+    ContentPart,
+)
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import LLMResponse, MessageRole
 from modex_agent.runtime.codec import RuntimeStateCodec, RuntimeStateCodecConfig

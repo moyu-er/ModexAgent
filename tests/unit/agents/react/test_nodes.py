@@ -491,7 +491,7 @@ class TestToolNode:
         assert len(starts) == 1
         assert len(ends) == 1
         assert starts[0].call_id == call_id
-        assert ends[0][0].call_id == call_id
+        assert ends[0].tool_call.call_id == call_id
         assert history.msgs[1].tool_call_id == call_id
 
     @pytest.mark.asyncio
@@ -629,7 +629,8 @@ class TestToolNode:
         await node.run(ctx)
 
         ends = [d for e, d in emitter.events if e == ReActEvent.TOOL_CALL_END]
-        assert [result.call_id for _tc, result in ends] == ["c1", "c2"]
+        assert [payload.result.call_id for payload in ends] == ["c1", "c2"]
+        assert [payload.seq for payload in ends] == [0, 1]
         # History tool messages pair with the same canonical ids.
         tool_msgs = [m for m in history.msgs if m.role == MessageRole.TOOL]
         assert [m.tool_call_id for m in tool_msgs] == ["c1", "c2"]

@@ -94,6 +94,12 @@ def _make_runtime():
     return AgentRuntime(services=AgentRuntimeServices(), state=state)
 
 
+def _make_tool_manager():
+    manager = MagicMock()
+    manager.get_tool.return_value = None
+    return manager
+
+
 class MockNonStreamingProvider(CallbackStreamProvider):
     """Callback-style mock: only chat_stream is overridden (bridge path)."""
 
@@ -162,7 +168,7 @@ class TestReActAgentUnifiedLoop:
         return AgentContext(
             system_prompt="You are a helpful assistant.",
             history=ListMessageHistory([{"role": "user", "content": "Hello"}]),
-            tool_manager=MagicMock(),
+            tool_manager=_make_tool_manager(),
             max_iterations=3,
             identity=runtime.state.identity, runtime=runtime,
             session=SessionInfo.from_str("test.agent"),
@@ -509,7 +515,7 @@ class TestReActAgentRegression:
         return AgentContext(
             system_prompt="You are a helpful assistant.",
             history=ListMessageHistory([{"role": "user", "content": "Hello"}]),
-            tool_manager=MagicMock(),
+            tool_manager=_make_tool_manager(),
             max_iterations=3,
             identity=runtime.state.identity, runtime=runtime,
             session=SessionInfo.from_str("test.agent"),
@@ -652,7 +658,7 @@ class TestReActAgentCheckpoint:
         return AgentContext(
             system_prompt="You are a helpful assistant.",
             history=ListMessageHistory([{"role": "user", "content": "Hello"}]),
-            tool_manager=MagicMock(),
+            tool_manager=_make_tool_manager(),
             max_iterations=3,
             identity=runtime.state.identity, runtime=runtime,
             session=SessionInfo.from_str("test.agent"),

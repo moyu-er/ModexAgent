@@ -271,7 +271,7 @@ async def test_call_id_stable_across_approval_suspend_and_resume():
 
     assert result.content == "done"
     end_ids = [
-        data[0].call_id
+        data.tool_call.call_id
         for event, data in end_emitter.events
         if event == ReActEvent.TOOL_CALL_END
     ]

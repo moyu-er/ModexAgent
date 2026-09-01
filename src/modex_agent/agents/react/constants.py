@@ -14,6 +14,19 @@ topology, routing is deliver-only).
 
 from enum import StrEnum
 
+from pydantic import BaseModel, ConfigDict
+
+from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.types import ToolCall
+
+
+class ToolCallEndPayload(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    tool_call: ToolCall
+    result: ToolResult
+    seq: int
+
 
 class ReActNode(StrEnum):
     START = "start"
