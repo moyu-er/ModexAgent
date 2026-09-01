@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import tempfile
 from pathlib import Path
@@ -340,8 +341,8 @@ async def test_ws_send_message_echo_carries_resolved_attachments() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ws_pause_sends_cancel_turn() -> None:
-    """WebSocket pause action sends CANCEL_TURN via the configured control filter."""
+async def test_ws_pause_cancels_active_turn_and_sends_cancel_command() -> None:
+    """Pause actively wakes the running turn after queuing CANCEL_TURN."""
     from modex_agent.commands.handlers import build_default_builtin_handlers
     from modex_agent.commands.processor import SlashCommandProcessor
     from modex_agent.control.channel import InMemoryControlChannel
@@ -352,10 +353,14 @@ async def test_ws_pause_sends_cancel_turn() -> None:
         input_adapter = WebSocketInputAdapter()
         channel = InMemoryControlChannel()
         processor = SlashCommandProcessor(handlers=list(build_default_builtin_handlers()))
+        active_turn = asyncio.create_task(asyncio.Event().wait())
         input_adapter.configure_control_filter(
             control_channel=channel,
             command_processor=processor,
             output_adapter=None,
+            session_checker=lambda _session_id: True,
+            turn_uuid_getter=lambda _session_id: "turn-uuid",
+            turn_canceller=lambda _session_id: active_turn.cancel(),
         )
         store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
         home_sessions_dir = WorkspacePaths(root=workspace_root / ".modex").sessions_dir
@@ -385,7 +390,11 @@ async def test_ws_pause_sends_cancel_turn() -> None:
             )
             assert len(cmds) == 1
             assert cmds[0].type == ControlCommandType.CANCEL_TURN
+            assert active_turn.cancelling() == 1
         finally:
+            active_turn.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await active_turn
             await client.close()
 
 

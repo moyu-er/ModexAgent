@@ -14,11 +14,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.emitter import WebBotEmitter
-from bot.webui.events import ServerEvent
+from bot.webui.events import ServerEvent, ToolResultEvent
 from bot.webui.transcript_store import JSONLTranscriptStore
 
 from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.core.emitter import AgentResult, EmitterConfig
+from modex_agent.agents.react.constants import ToolCallEndPayload
+from modex_agent.core.emitter import AgentResult, EmitterConfig, StopReason
+from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.types import ToolCall
 from modex_agent.workspace.runtime import bind_workspace_root
 
 
@@ -148,24 +151,23 @@ class TestTranscriptPersistence:
             store = _build_store()
             emitter = _build_emitter("conv.main", store)
 
-            tc = MagicMock()
-            tc.tool_name = "read_file"
-            tc.arguments = {"path": "/x"}
-            tc.tool_call_id = "c1"
-            tc.call_id = "c1"
-
-            tr = MagicMock()
-            tr.result = "contents"
-            tr.error = None
-            tr.message_content = MagicMock(return_value="contents")
+            tc = ToolCall(
+                tool_name="read_file",
+                arguments={"path": "/x"},
+                call_id="c1",
+            )
+            tr = ToolResult.from_text("read_file", "contents", call_id="c1")
 
             with bind_workspace_root(root):
                 await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
                 await emitter.emit_content("Checking...")
-                await emitter.emit(ReActEvent.TOOL_CALL_END, (tc, tr))
+                await emitter.emit(
+                    ReActEvent.TOOL_CALL_END,
+                    ToolCallEndPayload(tool_call=tc, result=tr, seq=7),
+                )
                 await emitter.emit_content("Done!")
 
-                result = AgentResult(stop_reason="completed", content="Done!")
+                result = AgentResult(stop_reason=StopReason.COMPLETED, content="Done!")
                 await emitter.emit_complete(result)
 
             events = await JSONLTranscriptStore(base / "main").load("conv.main")
@@ -174,6 +176,8 @@ class TestTranscriptPersistence:
             # Content events must be present
             for expected in ["ToolCallEvent", "AssistantTextEvent", "ToolResultEvent"]:
                 assert expected in event_types, f"Missing {expected} in {event_types}"
+            tool_result = next(e for e in events if isinstance(e, ToolResultEvent))
+            assert tool_result.seq == 7
 
             # Metadata events must NOT be persisted
             for forbidden in ["TurnStartEvent", "TurnEndEvent"]:

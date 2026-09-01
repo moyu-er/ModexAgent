@@ -235,6 +235,10 @@ class AgentPipeline:
         """Get turn UUID for the currently executing turn, or None."""
         return self._registry.get_turn_uuid(session_id)
 
+    def cancel_active_turn(self, session_id: str) -> bool:
+        """Wake and cancel the currently executing turn for this session."""
+        return self._registry.cancel_turn(session_id)
+
     async def _process_message(self, input_msg: InputMessage) -> AgentResult | None:
         """处理单个消息（内部入口）"""
         if self.router is not None:

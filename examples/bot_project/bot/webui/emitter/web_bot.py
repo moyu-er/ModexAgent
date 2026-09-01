@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from modex_agent.agents.react.agent import ReActEvent
+from modex_agent.agents.react.constants import ToolCallEndPayload
 from modex_agent.core.emitter import AgentResult, EmitterConfig, StreamingAwareEmitter
 from modex_agent.core.session_id import agent_of
 from modex_agent.core.turn_events import (
@@ -407,13 +408,16 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
 
         elif event_value == _TOOL_CALL_END:
             await self._flush_active_segment()
-            tc, tool_result = data
+            payload: ToolCallEndPayload = data
+            tc = payload.tool_call
+            tool_result = payload.result
+            seq = payload.seq
             tool_name: str = tc.tool_name
             raw_error: str | None = tool_result.error
             full_result: str = tool_result.message_content()
             # The canonical id assigned by the tool node — shared by the
             # persisted pair AND the streamed END, equal to the START's id.
-            call_id: str = tc.call_id
+            end_call_id: str | None = tc.call_id
 
             if self._transcript_store is not None:
                 self._ensure_turn_started()
@@ -427,7 +431,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                     session_id=self._session_id,
                     agent_name=self._agent_name,
                     turn_id=self._current_turn_id,
-                    call_id=call_id,
+                    call_id=end_call_id,
                     tool_name=tool_name,
                     args=full_args,
                 )
@@ -436,10 +440,11 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                     session_id=self._session_id,
                     agent_name=self._agent_name,
                     turn_id=self._current_turn_id,
-                    call_id=call_id,
+                    call_id=end_call_id,
                     tool_name=tool_name,
                     result=full_result.strip(),
                     error=raw_error,
+                    seq=seq,
                 )
                 await self._persist(tr_evt)
 
@@ -454,7 +459,8 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                 tool=tool_name,
                 result_summary=result_summary,
                 turn_id=self._current_turn_id,
-                call_id=call_id,
+                call_id=end_call_id,
+                seq=seq,
             )
             await self._send_event(evt)
 

@@ -12,10 +12,10 @@ import logging
 import pytest
 
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.agents.react import ReActEvent
+from modex_agent.agents.react import ReActEvent, ToolCallEndPayload
 from modex_agent.core.emitter import AgentResult
-from modex_agent.core.types import ToolCall
 from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.types import ToolCall
 
 
 class MockOutputAdapter:
@@ -102,7 +102,10 @@ class TestQQBotEmitter:
         result = ToolResult.from_text("weather", "Sunny, 25C")
 
         # Should not raise or send anything
-        await emitter.emit(ReActEvent.TOOL_CALL_END, (tool_call, result))
+        await emitter.emit(
+            ReActEvent.TOOL_CALL_END,
+            ToolCallEndPayload(tool_call=tool_call, result=result, seq=0),
+        )
 
         # No calls to adapter
         assert len(mock_adapter.send_delta_calls) == 0

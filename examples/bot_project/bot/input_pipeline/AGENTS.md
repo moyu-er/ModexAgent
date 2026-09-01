@@ -96,10 +96,11 @@ IM-only. Intercepts `/stop` and routes it through `ctx.command_adapter._try_inte
 > For this to actually cancel the running turn, the input adapter must be configured with
 > `configure_control_filter()`. `WebUIService.start()` now calls it after all source adapters
 > are wired and before the input adapter starts, injecting the shared `control_channel`,
-> `command_processor`, and cross-workspace `session_checker` / `turn_uuid_getter`.
-> With that wiring in place, `_try_intercept_control` pushes a `CANCEL_TURN` into
-> `InMemoryControlChannel`; the pool's `ControlDrainInterceptor` and `LlmCancelInterceptor`
-> drain it at the next safe point and abort the turn.
+> `command_processor`, and cross-workspace `session_checker` /
+> `turn_uuid_getter` / `turn_canceller`. `_try_intercept_control` first pushes a
+> turn-scoped `CANCEL_TURN`, then cancels the registered turn task so an in-flight
+> bash/other long tool is interrupted immediately. ToolNode drains workers,
+> invokes tool-owned cleanup, and writes `<tool_cancelled>` results.
 
 - Resolves `full_session_id` using the shared read-only `resolve_session_routing()` helper (does NOT persist — S5 owns persistence). This ensures `/stop` targets the conversation's current pool, not a bare conversation_id that would default to `main`.
 - Non-`/stop` messages pass through unchanged.

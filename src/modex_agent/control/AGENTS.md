@@ -46,20 +46,26 @@ There are two independent cancellation mechanisms:
 - **WebUI pause**: `bot/webui/server.py` `_ws_pause` → the same
   `_try_intercept_control` path.
 
-`drain_control_channel()` (`modex_agent/hook/builtin/control_drain.py`) drains
-`{CANCEL_TURN}` at safe points and raises `AgentCancelledError` on a turn-matched
-command. The drain is invoked from the ReAct `LLMNode` (before + after the LLM
-call), `ToolNode._execute_batch`, the agent iteration loop, and inside two
-interceptor wrappers registered live in `bot/workspace/wiring.py`:
+After queuing the command, `InputAdapter._try_intercept_control()` invokes the
+configured turn-task canceller. This is the wakeup edge for long-running tool
+awaits: `ToolNode` catches the outer cancellation and converges through worker
+cancel/drain, tool `on_cancel`, and synthesized `<tool_cancelled>` results.
+
+`drain_control_channel()` (`modex_agent/hook/builtin/control_drain.py`) also
+drains `{CANCEL_TURN}` at safe points and raises `AgentCancelledError` on a
+turn-matched command. It provides turn-UUID validation, stale-command discard,
+and cancellation at ordinary lifecycle boundaries. The drain is invoked from
+the ReAct `LLMNode`, `ToolNode._execute_batch`, and two interceptor wrappers:
 `ControlDrainInterceptor` (TOOL_CALL) and `LlmCancelInterceptor` (LLM_STREAM).
 `AgentCancelledError` is caught in `ReActAgent.run` → `AgentResult(stop_reason=CANCELLED)`.
 
-### (B) Task-based — busy-input INTERRUPT (independent of this package)
+### (B) Task-based — busy-input INTERRUPT
 
 `AgentPipeline._process_message_locked()` (`modex_agent/pipeline/pipeline.py`):
 when a new message arrives in `BusyInputMode.INTERRUPT`, it calls
 `existing_task.cancel()` on the running asyncio task — pure
-`asyncio.CancelledError`, no channel involvement.
+`asyncio.CancelledError`, no channel command. If cancellation lands during a
+tool batch, `ToolNode` converges it through the same cleanup/result path as (A).
 
 ### Steer (`INJECT_STEER`)
 
