@@ -33,7 +33,7 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
-from modex_agent.core.tool_manager import Tool, ToolManager
+from modex_agent.core.tool_manager import ExclusiveTool, Tool, ToolManager
 from modex_agent.tools.terminal._persistent_session import (
     PersistentShellManager,
     PersistentShellSession,
@@ -100,7 +100,7 @@ def ensure_input_companion(
     manager.register(tool_transform(companion) if tool_transform is not None else companion)
 
 
-class PersistentBashTool(Tool):
+class PersistentBashTool(ExclusiveTool):
     """Execute commands in persistent interactive bash shells (stateful).
 
     Stateless routing shell: the caller's conversation session_id
@@ -210,12 +210,16 @@ class PersistentBashTool(Tool):
             return "[Error] command must be a non-empty string"
         return await _routed_session(self._manager).run_command(command)
 
+    async def on_cancel(self) -> None:
+        """Interrupt and drain the bound shell without replacing it."""
+        await _routed_session(self._manager).send_input("\x03")
+
     async def close(self) -> None:
         """Terminate every pooled shell (call at shutdown)."""
         await self._manager.close_all()
 
 
-class BashInputTool(Tool):
+class BashInputTool(ExclusiveTool):
     """Send one stdin line to the caller's persistent bash shell."""
 
     def __init__(self, manager: PersistentShellManager) -> None:
@@ -271,3 +275,7 @@ class BashInputTool(Tool):
     async def execute(self, line: str = "", **kwargs: object) -> str:
         # An empty line is a legitimate keypress (Enter) — allowed.
         return await _routed_session(self._manager).send_input(line)
+
+    async def on_cancel(self) -> None:
+        """Interrupt and drain the bound shell without replacing it."""
+        await _routed_session(self._manager).send_input("\x03")

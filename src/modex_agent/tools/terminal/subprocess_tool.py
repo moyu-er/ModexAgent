@@ -25,10 +25,18 @@ from __future__ import annotations
 import asyncio
 import os
 import platform
+import sys
 from abc import ABC, abstractmethod
 from typing import Any
 
-from modex_agent.core.tool_manager import Tool
+if sys.platform == "win32":
+    from subprocess import CREATE_NEW_PROCESS_GROUP as _PROCESS_GROUP_CREATION_FLAGS
+    _START_NEW_SESSION = False
+else:
+    _PROCESS_GROUP_CREATION_FLAGS = 0
+    _START_NEW_SESSION = True
+
+from modex_agent.core.tool_manager import ExclusiveTool
 from modex_agent.tools.terminal.types import (
     Platform,
     ShellFamily,
@@ -36,6 +44,7 @@ from modex_agent.tools.terminal.types import (
     _parse_platform,
     detect_platform_shell,
 )
+from modex_agent.utils.process_tree import terminate_process_group
 
 
 class ShellExecutor(ABC):
@@ -43,7 +52,7 @@ class ShellExecutor(ABC):
 
     @abstractmethod
     async def execute(
-        self, command: str, working_dir: str | None = None, timeout: int = 300
+        self, command: str, working_dir: str | None = None, timeout: int | None = 300
     ) -> str:
         """Execute a shell command and return its output."""
 
@@ -101,6 +110,9 @@ class SubprocessExecutor(ShellExecutor):
 
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        except asyncio.CancelledError:
+            await terminate_process_group(process)
+            raise
         except TimeoutError:
             process.kill()
             return f"Error: Command timed out after {timeout} seconds"
@@ -141,6 +153,8 @@ class PosixSubprocessExecutor(SubprocessExecutor):
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
             env=env,
+            start_new_session=_START_NEW_SESSION,
+            creationflags=_PROCESS_GROUP_CREATION_FLAGS,
         )
 
 
@@ -161,6 +175,8 @@ class CmdSubprocessExecutor(SubprocessExecutor):
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
             env=env,
+            start_new_session=_START_NEW_SESSION,
+            creationflags=_PROCESS_GROUP_CREATION_FLAGS,
         )
 
 
@@ -185,6 +201,8 @@ class PowerShellSubprocessExecutor(SubprocessExecutor):
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
             env=env,
+            start_new_session=_START_NEW_SESSION,
+            creationflags=_PROCESS_GROUP_CREATION_FLAGS,
         )
 
 
@@ -205,7 +223,7 @@ def create_subprocess_executor(shell_info: ShellInfo | None = None) -> Subproces
     return CmdSubprocessExecutor(shell_info=resolved)
 
 
-class SubprocessTool(Tool):
+class SubprocessTool(ExclusiveTool):
     """Execute shell commands in a fresh subprocess (stateless).
 
     For subagent use -- each command runs in a new process, no terminal state.

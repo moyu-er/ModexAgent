@@ -84,6 +84,8 @@ def default_internals() -> ProbeInternals:
         return os.read(fd, length)
 
     def _stat_rdev(path: str) -> int | None:
+        if sys.platform == "win32":
+            return None
         try:
             return os.stat(path).st_rdev
         except OSError:

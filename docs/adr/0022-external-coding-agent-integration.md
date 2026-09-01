@@ -120,10 +120,12 @@ location is centrally defined — see D6.
 Session lifecycle is owned by harness + SessionStore; the CLI process sees
 only `--session <id>` (or nothing on the first turn).
 
-### D4 — OS abstraction: two primitives, not a strategy hierarchy
+### D4 — OS abstraction: shared primitives, not a strategy hierarchy
 
-OS-specific behaviour is concentrated in **two functions** in
-`agents/external/os_layer.py`:
+External-agent executable resolution and process-group spawn live in
+`agents/external/os_layer.py`. Complete process-tree termination lives in the
+lower-level `utils/process_tree.py` and is re-exported by `os_layer.py` to keep
+the external-agent public surface stable:
 
 ```python
 def resolve_executable(name: str, logger) -> ResolvedExecutable: ...
@@ -343,7 +345,7 @@ agents/external/
 ├── agent.py              # ExternalAgent(Agent[E]) — harness
 ├── builder.py            # ExternalAgentBuilder — pool registration
 ├── events.py             # ExternalEvent(StrEnum)
-├── os_layer.py           # resolve_executable, spawn_process_group, terminate_process_group
+├── os_layer.py           # resolve/spawn + terminate_process_group re-export
 ├── paths.py              # ExternalPaths + ProviderKind
 ├── session_store.py      # ExternalSessionStore — modex↔provider session map
 ├── env_builder.py        # ExternalEnvSpec + ExternalEnvBuilder
