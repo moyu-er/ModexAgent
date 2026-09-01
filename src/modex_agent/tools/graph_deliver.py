@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from modex_agent.agents.agent_node import AgentNode
 from modex_agent.core.agent import current_agent_context
-from modex_agent.core.tool_manager import Tool, ToolConfig
+from modex_agent.core.tool_manager import ExclusiveTool, ToolConfig
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_graph.compiled_graph import CompiledGraph
 from modex_graph.constants import GraphNode
@@ -153,7 +153,7 @@ _DELIVER_PARAMETERS: Final[dict[str, Any]] = {
 }
 
 
-class GraphDeliverTool(Tool):
+class GraphDeliverTool(ExclusiveTool):
     """Deliver agent content to one named downstream node."""
 
     def __init__(self, node: AgentNode, store: GraphDeliverTargetStore) -> None:

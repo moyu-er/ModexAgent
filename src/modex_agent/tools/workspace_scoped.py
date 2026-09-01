@@ -23,7 +23,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.tool_manager import Tool
+from modex_agent.core.tool_manager import ExecutionMode, Tool
 
 if TYPE_CHECKING:
     from modex_agent.core.capabilities import ModelCapabilities
@@ -85,6 +85,17 @@ class WorkspaceScopedTool(Tool):
     @property
     def parameters(self) -> dict[str, Any]:
         return self._inner.parameters
+
+    @property
+    def execution_mode(self) -> ExecutionMode:
+        """Delegate to the inner tool — inner tools span both execution modes.
+
+        A statically inherited marker would be wrong for one of them
+        (read tools wrap PARALLEL, write tools EXCLUSIVE), so the wrapper
+        reports whatever the inner tool resolves to (including the inner
+        instance-level override).
+        """
+        return self._inner.execution_mode
 
     def get_schema(self) -> dict[str, Any]:
         return self._inner.get_schema()

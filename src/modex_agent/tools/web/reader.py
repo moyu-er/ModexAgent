@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from modex_agent.core.tool_manager import Tool, ToolConfig
+from modex_agent.core.tool_manager import ParallelTool, ToolConfig
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ _MAX_CONTENT_LENGTH = 50_000
 _USER_AGENT = "Mozilla/5.0 (compatible; ModexAgent/0.1)"
 
 
-class WebReaderTool(Tool):
+class WebReaderTool(ParallelTool):
     """Fetch content from a URL and convert to readable text.
 
     Supports HTML-to-markdown conversion via *markdownify*.

@@ -21,7 +21,12 @@ from modex_agent.core.experience import (
     sanitize_name,
     validate_experience_md,
 )
-from modex_agent.core.tool_manager import Tool, ToolConfig, ToolResult
+from modex_agent.core.tool_manager import (
+    ExclusiveTool,
+    ParallelTool,
+    ToolConfig,
+    ToolResult,
+)
 from modex_agent.tools.standard.file_tool import (
     EditFileTool,
     ListDirTool,
@@ -168,7 +173,7 @@ def _validation_result_xml_with_extra(
 # ---------------------------------------------------------------------------
 
 
-class ExperienceReadTool(Tool):
+class ExperienceReadTool(ParallelTool):
     """Read EXPERIENCE.md or a sub-file inside an experience directory."""
 
     def __init__(
@@ -229,7 +234,7 @@ class ExperienceReadTool(Tool):
         return result
 
 
-class ExperienceWriteTool(Tool):
+class ExperienceWriteTool(ExclusiveTool):
     """Write content to EXPERIENCE.md or a sub-file.  Auto-creates parent directories."""
 
     def __init__(
@@ -306,7 +311,7 @@ class ExperienceWriteTool(Tool):
         return result
 
 
-class ExperienceEditTool(Tool):
+class ExperienceEditTool(ExclusiveTool):
     """Edit a file inside an experience directory via find-and-replace."""
 
     def __init__(
@@ -398,7 +403,7 @@ class ExperienceEditTool(Tool):
         return result
 
 
-class ExperienceListTool(Tool):
+class ExperienceListTool(ParallelTool):
     """List directory contents — delegates directly to the standard ls tool."""
 
     def __init__(
@@ -460,7 +465,7 @@ class ExperienceListTool(Tool):
         return await self._lister.execute(path=str(target_dir))
 
 
-class ExperienceRenameDirTool(Tool):
+class ExperienceRenameDirTool(ExclusiveTool):
     """Rename an experience directory (moves it on disk)."""
 
     def __init__(
@@ -537,7 +542,7 @@ class ExperienceRenameDirTool(Tool):
         )
 
 
-class ExperienceDeleteTool(Tool):
+class ExperienceDeleteTool(ExclusiveTool):
     """Delete an experience directory and all its contents."""
 
     def __init__(
@@ -608,7 +613,7 @@ class ExperienceDeleteTool(Tool):
 # ---------------------------------------------------------------------------
 
 
-class ExperienceTool(Tool):
+class ExperienceTool(ExclusiveTool):
     """Unified experience management tool.  Routes an *action* to the
     corresponding atomic tool above.
     """

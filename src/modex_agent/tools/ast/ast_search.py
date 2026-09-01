@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from modex_agent.core.tool_manager import Tool
+from modex_agent.core.tool_manager import ParallelTool
 from modex_agent.tools.ast.engine import (
     _EXT_MAP,
     AST_UNAVAILABLE_MSG,
@@ -17,7 +17,7 @@ from modex_agent.tools.ast.engine import (
 from modex_agent.workspace.runtime import resolve_workspace_root
 
 
-class AstGrepSearchTool(Tool):
+class AstGrepSearchTool(ParallelTool):
     """Search code using AST-aware pattern matching."""
 
     def __init__(self) -> None:

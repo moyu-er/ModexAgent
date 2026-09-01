@@ -13,7 +13,7 @@ from pathlib import Path
 from bot.webui.transcript_store import TranscriptStore
 from modex_agent.core.session_id import agent_of
 from modex_agent.core.tool_manager import (
-    Tool,
+    ExclusiveTool,
     ToolConfig,
 )
 from modex_agent.media.mime import classify_kind, sniff_mime
@@ -25,7 +25,7 @@ from modex_agent.workspace.runtime import resolve_workspace_root
 logger = logging.getLogger(__name__)
 
 
-class SendFileToUserTool(Tool):
+class SendFileToUserTool(ExclusiveTool):
     """Send a local file to the current user.
 
     Outbound attachment producer (ADR-0013 §3/§4/§7). The file stays in place

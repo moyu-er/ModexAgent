@@ -159,10 +159,16 @@ class MCPClientManager(McpBackend):
             #
             # MCP connect is best-effort: clean up the stack IN THIS TASK
             # (preventing the cross-task GC teardown) and skip the server for
-            # every non-fatal cause. Propagate only true interpreter signals.
+            # every non-fatal cause. Propagate genuine caller cancellation
+            # (CancelledError while this task is actually being cancelled)
+            # and true interpreter signals.
             await self._safe_aclose(server_stack)
             if isinstance(e, KeyboardInterrupt | SystemExit):
                 raise
+            if isinstance(e, asyncio.CancelledError):
+                task = asyncio.current_task()
+                if task is not None and task.cancelling() > 0:
+                    raise
 
             hint = ""
             text = str(e).lower()

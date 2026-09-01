@@ -13,6 +13,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from modex_agent.agents.react.constants import ToolCallEndPayload
 from modex_agent.core.emitter import AgentResult, ContentEmitter
 from modex_agent.core.events import EmitterConfig
 
@@ -75,7 +76,6 @@ class SummarizerTrajectoryEmitter(ContentEmitter[Any]):
             self._current_content += full_content
 
     async def _on_event(self, event: Any, data: Any = None) -> None:
-        from modex_agent.core.tool_manager import ToolResult
         from modex_agent.core.types import ToolCall
 
         event_name = event.value if isinstance(event, Enum) else str(event)
@@ -138,15 +138,11 @@ class SummarizerTrajectoryEmitter(ContentEmitter[Any]):
             )
 
         elif event_name == "tool_call_end":
-            tc_result = data if isinstance(data, tuple) and len(data) >= 2 else None
-            tc = tc_result[0] if tc_result else None
-            tr = tc_result[1] if tc_result else None
-            tool_name = tc.tool_name if isinstance(tc, ToolCall) else ""
-            success = isinstance(tr, ToolResult) and tr.error is None
-            error = tr.error if isinstance(tr, ToolResult) else None
-            result_preview = (
-                tr.message_content()[:200] if isinstance(tr, ToolResult) and tr.message_content() else ""
-            )
+            payload: ToolCallEndPayload = data
+            tool_name = payload.tool_call.tool_name
+            success = payload.result.error is None
+            error = payload.result.error
+            result_preview = payload.result.message_content()[:200]
             logger.info(
                 "[%s] tool end: %s success=%s session=%s",
                 self._agent_name,

@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from modex_agent.core.tool_manager import Tool, ToolResult
+from modex_agent.core.tool_manager import ExclusiveTool, ToolResult
 from modex_agent.memory.tools._utils import validate_scoped_path
 
 
-class ScopedEditFileTool(Tool):
+class ScopedEditFileTool(ExclusiveTool):
     """Edit a file by replacing text within allowed directories."""
 
     def __init__(self, allowed_dirs: list[Path]) -> None:

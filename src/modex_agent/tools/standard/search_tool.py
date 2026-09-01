@@ -15,7 +15,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from ...core.tool_manager import Tool
+from ...core.tool_manager import ParallelTool
 from ._fallback import DEFAULT_EXCLUDES, expand_braces, is_ignored, load_gitignore
 
 _MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -42,7 +42,7 @@ async def _async_subprocess_run(*args: Any, **kwargs: Any) -> subprocess.Complet
     return await asyncio.to_thread(subprocess.run, *args, **kwargs)
 
 
-class SearchFilesTool(Tool):
+class SearchFilesTool(ParallelTool):
     ABSOLUTE_MAX_RESULTS = 200
 
     def __init__(self) -> None:

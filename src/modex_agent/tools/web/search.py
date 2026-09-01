@@ -6,12 +6,12 @@ import asyncio
 import logging
 from typing import Any
 
-from modex_agent.core.tool_manager import Tool, ToolConfig
+from modex_agent.core.tool_manager import ParallelTool, ToolConfig
 
 logger = logging.getLogger(__name__)
 
 
-class WebSearchTool(Tool):
+class WebSearchTool(ParallelTool):
     """Search the web using DuckDuckGo.
 
     Returns titles, URLs, and snippets for each result.

@@ -10,8 +10,9 @@ import logging
 from abc import ABC, abstractmethod
 from contextvars import ContextVar
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -87,6 +88,22 @@ class ToolManagerConfig:
     pass
 
 
+class ExecutionMode(StrEnum):
+    """Tool 执行模式声明（ADR-0048 D1）。
+
+    PARALLEL: 无副作用调用，可与同批其他 PARALLEL 调用重叠执行。
+    EXCLUSIVE: 独占执行，是批内栅栏（barrier）。
+
+    v1 仅此两值。v2 的 ``conflict_scope`` 细化（如 ``file:<path>``、
+    ``terminal:<session>``、``workspace``）将把 EXCLUSIVE 从全局栅栏变为
+    作用域栅栏，届时今日的 EXCLUSIVE 即明日的
+    ``EXCLUSIVE(scope="global")``，v1 语义不变。
+    """
+
+    PARALLEL = "parallel"
+    EXCLUSIVE = "exclusive"
+
+
 class Tool(DynamicSchemaProvider):
     """工具基类
 
@@ -113,6 +130,26 @@ class Tool(DynamicSchemaProvider):
     Declarative metadata for downstream consumers (e.g. governance, result
     routing). Not used for visibility filtering — a tool that *produces*
     images is still listed for a text-only model (it just degrades at runtime).
+    """
+
+    _default_execution_mode: ClassVar[ExecutionMode] = ExecutionMode.EXCLUSIVE
+    """Class-level execution-mode default — fail-closed EXCLUSIVE (ADR-0048 D1).
+
+    A tool that declares nothing can never be overlapped by accident.
+    Marker ABCs (:class:`ParallelTool` / :class:`ExclusiveTool`) restate it
+    for ergonomic grouping; existing tools migrate by changing their parent
+    (ticket 2), not their bodies. Never read directly —
+    :attr:`execution_mode` resolves it.
+    """
+
+    _execution_mode_override: ExecutionMode | None = None
+    """Instance-level override slot (``MCPTool`` adapter registration).
+
+    ``None`` (default) = no override; :attr:`execution_mode` falls back to
+    ``_default_execution_mode``. Declared as a class-level annotated default
+    (like :attr:`required_modalities`) so the slot exists even on subclasses
+    whose ``__init__`` bypasses ``Tool.__init__`` (e.g.
+    ``WorkspaceScopedTool``).
     """
 
     def __init__(
@@ -153,6 +190,35 @@ class Tool(DynamicSchemaProvider):
         raise NotImplementedError(
             "Tool must define 'parameters' either via __init__ or as a property"
         )
+
+    @property
+    def execution_mode(self) -> ExecutionMode:
+        """执行模式解析：实例覆盖优先，否则用类级默认（ADR-0048 D1）。
+
+        Read-only declaration surface; the scheduler (ADR-0048 D2) reads it
+        to segment a batch. ``WorkspaceScopedTool`` overrides this property
+        to delegate to its inner tool — inner tools span both modes, so the
+        wrapper must not statically inherit a marker.
+        """
+        return self._execution_mode_override or type(self)._default_execution_mode
+
+    cancel_note: ClassVar[str | None] = None
+    """取消合成 ``<tool_cancelled>`` 结果时追加的说明文本（ADR-0048 D6）。
+
+    For tools whose external effects survive cancellation (e.g. the terminal
+    trio leaves the command running in the tab) — tells the model what state
+    it is in. ``None`` (default) = nothing to note.
+    """
+
+    async def on_cancel(self) -> None:
+        """在飞执行被取消时恢复工具自有的外部状态（ADR-0048 D6 契约）。
+
+        The scheduler owns exactly one cancellation action — cancelling the
+        asyncio task — and never touches external resources. Tools that hold
+        external state (persistent sessions, child processes) override this
+        to return it to a known-clean condition. Default: no-op (stateless
+        tools).
+        """
 
     @abstractmethod
     async def execute(self, **kwargs) -> Any:
@@ -206,6 +272,31 @@ class Tool(DynamicSchemaProvider):
         ``(ContentFormat.XML, <truncatable paths>)`` for their XML output.
         """
         return (None, None)
+
+
+class ParallelTool(Tool):
+    """Marker base for stateless read-type tools (ADR-0048 D1).
+
+    Carries no behavior — only flips the class-level execution-mode default
+    to PARALLEL. Existing tools migrate by changing their parent, not their
+    bodies. v2 conflict_scope extension point: this class is where a scoped
+    refinement (``PARALLEL(scope=...)``) would land without touching members.
+    """
+
+    _default_execution_mode = ExecutionMode.PARALLEL
+
+
+class ExclusiveTool(Tool):
+    """Marker base for tools with side effects or shared state (ADR-0048 D1).
+
+    Restates the fail-closed EXCLUSIVE default for explicitness — migrating
+    a tool to this parent documents the classification even though ``Tool``
+    already defaults to EXCLUSIVE. v2 conflict_scope extension point: today's
+    EXCLUSIVE is tomorrow's ``EXCLUSIVE(scope="global")``; a scoped subclass
+    would refine here.
+    """
+
+    _default_execution_mode = ExecutionMode.EXCLUSIVE
 
 
 class ToolResult(BaseModel):

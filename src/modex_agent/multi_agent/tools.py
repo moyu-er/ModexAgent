@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import Tool, ToolConfig
+from modex_agent.core.tool_manager import ParallelTool, ToolConfig
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
@@ -403,7 +403,7 @@ class CommunicationTargetStore:
         return "\n".join(lines)
 
 
-class SendToAgentTool(Tool):
+class SendToAgentTool(ParallelTool):
     """Send a message to another agent — description and parameters from CommunicationTargetStore.
 
     ``tool.description`` and ``tool.parameters`` read from the store;
@@ -560,7 +560,7 @@ _PEER_PARAMS: dict[str, Any] = {
 }
 
 
-class TaskDispatchTool(Tool):
+class TaskDispatchTool(ParallelTool):
     """Dispatch a task to a declared child — the work-delegation tool.
 
     Held by ANY agent with declared children (the root main agent and
@@ -773,7 +773,7 @@ class TaskDispatchTool(Tool):
         )
 
 
-class SendToPeerTool(Tool):
+class SendToPeerTool(ParallelTool):
     """Send a message to a peer — the main agent's cross-agent communication tool.
 
     Peers are separate, independent assistants, not workers you assign tasks

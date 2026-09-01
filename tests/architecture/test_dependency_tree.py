@@ -7,14 +7,13 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 CORE_ROOT = Path(__file__).resolve().parents[2] / "src" / "modex_agent" / "core"
 TOP_LEVEL = {
-    "providers", "commands", "approval", "control", "hook", "interceptor",
+    "agents", "providers", "commands", "approval", "control", "hook", "interceptor",
     "messaging", "input_pipeline", "adapters", "trace", "memory", "workspace",
     "tools", "sandbox", "runtime", "plugins", "multi_agent", "pipeline", "ioc",
 }
+TOOLS_ROOT = Path(__file__).resolve().parents[2] / "src" / "modex_agent" / "tools"
 
 # Offenders fixed incrementally by Tasks 3 (engine) and 4 (tool_manager).
 # This set shrinks to empty as fixes land; the assertion stays strict.
@@ -76,6 +75,23 @@ def test_core_no_unexpected_runtime_upward_imports() -> None:
             offenders.setdefault(mod, []).append(path.relative_to(CORE_ROOT).as_posix())
     unexpected = {m: f for m, f in offenders.items() if m not in EXPECTED_OFFENDERS}
     assert not unexpected, f"unexpected runtime upward imports from core: {unexpected}"
+
+
+EXPECTED_TOOLS_AGENT_OFFENDERS = {"modex_agent.agents.agent_node"}
+
+
+def test_tools_no_unexpected_runtime_imports_of_agents() -> None:
+    offenders: dict[str, list[str]] = {}
+    for path in sorted(TOOLS_ROOT.rglob("*.py")):
+        for mod in _runtime_upward(path):
+            if mod.split(".")[1] == "agents":
+                offenders.setdefault(mod, []).append(path.relative_to(TOOLS_ROOT).as_posix())
+    unexpected = {
+        mod: files
+        for mod, files in offenders.items()
+        if mod not in EXPECTED_TOOLS_AGENT_OFFENDERS
+    }
+    assert not unexpected, f"unexpected runtime imports from tools to agents: {unexpected}"
 
 
 # ── Candidate ③ guards ───────────────────────────────────────────────
