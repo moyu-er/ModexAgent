@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio  # noqa: ANYIO_OK -- production pool completion is asyncio.Future-based
+import asyncio  # production pool completion is asyncio.Future-based (anyio not required)
 import json
 from pathlib import Path
 from typing import Any

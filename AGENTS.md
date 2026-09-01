@@ -97,7 +97,7 @@ Detailed rules in `rules/type-safety.md` and `rules/architecture.md`. Read befor
 
 ## Documentation
 
-ADRs in `docs/adr/` (ADR-0001~0034), design docs in `docs/design/`. See `docs/AGENTS.md` for the index. Read relevant ADRs before significant architectural changes.
+ADRs in `docs/adr/` (ADR-0001~0048), design docs in `docs/design/`. See `docs/AGENTS.md` for the index. Read relevant ADRs before significant architectural changes.
 
 **ADR governance:** living documents, not append-only logs. Merge refinements in place. No parallel versions. Consolidate, don't proliferate. New ADRs only for genuinely new decisions.
 

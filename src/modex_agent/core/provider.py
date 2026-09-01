@@ -49,15 +49,15 @@ class LLMProvider(ABC):
     --- Dormant mechanism-A seam (NOT implemented in the current change). ---
     When a ``Modality`` beyond ``TEXT`` is enabled on
     ``LLMConfig.capabilities`` (``ModelCapabilities``, ADR-0013 §9), the
-    provider-side renderer is the repurposed ``MediaProcessor``
-    (``modex_agent.media.media_utils``): it renders each gate-accepted
-    Attachment whose ``kind`` matches an enabled modality into a native
-    multimodal content block (image → ``image_url``, document → extracted
-    text), inlined into the user message's ``content`` array alongside the
-    text block. On model rejection, the renderer strips the inline block
-    back to a text placeholder ``[image: <path>]`` / ``[doc: <path>]`` using
-    the block's ``_meta.path`` — a seamless degradation to the mechanism-B
-    path-reference form (strip/restore memory discipline).
+    provider-side renderer turns each gate-accepted Attachment whose
+    ``kind`` matches an enabled modality into a native multimodal content
+    block (image → ``image_url``), inlined into the user message's
+    ``content`` array alongside the text block. On model rejection, the
+    renderer strips the inline block back to a text placeholder
+    ``[image: <path>]`` / ``[doc: <path>]`` — a seamless degradation to the
+    mechanism-B path-reference form (strip/restore memory discipline). When
+    activated, it will be built on the event-stream primitive above, not
+    revived from cold storage.
 
     Memory discipline (load-bearing, mechanism A): a multimodal block is
     transient at call time only — it is stripped to a placeholder before the

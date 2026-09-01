@@ -1,3 +1,5 @@
+<!-- Updated: 2026-08-31 -->
+
 # ModexAgent
 
 Multi-agent framework where a main agent coordinates subagents through a star-topology pool, with multi-live workspace isolation.
@@ -165,6 +167,26 @@ The abstract method on `TerminalBackend` that returns the shell family of the ru
 
 **Snapshot Backend**:
 A `TerminalBackend` whose I/O model is a control-protocol snapshot rather than a byte stream. Only `TmuxPtyBackend` today: `send_keys` writes; `capture_pane` reads a pane snapshot. A snapshot backend overrides `write`, `read_pending`, `current_segment`, and `drain_startup` directly (per ADR-0032 D1 point 3) and does not participate in the Blocking-IO Hook pattern. The byte-stream backends (visible-windows, hidden-windows, pexpect) write bytes to a PTY and accumulate them in a `SlidingOutputBuffer`; the snapshot backend accumulates pane snapshots in `_last_capture` and derives new output via prefix-match diff over `capture-pane -p -S -` (full scrollback, ADR-0032 D5). Not a ubiquitous-language term — implementation shape, not domain concept.
+
+**Execution Mode** (`ExecutionMode`):
+A tool's declaration of how its calls may overlap with sibling calls inside one tool batch: `PARALLEL` (may overlap) or `EXCLUSIVE` (runs alone). The read-only `execution_mode` property resolves an instance override before the fail-closed class default; tools usually declare via the `ParallelTool` / `ExclusiveTool` base classes, while MCPTool may override per instance. `Tool.cancel_note` is optional class-level text appended to a synthesized `<tool_cancelled>` result. Per ADR-0048.
+_Avoid_: concurrency flag, parallel-safe (informal), `ToolExecutionMode` (doc-drift name, never existed)
+
+**Exclusive Barrier**:
+The scheduling property of an `EXCLUSIVE` tool call: the batch scheduler drains all in-flight parallel calls before starting it and starts nothing after it until it completes. Batch-local only — never constrains other sessions, pools, or agents; cross-session exclusion is owned by tool-internal locks.
+_Avoid_: global lock, scheduler lock
+
+**Commit Cursor**:
+The model-order commit channel of the tool scheduler — history appends, `message_delta`, the after-tool hook payload, and batch status transitions receive results in original tool-call order regardless of completion order.
+_Avoid_: result queue, commit order (say "commit cursor" for the mechanism)
+
+**Completion Stream**:
+The settle-order channel of the tool scheduler — `TOOL_CALL_END` events and per-call status fire as calls finish, correlated by `call_id`. The only externally visible ordering change under parallel scheduling.
+_Avoid_: event order (ambiguous — name the channel)
+
+**on_cancel Contract**:
+The optional `Tool.on_cancel()` hook invoked when an in-flight call is cancelled, responsible for returning tool-owned external state (PTY session, subprocess tree) to a known-clean condition; default no-op. The scheduler cancels coroutines but never destroys external resources itself. Corollary: `Tool.execute` must never swallow `CancelledError`.
+_Avoid_: cleanup hook (too generic), cancellation handler
 
 **Attachment**:
 A file bound to a message in a conversation, identified by an opaque id, rendered direction-agnostically but stored asymmetrically. The system's purpose is conversation-level file awareness + tool-based inspection by the agent, plus symmetric IM/WebUI download — not file transfer in isolation. `kind` (image / extractable-document / other) is classified once at ingest from magic-byte MIME. Two inspection mechanisms coexist: mechanism B (tool-based — the agent sees only a path reference and a tool's text result; works with any model; the v1 path) and mechanism A (native multimodal — file bytes inline as a model content block, gated on `ModelCapabilities`; implemented per ADR-0014). The injected agent reference carries `name + mime + size + absolute_path` (no download id).
