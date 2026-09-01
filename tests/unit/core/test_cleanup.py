@@ -6,7 +6,7 @@ Tests the seam:
   removed (``db_rows_deleted``, ``files_deleted``, ``dirs_deleted``, ``errors``).
 - :class:`SessionArtifactCleaner` — ABC with one method
   ``clean_session_artifacts(session_id, scope) -> SessionCleanupResult``.
-- :func:`session_artifact_paths` — the ten per-session artifact path units
+- :func:`session_artifact_paths` — the eleven per-session artifact path units
   (fork_contexts removed in T17, aligning with T18).
 - :class:`DefaultSessionArtifactCleaner` — file-only mode (current) and the
   structural stub for file+DB mode (future, T20-T25).
@@ -102,7 +102,7 @@ def test_cleaner_abc_subclass_must_implement_method() -> None:
 
 
 # ---------------------------------------------------------------------------
-# session_artifact_paths — ten units, fork_contexts removed
+# session_artifact_paths — eleven units, fork_contexts removed, overflow added
 # ---------------------------------------------------------------------------
 
 
@@ -110,14 +110,22 @@ def _paths_for(tmp_path: Path) -> WorkspacePaths:
     return WorkspacePaths(root=tmp_path / ".modex")
 
 
-def test_artifact_paths_returns_exactly_ten(tmp_path: Path) -> None:
+def test_artifact_paths_returns_exactly_eleven(tmp_path: Path) -> None:
     paths = _paths_for(tmp_path)
     ap = session_artifact_paths("009fc886ecba.coding", "coding", paths)
-    assert len(ap) == 10
+    assert len(ap) == 11
+
+
+def test_artifact_paths_includes_tool_overflow(tmp_path: Path) -> None:
+    """The overflow store writes {overflow_dir}/tool_overflow/{safe_sid};
+    session deletion must remove that directory too."""
+    paths = _paths_for(tmp_path)
+    ap = session_artifact_paths("009fc886ecba.coding", "coding", paths)
+    assert (paths.overflow_dir / "tool_overflow" / "009fc886ecba.coding") in ap
 
 
 def test_artifact_paths_excludes_fork_contexts(tmp_path: Path) -> None:
-    """T17 keeps fork_contexts out while media reads restores ten units.
+    """T17 keeps fork_contexts out while the overflow unit joins the list.
 
     Aligns with T18 which removes fork XML file writing.
     """
@@ -213,7 +221,7 @@ def test_cleaner_removes_all_ten_units(tmp_path: Path) -> None:
     for unit in session_artifact_paths(sid, pool, paths):
         assert not unit.exists(), f"still present: {unit}"
     assert result.db_rows_deleted == 0  # file-only mode
-    assert result.files_deleted + result.dirs_deleted == 10
+    assert result.files_deleted + result.dirs_deleted == 11
     assert result.errors == []
 
 
@@ -263,7 +271,7 @@ def test_cleaner_uses_default_pool_path_when_scope_has_no_pool(
 
     result = asyncio.run(cleaner.clean_session_artifacts(session_id, scope))
 
-    assert result.files_deleted + result.dirs_deleted == 10
+    assert result.files_deleted + result.dirs_deleted == 11
     assert result.errors == []
     assert all(
         not unit.exists() for unit in session_artifact_paths(session_id, default_pool, paths)
@@ -420,7 +428,7 @@ def test_cleaner_records_database_failure_and_still_cleans_files(tmp_path: Path)
 
     assert result.db_rows_deleted == 0
     assert result.errors == ["session database cleanup failed"]
-    assert result.files_deleted + result.dirs_deleted == 10
+    assert result.files_deleted + result.dirs_deleted == 11
     assert all(not unit.exists() for unit in session_artifact_paths(session_id, pool, paths))
 
 

@@ -43,16 +43,24 @@ def render_overflow_text(
 ) -> str:
     """Render the model-facing text for an oversized tool output.
 
-    Shape — head, explicit elision marker, tail, full-output notice::
+    Shape — head, blank line, explicit elision marker, blank line, tail,
+    blank line, full-output notice::
 
         {content[:head_chars]}
+
         [... OUTPUT ELIDED: {omitted} chars (~{lines} lines) omitted here — ...]
+
         {content[-tail_chars:]}
+
         [Full output ({total} chars total) saved to: {path} — ...]
 
     The elision marker is unmissable and self-describing: the model must see
-    that the middle is elided, not actual tool output. When
-    *full_output_path* is None (no overflow handler — full output not
+    that the middle is elided, not actual tool output. Blank lines separate
+    the marker and notice from surrounding content — head/tail cut at arbitrary
+    character positions, so without separation the marker reads as a line of
+    output (and the tail's first half-word glues onto it).
+
+    When *full_output_path* is None (no overflow handler — full output not
     persisted to disk), the marker and notice say so instead of claiming a
     path.
 
@@ -89,4 +97,4 @@ def render_overflow_text(
     if omitted < len(marker):
         return content
 
-    return f"{content[:head_chars]}\n{marker}\n{content[total - tail_chars :]}\n{notice}"
+    return f"{content[:head_chars]}\n\n{marker}\n\n{content[total - tail_chars :]}\n\n{notice}"

@@ -235,7 +235,8 @@ poll loop:
 ```
 poll_until_settled(session, registry, proc_id, config, check_input_wait=...)
   → poll cycle:
-     1. Read pending output (registry accumulates it; idle timer resets)
+     1. Read pending output (idle timer resets; the model-visible output
+        accumulates in the poll loop, not the registry)
      2. Backend dead?                                   → PROCESS_EXIT
      3. Prompt stable for prompt_stabilize_ms (100 ms)?  → PROMPT_DETECTED
      4. Quiet ≥ input_wait_idle_ms (10 s) AND evidence?  → INPUT_WAIT
@@ -512,7 +513,7 @@ main agents and subagents.
 | `env.py` | `build_full_env()` — complete environment dict for child processes. On Windows, merges missing HKLM/HKCU PATH entries from registry |
 | `prompt.py` | Prompt detection, ANSI/DA1 stripping, pager detection, startup drain |
 | `types.py` | `ShellFamily`, `ShellInfo`, `Platform`, `detect_platform_shell`, status enums (`CommandResultStatus`, `TerminalCommandStatus`, `ProcessStatus`), terminal XML truncation metadata |
-| `config.py` | Terminal runtime config (7 fields): `command_deadline_seconds` (480), `input_wait_idle_ms`, `max_output_chars`, `pending_max_output_chars`, `finished_ttl_ms`, `prompt_stabilize_ms`, `max_total_buffer_chars` |
+| `config.py` | Terminal runtime config (5 fields): `command_deadline_seconds` (480), `input_wait_idle_ms`, `finished_ttl_ms`, `prompt_stabilize_ms`, `max_total_buffer_chars`. (Output clipping was removed from this config — oversize tool results are truncated by the framework overflow interceptor; `ProcessRegistry` tracks only liveness/deadline state.) |
 | `results.py` | Result types |
 | `pty_keys.py` | PTY key constants + `normalize_write_payload` (`submit`-owned Enter semantics for process writes) |
 | `backends/base.py` | `TerminalBackend` ABC |

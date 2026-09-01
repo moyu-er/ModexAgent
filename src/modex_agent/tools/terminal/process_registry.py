@@ -3,14 +3,10 @@ from __future__ import annotations
 import secrets
 import time
 from dataclasses import dataclass, field
-from typing import Literal
 
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.pty_keys import CursorKeyMode
-from modex_agent.tools.terminal.results import TerminalRead
 from modex_agent.tools.terminal.types import ProcessStatus
-
-StreamName = Literal["stdout", "stderr"]
 
 
 @dataclass
@@ -25,14 +21,6 @@ class ProcessSession:
     status: ProcessStatus = ProcessStatus.RUNNING
     stdin_writable: bool = True
     last_output_at: float = field(default_factory=time.time)
-    pending_stdout: list[str] = field(default_factory=list)
-    pending_stderr: list[str] = field(default_factory=list)
-    aggregated: str = ""
-    tail: str = ""
-    total_output_chars: int = 0
-    max_output_chars: int = 200_000
-    pending_max_output_chars: int = 30_000
-    truncated: bool = False
     ended_at: float | None = None
     exit_code: int | None = None
     exit_signal: str | int | None = None
@@ -59,8 +47,6 @@ class ProcessRegistry:
             cwd=cwd,
             started_at=time.time(),
             deadline_at=time.monotonic() + self._config.command_deadline_seconds,
-            max_output_chars=self._config.max_output_chars,
-            pending_max_output_chars=self._config.pending_max_output_chars,
         )
         self._running[session_id] = session
         return session
@@ -97,32 +83,16 @@ class ProcessRegistry:
         self._finished.pop(session_id, None)
         return existed
 
-    def append_output(self, session_id: str, stream: StreamName, chunk: str) -> None:
-        session = self._running.get(session_id)
-        if session is None:
-            return
-        now = time.time()
-        session.last_output_at = now
-        session.total_output_chars += len(chunk)
-        pending = session.pending_stdout if stream == "stdout" else session.pending_stderr
-        pending.append(chunk)
-        self._cap_pending(pending, session)
-        combined = session.aggregated + chunk
-        if len(combined) > session.max_output_chars:
-            session.truncated = True
-            combined = combined[-session.max_output_chars :]
-        session.aggregated = combined
-        session.tail = combined[-2000:]
+    def record_output(self, session_id: str) -> None:
+        """Mark *session_id* as having produced output just now (idle timer).
 
-    def drain_pending(self, session_id: str) -> TerminalRead:
-        session = self._running.get(session_id) or self._finished.get(session_id)
-        if session is None:
-            return TerminalRead()
-        stdout = "".join(session.pending_stdout)
-        stderr = "".join(session.pending_stderr)
-        session.pending_stdout.clear()
-        session.pending_stderr.clear()
-        return TerminalRead(stdout=stdout, stderr=stderr, raw=stdout + stderr)
+        Output aggregation lives elsewhere: the poll loop accumulates the
+        model-visible parts, and oversize results are truncated by the
+        framework overflow interceptor — this registry only tracks liveness.
+        """
+        session = self._running.get(session_id)
+        if session is not None:
+            session.last_output_at = time.time()
 
     def mark_exited(
         self,
@@ -172,12 +142,3 @@ class ProcessRegistry:
             session_id = f"ps-{secrets.token_hex(4)}"
             if session_id not in self._running and session_id not in self._finished:
                 return session_id
-
-    def _cap_pending(self, pending: list[str], session: ProcessSession) -> None:
-        total = sum(len(item) for item in pending)
-        if total <= session.pending_max_output_chars:
-            return
-        session.truncated = True
-        text = "".join(pending)[-session.pending_max_output_chars :]
-        pending.clear()
-        pending.append(text)

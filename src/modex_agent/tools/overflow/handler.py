@@ -40,8 +40,14 @@ class ToolResultOverflowHandler:
         tool_name: str,
         content: str,
         *,
-        max_chars: int = 50_000,
+        max_chars: int,
     ) -> tuple[str, OverflowRef]:
+        """Persist *content* and render the model-facing truncated text.
+
+        *max_chars* is the overflow threshold — deliberately required (no
+        default): the caller (interceptor) owns the single source of truth
+        for when overflow triggers AND how much content to return.
+        """
         ref = await self._store.store(session_id, tool_call_id, tool_name, content)
         # Content at or under the threshold passes through unchanged — the
         # gate is explicit because the head/tail fractions no longer sum to
@@ -68,7 +74,7 @@ class ToolResultOverflowHandler:
         """
         self._store = store
         if self._cleaner is not None:
-            self._cleaner._store = store
+            self._cleaner.repoint_store(store)
 
     def schedule_cleanup(self, session_id: str, kept_call_ids: set[str]) -> None:
         self._cleaner.schedule_cleanup(session_id, kept_call_ids)
