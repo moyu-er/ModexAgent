@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-26 -->
+<!-- Updated: 2026-08-31 -->
 
 # core
 
@@ -36,7 +36,7 @@ The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMP
 | `session_store.py` | `SessionStore` ABC + JSON-file `LocalFileSessionStore` — authoritative persistent session storage (one JSON per session_id, I/O via `asyncio.to_thread`) |
 | `stream_events.py` | `LLMStreamEvent` — six-variant closed discriminated union (ADR-0046): `TextDelta` / `ReasoningDelta` / `ToolCallComplete` / `UsageSnapshot` / `Finish` / `StreamFailure`. `ReplayFields` (`Finish.replay`) is the event layer's only reasoning-replay channel; every stream terminates with exactly one `Finish` or `StreamFailure` (`EventAssembler` enforces, synthesizing `StreamFailure` on EOF without terminal event) |
 | `tool.py` | `DynamicSchemaProvider` ABC — context-aware tool schema. **`Tool` class lives in `tool_manager.py`** |
-| `tool_manager.py` | `Tool` class (dual-mode: `__init__` args OR `@property` name/description/parameters; declarative `required_modalities`/`produced_modalities` + `is_available(caps)` per ADR-0014), `ToolManager` ABC, `InMemoryToolManager`, `ToolResult` (`content: list[ContentPart]` is the source of truth — multimodal consumers read the parts directly), `ToolExecutionContext` (frozen BaseModel delivered via contextvar — carries `ModelInfo` + `media_store`/`session_id` to tools), `get_tool_execution_context()`, `FunctionalTool`, `ToolConfig`, `ToolManagerConfig`, `ToolExecutionMode` |
+| `tool_manager.py` | `Tool` class (dual-mode: `__init__` args OR `@property` name/description/parameters; declarative modalities per ADR-0014), `ExecutionMode`, `ParallelTool`, `ExclusiveTool`, `ToolManager` ABC, `InMemoryToolManager`, `ToolResult`, `ToolExecutionContext`, `ToolConfig`, `ToolManagerConfig`. `Tool.execution_mode` is a read-only property that resolves the instance `_execution_mode_override` before the fail-closed class `_default_execution_mode`; `Tool.on_cancel()` owns external-state recovery and `Tool.cancel_note` adds context to synthesized cancellation results. |
 | `types.py` | `InputMessage`, `OutputMessage` (frozen Pydantic `BaseModel`, B5), `LLMResponse`, `ToolCall` (Pydantic `BaseModel`, ADR-0033 D14 Stage 2), `MessageRole` (StrEnum: SYSTEM/USER/ASSISTANT/TOOL/AGENT/PENDING), `MessageType` (Enum), `OutputMessageType` (StrEnum, B1) |
 | `utils.py` | Core utility helpers |
 

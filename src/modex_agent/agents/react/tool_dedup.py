@@ -1,16 +1,10 @@
-"""Progressive tool-call deduplication for the ReAct ToolNode.
+"""Cross-step tool-call streak detection for the ReAct ToolNode.
 
-Two layers of protection against repetitive tool calls:
-
-1. **Same-step dedup** — if the LLM emits identical ``(tool_name, args)``
-   pairs within a single ToolNode execution, the result from the first
-   call is reused and the duplicate is skipped.
-
-2. **Cross-step streak detection** — when the same ``(tool_name, args)``
-   pair repeats across consecutive ReAct iterations, escalating
-   ``<system-reminder>`` messages are appended to (or replace) the tool
-   result.  At high streaks the call is skipped entirely; at streak ≥ 12
-   the turn is force-cancelled.
+Same-step duplicate pruning now runs in ToolNode's scheduler so followers can
+participate in ordered completion and cancellation. The old ``check_same_step``
+entry point has been removed. This module tracks repeated ``(tool_name, args)``
+pairs across consecutive ReAct iterations, escalating ``<system-reminder>``
+messages before eventually skipping or cancelling.
 
 The deduplicator is **per-turn**: create a fresh instance at the start
 of each ``ReActAgent.run()`` and pass it to ``build_react_graph()``.
@@ -123,14 +117,11 @@ class ToolCallDeduplicator:
 
     * ``begin_step()`` — called at the start of each ``ToolNode.execute``.
     * For each tool call in the batch:
-        - ``check_same_step()`` — reuse cached result if available.
         - ``check_streak()`` — decide whether to execute / remind / skip / stop.
-        - ``register_result()`` — cache the result for same-step dedup.
+        - ``register_result()`` — record the leader key for streak tracking.
     * ``end_step()`` — update cross-step streak counts after the batch.
     """
 
-    # Per-step cache: key -> ToolResult
-    _step_results: dict[str, ToolResult]
     # Keys seen in the current step
     _step_keys: set[str]
     # Keys seen in the previous step
@@ -139,7 +130,6 @@ class ToolCallDeduplicator:
     _streak_counts: dict[str, int]
 
     def __init__(self) -> None:
-        self._step_results: dict[str, ToolResult] = {}
         self._step_keys: set[str] = set()
         self._prev_step_keys: set[str] = set()
         self._streak_counts: dict[str, int] = {}
@@ -170,7 +160,6 @@ class ToolCallDeduplicator:
         """
         self._prev_step_keys = self._step_keys
         self._step_keys = set()
-        self._step_results = {}
 
     def end_step(self) -> None:
         """Update cross-step streak counts after the batch completes.
@@ -190,19 +179,10 @@ class ToolCallDeduplicator:
         self._streak_counts = new_counts
 
     # ------------------------------------------------------------------
-    # Same-step dedup
-    # ------------------------------------------------------------------
-
-    def check_same_step(self, tool_name: str, args: dict[str, Any]) -> ToolResult | None:
-        """Return a cached result if this call was already executed this step."""
-        key = self.make_key(tool_name, args)
-        return self._step_results.get(key)
-
     def register_result(self, tool_name: str, args: dict[str, Any], result: ToolResult) -> None:
-        """Cache *result* for same-step dedup and record the key for streak tracking."""
+        """Record a completed leader call key for cross-step streak tracking."""
         key = self.make_key(tool_name, args)
         self._step_keys.add(key)
-        self._step_results[key] = result
 
     # ------------------------------------------------------------------
     # Cross-step streak detection

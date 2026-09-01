@@ -9,6 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 
 from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, TextPart
@@ -452,6 +453,71 @@ class TestToolRecordReplay:
 
         with pytest.raises(KeyError, match="Cassette miss"):
             await replay_wrapped.execute("t", {"a": 2})
+
+    async def test_parallel_batch_replays_by_key_independent_of_order(
+        self, tmp_path: Path
+    ) -> None:
+        recorder = CassetteRecorder(tmp_path)
+        result_a = ToolResult.from_text("read", "result-A", call_id="recorded-A")
+        result_b = ToolResult.from_text("read", "result-B", call_id="recorded-B")
+        result_c = ToolResult.from_text("read", "result-C", call_id="recorded-C")
+        wrapped_a = recorder.wrap_tool_executor(_ScriptedToolManager(result_a))
+        wrapped_b = recorder.wrap_tool_executor(_ScriptedToolManager(result_b))
+        wrapped_c = recorder.wrap_tool_executor(_ScriptedToolManager(result_c))
+        calls = (
+            ("read", {"path": "A"}, wrapped_a),
+            ("read", {"path": "B"}, wrapped_b),
+            ("read", {"path": "A"}, wrapped_a),
+            ("read", {"path": "C"}, wrapped_c),
+        )
+        recorded = [""] * len(calls)
+
+        async def record_at(index: int) -> None:
+            tool_name, arguments, manager = calls[index]
+            result = await manager.execute(tool_name, arguments)
+            recorded[index] = result.message_content()
+
+        async with anyio.create_task_group() as task_group:
+            for index in range(len(calls)):
+                task_group.start_soon(record_at, index)
+
+        assert recorded == ["result-A", "result-B", "result-A", "result-C"]
+        key_a = tool_call_key("read", {"path": "A"})
+        assert [entry.key for entry in recorder.entries].count(key_a) == 2
+
+        cassette_dir = recorder.save("trace-parallel-tools-001")
+        engine = CassetteReplayEngine(cassette_dir)
+        engine.load()
+        replay_manager = engine.wrap_tool_executor(_RaisingToolManager())
+
+        async def replay_in_order(order: tuple[int, ...]) -> list[str]:
+            replayed = [""] * len(order)
+
+            async def replay_at(position: int) -> None:
+                tool_name, arguments, _manager = calls[order[position]]
+                result = await replay_manager.execute(tool_name, arguments)
+                replayed[position] = result.message_content()
+
+            async with anyio.create_task_group() as task_group:
+                for position in range(len(order)):
+                    task_group.start_soon(replay_at, position)
+            return replayed
+
+        forward = tuple(range(len(calls)))
+        reverse = tuple(reversed(forward))
+        assert await replay_in_order(forward) == [
+            "result-A",
+            "result-B",
+            "result-A",
+            "result-C",
+        ]
+        assert await replay_in_order(reverse) == [
+            "result-C",
+            "result-A",
+            "result-B",
+            "result-A",
+        ]
+        assert engine.misses == 0
 
     async def test_multimodal_result_round_trips_with_media_parts(
         self, tmp_path: Path

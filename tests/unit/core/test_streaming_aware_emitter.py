@@ -11,8 +11,9 @@
 import pytest
 
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.agents.react import ReActEvent
+from modex_agent.agents.react import ReActEvent, ToolCallEndPayload
 from modex_agent.core.emitter import AgentResult, StreamingAwareEmitter
+from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.turn_events import (
     TurnReasoningEvent,
     TurnTextEvent,
@@ -20,7 +21,6 @@ from modex_agent.core.turn_events import (
     TurnToolResultEvent,
 )
 from modex_agent.core.types import ToolCall
-from modex_agent.core.tool_manager import ToolResult
 
 
 class MockOutputAdapter:
@@ -241,7 +241,10 @@ class TestStreamingAwareEmitter:
         tool_call = ToolCall(tool_name="test_tool", arguments={})
         result = ToolResult.from_text("test_tool", "success")
         # Should not raise, default implementation does nothing to adapter
-        await emitter.emit(ReActEvent.TOOL_CALL_END, (tool_call, result))
+        await emitter.emit(
+            ReActEvent.TOOL_CALL_END,
+            ToolCallEndPayload(tool_call=tool_call, result=result, seq=0),
+        )
 
         # No calls to adapter
         assert len(emitter.output_adapter.send_delta_calls) == 0
