@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from modex_agent.core.message import ContentFormat
 
-from modex_agent.core.tool_manager import Tool
+from modex_agent.core.tool_manager import ExclusiveTool
 from modex_agent.tools.terminal.managers import TerminalManagerBase
 from modex_agent.tools.terminal.process_registry import ProcessRegistry
 from modex_agent.utils.xml import xml_attr
@@ -23,13 +23,18 @@ class TerminalAction(StrEnum):
     SELECT = "select"
 
 
-class TerminalTool(Tool):
+class TerminalTool(ExclusiveTool):
     """Tool for managing named terminal sessions.
 
     Parameters:
         action: One of open, close, list, select.
         name: Terminal tab name (optional for open, required for close/select).
     """
+
+    cancel_note: ClassVar[str | None] = (
+        "The command may still be running in the terminal tab."
+    )
+    """Cancellation leaves every terminal tab and its command untouched."""
 
     def __init__(
         self, manager: TerminalManagerBase, registry: ProcessRegistry | None = None

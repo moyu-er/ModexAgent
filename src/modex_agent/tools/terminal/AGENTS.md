@@ -488,7 +488,10 @@ main agents and subagents.
    control sequences. Visible terminal output is NOT modified.
 6. **Interrupts route through the process tool**: `process` with
    `data="^C"` (or `ctrl+c` / `\x03`) sends a real Ctrl+C to the running
-   command and refreshes the command deadline; `bash` has no `^C` path.
+   command and refreshes the command deadline; `bash` has no model-facing
+   `^C` parameter. Runtime cancellation is the exception: `CommandTool` and
+   `ProcessTool` share that same interrupt primitive from `on_cancel`, so a
+   WebUI pause stops the foreground command while preserving the tab.
 
 ---
 

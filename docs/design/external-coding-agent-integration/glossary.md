@@ -177,11 +177,13 @@ or more `ExternalEvent` emissions. Interface is open-ended
 events (e.g. a Pi `message_update` carrying both thinking and text).
 
 ### OS layer
-Two functions + one dataclass in `agents/external/os_layer.py`:
+Two functions + one dataclass live in `agents/external/os_layer.py`:
 `resolve_executable(name) → ResolvedExecutable`,
 `spawn_process_group(args, cwd, env, stdin) → Process`,
-`terminate_process_group(proc)`. Concentrates all `sys.platform` branches
-so provider backends and harness stay OS-agnostic.
+while `terminate_process_group(proc)` is implemented in
+`utils/process_tree.py` and re-exported by the OS facade. This keeps provider
+backends and the harness OS-agnostic without making lower layers depend on
+`agents`.
 
 ---
 

@@ -286,7 +286,7 @@ The external agent itself is unaware of either id.
 
 ### OS layer
 
-Three functions concentrate every `sys.platform` branch:
+Three functions expose the cross-platform process lifecycle:
 
 - `resolve_executable(name, logger) → ResolvedExecutable` — Windows
   resolves `.cmd` shims to the native binary to avoid argv truncation;
@@ -294,9 +294,12 @@ Three functions concentrate every `sys.platform` branch:
 - `spawn_process_group(args, cwd, env, stdin) → Process` — Windows uses
   `CREATE_NEW_PROCESS_GROUP`; POSIX uses `start_new_session=True`.
 - `terminate_process_group(proc)` — Windows uses `taskkill /T /PID`;
-  POSIX uses `os.killpg` SIGTERM→SIGKILL.
+  POSIX uses `os.killpg` SIGTERM→SIGKILL. Its shared implementation lives in
+  `utils/process_tree.py`; `agents/external/os_layer.py` re-exports it.
 
-Provider backends call these three and stay OS-agnostic. There is no
+Provider backends call these three through the external OS facade and stay
+OS-agnostic. Lower-level consumers import process-tree termination directly
+from `utils.process_tree`. There is no
 `Spawner` ABC and no per-OS strategy class — Python's
 `asyncio.subprocess` is already cross-platform; only the three behaviours
 above are not.

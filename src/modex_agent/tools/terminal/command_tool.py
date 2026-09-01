@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, assert_never
+from typing import TYPE_CHECKING, Any, ClassVar, assert_never
 
 if TYPE_CHECKING:
     from modex_agent.core.message import ContentFormat
 
-from modex_agent.core.tool_manager import Tool
+from modex_agent.core.tool_manager import ExclusiveTool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.guard import TerminalGuardResult, check_command_writable
 from modex_agent.tools.terminal.managers import TerminalManagerBase
@@ -48,8 +48,10 @@ def _build_command_xml(
     return "\n".join(parts)
 
 
-class CommandTool(Tool):
+class CommandTool(ExclusiveTool):
     """Execute a command in the default terminal session."""
+
+    cancel_note: ClassVar[str | None] = None
 
     def __init__(
         self,
@@ -189,6 +191,15 @@ class CommandTool(Tool):
                 return self._format_timed_out(result.output_parts, result.elapsed_ms, hint=hint)
             case unreachable:
                 assert_never(unreachable)
+
+    async def on_cancel(self) -> None:
+        """Interrupt the running command while preserving its terminal tab."""
+        from modex_agent.tools.terminal.process_tool import interrupt_running_command
+
+        session = await self._manager.get_default()
+        running = self._registry.get_running_by_terminal(session.name)
+        if running is not None:
+            await interrupt_running_command(session, running, self._registry)
 
     @staticmethod
     def _format_completed(

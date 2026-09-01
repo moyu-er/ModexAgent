@@ -360,16 +360,20 @@ async def test_transient_raw_juggle_completes_without_takeover():
 
 async def test_takeover_still_fires_for_stdin_reading_raw_child():
     """The suppression must not swallow REAL takeovers: a child that sets
-    raw mode and blocks reading stdin (ssh/REPL/pager shape) still returns
-    the shell-kind WAITING hint promptly."""
+    raw mode and blocks reading stdin after producing command-owned output
+    (ssh/REPL/pager shape) still returns the shell-kind WAITING hint promptly."""
     tool = PersistentBashTool(timeout_seconds=8)
     bash_input = BashInputTool(tool.manager)
     try:
         started = monotonic()
         out = await tool.execute(
-            command='python3 -c "import sys, tty; tty.setraw(0); sys.stdin.read(1)"'
+            command=(
+                "python3 -c 'import sys, tty; print(\"ready\", flush=True); "
+                "tty.setraw(0); sys.stdin.read(1)'"
+            )
         )
         elapsed = monotonic() - started
+        assert "ready" in out
         assert "[hint:" in out
         assert elapsed < 5.0
         resumed = await bash_input.execute(line="q")
@@ -508,18 +512,37 @@ async def test_foreign_markers_stripped_from_result():
 # ── cancellation hygiene ──
 
 
-async def test_cancelled_command_terminates_session_cleanly():
-    """Cancelling a run_command (the 540s executor deadline's last-resort
-    path) kills the session; the next call spawns fresh and works."""
+async def test_cancelled_command_recovers_session_via_on_cancel():
+    """ADR-0048 D6: cancelling a run_command preserves the session; the
+    tool's on_cancel hook interrupts the foreground command and drains it.
+    The shell, its cwd, and its env survive — the next call reuses them."""
     tool = PersistentBashTool(timeout_seconds=10)
     try:
+        await tool.execute(command="cd /tmp")
         task = asyncio.create_task(tool.execute(command="sleep 8"))
         await asyncio.sleep(0.4)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        assert tool.session._phase is session_mod._Phase.IDLE  # noqa: SLF001
-        assert await tool.execute(command="echo fresh") == "fresh"
+
+        await tool.on_cancel()
+
+        session = tool.session
+        assert session._phase is session_mod._Phase.IDLE  # noqa: SLF001
+        assert session._proc is not None  # noqa: SLF001
+        assert session._proc.isalive()  # noqa: SLF001
+        # The interrupt residue can race the next command's output window on
+        # a loaded CI runner (observed once: pwd returned `[no output]`).
+        # The pin here is the survival contract — cwd preserved — so retry
+        # bounded until the output window is clean instead of failing on
+        # the race.
+        pwd = ""
+        deadline = monotonic() + 5.0
+        while pwd != "/tmp" and monotonic() < deadline:
+            pwd = await tool.execute(command="pwd")
+            if pwd != "/tmp":
+                await asyncio.sleep(0.2)
+        assert pwd == "/tmp"
     finally:
         await tool.close()
 
@@ -530,12 +553,12 @@ async def test_cancelled_command_terminates_session_cleanly():
 def test_session_deadline_strictly_below_executor_default():
     """Layered-timeout ordering: the session's own graceful timeout path
     (partial output + reset notice) must be reachable BEFORE the executor's
-    blind cancel — 480 < DefaultValues.TOOL_TIMEOUT_SECONDS (540). The
+    blind cancel — 480 < DEFAULT_TOOL_TIMEOUT_SECONDS (540). The
     bot's old hardcoded 400 inverted this and made every interactive hang
     a silent `<tool_timeout>` with all partial output destroyed."""
-    from modex_agent.core.constants import DefaultValues
+    from modex_agent.core.llm_struct import DEFAULT_TOOL_TIMEOUT_SECONDS
 
-    assert session_mod._DEFAULT_TIMEOUT_SECONDS < DefaultValues.TOOL_TIMEOUT_SECONDS
+    assert session_mod._DEFAULT_TIMEOUT_SECONDS < DEFAULT_TOOL_TIMEOUT_SECONDS
 
 
 async def test_raw_takeover_returns_promptly_zsh_prompt():

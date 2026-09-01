@@ -18,6 +18,7 @@ General-purpose utilities — no domain-specific logic. Stateless helpers free o
 | `xml.py` | Unified XML escaping utilities |
 | `message_builder.py` | Message construction helpers |
 | `think_tag.py` | Think-tag extraction (streaming + non-streaming) |
+| `process_tree.py` | Cross-platform complete subprocess-tree termination |
 
 ## Dependencies
 - Standard library only (`json`, `pathlib`, `xml`, `re`, `base64`, `time`, `hashlib`, `os`) — stateless helpers with no framework coupling.
