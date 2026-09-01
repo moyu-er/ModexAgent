@@ -69,8 +69,11 @@ expiry the ENTIRE process session — the shell and every descendant
 group — is SIGKILLed, the PTY is closed, and the next call lazily
 spawns a fresh shell.  The result carries the partial output plus an
 explicit reset notice (cwd/env were NOT preserved).  External
-cancellation gets the same cleanup so a cancelled call never leaks a
-zombie shell; the cancellation itself propagates.
+cancellation instead PRESERVES the session: the cancelled call parks
+its pending transaction and the owning tool's ``on_cancel`` hook
+(ADR-0048 D6) interrupts the foreground command (``^C``) and drains
+output to quiet — the shell, its cwd, and its env survive for the
+next call.
 
 Output handling: per-command output accumulates in a tail-keeping
 rolling buffer (``_SCROLLBACK_MAX_CHARS``/``_SCROLLBACK_MAX_LINES``).
@@ -395,13 +398,19 @@ class _PendingWait:
     """A command in flight: its marker pair, absolute deadline, budget.
 
     ``deadline``/``timeout_seconds`` are ``None`` when no per-command
-    timeout is configured.
+    timeout is configured. ``interrupted`` marks a transaction resumed by
+    the ``^C`` interrupt path (``send_input("\\x03")`` after external
+    cancellation): the shell is expected to print its job-control residue
+    and return to the prompt, so prompt-shaped residue must NOT be
+    classified as an input wait — completion evidence (END marker / PS1 /
+    kernel probe) is the only trusted signal while it is set.
     """
 
     end_re: re.Pattern[str]
     start_token: str
     deadline: float | None
     timeout_seconds: int | None = None
+    interrupted: bool = False
 
 
 def _has_real_output(accum: _RollingBuffer, pending: _PendingWait) -> bool:
@@ -606,9 +615,10 @@ class PersistentShellSession:
     per-command env changes cannot reach an already-running shell.
 
     Commands run under a wall-clock deadline (``timeout_seconds``;
-    ``None`` disables). On expiry — or on external cancellation — the
-    whole process session is killed and the next call respawns a fresh
-    shell (cwd/env reset).
+    ``None`` disables). On expiry the whole process session is killed and
+    the next call respawns a fresh shell (cwd/env reset). External
+    cancellation preserves the pending transaction so the owning tool's
+    cancellation hook can interrupt and drain it without replacing the shell.
     """
 
     def __init__(
@@ -684,6 +694,7 @@ class PersistentShellSession:
         elif self._phase is _Phase.RUNNING:
             return _BUSY_RUNNING_MESSAGE
         self._waiting_shell = False
+        pending: _PendingWait | None = None
         try:
             await self._ensure_started()
             # Discard output left by a previously timed-out / abandoned
@@ -701,8 +712,6 @@ class PersistentShellSession:
                 f"__modex_status=$?; "
                 f"printf '%s%s\\n' {_bash_ansi_c_quote(end_token)} \"$__modex_status\""
             )
-            self._phase = _Phase.RUNNING
-            await self._send(wrapped + "\n")
             deadline = (
                 monotonic() + self._timeout_seconds if self._timeout_seconds is not None else None
             )
@@ -712,9 +721,12 @@ class PersistentShellSession:
                 deadline=deadline,
                 timeout_seconds=self._timeout_seconds,
             )
+            self._phase = _Phase.RUNNING
+            await self._send(wrapped + "\n")
             return await self._collect(pending)
         except asyncio.CancelledError:
-            self._terminate_session_sync()
+            if pending is not None:
+                self._pending = pending
             raise
 
     async def send_input(self, line: str) -> str:
@@ -742,16 +754,16 @@ class PersistentShellSession:
                 return _BUSY_RUNNING_MESSAGE
             if self._timeout_seconds is not None:
                 # The answer may unleash more work — give it a fresh deadline.
-                pending = replace(pending, deadline=monotonic() + self._timeout_seconds)
+                pending = replace(
+                    pending,
+                    deadline=monotonic() + self._timeout_seconds,
+                    interrupted=interrupt,
+                )
                 self._pending = pending
             self._phase = _Phase.RUNNING
             payload = CTRL_C if interrupt else line + ENTER_KEY
-            try:
-                await self._send(payload)
-                return await self._collect(pending)
-            except asyncio.CancelledError:
-                self._terminate_session_sync()
-                raise
+            await self._send(payload)
+            return await self._collect(pending)
 
     async def close(self) -> None:
         """Terminate the shell process session and release the PTY (shutdown seam)."""
@@ -903,6 +915,8 @@ class PersistentShellSession:
         terminal. Missing platform support (ImportError), missing attributes, and
         process or descriptor races (OSError or termios.error) all return None.
         """
+        if sys.platform == "win32":
+            return None
         if self._proc is None:
             return None
         try:
@@ -1089,9 +1103,22 @@ class PersistentShellSession:
             if probe_usable and now >= next_probe_at:
                 next_probe_at = now + _STDIN_PROBE_INTERVAL_S
                 if quiet and await self._probe_stdin_wait():
+                    signal = self._terminal_state()
+                    if pending.interrupted and signal is not _TerminalSignal.CHILD_RAW:
+                        # Interrupt recovery: the probe found the SHELL itself
+                        # back at its readline with no END marker and no PS1
+                        # painted — the wrapper died to the SIGINT without
+                        # running its closing printf. The transaction was
+                        # explicitly terminated by our own ^C; treat it as
+                        # abnormally completed (same as the PS1 path) instead
+                        # of re-classifying the shell's own prompt as an
+                        # input wait the next call would bounce off.
+                        self._pending = None
+                        self._waiting_shell = False
+                        self._phase = _Phase.IDLE
+                        return self._finalize(accum, pending, None)
                     # A child-owned raw terminal accepts shell passthrough;
                     # every other state remains prompt-kind.
-                    signal = self._terminal_state()
                     self._waiting_shell = signal is _TerminalSignal.CHILD_RAW
                     self._pending = pending
                     self._phase = _Phase.WAITING
@@ -1104,14 +1131,20 @@ class PersistentShellSession:
             # kernel probe. ADR-0045's extended probeless window applies only
             # to the session-local weak shapes below; see
             # test_shared_suffix_layer_preempts_probeless_weak_window.
-            if accum.text and quiet and is_waiting_for_input(accum.text):
+            # Interrupt recovery exempts itself: ^C makes bash print
+            # job-control residue ("^C", "Terminated") whose trailing shape
+            # falsely matches prompt suffixes while the shell is still
+            # returning to its prompt — only completion evidence (END
+            # marker / PS1 / kernel probe) may settle an interrupted wait.
+            if not pending.interrupted and accum.text and quiet and is_waiting_for_input(accum.text):
                 self._waiting_shell = False
                 self._pending = pending
                 self._phase = _Phase.WAITING
                 self._wait_tail = accum.text[-256:]
                 return _with_hint(self._finalize(accum, pending, None), _STDIN_HINT)
             if (
-                accum.text
+                not pending.interrupted
+                and accum.text
                 and _looks_like_foreign_prompt(accum.text)
                 and (
                     (probe_usable and quiet and await self._probe_stdin_wait())

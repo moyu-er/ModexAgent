@@ -264,12 +264,36 @@ class TestPerAgentStores:
 
     async def test_send_to_agent_factory_builds_subagent_mode_store(self) -> None:
         # The leaf's consultation tool: a fresh subagent-mode store, the
-        # parent resolved dynamically at execution time.
-        from modex_agent.plugins.assembly.context import AgentContext
+        # parent resolved dynamically at execution time. The chain carries
+        # the leaf's compiled spec (native_sub) — the factory's position
+        # gate reads it.
+        import dataclasses
 
         wiring = await _CAPABILITY.assemble(
             CapabilityBinding(), _Topology.chain(_Topology.LEAF, "native_sub")
         )
+        chain = dataclasses.replace(
+            _Topology.chain(_Topology.LEAF, "native_sub"),
+            capability_wirings={"subagents": wiring},
+        )
+        tool = await SendToAgentToolFactory().create(_empty_config(), chain)
+        assert tool.name == "send_to_agent"
+        assert isinstance(tool, SendToAgentTool)
+        assert tool.list_targets() == []  # parent resolves at call time
+
+    async def test_send_to_agent_factory_rejects_root_agent(self) -> None:
+        """Position gate: a root agent's hand reference cannot resolve the
+        subagent→parent consultation tool — configuration alone must not
+        enable a tool the tree position does not carry."""
+        chain = _Topology.chain(_Topology.ROOT, "native_main")
+        with pytest.raises(ValueError, match=r"not a subagent"):
+            await SendToAgentToolFactory().create(_empty_config(), chain)
+
+    async def test_send_to_agent_factory_rejects_specless_chain(self) -> None:
+        """A hand-built chain without a spec carries no position signal —
+        rejected loudly (the gate may never guess)."""
+        from modex_agent.plugins.assembly.context import AgentContext
+
         chain = AgentContext(
             registry=MagicMock(),
             workspace_ctx=WorkspaceContext(
@@ -279,12 +303,9 @@ class TestPerAgentStores:
                 capability_supply={"subagents": SubagentsSupply(service=MagicMock())}
             ),
             agent_name=_Topology.LEAF,
-            capability_wirings={"subagents": wiring},
         )
-        tool = await SendToAgentToolFactory().create(_empty_config(), chain)
-        assert tool.name == "send_to_agent"
-        assert isinstance(tool, SendToAgentTool)
-        assert tool.list_targets() == []  # parent resolves at call time
+        with pytest.raises(ValueError, match=r"not a subagent"):
+            await SendToAgentToolFactory().create(_empty_config(), chain)
 
 
 class TestSectionByteParity:

@@ -69,7 +69,7 @@ The ReAct module is the primary agent runtime. Key components:
 | `builder.py` | `ExternalAgentBuilder` — explicit backend/parser/session-store/env collaborator assembly |
 | `session_store.py` | `ExternalSessionMapStore` ABC + local-file adapter; SQLite adapter lives under `persistence/adapters/` |
 | `env_builder.py` / `runtime_config.py` | Per-turn `MODEX_*` environment and provider-visible AGENTS.md runtime block |
-| `os_layer.py` | Cross-platform executable resolution, process-group spawn, and complete process-tree termination |
+| `os_layer.py` | Cross-platform executable resolution/process-group spawn + stable re-export of `utils.process_tree.terminate_process_group` |
 | `providers/opencode_server_backend.py` | Warm `opencode serve` SSE backend; transactional readiness and close-time reap |
 | `providers/opencode_backend.py` | Per-turn `opencode run` fallback with active-child ownership |
 | `providers/pi_backend.py` | Per-turn Pi backend with active-child ownership |

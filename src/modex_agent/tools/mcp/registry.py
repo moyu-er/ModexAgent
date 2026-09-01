@@ -605,7 +605,8 @@ class McpConnectionRegistry:
 
         Coalesces concurrent requests onto one reconnect attempt. Returns True
         if the connection is READY afterward, False if it failed or the
-        registry is shutting down. Never raises (failures → False).
+        registry is shutting down. Connection failures become False; caller
+        cancellation propagates without cancelling the shared reconnect.
 
         There is NO ``state == READY`` short-circuit: passive detection means
         the facade knows the connection dropped (a call failed) while
@@ -618,10 +619,7 @@ class McpConnectionRegistry:
             return False
         # Coalesce: a reconnect is already in flight → await its result.
         if entry.reconnect_in_progress and entry.reconnect_future is not None:
-            try:
-                return await asyncio.shield(entry.reconnect_future)
-            except asyncio.CancelledError:
-                return False
+            return await asyncio.shield(entry.reconnect_future)
         # Claim the slot. The prefix below is synchronous (no await) so two
         # concurrent callers cannot both claim — exactly one reconnect fires.
         loop = asyncio.get_running_loop()
@@ -629,10 +627,7 @@ class McpConnectionRegistry:
         entry.reconnect_in_progress = True
         entry.reconnect_future = fut
         entry.wake_event.set()
-        try:
-            return await asyncio.shield(fut)
-        except asyncio.CancelledError:
-            return False
+        return await asyncio.shield(fut)
 
     async def shutdown(self) -> None:
         """Signal every supervisor to close and await them. Idempotent.

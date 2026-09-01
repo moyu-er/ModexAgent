@@ -119,6 +119,8 @@ class ServerEvent:
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         event_field = cls.__dict__.get("event")
+        if event_field is None:
+            return
         with contextlib.suppress(AttributeError):
             ServerEvent._registry[event_field.default] = cls
 
@@ -229,7 +231,8 @@ class ToolCallEndEvent(ServerEvent):
     tool: str = ""
     result_summary: str = ""
     turn_id: str = ""
-    call_id: str = ""
+    call_id: str | None = ""
+    seq: int | None = None
     event: str = field(default=WebUIEventType.TOOL_CALL_END.value, init=False)
 
 
@@ -268,7 +271,7 @@ class AssistantReasoningEvent(ServerEvent):
 class ToolCallEvent(ServerEvent):
     """Tool call parameters from assistant. Linked to ToolResultEvent by call_id."""
     turn_id: str = ""
-    call_id: str = ""
+    call_id: str | None = ""
     tool_name: str = ""
     args: dict[str, object] = field(default_factory=dict)
     event: str = field(default=WebUIEventType.TOOL_CALL.value, init=False)
@@ -278,10 +281,11 @@ class ToolCallEvent(ServerEvent):
 class ToolResultEvent(ServerEvent):
     """Tool execution result. Linked to ToolCallEvent by call_id."""
     turn_id: str = ""
-    call_id: str = ""
+    call_id: str | None = ""
     tool_name: str = ""
     result: str = ""
     error: str | None = None
+    seq: int | None = None
     event: str = field(default=WebUIEventType.TOOL_RESULT.value, init=False)
 
 

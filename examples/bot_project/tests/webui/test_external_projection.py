@@ -30,6 +30,7 @@ from bot.webui.events import (
 from bot.webui.transcript_store import JSONLTranscriptStore
 
 from modex_agent.agents.react.agent import ReActEvent
+from modex_agent.agents.react.constants import ToolCallEndPayload
 from modex_agent.core.emitter import (
     AgentResult,
     ContentEmitter,
@@ -200,6 +201,7 @@ async def test_external_tool_start_end_streamed_and_persisted_with_shared_call_i
         assert tc_events[0].tool_name == "bash"
         assert tr_events[0].tool_name == "bash"
         assert tr_events[0].result == "file.txt"
+        assert tr_events[0].seq is None
 
 
 @pytest.mark.asyncio
@@ -408,7 +410,11 @@ async def test_react_reasoning_and_tool_projection_unchanged() -> None:
         await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
         await emitter.emit(
             ReActEvent.TOOL_CALL_END,
-            (tc, ToolResult.from_text("read_file", "content")),
+            ToolCallEndPayload(
+                tool_call=tc,
+                result=ToolResult.from_text("read_file", "content"),
+                seq=0,
+            ),
         )
         await emitter.emit_complete(AgentResult(content="done"))
 

@@ -44,10 +44,18 @@ class OverflowCleaner:
     ) -> None:
         existing = self._pending.get(session_id)
         if existing is not None:
-            existing.kept_call_ids.update(kept_call_ids)
-            existing.max_tool_call_ids = max(existing.max_tool_call_ids, max_tool_call_ids)
+            merged = CleanRequest(
+                session_id=session_id,
+                kept_call_ids=existing.kept_call_ids | frozenset(kept_call_ids),
+                max_tool_call_ids=max(existing.max_tool_call_ids, max_tool_call_ids),
+            )
+            self._pending[session_id] = merged
         else:
-            self._pending[session_id] = CleanRequest(session_id, kept_call_ids, max_tool_call_ids)
+            self._pending[session_id] = CleanRequest(
+                session_id=session_id,
+                kept_call_ids=frozenset(kept_call_ids),
+                max_tool_call_ids=max_tool_call_ids,
+            )
         self._cancel_timer(session_id)
         loop = asyncio.get_running_loop()
         self._timers[session_id] = loop.call_later(
@@ -55,6 +63,10 @@ class OverflowCleaner:
             self._on_timer,
             session_id,
         )
+
+    def repoint_store(self, store: ToolOverflowStore) -> None:
+        """Retarget this cleaner at a new overflow store (workspace switch)."""
+        self._store = store
 
     async def flush(self) -> None:
         for session_id in list(self._pending):

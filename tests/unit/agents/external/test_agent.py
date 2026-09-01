@@ -405,6 +405,47 @@ class TestExternalAgentFullTurn:
         assert "BEGIN MODEX-RUNTIME" in agents_md
         assert "modexctl send" in agents_md
 
+    @pytest.mark.asyncio
+    async def test_provider_emission_renews_dispatch_deadline(self, tmp_path: Path) -> None:
+        """Every provider emission is an activity signal: on_emission renews
+        the dispatch deadline by its default amount (chunk_renew_seconds) —
+        same watchdog protocol as ReAct stream chunks."""
+        from modex_agent.runtime.dispatch import (
+            DispatchDeadline,
+            current_dispatch_deadline,
+        )
+
+        steps = (
+            _pi_text_step("Hello world"),
+            _pi_tool_use_step(),
+            _pi_tool_result_step(),
+        )
+        scripted = ScriptedProviderBackend(
+            ScriptedProgramme(steps=steps, status="completed", session_id="prov-sess-2")
+        )
+        adapter = ScriptedStreamingAdapter(scripted, _PiCompatibleParser())
+        store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
+        agent = ExternalAgent(
+            backend_provider=_pool_provider(adapter),
+            session_store=store,
+            parser=_PiCompatibleParser(),
+            provider_kind=ProviderKind.PI,
+            spec=_make_spec(tmp_path),
+            base_env={"PATH": "/usr/bin"},
+        )
+        ctx = _make_ctx()
+        emitter = RecordingEmitter()
+
+        deadline = DispatchDeadline(initial_timeout=0.0, max_ahead_seconds=600.0)
+        token = current_dispatch_deadline.set(deadline)
+        try:
+            assert deadline.is_expired
+            await agent.run(ctx, emitter)
+            assert not deadline.is_expired
+            assert 2.5 <= deadline.remaining <= 3.1  # default 3s renewal
+        finally:
+            current_dispatch_deadline.reset(token)
+
 
 class TestAgentsMdIdempotency:
     @pytest.mark.asyncio

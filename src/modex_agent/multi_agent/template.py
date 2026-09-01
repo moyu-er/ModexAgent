@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from dataclasses import replace as dataclass_replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -30,7 +31,6 @@ from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.skills import SkillsConfig
 from modex_agent.multi_agent.execution_strategy import strategy_name_of
-from modex_agent.multi_agent.tools import SEND_TO_AGENT_TOOL_NAME
 from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.scope.spec import AgentSpec
 from modex_agent.tools.presets import ContextMode, ToolPreset
@@ -65,6 +65,32 @@ def _pool_name(deps: AgentMaterializeDeps) -> str:
     return "main"
 
 
+def _subagent_workspace_root(deps: AgentMaterializeDeps) -> Path:
+    """Resolve the subagent's workspace root from the threaded authorities.
+
+    ``scope_path.workspace_root`` (the canonical addressing carrier) is
+    the primary source; the live ``root_provider`` is the alternative for
+    callers that thread one without a scope path. ``project_dir`` is
+    deliberately NOT consulted here — it is business-asset lookup only
+    (agents/<name>.md prompt templates, data/memory paths), never
+    workspace identity: production assemblies pass the static service
+    project dir alongside a live workspace handle, and the workspace
+    handle must win. All sources absent is a wiring error — raised, not
+    silently defaulted.
+
+    Shared by the native and external materialization roads (rule 15:
+    one mechanism, both callers).
+    """
+    if deps.scope_path is not None:
+        return deps.scope_path.workspace_root
+    if deps.root_provider is not None:
+        return deps.root_provider.current()
+    raise ValueError(
+        "AgentTemplate.materialize requires scope_path or root_provider "
+        "on AgentMaterializeDeps to resolve the subagent workspace root"
+    )
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -72,9 +98,10 @@ logger = logging.getLogger(__name__)
 class AgentTemplate:
     """Preset definition for a dynamically creatable subagent type.
 
-    Communication tools (``send_to_agent``) are auto-injected by the
-    framework in ``_build_tool_manager`` — they must not appear in template
-    config.
+    Communication tools (``send_to_agent``) arrive via the derived roster
+    entries the ``subagents`` capability injects at compile time — they
+    resolve through the TOOL-slot factories at assembly, never by
+    materialize-time side registration.
 
     ``toolset_profile`` is the node's RESOLVED toolset profile (position
     default + ``toolset`` override) — the read-only guard reads it.
@@ -160,15 +187,7 @@ class AgentTemplate:
         # ── Scope-path resolution (needed by both branches) ──
         pool_data = resolve_scope_path(deps.workspace_manager, deps.scope_path)
         runtime_dir: Path | None = pool_data.runtime_dir if pool_data is not None else None
-        subagent_workspace_root: Path
-        if deps.project_dir is not None:
-            subagent_workspace_root = deps.project_dir
-        elif runtime_dir is not None and len(runtime_dir.parents) >= 3:
-            subagent_workspace_root = runtime_dir.parents[2]
-        elif runtime_dir is not None:
-            subagent_workspace_root = runtime_dir
-        else:
-            subagent_workspace_root = Path(".")
+        subagent_workspace_root = _subagent_workspace_root(deps)
 
         assembly_spec: AssemblySpec | None = self.compiled_spec
         component_ctx: AssemblyContext | None = None
@@ -197,6 +216,10 @@ class AgentTemplate:
                     capability_supply=deps.capability_supply,
                 ),
             )
+            if deps.workspace_resources is not None:
+                component_ctx = dataclass_replace(
+                    component_ctx, workspace_resources=deps.workspace_resources
+                )
 
         if assembly_spec is None or component_ctx is None:
             raise RuntimeError(
@@ -425,17 +448,7 @@ class AgentTemplate:
         from modex_agent.workspace.context import WorkspaceContext
         from modex_agent.workspace.paths import WorkspacePaths
 
-        pool_data = resolve_scope_path(deps.workspace_manager, deps.scope_path)
-        runtime_dir: Path | None = pool_data.runtime_dir if pool_data is not None else None
-        subagent_workspace_root: Path
-        if deps.project_dir is not None:
-            subagent_workspace_root = deps.project_dir
-        elif runtime_dir is not None and len(runtime_dir.parents) >= 3:
-            subagent_workspace_root = runtime_dir.parents[2]
-        elif runtime_dir is not None:
-            subagent_workspace_root = runtime_dir
-        else:
-            subagent_workspace_root = Path(".")
+        subagent_workspace_root = _subagent_workspace_root(deps)
         workspace_ctx = WorkspaceContext(
             target=subagent_workspace_root,
             paths=WorkspacePaths(root=deps.data_dir or subagent_workspace_root / ".modex"),
@@ -461,6 +474,10 @@ class AgentTemplate:
                 pool_assembly_ctx=deps.pool_assembly_ctx,
             ),
         )
+        if deps.workspace_resources is not None:
+            component_ctx = dataclass_replace(
+                component_ctx, workspace_resources=deps.workspace_resources
+            )
         chain = agent_context_chain(
             component_ctx,
             spec=assembly_spec,
@@ -497,12 +514,11 @@ class AgentTemplate:
     ) -> InMemoryToolManager:
         """Build the agent tool manager from this template's tool policy.
 
-        Registers the ``SendToAgentTool`` wired against a subagent-scoped
-        communication service (baked default — every subagent can
-        delegate/reply). Preset/supplement tools and per-agent MCP tools
-        resolve downstream in ``assemble_native_agent`` (TOOL-slot
-        factories + the FW MCP loader, both reading the context chain —
-        ticket 10 converged the subagent MCP path onto that single point).
+        Every tool — preset/supplement tools, the derived communication
+        entries, per-agent MCP tools — resolves downstream in
+        ``assemble_native_agent`` (TOOL-slot factories + the FW MCP loader,
+        both reading the context chain — ticket 10 converged the subagent
+        MCP path onto that single point).
         """
         from modex_agent.core.tool_manager import (
             InMemoryToolManager,
@@ -511,74 +527,7 @@ class AgentTemplate:
 
         tm = InMemoryToolManager(config=ToolManagerConfig())
 
-        # Baked default: every subagent gets send_to_agent for CONSULTATION
-        # (asking its parent a question / for a decision). The single target
-        # (the parent) is resolved dynamically at execution time, since this
-        # instance is reused across different invokers. Wired from deps so the
-        # subagent's SendToAgentTool shares the pool's broker/bus/registry.
-        # The scope-declaration road supersedes this baked default: its
-        # compiled spec carries the derived ``send_to_agent`` entry, resolved
-        # through the TOOL-slot factory against the pool's ``subagents``
-        # capability supply.
-        if SEND_TO_AGENT_TOOL_NAME not in assembly_spec.tools:
-            self._register_send_to_agent(tm, deps, name)
-
         return tm
-
-    @staticmethod
-    def _register_send_to_agent(
-        tm: InMemoryToolManager,
-        deps: AgentMaterializeDeps,
-        name: str,
-    ) -> None:
-        """Register a subagent-scoped ``SendToAgentTool`` against deps.
-
-        Builds a minimal :class:`AgentCommunicationService` + a subagent-mode
-        :class:`CommunicationTargetStore` (``for_subagent=True``). The store
-        does NOT bake a static target list: the tool instance is reused across
-        different invokers, so the parent is resolved dynamically at execution
-        time from ``current_agent_context`` (see ``resolve_parent_name``). The
-        subagent's ``send_to_agent`` is for consultation only — the deliverable
-        is the subagent's final reply text (forwarded by
-        ``SubagentAutoSendHook``). Failures are logged and swallowed — a
-        subagent must still materialize without a comm tool.
-        """
-        if deps.pool is None:
-            return
-        try:
-            from modex_agent.multi_agent.address import AgentAddress
-            from modex_agent.multi_agent.communication import AgentCommunicationService
-            from modex_agent.multi_agent.tools import (
-                CommunicationTargetStore,
-                SendToAgentTool,
-            )
-
-            store = CommunicationTargetStore(for_subagent=True)
-            service = AgentCommunicationService(
-                source=AgentAddress(name=name),
-                registry=deps.pool,
-                tree=deps.tree,
-                pool=deps.pool,
-                pool_name=_pool_name(deps),
-                project_dir=deps.project_dir,
-                session_registry=deps.session_registry,
-                scope_path=deps.scope_path,
-                workspace_manager=deps.workspace_manager,
-            )
-            tm.register(
-                SendToAgentTool(
-                    store=store,
-                    source=AgentAddress(name=name),
-                    service=service,
-                )
-            )
-        except Exception:
-            import logging
-
-            logging.getLogger(__name__).exception(
-                "Failed to register SendToAgentTool for subagent %s",
-                name,
-            )
 
     def _build_skill_manager(
         self,

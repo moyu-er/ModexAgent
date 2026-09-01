@@ -16,7 +16,7 @@ import json
 from typing import Any
 
 from modex_agent.core.agent import current_agent_context
-from modex_agent.core.tool_manager import Tool
+from modex_agent.core.tool_manager import ExclusiveTool, ParallelTool
 from modex_agent.core.types import TodoStatus
 from modex_agent.runtime.store import TodoItem, TodoStore
 
@@ -123,7 +123,7 @@ def _parse_todos(raw: list[dict[str, Any]]) -> tuple[list[TodoItem], str | None]
     return items, None
 
 
-class TodoWriteTool(Tool):
+class TodoWriteTool(ExclusiveTool):
     """Full-replace write of the session task list."""
 
     def __init__(self, store: TodoStore) -> None:
@@ -226,7 +226,7 @@ class TodoWriteTool(Tool):
         return _write_view_text(items)
 
 
-class TodoReadTool(Tool):
+class TodoReadTool(ParallelTool):
     """Read the active (pending + in_progress) task list, in execution order."""
 
     def __init__(self, store: TodoStore) -> None:

@@ -3,25 +3,22 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 import pytest
 
+from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import DefaultValues
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy, TurnTimeoutPolicy
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.tool_manager import InMemoryToolManager, ToolResult
 from modex_agent.core.types import ToolCall
 from modex_agent.interceptor.abc import ToolCallContext
 from modex_agent.interceptor.builtin.tool_timeout import ToolTimeoutInterceptor
-from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-from modex_agent.memory.history import ListMessageHistory
-from modex_agent.core.tool_manager import InMemoryToolManager
 
 
 def _make_ctx(*, safety=None) -> AgentContext:
@@ -181,3 +178,54 @@ class TestToolTimeoutInterceptorResolution:
 
         assert result.message_content() == "ok"
         assert result.error is None
+
+
+class TestToolTimeoutInterceptorWatchdogFloor:
+    """Phase-budget protocol: the interceptor declares its full budget into
+    the dispatch deadline at entry so the outer watchdog never fires first."""
+
+    @pytest.mark.asyncio
+    async def test_entry_floor_raises_remaining_to_budget_plus_margin(self):
+        from modex_agent.runtime.dispatch import (
+            DispatchDeadline,
+            current_dispatch_deadline,
+        )
+
+        safety = RuntimeSafetyPolicy(
+            turn=TurnTimeoutPolicy(tool_timeout_seconds=100.0),
+        )
+        ctx = _make_ctx(safety=safety)
+
+        # Near-expiry deadline (simulating a long turn tail): 0.05s left.
+        deadline = DispatchDeadline(initial_timeout=0.05, max_ahead_seconds=1200.0)
+        token = current_dispatch_deadline.set(deadline)
+        try:
+            captured: dict[str, float] = {}
+
+            async def probe_tool():
+                captured["remaining_at_tool"] = deadline.remaining
+                return ToolResult.from_text("probe", "ok")
+
+            interceptor = ToolTimeoutInterceptor()
+            await interceptor.around_tool_call(ctx, _call_ctx(), probe_tool)
+
+            margin = safety.deadline.phase_margin_seconds
+            assert captured["remaining_at_tool"] >= 100.0 + margin - 1.0
+        finally:
+            current_dispatch_deadline.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_entry_floor_noop_without_deadline(self):
+        # No deadline on the ContextVar (clean mode / dispatch_timeout=0):
+        # the floor renewal must be a silent no-op.
+        async def fast_tool():
+            return ToolResult.from_text("fast", "ok")
+
+        safety = RuntimeSafetyPolicy(
+            turn=TurnTimeoutPolicy(tool_timeout_seconds=10.0),
+        )
+        ctx = _make_ctx(safety=safety)
+        interceptor = ToolTimeoutInterceptor()
+
+        result = await interceptor.around_tool_call(ctx, _call_ctx(), fast_tool)
+        assert result.message_content() == "ok"

@@ -96,10 +96,10 @@ async def test_dead_backend_before_deadline_returns_process_exit() -> None:
     assert result.outcome is PollOutcome.PROCESS_EXIT
 
 
-def test_append_output_after_finalization_is_dropped() -> None:
+def test_record_output_after_finalization_is_dropped() -> None:
     registry = ProcessRegistry()
 
-    registry.append_output("missing", "stdout", "late output")
+    registry.record_output("missing")
 
     assert registry.list_running() == []
     assert registry.list_finished() == []

@@ -31,6 +31,8 @@ _IS_UNIX = hasattr(os, "fork")
 
 
 def _apply_resource_limits(memory_limit_mb: int | None) -> None:
+    if sys.platform == "win32":
+        return
     if memory_limit_mb is None or not _IS_UNIX:
         return
     import resource

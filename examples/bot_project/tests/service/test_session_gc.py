@@ -48,7 +48,7 @@ def _paths_for(tmp_path: Path):
     return WorkspacePaths(root=tmp_path / ".modex")
 
 
-def test_artifact_paths_all_ten_with_correct_naming(tmp_path) -> None:
+def test_artifact_paths_all_eleven_with_correct_naming(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     sid = "009fc886ecba.coding"
     pool = "coding"
@@ -73,8 +73,11 @@ def test_artifact_paths_all_ten_with_correct_naming(tmp_path) -> None:
     seg_agent = JsonFileTurnStateStore._safe_segment("coding")
     seg_sid = JsonFileTurnStateStore._safe_segment(sid)
     assert (paths.runtime_dir(pool, "turns") / seg_agent / seg_sid) in ap
-    # exactly ten units (fork_contexts removed in T17; media reads added)
-    assert len(ap) == 10
+    # tool overflow: safe_filename (dot kept), workspace-level (no pool part)
+    assert (paths.overflow_dir / "tool_overflow" / "009fc886ecba.coding") in ap
+    # exactly eleven units (fork_contexts removed in T17; media reads added;
+    # tool overflow added with the tool-result overflow store)
+    assert len(ap) == 11
     # fork_contexts must NOT appear
     assert not any("fork_contexts" in str(p) for p in ap)
 
@@ -520,7 +523,7 @@ def test_sweep_parent_orphan_uses_discovered_exact_scope(tmp_path: Path) -> None
     assert factory.cleaned == [(paths.root, "child.worker", exact_scope)]
 
 
-def test_clean_session_removes_all_ten_units(tmp_path) -> None:
+def test_clean_session_removes_all_eleven_units(tmp_path) -> None:
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "coding", "aaa.coding")
     cleaner = _cleaner(paths)

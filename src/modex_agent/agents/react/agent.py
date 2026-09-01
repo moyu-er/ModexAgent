@@ -255,25 +255,17 @@ class ReActAgent(Agent[ReActEvent]):
                 )
 
             # ADR-0033 D13 Stage 4: construct the new ``modex_graph`` engine.
-            # ``compile(max_iterations=N)`` is the engine-level safety net
-            # (D9.3 layer 1) — N is larger than the business max
-            # (``context.max_iterations``) so the node-level check in
-            # ``LLMNode`` routes to END via a static edge before this fires.
-            max_turns = 1
-            if context.runtime and context.runtime.state:
-                max_turns = context.runtime.state.custom.get(
-                    TurnCustomKey.MAX_TURNS,
-                    1,
-                )
+            # Engine limit is opt-in and ReAct does not set it — the
+            # business-level iteration gate in ``LLMNode`` (routing to AFTER
+            # via a static edge) is the sole iteration cap, and the pool
+            # watchdog is the sole time-based termination mechanism.
             graph = build_react_graph(
                 llm_client=self._llm_client,
                 injection_drainer=self._injection_drainer,
                 tool_executor=self._tool_executor,
                 mode=self.mode,
                 deduplicator=ToolCallDeduplicator(),
-            ).compile(
-                max_iterations=context.max_iterations * max_turns * 4 + 10
-            )
+            ).compile()
             engine = GraphEngine(graph)
             react_state = get_react_state(context)
             assert react_state is not None  # constructed just above if previously None

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio  # noqa: ANYIO_OK -- pool runtime and emitter contract are asyncio-native
+import asyncio  # asyncio-native pool runtime and emitter contract (anyio not required)
 from collections import deque
 from pathlib import Path
 from typing import Any

@@ -317,6 +317,7 @@ async def test_flush_active_segment_clears_partial_buffer() -> None:
     from bot.webui.emitter import WebBotEmitter
 
     from modex_agent.agents.react.agent import ReActEvent
+    from modex_agent.agents.react.constants import ToolCallEndPayload
     from modex_agent.core.emitter import AgentResult, EmitterConfig
     from modex_agent.core.tool_manager import ToolResult
     from modex_agent.core.types import ToolCall
@@ -343,7 +344,10 @@ async def test_flush_active_segment_clears_partial_buffer() -> None:
         tc = ToolCall(tool_name="read_file", arguments={"path": "/x"}, call_id="c0")
         result = ToolResult.from_text("read_file", "ok")
         await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
-        await emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
+        await emitter.emit(
+            ReActEvent.TOOL_CALL_END,
+            ToolCallEndPayload(tool_call=tc, result=result, seq=0),
+        )
 
         partials = await store.load_partial(sid, sessions_dir=sessions_dir)
         assert partials == [], (

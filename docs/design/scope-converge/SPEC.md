@@ -120,11 +120,23 @@ class ComponentFactory(ABC):
         ...
 ```
 
-无依赖组件用 `SimpleFactory` 包装——`SimpleFactory.create()` 忽略 config/ctx 直接返回预构建实例：
+单例 vs 原型是**工厂的私有实现决策**，两个现成形态：
+
+- `SimpleFactory` —— 返回预构建单例。共享是有意语义（无状态 hook、
+  execution-strategy 类、测试注入 provider）。
+- `PrototypeFactory` —— 每次 `create()` 经零参 builder 新建实例。
+  TOOL 槽位的框架默认工具用它：共享的可变 `Tool` 实例会让
+  `register(tool, config)` 的改写跨 agent/pool/workspace 泄漏。
+
+需要 config/上下文差异化构造的组件写专属工厂子类（内部可自行复用
+pool 级资源，如 `BashToolFactory` 返回 pool 共享的 persistent shell）：
 
 ```python
-# 无依赖组件
+# 无依赖组件（单例语义）
 registry.register_tool("current_time", SimpleFactory(CurrentTimeTool(), CurrentTimeConfig))
+
+# 无依赖组件（原型语义——每次装配新实例）
+registry.register_tool("read", PrototypeFactory(ReadFileTool, ToolConfig))
 
 # 工厂形状组件（需 per-pool 参数）
 registry.register_hook("todo_continuation", TodoContinuationFactory())

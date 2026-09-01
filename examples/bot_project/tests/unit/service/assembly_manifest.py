@@ -39,7 +39,9 @@ class ToolEntry(BaseModel):
     tool_class: str
     # Driver-known provenance: "roster:<registration_source>" for registry-
     # resolved tools, "builders" for legacy direct construction, "glue" for
-    # BIZ glue tools (send_file_to_user / experience), "communication" for
+    # tools no roster entry maps to (there are no shipped glue tools —
+    # kb/send_file_to_user are registered TOOL-slot factories, resolved
+    # only when a declaration references them), "communication" for
     # task / send_to_peer.
     source: str
     # Key observable parameters (bash timeout, todo store class, ...).
@@ -292,10 +294,11 @@ def roster_source_map(
     The spec carries registry names (e.g. ``aci_edit``); the registered
     tool's LLM-facing name may differ (AciEditTool's name is ``edit`` —
     the documented same-name replacement, the ``aci`` capability's O3
-    declaration). SimpleFactory-wrapped tools are introspected for their
-    instance name so the rename stays attributed to the roster.
+    declaration). Instance-holding factories (SimpleFactory /
+    PrototypeFactory) are probed for the tool's instance name so the
+    rename stays attributed to the roster.
     """
-    from modex_agent.plugins.abc import SimpleFactory
+    from modex_agent.plugins.abc import PrototypeFactory, SimpleFactory
 
     source_of: dict[str, str] = {}
     for name in spec_tools:
@@ -307,8 +310,8 @@ def roster_source_map(
         llm_name = name
         if registry is not None:
             factory = registry.resolve(ComponentSlot.TOOL, name)
-            if isinstance(factory, SimpleFactory):
-                instance_name = getattr(factory._instance, "name", None)  # noqa: SLF001
+            if isinstance(factory, SimpleFactory | PrototypeFactory):
+                instance_name = getattr(factory.probe(), "name", None)
                 if isinstance(instance_name, str):
                     llm_name = instance_name
         source_of[llm_name] = source

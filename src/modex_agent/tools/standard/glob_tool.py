@@ -21,7 +21,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from ...core.tool_manager import Tool
+from ...core.tool_manager import ParallelTool
 from ._fallback import DEFAULT_EXCLUDES, expand_braces, is_ignored, load_gitignore
 from ._ripgrep import RipgrepBackend
 
@@ -45,7 +45,7 @@ def _to_forward_slashes(path: str) -> str:
     return path.replace("\\", "/")
 
 
-class GlobTool(Tool):
+class GlobTool(ParallelTool):
     """Find files by glob pattern.
 
     Backend chain (first available wins):

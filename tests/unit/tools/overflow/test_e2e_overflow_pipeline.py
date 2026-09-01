@@ -102,21 +102,22 @@ class TestHandlerEndToEnd:
     async def test_handler_returns_truncated_text_with_file_notice(
         self, handler: ToolResultOverflowHandler,
     ) -> None:
-        # default max_chars=50_000 → head 5_000 / tail 7_500 (10%/15%), 47_505 elided
+        # max_chars=50_000 → head 5_000 / tail 7_500 (10%/15%), 47_505 elided
         content = "H" * 20_000 + "M" * 10_005 + "T" * 30_000
         notice, ref = await handler.store_overflow(
             session_id="sid_main",
             tool_call_id="call_handler_1",
             tool_name="read_file",
             content=content,
+            max_chars=50_000,
         )
 
         lines = notice.split("\n")
-        assert len(lines) == 4
+        assert len(lines) == 7
         assert lines[0] == "H" * 5_000
-        assert lines[2] == "T" * 7_500
-        assert "OUTPUT ELIDED: 47505 chars" in lines[1]
-        assert lines[3].startswith(
+        assert lines[4] == "T" * 7_500
+        assert "OUTPUT ELIDED: 47505 chars" in lines[2]
+        assert lines[6].startswith(
             f"[Full output ({len(content)} chars total) saved to: {ref.dir_path}/full.txt"
         )
         assert not notice.startswith("<")
@@ -132,6 +133,7 @@ class TestHandlerEndToEnd:
             tool_call_id="call_full",
             tool_name="bash",
             content=content,
+            max_chars=50_000,
         )
 
         entry_dir = Path(ref.dir_path)
@@ -149,6 +151,7 @@ class TestHandlerEndToEnd:
             tool_call_id="call_short",
             tool_name="search",
             content=content,
+            max_chars=50_000,
         )
         assert notice == content
         assert ref.total_chars == 50000
@@ -163,6 +166,7 @@ class TestHandlerEndToEnd:
             tool_call_id="call_over",
             tool_name="search",
             content=content,
+            max_chars=50_000,
         )
         assert notice.startswith("Z" * 5_000)
         assert f"saved to: {ref.dir_path}/full.txt" in notice

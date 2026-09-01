@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from modex_agent.core.agent import current_agent_context
-from modex_agent.core.tool_manager import Tool, ToolConfig
+from modex_agent.core.tool_manager import ExclusiveTool, ToolConfig
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.tools.graph_knowledge_capabilities import KnowledgeToolCapabilities
 from modex_agent.tools.standard.file_tool import (
@@ -36,7 +36,7 @@ _GREP_MAX_CONTEXT: Final = 5
 _GREP_DEFAULT_CONTEXT: Final = 2
 
 
-class GraphKnowledgeBaseTool(Tool):
+class GraphKnowledgeBaseTool(ExclusiveTool):
     """Share markdown findings and decisions within one graph instance."""
 
     def __init__(

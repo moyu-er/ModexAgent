@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from modex_agent.core.tool_manager import Tool
+from modex_agent.core.tool_manager import ParallelTool
 
 _NOT_IMPLEMENTED = (
     "LSP navigation is not yet implemented. This tool will be available in a future update."
 )
 
 
-class LspNavigationTool(Tool):
+class LspNavigationTool(ParallelTool):
     """Navigate code using Language Server Protocol (stub)."""
 
     def __init__(self) -> None:

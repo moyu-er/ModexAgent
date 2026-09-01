@@ -121,6 +121,7 @@ class FanInInputAdapter(InputAdapter):
         output_adapter: OutputAdapter | None = None,
         session_checker: Callable[[str], bool] | None = None,
         turn_uuid_getter: Callable[[str], str | None] | None = None,
+        turn_canceller: Callable[[str], bool] | None = None,
     ) -> None:
         """Propagate control filter configuration to all source adapters.
 
@@ -134,6 +135,7 @@ class FanInInputAdapter(InputAdapter):
             output_adapter=output_adapter,
             session_checker=session_checker,
             turn_uuid_getter=turn_uuid_getter,
+            turn_canceller=turn_canceller,
         )
         for src in self._sources:
             src.configure_control_filter(
@@ -142,6 +144,7 @@ class FanInInputAdapter(InputAdapter):
                 output_adapter=output_adapter,
                 session_checker=session_checker,
                 turn_uuid_getter=turn_uuid_getter,
+                turn_canceller=turn_canceller,
             )
 
     # ------------------------------------------------------------------

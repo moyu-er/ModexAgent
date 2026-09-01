@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import fields
 from pathlib import Path
 
 import pytest
 
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
+from modex_agent.tools.overflow.models import OverflowMetadata, OverflowRef
 
 
 @pytest.fixture
@@ -36,7 +36,7 @@ class TestStoreCreatesFiles:
         assert ref.total_chars == 120
         assert ref.dir_path == str(entry_dir.resolve())
         assert ref.metadata_path == str((entry_dir / ".meta.json").resolve())
-        assert {field.name for field in fields(ref)} == {
+        assert set(OverflowRef.model_fields) == {
             "dir_path",
             "total_chars",
             "metadata_path",
@@ -62,13 +62,31 @@ class TestReadMetadata:
         assert meta.tool_call_id == "call_1"
         assert meta.session_id == "sess_1"
         assert meta.total_chars == 120
-        assert {field.name for field in fields(meta)} == {
+        assert set(OverflowMetadata.model_fields) == {
             "tool_name",
             "tool_call_id",
             "session_id",
             "created_at",
             "total_chars",
         }
+
+    @pytest.mark.asyncio
+    async def test_meta_json_is_written_after_full_txt(self, tmp_path: Path) -> None:
+        store = LocalFileToolOverflowStore(workspace=tmp_path)
+        await store.initialize()
+
+        await store.store(
+            session_id="sess_1",
+            tool_call_id="call_1",
+            tool_name="read_file",
+            content="a" * 120,
+        )
+
+        entry_dir = tmp_path / "tool_overflow" / "sess_1" / "call_1"
+        full_stat = (entry_dir / "full.txt").stat()
+        meta_stat = (entry_dir / ".meta.json").stat()
+        # .meta.json is the commit marker — it must land on disk last.
+        assert meta_stat.st_mtime_ns >= full_stat.st_mtime_ns
 
     @pytest.mark.asyncio
     async def test_read_metadata_not_found(self, tmp_path: Path) -> None:

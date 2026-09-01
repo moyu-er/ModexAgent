@@ -418,6 +418,28 @@ class TestMaxIterations:
             await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
         assert ctx.state.count == 4
 
+    async def test_max_iterations_default_is_unlimited(self) -> None:
+        class CountDownNode(Node[CounterState]):
+            async def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> None:
+                ctx.state.count += 1
+                target = "loop" if ctx.state.count < 150 else GraphNode.END
+                self.deliver(None, target, ctx)
+                return None
+
+        g: Graph[CounterState] = Graph()
+        g.add_node("loop", CountDownNode())
+        g.add_edge(GraphNode.START, "loop")
+        g.add_edge("loop", "loop")
+        g.add_edge("loop", GraphNode.END)
+        compiled = g.compile(scheduler=SchedulerKind.PARALLEL, cycle_detection="off")
+        assert compiled.max_iterations is None
+
+        ctx = make_parallel_ctx(CounterState(count=0))
+        await GraphEngine(compiled).run_async(ctx, mode=BootstrapMode.FRESH)
+        assert ctx.state.count == 150
+
     async def test_iteration_count_matches_executions(self) -> None:
         g: Graph[CounterState] = Graph()
         g.add_node("a", DispatchAddNode(amount=1, target="b"))

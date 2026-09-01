@@ -16,7 +16,7 @@ Runtime state governance — typed state models, enums, persistence, codecs, and
 | `process_registry.py` | `ProcessRegistry` ABC + `SingletonProcessRegistry` zero-infrastructure liveness implementation; replace the implementation for multi-instance discovery |
 | `constants.py` | `EXECUTOR_PROCESS_ID_KEY` — typed `GraphMetadata.attrs` key for executor ownership |
 | `store.py` | `TurnStateStore` ABC; `NoOpTurnStateStore` / `InMemoryTurnStateStore` / `JsonFileTurnStateStore` implementations; `ActiveTurnConflictError`. Also `TodoStore` ABC + `JsonFileTodoStore` + `TodoItem` (per-session task-list store, a separate concern from turn snapshots — injected into the todo tools, not part of turn-state governance) |
-| `dispatch.py` | `DispatchDeadline` — renewable monotonic-clock deadline with a **sliding forward ceiling**. The pool watchdog is the sole LLM termination mechanism (provider-level timeouts default to `None`). Streaming chunk callbacks renew +3s per chunk; each LLM iteration renews by `agent_run_timeout`. The sliding ceiling (`max_ahead_seconds`, default 1200s) caps how far a single `renew()` can reach ahead, but slides forward with each renewal — so continuous activity keeps the turn alive indefinitely. `current_dispatch_deadline` ContextVar + `renew_dispatch_deadline()` helper |
+| `dispatch.py` | `DispatchDeadline` — the unified watchdog deadline (module docstring carries the phase-budget protocol table). The pool watchdog is the sole termination mechanism (provider-level timeouts default to `None`). Phases owning an inner deadline declare their full budget at entry (tool: `tool_timeout + margin`; hooks: `hook_timeout×n + margin`; turn tail: flush+hook+margin); LLM calls re-assert `dispatch_timeout` at call entry; activity signals (react stream chunks, external provider events) renew by `chunk_renew_seconds`. `DeadlinePolicy` (`core/llm_struct.py`) holds the knobs (`chunk_renew_seconds` / `max_ahead_seconds` / `watchdog_poll_seconds`; phase margin = 2×poll). The sliding ceiling (`max_ahead_seconds`, default 1200s) is a panic fuse validated at startup against every phase budget. `current_dispatch_deadline` ContextVar + `renew_dispatch_deadline()` helper |
 | `models.py` | Core data models — `TurnIdentity`, `ToolArguments`, `ApprovalRequest`, `ApprovalTransaction`, `ToolCallRecord`, `ToolBatchState`, `TurnStateBase`, `TurnSnapshot`, `TurnSummary`, `StateQueryScope`, `MessageDelta` |
 | `enums.py` | Enumerations — `StateScope`, `AgentKind`, `TurnPhase`, `OperationKind`, `ToolBatchStatus`, `ToolCallStatus`, `ApprovalDenyPolicy`, `ApprovalSubjectType`, `OperationStatus`, `CancellationSource`, `SnapshotReason`, `MessageDeltaSource`, `TurnCustomKey` |
 | `policy.py` | `SnapshotPolicy` ABC — defines when/how snapshots are taken during agent execution |
@@ -26,18 +26,15 @@ Runtime state governance — typed state models, enums, persistence, codecs, and
 
 ## Timeout Architecture
 
-The LLM call chain has three layers:
+One watchdog, phase-budget declarations (see `dispatch.py` module docstring for the authoritative protocol table):
 
 1. **Provider HTTP timeout** (`request_timeout` / `stream_idle_timeout`) — defaults to `None` (no provider-level timeout). The provider waits indefinitely for the LLM.
-2. **Per-iteration renewal** (`agent_run_timeout`, called by `nodes/llm.py` after each LLM iteration) — renews the `DispatchDeadline` by a large amount to cover tool execution + next iteration.
-3. **Pool watchdog** (polls `DispatchDeadline.is_expired`) — the **sole termination mechanism**. Kills the turn only when the deadline is truly past and no renewal has occurred.
+2. **Phase-budget declarations** — every phase owning an inner deadline declares its full budget into the `DispatchDeadline` at entry (`renew(own_budget + margin)`; floor semantics, never shortens): tool calls (`ToolTimeoutInterceptor` entry), hook dispatches (`HookRunner.dispatch` entry), turn tail (`turn_runner` finally: flush + session-end + margin). The LLM call re-asserts `dispatch_timeout` at call entry; react stream chunks and external provider events renew by `chunk_renew_seconds` as activity signals.
+3. **Pool watchdog** (polls `DispatchDeadline.is_expired` at `DeadlinePolicy.watchdog_poll_seconds`) — the **sole termination mechanism**. Kills the turn only on genuine no-progress; it never races an inner deadline (phase margin = 2×poll interval guarantees the inner graceful path fires first).
 
-`DispatchDeadline` uses a **sliding forward ceiling** (`max_ahead_seconds`, default 1200s):
-- Each `renew(seconds)` sets `expires_at = max(old_expires, now + seconds)`, capped at `now + max_ahead_seconds`.
-- The cap slides forward with each renewal — continuous activity (streaming chunks) keeps the turn alive indefinitely.
-- The ceiling only prevents a single `renew(huge)` from making the watchdog ineffective if activity later stops.
+`DeadlinePolicy` (on `RuntimeSafetyPolicy.deadline`) holds `chunk_renew_seconds` / `max_ahead_seconds` / `watchdog_poll_seconds`; a startup model validator enforces `max_ahead_seconds >= every phase budget + margin`, so the sliding ceiling is a panic fuse, not a behaviour knob.
 
-**Design intent**: as long as the LLM is actively producing output (chunks arriving every <1200s), the turn never times out. The watchdog only fires when activity genuinely stops for longer than the current remaining deadline.
+**Design intent**: as long as there is ongoing activity (chunks arriving, phases declaring budgets), the turn never times out. The watchdog only fires when nothing has renewed the deadline for longer than its remaining budget.
 
 ## Design Rules
 

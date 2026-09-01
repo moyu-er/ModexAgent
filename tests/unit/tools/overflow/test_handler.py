@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from dataclasses import fields
 from pathlib import Path
 
 import pytest
@@ -9,6 +8,7 @@ import pytest
 from modex_agent.tools.overflow.cleaner import OverflowCleaner
 from modex_agent.tools.overflow.handler import ToolResultOverflowHandler
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
+from modex_agent.tools.overflow.models import OverflowRef
 
 
 @pytest.fixture
@@ -37,17 +37,17 @@ class TestStoreOverflow:
 
         # default ratios: head 10% / tail 15% of max_chars=50 → 5 / 7
         lines = text.split("\n")
-        assert len(lines) == 4
+        assert len(lines) == 7
         assert lines[0] == "H" * 5
-        assert lines[2] == "T" * 7
-        assert "OUTPUT ELIDED: 438 chars" in lines[1]
-        assert lines[3].startswith(
+        assert lines[4] == "T" * 7
+        assert "OUTPUT ELIDED: 438 chars" in lines[2]
+        assert lines[6].startswith(
             f"[Full output (450 chars total) saved to: {ref.dir_path}/full.txt"
         )
         assert not text.startswith("<")
         assert ref.total_chars == 450
         assert Path(ref.metadata_path) == Path(ref.dir_path, ".meta.json")
-        assert {field.name for field in fields(ref)} == {
+        assert set(OverflowRef.model_fields) == {
             "dir_path",
             "total_chars",
             "metadata_path",
@@ -140,6 +140,6 @@ class TestStoreOverflow:
         # head_ratio 0.2 / tail_ratio 0.3 of max_chars=50 → 10 / 15
         lines = text.split("\n")
         assert lines[0] == "H" * 10
-        assert lines[2] == "T" * 15
-        assert "OUTPUT ELIDED: 475 chars" in lines[1]
-        assert f"saved to: {ref.dir_path}/full.txt" in lines[3]
+        assert lines[4] == "T" * 15
+        assert "OUTPUT ELIDED: 475 chars" in lines[2]
+        assert f"saved to: {ref.dir_path}/full.txt" in lines[6]

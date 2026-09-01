@@ -351,7 +351,7 @@ guarantees no interleaving).
 
 `max_iterations` counts every node instance execution. Parallel execution
 of N instances consumes N iterations. Exceeding the limit raises
-`GraphRecursionError`. This preserves the Phase a safety-net semantics.
+`GraphRecursionError`. This preserves the Phase a safety-net semantics (opt-in: `max_iterations` defaults to `None` = unlimited; Linear and Parallel enforce the same conditional check).
 
 **Synchronous reservation (current contract):** The check + increment
 runs as a synchronous code segment at the top of `_execute_instance`,

@@ -63,7 +63,7 @@ class Graph[S: "GraphState"]:
     g.add_edge(GraphNode.START, "start")
     g.add_edge("start", "llm")
     g.add_edge("llm", GraphNode.END)
-    compiled = g.compile(max_iterations=100)
+    compiled = g.compile()  # engine limit is opt-in: max_iterations=...
     ```
 
     The graph is ALSO a `Node` (Graph-is-a-Node, D8): `CompiledGraph`
@@ -119,7 +119,7 @@ class Graph[S: "GraphState"]:
 
     def compile(
         self,
-        max_iterations: int = 100,
+        max_iterations: int | None = None,
         *,
         cycle_detection: str = "warn",
         scheduler: SchedulerKind = SchedulerKind.LINEAR,
@@ -136,9 +136,13 @@ class Graph[S: "GraphState"]:
           does not raise; `"raise"` raises `RoutingError` on any back-edge;
           `"off"` skips detection.
 
-        `max_iterations` is the engine-level safety net (ADR-0033 D9.3):
-        exceeding it raises `GraphRecursionError` (abnormal exit). Should be
-        larger than the business-level max (e.g. business 25, compile 100).
+        `max_iterations` is an opt-in engine-level safety net (ADR-0033
+        D9.3): exceeding it raises `GraphRecursionError` (abnormal exit).
+        Defaults to `None` (unlimited) — graphs whose business layer owns
+        its lifecycle (e.g. ReAct's `LLMNode` iteration gate) need no
+        engine limit; the pool watchdog is the termination mechanism.
+        Opt in only when you want a hard recursion fuse (e.g. declarative
+        DAG specs declare `max_iterations` explicitly).
 
         `scheduler` selects the execution strategy (`SchedulerKind`).
         Defaults to `LINEAR` (sequential execution — the original behaviour).

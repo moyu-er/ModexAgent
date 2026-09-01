@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, assert_never
+from typing import TYPE_CHECKING, Any, ClassVar, assert_never
 
 if TYPE_CHECKING:
     from modex_agent.core.message import ContentFormat
 
-from modex_agent.core.tool_manager import Tool
+from modex_agent.core.tool_manager import ExclusiveTool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.guard import TerminalGuardResult, check_process_writable
 from modex_agent.tools.terminal.managers import TerminalManagerBase
@@ -34,6 +34,30 @@ _NO_RUNNING_MSG = (
     "[Error] No running command in the selected tab — the previous command "
     "already finished. Run a new command with bash."
 )
+
+
+async def interrupt_running_command(
+    terminal_session: TerminalSession,
+    running: ProcessSession,
+    registry: ProcessRegistry,
+) -> str:
+    """Send Ctrl+C to one terminal command and refresh its tracked state."""
+    await terminal_session.interrupt()
+    registry.refresh_deadline(running.id)
+    await asyncio.sleep(0.5)
+    await terminal_session.refresh_output(timeout=1.0)
+    output = sanitize_terminal_output(await terminal_session.last_command_output())
+    segment = await terminal_session.current_segment()
+    if not output:
+        output = sanitize_terminal_output(segment.cursor_line or "(no output)")
+    if segment.is_empty_prompt:
+        registry.mark_exited(
+            running.id,
+            exit_code=None,
+            exit_signal="SIGINT",
+            status=ProcessStatus.KILLED,
+        )
+    return output
 
 
 async def _drain_terminal_after_action(
@@ -82,7 +106,11 @@ def _build_process_xml(
     return "\n".join(parts)
 
 
-class ProcessTool(Tool):
+class ProcessTool(ExclusiveTool):
+    """Interact with a command that remains owned by its terminal tab."""
+
+    cancel_note: ClassVar[str | None] = None
+
     def __init__(
         self,
         registry: ProcessRegistry,
@@ -147,21 +175,11 @@ class ProcessTool(Tool):
             return _build_process_xml(_NO_RUNNING_MSG)
 
         if data.strip().lower() in {"^c", "ctrl+c", "\x03"}:
-            await terminal_session.interrupt()
-            self._registry.refresh_deadline(running.id)
-            await asyncio.sleep(0.5)
-            await terminal_session.refresh_output(timeout=1.0)
-            output = sanitize_terminal_output(await terminal_session.last_command_output())
-            segment = await terminal_session.current_segment()
-            if not output:
-                output = sanitize_terminal_output(segment.cursor_line or "(no output)")
-            if segment.is_empty_prompt:
-                self._registry.mark_exited(
-                    running.id,
-                    exit_code=None,
-                    exit_signal="SIGINT",
-                    status=ProcessStatus.KILLED,
-                )
+            output = await interrupt_running_command(
+                terminal_session,
+                running,
+                self._registry,
+            )
             return _build_process_xml(output)
 
         guard_result = await check_process_writable(
@@ -235,6 +253,12 @@ class ProcessTool(Tool):
         running = self._registry.get_running_by_terminal(name)
         finished = self._registry.get_finished_by_terminal(name)
         return terminal_session, running, finished
+
+    async def on_cancel(self) -> None:
+        """Interrupt the command owned by the selected terminal tab."""
+        terminal_session, running, _finished = await self._resolve_terminal()
+        if running is not None:
+            await interrupt_running_command(terminal_session, running, self._registry)
 
     def _format_write_rejected(
         self,

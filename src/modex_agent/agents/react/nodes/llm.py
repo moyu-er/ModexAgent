@@ -69,11 +69,11 @@ class LLMNode(Node[ReActTurnState]):
                 if temp is not None:
                     tool_dict[tool_name] = temp
 
-        # Business-level max iterations check (ADR-0033 D9.3 layer 2). The
-        # engine-level ``compile(max_iterations=N)`` safety net (layer 1) is
-        # larger than this and raises ``GraphRecursionError`` only on runaway
-        # loops — the normal max-iterations exit routes through this static
-        # edge to AFTER.
+        # Business-level max iterations check (ADR-0033 D9.3 layer 2). This
+        # is the SOLE iteration cap on the ReAct path — the engine-level
+        # ``compile(max_iterations=N)`` safety net is opt-in and ReAct does
+        # not set it; exceeding this gate routes to AFTER via this static
+        # edge as a controlled stop.
         if state.iteration > agent_ctx.max_iterations:
             await ctx.runtime.emit(GraphReActEvent.MAX_ITERATIONS, None, ctx)
             self.deliver(None, ReActNode.AFTER, ctx)
@@ -113,6 +113,14 @@ class LLMNode(Node[ReActTurnState]):
                 ctx,
                 data={"request": [ChatMessage.coerce(m) for m in messages]},
             )
+
+            # Declare the LLM no-progress budget into the dispatch deadline
+            # before the call: while streaming, chunk callbacks keep renewing
+            # (small amounts); a fully stalled stream expires per the budget.
+            if agent_runtime is not None:
+                renew_dispatch_deadline(
+                    agent_runtime.safety.turn.dispatch_timeout_seconds
+                )
 
             response = await self._llm_client.call(messages, agent_ctx)
 
@@ -167,13 +175,6 @@ class LLMNode(Node[ReActTurnState]):
         # internally calls ``body()``. Both paths match the previous
         # ``if has_scope(ITERATION): around_iteration else: actual_iteration``.
         await ctx.runtime.around(ReActScope.ITERATION, ctx, actual_iteration)
-
-        _round_extension = (
-            agent_runtime.safety.turn.agent_run_timeout_seconds
-            if agent_runtime is not None
-            else 600.0
-        )
-        renew_dispatch_deadline(_round_extension)
 
         # AFTER_ITERATION fires at current-iteration-end (not next-iteration-start),
         # so all three exit paths (ERROR, TOOL, AFTER) get the dispatch (T16).

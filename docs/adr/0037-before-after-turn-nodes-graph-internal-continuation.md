@@ -209,9 +209,10 @@ END   → GraphNode.END  # unchanged
 
 3. **`max_iterations` interaction.** `state.iteration` resets to 0 in
    BeforeTurnNode. Each turn attempt gets a fresh iteration budget. The
-   engine-level `compile(max_iterations=N)` safety net must be set to
-   `business_max * MAX_TURNS` to allow for continuations (e.g. business
-   25 × MAX_TURNS 3 = compile with 75).
+   legacy engine-level `compile(max_iterations=N)` safety net was removed
+   (engine default is unlimited; the `LLMNode` business gate is the sole
+   cap) — formerly it had to be set to `business_max * MAX_TURNS` to allow
+   for continuations (e.g. business 25 × MAX_TURNS 3 = compile with 75).
 
 4. **AfterTurnNode constructs preliminary result.** The result is
    constructed before EndNode runs and stored on `state.result`. EndNode

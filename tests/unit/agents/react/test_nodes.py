@@ -234,6 +234,45 @@ class TestEndNode:
 
 class TestLLMNode:
     @pytest.mark.asyncio
+    async def test_llm_call_entry_renews_dispatch_deadline(
+        self, make_runtime, make_graph_ctx, make_response
+    ):
+        """LLMNode declares the dispatch_timeout budget into the deadline
+        BEFORE the LLM call, so a fresh iteration always gets a full
+        no-progress budget regardless of the previous iteration's tail."""
+        from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+        from modex_agent.runtime.dispatch import (
+            DispatchDeadline,
+            current_dispatch_deadline,
+        )
+
+        async def _mock_call(messages, ctx):
+            return make_response(content="ok")
+
+        llm_client = _make_llm_client()
+        llm_client.call = _mock_call  # type: ignore[method-assign]
+        node = LLMNode(llm_client, InjectionDrainer())
+
+        runtime = make_runtime()
+        runtime.services.safety = RuntimeSafetyPolicy(
+            turn=RuntimeSafetyPolicy().turn.model_copy(
+                update={"dispatch_timeout_seconds": 300.0}
+            )
+        )
+        ctx = make_graph_ctx(runtime=runtime)
+        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
+
+        deadline = DispatchDeadline(initial_timeout=0.05, max_ahead_seconds=600.0)
+        token = current_dispatch_deadline.set(deadline)
+        try:
+            await node.run(ctx)
+        finally:
+            current_dispatch_deadline.reset(token)
+
+        assert deadline.remaining > 295.0  # floored to 300s at call entry
+
+    @pytest.mark.asyncio
     async def test_canonicalizes_missing_call_id_before_consumers(
         self, make_runtime, make_graph_ctx, make_response
     ):
@@ -452,7 +491,7 @@ class TestToolNode:
         assert len(starts) == 1
         assert len(ends) == 1
         assert starts[0].call_id == call_id
-        assert ends[0][0].call_id == call_id
+        assert ends[0].tool_call.call_id == call_id
         assert history.msgs[1].tool_call_id == call_id
 
     @pytest.mark.asyncio
@@ -590,7 +629,8 @@ class TestToolNode:
         await node.run(ctx)
 
         ends = [d for e, d in emitter.events if e == ReActEvent.TOOL_CALL_END]
-        assert [result.call_id for _tc, result in ends] == ["c1", "c2"]
+        assert [payload.result.call_id for payload in ends] == ["c1", "c2"]
+        assert [payload.seq for payload in ends] == [0, 1]
         # History tool messages pair with the same canonical ids.
         tool_msgs = [m for m in history.msgs if m.role == MessageRole.TOOL]
         assert [m.tool_call_id for m in tool_msgs] == ["c1", "c2"]

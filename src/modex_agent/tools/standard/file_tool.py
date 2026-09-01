@@ -13,7 +13,12 @@ from uuid import uuid4
 
 from ...core.capabilities import Modality, ModelCapabilities
 from ...core.message import ImageUrl, ImageUrlPart, TextPart, build_media_ref
-from ...core.tool_manager import Tool, ToolResult, get_tool_execution_context
+from ...core.tool_manager import (
+    ExclusiveTool,
+    ParallelTool,
+    ToolResult,
+    get_tool_execution_context,
+)
 from ...media.media_utils import compress_image
 from ...media.mime import classify_kind, sniff_mime
 from ...media.models import Kind
@@ -500,7 +505,7 @@ async def _read_image_as_multimodal(
 # -- 工具类 -----------------------------------------------------------------
 
 
-class ReadFileTool(Tool):
+class ReadFileTool(ParallelTool):
     """读取文件内容的工具."""
 
     produced_modalities: frozenset[Modality] = frozenset({Modality.IMAGE})
@@ -620,7 +625,7 @@ class ReadFileTool(Tool):
             return ToolResult(tool_name=self.name, error=f"Failed to read file: {e}")
 
 
-class WriteFileTool(Tool):
+class WriteFileTool(ExclusiveTool):
     """写入内容到文件的工具."""
 
     def __init__(self) -> None:
@@ -683,7 +688,7 @@ class WriteFileTool(Tool):
             return ToolResult(tool_name=self.name, error=f"Failed to write file: {e}")
 
 
-class EditFileTool(Tool):
+class EditFileTool(ExclusiveTool):
     """通过精确字符串替换编辑文件的工具。
 
     核心能力：
@@ -863,7 +868,7 @@ class EditFileTool(Tool):
             return ToolResult(tool_name=self.name, error=f"Failed to edit file: {e}")
 
 
-class ListDirTool(Tool):
+class ListDirTool(ParallelTool):
     """列出目录内容的工具."""
 
     def __init__(self) -> None:

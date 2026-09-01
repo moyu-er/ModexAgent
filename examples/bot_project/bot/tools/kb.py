@@ -16,10 +16,10 @@ from bot.kb.models import (
     KbUpsertRequest,
 )
 from bot.kb.provider import KbProvider
-from modex_agent.core.tool_manager import Tool, ToolConfig
+from modex_agent.core.tool_manager import ExclusiveTool, ToolConfig
 
 
-class KbTool(Tool):
+class KbTool(ExclusiveTool):
     def __init__(
         self,
         provider: KbProvider,

@@ -24,7 +24,12 @@ from __future__ import annotations
 import logging
 
 from modex_agent.core.constants import InterfaceFormat
-from modex_agent.core.llm_struct import LLMTimeoutPolicy, RuntimeSafetyPolicy, TurnTimeoutPolicy
+from modex_agent.core.llm_struct import (
+    DeadlinePolicy,
+    LLMTimeoutPolicy,
+    RuntimeSafetyPolicy,
+    TurnTimeoutPolicy,
+)
 from modex_agent.core.provider import LLMProvider
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.configs.safety import SafetyConfig
@@ -71,9 +76,13 @@ def create_llm_provider(
                 retry_backoff_seconds=tuple(safety.llm.retry_backoff),
             ),
             turn=TurnTimeoutPolicy(
-                agent_run_timeout_seconds=safety.turn.agent_run_timeout,
                 hook_timeout_seconds=safety.turn.hook_timeout,
                 tool_timeout_seconds=safety.turn.tool_timeout,
+            ),
+            deadline=DeadlinePolicy(
+                chunk_renew_seconds=safety.deadline.chunk_renew_seconds,
+                max_ahead_seconds=safety.deadline.max_ahead_seconds,
+                watchdog_poll_seconds=safety.deadline.watchdog_poll_seconds,
             ),
         )
 

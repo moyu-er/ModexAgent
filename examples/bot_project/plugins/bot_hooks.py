@@ -27,11 +27,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar, Final
 
+from bot.kb.provider import KbProvider
 from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from bot.service.pool.agent_factory import _cell_sessions_dir
 from bot.service.pool.communication import UserNoticeCleanupHook
 from bot.tools.custom import SendFileToUserTool
+from bot.workspace.handle import PoolWorkspaceResources
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.tool_manager import Tool
@@ -47,10 +49,16 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from modex_agent.hook.notification import AgentNotificationService
-    from modex_agent.plugins.assembly.context import AssemblyContext, PoolContext
+    from modex_agent.plugins.assembly.context import (
+        AssemblyContext,
+        PoolContext,
+        WorkspaceContext,
+    )
 
 __all__ = [
     "BotHooksPlugin",
+    "KbToolConfig",
+    "KbToolFactory",
     "ModelChoiceBindHookConfig",
     "ModelChoiceBindHookFactory",
     "UserNoticeCleanupHookConfig",
@@ -94,6 +102,8 @@ class UserNoticeCleanupHookConfig(BaseModel):
 
 
 SEND_FILE_TO_USER_TOOL_NAME: Final = "send_file_to_user"
+
+KB_TOOL_NAME: Final = "kb"
 
 
 class SendFileToUserToolConfig(BaseModel):
@@ -148,6 +158,80 @@ class SendFileToUserToolFactory(ComponentFactory):
             media_config=assembly_deps.media,
             sessions_dir_provider=sessions_dir_provider,
         )
+
+
+class KbToolConfig(BaseModel):
+    """Config for :class:`KbToolFactory` — no settings.
+
+    The ``KbProvider`` is a workspace-layer resource (the per-workspace
+    bundle's ``kb_provider``) read from ``ctx.workspace_resources`` at
+    ``create()`` time, not carried by config.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class KbToolFactory(ComponentFactory):
+    """Factory for :class:`KbTool` — knowledge-base save/lookup.
+
+    Declares ``WorkspaceContext`` — the KB provider is a workspace-level
+    resource shared across the workspace's pools, so it rides the
+    workspace layer of the context chain (pool-layer
+    ``capability_supply`` is the wrong granularity). The tool ships
+    registered but unreferenced: enabling it for an agent is a
+    declaration concern (``tools: [+kb]`` in the scope declaration),
+    and a reference without a configured provider fails loudly.
+    """
+
+    config_model: ClassVar[type[BaseModel]] = KbToolConfig
+
+    async def create(self, config: BaseModel, ctx: WorkspaceContext) -> Tool:
+        del config
+        resources = ctx.workspace_resources
+        kb_provider: KbProvider | None = None
+        if isinstance(resources, PoolWorkspaceResources):
+            kb_provider = resources.kb_provider
+        if kb_provider is None:
+            raise ValueError(
+                f"{KB_TOOL_NAME} tool requires a configured KbProvider on the "
+                "workspace resource bundle; configure KB for the workspace or "
+                "remove the 'kb' reference from the agent's tool roster"
+            )
+
+        def _task_id_provider() -> str | None:
+            # Per-turn ContextVar first (the native env-injection channel —
+            # process-global os.environ is wrong under concurrent turns and
+            # unset for native agents); os.environ last for the modexctl/CLI
+            # subprocess contexts that legitimately carry it.
+            import os
+
+            from modex_agent.runtime.env_context import _modex_env
+
+            modex_vars = _modex_env.get()
+            if modex_vars is not None:
+                value = modex_vars.get("MODEX_TASK_ID")
+                if value is not None:
+                    return value
+            return os.environ.get("MODEX_TASK_ID")
+
+        def _session_id_provider() -> str | None:
+            import os
+
+            from modex_agent.runtime.env_context import _current_session_id, _modex_env
+
+            session = _current_session_id.get()
+            if session is not None:
+                return session
+            modex_vars = _modex_env.get()
+            if modex_vars is not None:
+                value = modex_vars.get("MODEX_SESSION_ID")
+                if value is not None:
+                    return value
+            return os.environ.get("MODEX_SESSION_ID")
+
+        from bot.tools.kb import KbTool
+
+        return KbTool(kb_provider, _task_id_provider, _session_id_provider)
 
 
 # ---------------------------------------------------------------------------
@@ -246,3 +330,4 @@ class BotHooksPlugin(Plugin):
         ctx.register_hook("model_choice_bind", ModelChoiceBindHookFactory())
         ctx.register_hook("user_notice_cleanup", UserNoticeCleanupHookFactory())
         ctx.register_tool(SEND_FILE_TO_USER_TOOL_NAME, SendFileToUserToolFactory())
+        ctx.register_tool(KB_TOOL_NAME, KbToolFactory())

@@ -74,6 +74,7 @@ class AgentMaterializeDeps:
         context_fork_builder: ContextForkBuilder | None = None,
         scope_path: ScopePath | None = None,
         workspace_manager: WorkspaceManager | None = None,
+        workspace_resources: Any | None = None,
         mcp_registry: McpConnectionRegistry | None = None,
         execution_strategy: ExecutionStrategy | None = None,
         strategy_registry: ExecutionStrategyRegistry | None = None,
@@ -112,6 +113,7 @@ class AgentMaterializeDeps:
         self.context_fork_builder = context_fork_builder
         self.scope_path = scope_path
         self.workspace_manager = workspace_manager
+        self.workspace_resources = workspace_resources
         self.mcp_registry = mcp_registry
         self.execution_strategy = execution_strategy
         self.strategy_registry = strategy_registry
@@ -149,6 +151,14 @@ class AgentMaterializeDeps:
     on_subagent_created: Callable[[str, str], Awaitable[None]] | None
     context_fork_builder: ContextForkBuilder | None
     scope_path: ScopePath | None
+    workspace_resources: Any | None
+    """The workspace's materialized resource bundle (business ``R``).
+
+    Threads the workspace layer onto subagent assembly: factories
+    resolving workspace-scoped resources (e.g. the bot ``kb`` tool's
+    KbProvider) read it off the assembly context chain, same as the
+    main-agent road. ``None`` on non-workspace test contexts.
+    """
     workspace_manager: WorkspaceManager | None
     """Workspace manager for per-turn workspace binding (``set_pool_context``).
 

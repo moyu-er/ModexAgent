@@ -1,4 +1,4 @@
-"""OS-layer primitives — every ``sys.platform`` branch lives here.
+"""External-agent OS primitives and the process-tree compatibility facade.
 
 Three responsibilities keep provider backends OS-agnostic:
 
@@ -10,16 +10,14 @@ Three responsibilities keep provider backends OS-agnostic:
   its own process group so cancellation reaches the provider's whole
   subprocess tree (``start_new_session=True`` on POSIX;
   ``creationflags=subprocess.CREATE_NEW_PROCESS_GROUP`` on Windows).
-- ``terminate_process_group(proc)`` — graceful SIGTERM → SIGKILL on
-  POSIX; ``taskkill /T /PID`` on Windows (the ``/T`` flag kills the
-  tree). Already-dead processes are a no-op.
+- ``terminate_process_group(proc)`` — re-exported from the shared
+  ``utils.process_tree`` implementation for compatibility.
 """
 
 from __future__ import annotations
 
 import asyncio
 import atexit
-import contextlib
 import logging
 import os
 import re
@@ -31,6 +29,8 @@ from pathlib import Path
 from typing import Final
 
 from pydantic import BaseModel, ConfigDict
+
+from modex_agent.utils.process_tree import terminate_process_group
 
 if sys.platform == "win32":
     from signal import SIGBREAK as _SIGBREAK
@@ -241,72 +241,6 @@ async def spawn_process_group(
         creationflags=_CREATE_NEW_PROCESS_GROUP,
         limit=limit,
     )
-
-
-# ---------------------------------------------------------------------------
-# terminate_process_group
-# ---------------------------------------------------------------------------
-
-
-async def terminate_process_group(proc: asyncio.subprocess.Process) -> None:
-    """Tear down ``proc`` and its entire process group.
-
-    POSIX: graceful ``SIGTERM`` → ``asyncio.wait_for(proc.wait())``
-    with a 1-second budget → hard ``SIGKILL``. Windows:
-    ``taskkill /T /PID <pid>`` (``/T`` walks the tree). Both branches
-    handle already-dead processes silently (``ProcessLookupError`` on
-    POSIX; non-zero / not-found ``taskkill`` exit on Windows).
-    """
-    if proc.returncode is not None:
-        return
-
-    if _IS_POSIX:
-        await _terminate_posix(proc)
-        return
-    if _IS_WINDOWS:
-        await _terminate_windows(proc)
-        return
-    try:
-        proc.terminate()
-        await proc.wait()
-    except (ProcessLookupError, OSError):
-        pass
-
-
-async def _terminate_posix(proc: asyncio.subprocess.Process) -> None:
-    """POSIX branch of :func:`terminate_process_group`."""
-    try:
-        pgid = os.getpgid(proc.pid)  # type: ignore[attr-defined]
-    except (ProcessLookupError, OSError):
-        return
-
-    with contextlib.suppress(ProcessLookupError, OSError):
-        os.killpg(pgid, signal.SIGTERM)  # type: ignore[attr-defined]
-
-    try:
-        await asyncio.wait_for(proc.wait(), timeout=1.0)
-    except TimeoutError:
-        with contextlib.suppress(ProcessLookupError, OSError):
-            os.killpg(pgid, signal.SIGKILL)  # type: ignore[attr-defined]
-        with contextlib.suppress(ProcessLookupError, OSError, asyncio.CancelledError):
-            await proc.wait()
-
-
-async def _terminate_windows(proc: asyncio.subprocess.Process) -> None:
-    """Windows branch of :func:`terminate_process_group`."""
-    with contextlib.suppress(OSError):
-        subprocess.run(
-            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-            check=False,
-            capture_output=True,
-        )
-    with contextlib.suppress(
-        ProcessLookupError,
-        OSError,
-        asyncio.CancelledError,
-        TimeoutError,
-    ):
-        await asyncio.wait_for(proc.wait(), timeout=2.0)
 
 
 # ---------------------------------------------------------------------------

@@ -35,6 +35,13 @@ class TurnSessionRegistry:
     def get_session_task(self, session_id: str) -> asyncio.Task | None:
         return self._session_tasks.get(session_id)
 
+    def cancel_turn(self, session_id: str) -> bool:
+        """Request immediate cancellation of the running turn for *session_id*."""
+        task = self._session_tasks.get(session_id)
+        if task is None or task.done():
+            return False
+        return task.cancel()
+
     def register_task(self, session_id: str, task: asyncio.Task) -> None:
         self._session_tasks[session_id] = task
 

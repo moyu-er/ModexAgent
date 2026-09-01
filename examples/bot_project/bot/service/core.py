@@ -56,6 +56,7 @@ from modex_agent.agents.external.providers.opencode.server_manager import (
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_struct import (
+    DeadlinePolicy,
     LLMTimeoutPolicy,
     RuntimeSafetyPolicy,
     TurnTimeoutPolicy,
@@ -568,9 +569,13 @@ class BotService(AgentBuilderMixin):
                     retry_backoff_seconds=tuple(s.llm.retry_backoff),
                 ),
                 turn=TurnTimeoutPolicy(
-                    agent_run_timeout_seconds=s.turn.agent_run_timeout,
                     hook_timeout_seconds=s.turn.hook_timeout,
                     tool_timeout_seconds=s.turn.tool_timeout,
+                ),
+                deadline=DeadlinePolicy(
+                    chunk_renew_seconds=s.deadline.chunk_renew_seconds,
+                    max_ahead_seconds=s.deadline.max_ahead_seconds,
+                    watchdog_poll_seconds=s.deadline.watchdog_poll_seconds,
                 ),
             )
         else:
@@ -584,7 +589,6 @@ class BotService(AgentBuilderMixin):
                     retry_backoff_seconds=(2.0, 8.0),
                 ),
                 turn=TurnTimeoutPolicy(
-                    agent_run_timeout_seconds=600.0,
                     hook_timeout_seconds=10.0,
                     tool_timeout_seconds=DefaultValues.TOOL_TIMEOUT_SECONDS,
                 ),
@@ -623,6 +627,16 @@ class BotService(AgentBuilderMixin):
                         return uuid
         return None
 
+    def _cancel_active_turn(self, session_id: str) -> bool:
+        """Cancel the running turn for *session_id* in its owning pool."""
+        for resources in self._iter_workspace_resources():
+            for pi in resources.pools.values():
+                for inst in pi.pool.iter_instances():
+                    pipeline = inst.pipeline
+                    if pipeline is not None and pipeline.cancel_active_turn(session_id):
+                        return True
+        return False
+
     # ------------------------------------------------------------------ #
     # Start / Stop
     # ------------------------------------------------------------------ #
@@ -649,6 +663,7 @@ class BotService(AgentBuilderMixin):
                 output_adapter=self.output_adapter,
                 session_checker=self._is_session_active,
                 turn_uuid_getter=self._get_active_turn_uuid,
+                turn_canceller=self._cancel_active_turn,
             )
 
             await self.input_adapter.start()

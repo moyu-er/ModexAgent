@@ -12,7 +12,6 @@ No tool configuration is read from YAML/config dicts.
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -46,7 +45,6 @@ from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.registry import ScopeRegistryStore
 
 if TYPE_CHECKING:
-    from bot.kb.provider import KbProvider
     from bot.service.pool.declaration import DeclaredPoolBuild
     from bot.workspace.handle import WorkspaceResolverCell
     from modex_agent.commands.processor import SlashCommandProcessor
@@ -147,25 +145,6 @@ class AgentBuilderMixin:
 # ── Pool assembly helpers (shared by both execution strategies) ──
 
 
-def _make_task_id_provider() -> Callable[[], str | None]:
-    """从 env 拿 taskId。图调度时 env 已注入 (graphInstanceId)。
-    非 graph 场景 env 无 MODEX_TASK_ID → None = 无 task 隔离。"""
-
-    def _provider() -> str | None:
-        return os.environ.get("MODEX_TASK_ID")
-
-    return _provider
-
-
-def _make_session_id_provider() -> Callable[[], str | None]:
-    """从 env 拿 sessionId。有值 = 按 session 隔离; 无值 = 无 session 隔离。"""
-
-    def _provider() -> str | None:
-        return os.environ.get("MODEX_SESSION_ID")
-
-    return _provider
-
-
 class _PoolAssemblyMixin:
     """Private mixin hosting the build helpers both strategies need.
 
@@ -181,39 +160,17 @@ class _PoolAssemblyMixin:
 
     # ── Tools ────────────────────────────────────────────────────────────
 
-    async def _build_tools(
-        self,
-        pool_name: str,
-        *,
-        kb_provider: KbProvider | None = None,
-        register_kb_tool: bool = False,
-    ) -> InMemoryToolManager:
-        """Build the main agent's base tool manager.
+    async def _build_tools(self, pool_name: str) -> InMemoryToolManager:
+        """Build the main agent's base tool manager (empty).
 
-        Tool assembly is fully roster-driven (scope-assembly ticket 05 +
-        ticket 10): every tool — preset tools, supplements (bash/edit/aci/
-        todo/experience), the communication entries, the terminal trio,
-        and per-agent MCP tools — is registered by Stage 4 through the
+        Every tool — preset tools, supplements (bash/edit/aci/todo/
+        experience), the communication entries, the terminal trio, the
+        opt-in business tools (``kb``, ``send_file_to_user``), and
+        per-agent MCP tools — is registered by Stage 4 through the
         TOOL-slot factories / the FW MCP loader reading the context chain,
-        on top of the empty base manager this builder returns. The only
-        builder-registered tool is the opt-in KB tool.
+        on top of the empty base manager this builder returns.
         """
         tm = InMemoryToolManager(config=ToolManagerConfig())
-
-        # KB tool — KbProvider is built but KbTool is NOT registered to any
-        # agent yet.  The tool implementation, CLI command, and REST route are
-        # fully functional; agents access KB via `modexctl kb` (external) or
-        # the REST endpoint directly.  To enable in-process agent usage, set
-        # register_kb_tool=True (or remove the guard) once the feature has
-        # been validated in production.
-        if kb_provider is not None and register_kb_tool:
-            from bot.tools.kb import KbTool
-
-            task_id_provider = _make_task_id_provider()
-            session_id_provider = _make_session_id_provider()
-            tm.register(KbTool(kb_provider, task_id_provider, session_id_provider))
-            logger.info("Pool '%s': kb tool registered", pool_name)
-
         logger.info(
             "Pool '%s': ToolManager ready (%d tools total)", pool_name, len(tm.list_tools())
         )

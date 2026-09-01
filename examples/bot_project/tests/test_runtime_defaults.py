@@ -55,3 +55,37 @@ def test_tool_timeout_default_is_540() -> None:
     from modex_agent.core.constants import DefaultValues
 
     assert DefaultValues.TOOL_TIMEOUT_SECONDS == 540.0
+
+
+def test_deadline_policy_defaults_and_margin() -> None:
+    """DeadlinePolicy defaults match the former hardcoded constants; the
+    phase margin derives as 2 × watchdog_poll_seconds so an inner phase
+    deadline always fires before the outer watchdog."""
+    from modex_agent.core.llm_struct import DeadlinePolicy, RuntimeSafetyPolicy
+
+    deadline = DeadlinePolicy()
+    assert deadline.chunk_renew_seconds == 3.0
+    assert deadline.max_ahead_seconds == 1200.0
+    assert deadline.watchdog_poll_seconds == 5.0
+    assert deadline.phase_margin_seconds == 10.0
+
+    RuntimeSafetyPolicy()  # defaults pass the phase-budget validator
+
+
+def test_runtime_safety_policy_rejects_ceiling_below_phase_budgets() -> None:
+    """max_ahead_seconds below any phase budget + margin fails validation
+    (fail loudly at construction instead of clipping phase declarations)."""
+    import pytest as _pytest
+
+    from modex_agent.core.llm_struct import DeadlinePolicy, RuntimeSafetyPolicy, TurnTimeoutPolicy
+
+    with _pytest.raises(Exception, match="max_ahead_seconds"):
+        RuntimeSafetyPolicy(
+            turn=TurnTimeoutPolicy(tool_timeout_seconds=2000.0),
+            deadline=DeadlinePolicy(max_ahead_seconds=1200.0),
+        )
+
+    exempt = RuntimeSafetyPolicy(
+        turn=TurnTimeoutPolicy(dispatch_timeout_seconds=0.0),
+    )
+    assert exempt.turn.dispatch_timeout_seconds == 0.0

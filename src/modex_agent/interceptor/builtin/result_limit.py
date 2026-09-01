@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from modex_agent.core.message import TextPart
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.types import MessageRole
 from modex_agent.interceptor.abc import (
@@ -91,20 +92,26 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
 
         # 3. No handler — head/tail truncation, full output NOT persisted
         if self._handler is None:
-            return ToolResult.from_text(
-                result.tool_name,
-                self._render_unpersisted(result_str),
-                call_id=result.call_id,
-                execution_time=result.execution_time,
-                error=result.error,
-                overflow_processed=False,
-            )
+            return self._rebuild_truncated(result, self._render_unpersisted(result_str))
 
-        # 4. Overflow path — write to disk synchronously, then return.
-        #    Cleanup is fire-and-forget; must not block the agent turn.
+        # 4. Overflow path. Ordering closes the cleanup race: the kept-set
+        #    must cover this call BEFORE its entry lands on disk. A clean
+        #    pass firing while a just-stored entry is not yet in any
+        #    scheduled kept-set would delete it (the entry is on disk but
+        #    absent from session history — indistinguishable from stale).
         session_id = self._get_session_id(ctx)
         tool_call_id = call.tool_call.call_id or f"{call.tool_name}-{uuid4().hex[:12]}"
 
+        try:
+            kept_call_ids = await self._gather_kept_call_ids(ctx)
+        except Exception:
+            logger.debug("Failed to gather kept call_ids, keeping current only", exc_info=True)
+            kept_call_ids = set()
+        kept_call_ids.add(tool_call_id)
+        self._handler.schedule_cleanup(session_id, kept_call_ids)
+
+        # 5. Write to disk synchronously, then return. Cleanup is
+        #    fire-and-forget; must not block the agent turn.
         try:
             overflow_content, _ref = await self._handler.store_overflow(
                 session_id=session_id,
@@ -115,30 +122,31 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
             )
         except Exception:
             logger.exception("Overflow store failed for %s/%s", session_id, tool_call_id)
-            return ToolResult.from_text(
-                result.tool_name,
-                self._render_unpersisted(result_str),
-                call_id=result.call_id,
-                error=result.error,
-                overflow_processed=False,
-            )
+            return self._rebuild_truncated(result, self._render_unpersisted(result_str))
 
-        # 5. Schedule async cleanup — after the tool result has been
-        #    written to session history by the caller (ReAct agent).
-        try:
-            kept_call_ids = await self._gather_kept_call_ids(ctx)
-        except Exception:
-            logger.debug("Failed to gather kept call_ids, keeping current only", exc_info=True)
-            kept_call_ids = set()
-        kept_call_ids.add(tool_call_id)
-        self._handler.schedule_cleanup(session_id, kept_call_ids)
+        return self._rebuild_truncated(result, overflow_content, overflow_processed=True)
 
-        return ToolResult.from_text(
-            result.tool_name,
-            overflow_content,
-            call_id=result.call_id,
-            error=result.error,
-            overflow_processed=True,
+    def _rebuild_truncated(
+        self,
+        result: ToolResult,
+        truncated_text: str,
+        *,
+        overflow_processed: bool = False,
+    ) -> ToolResult:
+        """Rebuild a ToolResult with truncated text, preserving siblings.
+
+        ``model_copy`` keeps every field the tool set — ``content_format`` and
+        ``truncatable_paths`` (governance truncation metadata declared by
+        terminal tools) and non-text content parts (e.g. ImageUrlPart) — so a
+        text overflow never silently drops metadata or multimodal content.
+        Text parts are replaced by the single truncated text.
+        """
+        non_text = [part for part in result.content if not isinstance(part, TextPart)]
+        return result.model_copy(
+            update={
+                "content": [TextPart(text=truncated_text), *non_text],
+                "overflow_processed": overflow_processed,
+            }
         )
 
     def _render_unpersisted(self, content: str) -> str:

@@ -6,7 +6,7 @@ Wraps MCP tools as framework Tool objects.
 import re
 from typing import Any
 
-from modex_agent.core.tool_manager import Tool, ToolConfig
+from modex_agent.core.tool_manager import ExecutionMode, Tool, ToolConfig
 from modex_agent.tools.mcp.backend import McpBackend
 from modex_agent.tools.mcp.client import _DEFAULT_TOOL_TIMEOUT
 
@@ -98,6 +98,7 @@ class MCPTool(Tool):
         mcp_manager: McpBackend,
         config: ToolConfig | None = None,
         tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
+        execution_mode: ExecutionMode | None = None,
     ) -> None:
         full_name = _mcp_tool_name(server_name, tool_name)
 
@@ -116,6 +117,11 @@ class MCPTool(Tool):
         self._tool_name = tool_name
         self._mcp_manager = mcp_manager
         self._tool_timeout = tool_timeout
+        # Instance-level execution-mode override (ADR-0048 D1): one class
+        # serves many servers, so the adapter labels safety per tool at
+        # registration time. None keeps the fail-closed EXCLUSIVE default.
+        if execution_mode is not None:
+            self._execution_mode_override = execution_mode
 
     async def execute(self, **kwargs: Any) -> str:
         """Execute the MCP tool.

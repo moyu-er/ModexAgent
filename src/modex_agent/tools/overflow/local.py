@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
 from pathvalidate import sanitize_filename
+from pydantic import ValidationError
 
 from modex_agent.memory.core.lock import AioRWLock
 from modex_agent.tools.overflow.models import OverflowMetadata, OverflowRef
@@ -67,21 +67,18 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
         async with self._lock.write():
             await asyncio.to_thread(entry_dir.mkdir, parents=True, exist_ok=True)
 
-            # Write metadata
-            meta_path = entry_dir / ".meta.json"
-            meta_dict = {
-                "tool_name": meta.tool_name,
-                "tool_call_id": meta.tool_call_id,
-                "session_id": meta.session_id,
-                "created_at": meta.created_at,
-                "total_chars": meta.total_chars,
-            }
-            await asyncio.to_thread(
-                meta_path.write_text, json.dumps(meta_dict, ensure_ascii=False), encoding="utf-8"
-            )
-
+            # full.txt first, .meta.json LAST: the metadata file is the
+            # entry's commit marker (list_tool_call_ids counts only
+            # directories that carry it), so a crash mid-write leaves a
+            # half-entry that is never listed instead of a listed entry
+            # whose full.txt is missing.
             full_path = entry_dir / "full.txt"
             await asyncio.to_thread(full_path.write_text, content, encoding="utf-8")
+
+            meta_path = entry_dir / ".meta.json"
+            await asyncio.to_thread(
+                meta_path.write_text, meta.model_dump_json(), encoding="utf-8"
+            )
 
         return OverflowRef(
             dir_path=str(absolute_dir),
@@ -101,14 +98,7 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
             if not await asyncio.to_thread(meta_path.exists):
                 return None
             text = await asyncio.to_thread(meta_path.read_text, encoding="utf-8")
-            data = json.loads(text)
-        return OverflowMetadata(
-            tool_name=data["tool_name"],
-            tool_call_id=data["tool_call_id"],
-            session_id=data["session_id"],
-            created_at=data["created_at"],
-            total_chars=data["total_chars"],
-        )
+            return OverflowMetadata.model_validate_json(text)
 
     async def delete(self, session_id: str, tool_call_id: str) -> bool:
         entry_dir = self._entry_dir(session_id, tool_call_id)
@@ -139,9 +129,9 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
         for name, p in entries:
             try:
                 meta_text = await asyncio.to_thread((p / ".meta.json").read_text, encoding="utf-8")
-                meta_data = json.loads(meta_text)
-                sorted_entries.append((name, meta_data.get("created_at", "")))
-            except (FileNotFoundError, OSError, json.JSONDecodeError):
+                meta = OverflowMetadata.model_validate_json(meta_text)
+                sorted_entries.append((name, meta.created_at))
+            except (FileNotFoundError, OSError, ValidationError):
                 # Entry may have been deleted between listing and reading
                 continue
         sorted_entries.sort(key=lambda x: x[1])

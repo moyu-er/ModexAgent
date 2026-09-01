@@ -45,7 +45,9 @@ class CompiledGraph(Node[S]):
     """Validated graph. Subclass of `Node[S]` (Graph-is-a-Node, D8).
 
     Constructed by `Graph.compile()`. Holds the validated node registry,
-    edges, entry node, and `max_iterations` safety net.
+    edges, entry node, and the opt-in `max_iterations` safety net
+    (`None` = unlimited, the default — termination then belongs to the
+    business layer or the pool watchdog).
 
     As a `Node`: `execute(ctx)` runs its own `GraphEngine` loop on `ctx`.
     The subgraph writes its result to `ctx.state` (a field on the state) —
@@ -63,7 +65,7 @@ class CompiledGraph(Node[S]):
         nodes: dict[str, Node[Any]],
         edges: list[Edge],
         entry_node: str,
-        max_iterations: int = 1000,
+        max_iterations: int | None = None,
         scheduler: SchedulerKind = SchedulerKind.LINEAR,
         default_trigger: NodeTrigger = NodeTrigger.ON_ALL_PREDS,
     ) -> None:

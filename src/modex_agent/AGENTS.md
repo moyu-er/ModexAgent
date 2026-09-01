@@ -45,7 +45,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `workspace/` | 13 py | — | `WorkspaceContext` ABC, `DefaultWorkspaceContext` — cd/exit/restore workspace switching with callback notification and persistence (see `workspace/AGENTS.md`) |
 | `input_pipeline/` | 5 py | — | Extensible user-input stage pipeline — `UserInputEnvelope`, `InputStage` ABC, `Continue`/`Terminate`, `UserInputPipeline` (see `input_pipeline/AGENTS.md`) |
 | `trace/` | 4 py | — | Tracing and observability — `TraceStore`, `TraceHooks`, `TraceType` |
-| `utils/` | 11 py | — | tokenizer, context_builder, deduplicator, sanitizer, helpers, `time` (`now_ms`/`now_s` — ADR-0029 single source of truth) |
+| `utils/` | 12 py | — | tokenizer, context_builder, deduplicator, sanitizer, helpers, process-tree termination, `time` (`now_ms`/`now_s` — ADR-0029 single source of truth) |
 | `adapters/` | 2 py | — | `PlatformAdapter` ABC, `AdapterRegistry`, `StreamingMode` |
 | `media/` | 6 py | — | Attachment/media handling (ADR-0013) — `MediaStore` ABC, MIME classification, security gate, storage routing (`LocalFileMediaStore`) |
 | `registry/` | 1 py | — | Shared registry utilities |
@@ -95,7 +95,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 - `pipeline/` — End-to-end orchestration pipeline.
 - `runtime/` — Runtime state and services assembly.
 - `hook/` + `interceptor/` — Extension layers for lifecycle observation and AOP.
-- `control/` — Control transport: the live `/stop` + pause channel (`CANCEL_TURN` → drain → interceptors → `AgentCancelledError`); plus `AgentControlError` exceptions. A separate busy-INTERRUPT path uses `asyncio.Task.cancel()` directly.
+- `control/` — Control transport: live `/stop` + pause queues `CANCEL_TURN` and actively cancels the registered turn task so long-running tools wake immediately; ToolNode converges worker cleanup and tool-result synthesis. A separate busy-INTERRUPT path uses the same task-cancel wakeup without a channel command.
 - `ioc/` — Dependency injection configuration and factories.
 
 ## Graph Scheduling Convergence

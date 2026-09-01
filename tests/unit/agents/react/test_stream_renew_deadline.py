@@ -87,12 +87,22 @@ class _FakeEmitter:
 class _RenewCountingDeadline(DispatchDeadline):
     """Wraps DispatchDeadline to count renew() calls and their arguments."""
 
-    def __init__(self, initial_timeout: float, *, max_ahead_seconds: float | None = None):
-        super().__init__(initial_timeout, max_ahead_seconds=max_ahead_seconds)
+    def __init__(
+        self,
+        initial_timeout: float,
+        *,
+        max_ahead_seconds: float | None = None,
+        default_renew_seconds: float | None = None,
+    ):
+        super().__init__(
+            initial_timeout,
+            max_ahead_seconds=max_ahead_seconds,
+            default_renew_seconds=default_renew_seconds,
+        )
         self.renew_count = 0
-        self.renew_args: list[float] = []
+        self.renew_args: list[float | None] = []
 
-    def renew(self, seconds: float = DispatchDeadline.DEFAULT_RENEW_SECONDS) -> None:
+    def renew(self, seconds: float | None = None) -> None:
         self.renew_count += 1
         self.renew_args.append(seconds)
         super().renew(seconds)
@@ -160,7 +170,7 @@ class TestPerChunkRenewalStreamWithControl:
             current_dispatch_deadline.reset(token)
 
         assert deadline.renew_count == 3
-        assert all(s == 3.0 for s in deadline.renew_args)
+        assert all(s is None for s in deadline.renew_args)  # instance default (3.0)
 
     @pytest.mark.asyncio
     async def test_reasoning_delta_renews_deadline_each_chunk(self):
@@ -181,7 +191,7 @@ class TestPerChunkRenewalStreamWithControl:
             current_dispatch_deadline.reset(token)
 
         assert deadline.renew_count == 3
-        assert all(s == 3.0 for s in deadline.renew_args)
+        assert all(s is None for s in deadline.renew_args)  # instance default (3.0)
 
     @pytest.mark.asyncio
     async def test_renew_uses_default_3_seconds(self):
@@ -236,7 +246,7 @@ class TestPerChunkRenewalStreamPlain:
             current_dispatch_deadline.reset(token)
 
         assert deadline.renew_count == 2
-        assert all(s == 3.0 for s in deadline.renew_args)
+        assert all(s is None for s in deadline.renew_args)  # instance default (3.0)
 
     @pytest.mark.asyncio
     async def test_reasoning_delta_renews_in_plain_stream(self):

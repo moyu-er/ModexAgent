@@ -1,6 +1,8 @@
 """TurnSessionRegistry — shared per-session turn state (was AgentPipeline's 4 dicts)."""
 import asyncio
+
 import pytest
+
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 
 
@@ -65,6 +67,19 @@ async def test_get_session_task_for_busy_cancel(reg):
     reg.register_task("s1", t)
     assert reg.get_session_task("s1") is t
     t.cancel()
+
+
+async def test_cancel_turn_wakes_only_active_registered_task(reg):
+    task = asyncio.create_task(asyncio.Event().wait())
+    reg.register_task("s1", task)
+
+    assert reg.cancel_turn("missing") is False
+    assert reg.cancel_turn("s1") is True
+    assert task.cancelling() == 1
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert reg.cancel_turn("s1") is False
 
 
 async def test_get_turn_uuid_none_when_task_registered_without_uuid(reg):

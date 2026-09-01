@@ -8,10 +8,13 @@ to this ABC instead of doing cleanup directly.
 T17 removes ``fork_contexts`` from the per-session artifact list, aligning
 with T18 which removes fork XML file writing.
 
-The default implementation always removes the ten per-session file units and
-optionally delegates structured-row deletion to a storage-specific capability.
+The default implementation always removes the eleven per-session file units
+and optionally delegates structured-row deletion to a storage-specific
+capability.
 
-The ten artifact units (fork_contexts removed in T17):
+The eleven artifact units (fork_contexts removed in T17; overflow added —
+the tool-result overflow store writes one directory per session under
+``overflow/``):
 
 1. transcript — ``sessions/<pool>/<safe>.jsonl``
 2. index record — ``session_index/<pool>/<safe>.json``
@@ -23,6 +26,7 @@ The ten artifact units (fork_contexts removed in T17):
 8. runtime output dir — ``runtime_state/<pool>/output/<raw_sid>``
 9. runtime todos file — ``runtime_state/<pool>/todos/<safe>.json``
 10. runtime turn state dir — ``runtime_state/<pool>/turns/<seg_agent>/<seg_sid>``
+11. tool overflow dir — ``tool_overflow/<safe>``
 """
 
 from __future__ import annotations
@@ -104,6 +108,7 @@ def session_artifact_paths(session_id: str, pool: str, paths: WorkspacePaths) ->
         paths.runtime_dir(pool, "turns")
         / JsonFileTurnStateStore._safe_segment(agent)
         / JsonFileTurnStateStore._safe_segment(session_id),  # turn state
+        paths.overflow_dir / "tool_overflow" / safe,  # tool result overflow
     ]
 
 

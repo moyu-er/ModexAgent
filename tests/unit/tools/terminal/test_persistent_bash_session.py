@@ -508,18 +508,26 @@ async def test_foreign_markers_stripped_from_result():
 # ── cancellation hygiene ──
 
 
-async def test_cancelled_command_terminates_session_cleanly():
-    """Cancelling a run_command (the 540s executor deadline's last-resort
-    path) kills the session; the next call spawns fresh and works."""
+async def test_cancelled_command_recovers_session_via_on_cancel():
+    """ADR-0048 D6: cancelling a run_command preserves the session; the
+    tool's on_cancel hook interrupts the foreground command and drains it.
+    The shell, its cwd, and its env survive — the next call reuses them."""
     tool = PersistentBashTool(timeout_seconds=10)
     try:
+        await tool.execute(command="cd /tmp")
         task = asyncio.create_task(tool.execute(command="sleep 8"))
         await asyncio.sleep(0.4)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        assert tool.session._phase is session_mod._Phase.IDLE  # noqa: SLF001
-        assert await tool.execute(command="echo fresh") == "fresh"
+
+        await tool.on_cancel()
+
+        session = tool.session
+        assert session._phase is session_mod._Phase.IDLE  # noqa: SLF001
+        assert session._proc is not None  # noqa: SLF001
+        assert session._proc.isalive()  # noqa: SLF001
+        assert await tool.execute(command="pwd") == "/tmp"
     finally:
         await tool.close()
 

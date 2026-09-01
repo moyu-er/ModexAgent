@@ -440,7 +440,7 @@ class TestE2EStepFun:
                 retry_backoff_seconds=(2.0, 8.0),
             ),
             turn=TurnTimeoutPolicy(
-                agent_run_timeout_seconds=420.0,
+                dispatch_timeout_seconds=420.0,
                 hook_timeout_seconds=10.0,
             ),
         )
@@ -707,7 +707,7 @@ class TestE2EReviewLoopWithMemory:
                 retry_backoff_seconds=(2.0, 8.0),
             ),
             turn=TurnTimeoutPolicy(
-                agent_run_timeout_seconds=120.0,
+                dispatch_timeout_seconds=120.0,
                 hook_timeout_seconds=10.0,
             ),
         )

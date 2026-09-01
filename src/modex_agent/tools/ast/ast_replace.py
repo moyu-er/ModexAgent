@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from modex_agent.core.tool_manager import Tool
+from modex_agent.core.tool_manager import ExclusiveTool
 from modex_agent.tools.ast.engine import (
     AST_UNAVAILABLE_MSG,
     AstNotAvailableError,
@@ -14,7 +14,7 @@ from modex_agent.tools.ast.engine import (
 )
 
 
-class AstGrepReplaceTool(Tool):
+class AstGrepReplaceTool(ExclusiveTool):
     """Replace code using AST-aware pattern matching. Dry-run by default."""
 
     def __init__(self) -> None:

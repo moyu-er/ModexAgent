@@ -10,7 +10,7 @@ models, and owns provider resources through one lifecycle interface.
 
 ## Architecture
 
-- `ExternalAgent` owns turn orchestration and retryable agent stop.
+- `ExternalAgent` owns turn orchestration and retryable agent stop. Every provider emission (`on_emission`) renews the pool dispatch deadline by `chunk_renew_seconds` — external turns share the same watchdog activity-renewal protocol as ReAct stream chunks.
 - `StreamingProviderBackend` is the execution and cleanup seam. Upper layers
   call `execute_streaming()` and `close()` without branching on provider kind.
 - `OpenCodeServerManager` is a process-wide singleton that owns the shared
@@ -26,8 +26,8 @@ models, and owns provider resources through one lifecycle interface.
 - `ExternalEnvBuilder`, runtime AGENTS.md injection, and `ExternalPaths`
   centralize provider-visible identity and filesystem layout. `env_builder.py`
   also injects `OPENCODE_PERMISSION` to eliminate runtime permission prompts.
-- `os_layer.py` centralizes executable resolution, process-group spawn, and
-  complete process-tree termination for Windows and POSIX.
+- `os_layer.py` centralizes executable resolution and process-group spawn, and
+  re-exports complete process-tree termination from `utils/process_tree.py`.
 
 ## Key Files
 
@@ -42,7 +42,7 @@ models, and owns provider resources through one lifecycle interface.
 | `runtime_config.py` | Idempotent provider-visible AGENTS.md marker block |
 | `system_prompt.py` | Dynamic peer list and `modexctl send` instructions |
 | `paths.py` | Workdir-contained `.modex/external/` paths and `ProviderKind` |
-| `os_layer.py` | Cross-platform process-tree lifecycle primitives |
+| `os_layer.py` | External-process spawn primitives + stable process-tree termination re-export |
 | `scripted_backend.py` | Provider-free deterministic test adapter |
 | `turn_runner.py` | Pipeline turn-runner adapter for external agents |
 | `providers/opencode_server_manager.py` | Singleton managing the shared `opencode serve` process: lazy spawn, liveness check, per-workdir SSE readers, orphan reaping, PID registry, watchdog health monitor, `lifecycle()` async context manager, `_respawn()` extension point |

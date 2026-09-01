@@ -7,7 +7,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from modex_agent.core.llm_struct import RuntimeSafetyPolicy, TurnTimeoutPolicy
+from modex_agent.core.llm_struct import (
+    DeadlinePolicy,
+    RuntimeSafetyPolicy,
+    TurnTimeoutPolicy,
+)
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.state import AgentState
 from modex_agent.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
@@ -111,10 +115,7 @@ class TestPoolRenewableDispatch:
     @pytest.fixture
     async def pool(self):
         safety = RuntimeSafetyPolicy(
-            turn=TurnTimeoutPolicy(
-                dispatch_timeout_seconds=0.15,
-                agent_run_timeout_seconds=0.1,
-            ),
+            turn=TurnTimeoutPolicy(dispatch_timeout_seconds=0.15),
         )
         p = AgentPool(
             broker=_FakeBroker(),
@@ -180,10 +181,7 @@ class TestPoolRenewableDispatch:
 
     async def test_renew_while_watchdog_sleeping_extends_timeout(self):
         safety = RuntimeSafetyPolicy(
-            turn=TurnTimeoutPolicy(
-                dispatch_timeout_seconds=0.5,
-                agent_run_timeout_seconds=0.2,
-            ),
+            turn=TurnTimeoutPolicy(dispatch_timeout_seconds=0.5),
         )
         p = AgentPool(
             broker=_FakeBroker(),
@@ -210,10 +208,7 @@ class TestPoolRenewableDispatch:
 
     async def test_early_renew_does_not_steal_time(self):
         safety = RuntimeSafetyPolicy(
-            turn=TurnTimeoutPolicy(
-                dispatch_timeout_seconds=0.3,
-                agent_run_timeout_seconds=0.1,
-            ),
+            turn=TurnTimeoutPolicy(dispatch_timeout_seconds=0.3),
         )
         p = AgentPool(
             broker=_FakeBroker(),
@@ -250,15 +245,21 @@ class TestPoolRenewableDispatch:
         assert current_dispatch_deadline.get() is None
         await p.shutdown_all(timeout=0.1)
 
-    async def test_ceiling_caps_single_renew_burst(self, monkeypatch):
+    async def test_ceiling_caps_single_renew_burst(self):
         """A single renew(huge) is capped to max_ahead, so if activity then
         stops, the watchdog kills the coro within max_ahead."""
-        monkeypatch.setattr(DispatchDeadline, "DEFAULT_MAX_AHEAD_SECONDS", 0.3)
-
         safety = RuntimeSafetyPolicy(
             turn=TurnTimeoutPolicy(
                 dispatch_timeout_seconds=0.1,
-                agent_run_timeout_seconds=0.05,
+                tool_timeout_seconds=0.1,
+                hook_timeout_seconds=0.1,
+                output_send_timeout_seconds=0.05,
+                memory_flush_timeout_seconds=0.05,
+            ),
+            deadline=DeadlinePolicy(
+                chunk_renew_seconds=0.05,
+                max_ahead_seconds=0.3,
+                watchdog_poll_seconds=0.02,
             ),
         )
         p = AgentPool(

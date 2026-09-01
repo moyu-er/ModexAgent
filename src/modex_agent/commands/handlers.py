@@ -164,8 +164,8 @@ class InvalidCommandHandler:
 class ControlCommandHandler(CommandHandler):
     """Handles /stop and future control slash commands.
 
-    Returns CONTROL_COMMAND action for the pipeline to execute immediately
-    via task.cancel() in the pre-lock phase.
+    Returns CONTROL_COMMAND for the adapter to queue and pair with immediate
+    cancellation of the registered turn task.
     """
 
     _COMMAND_MAP: dict[str, str] = {

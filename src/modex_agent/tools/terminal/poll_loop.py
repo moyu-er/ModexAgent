@@ -72,12 +72,12 @@ async def poll_until_settled(
 
         read = await session.poll_once(timeout=0.05)
         if read.stdout:
-            registry.append_output(proc_id, "stdout", read.stdout)
+            registry.record_output(proc_id)
             output_parts.append(read.stdout)
             output_received = True
             prompt_stable_since = None
         if read.stderr:
-            registry.append_output(proc_id, "stderr", read.stderr)
+            registry.record_output(proc_id)
             output_parts.append(read.stderr)
             output_received = True
             prompt_stable_since = None

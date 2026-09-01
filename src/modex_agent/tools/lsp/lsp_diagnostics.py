@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from modex_agent.core.tool_manager import Tool
+from modex_agent.core.tool_manager import ParallelTool
 
 _NOT_IMPLEMENTED = (
     "LSP diagnostics is not yet implemented. This tool will be available in a future update."
 )
 
 
-class LspDiagnosticsTool(Tool):
+class LspDiagnosticsTool(ParallelTool):
     """Get language server diagnostics for a file or directory (stub)."""
 
     def __init__(self) -> None:

@@ -40,13 +40,15 @@ class TestRenderOverflowText:
         )
 
         lines = text.split("\n")
-        assert len(lines) == 4
+        # head / "" / marker / "" / tail / "" / notice
+        assert len(lines) == 7
         assert lines[0] == "H" * 40
-        assert lines[2] == "T" * 40
-        assert lines[1].startswith("[... OUTPUT ELIDED: 250 chars")
-        assert "truncation marker, NOT tool output" in lines[1]
-        assert lines[3].startswith("[Full output (330 chars total) saved to: /ovf/s1/c1/full.txt")
-        assert "read tool" in lines[3]
+        assert lines[1] == ""
+        assert lines[4] == "T" * 40
+        assert lines[2].startswith("[... OUTPUT ELIDED: 250 chars")
+        assert "truncation marker, NOT tool output" in lines[2]
+        assert lines[6].startswith("[Full output (330 chars total) saved to: /ovf/s1/c1/full.txt")
+        assert "read tool" in lines[6]
 
     def test_elision_counts_chars_and_lines(self) -> None:
         middle = "m\n" * 100  # 200 chars, 100 newlines
@@ -95,12 +97,12 @@ class TestRenderOverflowText:
         text = render_overflow_text(content, head_chars=40, tail_chars=40)
 
         lines = text.split("\n")
-        assert len(lines) == 4
+        assert len(lines) == 7
         assert lines[0] == "H" * 40
-        assert lines[2] == "T" * 40
-        assert "OUTPUT ELIDED: 250 chars" in lines[1]
-        assert "NOT saved (overflow handler unavailable)" in lines[1]
-        assert lines[3].startswith("[Full output (330 chars total) NOT saved to disk")
+        assert lines[4] == "T" * 40
+        assert "OUTPUT ELIDED: 250 chars" in lines[2]
+        assert "NOT saved (overflow handler unavailable)" in lines[2]
+        assert lines[6].startswith("[Full output (330 chars total) NOT saved to disk")
         assert "full.txt" not in text
         assert "saved to:" not in text
 
@@ -112,9 +114,9 @@ class TestRenderOverflowText:
         )
 
         lines = text.split("\n")
-        assert len(lines) == 4
+        assert len(lines) == 7
         assert lines[0] == "H" * 10
-        assert lines[2] == ""
+        assert lines[4] == ""
 
     def test_multibyte_chars_count_as_chars(self) -> None:
         content = "头" * 400
@@ -124,5 +126,5 @@ class TestRenderOverflowText:
 
         lines = text.split("\n")
         assert lines[0] == "头" * 100
-        assert lines[2] == "头" * 100
-        assert "OUTPUT ELIDED: 200 chars" in lines[1]
+        assert lines[4] == "头" * 100
+        assert "OUTPUT ELIDED: 200 chars" in lines[2]

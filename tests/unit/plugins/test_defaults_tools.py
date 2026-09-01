@@ -15,7 +15,7 @@ import inspect
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
+from modex_agent.plugins.abc import ComponentSlot, PrototypeFactory
 from modex_agent.plugins.defaults.tools import (
     ExperienceToolConfig,
     ToolConfig,
@@ -143,8 +143,9 @@ class TestCommunicationTrioExcluded:
 # ---- Factory type + create() contract -----------------------------------
 
 
-# Names whose factories are runtime (pool-scoped deps) rather than SimpleFactory
-# wrappers, or whose tool name deliberately differs from the registry name.
+# Names whose factories are runtime (pool-scoped deps) rather than
+# PrototypeFactory wrappers, or whose tool name deliberately differs
+# from the registry name.
 # "experience": pool-data-fed ExperienceToolFactory (moved from the bot plugin).
 _RUNTIME_TOOL_NAMES = frozenset(
     {"todo_read", "todo_write", "bash", "process", "terminal", "experience"}
@@ -155,21 +156,22 @@ _NAME_MISMATCH_TOOLS = frozenset({"aci_edit"})
 
 
 class TestFactoryContract:
-    """Stateless registered factories are SimpleFactory wrappers."""
+    """Stateless registered factories are PrototypeFactory wrappers —
+    per-assembly construction, never shared instances."""
 
-    def test_stateless_factories_are_simple_factory(self):
+    def test_stateless_factories_are_prototype_factory(self):
         registry = _register_defaults()
         slot_map = registry._factories.get(ComponentSlot.TOOL, {})  # noqa: SLF001
         assert len(slot_map) > 0
         for name, factory in slot_map.items():
             if name in _RUNTIME_TOOL_NAMES:
                 continue
-            assert isinstance(factory, SimpleFactory), (
-                f"factory for {name!r} is {type(factory).__name__}, expected SimpleFactory"
+            assert isinstance(factory, PrototypeFactory), (
+                f"factory for {name!r} is {type(factory).__name__}, expected PrototypeFactory"
             )
 
     async def test_create_returns_tool_with_matching_name(self):
-        """factory.create() returns the wrapped Tool instance whose
+        """factory.create() returns the built Tool instance whose
         .name matches the registered name."""
         registry = _register_defaults()
         slot_map = registry._factories.get(ComponentSlot.TOOL, {})  # noqa: SLF001
@@ -179,6 +181,23 @@ class TestFactoryContract:
             instance = await factory.create(ToolConfig(), ctx=None)  # type: ignore[arg-type]
             assert instance.name == name, (
                 f"factory.create() for {name!r} returned tool with name {instance.name!r}"
+            )
+
+    async def test_stateless_factories_build_fresh_instance_per_resolution(self):
+        """Prototype semantics: resolving the same name twice never shares
+        a Tool instance — the cross-agent config-leakage guard (a shared
+        instance would let ``register(tool, config)`` in one agent mutate
+        every other agent's tool)."""
+        registry = _register_defaults()
+        slot_map = registry._factories.get(ComponentSlot.TOOL, {})  # noqa: SLF001
+        for name, factory in slot_map.items():
+            if name in _RUNTIME_TOOL_NAMES:
+                continue
+            first = await factory.create(ToolConfig(), ctx=None)  # type: ignore[arg-type]
+            second = await factory.create(ToolConfig(), ctx=None)  # type: ignore[arg-type]
+            assert first is not second, (
+                f"factory for {name!r} returned a shared instance — "
+                f"prototype semantics violated"
             )
 
     def test_config_model_is_toolconfig(self):
