@@ -25,10 +25,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modex_agent.core.scope import MemoryAgentRole
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
 from modex_agent.ioc.factories.descriptors import build_session_only_memory
+from modex_agent.memory.scope import MemoryAgentRole
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance

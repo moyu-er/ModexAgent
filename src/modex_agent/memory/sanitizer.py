@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import MessageRole
 
 #: Content inserted when a dangling assistant tool_call has no matching tool
 #: result in MODEL_VISIBLE_CONTEXT mode. The assistant is preserved and this

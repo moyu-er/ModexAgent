@@ -19,11 +19,10 @@ from bot.eval.harbor.pool_mode_types import PoolUsageArtifact
 from plugins.bot_strategies import BotDefaultLLMConfig
 from pydantic import BaseModel
 
-from modex_agent.core.constants import FinishReason
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
+from modex_agent.core.message import ChatMessage, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.plugins.abc import ComponentFactory
 from modex_agent.plugins.assembly.context import AssemblyContext
 from modex_agent.runtime.models import JsonValue

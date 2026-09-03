@@ -16,8 +16,8 @@ from pathlib import Path
 import pytest
 from bot.workspace.handle import PoolWorkspaceResources
 
-from modex_agent.core.session_store import LocalFileSessionStore
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.factory import ResourceFactory

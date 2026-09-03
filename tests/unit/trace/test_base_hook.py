@@ -11,13 +11,13 @@ from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.trace.base_hook import BaseTraceHook
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.scoring import compute_metrics
 from modex_agent.trace.semconv import GenAiAttr, SpanKind, SpanName
 from modex_agent.trace.session_state import TraceSessionState
 from modex_agent.trace.store import SpanStatus
-from modex_agent.tools.manager import InMemoryToolManager
 
 # -- helpers ------------------------------------------------------------------
 

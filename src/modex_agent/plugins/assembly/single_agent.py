@@ -10,12 +10,12 @@ from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.provider import LLMProvider
-from modex_agent.core.scope import MemoryAgentRole
 from modex_agent.core.tool_manager import Tool
 from modex_agent.hook import Hook
 from modex_agent.ioc.factories.governance import create_governance
 from modex_agent.ioc.factories.memory import create_memory
 from modex_agent.memory.core.system import MemorySystem
+from modex_agent.memory.scope import MemoryAgentRole
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
 from modex_agent.multi_agent.factory import DefaultAgentFactory

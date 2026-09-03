@@ -14,9 +14,9 @@ from typing import TYPE_CHECKING, Any
 
 from bot.service.session_store import WorkspacePoolSessionStore
 from bot.webui.types import RuntimeStores
-from modex_agent.core.session_store import SessionStore
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.persistence.config import PersistenceBackend
+from modex_agent.persistence.session_store import SessionStore
 from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
 
 if TYPE_CHECKING:

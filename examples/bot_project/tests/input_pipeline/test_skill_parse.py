@@ -10,11 +10,10 @@ from bot.input_pipeline.stages.skill_parse import (
     SkillParseStage,
 )
 
-from modex_agent.approval.types import ApprovalAction
-from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.commands.skill import ResolvedSkillCommand, SkillResolver
 from modex_agent.core.message import ContentFormat
 from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
+from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
 
 
 class _FakeResolver(SkillResolver):
@@ -102,7 +101,7 @@ async def test_skill_parse_passes_through_approval_decision() -> None:
         channel="websocket",
         metadata={
             RoutingMeta.APPROVAL_DECISION: ApprovalDecisionInput(
-                "c1", ApprovalAction.ALLOW
+                tool_call_id="c1", action=ApprovalAction.ALLOW
             ),
         },
     )

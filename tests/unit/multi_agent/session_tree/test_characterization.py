@@ -24,10 +24,10 @@ import pytest
 
 from modex_agent.core.agent import AgentCommKind, AgentContext
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
-from modex_agent.core.types import InputMessage
 from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.messaging.broker import Address, BrokerMessage, MessageBroker
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import AgentPool
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus

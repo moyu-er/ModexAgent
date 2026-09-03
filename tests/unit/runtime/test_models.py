@@ -1,6 +1,8 @@
 """Tests for runtime state models — enums, identities, turn state, operations."""
 from __future__ import annotations
 
+from modex_agent.core.message import ChatMessage
+from modex_agent.core.session_id import SessionInfo
 from modex_agent.runtime.enums import (
     AgentKind,
     MessageDeltaSource,
@@ -16,8 +18,6 @@ from modex_agent.runtime.models import (
     TurnIdentity,
     TurnStateBase,
 )
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.session_id import SessionInfo
 
 
 def test_turn_identity_is_explicit_and_stable() -> None:

@@ -19,8 +19,7 @@ from typing import Any
 
 import httpx
 
-from modex_agent.core.constants import ReasoningEffort
-from modex_agent.core.llm_request import LLMRequest
+from modex_agent.core.llm_request import LLMRequest, ReasoningEffort
 from modex_agent.core.llm_struct import LLMErrorInfo, LLMErrorKind, RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.stream_events import (

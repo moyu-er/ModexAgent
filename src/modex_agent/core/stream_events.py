@@ -15,9 +15,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .constants import FinishReason
-from .llm_struct import LLMErrorInfo, LLMErrorKind
-from .types import LLMResponse, TokenUsage, ToolCall
+from .llm_struct import FinishReason, LLMErrorInfo, LLMErrorKind, LLMResponse, TokenUsage
+from .message import ToolCall
 
 
 class ReplayFields(BaseModel):

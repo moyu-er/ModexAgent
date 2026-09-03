@@ -1,13 +1,10 @@
 """Tests for runtime state codec — round-trip, schema validation, payload size limits."""
 from __future__ import annotations
 
-import pytest
-
 from modex_agent.core.message import ChatMessage
-from modex_agent.runtime.codec import RuntimeStateCodecConfig, RuntimeStateCodecError
+from modex_agent.core.session_id import SessionInfo
 from modex_agent.runtime.enums import AgentKind, MessageDeltaSource, SnapshotReason, TurnPhase
 from modex_agent.runtime.models import MessageDelta, ResumePoint, TurnIdentity, TurnSnapshot
-from modex_agent.core.session_id import SessionInfo
 
 
 class _FakeCodec:

@@ -1,5 +1,11 @@
 # Session Garbage Collection Implementation Plan
 
+> **Implemented status (2026-09-02):** This is a historical implementation
+> plan. Session artifact cleanup now lives in
+> `modex_agent.persistence.session_artifacts`; the Bot-owned
+> `SessionGarbageCollector` still orchestrates the same cascade and backstop
+> sweep. Historical code sketches below are intentionally unchanged.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 > **Correction (2026-08-08):** ADR-0023 D7 simplified `ContextForkBuilder`

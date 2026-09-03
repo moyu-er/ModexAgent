@@ -15,8 +15,7 @@ from aiohttp import web
 from bot.webui.routes.sessions import resolve_agent
 from bot.webui.types import _materialize_partial_deltas
 from modex_agent.core.session_id import session_id_prefix_of
-from modex_agent.core.types import TodoStatus
-from modex_agent.runtime.store import JsonFileTodoStore
+from modex_agent.runtime.todo import JsonFileTodoStore, TodoStatus
 from modex_agent.workspace.paths import WorkspacePaths
 
 if TYPE_CHECKING:

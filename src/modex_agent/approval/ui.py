@@ -8,11 +8,11 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from modex_agent.core.types import OutputMessage
+from modex_agent.messaging.models import OutputMessage
 
 if TYPE_CHECKING:
-    from modex_agent.approval.views import ApprovalRequestView
     from modex_agent.adapters.output import OutputAdapter
+    from modex_agent.approval.views import ApprovalRequestView
 
 logger = logging.getLogger(__name__)
 

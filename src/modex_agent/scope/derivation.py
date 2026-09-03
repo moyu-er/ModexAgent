@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from modex_agent.core.constants import ProviderKind
+from modex_agent.core.agent import ProviderKind
 from modex_agent.plugins.abc import AgentType
 from modex_agent.tools.presets import ToolPreset, get_preset_tools
 

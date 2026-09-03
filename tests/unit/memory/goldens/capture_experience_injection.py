@@ -32,8 +32,6 @@ from modex_agent.plugins.defaults.capabilities.experience.catalog import Experie
 from modex_agent.plugins.defaults.capabilities.experience.metadata import (
     PerFileExperienceMetaStore,
 )
-from modex_agent.plugins.defaults.capabilities.experience.source import FileExperienceSource
-from modex_agent.core.scope import MemoryContext
 
 _GOLDEN_DIR = Path(__file__).resolve().parent
 _GOLDEN_FILE = _GOLDEN_DIR / "experience_section_pre_migration.txt"

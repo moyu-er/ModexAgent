@@ -21,8 +21,8 @@ from bot.eval.agent_harness import (
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.capabilities import ModelCapabilities
-from modex_agent.core.constants import FinishReason
-from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, TextPart
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
+from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, MessageRole, TextPart
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import (
@@ -32,13 +32,13 @@ from modex_agent.core.tool_manager import (
     ToolManager,
     ToolResult,
 )
-from modex_agent.core.types import LLMResponse, MessageRole
 from modex_agent.ioc.configs.observability import TraceBackend
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import JsonValue, TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.trace.cassette import (
     CassetteCategory,
     CassetteFlushHook,
@@ -47,7 +47,6 @@ from modex_agent.trace.cassette import (
 )
 from modex_agent.trace.chat_span_hook import ChatSpanHook
 from modex_agent.trace.semconv import GenAiAttr
-from modex_agent.tools.manager import InMemoryToolManager
 
 
 class _ScriptedToolManager(ToolManager):

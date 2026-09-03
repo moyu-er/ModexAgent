@@ -18,9 +18,9 @@ from modex_agent.workspace.scope_path import resolve_scope_path
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.session_id import SessionIdFactory, SessionInfo
-    from modex_agent.core.session_registry import SessionRegistry
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
     from modex_agent.multi_agent.tools import CommunicationTarget
+    from modex_agent.persistence.session_registry import SessionRegistry
     from modex_agent.workspace.resources import WorkspaceManager
     from modex_agent.workspace.scope_path import ScopePath
 

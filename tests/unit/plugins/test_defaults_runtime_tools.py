@@ -14,7 +14,7 @@ from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
 from modex_agent.plugins.defaults.tools import ToolConfig, register_default_tools
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.runtime.store import TodoItem, TodoStore
+from modex_agent.runtime.todo import TodoItem, TodoStore
 from modex_agent.tools.aci.edit_tool import AciEditTool
 
 

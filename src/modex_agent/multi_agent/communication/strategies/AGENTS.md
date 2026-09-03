@@ -110,7 +110,7 @@ class SendStrategy(ABC):
 - `modex_agent.multi_agent.tools` — `CommunicationTarget`
 - `modex_agent.core.agent` — `AgentCommKind`, `AgentContext`
 - `modex_agent.core.session_id` — `SessionIdFactory`, `SessionInfo`
-- `modex_agent.core.session_registry` — `SessionRegistry`
+- `modex_agent.persistence.session_registry` — `SessionRegistry`
 - `modex_agent.workspace.scope_path` — `ScopePath` + `resolve_scope_path` (addressing convergence)
 
 <!-- MANUAL -->

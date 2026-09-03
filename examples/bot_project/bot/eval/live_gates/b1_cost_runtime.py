@@ -20,14 +20,13 @@ from bot.eval.experiment_runner import _NoopEmitter
 from bot.service.pool.declaration import boot_scope_spec
 from bot.workspace.handle import WorkspaceHandle, WorkspaceHandleRootProvider
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.core.constants import StopReason
-from modex_agent.core.context import ContextState
+from modex_agent.core.emitter import StopReason
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import MessageRole
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.factories.llm import create_llm_provider
+from modex_agent.memory.context import ContextState
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.plugins.assembly.single_agent import (
     SingleAgentAssembled,

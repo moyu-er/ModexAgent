@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.scope import MemoryContext, Scope, UserScope
 from modex_agent.memory.archive_models import (
     ArchiveBundleResult,
     ArchiveChannel,
@@ -23,6 +22,7 @@ from modex_agent.memory.core.models import (
     StorageRevision,
     UnprocessedResult,
 )
+from modex_agent.memory.scope import MemoryContext, Scope, UserScope
 
 
 class SessionMemoryManager(ABC):

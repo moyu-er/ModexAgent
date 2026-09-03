@@ -2,12 +2,24 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.constants import ReasoningEffort
 from modex_agent.core.message import ChatMessage
+
+
+class ReasoningEffort(StrEnum):
+    """Provider-neutral model reasoning effort."""
+
+    NONE = "none"
+    MINIMAL = "minimal"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    XHIGH = "xhigh"
+    MAX = "max"
 
 
 class LLMRequest(BaseModel):

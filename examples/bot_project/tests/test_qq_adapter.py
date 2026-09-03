@@ -121,7 +121,7 @@ class TestQQOutputAdapter:
         to ``_send_media`` so QQ preserves the original filename and type — not
         derive them from the (opaque) path basename."""
         from modex_agent.core.media import Attachment, AttachmentLocator, Kind
-        from modex_agent.core.types import OutputMessage
+        from modex_agent.messaging.models import OutputMessage
 
         opaque = tmp_path / "9d096e81667c434aa5f0df71d1529fbe"
         opaque.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 40)

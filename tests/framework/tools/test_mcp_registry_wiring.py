@@ -22,6 +22,7 @@ import pytest
 
 from modex_agent.ioc.configs.mcp import MCPConfig, MCPServerEntry
 from modex_agent.ioc.factories.tools import connect_mcp
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.mcp.client import BaseMCPClient
 from modex_agent.tools.mcp.injector import MCPTransportInjector
 from modex_agent.tools.mcp.registry import (
@@ -29,7 +30,6 @@ from modex_agent.tools.mcp.registry import (
     SharedMcpBackend,
 )
 from modex_agent.tools.mcp_loader import load_per_agent_mcp
-from modex_agent.tools.manager import InMemoryToolManager
 
 
 class _StubClient(BaseMCPClient):
@@ -171,7 +171,6 @@ async def test_connect_mcp_none_config_returns_none() -> None:
 @pytest.mark.asyncio
 async def test_load_per_agent_mcp_uses_registry_when_provided(tmp_path: Path) -> None:
     """Registry branch registers prefixed tools WITHOUT reading registry.json."""
-    from modex_agent.tools.manager import InMemoryToolManager
 
     one_tool = [{"name": "t1", "description": "d", "inputSchema": {"type": "object"}}]
     reg = McpConnectionRegistry(
@@ -196,7 +195,6 @@ async def test_load_per_agent_mcp_registry_acquire_failure_is_fail_soft(
     tmp_path: Path,
 ) -> None:
     """A FAILED connect must not raise and must register zero tools."""
-    from modex_agent.tools.manager import InMemoryToolManager
 
     reg = McpConnectionRegistry(
         {"s1": {"transport": "stdio", "command": "echo"}},
@@ -216,7 +214,6 @@ async def test_load_per_agent_mcp_registry_acquire_failure_is_fail_soft(
 @pytest.mark.asyncio
 async def test_load_per_agent_mcp_falls_back_without_registry(tmp_path: Path) -> None:
     """With registry=None and no registry.json, the default path logs+returns."""
-    from modex_agent.tools.manager import InMemoryToolManager
 
     tm = InMemoryToolManager()
     # tmp_path has no config/mcp/registry.json → early "missing; skipping" return.

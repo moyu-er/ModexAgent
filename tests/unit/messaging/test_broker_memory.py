@@ -1,4 +1,5 @@
 import asyncio
+
 import pytest
 
 from modex_agent.messaging.broker import Address, AddressKind, BrokerMessage

@@ -39,13 +39,13 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from modex_agent.commands.skill import SkillResolver
-    from modex_agent.core.context import ContextManager
     from modex_agent.core.emitter import AgentResult, ContentEmitter
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.tool_manager import ToolManager
-    from modex_agent.core.types import InputMessage
     from modex_agent.hook.runner import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
+    from modex_agent.memory.context import ContextManager
+    from modex_agent.messaging.models import InputMessage
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.multi_agent.router import RouteResult
     from modex_agent.pipeline.approval_renderer import ApprovalRenderer

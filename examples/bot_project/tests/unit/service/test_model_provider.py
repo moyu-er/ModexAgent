@@ -15,9 +15,8 @@ from bot.service.model_choice import current_model_choice
 from bot.service.model_config import BotModelConfig
 from bot.service.model_provider import BotModelProvider
 
-from modex_agent.core.constants import FinishReason
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.types import LLMResponse, MessageRole
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
+from modex_agent.core.message import ChatMessage, MessageRole
 
 _YML = """
 models:

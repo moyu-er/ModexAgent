@@ -47,7 +47,7 @@ from modex_agent.core.session_id import (
     SessionInfo,
     session_id_prefix_of,
 )
-from modex_agent.core.session_store import SessionStore
+from modex_agent.persistence.session_store import SessionStore
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.port import WorkspaceControlPort
 

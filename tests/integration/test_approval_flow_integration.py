@@ -28,17 +28,22 @@ import pytest
 
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.agents.react.agent import ReActAgent
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.ui import IMUserInterface
-from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.commands.processor import SlashCommandProcessor
-from modex_agent.core.context import InMemoryContextManager
+from modex_agent.core.llm_struct import LLMResponse
+from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import Tool
-from modex_agent.core.types import InputMessage, LLMResponse, OutputMessage, ToolCall
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
 from modex_agent.ioc.factories.approval import build_approval_runtime
+from modex_agent.memory.context import InMemoryContextManager
+from modex_agent.messaging.models import (
+    ApprovalAction,
+    ApprovalDecisionInput,
+    InputMessage,
+    OutputMessage,
+)
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.runtime.enums import SnapshotReason, TurnPhase
 from modex_agent.runtime.models import StateQueryScope
@@ -400,7 +405,7 @@ async def test_dangerous_tool_suspends_then_webui_decision_resumes(tmp_path: Pat
     decision_msg = InputMessage(
         content="",
         session=session,
-        approval_decision=ApprovalDecisionInput("c1", ApprovalAction.ALLOW),
+        approval_decision=ApprovalDecisionInput(tool_call_id="c1", action=ApprovalAction.ALLOW),
     )
     resume_result = await pipeline._process_message(decision_msg)
 
@@ -605,7 +610,7 @@ async def test_resume_feeds_llm_well_formed_history(tmp_path: Path) -> None:
         InputMessage(
             content="",
             session=session,
-            approval_decision=ApprovalDecisionInput("c1", ApprovalAction.ALLOW),
+            approval_decision=ApprovalDecisionInput(tool_call_id="c1", action=ApprovalAction.ALLOW),
         )
     )
     assert resume_result is not None
@@ -675,7 +680,7 @@ async def test_resume_with_tool_chain_governance_feeds_llm_well_formed_history(
         InputMessage(
             content="",
             session=session,
-            approval_decision=ApprovalDecisionInput("c1", ApprovalAction.ALLOW),
+            approval_decision=ApprovalDecisionInput(tool_call_id="c1", action=ApprovalAction.ALLOW),
         )
     )
     assert resume_result is not None
@@ -697,7 +702,7 @@ async def test_post_construction_governance_mirrors_and_backfills_dangling_toolc
     post-construction assignment never reached ``TurnContextBuilder._governance``
     and the sanitizer never ran — a dangling tool_call went straight to the LLM.
     """
-    from modex_agent.core.context import InMemoryContextManager
+    from modex_agent.memory.context import InMemoryContextManager
     from modex_agent.memory.context_governance import (
         CompositeGovernance,
         ContextBudgetGovernance,
@@ -808,7 +813,7 @@ async def test_snapshot_and_resume_connect_across_different_agent_ids(
         InputMessage(
             content="",
             session=session,
-            approval_decision=ApprovalDecisionInput("c1", ApprovalAction.ALLOW),
+            approval_decision=ApprovalDecisionInput(tool_call_id="c1", action=ApprovalAction.ALLOW),
         )
     )
     assert result is not None
@@ -866,7 +871,7 @@ async def test_resume_isolated_by_session_id_no_cross_contamination(
         InputMessage(
             content="",
             session=sess_b,
-            approval_decision=ApprovalDecisionInput("ca", ApprovalAction.ALLOW),
+            approval_decision=ApprovalDecisionInput(tool_call_id="ca", action=ApprovalAction.ALLOW),
         )
     )
     assert recorded == [], "session B approve must not execute session A's tool"
@@ -887,7 +892,7 @@ async def test_webui_approval_decision_not_persisted_as_empty_user_message(
     short-circuit branch sets append_user_message=False and resume runs
     instead — no empty user is stored.
     """
-    from modex_agent.core.types import MessageRole
+    from modex_agent.core.message import MessageRole
 
     pipeline, provider, output_adapter, turn_store, recorded = _build_pipeline(tmp_path=tmp_path)
     session = SessionInfo.from_str("s1.main")
@@ -904,7 +909,7 @@ async def test_webui_approval_decision_not_persisted_as_empty_user_message(
         InputMessage(
             content="",
             session=session,
-            approval_decision=ApprovalDecisionInput("c1", ApprovalAction.ALLOW),
+            approval_decision=ApprovalDecisionInput(tool_call_id="c1", action=ApprovalAction.ALLOW),
         )
     )
     assert resume_result is not None
@@ -989,7 +994,7 @@ async def test_resume_with_file_turn_store_feeds_llm_well_formed_history(
         InputMessage(
             content="",
             session=session,
-            approval_decision=ApprovalDecisionInput("c1", ApprovalAction.ALLOW),
+            approval_decision=ApprovalDecisionInput(tool_call_id="c1", action=ApprovalAction.ALLOW),
         )
     )
     assert resume_result is not None
@@ -1067,7 +1072,7 @@ async def test_resume_with_production_memory_cm_feeds_llm_well_formed_history(
         InputMessage(
             content="",
             session=session,
-            approval_decision=ApprovalDecisionInput("c1", ApprovalAction.ALLOW),
+            approval_decision=ApprovalDecisionInput(tool_call_id="c1", action=ApprovalAction.ALLOW),
         )
     )
     assert resume_result is not None

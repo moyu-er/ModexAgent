@@ -11,7 +11,7 @@ import pytest
 from bot.adapters.fan_in import FanInInputAdapter
 
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
+from modex_agent.messaging.models import InputMessage
 from modex_agent.pipeline.adapters import InputAdapter
 
 

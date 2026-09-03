@@ -78,78 +78,15 @@ __all__ = [
 ]
 
 _SYMBOL_MODULE = {
-    **{
-        name: "modex_agent.plugins.abc"
-        for name in (
-            "AgentType",
-            "ComponentFactory",
-            "ComponentSlot",
-            "HookFactory",
-            "HookRunnerKind",
-            "MemoryHookFactory",
-            "PluginSource",
-            "PrototypeFactory",
-            "ReactHookFactory",
-            "SimpleFactory",
-        )
-    },
-    **{
-        name: "modex_agent.plugins.assembly.builder"
-        for name in ("AssembledAgent", "AssemblyBuilder")
-    },
-    **{
-        name: "modex_agent.plugins.assembly.context"
-        for name in (
-            "AgentContext",
-            "AssemblyContext",
-            "PoolContext",
-            "PoolRuntimeDeps",
-            "WorkspaceContext",
-            "agent_context_chain",
-        )
-    },
+    **dict.fromkeys(("AgentType", "ComponentFactory", "ComponentSlot", "HookFactory", "HookRunnerKind", "MemoryHookFactory", "PluginSource", "PrototypeFactory", "ReactHookFactory", "SimpleFactory"), "modex_agent.plugins.abc"),
+    **dict.fromkeys(("AssembledAgent", "AssemblyBuilder"), "modex_agent.plugins.assembly.builder"),
+    **dict.fromkeys(("AgentContext", "AssemblyContext", "PoolContext", "PoolRuntimeDeps", "WorkspaceContext", "agent_context_chain"), "modex_agent.plugins.assembly.context"),
     "LlmDefaults": "modex_agent.plugins.assembly.native_core",
-    **{
-        name: "modex_agent.plugins.assembly.pipeline"
-        for name in ("AssemblyPipeline", "AssemblyStage")
-    },
-    **{
-        name: "modex_agent.plugins.assembly.spec"
-        for name in ("AssemblySpec", "MemoryOverrides")
-    },
-    **{
-        name: "modex_agent.plugins.capability"
-        for name in (
-            "AgentDeclarationView",
-            "AgentDeclaredFields",
-            "Capability",
-            "CapabilityBinding",
-            "CapabilityConfig",
-            "CapabilityContribution",
-            "CapabilitySupply",
-            "CapabilityWiring",
-            "ChildSummary",
-            "FinalRosterView",
-            "PoolSupplyAgentEntry",
-            "PoolSupplyView",
-            "PromptSectionSpec",
-            "ToolReplacementSpec",
-            "TreePositionView",
-        )
-    },
-    **{
-        name: "modex_agent.plugins.loader"
-        for name in (
-            "ComponentRegistryLoader",
-            "Plugin",
-            "PluginDiscoveryConfig",
-            "PluginRegistrationContext",
-        )
-    },
-    **{
-        name: "modex_agent.plugins.registry"
-        for name in ("ComponentNotFoundError", "ComponentRegistry", "TypedBundle")
-    },
+    **dict.fromkeys(("AssemblyPipeline", "AssemblyStage"), "modex_agent.plugins.assembly.pipeline"),
+    **dict.fromkeys(("AssemblySpec", "MemoryOverrides"), "modex_agent.plugins.assembly.spec"),
+    **dict.fromkeys(("AgentDeclarationView", "AgentDeclaredFields", "Capability", "CapabilityBinding", "CapabilityConfig", "CapabilityContribution", "CapabilitySupply", "CapabilityWiring", "ChildSummary", "FinalRosterView", "PoolSupplyAgentEntry", "PoolSupplyView", "PromptSectionSpec", "ToolReplacementSpec", "TreePositionView"), "modex_agent.plugins.capability"),
+    **dict.fromkeys(("ComponentRegistryLoader", "Plugin", "PluginDiscoveryConfig", "PluginRegistrationContext"), "modex_agent.plugins.loader"),
+    **dict.fromkeys(("ComponentNotFoundError", "ComponentRegistry", "TypedBundle"), "modex_agent.plugins.registry"),
 }
 
 

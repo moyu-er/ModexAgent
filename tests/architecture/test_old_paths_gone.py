@@ -109,6 +109,15 @@ FORBIDDEN_MODULE_PATHS: tuple[str, ...] = (
     # D2 OLD-AUTHORITY: skill assignment is disk-owned; the generic IOC
     # config module no longer supplies roots or allow-lists.
     "ioc/configs/skills.py",
+    # E1 (plan §15): remaining core grab bags split into their semantic
+    # memory, messaging, persistence, runtime, and ReAct owners.
+    "core/constants.py",
+    "core/context.py",
+    "core/governance.py",
+    "core/ids.py",
+    "core/session_registry.py",
+    "core/session_store.py",
+    "core/types.py",
 )
 
 # (shim module, origin module) — the shim must not import anything from the
@@ -146,7 +155,50 @@ FORBIDDEN_IDENTIFIERS: tuple[str, ...] = (
     "ParsedSkill",
     "_build_skill_manager",
     "skill_manager",
+    # E1: constants with no live semantic owner were deleted rather than
+    # carried into another grab bag.
+    "ToolCallType",
+    "ToolChoice",
+    "StreamControlAction",
+    "ErrorMessages",
+    "DefaultValues",
+    "ToolSchemaConstants",
+    # E1: these concrete-history helpers had no remaining callers.
+    "history_to_list",
+    "inject_attachments_to_history",
 )
+
+# Symbols relocated from core files that remain live. These checks are scoped
+# to the old owner so the canonical definitions in their new owners stay valid.
+FORBIDDEN_OLD_OWNER_BINDINGS: dict[str, tuple[str, ...]] = {
+    "approval/__init__.py": ("ApprovalAction",),
+    "approval/types.py": ("ApprovalAction",),
+    "core/history.py": ("ListMessageHistory",),
+    "core/message_utils.py": ("ToolNudgeVerdict", "scan_tool_usage_in_turn"),
+    "core/scope.py": (
+        "MemoryAgentRole",
+        "MemoryLayerName",
+        "MemoryContext",
+        "ScopeRecord",
+        "infer_agent_role",
+        "Scope",
+        "SessionScope",
+        "UserScope",
+        "TenantScope",
+        "AgentScope",
+        "ChannelScope",
+        "ChatScope",
+        "GlobalScope",
+        "CompositeScope",
+        "build_scope",
+        "scope_path_key",
+    ),
+    "core/session_id.py": ("now_ms", "now_s"),
+    "memory/default_system.py": ("ScopedMessageHistory",),
+    "memory/history.py": ("MessageHistory",),
+    "memory/__init__.py": ("MemorySystemABC",),
+    "runtime/store.py": ("TodoItem", "TodoStatus", "TodoStore", "JsonFileTodoStore"),
+}
 
 
 def _existing_forbidden_paths(root: Path) -> list[str]:
@@ -201,6 +253,40 @@ def _python_identifiers(path: Path) -> set[str]:
     return identifiers
 
 
+def _assignment_names(target: ast.expr) -> set[str]:
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, ast.Tuple | ast.List):
+        return {
+            name
+            for element in target.elts
+            for name in _assignment_names(element)
+        }
+    return set()
+
+
+def _python_module_bindings(path: Path) -> set[str]:
+    """Names defined or imported directly by a module."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    bindings: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            bindings.add(node.name)
+        elif isinstance(node, ast.Import):
+            bindings.update(
+                alias.asname or alias.name.split(".", maxsplit=1)[0]
+                for alias in node.names
+            )
+        elif isinstance(node, ast.ImportFrom):
+            bindings.update(alias.asname or alias.name for alias in node.names)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                bindings.update(_assignment_names(target))
+        elif isinstance(node, ast.AnnAssign):
+            bindings.update(_assignment_names(node.target))
+    return bindings
+
+
 def test_old_module_paths_stay_gone() -> None:
     resurrected = _existing_forbidden_paths(PACKAGE_ROOT)
     assert not resurrected, (
@@ -227,6 +313,7 @@ def test_forbidden_path_list_is_nonempty() -> None:
     """Sanity: the guard must actually watch something."""
     assert FORBIDDEN_MODULE_PATHS
     assert FORBIDDEN_IDENTIFIERS
+    assert FORBIDDEN_OLD_OWNER_BINDINGS
 
 
 def test_forbidden_identifiers_absent_from_live_python() -> None:
@@ -239,4 +326,17 @@ def test_forbidden_identifiers_absent_from_live_python() -> None:
     assert not offenders, (
         "Identifiers deleted as proven dead re-introduced in live Python "
         f"(provenance in FORBIDDEN_IDENTIFIERS): {offenders}"
+    )
+
+
+def test_moved_symbols_absent_from_old_live_owners() -> None:
+    offenders: list[str] = []
+    for relative_path, forbidden in FORBIDDEN_OLD_OWNER_BINDINGS.items():
+        bindings = _python_module_bindings(PACKAGE_ROOT / relative_path)
+        hits = set(forbidden) & bindings
+        if hits:
+            offenders.append(f"{relative_path}: {sorted(hits)}")
+    assert not offenders, (
+        "Symbols relocated during architecture convergence are bound by their "
+        f"old live owners: {offenders}"
     )

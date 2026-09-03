@@ -1,9 +1,9 @@
 """Tests for AgentCommunicationService routing logic."""
 
 from __future__ import annotations
-from unittest.mock import MagicMock
 
 from collections.abc import AsyncIterator
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -16,8 +16,8 @@ from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.multi_agent.registry import AgentProfile
-from modex_agent.multi_agent.tools import CommunicationTarget
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+from modex_agent.multi_agent.tools import CommunicationTarget
 from modex_agent.tools.manager import InMemoryToolManager
 
 

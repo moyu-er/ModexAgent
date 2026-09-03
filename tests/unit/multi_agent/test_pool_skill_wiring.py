@@ -15,9 +15,9 @@ import pytest
 from modex_agent.commands.handlers import SkillCommandHandler
 from modex_agent.commands.models import CommandContext, SlashCommandInvocation
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
 from modex_agent.messaging.broker import AddressKind
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import AgentPool, DefaultAgentFactory
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentDescriptor
@@ -197,14 +197,14 @@ async def test_pooled_assembly_uses_one_disk_catalog_per_native_agent(
 
     from pydantic import BaseModel, ConfigDict
 
-    from modex_agent.core.context import ContextManager
     from modex_agent.core.llm_request import LLMRequest
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.provider import LLMProvider
-    from modex_agent.core.scope import MemoryAgentRole
     from modex_agent.core.session_id import SessionIdFactory
     from modex_agent.core.stream_events import LLMStreamEvent
     from modex_agent.ioc.factories.descriptors import build_session_only_memory
+    from modex_agent.memory.context import ContextManager
+    from modex_agent.memory.scope import MemoryAgentRole
     from modex_agent.multi_agent import SessionRetentionPolicy
     from modex_agent.multi_agent.bus import LocalAgentMessageBus
     from modex_agent.multi_agent.execution_strategy import (

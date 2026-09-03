@@ -6,11 +6,12 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.core.capabilities import ModelInfo
-from modex_agent.core.constants import ExecutionStrategyKind, ProviderKind, ReasoningEffort
-from modex_agent.core.context import ContextManager
+from modex_agent.core.llm_request import ReasoningEffort
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.memory.context import ContextManager
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 
@@ -107,7 +108,7 @@ class AgentDescriptor(BaseModel):
     default in factory.create_agent."""
     roles: list[str] = Field(default_factory=list)
     """Agent role tags (T1 data layer). Plain strings — preset values are
-    :class:`modex_agent.core.constants.AgentRole` members, custom strings
+    :class:`modex_agent.core.agent.AgentRole` members, custom strings
     are allowed. ``compare=False`` excludes this field from the auto-generated
     ``__eq__`` / ``__hash__`` because roles are metadata, not identity —
     pool registration dedup is unaffected by role changes."""

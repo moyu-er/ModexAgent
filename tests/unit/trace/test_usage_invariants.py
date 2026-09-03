@@ -16,7 +16,7 @@ through individually-tested layers:
 
 from __future__ import annotations
 
-from modex_agent.core.types import TokenUsage
+from modex_agent.core.llm_struct import TokenUsage
 from modex_agent.trace.scoring import compute_metrics
 from modex_agent.trace.semconv import GenAiAttr
 from modex_agent.trace.store import SpanModel, SpanStatus, SpanStatusCode

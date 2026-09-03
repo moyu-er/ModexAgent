@@ -10,7 +10,7 @@ import questionary
 from rich.console import Console
 from rich.table import Table
 
-from modex_agent.core.constants import InterfaceFormat
+from modex_agent.ioc.configs.llm import InterfaceFormat
 from modexbot.config_model import (
     load_models_section,
     save_models_section,

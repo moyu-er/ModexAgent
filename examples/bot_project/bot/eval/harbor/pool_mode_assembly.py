@@ -51,9 +51,8 @@ from bot.workspace.handle import PoolWorkspaceResources, WorkspaceResolverCell
 from bot.workspace.pool_data import PoolData, build_pool_data
 from bot.workspace.wiring import build_tool_overflow_interceptor_chain
 from bot.workspace.wiring.stack import declared_assembly_deps
+from modex_agent.adapters.output import NullOutputAdapter, OutputAdapter
 from modex_agent.core.provider import LLMProvider
-from modex_agent.core.session_registry import InMemorySessionRegistry
-from modex_agent.core.session_store import SessionStore
 from modex_agent.hook import Hook, HookRunner
 from modex_agent.hook.builtin import CurrentTimeInjectionHook
 from modex_agent.hook.builtin.knowledge_hook import KnowledgeHook
@@ -65,7 +64,8 @@ from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.managers import WorkspacePersistenceManager
-from modex_agent.adapters.output import NullOutputAdapter, OutputAdapter
+from modex_agent.persistence.session_registry import InMemorySessionRegistry
+from modex_agent.persistence.session_store import SessionStore
 from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.assembly.context import AssemblyContext
 from modex_agent.plugins.registry import ComponentRegistry

@@ -42,7 +42,7 @@ from modex_agent.agents.external.backend_provider import (
 )
 from modex_agent.agents.external.contracts import ProviderEventParser
 from modex_agent.agents.external.events import ExternalEvent
-from modex_agent.agents.external.paths import ExternalPaths, ProviderKind
+from modex_agent.agents.external.paths import ExternalPaths
 from modex_agent.agents.external.scripted_backend import (
     ScriptedProgramme,
     ScriptedProviderBackend,
@@ -56,10 +56,13 @@ from modex_agent.agents.external.types import (
     ExecOptions,
     ExternalEnvSpec,
 )
-from modex_agent.core.agent import AgentContext, AgentImplementation, current_agent_context
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.core.history import ListMessageHistory
+from modex_agent.core.agent import (
+    AgentContext,
+    AgentImplementation,
+    ProviderKind,
+    current_agent_context,
+)
+from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn_events import (
@@ -68,6 +71,7 @@ from modex_agent.core.turn_events import (
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
+from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.message_format import SourceLabel, build_agent_comm_message
 from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.tools.manager import InMemoryToolManager

@@ -191,7 +191,8 @@ async def test_session_index_save_writes_to_constructed_root(
     removed: workspace isolation now lives in store construction (the WebUI
     server builds a fresh store per workspace via a factory).
     """
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     index = WorkspacePoolSessionStore(
         base_dir=tmp_path / "idx", pool_resolver=lambda s: "main"

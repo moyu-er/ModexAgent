@@ -7,8 +7,8 @@ import pytest
 from modex_agent.control.exceptions import AgentCancelledError, AgentControlError, AgentTimeoutError
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
+from modex_agent.core.message import ToolCall
 from modex_agent.core.tool_manager import ToolResult
-from modex_agent.core.types import ToolCall
 from modex_agent.interceptor.abc import (
     IterationContext,
     IterationInterceptor,

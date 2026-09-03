@@ -16,7 +16,7 @@ from bot.eval.memory_metric_reporting import (
     render_memory_metrics,
 )
 from bot.eval.memory_metrics import reduce_memory_spans
-from modex_agent.core.constants import StopReason
+from modex_agent.core.emitter import StopReason
 from modex_agent.trace.langfuse_query import (
     LangfuseClient,
     LangfuseQueryError,

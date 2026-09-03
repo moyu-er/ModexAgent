@@ -14,17 +14,16 @@ from plugins.bot_strategies import BotDefaultLLMConfig
 
 from modex_agent.adapters.output import NullOutputAdapter
 from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.core.constants import FinishReason
 from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.llm_struct import FinishReason, LLMResponse, RuntimeSafetyPolicy
+from modex_agent.core.message import ChatMessage, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage, LLMResponse, ToolCall
 from modex_agent.hook import HookRunner
 from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.memory.presets import main_agent_memory
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_instance import PoolInstance

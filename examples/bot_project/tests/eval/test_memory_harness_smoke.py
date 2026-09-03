@@ -9,11 +9,11 @@ from bot.eval.agent_harness import (
     run_dream_until_exhausted,
 )
 
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.llm_struct import LLMResponse
+from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.scope import MemoryContext
-from modex_agent.core.types import LLMResponse, MessageRole, ToolCall
-from modex_agent.memory.default_system import ScopedMessageHistory
+from modex_agent.memory.history import ScopedMessageHistory
+from modex_agent.memory.scope import MemoryContext
 
 _FACT: Final = "The launch code is indigo-742."
 _SESSION_ID: Final = "eval.memory.smoke.react"

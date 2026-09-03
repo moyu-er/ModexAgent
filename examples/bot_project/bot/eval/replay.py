@@ -21,11 +21,11 @@ from bot.eval.agent_harness import (
 from bot.eval.experiment_runner import EvalRunner
 from bot.eval.task_output import EvalTaskOutput, ToolStats, TurnRecord, WorldResult
 from bot.eval.task_spec import EvalItemSpec
-from modex_agent.core.constants import StopReason
+from modex_agent.core.emitter import StopReason
+from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.tool_manager import ToolManager
-from modex_agent.core.types import LLMResponse
 from modex_agent.trace.cassette import (
     CassetteEntry,
     CassetteManifest,

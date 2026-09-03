@@ -7,10 +7,11 @@ from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.llm_struct import LLMResponse
+from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import Tool
-from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import (
     AgentKind,

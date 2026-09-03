@@ -8,12 +8,9 @@ from __future__ import annotations
 import pytest
 
 from modex_agent.tools.ast.engine import (
-    AST_UNAVAILABLE_MSG,
-    AstMatch,
-    AstNotAvailableError,
-    AstParseError,
-    AstQueryError,
     _EXT_MAP,
+    AstNotAvailableError,
+    AstQueryError,
     _get_parser,
     _resolve_language,
     is_ast_available,

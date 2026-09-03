@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import MessageRole
 from modex_agent.memory.pruned.models import PrunedIndexEntry
 from modex_agent.memory.pruned.render import render_transcript
 from modex_agent.memory.tags import PrunedTag

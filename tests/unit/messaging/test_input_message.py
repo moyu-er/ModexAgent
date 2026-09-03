@@ -6,12 +6,15 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.approval.types import ApprovalAction
-from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage, MessageType
+from modex_agent.messaging.models import (
+    ApprovalAction,
+    ApprovalDecisionInput,
+    InputMessage,
+    MessageType,
+)
 
 
 def test_input_message_defaults_no_approval_decision():
@@ -28,9 +31,8 @@ def test_input_message_carries_approval_decision():
 def test_input_message_roundtrip():
     """to_dict -> from_dict preserves all InputMessage fields (TDD B5C).
 
-    Covers the non-BaseModel fields (Path workspace, ApprovalDecisionInput
-    dataclass) that require custom serialization in the to_dict/from_dict
-    facades plus arbitrary_types_allowed on the model.
+    Covers Path and the nested ApprovalDecisionInput model through Pydantic's
+    JSON serialization and validation.
     """
     record = Attachment(
         id="att-1",
@@ -83,4 +85,3 @@ def test_input_message_frozen():
     msg = InputMessage(content="x", session=SessionInfo.from_str("s1"))
     with pytest.raises(ValidationError):
         msg.content = "y"  # type: ignore[misc]
-

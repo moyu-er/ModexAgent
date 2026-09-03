@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modex_agent.core.scope import SessionScope
 from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.memory.layers.config import (
     ArchiveMemoryConfig,
@@ -14,6 +13,7 @@ from modex_agent.memory.layers.config import (
 )
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+from modex_agent.memory.scope import SessionScope
 
 
 class TestBuildFullConfig:

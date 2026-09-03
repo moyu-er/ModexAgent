@@ -42,11 +42,11 @@ from typing import TYPE_CHECKING
 from modex_agent.core.session_id import SessionInfo
 
 if TYPE_CHECKING:
-    from modex_agent.core.session_registry import SessionRegistry
     from modex_agent.multi_agent.descriptor import AgentInstance
     from modex_agent.multi_agent.pool import AgentPool
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
     from modex_agent.multi_agent.template import AgentTemplate
+    from modex_agent.persistence.session_registry import SessionRegistry
 
 logger = logging.getLogger(__name__)
 

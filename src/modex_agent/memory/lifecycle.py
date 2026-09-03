@@ -10,13 +10,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from modex_agent.core.scope import (
-    MemoryContext,
-    MemoryLayerName,
-)
 from modex_agent.memory.archive_models import ArchiveChannel
 from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.memory.registry.base import MemoryStoreRegistry
+from modex_agent.memory.scope import (
+    MemoryContext,
+    MemoryLayerName,
+)
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 
 logger = logging.getLogger(__name__)

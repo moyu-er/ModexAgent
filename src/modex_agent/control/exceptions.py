@@ -6,7 +6,7 @@ asyncio.CancelledError, KeyboardInterrupt, SystemExit must not be swallowed.
 
 from __future__ import annotations
 
-from modex_agent.core.constants import StopReason
+from modex_agent.core.emitter import StopReason
 
 
 class AgentControlError(Exception):

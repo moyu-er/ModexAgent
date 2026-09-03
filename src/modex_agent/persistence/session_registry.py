@@ -20,8 +20,9 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 
-from modex_agent.core.session_id import SessionInfo, now_ms
-from modex_agent.core.session_store import SessionStore
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.persistence.session_store import SessionStore
+from modex_agent.utils.time import now_ms
 
 logger = logging.getLogger(__name__)
 

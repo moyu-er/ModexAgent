@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modex_agent.core.types import OutputMessage
+from modex_agent.messaging.models import OutputMessage
 
 
 class TestQQOutputAdapter:

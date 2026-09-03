@@ -11,10 +11,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from modex_agent.core.context import ContextManager, InMemoryContextManager
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.tool_manager import ToolManager
-from modex_agent.adapters.output import OutputAdapter
+from modex_agent.memory.context import ContextManager, InMemoryContextManager
 from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer

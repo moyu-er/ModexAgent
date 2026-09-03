@@ -12,10 +12,10 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.agents.react.injection_drainer import InjectionDrainer
+from modex_agent.core.session_id import SessionInfo
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity, TurnStateBase
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-from modex_agent.core.session_id import SessionInfo
 
 if TYPE_CHECKING:
     from modex_agent.core.capabilities import ModelCapabilities

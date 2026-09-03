@@ -29,9 +29,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.constants import StopReason
-from modex_agent.core.scope import MemoryContext
+from modex_agent.core.emitter import StopReason
 from modex_agent.hook.abc import AfterGraphHook
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.snapshot import (
     DEFAULT_SNAPSHOT_MAX_CONTENT_LEN,
     DEFAULT_SNAPSHOT_MAX_MESSAGES,

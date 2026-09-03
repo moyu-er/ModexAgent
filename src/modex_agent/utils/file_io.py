@@ -5,8 +5,8 @@ crash-safe rename helper for every file-based writer in the framework (memory
 stores, experience/skills metadata, session indexes). It moved here from
 ``core/utils.py``, which moved it from ``memory/utils.py`` to break the old
 core↔memory cycle — the cycle is gone, so both duplicates converged here.
-``atomic_write_text`` (write-tmp + ``os.replace``, from
-``core/session_store.py``) rides the same consolidation.
+``atomic_write_text`` (write-tmp + ``os.replace``, formerly owned by the
+session-store implementation) rides the same consolidation.
 
 All consumers that read JSON or JSONL files from disk should use
 ``read_json_robust`` and ``read_jsonl_robust`` instead of calling

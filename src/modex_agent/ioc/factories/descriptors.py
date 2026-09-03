@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
 
-from modex_agent.core.scope import MemoryAgentRole
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.memory.injection import RestrictedInjectionPolicy
 from modex_agent.memory.layers.config import (
@@ -24,6 +23,7 @@ from modex_agent.memory.layers.config import (
     SessionMemoryConfig,
 )
 from modex_agent.memory.registry import MemoryStoreRegistry
+from modex_agent.memory.scope import MemoryAgentRole
 from modex_agent.memory.system import MemorySystemContextManager, create_memory_system
 
 

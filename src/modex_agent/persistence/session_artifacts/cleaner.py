@@ -42,7 +42,6 @@ from pathlib import Path
 
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import agent_of
-from modex_agent.core.session_store import safe_filename
 from modex_agent.memory.stores.utils import sanitize_scope_key
 from modex_agent.persistence.session_artifacts.discovery import (
     discover_file_session_scopes,
@@ -53,7 +52,9 @@ from modex_agent.persistence.session_artifacts.models import (
     SessionDatabaseCleanupError,
     SessionScopeMismatchError,
 )
-from modex_agent.runtime.store import JsonFileTodoStore, JsonFileTurnStateStore
+from modex_agent.persistence.session_store import safe_filename
+from modex_agent.runtime.store import JsonFileTurnStateStore
+from modex_agent.runtime.todo import JsonFileTodoStore
 from modex_agent.workspace.paths import WorkspacePaths, safe_segment
 
 logger = logging.getLogger(__name__)

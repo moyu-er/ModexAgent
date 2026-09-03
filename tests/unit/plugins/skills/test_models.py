@@ -1,6 +1,5 @@
 """Unit tests for core/skills/models.py."""
 
-import pytest
 
 from modex_agent.plugins.defaults.capabilities.skills.models import (
     ResolutionContext,

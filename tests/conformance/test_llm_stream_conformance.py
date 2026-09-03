@@ -25,10 +25,9 @@ from typing import Any
 import httpx
 import pytest
 
-from modex_agent.core.constants import FinishReason
 from modex_agent.core.llm_request import LLMRequest
-from modex_agent.core.llm_struct import LLMErrorKind
-from modex_agent.core.message import ChatMessage, MessageRole
+from modex_agent.core.llm_struct import FinishReason, LLMErrorKind, LLMResponse, TokenUsage
+from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.stream_events import (
     EventAssembler,
@@ -38,7 +37,6 @@ from modex_agent.core.stream_events import (
     TextDelta,
     ToolCallComplete,
 )
-from modex_agent.core.types import LLMResponse, TokenUsage, ToolCall
 from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
 from modex_agent.providers.http.provider import HTTPStreamProvider
 

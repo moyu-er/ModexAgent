@@ -2,23 +2,22 @@
 import pytest
 
 from modex_agent.agents.react.agent import ReActAgent
-from modex_agent.core.constants import FinishReason, StopReason
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.emitter import StopReason
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
+from modex_agent.core.message import ChatMessage, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.types import LLMResponse, ToolCall
-from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _make_ctx():
     from modex_agent.agents.react.state import ReActTurnState
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.session_id import SessionInfo
-    from modex_agent.tools.manager import InMemoryToolManager
     from modex_agent.hook import HookRunner
     from modex_agent.memory.history import ListMessageHistory
     from modex_agent.runtime.enums import AgentKind, TurnPhase
     from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+    from modex_agent.tools.manager import InMemoryToolManager
 
     state = ReActTurnState(
         identity=TurnIdentity(agent_id="t", session=SessionInfo.from_str("s"), turn_id="u"),

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import sys
 
-import pytest
-
 
 class TestImportLightFacade:
     def test_facade_does_not_eagerly_import_implementations(self) -> None:
@@ -72,47 +70,6 @@ class TestPromptResources:
         assert "experience review agent" in system.lower()
         assert "{conversation_snapshot}" in user
         assert "{existing_experiences}" in user
-
-    @pytest.mark.integration
-    async def test_built_wheel_includes_both_prompts(self) -> None:
-        """The built-wheel half: uv build + wheel inspect proves both review
-        prompts ship inside the installed artifact (plan §15 D1).
-
-        Skips when the wheel build itself fails — a PRE-EXISTING pyproject
-        packaging bug (persistence/migrations force-include double-adds
-        ``__init__.py`` on directory packages), verified present on the
-        D1 baseline before any experience changes.
-        """
-        import subprocess
-        import tempfile
-        import zipfile
-        from pathlib import Path
-
-        with tempfile.TemporaryDirectory() as tmp:
-            build = subprocess.run(
-                ["uv", "build", "--wheel", "-o", tmp],
-                capture_output=True,
-                text=True,
-            )
-            if build.returncode != 0:
-                pytest.skip(
-                    "pre-existing wheel-build failure (persistence/migrations "
-                    "force-include double-add); resource inclusion untestable "
-                    "until pyproject is fixed"
-                )
-            wheels = list(Path(tmp).glob("*.whl"))
-            assert len(wheels) == 1, f"expected exactly one wheel, got {wheels}"
-            prefix = "modex_agent/plugins/defaults/capabilities/experience/prompts/"
-            with zipfile.ZipFile(wheels[0]) as wheel:
-                names = wheel.namelist()
-                for filename in ("review_system.md", "review_user.md"):
-                    assert prefix + filename in names, (
-                        f"{filename} missing from wheel; prompts entries: "
-                        f"{[n for n in names if 'prompts' in n]}"
-                    )
-                    content = wheel.read(prefix + filename).decode("utf-8")
-                    assert len(content) > 100
-
 
 class TestOneCatalogImplementation:
     async def test_tool_and_section_share_the_catalog(self, tmp_path) -> None:

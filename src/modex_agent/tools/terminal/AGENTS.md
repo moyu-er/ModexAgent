@@ -184,7 +184,7 @@ Every command gets a **480 s budget** (`command_deadline_seconds` in
   interrupt call `ProcessRegistry.refresh_deadline()`, restarting the 480 s
   clock for the interaction.
 - **Why 480** — the deadline sits strictly below the executor's 540 s tool
-  timeout (`TOOL_TIMEOUT_SECONDS`, `core/constants.py`), so the graceful
+  timeout (`DEFAULT_TOOL_TIMEOUT_SECONDS`, `core/llm_struct.py`), so the graceful
   close-tab-and-reset path always fires before the executor kills the call.
 
 ---

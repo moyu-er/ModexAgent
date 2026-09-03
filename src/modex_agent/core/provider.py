@@ -7,9 +7,8 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-from .constants import FinishReason
 from .llm_request import LLMRequest
-from .llm_struct import LLMErrorInfo, LLMErrorKind
+from .llm_struct import FinishReason, LLMErrorInfo, LLMErrorKind, LLMResponse, TokenUsage
 from .message import ChatMessage
 from .stream_events import (
     EventAssembler,
@@ -21,7 +20,6 @@ from .stream_events import (
     ToolCallComplete,
     UsageSnapshot,
 )
-from .types import LLMResponse, TokenUsage
 
 logger = logging.getLogger(__name__)
 

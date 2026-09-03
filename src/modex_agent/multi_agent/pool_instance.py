@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.commands.skill import SkillResolver
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.messaging.broker import AddressKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.pool_config.media import MediaConfig

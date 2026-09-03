@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent import ToolCall
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.context import ReActGraphContext
@@ -19,12 +18,11 @@ from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.approval.constants import ApprovalDecision
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import FinishReason, StopReason
-from modex_agent.core.emitter import AgentResult
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.llm_struct import FinishReason
+from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolResult
-from modex_agent.core.types import MessageRole
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
 from modex_agent.tools.manager import InMemoryToolManager

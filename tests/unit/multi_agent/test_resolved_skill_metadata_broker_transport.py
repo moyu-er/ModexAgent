@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
 from modex_agent.messaging.broker import Address, AddressKind, BrokerMessage
 from modex_agent.messaging.broker_bridge import build_input_broker_message
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 
 

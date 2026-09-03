@@ -19,8 +19,7 @@ from modex_agent.agents.react.error_recovery import (
     is_context_overflow_error,
 )
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import ChatMessage, MessageRole
 
 _CTX: MagicMock = MagicMock(spec=AgentContext)
 

@@ -15,6 +15,7 @@ import httpx
 import pytest
 from dotenv import load_dotenv
 
+from modex_agent.core.message import MessageRole
 from modex_agent.trace import langfuse_query
 from modex_agent.trace.langfuse_query import (
     LangfuseClient,
@@ -32,7 +33,7 @@ from modex_agent.trace.semconv import (
     SpanStatusCode,
 )
 from modex_agent.trace.store import SpanModel, SpanStatus
-from modex_agent.trace.training_exporter import MessageRole, TrainingDataExporter
+from modex_agent.trace.training_exporter import TrainingDataExporter
 
 TRACE_ID = "0123456789abcdef0123456789abc003"
 _LIVE_LANGFUSE_CONFIGURED = bool(

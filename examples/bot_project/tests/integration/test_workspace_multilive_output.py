@@ -33,10 +33,11 @@ from bot.service.core import BotService
 from modex_agent.adapters.emitter import StreamingAwareEmitter
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.adapters.platform import StreamingMode
+from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.types import InputMessage, LLMResponse, OutputMessage
 from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.messaging.models import InputMessage, OutputMessage
 
 pytestmark = pytest.mark.integration
 

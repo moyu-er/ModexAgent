@@ -18,18 +18,17 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.approval.runtime import TieredToolApprovalClassifier
 from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from modex_agent.approval.constants import ApprovalTier
+from modex_agent.approval.runtime import TieredToolApprovalClassifier
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import ToolCall
 from modex_agent.interceptor.builtin.tool_approval import ArgumentMatcher
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.standard.file_tool import EditFileTool, ReadFileTool, WriteFileTool
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
-from modex_agent.tools.manager import InMemoryToolManager
-
 
 # ---------------------------------------------------------------------------
 # Bug A — canonical tool-name contract

@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.core.consolidation import MemoryUpdate
 from modex_agent.memory.core.models import ArchiveEntry
 from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.system import MemorySystemContextManager
 
 
@@ -130,7 +130,7 @@ async def test_default_memory_system_accepts_custom_estimator(tmp_path) -> None:
 
 
 async def test_context_manager_load_injects_role_contract_when_roles_set(system) -> None:
-    from modex_agent.core.constants import AgentRole
+    from modex_agent.core.agent import AgentRole
 
     manager = MemorySystemContextManager(system, roles=[AgentRole.REVIEWER.value])
     state = await manager.load("role-contract-session")
@@ -162,7 +162,7 @@ async def test_get_full_history_with_limit(system) -> None:
     With 10 messages (1 COMPACT), limit=5 returns the last 5 of the 9
     non-COMPACT messages.
     """
-    from modex_agent.core.types import MessageRole
+    from modex_agent.core.message import MessageRole
 
     await system.initialize()
     ctx = MemoryContext(session_id="full-history-limit")

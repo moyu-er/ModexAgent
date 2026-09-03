@@ -3,13 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from modex_agent.core.provider import LLMProvider
-from modex_agent.core.scope import (
-    MemoryContext,
-    MemoryLayerName,
-    Scope,
-    SessionScope,
-    UserScope,
-)
 from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.memory.core.split_stores import MemoryStoreBundle
 from modex_agent.memory.hooks import MemoryHookRunner
@@ -23,6 +16,13 @@ from modex_agent.memory.layers.config import (
 from modex_agent.memory.layers.core import ScopedCoreMemoryManager
 from modex_agent.memory.layers.session import ScopedSessionMemoryManager
 from modex_agent.memory.registry import MemoryStoreRegistry
+from modex_agent.memory.scope import (
+    MemoryContext,
+    MemoryLayerName,
+    Scope,
+    SessionScope,
+    UserScope,
+)
 from modex_agent.memory.token_estimator import TokenEstimator
 
 

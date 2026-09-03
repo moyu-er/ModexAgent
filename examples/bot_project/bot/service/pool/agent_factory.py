@@ -13,10 +13,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bot.service.external_strategy import ExternalAwareFactory
-from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.ioc.configs.observability import TraceBackend
 from modex_agent.multi_agent import DefaultAgentFactory
+from modex_agent.persistence.session_registry import SessionRegistry
 
 if TYPE_CHECKING:
     from bot.workspace.handle import WorkspaceResolverCell

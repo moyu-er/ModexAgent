@@ -26,7 +26,7 @@ from pydantic import (
     model_validator,
 )
 
-from modex_agent.core.constants import ExecutionStrategyKind, ProviderKind
+from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.tools.presets import (

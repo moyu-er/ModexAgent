@@ -16,6 +16,7 @@ from modex_agent.agents.react.constants import (
     ToolCallEndPayload,
 )
 from modex_agent.agents.react.context import get_agent_ctx
+from modex_agent.agents.react.ids import next_call_id
 from modex_agent.agents.react.message_builder import build_tool_message
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.agents.react.tool_dedup import (
@@ -27,11 +28,8 @@ from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.control.exceptions import AgentCancelledError
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import DefaultValues
-from modex_agent.core.ids import next_call_id
-from modex_agent.core.message import ChatMessage, TextPart
+from modex_agent.core.message import ChatMessage, MessageRole, TextPart, ToolCall
 from modex_agent.core.tool_manager import ExecutionMode, ToolResult
-from modex_agent.core.types import MessageRole, ToolCall
 from modex_agent.runtime.enums import (
     ApprovalDenyPolicy,
     ApprovalSubjectType,
@@ -51,6 +49,8 @@ from modex_agent.runtime.models import (
     ToolBatchState,
     ToolCallState,
 )
+
+_DEFAULT_MAX_PARALLEL_TOOL_CALLS = 5
 from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node
@@ -690,7 +690,7 @@ class ToolNode(Node[ReActTurnState]):
             else None
         )
         if configured_max is None:
-            max_parallel = DefaultValues.MAX_PARALLEL_TOOL_CALLS
+            max_parallel = _DEFAULT_MAX_PARALLEL_TOOL_CALLS
         elif (
             isinstance(configured_max, bool)
             or not isinstance(configured_max, int)

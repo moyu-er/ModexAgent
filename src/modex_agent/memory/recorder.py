@@ -20,8 +20,8 @@ from enum import StrEnum
 from typing import Any
 
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.scope import MemoryAgentRole, MemoryContext
 from modex_agent.memory.core.provider import MemoryProvider
+from modex_agent.memory.scope import MemoryAgentRole, MemoryContext
 
 type QueuedAppend = tuple[list[ChatMessage | dict[str, Any]], MemoryContext] | None
 

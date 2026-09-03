@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.ioc.configs.llm import LLMConfig, ModelCapabilities, Modality
+from modex_agent.ioc.configs.llm import LLMConfig, Modality, ModelCapabilities
 
 
 class TestCapabilitiesListCoercion:

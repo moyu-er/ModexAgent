@@ -32,7 +32,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from modex_agent.core.constants import ExecutionStrategyKind, ProviderKind
+from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.capability import (
     AgentDeclarationView,

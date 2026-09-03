@@ -45,15 +45,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.constants import (
-    ExecutionStrategyKind,
-    ProviderKind,
-    RuntimeInfoKey,
-)
-from modex_agent.core.context import InMemoryContextManager
+from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.tool_manager import Tool
 from modex_agent.hook.runner import HookRunner
+from modex_agent.memory.context import InMemoryContextManager, RuntimeInfoKey
 from modex_agent.memory.hooks import MemoryHookRunner
 from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
 from modex_agent.memory.system import MemorySystemContextManager
@@ -85,9 +81,9 @@ from modex_agent.scope import (
     ScopeSpec,
     compile_scope,
 )
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
-from modex_agent.tools.manager import InMemoryToolManager
 
 _GOLDEN_PATH = Path(__file__).parent / "goldens" / "capability_sections_baseline.txt"
 

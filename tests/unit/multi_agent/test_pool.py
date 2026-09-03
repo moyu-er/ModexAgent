@@ -442,11 +442,9 @@ class TestSubmitInputAndPollerHelpers:
 
     @staticmethod
     def _build_input_message():
-        from modex_agent.approval.types import ApprovalAction
-        from modex_agent.approval.views import ApprovalDecisionInput
         from modex_agent.core.media import Attachment, AttachmentLocator, Kind
         from modex_agent.core.session_id import SessionIdFactory
-        from modex_agent.core.types import InputMessage
+        from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput, InputMessage
 
         sess = SessionIdFactory().create(agent_name="main")
         attachment = Attachment(

@@ -27,8 +27,8 @@ from modex_agent.agents.react.error_recovery import (
 )
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import FinishReason
 from modex_agent.core.llm_request import LLMRequest
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.stream_events import (
@@ -38,7 +38,6 @@ from modex_agent.core.stream_events import (
     TextDelta,
     ToolCallComplete,
 )
-from modex_agent.core.types import LLMResponse
 from modex_agent.interceptor.abc import (
     InterceptorScope,
     LLMStreamContext,

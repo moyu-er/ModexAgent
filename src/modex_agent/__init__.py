@@ -10,26 +10,33 @@ Agent Framework Core - 多Agent服务框架核心
 - Adapter直接接入（无需Gateway）
 """
 
-from ._version import __version__
-from .adapters.emitter import StreamingAwareEmitter
-from .adapters.output import OutputAdapter
-from .agents import ReActAgent, ReActEvent
-from .core.agent import Agent, AgentContext
-from .core.context import ContextManager, ContextState
-from .core.emitter import AgentResult, ContentEmitter
-from .core.events import AgentEvent, EmitterConfig
-from .core.provider import CallbackStreamProvider, LLMProvider
-from .core.tool_manager import Tool, ToolConfig, ToolManager, ToolResult
-from .core.turn_events import (
+from ._version import __version__  # noqa: I001 - messaging must load before adapters
+from .messaging import InputMessage, MessageType, OutputMessage
+from .adapters import OutputAdapter, StreamingAwareEmitter
+from .agents.react import ReActAgent, ReActEvent
+from .core import (
+    Agent,
+    AgentContext,
+    AgentEvent,
+    AgentResult,
+    CallbackStreamProvider,
+    ContentEmitter,
+    EmitterConfig,
+    LLMProvider,
+    Tool,
+    ToolCall,
+    ToolConfig,
+    ToolManager,
+    ToolResult,
     TurnEvent,
     TurnReasoningEvent,
     TurnTextEvent,
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
-from .core.types import MessageType, OutputMessage, ToolCall
-from .pipeline import AgentPipeline, InputAdapter, InputMessage
-from .tools.manager import InMemoryToolManager
+from .memory import ContextManager, ContextState
+from .pipeline import AgentPipeline, InputAdapter
+from .tools import InMemoryToolManager
 
 __all__ = [
     "__version__",

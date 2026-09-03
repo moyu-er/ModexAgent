@@ -24,8 +24,8 @@ from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
 from bot.webui.transcript_store import JSONLTranscriptStore
 
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
-from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
+from modex_agent.messaging.models import InputMessage
 from modex_agent.pipeline.adapters import InputAdapter
 from tests.input_pipeline.assembly_support import (
     TEST_ASSEMBLY_CTX,

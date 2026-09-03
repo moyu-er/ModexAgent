@@ -7,9 +7,8 @@ from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.approval import ApprovalStage
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 
-from modex_agent.approval.types import ApprovalAction
-from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
+from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
 
 
 def _ctx() -> BotInputContext:
@@ -46,7 +45,7 @@ async def test_existing_decision_passes_and_is_marked_resolved() -> None:
         channel="websocket",
         metadata={
             RoutingMeta.APPROVAL_DECISION: ApprovalDecisionInput(
-                "c1", ApprovalAction.ALLOW
+                tool_call_id="c1", action=ApprovalAction.ALLOW
             )
         },
     )

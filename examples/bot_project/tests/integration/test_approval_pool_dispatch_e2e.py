@@ -33,18 +33,23 @@ import pytest
 
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.agents.react.agent import ReActAgent
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.ui import IMUserInterface
-from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.commands.processor import SlashCommandProcessor
-from modex_agent.core.context import InMemoryContextManager
+from modex_agent.core.llm_struct import LLMResponse
+from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import Tool
-from modex_agent.core.types import InputMessage, LLMResponse, OutputMessage, ToolCall
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
 from modex_agent.ioc.factories.approval import build_approval_runtime
+from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.models import (
+    ApprovalAction,
+    ApprovalDecisionInput,
+    InputMessage,
+    OutputMessage,
+)
 from modex_agent.multi_agent import AgentDescriptor, AgentFactory, AgentPool
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentInstance
@@ -73,8 +78,8 @@ def _make_react_pipeline(
     max_iterations=10,
     safety=None,
 ):
-    from modex_agent.core.context import InMemoryContextManager
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+    from modex_agent.memory.context import InMemoryContextManager
     from modex_agent.pipeline.approval_renderer import ApprovalRenderer
     from modex_agent.pipeline.approval_resumer import ApprovalResumer
     from modex_agent.pipeline.pipeline import AgentPipeline
@@ -399,11 +404,11 @@ async def _build_stack(
     # made pool.submit_input fail-loud when pool.tree is None). Mirrors the
     # production create_pool path (factory.py:388-406) and the framework
     # integration test pattern (test_human_dm_fidelity.py:94-112).
-    from modex_agent.core.session_registry import InMemorySessionRegistry
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
     from modex_agent.multi_agent.session_tree.store_node import InMemoryTreeNodeStore
     from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrackStore
     from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
+    from modex_agent.persistence.session_registry import InMemorySessionRegistry
 
     tree_manager = SessionTreeManager(
         tree_store=InMemorySessionTreeStore(),

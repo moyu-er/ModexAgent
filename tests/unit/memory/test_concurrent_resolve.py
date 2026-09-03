@@ -14,13 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.scope import (
+from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+from modex_agent.memory.scope import (
     GlobalScope,
     MemoryContext,
     MemoryLayerName,
     SessionScope,
 )
-from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 
 
 def _make_context(session_id: str = "sess-1") -> MemoryContext:

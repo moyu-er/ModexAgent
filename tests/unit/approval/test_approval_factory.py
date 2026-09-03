@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.approval.constants import ApprovalTier
+from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import ToolCall
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
 from modex_agent.ioc.factories.approval import build_approval_runtime
 from modex_agent.memory.history import ListMessageHistory

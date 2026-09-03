@@ -27,10 +27,10 @@ from typing import Final
 
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import FinishReason, StopReason
-from modex_agent.core.emitter import AgentResult
+from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
+from modex_agent.core.message import MessageRole
 from modex_agent.core.message_utils import wrap_system_reminder
-from modex_agent.core.types import LLMResponse, MessageRole
 from modex_agent.hook.abc import AfterLLMResponseHook, AfterTurnHook
 from modex_agent.runtime.enums import TurnCustomKey
 

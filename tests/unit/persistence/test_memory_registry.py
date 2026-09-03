@@ -8,11 +8,7 @@ from modex_agent.agents.summarizer.abc import (
     ArchiveGenerator,
 )
 from modex_agent.core.scope import (
-    MemoryContext,
-    MemoryLayerName,
     RecordScope,
-    SessionScope,
-    UserScope,
 )
 from modex_agent.memory.archive_models import (
     ArchiveDocuments,
@@ -24,6 +20,12 @@ from modex_agent.memory.injection.archive import ArchiveInjectionConfig
 from modex_agent.memory.layers.config import ArchiveMemoryConfig, MemoryLayerConfigSet
 from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+from modex_agent.memory.scope import (
+    MemoryContext,
+    MemoryLayerName,
+    SessionScope,
+    UserScope,
+)
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 from modex_agent.memory.stores.markdown_core import MarkdownCoreMemoryStorage
 from modex_agent.memory.system import MemorySystemContextManager, create_memory_system

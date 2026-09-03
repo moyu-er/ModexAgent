@@ -7,8 +7,8 @@ from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.enqueue import EnqueueStage
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 
-from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.messaging.models import InputMessage
 
 
 def _ctx(enqueued: list[InputMessage]) -> BotInputContext:

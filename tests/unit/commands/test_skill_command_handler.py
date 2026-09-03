@@ -13,7 +13,7 @@ import pytest
 from modex_agent.commands.handlers import SkillCommandHandler
 from modex_agent.commands.models import CommandContext, SlashCommandInvocation
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
+from modex_agent.messaging.models import InputMessage
 from modex_agent.plugins.defaults.capabilities.skills.supply import build_skill_catalog
 
 

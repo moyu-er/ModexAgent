@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-09-02 | D2 Skills prompt ownership -->
+<!-- Updated: 2026-09-02 | E1/E2 ownership -->
 
 # memory
 
@@ -15,10 +15,12 @@ The `memory/` module provides a comprehensive memory system for agents. It manag
 
 | File | Description |
 |------|-------------|
+| `context.py` | `ContextManager` ABC, `ContextState`, `InMemoryContextManager`, and shared runtime prompt helpers. |
+| `scope.py` | `MemoryContext`, `Scope` and its concrete dimensions, memory ownership enums/records, `build_scope()`, and `scope_path_key()`; canonical `RecordScope` remains in `core/scope.py`. |
 | `system.py` | `MemorySystemContextManager(ContextManager)` — high-level facade wrapping `MemorySystem` for pipeline integration. `load()` renders the capability-section anchor block after fork context and before core memory. Skills prompt injection arrives through the `SkillsCapability` provider in that generic block; memory has no skill-specific load parameter. A custom `MEMORY_SYSTEM` owns its full prompt assembly, while command resolution remains independent through `SkillResolver`. |
 | `default_system.py` | `DefaultMemorySystem` — standard implementation wiring all layers |
-| `history.py` | `MessageHistory`, `ListMessageHistory`, `ScopedMessageHistory`, `inject_attachments_to_history()` |
-| `context_governance.py` | `ContextGovernance` ABC — `CompositeGovernance`, `TokenBudgetGovernance`, `MicrocompactGovernance`, `ToolChainRepairGovernance`. Mutates only LLM input copy, never persisted session data |
+| `history.py` | Concrete `ListMessageHistory` and `ScopedMessageHistory` implementations of `core.history.MessageHistory`. |
+| `context_governance.py` | `ContextGovernance`, `CompositeGovernance`, `ContextBudgetGovernance`, and `ToolChainRepairGovernance`; transforms only the LLM input copy. |
 | `archive_models.py` | Archive data models — typed generated documents, channel writes, bundle results, and archive state |
 | `tags.py` | Injection XML element tag names (StrEnum) shared between injection, governance, and truncation |
 | `cleanup.py` | `cleanup_session()`, `CleanupResult` — 5-phase pipeline: trigger+boundary → compact generation → session commit (`[compact_summary]`+`[tail]`) → pruned catalog write (topic from compact's `## Objective`) → archive generation (optional, default off; archive state advances atomically inside this phase, DreamEngine polling is the only archive-consolidation trigger). `CleanupResult` carries `tokens_before`/`tokens_after` (char-estimated via `TokenEstimator`) for savings/thrash metrics. `cleanup_session()` takes `compactor` param instead of `user_retention` |
@@ -30,28 +32,29 @@ The `memory/` module provides a comprehensive memory system for agents. It manag
 | `lifecycle.py` | `DefaultMemoryMaintenancePolicy` (concrete background-maintenance scan) and retention ABCs — `ArchiveRetentionPolicy`, `CoreMemoryRetentionPolicy` — with per-scope thresholds called from `scan_once` |
 | `xml_truncate.py` | XML-based content truncation for governance — ensures injected XML stays within token budget |
 | `utils.py` | Memory utility helpers |
-| `hooks.py` | `MemoryHookPoint` (`CLEANUP_TRIGGERED`/`CLEANUP_FINISHED`), `MemoryHookContext` (frozen Pydantic), `MemoryHook` ABC, `CleanupTriggeredHook`, `CleanupFinishedHook`, `MemoryHookRunner` — per-system lifecycle dispatch with tuple-snapshot iteration, 10s timeout, log-and-continue isolation |
-| `cleanup_hooks.py` | `TodoReorientationHook(CleanupFinishedHook)` — persists a `<system-reminder>` USER message via `SessionMemoryManager.add_messages` after cleanup prunes messages; event-driven (no heuristic history-diff). `CleanupMetricsHook(CleanupFinishedHook)` — pure observer, appends one `CleanupMetricRecord` JSONL line per triggered cleanup to `<workspace>/.modex/metrics/cleanup.jsonl` (ts/session_id/reason/messages_kept/pruned/compact_generated/prune_ratio/tokens_before/after/saved — char-estimated via `CharTokenEstimator`); registered on both main pool and subagent memory systems; never raises |
+| `hooks.py` | Typed cleanup, context-assembly, core-update, and consolidation hook contracts plus `MemoryHookRunner`. |
+| `cleanup_hooks.py` | `TodoReorientationHook`, which persists the post-cleanup Todo reminder without re-entering history cleanup. |
 
 ## Subdirectories
 
 | Directory | Files | Purpose |
 |-----------|-------|---------|
-| `core/` | 9 py | ABCs — `MemorySystem`, split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) + `MemoryStoreBundle`, `StoreMetadata`, layer managers, consolidation types, `StorageLock`. Scope system lives in `modex_agent.core.scope` (see `core/AGENTS.md`) |
-| `layers/` | 5 py | Concrete layer managers — `SessionMemoryManager`, `ArchiveMemoryManager`, `CoreMemoryManager` + `MemoryLayerConfigSet` + `MemoryLayerFactory`. `MemoryLayerConfigSet` and all layer configs are frozen Pydantic `BaseModel` (B4) |
-| `consolidation/` | 1 py | `DreamEngine` — offline background consolidation of session → archive → core memory |
-| `injection/` | 3 py | `MemoryInjectionPolicy` → core memory bundle assembly: `FullInjectionPolicy` (core memory, budget-trimmed; no disclaimer when core memory empty → empty system_prompt → CoreMemoryProvider not added), `RestrictedInjectionPolicy` (session-only, empty prompt). Archive/pruned/blocks/prefetch handled by pipeline providers |
-| `pruned/` | 4 py | `PrunedManager` + `PrunedStorage` (ABC + `FilePrunedStorage`) + `PrunedIndexEntry` — catalog of cleaned-up session messages, session-scoped |
-| `registry/` | 3 py | `MemoryStoreRegistry` — storage provider registry. `resolve()` returns a `MemoryStoreBundle`. `BaseMemoryStoreRegistry` ABC + `DefaultMemoryStoreRegistry` (file-backed). The in-memory registry was removed in T03 |
-| `pipeline/` | 3 py | `SystemPromptPipeline` — ordered collection of versioned `SystemPromptProvider` (ABC + pipeline orchestrator + provider implementations) |
-| `prompts/` | 6 files | Prompt templates: `archive/` (agent_system.md, agent_user.md), `core_memory/` (consolidator_system.md, consolidator_user.md — renamed from `knowledge/` per ADR-0035), `compact/` (agent_system.md, agent_user.md — session compact summary prompts) |
-| `stores/` | 7 py | Storage backend implementations — `FileStorage`, `DefaultScopedStorage` (file, implements all four split ABCs), `InMemoryScopedStorage` (in-memory, implements all four split ABCs), `DirArchiveStorage`, `MarkdownCoreMemoryStorage` (renamed from `MarkdownKnowledgeStorage` per ADR-0035), storage utilities. The standalone `InMemoryStorage` was removed in T03 |
-| `tools/` | 6 py | Agent-facing tools — scoped file tools (read/write/edit/list) for summarizer agents (the 6 experience tools moved to the `experience` capability package, plan §10) |
+| `core/` | Memory system and split-store ABCs, shared layer/consolidation models, metadata, and locking. |
+| `layers/` | Concrete session, archive, and core-memory managers plus layer configuration/factory. |
+| `consolidation/` | `DreamEngine` offline consolidation. |
+| `injection/` | Full/restricted memory injection policies and archive injection. |
+| `prompt_pipeline/` | Consumer-owned `SystemPromptProvider` implementations; the provider/pipeline seams remain in `core/prompt.py`. |
+| `prompts/` | Archive, compact, and core-memory templates. |
+| `pruned/` | Pruned-message catalog models, rendering, storage, and manager. |
+| `registry/` | File-backed `MemoryStoreRegistry` implementation. |
+| `stores/` | File and in-memory split-store implementations. |
+| `tools/` | Scoped read/write/edit/list tools for summarizer agents. |
 
 ### Memory Scope Hierarchy
 
-Scopes live in `modex_agent.core.scope`. The `Scope` ABC (replaces the deleted
-`MemoryScope`) extracts a `RecordScope` from a `MemoryContext`. Config accepts
+Configurable scopes live in `modex_agent.memory.scope`; only the canonical
+`RecordScope` value remains in `modex_agent.core.scope`. The `Scope` ABC extracts
+a `RecordScope` from a `MemoryContext`. Config accepts
 `scope: list[str]` (a single string is auto-wrapped by `build_scope`).
 
 ```
@@ -66,9 +69,8 @@ Scope (ABC) — extract(context) -> RecordScope
 └── GlobalScope        — global memory (empty path segment)
 ```
 
-`PeerPairScope` was removed in T04 (documented only, never implemented).
 `build_scope(dims)` is the factory that turns dimension short-names into a
-`Scope`. See `core/AGENTS.md` for the full `RecordScope` contract
+`Scope`. See `core/AGENTS.md` for the foundational `RecordScope` contract
 (`canonical()`, `to_path_segment()`, `merge()`).
 
 ### Injection Architecture
@@ -175,7 +177,7 @@ unconditional `factory.py` registration is gone.
 5. `_cleanup_subagent_memory()` called on session end via explicit cleanup
 
 ### Common Patterns
-- `Scope.extract(context)` returns a `RecordScope` (in `modex_agent.core.scope`); consumers derive a DB key via `.canonical()` or a filesystem path via `scope_path_key()`
+- `Scope.extract(context)` in `modex_agent.memory.scope` returns the foundational `core.scope.RecordScope`; consumers derive a DB key via `.canonical()` or a filesystem path via `scope_path_key()`.
 - Plugin memory providers hook into `add()`, `search()`, `prefetch()`, `on_pre_compress()`
 - `MemorySystemModifier` wraps internal managers via plugin injection
 - `MemoryLayerConfigSet` holds all layer configs; `MemoryLayerFactory` builds from it
@@ -187,10 +189,10 @@ unconditional `factory.py` registration is gone.
 ## Dependencies
 
 ### Internal
-- `modex_agent.core.types` — `MessageRole`, `MessageType`, `ToolCall`
-- `modex_agent.core.context` — `ContextManager`, `ContextState`
+- `modex_agent.core.message` — `ChatMessage`, `MessageRole`, `ToolCall`
+- `modex_agent.core.prompt` — `SystemPromptProvider`, `SystemPromptPipeline`
+- `modex_agent.core.scope` — canonical `RecordScope`
 - `modex_agent.core.session_id` — `SessionInfo`
-- `modex_agent.core.events` — `AgentEvent`
 - `modex_agent.core.history` — `MessageHistory` ABC
 - `modex_agent.utils` — xml, helpers, sanitizer
 - `modex_agent.agents.summarizer` — `ArchiveSummarizer`, `CoreMemoryConsolidator`, `SessionCompactorAgent` (for consolidation and compact pipelines)

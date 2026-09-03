@@ -18,11 +18,10 @@ from bot.eval.harbor.entry import (
 
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import FinishReason, StopReason
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.types import LLMResponse
 from modex_agent.runtime.models import JsonValue
 from modex_agent.tools.terminal.persistent_bash import persistent_bash_supported
 from modex_agent.trace.experiment_attrs import ExperimentAttribute

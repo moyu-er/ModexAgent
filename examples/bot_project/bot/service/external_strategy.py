@@ -47,7 +47,6 @@ from modex_agent.agents.external.child_discovery import (
 from modex_agent.agents.external.cli_resolver import resolve_modexctl_bin_dir
 from modex_agent.agents.external.contracts import ProviderEventParser
 from modex_agent.agents.external.events import ExternalEvent
-from modex_agent.agents.external.paths import ProviderKind
 from modex_agent.agents.external.providers.opencode.server_backend import (
     OpenCodeServerBackend,
 )
@@ -58,12 +57,11 @@ from modex_agent.agents.external.session_store import ExternalSessionMapStore
 from modex_agent.agents.external.types import (
     ExternalEnvSpec,
 )
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
@@ -83,6 +81,7 @@ from modex_agent.multi_agent.execution_strategy import (
 )
 from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
+from modex_agent.persistence.session_registry import SessionRegistry
 from modex_agent.plugins.assembly.context import AgentContext
 from modex_agent.scope.spec import PoolSpec
 

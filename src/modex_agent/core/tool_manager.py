@@ -387,7 +387,7 @@ class ToolResult(BaseModel):
         Terminal-tool results carry content_format/truncatable_paths metadata
         (declared by the tool via result_metadata) for governance truncation.
         """
-        from .types import MessageRole
+        from .message import MessageRole
 
         msg: dict[str, Any] = {
             "role": MessageRole.TOOL.value,

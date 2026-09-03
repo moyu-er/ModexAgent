@@ -56,9 +56,14 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from modex_agent.core.agent import Agent, AgentCommKind, AgentContext, current_agent_context
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.agent import (
+    Agent,
+    AgentCommKind,
+    AgentContext,
+    ProviderKind,
+    current_agent_context,
+)
+from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
 from modex_agent.core.turn_events import (
     TurnReasoningEvent,
     TurnTextEvent,
@@ -73,7 +78,7 @@ from .contracts import ProviderBackend, ProviderEventParser
 from .env_builder import ExternalEnvBuilder
 from .events import ExternalEvent
 from .os_layer import terminate_process_group
-from .paths import ExternalPaths, ProviderKind
+from .paths import ExternalPaths
 from .runtime_config import default_runtime_block, read_runtime_block, write_runtime_block
 from .scripted_backend import ScriptedProviderBackend
 from .session_store import ExternalSessionMapStore
@@ -81,7 +86,7 @@ from .types import BackendResult, BackendStatus, Emission, ExecOptions, External
 
 if TYPE_CHECKING:
     from modex_agent.core.session_id import SessionIdFactory
-    from modex_agent.core.session_registry import SessionRegistry
+    from modex_agent.persistence.session_registry import SessionRegistry
 
     from .child_discovery import ChildSessionDiscoverySink
 

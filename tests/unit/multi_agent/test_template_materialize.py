@@ -7,12 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from modex_agent.core.constants import FinishReason, ReasoningEffort
-from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.core.llm_request import ReasoningEffort
+from modex_agent.core.llm_struct import FinishReason, LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.types import LLMResponse
 from modex_agent.memory.cleanup_hooks import TodoReorientationHook
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
@@ -501,7 +500,7 @@ async def test_materialize_external_injects_emitter_factory_into_turn_runner():
     default ``StreamingAwareEmitter``+``BrokerOutputAdapter`` from
     ``assemble_pipeline`` and turns are invisible in the WebUI history.
     """
-    from modex_agent.core.constants import ExecutionStrategyKind, ProviderKind
+    from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
     from modex_agent.multi_agent.execution_strategy import (
@@ -580,7 +579,7 @@ async def test_materialize_external_injects_pool_context_into_turn_runner():
     ``project_dir`` workdir instead of the active workspace (wrong under
     multi-live workspaces).
     """
-    from modex_agent.core.constants import ExecutionStrategyKind, ProviderKind
+    from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
     from modex_agent.multi_agent.execution_strategy import (
@@ -654,7 +653,7 @@ async def test_materialize_external_injects_pool_context_into_turn_runner():
 async def test_materialize_external_skips_emitter_injection_when_deps_emitter_none():
     """No emitter_factory in deps → no set_emitter_factory call; the
     external subagent keeps the default factory from assemble_pipeline."""
-    from modex_agent.core.constants import ExecutionStrategyKind, ProviderKind
+    from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
     from modex_agent.multi_agent.execution_strategy import (

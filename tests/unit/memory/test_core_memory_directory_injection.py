@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.core.models import CoreMemoryContents
 from modex_agent.memory.injection.full_injection import FullInjectionPolicy
+from modex_agent.memory.scope import MemoryContext
 
 
 def _make_injectable_system(knowledge_dir: Path | None = None):
@@ -109,7 +109,7 @@ async def test_directory_section_cross_platform_path(tmp_path):
 
 
 def test_scoped_storage_base_path(tmp_path):
-    from modex_agent.core.scope import MemoryLayerName
+    from modex_agent.memory.scope import MemoryLayerName
     from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
 
     storage = DefaultScopedStorage(tmp_path, layer=MemoryLayerName.CORE)

@@ -1,16 +1,17 @@
 """Tests for LLM error types and timeout response builder."""
 
 import pytest
+from pydantic import ValidationError
 
 from modex_agent.core.llm_struct import (
     LLMErrorInfo,
     LLMErrorKind,
+    LLMResponse,
     LLMTimeoutPolicy,
     RuntimeSafetyPolicy,
     TurnTimeoutPolicy,
     build_timeout_response,
 )
-from modex_agent.core.types import LLMResponse
 
 
 class TestLLMErrorKind:
@@ -33,7 +34,7 @@ class TestLLMErrorInfo:
             provider="openai",
             should_retry=True,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             info.kind = LLMErrorKind.UNKNOWN  # type: ignore[misc]
 
     def test_defaults(self):

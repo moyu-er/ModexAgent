@@ -15,14 +15,10 @@ reconstructs it.
 
 from __future__ import annotations
 
-import pytest
-
-from modex_agent.approval.types import ApprovalAction
-from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
 from modex_agent.messaging.broker import Address
 from modex_agent.messaging.broker_bridge import build_input_broker_message
+from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput, InputMessage
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.pool import input_message_from_dispatch_envelope
 
@@ -33,16 +29,19 @@ def _session() -> SessionInfo:
 
 def test_approval_decision_dto_round_trips() -> None:
     """ApprovalDecisionInput serializes to/from a plain dict (broker-safe)."""
-    d = ApprovalDecisionInput("call_abc", ApprovalAction.ALLOW)
-    assert d.to_dict() == {"tool_call_id": "call_abc", "action": "allow"}
-    assert ApprovalDecisionInput.from_dict(d.to_dict()) == d
+    d = ApprovalDecisionInput(tool_call_id="call_abc", action=ApprovalAction.ALLOW)
+    payload = d.model_dump(mode="json")
+    assert payload == {"tool_call_id": "call_abc", "action": "allow"}
+    assert ApprovalDecisionInput.model_validate(payload) == d
 
 
 def test_build_input_broker_message_carries_approval_decision() -> None:
     msg = InputMessage(
         content="",
         session=_session(),
-        approval_decision=ApprovalDecisionInput("call_abc", ApprovalAction.DENY),
+        approval_decision=ApprovalDecisionInput(
+            tool_call_id="call_abc", action=ApprovalAction.DENY
+        ),
     )
     broker_msg = build_input_broker_message(msg, Address(kind="agent", name="main"))
     assert broker_msg.payload["approval_decision"] == {
@@ -63,7 +62,9 @@ def test_approval_decision_survives_full_broker_round_trip() -> None:
     original = InputMessage(
         content="",
         session=_session(),
-        approval_decision=ApprovalDecisionInput("call_xyz", ApprovalAction.ALLOW),
+        approval_decision=ApprovalDecisionInput(
+            tool_call_id="call_xyz", action=ApprovalAction.ALLOW
+        ),
     )
     broker_msg = build_input_broker_message(original, Address(kind="agent", name="main"))
     envelope = AgentMessageEnvelope.from_broker_message(broker_msg)
@@ -71,7 +72,7 @@ def test_approval_decision_survives_full_broker_round_trip() -> None:
 
     reconstructed = input_message_from_dispatch_envelope(envelope, session=_session())
     assert reconstructed.approval_decision == ApprovalDecisionInput(
-        "call_xyz", ApprovalAction.ALLOW
+        tool_call_id="call_xyz", action=ApprovalAction.ALLOW
     )
 
 

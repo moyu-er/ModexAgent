@@ -14,6 +14,7 @@ from modex_agent.persistence.adapters.cursor_store import SqliteCursorStore
 from modex_agent.persistence.adapters.external_session_map_store import (
     SqliteExternalSessionMapStore,
 )
+from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
 from modex_agent.persistence.adapters.inbox_mq import SqliteInboxMQ
 from modex_agent.persistence.adapters.kv_store import SqliteKVStore
 from modex_agent.persistence.adapters.message_store import SqliteMessageStore
@@ -32,6 +33,7 @@ from modex_agent.runtime.approval_decision import ApprovalAuditEntry
 __all__ = [
     "ApprovalAuditEntry",
     "ApprovalAuditStore",
+    "LocalFileSessionStore",
     "PoolRoutingCorruptionError",
     "SqliteApprovalAuditStore",
     "SqliteCursorStore",

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.agent import Agent
 from modex_agent.core.tool_manager import ToolManager
 from modex_agent.hook import ClosableHook, HookRunner, HookSpec
-from modex_agent.adapters.output import OutputAdapter
 from modex_agent.pipeline.adapters import InputAdapter
 from tests.unit.pipeline._helpers import _make_react_pipeline
 

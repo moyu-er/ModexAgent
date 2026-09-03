@@ -754,7 +754,8 @@ async def test_pool_mapping_persistence_across_restart() -> None:
     """Pool mapping survives server restart via physical transcript layout."""
     from bot.service.session_store import WorkspacePoolSessionStore
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -859,7 +860,8 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1121,7 +1123,8 @@ async def test_api_messages_loads_subagent_transcript() -> None:
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1517,7 +1520,8 @@ async def test_api_sessions_falls_back_preserves_index_entries() -> None:
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
-    from modex_agent.core.session_id import SessionIdFactory, SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionIdFactory, SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1588,7 +1592,8 @@ async def test_workspace_cd_switches_current_workspace() -> None:
     """
     from bot.service.session_store import WorkspacePoolSessionStore
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     home = Path(tempfile.mkdtemp())
     ws_a = home / "ws-a"
@@ -1681,7 +1686,8 @@ async def test_api_sessions_includes_subagent_sessions() -> None:
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1756,7 +1762,8 @@ async def test_api_sessions_includes_dynamic_subagent_instance() -> None:
     """
     from bot.service.session_store import WorkspacePoolSessionStore
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()

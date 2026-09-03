@@ -9,9 +9,8 @@ import pytest
 from modex_agent.approval.constants import ApprovalTier
 from modex_agent.control.exceptions import PolicyViolationError
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import MessageRole
 from modex_agent.hook import (
     AfterApprovalHook,
     BeforeGraphHook,

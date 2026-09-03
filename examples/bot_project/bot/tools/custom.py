@@ -96,7 +96,7 @@ class SendFileToUserTool(ExclusiveTool):
             return f"Error: Not a regular file: {file_path}"
 
         from modex_agent.core.agent import current_agent_context
-        from modex_agent.core.types import OutputMessage
+        from modex_agent.messaging.models import OutputMessage
 
         agent_ctx = current_agent_context.get(None)
         if agent_ctx is None:

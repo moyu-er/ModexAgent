@@ -97,7 +97,7 @@ async def test_concurrent_assembles_keep_session_payloads_isolated(tmp_path: Pat
 
 
 def manager_context_factory():
-    from modex_agent.core.scope import MemoryContext
+    from modex_agent.memory.scope import MemoryContext
 
     return MemoryContext(session_id="seed-session", user_id="seed-user")
 

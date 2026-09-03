@@ -55,18 +55,17 @@ _BOT_PROJECT = _REPO_ROOT / "examples" / "bot_project"
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult
+from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.provider import LLMProvider
-from modex_agent.core.scope import MemoryAgentRole
 from modex_agent.core.stream_events import LLMStreamEvent
 from modex_agent.core.tool_manager import Tool
 from modex_agent.hook import HookPayload, HookPoint
 from modex_agent.hook.abc import AfterTurnHook
 from modex_agent.ioc.factories.descriptors import build_session_only_memory
+from modex_agent.memory.scope import MemoryAgentRole
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.multi_agent.factory import DefaultAgentFactory

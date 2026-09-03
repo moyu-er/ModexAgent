@@ -51,7 +51,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.constants import ExecutionStrategyKind, ProviderKind
+from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.tool_manager import Tool
 from modex_agent.hook.abc import Hook
@@ -103,9 +103,9 @@ from modex_agent.scope import (
     spec_hash,
     validate_declaration,
 )
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
-from modex_agent.tools.manager import InMemoryToolManager
 
 # The default toolset a bare root compiles to — the native-dispatch registry
 # must resolve every roster name the real compiler emits.

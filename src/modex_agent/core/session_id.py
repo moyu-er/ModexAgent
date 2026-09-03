@@ -14,13 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Timestamp producers live in `modex_agent.utils.time` (ADR-0029 §2). They are
-# re-exported here so existing callers of `from modex_agent.core.session_id
-# import now_ms` keep working. New code should import from `utils.time` directly.
-# The `as` idiom marks these as explicit re-exports under mypy
-# `no_implicit_reexport` (strict mode).
-from modex_agent.utils.time import now_ms as now_ms  # noqa: F401
-from modex_agent.utils.time import now_s as now_s
+from modex_agent.utils.time import now_ms as _now_ms
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +90,7 @@ class SessionInfo(BaseModel):
     # deprecated, don't use touch()
     def touch(self) -> SessionInfo:
         """Return a copy with ``updated_at`` refreshed to now."""
-        return self.model_copy(update={"updated_at": now_ms()})
+        return self.model_copy(update={"updated_at": _now_ms()})
 
     @classmethod
     def from_str(cls, value: str) -> SessionInfo:
@@ -210,7 +204,7 @@ class SessionIdFactory:
         metadata: dict[str, Any] | None = None,
     ) -> SessionInfo:
         session_id = f"{prefix}.{agent_name}"
-        now = now_ms()
+        now = _now_ms()
         parent_str = str(parent_session_id) if parent_session_id else None
         return SessionInfo(
             session_id=session_id,

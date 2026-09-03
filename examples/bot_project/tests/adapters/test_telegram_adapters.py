@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from bot.adapters.telegram import TelegramInputAdapter, TelegramOutputAdapter
 
-from modex_agent.core.types import OutputMessage
+from modex_agent.messaging.models import OutputMessage
 
 
 def test_input_adapter_name() -> None:
@@ -33,7 +33,7 @@ async def test_handle_text_message_rejects_disallowed_sender() -> None:
 @pytest.mark.asyncio
 async def test_receive_yields_input_message_after_put() -> None:
     from modex_agent.core.session_id import SessionInfo
-    from modex_agent.core.types import InputMessage
+    from modex_agent.messaging.models import InputMessage
 
     inp = TelegramInputAdapter(token="t", allow_from=["*"], proxy=None)
     await inp.start()

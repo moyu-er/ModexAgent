@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime
 from json import loads
 
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.core.models import CompressionReason
 from modex_agent.memory.hooks import (
     ConsolidationFinishedPayload,
@@ -13,6 +12,7 @@ from modex_agent.memory.hooks import (
     MemoryUpdateRef,
     SectionProvenance,
 )
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.trace.memory_trace_hook import MemoryTraceHook
 from tests.unit.trace._memory_trace_support import (
     RecordingStore,

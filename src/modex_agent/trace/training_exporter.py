@@ -29,6 +29,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.core.message import MessageRole
 from modex_agent.trace.scoring import (
     TrajectoryMetrics,
     compute_metrics,
@@ -64,13 +65,6 @@ _REFUSAL_PHRASES: tuple[str, ...] = (
 _SEMANTIC_DEDUP_NOT_IMPLEMENTED_MSG: str = (
     "Tier 3 semantic dedup not implemented in Phase 1 — requires embedding model"
 )
-
-
-class MessageRole(StrEnum):
-    SYSTEM = "system"
-    USER = "user"
-    ASSISTANT = "assistant"
-    TOOL = "tool"
 
 
 class DedupTier(StrEnum):

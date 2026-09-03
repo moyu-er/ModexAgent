@@ -11,12 +11,12 @@ from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.trace.agent_start_hook import AgentStartSpanHook
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.prompt_capture import FullPromptCapture
 from modex_agent.trace.semconv import GenAiAttr, LangfuseObservationType, SpanKind, SpanName
 from modex_agent.trace.session_state import TraceSessionState
-from modex_agent.tools.manager import InMemoryToolManager
 
 
 class _SearchTool(Tool):

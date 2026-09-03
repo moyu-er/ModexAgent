@@ -6,7 +6,7 @@ per-invocation tool deadline enforced by ``ToolExecutor`` as the
 innermost interceptor.
 
 Registration only — the semantic (timeout resolution via
-``ctx.runtime.safety`` or ``DefaultValues.TOOL_TIMEOUT_SECONDS``) is
+``ctx.runtime.safety`` or ``DEFAULT_TOOL_TIMEOUT_SECONDS``) is
 unchanged. This factory never downgrades the interceptor.
 """
 

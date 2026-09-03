@@ -59,13 +59,7 @@ TOP_LEVEL = _discover_top_level_packages()
 # utils is never listed: core MAY import utils (ADR-0006 pure-leaf policy).
 # C1 removed both media edges: MediaStore/Attachment contracts were promoted
 # to core/media.py; media/store.py keeps only LocalFileMediaStore.
-EXPECTED_OFFENDERS: set[tuple[str, str]] = {
-    # E1 (types.py split) removes the approval edges: InputMessage lazily
-    # reconstructs ApprovalDecisionInput in two function bodies
-    # (_ensure_complete, from_dict) — runtime imports the old guard missed
-    # because the same module also appears under TYPE_CHECKING.
-    ("types.py", "modex_agent.approval.views"),
-}
+EXPECTED_OFFENDERS: set[tuple[str, str]] = set()
 
 
 def _type_checking_nodes(tree: ast.Module) -> set[int]:
@@ -204,24 +198,22 @@ def test_core_no_unexpected_runtime_upward_imports() -> None:
     )
 
 
-EXPECTED_TOOLS_AGENT_OFFENDERS = {"modex_agent.agents.agent_node"}
+EXPECTED_TOOLS_AGENT_OFFENDERS: set[tuple[str, str]] = set()
 
 
 def test_tools_no_unexpected_runtime_imports_of_agents() -> None:
-    offenders: dict[str, list[str]] = {}
+    offenders: set[tuple[str, str]] = set()
     for path in sorted(TOOLS_ROOT.rglob("*.py")):
+        file_rel = path.relative_to(TOOLS_ROOT).as_posix()
         for mod in _runtime_upward_modules(path, PACKAGE_ROOT):
             if mod.split(".")[1] == "agents":
-                offenders.setdefault(mod, []).append(
-                    path.relative_to(TOOLS_ROOT).as_posix()
-                )
-    unexpected = {
-        mod: files
-        for mod, files in offenders.items()
-        if mod not in EXPECTED_TOOLS_AGENT_OFFENDERS
-    }
-    assert not unexpected, (
-        f"unexpected runtime imports from tools to agents: {unexpected}"
+                offenders.add((file_rel, mod))
+    assert offenders == EXPECTED_TOOLS_AGENT_OFFENDERS, (
+        "tools-to-agents runtime-import ledger mismatch:\n"
+        f"  new debt (remove or fix): "
+        f"{sorted(offenders - EXPECTED_TOOLS_AGENT_OFFENDERS)}\n"
+        f"  stale entries (delete, the fix landed): "
+        f"{sorted(EXPECTED_TOOLS_AGENT_OFFENDERS - offenders)}"
     )
 
 

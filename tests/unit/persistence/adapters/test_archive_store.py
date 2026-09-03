@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from modex_agent.core.scope import MemoryContext, RecordScope
+from modex_agent.core.scope import RecordScope
 from modex_agent.memory.archive_models import ArchiveChannel, ArchiveWrite
 from modex_agent.memory.core.split_stores import MemoryStoreBundle
 from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
 from modex_agent.memory.layers.config import ArchiveMemoryConfig
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.persistence import ConnectionManager
 from modex_agent.persistence.adapters.archive_store import SqliteArchiveStore
 from modex_agent.persistence.adapters.cursor_store import SqliteCursorStore

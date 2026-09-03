@@ -24,7 +24,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
-from modex_agent.core.types import InputMessage
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import AgentPool, DefaultAgentFactory
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
@@ -264,8 +264,8 @@ async def test_dispatch_end_exception_doesnt_crash_poller() -> None:
 async def test_poller_lazy_materializes_missing_subagent():
     """A provocation for a session with no live instance triggers
     template.materialize on the first turn (ADR-0015 D3)."""
-    from modex_agent.core.session_registry import InMemorySessionRegistry
     from modex_agent.multi_agent.template import AgentTemplate
+    from modex_agent.persistence.session_registry import InMemorySessionRegistry
 
     pool, bus, poller = await _make_poller_pool()
 

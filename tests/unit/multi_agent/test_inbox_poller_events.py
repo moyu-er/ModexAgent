@@ -24,7 +24,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.types import InputMessage
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import AgentPool, DefaultAgentFactory
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus

@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     from modex_agent.core.llm import LLMProvider
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.session_id import SessionIdFactory
-    from modex_agent.core.session_registry import SessionRegistry
     from modex_agent.hook.notification import AgentNotificationService
     from modex_agent.memory.registry import MemoryStoreRegistry
     from modex_agent.messaging.broker import MessageBroker
@@ -33,6 +32,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.inbox.consumer import InboxConsumer
     from modex_agent.multi_agent.pool import AgentPool
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+    from modex_agent.persistence.session_registry import SessionRegistry
     from modex_agent.plugins.capability import CapabilitySupply
     from modex_agent.plugins.registry import ComponentRegistry
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
@@ -42,8 +42,8 @@ if TYPE_CHECKING:
     from modex_graph.context import GraphContext
 
 from modex_agent.core.capabilities import ModelInfo
-from modex_agent.core.constants import ReasoningEffort
 from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.llm_request import ReasoningEffort
 
 
 class AgentMaterializeDeps:

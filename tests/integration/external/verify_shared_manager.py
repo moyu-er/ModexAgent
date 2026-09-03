@@ -37,14 +37,15 @@ import sys
 import tempfile
 from pathlib import Path
 
-from modex_agent.agents.external import Emission, ExternalEvent
 from modex_agent.agents.external.providers.opencode_server_backend import (
     OpenCodeServerBackend,
 )
 from modex_agent.agents.external.providers.opencode_server_manager import (
     OpenCodeServerManager,
 )
-from modex_agent.agents.external.types import BackendStatus, ExecOptions
+
+from modex_agent.agents.external import Emission, ExternalEvent
+from modex_agent.agents.external.types import ExecOptions
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s %(message)s")
 logger = logging.getLogger("verify")

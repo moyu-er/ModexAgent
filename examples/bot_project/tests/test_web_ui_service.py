@@ -16,7 +16,7 @@ from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import _unwrap_envelope
 from bot.webui.server import WebUIServer
 
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.multi_agent.pool_router import PoolSessionStore
 from modex_agent.workspace.paths import WorkspacePaths

@@ -8,13 +8,15 @@ import pytest
 from modex_agent.plugins.defaults.capabilities.skills.builder import DefaultSkillBuilder
 from modex_agent.plugins.defaults.capabilities.skills.catalog import SkillCatalog
 from modex_agent.plugins.defaults.capabilities.skills.models import (
-    ResolutionContext,
     Skill,
     SkillMetadata,
     SkillResource,
     SkillSummary,
 )
-from modex_agent.plugins.defaults.capabilities.skills.source import FileSkillSource, InlineSkillSource
+from modex_agent.plugins.defaults.capabilities.skills.source import (
+    FileSkillSource,
+    InlineSkillSource,
+)
 
 
 class TestFileSkillSourceEdgeCases:

@@ -50,6 +50,7 @@ from bot.workspace.wiring import build_workspace_stack
 from modex_agent import (
     LLMProvider,
 )
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.agents.external.providers.opencode.server_manager import (
     OpenCodeServerManager,
 )
@@ -61,13 +62,12 @@ from modex_agent.core.llm_struct import (
     RuntimeSafetyPolicy,
     TurnTimeoutPolicy,
 )
-from modex_agent.core.session_registry import SessionRegistry
-from modex_agent.core.session_store import SessionStore
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.pool_router import PoolRoutingStore
 from modex_agent.persistence.config import PersistenceBackend
-from modex_agent.adapters.output import OutputAdapter
+from modex_agent.persistence.session_registry import SessionRegistry
+from modex_agent.persistence.session_store import SessionStore
 from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.workspace.paths import RESERVED_GLOBAL_DIR, WORKSPACE_STATE_DB
 
@@ -580,8 +580,6 @@ class BotService(AgentBuilderMixin):
                 ),
             )
         else:
-            from modex_agent.core.constants import DefaultValues
-
             policy = RuntimeSafetyPolicy(
                 llm=LLMTimeoutPolicy(
                     request_timeout_seconds=None,
@@ -591,7 +589,6 @@ class BotService(AgentBuilderMixin):
                 ),
                 turn=TurnTimeoutPolicy(
                     hook_timeout_seconds=10.0,
-                    tool_timeout_seconds=DefaultValues.TOOL_TIMEOUT_SECONDS,
                 ),
             )
         self._safety_policy_cache = policy

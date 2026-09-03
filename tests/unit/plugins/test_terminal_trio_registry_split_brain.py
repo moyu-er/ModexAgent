@@ -47,6 +47,7 @@ from modex_agent.plugins.loader import (
     PluginDiscoveryConfig,
 )
 from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.terminal import (
     CommandTool,
     ProcessRegistry,
@@ -56,7 +57,6 @@ from modex_agent.tools.terminal import (
 from modex_agent.tools.terminal.managers import TerminalManagerBase
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
-from modex_agent.tools.manager import InMemoryToolManager
 
 
 async def _load_default_registry() -> ComponentRegistry:

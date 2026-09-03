@@ -12,10 +12,10 @@ from bot.eval.harbor.pool_mode_types import build_model_config
 from bot.service import model_provider as model_provider_module
 from bot.service.model_provider import BotModelProvider
 
-from modex_agent.core.constants import FinishReason, ReasoningEffort
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.llm_request import ReasoningEffort
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
-from modex_agent.core.types import LLMResponse, MessageRole
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.providers import HTTPStreamProvider
 from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol

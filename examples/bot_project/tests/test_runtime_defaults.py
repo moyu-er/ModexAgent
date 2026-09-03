@@ -10,10 +10,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
 from modex_agent.interceptor.builtin import (
     ToolResultLimitInterceptor,
 )
+from modex_agent.messaging.models import InputMessage
 from modex_agent.pipeline.adapters import InputAdapter
 
 
@@ -52,9 +52,9 @@ def test_default_interceptor_chain_keeps_only_effective_defaults() -> None:
 def test_tool_timeout_default_is_540() -> None:
     """Framework default tool timeout is 540 seconds, enforced by
     ToolTimeoutInterceptor (persistent bash ladder: 480s tool < 540s interceptor)."""
-    from modex_agent.core.constants import DefaultValues
+    from modex_agent.core.llm_struct import DEFAULT_TOOL_TIMEOUT_SECONDS
 
-    assert DefaultValues.TOOL_TIMEOUT_SECONDS == 540.0
+    assert DEFAULT_TOOL_TIMEOUT_SECONDS == 540.0
 
 
 def test_deadline_policy_defaults_and_margin() -> None:

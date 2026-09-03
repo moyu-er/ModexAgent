@@ -12,14 +12,12 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.scope import MemoryContext
+from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import MessageRole, ToolCall
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.plugins.defaults.capabilities.experience.metadata import PerFileExperienceMetaStore
 from modex_agent.plugins.defaults.capabilities.experience.review_hook import ExperienceReviewHook
 

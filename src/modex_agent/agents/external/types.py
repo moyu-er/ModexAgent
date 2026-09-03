@@ -19,10 +19,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from modex_agent.core.agent import AgentCommKind
+from modex_agent.core.agent import AgentCommKind, ProviderKind
 
 from .events import ExternalEvent
-from .paths import ProviderKind
 
 # ---------------------------------------------------------------------------
 # Exec options / backend result

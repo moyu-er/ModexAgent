@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 
 _GOVERNANCE_FILES: tuple[str, ...] = (
-    "src/modex_agent/core/governance.py",
     "src/modex_agent/memory/context_governance.py",
 )
 

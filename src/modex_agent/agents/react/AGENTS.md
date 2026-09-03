@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-31 -->
+<!-- Updated: 2026-09-02 -->
 
 # react
 
@@ -13,12 +13,12 @@ approval suspend/resume, and integration points for hooks, interceptors, and con
 | File | Description |
 |------|-------------|
 | `agent.py` | `ReActAgent(Agent[ReActEvent])` — event enum, turn context setup, constructs `Graph` via `build_react_graph().compile()`, wraps in `GraphEngine`, executes via `engine.run_async(ReActGraphContext(...))`. |
-| `graph.py` | `build_react_graph()` — builds `Graph[ReActTurnState]` (from `modex_graph`) with 6 ReAct nodes + 11 edges (8 total with engine sentinels). |
+| `graph.py` | `build_react_graph()` -- builds six ReAct nodes plus engine sentinels with 11 edges. |
 | `context.py` | `ReActGraphContext(GraphContext[ReActTurnState])` — type-safe accessors (`agent_ctx`, `tool_manager`, `context_manager`). |
 | `runtime.py` | `ReactGraphRuntime(GraphRuntime)` — AOP bridge mapping ReAct StrEnums to framework enums, bridging `GraphContext.user_data` → `AgentContext`. |
 | `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy`, and `ReActRuntimeStateCodec`. |
 | `builder.py` | `ReActAgentBuilder` -- `build_agent()` + `build_emitter_factory()` from `AgentDescriptor`. |
-| `approval.py` | *(removed — migrated to `modex_agent.approval.runtime`)* |
+| `ids.py` | `next_call_id()` -- Snowflake-based fallback ID minting for provider tool calls without native IDs; exported by `agents.react`. |
 | `llm_client.py` | `ReactLlmClient` — the ReAct LLM caller; single event loop (ADR-0046): `call()` drives one pass over `provider.stream(request)` for every provider — stream-native providers yield real event streams, `CallbackStreamProvider` implementations ride the callback→event bridge (LLMStreamEvents fed into an `EventAssembler`). The LLM_STREAM-scope interceptor chain wraps the event iterator (events in, events out). Emitter driving happens at the event dispatch point, gated on `emitter.wants_streaming()`. Mid-stream interrupt stashes `INTERRUPTED_PARTIAL` into turn state; a bridge-translated `Finish(CANCELLED)` re-enters the lifecycle as `CancelledError`. |
 | `error_recovery.py` | Provider error recovery for `ReactLlmClient` — on context-length / payload-too-large errors applies emergency compaction (drop middle messages, keep system + recent tail) and retries with the trimmed list. |
 | `media_injection.py` | `inject_multimodal(messages, ctx)` — copy-on-write resolution of persisted `media://` parts at the LLM boundary (input history never mutated). Per-part modality gate (`content_part_modality` — unsupported modalities drop with ERROR); two-pass budget (framework constants: 8 parts / 6MB decoded bytes, oldest-first offload to `[media offloaded: <aid>]` placeholders); `media://` resolution via `runtime.services.media_store` with a `(id(store), session_id, aid)` weakref-guarded cache; no store / missing / corrupt bytes degrade to `[media unavailable: <aid>]` placeholders with ERROR — a broken image never fails the LLM call. |

@@ -6,8 +6,14 @@ from typing import Any
 import pytest
 
 from modex_agent.agents.react.message_builder import build_assistant_message
-from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, build_media_ref
-from modex_agent.core.types import MessageRole, ToolCall
+from modex_agent.core.message import (
+    ChatMessage,
+    ImageUrl,
+    ImageUrlPart,
+    MessageRole,
+    ToolCall,
+    build_media_ref,
+)
 from modex_agent.memory.token_estimator import (
     CharTokenEstimator,
     TokenEstimator,
@@ -155,10 +161,10 @@ def test_chatmessage_token_count_default_none_omitted() -> None:
 
 @pytest.mark.asyncio
 async def test_scoped_message_history_stamps_token_count(tmp_path) -> None:
-    from modex_agent.core.scope import MemoryContext
-    from modex_agent.memory.default_system import ScopedMessageHistory
+    from modex_agent.memory.history import ScopedMessageHistory
     from modex_agent.memory.layers.factory import MemoryLayerFactory
     from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+    from modex_agent.memory.scope import MemoryContext
 
     registry = DefaultMemoryStoreRegistry(tmp_path)
     layer_set = MemoryLayerFactory.single_user(registry=registry)
@@ -174,10 +180,10 @@ async def test_cleanup_uses_injected_estimator_not_default(tmp_path) -> None:
     """ScopedMessageHistory must forward its estimator to cleanup_session so
     trigger/boundary share the same estimator as stamping. Regression for the
     divergence bug where cleanup silently fell back to CharTokenEstimator."""
-    from modex_agent.core.scope import MemoryContext
-    from modex_agent.memory.default_system import ScopedMessageHistory
+    from modex_agent.memory.history import ScopedMessageHistory
     from modex_agent.memory.layers.factory import MemoryLayerFactory
     from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+    from modex_agent.memory.scope import MemoryContext
 
     class HugeEstimator(TokenEstimator):
         """Every message is enormous -> cleanup always triggers and prunes hard."""

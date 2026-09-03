@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modex_agent.core.session_store import SessionStore
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.persistence.session_store import SessionStore
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider

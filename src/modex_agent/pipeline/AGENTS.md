@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-26 -->
+<!-- Updated: 2026-09-02 -->
 
 # pipeline
 
@@ -20,7 +20,7 @@ End-to-end flow orchestration. `AgentPipeline` is now a **slimmed facade** (ADR-
 | `approval_resumer.py` | `ApprovalResumer` — pure approval state machine. `load_pending()` queries `TurnStateStore` for `SUSPENDED` turns; `apply_resume()` applies a decision, re-saves partial state, and restores `agent_context.runtime.state` on completion. **Single-direction dependency**: no knowledge of turn execution — the caller (`TurnRunner`) drives execute + delete_turn + drain. |
 | `turn_session_registry.py` | `TurnSessionRegistry` — the 4 in-process bookkeeping dicts (session locks, running turn tasks, injection queues, turn UUIDs) plus queries and `cancel_turn()` (the active wakeup used by `/stop`/WebUI pause). Shared by `pipeline` and `TurnRunner`, removing any runner→pipeline back-ref. |
 | `dream_scanner.py` | `DreamScanner` — `run_forever()` background loop that scans active contexts every `dream_interval` and triggers `DreamEngine` consolidation, scoped by per-scope `asyncio.Lock` from `runtime.dream_locks`. Pipeline owns the task lifecycle (`run()` creates it, `stop()` cancels + `DreamScanner.stop()`). |
-| `adapters.py` | `InputAdapter` ABC only (B4: `OutputAdapter` family moved to `modex_agent/adapters/output.py`). `InputAdapter.configure_input_pipeline()` stores pipeline/ctx/output reference. `WebSocketInputAdapter` overrides with no-op. |
+| `adapters.py` | `InputAdapter` ABC only (B4: `OutputAdapter` family moved to `modex_agent/adapters/output.py`; `InputMessage` transport is owned by `modex_agent.messaging`). `InputAdapter.configure_input_pipeline()` stores pipeline/ctx/output reference. `WebSocketInputAdapter` overrides with no-op. |
 | `approval_renderer.py` | `ApprovalRenderer` — detects pending approval state, buffers agent messages during approval, applies unrelated-input auto-denial. Standalone `format_approval_prompt()`. Does NOT parse `/approve`/`/deny` (that's `parse_input_command` from `approval/response`). |
 | `context_assembler.py` | `assemble_context()` — loads history, writes user message, builds system prompt, handles multimodal/attachment content (user message carries attachment `media://` ImageUrlParts alongside the text part when the model is IMAGE-capable; otherwise stays plain str), sideband prompts, runs `MultiAgentContextBuilder`. Called by `TurnContextBuilder.assemble()`. |
 | `snapshot.py` | `PipelineSnapshot` — captures pipeline state for approval suspend/resume (used by `ApprovalResumer` / `TurnRunner._handle_snapshot_approval()`). |
@@ -93,6 +93,7 @@ The pipeline facade assembles runtime services and handles platform I/O + pre-lo
 ## For AI Agents
 
 - `AgentPipeline` is a thin facade — for turn-execution logic read `turn_runner.py`; for turn-preparation read `turn_context_builder.py`; for approval state read `approval_resumer.py`.
+- `InputMessage` is consumed here but owned and exported by `modex_agent.messaging`; pipeline exports `InputAdapter`, not message DTOs.
 - The facade delegates the locked turn to `TurnRunner.process_locked()`; it never executes agent turns itself.
 - Snapshots capture the full agent state (including ReAct loop position) — suspension and resumption is transparent to the agent.
 - Busy-input modes and slash-command dispatch live in `pipeline._process_message` (pre-lock); the in-lock command handling is in `TurnContextBuilder.build_turn_request`.
@@ -104,6 +105,7 @@ The pipeline facade assembles runtime services and handles platform I/O + pre-lo
 - `modex_agent.agents.react` — `ReActAgent`, `ReActTurnState` for turn execution
 - `modex_agent.runtime` — `AgentRuntimeServices`, `TurnStateStore` for state and snapshot persistence
 - `modex_agent.commands` — `CommandProcessor` for slash command parsing
+- `modex_agent.messaging` — `InputMessage` / `OutputMessage` transport models
 - `modex_agent.approval` — approval response parsing and tier classification
 - `modex_agent.multi_agent` — `MultiAgentContextBuilder` for multi-agent context assembly
 - `modex_agent.memory` — memory compaction and consolidation after turns

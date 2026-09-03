@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.pruned.manager import PrunedManager
+from modex_agent.memory.scope import MemoryContext
 
 if TYPE_CHECKING:
     from modex_agent.memory.cleanup import CleanupResult

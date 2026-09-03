@@ -50,8 +50,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.agent import AgentCommKind, AgentContext
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.agent import AgentCommKind, AgentContext, ExecutionStrategyKind
 from modex_agent.core.tool_manager import Tool
 from modex_agent.multi_agent.tools import SEND_TO_PEER_TOOL_NAME
 from modex_agent.runtime.enums import TurnCustomKey

@@ -8,14 +8,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from bot.service.pool.declaration import boot_scope_spec
-from modex_agent.core.constants import StopReason
+from modex_agent.core.emitter import StopReason
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
-from modex_agent.core.scope import MemoryAgentRole, MemoryLayerName
 from modex_agent.hook import HookSpec, OutcomeFinallyHook
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.memory.consolidation.dream_engine import DreamEngine
 from modex_agent.memory.default_system import DefaultMemorySystem
+from modex_agent.memory.scope import MemoryAgentRole, MemoryLayerName
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.plugins.assembly.single_agent import (
     SingleAgentAssembled,

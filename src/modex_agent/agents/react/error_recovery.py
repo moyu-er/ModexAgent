@@ -15,9 +15,9 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.governance import ContextGovernance
 from modex_agent.core.llm_struct import is_context_overflow_text
 from modex_agent.core.message import ChatMessage
+from modex_agent.memory.context_governance import ContextGovernance
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext

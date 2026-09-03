@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.session_registry import InMemorySessionRegistry
+from modex_agent.persistence.session_registry import InMemorySessionRegistry
 
 
 @pytest.fixture
@@ -57,7 +57,7 @@ async def test_touch_updates_updated_at(factory: SessionIdFactory):
 
 
 async def test_register_writes_through_to_store(tmp_path, factory: SessionIdFactory):
-    from modex_agent.core.session_store import LocalFileSessionStore
+    from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
 
     store = LocalFileSessionStore(tmp_path)
     reg = InMemorySessionRegistry(store=store)
@@ -68,7 +68,7 @@ async def test_register_writes_through_to_store(tmp_path, factory: SessionIdFact
 
 
 async def test_load_all_populates_cache_from_store(tmp_path, factory: SessionIdFactory):
-    from modex_agent.core.session_store import LocalFileSessionStore
+    from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
 
     store = LocalFileSessionStore(tmp_path)
     session = factory.create(agent_name="main")
@@ -156,7 +156,7 @@ async def test_cleanup_removes_session_from_cache(factory: SessionIdFactory):
 
 
 async def test_cleanup_removes_session_from_store(tmp_path, factory: SessionIdFactory):
-    from modex_agent.core.session_store import LocalFileSessionStore
+    from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
 
     store = LocalFileSessionStore(tmp_path)
     reg = InMemorySessionRegistry(store=store)

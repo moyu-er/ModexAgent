@@ -35,6 +35,7 @@ from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.constants import ToolCallEndPayload
 from modex_agent.core.emitter import AgentResult, ContentEmitter
 from modex_agent.core.events import EmitterConfig
+from modex_agent.core.message import ToolCall
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.turn_events import (
     TurnReasoningEvent,
@@ -42,7 +43,7 @@ from modex_agent.core.turn_events import (
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
-from modex_agent.core.types import OutputMessage, ToolCall
+from modex_agent.messaging.models import OutputMessage
 
 
 def _make_emitter(

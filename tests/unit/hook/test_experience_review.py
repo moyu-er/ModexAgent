@@ -14,9 +14,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import MessageRole
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.plugins.defaults.capabilities.experience.catalog import ExperienceCatalog

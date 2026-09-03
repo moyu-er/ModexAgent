@@ -16,14 +16,14 @@ from typing import Any
 import httpx
 import pytest
 
-from modex_agent.core.constants import FinishReason
 from modex_agent.core.llm_struct import (
+    FinishReason,
     LLMErrorKind,
     LLMTimeoutPolicy,
     RuntimeSafetyPolicy,
+    TokenUsage,
 )
 from modex_agent.core.message import ChatMessage, MessageRole
-from modex_agent.core.types import TokenUsage
 from modex_agent.providers.http.formats.anthropic import AnthropicProtocol
 from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
 from modex_agent.providers.http.provider import HTTPStreamProvider

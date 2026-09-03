@@ -4,9 +4,9 @@ import hashlib
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.archive_models import ArchiveChannel
 from modex_agent.memory.core.system import MemorySystem
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.tags import ArchiveTag
 from modex_agent.utils.xml import xml_attr, xml_text
 

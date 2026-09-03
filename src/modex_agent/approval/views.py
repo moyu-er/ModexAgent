@@ -1,15 +1,12 @@
 """Cross-channel approval DTOs.
 
 ``ApprovalRequestView`` is the single payload shape shared by push (suspend-time
-prompt) and pull (GET query for restart recovery). ``ApprovalDecisionInput``
-carries a webui approve/deny decision on ``InputMessage``.
+prompt) and pull (GET query for restart recovery).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-
-from modex_agent.approval.types import ApprovalAction
 
 if TYPE_CHECKING:
     from modex_agent.runtime.models import ApprovalRequestState
@@ -32,32 +29,6 @@ class ApprovalRequestView:
             "arguments": dict(self.arguments),
             "status": self.status,
         }
-
-
-@dataclass(frozen=True)
-class ApprovalDecisionInput:
-    """An approve/deny decision carried on ``InputMessage``.
-
-    WebUI fills ``tool_call_id`` (precision: that exact request). IM fills
-    ``None`` (decide-next-pending: the next still-pending request in order).
-    """
-    tool_call_id: str | None
-    action: ApprovalAction
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to a broker-safe plain dict (crosses the message broker)."""
-        return {"tool_call_id": self.tool_call_id, "action": self.action.value}
-
-    @classmethod
-    def from_dict(cls, data: Any) -> ApprovalDecisionInput | None:
-        """Reconstruct from ``to_dict`` output; None when *data* is None."""
-        if data is None:
-            return None
-        raw_id = data.get("tool_call_id")
-        return cls(
-            tool_call_id=None if raw_id is None else str(raw_id),
-            action=ApprovalAction(str(data["action"])),
-        )
 
 
 def view_from_request(req: ApprovalRequestState, *, status: str = "pending") -> ApprovalRequestView:

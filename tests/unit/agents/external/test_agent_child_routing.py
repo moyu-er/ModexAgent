@@ -40,7 +40,7 @@ from modex_agent.agents.external.child_discovery import (
     ChildSessionDiscoverySink,
 )
 from modex_agent.agents.external.events import ExternalEvent
-from modex_agent.agents.external.paths import ExternalPaths, ProviderKind
+from modex_agent.agents.external.paths import ExternalPaths
 from modex_agent.agents.external.providers.opencode.v2_parser import OpenCodeV2EventParser
 from modex_agent.agents.external.session_store import (
     LocalFileExternalSessionMapStore,
@@ -52,20 +52,18 @@ from modex_agent.agents.external.types import (
     ExecOptions,
     ExternalEnvSpec,
 )
-from modex_agent.core.agent import AgentCommKind, AgentContext
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.core.history import ListMessageHistory
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.agent import AgentCommKind, AgentContext, ProviderKind
+from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.turn_events import (
     TurnEvent,
     TurnTextEvent,
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
-from modex_agent.core.types import MessageRole
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.persistence.session_registry import SessionRegistry
 from modex_agent.tools.manager import InMemoryToolManager
 
 # ---------------------------------------------------------------------------

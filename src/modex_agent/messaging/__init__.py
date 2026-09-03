@@ -6,6 +6,17 @@
 - Pipeline 桥接: BrokerInputAdapter, BrokerOutputAdapter, BrokerBridgeService, OutputRoute
 """
 
+from .models import (  # noqa: I001 - payloads must bind before bridge imports pipeline
+    ApprovalAction,
+    ApprovalDecisionInput,
+    BrokerInputPayload,
+    BrokerOutputPayload,
+    InputMessage,
+    MessageType,
+    OutputMessage,
+    OutputMessageType,
+    ReminderKind,
+)
 from .broker import Address, AddressKind, BrokerMessage, DeliveryError, MessageBroker
 from .broker_bridge import BrokerBridgeService, BrokerInputAdapter, BrokerOutputAdapter, OutputRoute
 from .broker_memory import InMemoryMessageBroker
@@ -14,11 +25,20 @@ __all__ = [
     "Address",
     "AddressKind",
     "BrokerMessage",
+    "BrokerBridgeService",
+    "BrokerInputAdapter",
+    "BrokerInputPayload",
+    "BrokerOutputAdapter",
+    "BrokerOutputPayload",
     "DeliveryError",
     "MessageBroker",
     "InMemoryMessageBroker",
-    "BrokerInputAdapter",
-    "BrokerOutputAdapter",
-    "BrokerBridgeService",
+    "ApprovalAction",
+    "ApprovalDecisionInput",
+    "InputMessage",
+    "MessageType",
+    "OutputMessage",
+    "OutputMessageType",
     "OutputRoute",
+    "ReminderKind",
 ]

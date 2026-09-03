@@ -9,15 +9,14 @@ tests/unit/agents/react/test_llm_client.py; this file covers full-turn behavior.
 
 import asyncio
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
-from modex_agent.agents.react.agent import ReActEvent, ReActAgent
+from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.core.llm_struct import LLMResponse
+from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.types import LLMResponse, ToolCall
-from modex_agent.interceptor.abc import InterceptorScope
-from modex_agent.tools.manager import InMemoryToolManager
 
 
 class _StreamingEmitter:
@@ -55,14 +54,14 @@ class _StreamingEmitter:
 
 
 def _make_fake_ctx(*, interceptor_chain=None, control_channel=None):
-    from modex_agent.core.agent import AgentContext
-    from modex_agent.memory.history import ListMessageHistory
-    from modex_agent.tools.manager import InMemoryToolManager
     from modex_agent.agents.react.state import ReActTurnState
-    from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-    from modex_agent.runtime.models import TurnIdentity
-    from modex_agent.runtime.enums import AgentKind, TurnPhase
+    from modex_agent.core.agent import AgentContext
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.memory.history import ListMessageHistory
+    from modex_agent.runtime.enums import AgentKind, TurnPhase
+    from modex_agent.runtime.models import TurnIdentity
+    from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+    from modex_agent.tools.manager import InMemoryToolManager
     state = ReActTurnState(
         identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("test-session-001"), turn_id="t1"),
         agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED,

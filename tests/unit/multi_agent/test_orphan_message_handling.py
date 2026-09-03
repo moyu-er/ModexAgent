@@ -23,10 +23,10 @@ from uuid import uuid4
 
 import pytest
 
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer

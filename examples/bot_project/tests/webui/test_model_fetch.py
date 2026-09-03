@@ -28,7 +28,7 @@ from bot.webui.model_fetch import (  # noqa: E402
 )
 from bot.webui.server import WebUIServer  # noqa: E402
 
-from modex_agent.core.constants import InterfaceFormat  # noqa: E402
+from modex_agent.ioc.configs.llm import InterfaceFormat  # noqa: E402
 
 # ── URL candidate construction ──────────────────────────────────────────────
 

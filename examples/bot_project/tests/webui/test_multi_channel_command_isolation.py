@@ -24,7 +24,7 @@ from bot.adapters.fan_in import FanInInputAdapter
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage, OutputMessage
+from modex_agent.messaging.models import InputMessage, OutputMessage
 from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
 from modex_agent.pipeline.adapters import InputAdapter
 

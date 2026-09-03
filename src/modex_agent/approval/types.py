@@ -5,11 +5,6 @@ from __future__ import annotations
 from enum import StrEnum
 
 
-class ApprovalAction(StrEnum):
-    ALLOW = "allow"
-    DENY = "deny"
-
-
 class ApprovalResolution(StrEnum):
     ALLOWED = "allowed"
     DENIED = "denied"

@@ -183,7 +183,6 @@ class TestSendToPeerToolDescription:
 
 class TestSendToPeerToolGraphMode:
     def test_list_targets_empty_in_graph_mode(self) -> None:
-        from modex_agent.tools.manager import InMemoryToolManager
         from modex_agent.memory.history import ListMessageHistory
 
         store = CommunicationTargetStore()

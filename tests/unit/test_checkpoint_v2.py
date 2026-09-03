@@ -1,5 +1,4 @@
 """Tests for ApprovalDenialContext."""
-import pytest
 
 from modex_agent.runtime.models import ApprovalDenialContext
 

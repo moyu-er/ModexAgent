@@ -49,7 +49,7 @@ from modex_agent.plugins.defaults.capabilities.experience.validation import (
 from modex_agent.utils.xml import xml_attr, xml_text
 
 if TYPE_CHECKING:
-    from modex_agent.core.scope import MemoryContext
+    from modex_agent.memory.scope import MemoryContext
 
 
 def render_index_xml(experiences: list[ExperienceSummary]) -> str:

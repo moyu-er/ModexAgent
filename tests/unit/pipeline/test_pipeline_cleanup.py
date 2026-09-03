@@ -5,8 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from tests.unit.pipeline._helpers import _make_react_pipeline
 
 if TYPE_CHECKING:
@@ -53,7 +51,7 @@ class _MinimalInputAdapter:
         if not self._sent:
             self._sent = True
             from modex_agent.core.session_id import SessionInfo
-            from modex_agent.core.types import InputMessage
+            from modex_agent.messaging.models import InputMessage
             yield InputMessage(content="test", session=SessionInfo.from_str("s1"))
 
 

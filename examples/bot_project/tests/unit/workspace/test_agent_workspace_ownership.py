@@ -29,8 +29,8 @@ pool:
       description: ownership test root
 """
 
-from modex_agent.core.session_store import LocalFileSessionStore
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 from modex_agent.tools.presets import ToolPreset, get_preset_tools
 from modex_agent.tools.standard import ReadFileTool, SearchFilesTool
@@ -319,9 +319,9 @@ async def test_build_pool_data_uses_workspace_sqlite_for_session_memory(
 ) -> None:
     from bot.workspace.pool_data import build_pool_data
 
-    from modex_agent.core.scope import MemoryContext
     from modex_agent.ioc.configs.app import AppConfig
     from modex_agent.ioc.configs.memory import MemoryConfig
+    from modex_agent.memory.scope import MemoryContext
     from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
     from modex_agent.persistence.managers import WorkspacePersistenceManager
     from modex_agent.scope.spec import AgentSpec

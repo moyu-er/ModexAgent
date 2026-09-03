@@ -4,7 +4,7 @@ import tempfile
 from unittest.mock import AsyncMock, MagicMock
 
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import StopReason
+from modex_agent.core.emitter import StopReason
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.message_format import (
@@ -452,9 +452,9 @@ class TestOutputMdInjection:
         import tempfile
         from pathlib import Path as _Path
 
-        from modex_agent.core.scope import MemoryAgentRole
         from modex_agent.ioc.configs.memory import MemoryConfig
         from modex_agent.ioc.factories.descriptors import build_session_only_memory
+        from modex_agent.memory.scope import MemoryAgentRole
 
         runtime_dir = _Path(tempfile.mkdtemp()) / "runtime"
         session_id = "conv-1.reviewer.abc123"

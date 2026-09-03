@@ -224,7 +224,7 @@ class TurnCustomKey(StrEnum):
     # Reply deliver pattern.
     GRAPH_DOWNSTREAM_HAS_END = "_graph_downstream_has_end"
     # Parallel-scheduler rolling-pool ceiling for this turn (int, ADR-0048
-    # D2). Optional per-turn override of DefaultValues.MAX_PARALLEL_TOOL_CALLS;
+    # D2). Optional per-turn override of the ReAct scheduler default;
     # 1 = exact serial execution (regression escape hatch).
     MAX_PARALLEL_TOOL_CALLS = "max_parallel_tool_calls"
     # Turn-scoped monotonic tool-call seq counter (int, ADR-0048 G2-b):

@@ -21,8 +21,7 @@ from collections.abc import Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.agent import AgentCommKind
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.agent import AgentCommKind, ExecutionStrategyKind
 from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.tools import CommunicationTarget
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeSpec

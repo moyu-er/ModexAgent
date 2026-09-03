@@ -301,7 +301,6 @@ class TestToolManagerIntegration:
     """
 
     def test_tool_manager_descriptions_use_dynamic_schema(self) -> None:
-        from modex_agent.tools.manager import InMemoryToolManager
 
         store = CommunicationTargetStore()
         store.add(
@@ -488,7 +487,6 @@ class TestTaskDispatchToolDescription:
 
     def test_description_via_tool_manager(self) -> None:
         """ToolManager.get_tool_descriptions() returns dynamic description."""
-        from modex_agent.tools.manager import InMemoryToolManager
 
         store = CommunicationTargetStore()
         store.add(

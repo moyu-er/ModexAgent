@@ -4,14 +4,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from modex_agent.core.context import InMemoryContextManager
+from modex_agent.adapters.output import OutputAdapter
+from modex_agent.core.message import MessageRole
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import MessageRole, ReminderKind
+from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.messaging.broker import AddressKind
+from modex_agent.messaging.models import ReminderKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.message_type import AgentMessageType
-from modex_agent.adapters.output import OutputAdapter
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.tools.manager import InMemoryToolManager

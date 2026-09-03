@@ -21,10 +21,10 @@ from bot.eval.probes._harness_models import (
 )
 from bot.eval.probes.budget import BudgetedProvider
 from bot.eval.probes.schema import Probe, Speaker, WorldSpec
-from modex_agent.core.constants import RuntimeInfoKey
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.scope import MemoryAgentRole, MemoryContext
-from modex_agent.core.types import MessageRole, TokenUsage
+from modex_agent.core.llm_struct import TokenUsage
+from modex_agent.core.message import ChatMessage, MessageRole
+from modex_agent.memory.context import RuntimeInfoKey
+from modex_agent.memory.scope import MemoryAgentRole, MemoryContext
 from modex_agent.trace.experiment_attrs import (
     ExperimentLinkage,
     attach_experiment_attrs,

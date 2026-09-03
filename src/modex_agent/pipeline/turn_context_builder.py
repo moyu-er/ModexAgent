@@ -32,14 +32,14 @@ if TYPE_CHECKING:
     from modex_agent.commands.skill import SkillResolver
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.agent import Agent, AgentContext
-    from modex_agent.core.context import ContextManager, ContextState
     from modex_agent.core.emitter import ContentEmitter
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.tool_manager import ToolManager
-    from modex_agent.core.types import InputMessage
     from modex_agent.hook.runner import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
+    from modex_agent.memory.context import ContextManager, ContextState
     from modex_agent.memory.context_governance import ContextGovernance
+    from modex_agent.messaging.models import InputMessage
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.multi_agent.router import RouteResult
     from modex_agent.multi_agent.session_tree.session_binding import (
@@ -57,12 +57,11 @@ if TYPE_CHECKING:
 
 from modex_agent.adapters.emitter import StreamingAwareEmitter
 from modex_agent.approval.response import parse_input_command
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.commands.models import CommandContext
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.media import Attachment, MediaStore
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import OutputMessage, OutputMessageType
+from modex_agent.messaging.models import ApprovalAction, OutputMessage, OutputMessageType
 from modex_agent.pipeline.context_assembler import assemble_context
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry

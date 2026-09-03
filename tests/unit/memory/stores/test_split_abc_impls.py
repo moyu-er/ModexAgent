@@ -18,11 +18,6 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.scope import (
-    MemoryContext,
-    MemoryLayerName,
-    SessionScope,
-)
 from modex_agent.memory.core.split_stores import (
     ArchiveStore,
     CursorStore,
@@ -31,6 +26,11 @@ from modex_agent.memory.core.split_stores import (
     MessageStore,
 )
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+from modex_agent.memory.scope import (
+    MemoryContext,
+    MemoryLayerName,
+    SessionScope,
+)
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 from modex_agent.memory.stores.markdown_core import MarkdownCoreMemoryStorage
 from modex_agent.memory.stores.scoped_file import DefaultScopedStorage

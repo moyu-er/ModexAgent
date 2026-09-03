@@ -39,9 +39,9 @@ from modex_agent.runtime.dispatch import renew_dispatch_deadline
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.emitter import AgentResult
-    from modex_agent.core.message import ChatMessage
+    from modex_agent.core.llm_struct import LLMResponse
+    from modex_agent.core.message import ChatMessage, ToolCall
     from modex_agent.core.tool_manager import ToolResult
-    from modex_agent.core.types import LLMResponse, ToolCall
     from modex_agent.runtime.models import ApprovalTransaction
 
 logger = logging.getLogger(__name__)

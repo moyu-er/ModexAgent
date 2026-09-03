@@ -401,8 +401,8 @@ class TestArchiveEmitterNotification:
         start notice via notification_service.send_notice."""
         from bot.service.pool.communication import UserNoticeCleanupHook
 
-        from modex_agent.core.scope import MemoryContext
         from modex_agent.memory.hooks import MemoryHookContext
+        from modex_agent.memory.scope import MemoryContext
 
         notification_service = MagicMock()
         notification_service.send_notice = AsyncMock()
@@ -429,10 +429,10 @@ class TestArchiveEmitterNotification:
         done notice via notification_service.send_notice."""
         from bot.service.pool.communication import UserNoticeCleanupHook
 
-        from modex_agent.core.scope import MemoryContext
         from modex_agent.memory.cleanup import CleanupResult
         from modex_agent.memory.core.models import CompressionReason
         from modex_agent.memory.hooks import MemoryHookContext
+        from modex_agent.memory.scope import MemoryContext
 
         notification_service = MagicMock()
         notification_service.send_notice = AsyncMock()
@@ -465,8 +465,8 @@ class TestArchiveEmitterNotification:
         (defensive — avoids crash on malformed context)."""
         from bot.service.pool.communication import UserNoticeCleanupHook
 
-        from modex_agent.core.scope import MemoryContext
         from modex_agent.memory.hooks import MemoryHookContext
+        from modex_agent.memory.scope import MemoryContext
 
         notification_service = MagicMock()
         notification_service.send_notice = AsyncMock()
@@ -557,11 +557,11 @@ class TestMemorySystemCleanupHookFiring:
         asyncio.run(self._run_real_cleanup_fires_finished_hook(tmp_path))
 
     async def _run_real_cleanup_fires_finished_hook(self, tmp_path: Path) -> None:
-        from modex_agent.core.scope import MemoryContext
         from modex_agent.memory.default_system import DefaultMemorySystem
         from modex_agent.memory.hooks import CleanupFinishedHook, MemoryHookContext
         from modex_agent.memory.layers.factory import MemoryLayerFactory
         from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+        from modex_agent.memory.scope import MemoryContext
         from modex_agent.memory.token_estimator import TokenEstimator
 
         class _FixedEstimator(TokenEstimator):
@@ -614,7 +614,6 @@ class TestMemorySystemCleanupHookFiring:
         asyncio.run(self._run_real_cleanup_fires_both(tmp_path))
 
     async def _run_real_cleanup_fires_both(self, tmp_path: Path) -> None:
-        from modex_agent.core.scope import MemoryContext
         from modex_agent.memory.default_system import DefaultMemorySystem
         from modex_agent.memory.hooks import (
             CleanupFinishedHook,
@@ -623,6 +622,7 @@ class TestMemorySystemCleanupHookFiring:
         )
         from modex_agent.memory.layers.factory import MemoryLayerFactory
         from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+        from modex_agent.memory.scope import MemoryContext
         from modex_agent.memory.token_estimator import TokenEstimator
 
         class _FixedEstimator(TokenEstimator):

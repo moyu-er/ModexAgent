@@ -20,8 +20,8 @@ from modex_agent.commands.processor import SlashCommandProcessor
 from modex_agent.commands.skill import ResolvedSkillCommand, SkillResolver
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo, encode_snowflake
-from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.messaging.models import InputMessage
 from modex_agent.plugins.defaults.capabilities.skills.catalog import SkillCatalog
 from modex_agent.plugins.defaults.capabilities.skills.models import Skill
 from modex_agent.plugins.defaults.capabilities.skills.source import InlineSkillSource

@@ -25,7 +25,7 @@ from modex_agent.agents.external.agent import (
 from modex_agent.agents.external.backend_provider import PoolScopedBackendProvider
 from modex_agent.agents.external.contracts import ProviderEventParser
 from modex_agent.agents.external.events import ExternalEvent
-from modex_agent.agents.external.paths import ExternalPaths, ProviderKind
+from modex_agent.agents.external.paths import ExternalPaths
 from modex_agent.agents.external.scripted_backend import (
     ScriptedProgramme,
     ScriptedProviderBackend,
@@ -33,12 +33,12 @@ from modex_agent.agents.external.scripted_backend import (
 )
 from modex_agent.agents.external.session_store import LocalFileExternalSessionMapStore
 from modex_agent.agents.external.types import Emission, ExternalEnvSpec
-from modex_agent.core.agent import AgentContext
+from modex_agent.core.agent import AgentContext, ProviderKind
 from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.core.history import ListMessageHistory
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn_events import TurnEvent
+from modex_agent.memory.history import ListMessageHistory
 from modex_agent.tools.manager import InMemoryToolManager
 
 _TRACEPARENT_RE = re.compile(r"^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$")

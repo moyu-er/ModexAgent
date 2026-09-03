@@ -14,12 +14,13 @@ from bot.eval.agent_harness import (
 )
 
 from modex_agent.core.emitter import AgentResult
+from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.scope import MemoryContext
-from modex_agent.core.types import LLMResponse
 from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
-from modex_agent.memory.default_system import DefaultMemorySystem, ScopedMessageHistory
+from modex_agent.memory.default_system import DefaultMemorySystem
+from modex_agent.memory.history import ScopedMessageHistory
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.trace.langfuse_query import Provenance
 from modex_agent.trace.memory_trace_hook import MemoryTelemetryCounters, MemoryTraceHook

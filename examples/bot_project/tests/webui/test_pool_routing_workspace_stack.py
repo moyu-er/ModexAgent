@@ -32,8 +32,8 @@ from bot.workspace.dispatch import WorkspaceMessageDispatcher
 from bot.workspace.handle import PoolWorkspaceResources
 
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.types import InputMessage
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
 from modex_agent.workspace.context import WorkspaceContext

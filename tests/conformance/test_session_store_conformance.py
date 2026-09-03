@@ -12,9 +12,10 @@ from pathlib import Path
 import pytest
 
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.session_store import LocalFileSessionStore, SessionStore
 from modex_agent.persistence import ConnectionManager, DatabaseKind
+from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
 from modex_agent.persistence.adapters.session_store import SqliteSessionStore
+from modex_agent.persistence.session_store import SessionStore
 
 
 def _session(

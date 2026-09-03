@@ -33,8 +33,7 @@ from bot.webui.events import (
 from bot.webui.transcript_store import TranscriptStore
 from bot.workspace.handle import PoolWorkspaceResources
 
-from modex_agent.core.agent import AgentCommKind
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.agent import AgentCommKind, ExecutionStrategyKind
 from modex_agent.memory.core.split_stores import MessageStore
 from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
 

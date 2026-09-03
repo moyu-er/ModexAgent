@@ -16,8 +16,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
+from modex_agent.core.message import ToolCall
 from modex_agent.core.tool_manager import ToolResult
-from modex_agent.core.types import ToolCall
 
 
 class ToolCallEndPayload(BaseModel):

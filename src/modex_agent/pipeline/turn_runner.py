@@ -24,6 +24,7 @@ seam between ``AgentPipeline`` and concrete turn runners — ADR-0025 D3).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -35,22 +36,21 @@ if TYPE_CHECKING:
 
     from modex_agent.approval.ui import ApprovalUserInterface
     from modex_agent.core.agent import Agent
-    from modex_agent.core.context import ContextManager, ContextState
     from modex_agent.core.emitter import ContentEmitter
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.session_id import SessionInfo
-    from modex_agent.core.types import InputMessage
+    from modex_agent.memory.context import ContextManager, ContextState
+    from modex_agent.messaging.models import InputMessage
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.multi_agent.router import RouteResult
     from modex_agent.pipeline.turn_context_config import TurnContextDescriptor
     from modex_agent.runtime.store import TurnStateStore
     from modex_agent.workspace import WorkspaceManager
 
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import view_from_request
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
-from modex_agent.memory.history import inject_attachments_to_history
+from modex_agent.messaging.models import ApprovalAction
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
@@ -261,7 +261,7 @@ class ReActTurnRunner(TurnRunner):
         store to read at ``deliver`` time; receivers do not read envelopes.
         """
         from modex_agent.core import AgentCommKind
-        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.core.agent import ExecutionStrategyKind
         from modex_agent.pipeline.turn_context_config import TurnContextDescriptor
 
         agent_kind = AgentCommKind.SUBAGENT if self._is_subagent() else AgentCommKind.NORMAL
@@ -342,7 +342,16 @@ class ReActTurnRunner(TurnRunner):
 
             # Inject attachments metadata into the last assistant message
             if result and result.attachments:
-                await inject_attachments_to_history(context_state.history, result.attachments)
+                history = context_state.history
+                history_list = [message.to_dict() for message in await history.to_list()]
+                for message in reversed(history_list):
+                    if message.get("role") == "assistant":
+                        metadata = dict(message.get("metadata") or {})
+                        metadata["attachments"] = result.attachments
+                        message["metadata"] = metadata
+                        break
+                with contextlib.suppress(NotImplementedError):
+                    await history.replace_all(history_list)
 
             await ctx_mgr.save(
                 session_id=session_id,

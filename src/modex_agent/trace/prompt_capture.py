@@ -30,8 +30,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any
 
-from modex_agent.core.message import ChatMessage, render_content_part_ref
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import ChatMessage, MessageRole, render_content_part_ref
 from modex_agent.ioc.configs.observability import PromptCaptureMode
 from modex_agent.trace.semconv import GenAiAttr
 

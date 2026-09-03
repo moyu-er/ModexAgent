@@ -55,7 +55,7 @@ from bot.eval.experiment_runner import EvalRunner as _BaseEvalRunner
 from bot.eval.judge.calibration import JudgeScoreComment
 from bot.eval.judge_cli import judge as judge_command
 from bot.eval.task_spec import EvalItemSpec, EvalToolset
-from modex_agent.core.constants import ReasoningEffort
+from modex_agent.core.llm_request import ReasoningEffort
 from modex_agent.core.provider import LLMProvider
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.factories.llm import create_llm_provider
@@ -945,7 +945,7 @@ async def _record_golden_case(case_dir: Path) -> None:
     from bot.eval.replay import GoldenMeta
     from bot.eval.task_output import EvalTaskOutput
     from bot.eval.task_spec import EvalItemSpec
-    from modex_agent.core.constants import StopReason
+    from modex_agent.core.emitter import StopReason
     from modex_agent.runtime.services import AgentRuntimeServices
     from modex_agent.trace.cassette import (
         CassetteCategory,

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from modex_agent.core.scope import MemoryContext, MemoryLayerName
 from modex_agent.memory.archive_models import (
     ArchiveChannel,
     ArchiveDocuments,
@@ -14,6 +13,7 @@ from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
 from modex_agent.memory.layers.config import ArchiveMemoryConfig
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+from modex_agent.memory.scope import MemoryContext, MemoryLayerName
 
 
 async def test_append_bundle_writes_same_archive_id_to_both_channels(tmp_path: Path) -> None:

@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.core.types import LLMResponse, TokenUsage
+from modex_agent.core.llm_struct import LLMResponse, TokenUsage
 
 # ---------------------------------------------------------------------------
 # OpenAI chat completions wire shape
@@ -209,3 +209,11 @@ def test_llm_response_reasoning_fields_default_none() -> None:
     assert response.reasoning_signature is None
     assert response.reasoning_item_id is None
     assert response.reasoning_encrypted_content is None
+
+
+def test_llm_response_is_frozen() -> None:
+    response = LLMResponse(content="original")
+
+    with pytest.raises(ValidationError):
+        response.content = "updated"  # type: ignore[misc]
+    assert response.model_copy(update={"content": "updated"}).content == "updated"

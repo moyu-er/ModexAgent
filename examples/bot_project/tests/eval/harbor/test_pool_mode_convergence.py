@@ -22,13 +22,12 @@ from bot.eval.harbor.pool_mode_convergence import (
 from plugins.bot_strategies import BotDefaultLLMConfig
 from pydantic import BaseModel
 
-from modex_agent.core.constants import FinishReason, StopReason
-from modex_agent.core.emitter import AgentResult
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
+from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
-from modex_agent.core.scope import MemoryContext
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import LLMResponse, MessageRole, ToolCall
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.plugins.abc import ComponentFactory
 from modex_agent.plugins.assembly.context import AssemblyContext
 from modex_agent.runtime.models import JsonValue
@@ -450,4 +449,3 @@ async def test_read_back_returns_none_when_history_read_fails() -> None:
     result = await read_back_root_result(_ExplodingMemorySystem(), _ROOT_SESSION_ID)
 
     assert result is None
-

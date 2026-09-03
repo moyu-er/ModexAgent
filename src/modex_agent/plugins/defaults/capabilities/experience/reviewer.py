@@ -196,7 +196,7 @@ class ExperienceReviewAgent(ScopedFileAgent):
         from modex_agent.agents.react.state import ReActTurnState
         from modex_agent.agents.summarizer.emitter import SummarizerTrajectoryEmitter
         from modex_agent.core.agent import AgentContext
-        from modex_agent.core.types import MessageRole
+        from modex_agent.core.message import MessageRole
         from modex_agent.hook.abc import HookErrorPolicy, HookSpec
         from modex_agent.hook.builtin import RunLoggingHook
         from modex_agent.hook.runner import HookRunner

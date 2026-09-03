@@ -14,10 +14,15 @@ from typing import Any
 
 import pytest
 
-from modex_agent.core.constants import FinishReason
 from modex_agent.core.llm_request import LLMRequest
-from modex_agent.core.llm_struct import LLMErrorInfo, LLMErrorKind
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.llm_struct import (
+    FinishReason,
+    LLMErrorInfo,
+    LLMErrorKind,
+    LLMResponse,
+    TokenUsage,
+)
+from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.stream_events import (
     EventAssembler,
@@ -29,7 +34,6 @@ from modex_agent.core.stream_events import (
     ToolCallComplete,
     UsageSnapshot,
 )
-from modex_agent.core.types import LLMResponse, MessageRole, TokenUsage, ToolCall
 
 
 def _messages() -> list[ChatMessage]:

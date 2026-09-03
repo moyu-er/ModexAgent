@@ -26,16 +26,29 @@ duplicate that work.
 from __future__ import annotations
 
 import logging
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.governance import ContextGovernance
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import MessageRole
 from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
 
 logger = logging.getLogger(__name__)
+
+
+class ContextGovernance(ABC):
+    """Pre-LLM treatment of a copy of the model-visible context."""
+
+    @abstractmethod
+    async def apply(
+        self,
+        messages: list[dict[str, Any]],
+        ctx: AgentContext,
+    ) -> list[dict[str, Any]]:
+        """Apply governance and return a new message list."""
+        ...
 
 
 # ── Metadata keys ───────────────────────────────────────────────────────────

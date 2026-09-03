@@ -18,7 +18,7 @@ import logging
 from collections.abc import Sequence
 from typing import Final
 
-from modex_agent.core.types import ToolCall
+from modex_agent.core.message import ToolCall
 from modex_agent.trace.pricing import PerModelUsage, UsageBuckets
 from modex_agent.trace.scoring import TrajectoryMetrics, _as_int
 from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode

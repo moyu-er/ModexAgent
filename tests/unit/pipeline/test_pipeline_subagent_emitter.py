@@ -7,14 +7,11 @@ Verifies that:
 
 from unittest.mock import MagicMock
 
-import pytest
-
-from modex_agent.core.context import ContextState
 from modex_agent.adapters.emitter import StreamingAwareEmitter
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
-
+from modex_agent.memory.context import ContextState
+from modex_agent.messaging.models import InputMessage
 from tests.unit.pipeline._helpers import _make_react_pipeline
 
 

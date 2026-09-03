@@ -2,13 +2,12 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, create_autospec
 
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.scope import MemoryContext
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.memory.core.models import CoreMemoryContents, InjectionResult, MemoryBudget
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.hooks import SectionProvenance
 from modex_agent.memory.injection.full_injection import FullInjectionPolicy
+from modex_agent.memory.scope import MemoryContext
 
 
 def _section() -> SectionProvenance:

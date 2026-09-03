@@ -76,15 +76,14 @@ from typing import TYPE_CHECKING, Any
 
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.control.exceptions import LoopDetectedError
+from modex_agent.core.message import MessageRole
 from modex_agent.core.message_utils import wrap_system_reminder
-from modex_agent.core.types import MessageRole
 from modex_agent.hook.abc import BeforeIterationHook
 from modex_agent.runtime.enums import TurnCustomKey
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
-    from modex_agent.core.message import ChatMessage
-    from modex_agent.core.types import ToolCall
+    from modex_agent.core.message import ChatMessage, ToolCall
 
 
 _TRUNCATE = 500

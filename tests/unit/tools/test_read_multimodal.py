@@ -19,8 +19,8 @@ from modex_agent.core.message import ChatMessage, ImageUrlPart, TextPart
 from modex_agent.core.tool_manager import ToolExecutionContext, ToolResult
 from modex_agent.media.store import LocalFileMediaStore
 from modex_agent.memory.tools.scoped_read import ScopedReadFileTool
-from modex_agent.tools.standard.file_tool import ReadFileTool
 from modex_agent.tools.manager import InMemoryToolManager
+from modex_agent.tools.standard.file_tool import ReadFileTool
 
 _PNG_BYTES = (
     b"\x89PNG\r\n\x1a\n"
@@ -252,9 +252,8 @@ async def test_image_chain_tool_to_message_to_injection(tmp_path: Path) -> None:
     from modex_agent.agents.react.message_builder import build_tool_message
     from modex_agent.agents.react.state import ReActTurnState
     from modex_agent.core.agent import AgentContext
-    from modex_agent.core.history import ListMessageHistory
     from modex_agent.core.session_id import SessionInfo
-    from modex_agent.tools.manager import InMemoryToolManager
+    from modex_agent.memory.history import ListMessageHistory
     from modex_agent.runtime.enums import AgentKind, TurnPhase
     from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices

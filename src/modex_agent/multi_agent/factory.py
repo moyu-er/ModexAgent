@@ -12,13 +12,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-from modex_agent.core.constants import ExecutionStrategyKind
-from modex_agent.core.context import ContextManager, InMemoryContextManager
-from modex_agent.core.session_registry import SessionRegistry
+from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.hook import HookRunner
 from modex_agent.hook.builtin import InboxFlushHook
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.factories.llm import create_llm_provider
+from modex_agent.memory.context import ContextManager, InMemoryContextManager
+from modex_agent.persistence.session_registry import SessionRegistry
 from modex_agent.runtime.context import RuntimeContextManager
 from modex_agent.tools.filter import FilteredToolManager
 from modex_agent.tools.manager import InMemoryToolManager
@@ -101,7 +101,7 @@ class DefaultAgentFactory(AgentFactory):
         self._inbox_producer = InboxProducer(inbox_server) if inbox_server else None
         self._inbox_consumer = inbox_consumer
         # Shared runtime-context manager across all agents created by this factory.
-        # Per-session isolation is handled internally via SessionScope.
+        # Per-session isolation is keyed directly by session_id.
         self._runtime_context_manager = RuntimeContextManager()
 
     def _resolve_llm_provider(

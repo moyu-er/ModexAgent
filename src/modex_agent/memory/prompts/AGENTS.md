@@ -4,7 +4,7 @@
 # prompts
 
 ## Purpose
-Prompt template files used during memory consolidation, compact generation, and experience review. Contains system and user prompt pairs for three operations: archive consolidation (agent/user), core memory consolidation (system/user, formerly "knowledge consolidation"; renamed per ADR-0035), and session compact summary (agent/user). Each pair is a markdown file loaded by the summarizer agents.
+Prompt template files used during memory consolidation and compact generation. Contains system and user prompt pairs for archive consolidation, core memory consolidation (formerly "knowledge consolidation"; renamed per ADR-0035), and session compact summaries. Experience review prompts live with the Experience capability.
 
 ## Key Files
 | File | Description |

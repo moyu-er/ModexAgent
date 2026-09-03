@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from modex_agent.approval.config import AgentApprovalConfig
 from modex_agent.approval.constants import ApprovalTier
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.types import ToolCall
+from modex_agent.core.message import ToolCall
 from modex_agent.interceptor.builtin.tool_approval import ArgumentMatcher
 from modex_agent.runtime.enums import ApprovalDenyPolicy
 

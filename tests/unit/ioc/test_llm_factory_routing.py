@@ -12,8 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.core.constants import InterfaceFormat
-from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.configs.llm import InterfaceFormat, LLMConfig
 from modex_agent.ioc.configs.model import GlobalModelConfig
 from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.providers.http.formats.anthropic import AnthropicProtocol

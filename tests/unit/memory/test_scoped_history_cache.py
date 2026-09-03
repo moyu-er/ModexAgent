@@ -7,10 +7,9 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.scope import MemoryContext
-from modex_agent.core.types import MessageRole
-from modex_agent.memory.default_system import ScopedMessageHistory
+from modex_agent.core.message import ChatMessage, MessageRole
+from modex_agent.memory.history import ScopedMessageHistory
+from modex_agent.memory.scope import MemoryContext
 
 # ---------------------------------------------------------------------------
 # Helpers

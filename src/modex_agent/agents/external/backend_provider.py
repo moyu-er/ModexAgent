@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .paths import ProviderKind
+from modex_agent.core.agent import ProviderKind
 
 if TYPE_CHECKING:
     from .agent import StreamingProviderBackend

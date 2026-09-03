@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from modex_agent.sandbox.guard import CommandPatternGuard, CommandPatternGuardConfig
 from modex_agent.sandbox.guard_pipeline import GuardPipeline
 from modex_agent.sandbox.guard_traversal import PathTraversalGuard

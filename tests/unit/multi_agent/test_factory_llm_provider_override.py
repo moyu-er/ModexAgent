@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from modex_agent.core.constants import ExecutionStrategyKind, FinishReason
+from modex_agent.core.agent import ExecutionStrategyKind
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
-from modex_agent.core.types import LLMResponse
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import AgentDescriptor, DefaultAgentFactory
 from modex_agent.multi_agent.address import AgentAddress

@@ -30,12 +30,12 @@ from bot.adapters.channels import (
     register,
     set_conv_channel,
 )
-from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.output import OutputAdapter
+from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.events import EmitterConfig
 from modex_agent.core.session_id import session_id_prefix_of
-from modex_agent.adapters.output import OutputAdapter
 
 if TYPE_CHECKING:
     from bot.adapters.telegram import TelegramInputAdapter, TelegramOutputAdapter

@@ -6,12 +6,12 @@ import pytest
 
 from modex_agent.commands.constants import CommandAction, CommandDispatchPolicy, CommandParseStatus
 from modex_agent.commands.models import CommandContext
-from modex_agent.commands.skill import ResolvedSkillCommand, SkillResolver
 from modex_agent.commands.processor import SlashCommandProcessor
+from modex_agent.commands.skill import ResolvedSkillCommand, SkillResolver
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.messaging.models import InputMessage
 from modex_agent.plugins.defaults.capabilities.skills.builder import build_skill_command_xml
 from modex_agent.plugins.defaults.capabilities.skills.models import Skill
-from modex_agent.core.types import InputMessage
 
 
 class FakeSkillResolver(SkillResolver):

@@ -24,15 +24,14 @@ from bot.service.builders import build_memory_registry, resolve_declared_root_pr
 from plugins.bot_strategies import BotDefaultLLMConfig
 from pydantic import BaseModel
 
-from modex_agent.core.constants import FinishReason
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
+from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
-from modex_agent.core.scope import MemoryContext, MemoryLayerName, SessionScope
-from modex_agent.core.types import LLMResponse, MessageRole, ToolCall
 from modex_agent.hook.builtin import CurrentTimeInjectionHook
 from modex_agent.hook.builtin.checkpoint import CheckpointHook
 from modex_agent.hook.builtin.knowledge_hook import KnowledgeHook
 from modex_agent.interceptor.builtin import ToolResultLimitInterceptor
+from modex_agent.memory.scope import MemoryContext, MemoryLayerName, SessionScope
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.managers import WorkspacePersistenceManager
 from modex_agent.persistence.memory_registry import HybridMemoryStoreRegistry

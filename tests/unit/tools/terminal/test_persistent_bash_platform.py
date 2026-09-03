@@ -13,6 +13,7 @@ import sys
 
 import pytest
 
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.terminal._persistent_session import (
     PersistentShellSession,
     PersistentShellUnsupportedError,
@@ -28,7 +29,6 @@ from modex_agent.tools.terminal.types import (
     ShellFamily,
     ShellInfo,
 )
-from modex_agent.tools.manager import InMemoryToolManager
 
 # ── persistent_bash_supported ──
 
@@ -199,7 +199,6 @@ async def test_run_command_raises_typed_error_on_win32_host() -> None:
 
 
 def test_ensure_input_companion_registers_bash_input_sharing_session() -> None:
-    from modex_agent.tools.manager import InMemoryToolManager
 
     manager = InMemoryToolManager()
     bash = PersistentBashTool()
@@ -210,7 +209,6 @@ def test_ensure_input_companion_registers_bash_input_sharing_session() -> None:
 
 
 def test_ensure_input_companion_noop_for_non_persistent_bash() -> None:
-    from modex_agent.tools.manager import InMemoryToolManager
     from modex_agent.tools.terminal.subprocess_tool import (
         SubprocessTool,
         create_subprocess_executor,
@@ -223,7 +221,6 @@ def test_ensure_input_companion_noop_for_non_persistent_bash() -> None:
 
 
 def test_ensure_input_companion_is_idempotent() -> None:
-    from modex_agent.tools.manager import InMemoryToolManager
 
     manager = InMemoryToolManager()
     bash = PersistentBashTool()
@@ -241,7 +238,6 @@ def test_ensure_input_companion_replaces_stale_session_companion() -> None:
     the idempotency guard preserved it — every bash_input call then hit a
     dead session while the live shell waited for answers.
     """
-    from modex_agent.tools.manager import InMemoryToolManager
 
     manager = InMemoryToolManager()
     stale_bash = PersistentBashTool()

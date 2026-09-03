@@ -4,13 +4,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.commands.constants import (
     CommandAction,
     CommandDispatchPolicy,
     CommandParseStatus,
 )
-from modex_agent.core.types import InputMessage
+from modex_agent.messaging.models import ApprovalAction, InputMessage
 from modex_agent.runtime.models import JsonValue, TurnSnapshot
 
 if TYPE_CHECKING:

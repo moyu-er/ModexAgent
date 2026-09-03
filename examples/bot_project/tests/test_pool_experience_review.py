@@ -18,9 +18,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import MessageRole
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.plugins.defaults.capabilities.experience.review_hook import ExperienceReviewHook
 
@@ -49,8 +48,7 @@ class TestExperienceReviewHookExecution:
         # Mock the ReActAgent.run so we don't need a real LLM,
         # but make it emit a complete event so trace is written.
         async def _mock_run(context, emitter):
-            from modex_agent.core.constants import StopReason
-            from modex_agent.core.emitter import AgentResult
+            from modex_agent.core.emitter import AgentResult, StopReason
 
             await emitter.emit_complete(
                 AgentResult(content="done", stop_reason=StopReason.COMPLETED)
@@ -98,8 +96,7 @@ class TestExperienceReviewHookExecution:
         meta = PerFileExperienceMetaStore(exp_dir)
 
         async def _mock_run(context, emitter):
-            from modex_agent.core.constants import StopReason
-            from modex_agent.core.emitter import AgentResult
+            from modex_agent.core.emitter import AgentResult, StopReason
 
             await emitter.emit_complete(
                 AgentResult(content="done", stop_reason=StopReason.COMPLETED)
@@ -128,8 +125,7 @@ class TestExperienceReviewHookExecution:
     @pytest.mark.asyncio
     async def test_experience_review_hook_after_graph_logs_info(self, tmp_path: Path) -> None:
         """ExperienceReviewHook.after_graph must log INFO when triggering review."""
-        from modex_agent.core.constants import StopReason
-        from modex_agent.core.emitter import AgentResult
+        from modex_agent.core.emitter import AgentResult, StopReason
         from modex_agent.memory.history import ListMessageHistory
         from modex_agent.plugins.defaults.capabilities.experience.metadata import (
             PerFileExperienceMetaStore,

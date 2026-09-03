@@ -1,4 +1,4 @@
-"""Unit tests for core/context.py.
+"""Unit tests for memory/context.py.
 
 TDD: verify ContextState behaviors including system prompt building and history.
 """
@@ -9,7 +9,7 @@ import inspect
 
 import pytest
 
-from modex_agent.core.context import ContextManager, ContextState
+from modex_agent.memory.context import ContextManager, ContextState
 from modex_agent.memory.history import ListMessageHistory
 
 

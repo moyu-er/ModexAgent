@@ -21,7 +21,7 @@ from bot.webui.transcript_store import TranscriptStore
 from bot.workspace.dispatch import WorkspaceMessageDispatcher
 
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.types import InputMessage
+from modex_agent.messaging.models import InputMessage
 from modex_agent.persistence.adapters.session_store import SqliteSessionStore
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.managers import WorkspacePersistenceManager

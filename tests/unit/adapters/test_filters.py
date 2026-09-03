@@ -11,7 +11,7 @@ from modex_agent.adapters.filters import (
     ReasoningContentFilter,
     WhitespaceFilter,
 )
-from modex_agent.core.types import OutputMessage
+from modex_agent.messaging.models import OutputMessage
 
 
 class TestReasoningContentFilter:

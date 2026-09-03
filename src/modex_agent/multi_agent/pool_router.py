@@ -19,10 +19,10 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from modex_agent.core.session_id import session_id_prefix_of
-from modex_agent.core.session_store import safe_filename
-from modex_agent.core.types import InputMessage
 from modex_agent.messaging.broker import MessageBroker
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent.pool_instance import PoolInstance
+from modex_agent.persistence.session_store import safe_filename
 from modex_agent.pipeline.adapters import InputAdapter
 
 if TYPE_CHECKING:

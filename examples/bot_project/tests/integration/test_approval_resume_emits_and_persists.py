@@ -40,17 +40,22 @@ from bot.webui.transcript_store import JSONLTranscriptStore
 
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.agents.react.state import ReActSnapshotPolicy
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.ui import IMUserInterface
-from modex_agent.approval.views import ApprovalDecisionInput
-from modex_agent.core.context import InMemoryContextManager
 from modex_agent.core.events import EmitterConfig
+from modex_agent.core.llm_struct import LLMResponse
+from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import Tool
-from modex_agent.core.types import InputMessage, LLMResponse, OutputMessage, ToolCall
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
 from modex_agent.ioc.factories.approval import build_approval_runtime
+from modex_agent.memory.context import InMemoryContextManager
+from modex_agent.messaging.models import (
+    ApprovalAction,
+    ApprovalDecisionInput,
+    InputMessage,
+    OutputMessage,
+)
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.runtime.enums import SnapshotReason, TurnPhase
 from modex_agent.runtime.models import StateQueryScope
@@ -75,8 +80,8 @@ def _make_react_pipeline(
     max_iterations=10,
     safety=None,
 ):
-    from modex_agent.core.context import InMemoryContextManager
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+    from modex_agent.memory.context import InMemoryContextManager
     from modex_agent.pipeline.approval_renderer import ApprovalRenderer
     from modex_agent.pipeline.approval_resumer import ApprovalResumer
     from modex_agent.pipeline.pipeline import AgentPipeline
@@ -346,7 +351,7 @@ async def test_resumed_approval_turn_persists_to_transcript(tmp_path: Path) -> N
         InputMessage(
             content="",
             session=session,
-            approval_decision=ApprovalDecisionInput("c1", ApprovalAction.ALLOW),
+            approval_decision=ApprovalDecisionInput(tool_call_id="c1", action=ApprovalAction.ALLOW),
         )
     )
     assert resume_result is not None, "resumed turn must complete"
@@ -388,7 +393,7 @@ async def test_resumed_approval_turn_persists_final_text(tmp_path: Path) -> None
         InputMessage(
             content="",
             session=session,
-            approval_decision=ApprovalDecisionInput("c1", ApprovalAction.ALLOW),
+            approval_decision=ApprovalDecisionInput(tool_call_id="c1", action=ApprovalAction.ALLOW),
         )
     )
 
@@ -451,7 +456,7 @@ async def test_resumed_turn_persists_after_jsonfile_snapshot_roundtrip(
         InputMessage(
             content="",
             session=session,
-            approval_decision=ApprovalDecisionInput("c1", ApprovalAction.ALLOW),
+            approval_decision=ApprovalDecisionInput(tool_call_id="c1", action=ApprovalAction.ALLOW),
         )
     )
     assert resume_result is not None, "resumed turn must complete after JsonFile round-trip"
@@ -510,7 +515,7 @@ async def test_resumed_turn_materializes_into_complete_tool_block(tmp_path: Path
         InputMessage(
             content="",
             session=session,
-            approval_decision=ApprovalDecisionInput("c1", ApprovalAction.ALLOW),
+            approval_decision=ApprovalDecisionInput(tool_call_id="c1", action=ApprovalAction.ALLOW),
         )
     )
     assert recorded == [("/etc/secrets", "x")]
@@ -569,7 +574,7 @@ async def test_denied_tool_result_message_is_explicit_rejection(tmp_path: Path) 
         InputMessage(
             content="",
             session=session,
-            approval_decision=ApprovalDecisionInput("c1", ApprovalAction.DENY),
+            approval_decision=ApprovalDecisionInput(tool_call_id="c1", action=ApprovalAction.DENY),
         )
     )
 
@@ -705,7 +710,7 @@ async def test_deny_all_on_batch_seals_all_pending_requests(tmp_path: Path) -> N
         InputMessage(
             content="",
             session=session,
-            approval_decision=ApprovalDecisionInput("c1", ApprovalAction.DENY),
+            approval_decision=ApprovalDecisionInput(tool_call_id="c1", action=ApprovalAction.DENY),
         )
     )
     assert result is not None, "deny-all must complete the resumed turn, not re-suspend"

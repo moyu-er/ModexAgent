@@ -23,9 +23,8 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
-from modex_agent.core.agent import AgentCommKind
+from modex_agent.core.agent import AgentCommKind, ExecutionStrategyKind
 from modex_agent.core.agent import AgentContext as RuntimeAgentContext
-from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.address import AgentAddress
@@ -55,9 +54,9 @@ from modex_agent.plugins.defaults.communication import (
     TaskToolFactory,
 )
 from modex_agent.scope.spec import AgentSpec, PoolSpec
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
-from modex_agent.tools.manager import InMemoryToolManager
 
 _CAPABILITY = SubagentsCapability()
 

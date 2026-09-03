@@ -5,7 +5,10 @@ from typing import Final
 from helpers import TrackingRuntime, make_coordinator, make_ctx, register_graph_nodes
 
 from modex_agent.agents.agent_node import AgentNode
-from modex_agent.core.session_registry import InMemorySessionRegistry, SessionRegistry
+from modex_agent.persistence.session_registry import (
+    InMemorySessionRegistry,
+    SessionRegistry,
+)
 from modex_graph import (
     DefaultGraphState,
     Graph,

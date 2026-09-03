@@ -14,19 +14,15 @@ proving the guard is surgical.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
-from modex_agent.approval.types import ApprovalAction
-from modex_agent.approval.views import ApprovalDecisionInput
-from modex_agent.core.context import InMemoryContextManager
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
-from modex_agent.utils.deduplicator import MessageDeduplicator
+from modex_agent.memory.context import InMemoryContextManager
+from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput, InputMessage
 from modex_agent.tools.manager import InMemoryToolManager
-
+from modex_agent.utils.deduplicator import MessageDeduplicator
 from tests.unit.pipeline._helpers import _make_react_pipeline
 
 
@@ -103,7 +99,9 @@ async def test_approval_decision_bypasses_deduplicator() -> None:
     decision_msg = InputMessage(
         content="",
         session=SessionInfo.from_str("s:main"),
-        approval_decision=ApprovalDecisionInput("call_1", ApprovalAction.DENY),
+        approval_decision=ApprovalDecisionInput(
+            tool_call_id="call_1", action=ApprovalAction.DENY
+        ),
     )
     await pipeline._process_message(decision_msg)
 

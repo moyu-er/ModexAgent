@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from modex_agent.core.constants import InterfaceFormat
+from modex_agent.ioc.configs.llm import InterfaceFormat
 
 
 class GlobalModelConfig(BaseModel):

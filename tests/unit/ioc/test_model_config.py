@@ -5,8 +5,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from modex_agent.core.constants import InterfaceFormat
 from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.ioc.configs.llm import InterfaceFormat
 from modex_agent.ioc.configs.model import GlobalModelConfig
 
 

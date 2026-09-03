@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.snapshot import format_snapshot_xml
 
 if TYPE_CHECKING:

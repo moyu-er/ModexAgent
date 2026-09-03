@@ -27,7 +27,6 @@ from pathlib import Path
 import pytest
 
 from modex_agent.core.scope import RecordScope
-from modex_agent.core.session_registry import InMemorySessionRegistry
 from modex_agent.messaging.broker import AddressKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
@@ -49,6 +48,7 @@ from modex_agent.multi_agent.session_tree.store_node import SqliteTreeNodeStore
 from modex_agent.multi_agent.session_tree.store_track import SqliteMessageTrackStore
 from modex_agent.multi_agent.session_tree.store_tree import SqliteSessionTreeStore
 from modex_agent.persistence import ConnectionManager, DatabaseKind
+from modex_agent.persistence.session_registry import InMemorySessionRegistry
 from modex_agent.utils.time import now_ms
 
 pytestmark = pytest.mark.integration

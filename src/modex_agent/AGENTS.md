@@ -23,15 +23,15 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 
 | Module | Subdirectories | Purpose |
 |--------|----------------|---------|
-| `core/` | — | Foundational ABCs and values — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, messages, sessions, and media contracts (see `core/AGENTS.md`). The graph engine lives in `modex_graph` (ADR-0033). |
+| `core/` | — | Foundational contracts and values: agents, emitters, `MessageHistory`, system-prompt seams, messages, LLMs, tools, media, session identity, and canonical `RecordScope`. Session persistence lives in `persistence/` (see `core/AGENTS.md`). |
 | `agents/` | `react/`, `external/`, `summarizer/` | Agent implementations — `ReActAgent`, `ExternalAgent`, and `SessionCompactorAgent` (see `agents/AGENTS.md`). |
-| `memory/` | `consolidation/`, `core/`, `injection/`, `layers/`, `pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Three-layer memory — session/archive/core, compaction, consolidation, governance, injection. Split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) + `MemoryStoreBundle` (see `memory/AGENTS.md`) |
-| `persistence/` | `adapters/`, `managers/`, `migrations/`, `session_artifacts/` | Hybrid persistence layer (ADR-0023, ADR-0028~0031). `ConnectionManager` + `MigrationRunner` (per-workspace SQLite), backend adapters, and session artifact cleanup. |
+| `memory/` | `consolidation/`, `core/`, `injection/`, `layers/`, `prompt_pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Context management, configurable memory scopes, governance, concrete message histories, and session/archive/core memory with pluggable split stores (see `memory/AGENTS.md`). |
+| `persistence/` | `adapters/`, `managers/`, `migrations/`, `session_artifacts/` | Hybrid persistence layer (ADR-0023, ADR-0028~0031). Owns `SessionStore`, `SessionRegistry`, file/SQLite adapters, migrations, and session artifact cleanup. |
 | `multi_agent/` | `communication/`, `inbox/`, `session_tree/` | Star-topology orchestration — `AgentPool`, `AgentTemplate`, `PoolInstance`, inbox, and `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
 | `tools/` | `ast/`, `lsp/`, `mcp/`, `overflow/`, `standard/`, `terminal/`, `web/` | Tool subsystem — concrete `InMemoryToolManager`, filtering, MCP, terminal, overflow, and standard tools (see `tools/AGENTS.md`) |
 | `sandbox/` | `adapters/` | Sandboxed execution — Subprocess, Docker, E2B, Landlock, guards, environment builder (see `sandbox/AGENTS.md`) |
 | `pipeline/` | — | `AgentPipeline` orchestration, `InputAdapter` ABC, approval renderer, snapshot handling (see `pipeline/AGENTS.md`) |
-| `runtime/` | — | `AgentRuntime`, `AgentRuntimeServices`, `TurnStateStore`, codec, snapshot policy (see `runtime/AGENTS.md`) |
+| `runtime/` | — | `AgentRuntime`, runtime state/codecs, `TurnStateStore`, and per-session Todo models/store contracts in `todo.py` (see `runtime/AGENTS.md`). |
 | `commands/` | — | Slash command parsing and dispatch, including the consumer-owned `SkillResolver` command seam (see `commands/AGENTS.md`) |
 | `control/` | — | Control transport — `InMemoryControlChannel` (the live `/stop` + pause mechanism), `ControlCommand`, `AgentControlError` exceptions (see `control/AGENTS.md`) |
 | `hook/` | `builtin/` | Lifecycle hooks — `HookRunner`, `HookPoint`, builtin hooks (see `hook/AGENTS.md`) |
@@ -53,7 +53,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 
 | File | Description |
 |------|-------------|
-| `__init__.py` | Public API — exports `ReActAgent`, `ReActEvent`, `Agent`, `AgentContext`, `ContentEmitter`, `LLMProvider`, `Tool`, `ToolManager`, `AgentPipeline`, etc. |
+| `__init__.py` | Exact convenience facade over the final core, messaging, memory, adapters, ReAct, and pipeline owners. |
 
 ## For AI Agents
 
@@ -65,7 +65,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 - Frozen Pydantic BaseModels for config/value objects (rule 12); runtime objects hold state/connections
 
 ### Type Safety (from rules/type-safety.md)
-1. Enums/constants over raw strings — `MessageRole`, `MessageType`, `FinishReason`, `DefaultValues`
+1. Enums/constants over raw strings — `MessageRole`, `MessageType`, `FinishReason`, `StopReason`
 2. Typed structures over loose dicts — `ChatMessage`, `ToolCall`, `LLMResponse`, `InputMessage`, `OutputMessage`
 3. Typed signatures — no bare `Any`, `list`, `dict`, `object` in framework-facing APIs
 4. ABCs before implementations (rule 7 — no Protocols) — no concrete dependency where pluggable contract exists
@@ -85,14 +85,14 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 - `TurnCustomKey` enum for per-turn custom state keys in `TurnStateBase.custom`
 
 ### Module Responsibilities
-- `core/` — ABCs and foundational types. All other modules depend on it.
-- `agents/` — Agent strategies (ReAct, external coding CLI harness, summarizer, experience review). External provider resources converge through `StreamingProviderBackend.close()`; adapter-specific lifetime remains local to each backend.
-- `memory/` — Three-layer persistent memory with scope isolation. Split store ABCs + `MemoryStoreBundle` are the storage contract.
-- `persistence/` — Hybrid persistence (ADR-0023). SQLite `ConnectionManager`/`MigrationRunner` + adapters for the split store and runtime-state ABCs. `PersistenceBackend` (`FILE`/`SQLITE`) drives IOC selection.
+- `core/` — Foundational contracts and values, including `MessageHistory` and system-prompt seams; no session persistence or concrete memory adapters.
+- `agents/` — General agent strategies (ReAct, external harness, summarizers). Capability-specific agents stay in their capability packages. External provider resources converge through `StreamingProviderBackend.close()`.
+- `memory/` — Context, memory scope/governance, concrete histories, and three-layer persistent memory. Split store ABCs + `MemoryStoreBundle` are the storage contract.
+- `persistence/` — Session persistence plus hybrid file/SQLite adapters (ADR-0023). `PersistenceBackend` (`FILE`/`SQLITE`) drives IOC selection.
 - `multi_agent/` — Star-topology subagent orchestration.
 - `tools/` — Concrete tool manager (InMemoryToolManager), MCP, terminal backends.
 - `pipeline/` — End-to-end orchestration pipeline.
-- `runtime/` — Runtime state and services assembly.
+- `runtime/` — Runtime state/services plus Todo values and persistence contracts.
 - `hook/` + `interceptor/` — Extension layers for lifecycle observation and AOP.
 - `control/` — Control transport: live `/stop` + pause queues `CANCEL_TURN` and actively cancels the registered turn task so long-running tools wake immediately; ToolNode converges worker cleanup and tool-result synthesis. A separate busy-INTERRUPT path uses the same task-cancel wakeup without a channel command.
 - `ioc/` — Dependency injection configuration and factories.
@@ -111,8 +111,8 @@ From `modex_agent`'s perspective:
 ### Internal
 - All modules depend on `core/` for ABCs and types.
 - `agents/` depends on `core/` (agent ABC, graph engine, tool manager).
-- `memory/` depends on `core/` (types, context, events, scope).
-- `persistence/` depends on `core/` (scope) and `memory/` (split store ABCs); implements the SQLite adapters.
+- `memory/` depends on `core/` for canonical messages, `MessageHistory`, prompt seams, session identity, and `RecordScope`.
+- `persistence/` depends on `core/` identity/scope values and `memory/` split-store ABCs; it owns session persistence and backend adapters.
 - `multi_agent/` depends on `core/` (agent ABC), `memory/` (isolated memory), `messaging/` (bus), `persistence/` (InboxMQ, routing stores).
 - `pipeline/` depends on `core/`, `agents/`, `runtime/`, `commands/`.
 - `tools/` depends on `core/` (Tool ABC, ToolManager ABC); owns the concrete InMemoryToolManager (C2).

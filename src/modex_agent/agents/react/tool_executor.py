@@ -9,8 +9,8 @@ interceptor registration.
 from __future__ import annotations
 
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.message import ToolCall
 from modex_agent.core.tool_manager import ToolExecutionContext, ToolResult
-from modex_agent.core.types import ToolCall
 from modex_agent.interceptor.abc import ToolCallContext
 from modex_agent.interceptor.builtin.tool_timeout import ToolTimeoutInterceptor
 from modex_agent.workspace.runtime import resolve_workspace_root

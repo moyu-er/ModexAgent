@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from modex_agent.core.context import ContextManager
+    from modex_agent.memory.context import ContextManager
     from modex_agent.memory.pruned.manager import PrunedManager
     from modex_agent.runtime.approval_decision import ApprovalDecisionCoordinator
     from modex_agent.runtime.store import TurnStateStore

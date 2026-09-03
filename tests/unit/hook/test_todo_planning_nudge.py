@@ -14,15 +14,14 @@ from unittest.mock import MagicMock
 
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import MessageRole, TodoStatus
 from modex_agent.hook.builtin.todo_planning_nudge import TodoPlanningNudgeHook
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-from modex_agent.runtime.store import JsonFileTodoStore, TodoItem
+from modex_agent.runtime.todo import JsonFileTodoStore, TodoItem, TodoStatus
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.standard.todo_tool import TodoWriteTool
 

@@ -13,8 +13,7 @@ repr contains the type name ``Modality``, which includes the letter ``y``.
 
 from __future__ import annotations
 
-from modex_agent.core.constants import InterfaceFormat
-from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.configs.llm import InterfaceFormat, LLMConfig
 from modex_agent.ioc.configs.model import GlobalModelConfig
 
 _SECRET_KEY = "sk-secret-redacted-probe"

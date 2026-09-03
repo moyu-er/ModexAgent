@@ -42,15 +42,11 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
-
-import pytest
 
 # Ensure bot_project is importable
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "examples" / "bot_project"))
 
 from bot.cli.modexctl.context import ModexCtlContext  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -327,7 +323,6 @@ class TestAsyncConcurrentSimulation:
 
     def test_async_concurrent_native_sessions(self, tmp_path: Path) -> None:
         """10 concurrent native sessions → each resolves correctly."""
-        from modex_agent.runtime.env_context import _modex_env
 
         sessions = [f"conv{i}.main" for i in range(10)]
 

@@ -16,9 +16,9 @@ from bot.eval.probes.schema import (
     WorldSpec,
 )
 
+from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.types import LLMResponse
 
 
 class ScriptedProvider(CallbackStreamProvider):

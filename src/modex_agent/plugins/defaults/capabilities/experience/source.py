@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from pathvalidate import sanitize_filename as _path_sanitize
 
-from modex_agent.core.scope import scope_path_key
+from modex_agent.memory.scope import scope_path_key
 from modex_agent.plugins.defaults.capabilities.experience.models import (
     Experience,
     ExperienceSummary,
@@ -18,7 +18,7 @@ from modex_agent.plugins.defaults.capabilities.experience.paths import EXPERIENC
 from modex_agent.utils.frontmatter import parse_frontmatter
 
 if TYPE_CHECKING:
-    from modex_agent.core.scope import MemoryContext, Scope
+    from modex_agent.memory.scope import MemoryContext, Scope
 
 logger = logging.getLogger(__name__)
 

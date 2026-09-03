@@ -1,9 +1,12 @@
 """InboxPoller — sole between-turn driver; single-flight; lazy materialize; reconcile."""
 
 from __future__ import annotations
+
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
+
 import pytest
+
 from modex_agent.multi_agent.inbox_poller import InboxPoller
 
 
@@ -138,7 +141,7 @@ async def test_materialize_registers_parent_session_id_from_envelope():
     management. send_to_agent avoids this because SubagentDispatchStrategy
     registers the session WITH parent at send time; modexctl skips that step.
     """
-    from modex_agent.core.session_registry import InMemorySessionRegistry
+    from modex_agent.persistence.session_registry import InMemorySessionRegistry
 
     registry = InMemorySessionRegistry()
 

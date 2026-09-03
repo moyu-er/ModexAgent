@@ -16,14 +16,14 @@ from pydantic import BaseModel, ConfigDict
 
 from modex_agent.commands.handlers import SkillCommandHandler
 from modex_agent.commands.models import CommandContext, SlashCommandInvocation
-from modex_agent.core.context import InMemoryContextManager
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import Tool, ToolResult
-from modex_agent.core.types import InputMessage
 from modex_agent.hook import Hook
+from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.memory.context_governance import CompositeGovernance
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
 from modex_agent.plugins.assembly.single_agent import (

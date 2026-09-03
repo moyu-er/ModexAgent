@@ -25,7 +25,7 @@ class ArchiveChannel(StrEnum):
     ``CORE`` is the Core Memory channel (per ADR-0035; formerly ``KNOWLEDGE``).
     The string value ``"core"`` is serialized into ``*_archive.jsonl`` entries'
     ``channel`` field — it refers to the same concept as
-    :attr:`modex_agent.core.scope.MemoryLayerName.CORE` (Core Memory); the
+    :attr:`modex_agent.memory.scope.MemoryLayerName.CORE` (Core Memory); the
     short name ``"core"`` is kept for brevity in persisted JSON.
     """
 

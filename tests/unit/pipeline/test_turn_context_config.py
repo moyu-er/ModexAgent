@@ -9,8 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.core.agent import AgentCommKind, AgentContext
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.agent import AgentCommKind, AgentContext, ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import Tool
 from modex_agent.memory.history import ListMessageHistory

@@ -1,7 +1,7 @@
 """Tests for Phase 2 ControlChannel — type-routed storage, command_types filtering, TTL, cleanup_session."""
 
 import asyncio
-import pytest
+
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
 

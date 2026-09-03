@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent.message_type import AgentMessageType
 
 if TYPE_CHECKING:
-    from modex_agent.core.session_registry import SessionRegistry
+    from modex_agent.persistence.session_registry import SessionRegistry
 
 
 @dataclass

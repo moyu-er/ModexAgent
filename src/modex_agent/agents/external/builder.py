@@ -21,19 +21,20 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.agent import ProviderKind
+
 from .agent import ExternalAgent
 from .backend_provider import BackendProvider
 from .contracts import ProviderEventParser
-from .paths import ProviderKind
 from .types import ExternalEnvSpec
 
 if TYPE_CHECKING:
     from ...core.emitter import ContentEmitter
     from ...core.provider import LLMProvider
     from ...core.session_id import SessionIdFactory
-    from ...core.session_registry import SessionRegistry
     from ...multi_agent.descriptor import AgentDescriptor
     from ...multi_agent.session_tree.session_binding import SessionBindingStore
+    from ...persistence.session_registry import SessionRegistry
     from ...pipeline.adapters import OutputAdapter
     from .child_discovery import ChildSessionDiscoverySink
     from .events import ExternalEvent
@@ -271,7 +272,8 @@ class ExternalAgentBuilder:
         selection, env-spec construction, and (for subagent) hook
         registration. Only the pipeline-IO-instance assembly is shared.
         """
-        from ...core.context import InMemoryContextManager
+        from modex_agent.memory.context import InMemoryContextManager
+
         from ...core.llm_struct import RuntimeSafetyPolicy
         from ...messaging.broker_bridge import (
             BrokerInputAdapter,

@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from modex_agent.core.context import ContextManager, InMemoryContextManager
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.tool_manager import Tool
 from modex_agent.hook.runner import HookRunner
+from modex_agent.memory.context import ContextManager, InMemoryContextManager
 from modex_agent.multi_agent.descriptor import AgentInstance
 from modex_agent.multi_agent.factory import AgentFactory
 from modex_agent.plugins.abc import (
@@ -30,8 +30,7 @@ from modex_agent.plugins.assembly.native_core import (
 )
 from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
 from modex_agent.plugins.assembly.stages.agent_assemble import AgentAssembleStage
-from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.plugins.registry import ComponentNotFoundError
+from modex_agent.plugins.registry import ComponentNotFoundError, ComponentRegistry
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 

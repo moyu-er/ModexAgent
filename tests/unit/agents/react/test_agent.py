@@ -4,7 +4,6 @@ import pytest
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.hook import HookRunner
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.tools.manager import InMemoryToolManager
 

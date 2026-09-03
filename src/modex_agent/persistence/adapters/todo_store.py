@@ -1,4 +1,4 @@
-"""SQLite-backed :class:`~modex_agent.runtime.store.TodoStore`.
+"""SQLite-backed :class:`~modex_agent.runtime.todo.TodoStore`.
 
 Stores per-session todo lists in the ``todos`` table. Each session gets one
 row keyed by ``session_id``; the todo items are serialized as a JSON array
@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from modex_agent.runtime.store import TodoItem, TodoStore
+from modex_agent.runtime.todo import TodoItem, TodoStore
 
 if TYPE_CHECKING:
     from modex_agent.core.scope import RecordScope
@@ -24,7 +24,7 @@ class SqliteTodoStore(TodoStore):
     The ``scope_key`` column is populated from the injected ``RecordScope``'s
     canonical JSON. Todo items are serialized as a JSON array of
     ``{"content", "status"}`` dicts in the ``items_json`` column (same format
-    as :class:`~modex_agent.runtime.store.JsonFileTodoStore`).
+    as :class:`~modex_agent.runtime.todo.JsonFileTodoStore`).
     ``created_at``/``updated_at`` are owned by the schema DEFAULT + the
     ``trg_todos_auto_updated_at`` trigger (ADR-0029), so the adapter does not
     write them explicitly.

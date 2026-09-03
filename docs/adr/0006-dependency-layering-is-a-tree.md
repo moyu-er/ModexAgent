@@ -19,17 +19,27 @@ It refines this ADR; it does not replace it.
 The pre-refactor violations (graph engine reading `runtime` state,
 `tool_manager` importing terminal internals, `memory.core` re-export shims,
 `WorkspaceManager` owned by `multi_agent`) are fixed; see the refactor track
-below. The confirmed remaining runtime upward imports and hidden cycles:
+below. The migration identified these additional runtime upward imports and
+hidden cycles; all are now resolved:
 
 | Edge | Cause | Disposition |
 |---|---|---|
-| `core.cleanup -> memory/runtime/workspace` | Session artifact paths and cleanup implementation live in core | Move to `persistence/session_artifacts/` (B1) |
-| `core.session_scope_discovery -> workspace` | Filesystem Session scope discovery lives in core | Move to `persistence/session_artifacts/discovery.py` (B1) |
+| `core.cleanup -> memory/runtime/workspace` | Session artifact paths and cleanup implementation live in core | Resolved in B1: moved to `persistence/session_artifacts/`; old core modules deleted |
+| `core.session_scope_discovery -> workspace` | Filesystem Session scope discovery lives in core | Resolved in B1: moved to `persistence/session_artifacts/discovery.py`; old core module deleted |
 | `core.provider -> providers.http.EventAssembler` | Provider-neutral stream folding lives under the HTTP adapter | Resolved in B3: `EventAssembler` folded into `core/stream_events.py`, module deleted |
 | `core.emitter -> adapters.StreamingMode` | Concrete output transport behavior lives with the emitter contract | Resolved in B4: contract stays in core; concrete emitter, filters, and output adapters moved to `adapters/` (`emitter.py` / `output.py` / `filters.py`) |
 | `core.tool_manager -> media.MediaStore` | Media contracts are above core instead of at the shared seam | Resolved in C1: `Attachment` and the `MediaStore` contract promoted to `core/media.py`; concrete store stays in `media/store.py` |
 | `core.types -> media.Attachment` | Foundational messages carry an upward media value | Resolved in C1: `Attachment` values moved to `core/media.py` |
-| `core.types <-> approval` | `InputMessage` lazily reconstructs an approval DTO owned by the approval package | `ApprovalDecisionInput` moves to `messaging/models.py`, deleting the manual reconstruction (E1) |
+| `core.types <-> approval` | `InputMessage` lazily reconstructs an approval DTO owned by the approval package | Resolved in E1: `InputMessage`, `ApprovalAction`, and `ApprovalDecisionInput` moved to `messaging/models.py`; `core/types.py` and the manual reconstruction were deleted |
+
+E1 also closed the remaining core ownership debt. Memory scope extraction,
+context management, governance, and concrete histories now live under
+`memory/`, while `RecordScope`, `MessageHistory`, and `SystemPromptPipeline`
+remain foundational core seams. Session stores and the session registry now
+live under `persistence/`; transport models under `messaging/`; Todo runtime
+values under `runtime/todo.py`; and ReAct-only IDs under `agents/react/`.
+Constants were split among their semantic owners, Todo-only message scanning
+moved to its hook owner, and the emptied core files were deleted.
 
 Work-package letters refer to `ARCHITECTURE-MIGRATION-PLAN.md` §15. The
 architecture guard (`tests/architecture/test_dependency_tree.py`) resolves

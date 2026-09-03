@@ -27,7 +27,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .paths import ExternalPaths, ProviderKind
+from modex_agent.core.agent import ProviderKind
+
+from .paths import ExternalPaths
 from .types import SessionMapEntry
 
 __all__ = ["ExternalSessionMapStore", "LocalFileExternalSessionMapStore"]

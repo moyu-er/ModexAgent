@@ -7,11 +7,11 @@ import pytest
 from bot.eval.memory_harness import build_memory_runtime_services
 from bot.service.pool.declaration import boot_scope_spec
 
+from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.scope import MemoryAgentRole
-from modex_agent.core.types import LLMResponse
 from modex_agent.memory.default_system import DefaultMemorySystem
+from modex_agent.memory.scope import MemoryAgentRole
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.tools.presets import ToolPreset
 

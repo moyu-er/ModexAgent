@@ -11,7 +11,7 @@ from modex_agent.multi_agent.message_type import AgentMessageType
 
 if TYPE_CHECKING:
     from modex_agent.core.session_id import SessionInfo
-    from modex_agent.core.types import InputMessage
+    from modex_agent.messaging.models import InputMessage
     from modex_agent.multi_agent.address import AgentAddress
 
 
@@ -136,7 +136,7 @@ class AgentMessageEnvelope:
         ``submit_input`` (``BrokerInputPayload``) is merged back beneath the
         authoritative routing and envelope metadata.
         """
-        from modex_agent.messaging.broker_bridge import BrokerInputPayload
+        from modex_agent.messaging import BrokerInputPayload
 
         payload = BrokerInputPayload.model_validate(self.payload)
         return self._to_input_metadata(payload.metadata)
@@ -168,8 +168,8 @@ class AgentMessageEnvelope:
         ``session`` must already carry ``parent_session_id`` (stamped by
         ``dispatch_envelope`` before this call).
         """
-        from modex_agent.core.types import InputMessage
-        from modex_agent.messaging.broker_bridge import BrokerInputPayload
+        from modex_agent.messaging import BrokerInputPayload
+        from modex_agent.messaging.models import InputMessage
 
         payload = BrokerInputPayload.model_validate(self.payload)
         return InputMessage(
@@ -178,7 +178,7 @@ class AgentMessageEnvelope:
             metadata=self._to_input_metadata(payload.metadata),
             content_format=payload.content_format,
             truncatable_paths=payload.truncatable_paths,
-            approval_decision=payload.to_approval_decision(),
+            approval_decision=payload.approval_decision,
             attachments_resolved=payload.attachments_resolved,
             workspace=Path(payload.workspace) if payload.workspace is not None else None,
         )

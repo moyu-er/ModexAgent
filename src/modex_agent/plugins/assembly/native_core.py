@@ -11,8 +11,9 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
+from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.core.capabilities import ModelInfo
-from modex_agent.core.constants import ExecutionStrategyKind, ReasoningEffort
+from modex_agent.core.llm_request import ReasoningEffort
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.tool_manager import Tool
 from modex_agent.hook import Hook, HookSpec
@@ -42,9 +43,9 @@ from modex_agent.tools.manager import InMemoryToolManager
 if TYPE_CHECKING:
     from modex_agent.adapters.output import OutputAdapter
     from modex_agent.commands.skill import SkillResolver
-    from modex_agent.core.context import ContextManager
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.provider import LLMProvider
+    from modex_agent.memory.context import ContextManager
     from modex_agent.messaging import MessageBroker
     from modex_agent.multi_agent.factory import AgentFactory
     from modex_agent.multi_agent.pool import AgentPool

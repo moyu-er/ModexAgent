@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 import logging
-from unittest.mock import AsyncMock
 
 import pytest
 
-from modex_agent.approval.ui import IMUserInterface
-from modex_agent.core.types import OutputMessage
 from modex_agent.adapters.output import OutputAdapter
+from modex_agent.approval.ui import IMUserInterface
+from modex_agent.messaging.models import OutputMessage
 
 
 class _FakeOutputAdapter(OutputAdapter):

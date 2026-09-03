@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from modex_agent.core.scope import MemoryContext, MemoryLayerName, UserScope
 from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
-from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.layers.core import ScopedCoreMemoryManager
+from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+from modex_agent.memory.scope import MemoryContext, MemoryLayerName, UserScope
 
 
 async def test_append_update_is_idempotent(tmp_path: Path):

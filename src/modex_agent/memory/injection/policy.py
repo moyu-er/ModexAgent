@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.core.models import InjectionResult
 from modex_agent.memory.core.system import MemorySystem
+from modex_agent.memory.scope import MemoryContext
 
 
 class MemoryInjectionPolicy(ABC):

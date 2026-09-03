@@ -7,12 +7,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core import MessageHistory
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.archive_models import ArchiveChannel
 from modex_agent.memory.core.models import CoreMemoryContents
-from modex_agent.memory.history import MessageHistory
 from modex_agent.memory.pruned.manager import PrunedManager
+from modex_agent.memory.scope import MemoryContext
 
 if TYPE_CHECKING:
     from modex_agent.memory.hooks import MemoryHook

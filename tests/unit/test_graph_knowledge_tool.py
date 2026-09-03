@@ -6,16 +6,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from modex_agent.core import MessageHistory
 from modex_agent.core.agent import AgentContext, current_agent_context
-from modex_agent.core.history import MessageHistory
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity, TurnStateBase
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.graph_knowledge_capabilities import KnowledgeToolCapabilities
 from modex_agent.tools.graph_knowledge_tool import GraphKnowledgeBaseTool
-from modex_agent.tools.presets import ToolPreset
 from modex_agent.tools.manager import InMemoryToolManager
+from modex_agent.tools.presets import ToolPreset
 
 
 def _tool(

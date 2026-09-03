@@ -13,27 +13,22 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.context import ContextState, InMemoryContextManager
 from modex_agent.core.emitter import AgentResult
-from modex_graph.exceptions import GraphInterrupt
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import Tool
-from modex_agent.core.types import InputMessage
+from modex_agent.memory.context import ContextState, InMemoryContextManager
+from modex_agent.messaging.models import ApprovalAction, InputMessage
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
-from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.models import TurnSnapshot
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager
-
+from modex_graph.exceptions import GraphInterrupt
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -464,7 +459,7 @@ async def test_process_locked_runs_full_flow_and_returns_result() -> None:
 def test_build_turn_descriptor_empty_metadata_returns_normal_descriptor() -> None:
     """No graph fields in metadata -> NORMAL agent, no graph context, REACT strategy."""
     from modex_agent.core import AgentCommKind
-    from modex_agent.core.constants import ExecutionStrategyKind
+    from modex_agent.core.agent import ExecutionStrategyKind
 
     runner = _make_runner()
     session = SessionInfo.from_str("s1.main")
@@ -576,7 +571,7 @@ async def test_process_locked_passes_turn_descriptor_to_build_runtime_and_contex
     non-None, proving the wiring (build → pass) is in place.
     """
     from modex_agent.core import AgentCommKind
-    from modex_agent.core.constants import ExecutionStrategyKind
+    from modex_agent.core.agent import ExecutionStrategyKind
 
     builder = MagicMock(spec=TurnContextBuilder)
     builder.session_binding_store = None

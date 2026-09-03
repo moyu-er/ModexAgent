@@ -15,7 +15,7 @@ from typing import Any
 
 from modex_agent.adapters.filters import ContentFilter
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.core.types import OutputMessage
+from modex_agent.messaging.models import OutputMessage
 
 
 class OutputAdapter(ABC):

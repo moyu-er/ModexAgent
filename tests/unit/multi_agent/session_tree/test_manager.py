@@ -6,7 +6,6 @@ import asyncio
 
 import pytest
 
-from modex_agent.core.session_registry import InMemorySessionRegistry
 from modex_agent.messaging.broker import AddressKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
@@ -31,6 +30,7 @@ from modex_agent.multi_agent.session_tree.session_binding import (
 from modex_agent.multi_agent.session_tree.store_node import InMemoryTreeNodeStore
 from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrackStore
 from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
+from modex_agent.persistence.session_registry import InMemorySessionRegistry
 from modex_agent.utils.time import now_ms
 
 

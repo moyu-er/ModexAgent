@@ -12,7 +12,7 @@ from modex_agent.adapters.output import OutputAdapter
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.core.media import Attachment, Kind
 from modex_agent.core.session_id import SessionIdFactory, agent_of
-from modex_agent.core.types import InputMessage, OutputMessage
+from modex_agent.messaging.models import InputMessage, OutputMessage
 from modex_agent.pipeline.adapters import InputAdapter
 
 # ── Constants ──────────────────────────────────────────────────────────────

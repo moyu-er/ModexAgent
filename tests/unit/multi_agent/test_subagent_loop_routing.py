@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult
+from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.hook.builtin import SubagentAutoSendHook
 from modex_agent.memory.history import ListMessageHistory

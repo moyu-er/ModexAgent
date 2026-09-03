@@ -26,7 +26,7 @@ import pytest
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
+from modex_agent.messaging.models import InputMessage
 from modex_agent.pipeline.context_assembler import assemble_context
 from modex_agent.pipeline.turn_context_builder import (
     TurnContextBuilder,
@@ -204,7 +204,7 @@ async def _assemble_user_message(
     sanitized: str | None,
     model_info: Any,
 ) -> Any:
-    from modex_agent.core.context import InMemoryContextManager
+    from modex_agent.memory.context import InMemoryContextManager
 
     ctx_mgr = InMemoryContextManager()
     state = await assemble_context(

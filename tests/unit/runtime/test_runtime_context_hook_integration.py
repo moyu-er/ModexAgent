@@ -10,8 +10,7 @@ Verifies:
 from unittest.mock import AsyncMock, MagicMock
 
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.hook import Hook, HookErrorPolicy, HookRunner, HookSpec
 from modex_agent.hook.abc import AfterToolExecutionHook, AfterTurnHook, BeforeTurnHook

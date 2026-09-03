@@ -20,6 +20,7 @@ from modex_agent.runtime.models import (
     TurnIdentity,
 )
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.trace.approval_span_hook import ApprovalSpanHook
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.semconv import (
@@ -30,7 +31,6 @@ from modex_agent.trace.semconv import (
     SpanName,
 )
 from modex_agent.trace.session_state import TraceSessionState
-from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _make_context(*, with_trace: bool = True) -> AgentContext:

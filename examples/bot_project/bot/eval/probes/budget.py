@@ -8,9 +8,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.core.llm_struct import LLMResponse, TokenUsage
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
-from modex_agent.core.types import LLMResponse, TokenUsage
 from modex_agent.trace.pricing import (
     TOKENS_PER_MILLION,
     PerModelUsage,

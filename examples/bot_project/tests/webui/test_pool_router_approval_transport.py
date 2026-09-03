@@ -25,16 +25,14 @@ from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.enqueue import EnqueueStage
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 
-from modex_agent.approval.types import ApprovalAction
-from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 from modex_agent.messaging.broker import AddressKind, BrokerMessage
 from modex_agent.messaging.broker_bridge import BrokerInputPayload
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput, InputMessage
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.pool import AgentPool, input_message_from_dispatch_envelope
@@ -140,14 +138,12 @@ async def test_decision_survives_full_dispatch_reconstruction(tmp_path: Path) ->
         metadata=dict(submitted.metadata) if submitted.metadata else {},
         sender_id=submitted.sender_id,
         chat_id=submitted.chat_id,
-        approval_decision=submitted.approval_decision.to_dict()
-        if submitted.approval_decision is not None
-        else None,
-        attachments_resolved=[a.to_dict() for a in submitted.attachments_resolved],
+        approval_decision=submitted.approval_decision,
+        attachments_resolved=submitted.attachments_resolved,
         message_type="external_input",
     )
     envelope = AgentMessageEnvelope(
-        payload=payload_model.model_dump(exclude_none=True),
+        payload=payload_model.model_dump(mode="json", exclude_none=True),
         source=AgentAddress(kind=AddressKind.CHANNEL, name="websocket"),
         target=AgentAddress(kind=AddressKind.AGENT, name="main"),
         message_type="external_input",

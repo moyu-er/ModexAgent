@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.approval.runtime import ApprovalRuntime
 from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.approval.constants import ApprovalTier
-from modex_agent.core.context import ContextState, InMemoryContextManager
+from modex_agent.approval.runtime import ApprovalRuntime
 from modex_agent.core.emitter import AgentResult
-from modex_graph.exceptions import GraphInterrupt
-from modex_agent.core.types import InputMessage, ToolCall
+from modex_agent.core.message import ToolCall
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.memory.context import ContextState, InMemoryContextManager
+from modex_agent.messaging.models import InputMessage
 from modex_agent.runtime.enums import AgentKind, ApprovalSubjectType, SnapshotReason, TurnPhase
 from modex_agent.runtime.models import (
     ApprovalRequestState,
@@ -20,10 +21,9 @@ from modex_agent.runtime.models import (
     TurnIdentity,
 )
 from modex_agent.runtime.services import AgentRuntimeServices
-from modex_agent.core.session_id import SessionInfo
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager
-
+from modex_graph.exceptions import GraphInterrupt
 from tests.unit.pipeline._helpers import _make_react_pipeline
 
 

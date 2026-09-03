@@ -323,7 +323,7 @@ class QQInputAdapter(InputAdapter):
                 if msg_text:
                     out = self._output_adapter or self._ctrl_output_adapter
                     if out is not None:
-                        from modex_agent.core.types import OutputMessage
+                        from modex_agent.messaging.models import OutputMessage
                         await out.send(OutputMessage(content=msg_text), user_id)
                     else:
                         print(f"[QQInputAdapter] Cannot send Terminate notice (no output adapter): {msg_text}")

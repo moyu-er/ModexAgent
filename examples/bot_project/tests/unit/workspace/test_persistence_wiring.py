@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from bot.workspace.wiring.resources import _build_resources, _stop_resources
 
-from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.multi_agent.pool_router import PoolRoutingStore
 from modex_agent.persistence.adapters.session_store import SqliteSessionStore
 from modex_agent.persistence.connection import ConnectionNotOpenError
 from modex_agent.persistence.managers import WorkspacePersistenceManager
+from modex_agent.persistence.session_registry import SessionRegistry
 from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.defaults.prompt import FilePromptProviderFactory
 from modex_agent.plugins.registry import ComponentRegistry

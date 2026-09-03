@@ -12,10 +12,17 @@ from typing import Any
 import anyio
 import pytest
 
-from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, TextPart
+from modex_agent.core.llm_struct import LLMResponse, TokenUsage
+from modex_agent.core.message import (
+    ChatMessage,
+    ImageUrl,
+    ImageUrlPart,
+    MessageRole,
+    TextPart,
+    ToolCall,
+)
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.tool_manager import Tool, ToolConfig, ToolManager, ToolResult
-from modex_agent.core.types import LLMResponse, MessageRole, TokenUsage, ToolCall
 from modex_agent.ioc.configs.observability import CassetteScope
 from modex_agent.trace.cassette import (
     CassetteCategory,

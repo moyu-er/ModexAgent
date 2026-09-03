@@ -46,11 +46,10 @@ from uuid import uuid4
 
 from modex_agent.adapters.emitter import StreamingAwareEmitter
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult
-from modex_agent.core.history import ListMessageHistory
+from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.message_utils import sanitize_reminder_content, wrap_system_reminder
 from modex_agent.hook.abc import HookPayload, HookPoint
+from modex_agent.memory.history import ListMessageHistory
 from modex_agent.pipeline.turn_runner_abc import TurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.models import TurnIdentity
@@ -64,8 +63,8 @@ if TYPE_CHECKING:
     from modex_agent.core.emitter import ContentEmitter
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.session_id import SessionInfo
-    from modex_agent.core.types import InputMessage
     from modex_agent.hook.runner import HookRunner
+    from modex_agent.messaging.models import InputMessage
     from modex_agent.multi_agent.router import RouteResult
     from modex_agent.multi_agent.session_tree.session_binding import (
         SessionBindingStore,

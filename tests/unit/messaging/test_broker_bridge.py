@@ -5,7 +5,6 @@ import pytest
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage, OutputMessage
 from modex_agent.messaging.broker import Address, AddressKind, BrokerMessage
 from modex_agent.messaging.broker_bridge import (
     BrokerBridgeService,
@@ -15,6 +14,7 @@ from modex_agent.messaging.broker_bridge import (
     _broker_msg_to_input_message,
 )
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.models import InputMessage, OutputMessage
 from modex_agent.pipeline.adapters import InputAdapter
 
 

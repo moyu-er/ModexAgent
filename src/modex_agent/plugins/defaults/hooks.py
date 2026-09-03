@@ -62,8 +62,7 @@ from pydantic import BaseModel, ConfigDict
 
 from modex_agent.agents.external.cli_resolver import resolve_modexctl_bin_dir
 from modex_agent.agents.external.types import ExternalEnvSpec
-from modex_agent.core.agent import AgentCommKind
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.agent import AgentCommKind, ExecutionStrategyKind
 from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
 from modex_agent.hook.builtin.env_injection import NativeEnvInjectionHook
 from modex_agent.hook.builtin.inbox_flush import InboxFlushHook

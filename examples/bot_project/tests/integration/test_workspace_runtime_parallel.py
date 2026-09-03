@@ -57,10 +57,12 @@ from bot.workspace.dynamic_workspaces import (
 from modex_agent.adapters.emitter import StreamingAwareEmitter
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.adapters.platform import StreamingMode
+from modex_agent.core.llm_struct import LLMResponse
+from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.types import InputMessage, LLMResponse, OutputMessage, ToolCall
 from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.messaging.models import InputMessage, OutputMessage
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.workspace.runtime import resolve_workspace_root
 
@@ -664,7 +666,7 @@ async def test_parallel_turns_isolated_concurrent(
         # through its own memory system (the same read path the next
         # turn's context assembly takes) — each conversation's history is
         # there, and the other workspace's memory never saw it.
-        from modex_agent.core.scope import MemoryContext
+        from modex_agent.memory.scope import MemoryContext
 
         async def _history_text(resources: Any, session_id: str) -> str:
             memory_system = resources.pool_data[_MAIN_POOL].context_manager.memory_system

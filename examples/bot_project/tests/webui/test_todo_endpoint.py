@@ -11,8 +11,7 @@ from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.server import WebUIServer
 
-from modex_agent.core.types import TodoStatus
-from modex_agent.runtime.store import JsonFileTodoStore, TodoItem
+from modex_agent.runtime.todo import JsonFileTodoStore, TodoItem, TodoStatus
 from modex_agent.workspace.paths import WorkspacePaths
 
 

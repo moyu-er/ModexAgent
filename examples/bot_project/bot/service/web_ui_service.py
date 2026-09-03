@@ -35,13 +35,13 @@ from bot.webui.workspace_providers import (
     workspace_persistence_for_data_root,
     workspace_transcript_store_for_sessions,
 )
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.core.emitter import ContentEmitter
-from modex_agent.core.session_store import SessionStore
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.persistence.config import PersistenceBackend
-from modex_agent.adapters.output import OutputAdapter
+from modex_agent.persistence.session_store import SessionStore
 from modex_agent.pipeline.adapters import InputAdapter
 
 if TYPE_CHECKING:
@@ -193,7 +193,7 @@ class WebUIService(BotService):
 
         # ── 2.5 Session store + registry ───────────────────────────────
         from bot.service.session_store import WorkspacePoolSessionStore
-        from modex_agent.core.session_registry import InMemorySessionRegistry
+        from modex_agent.persistence.session_registry import InMemorySessionRegistry
 
         session_store: WorkspacePoolSessionStore = WorkspacePoolSessionStore(
             home_session_index,
@@ -706,7 +706,7 @@ class WebUIService(BotService):
         # None and the control routes return 503.
         from bot.control.facade import BotControlFacade, ControlFacadeError
         from bot.control.models import ControlError
-        from modex_agent.core.scope import MemoryContext, MemoryLayerName, SessionScope
+        from modex_agent.memory.scope import MemoryContext, MemoryLayerName, SessionScope
 
         async def _resolve_workspace_for_control(
             root: Path,

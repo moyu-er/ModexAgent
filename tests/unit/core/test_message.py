@@ -20,9 +20,10 @@ from modex_agent.core.message import (
     ContentPartType,
     ImageUrl,
     ImageUrlPart,
+    MessageRole,
     TextPart,
+    ToolCall,
 )
-from modex_agent.core.types import MessageRole, ToolCall
 
 # ---------------------------------------------------------------------------
 # #1 — ChatMessage.to_dict / from_dict tool_calls (OpenAI wire format)
@@ -64,6 +65,14 @@ def test_to_dict_tool_calls_none_call_id():
     )
     result = msg.to_dict()
     assert result["tool_calls"][0]["id"] == "call_0"
+
+
+def test_tool_call_is_frozen():
+    call = ToolCall(tool_name="search", arguments={"q": "x"}, call_id="c1")
+
+    with pytest.raises(ValidationError):
+        call.call_id = "c2"  # type: ignore[misc]
+    assert call.model_copy(update={"call_id": "c2"}).call_id == "c2"
 
 
 def test_from_dict_openai_format_tool_calls():

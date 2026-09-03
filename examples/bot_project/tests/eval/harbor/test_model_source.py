@@ -14,7 +14,8 @@ from bot.eval.harbor.model_source import (
 )
 from bot.eval.harbor.pool_mode_types import build_model_config
 
-from modex_agent.core.constants import InterfaceFormat, ReasoningEffort
+from modex_agent.core.llm_request import ReasoningEffort
+from modex_agent.ioc.configs.llm import InterfaceFormat
 
 _MODEL_ENV_NAMES = (
     "LLM_MODEL",

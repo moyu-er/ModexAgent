@@ -22,11 +22,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
-from modex_agent.core.agent import AgentContext, AgentCommKind
-from modex_agent.core.constants import ExecutionStrategyKind
-from modex_agent.core.history import ListMessageHistory
+from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.core.agent import AgentCommKind, AgentContext, ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
 from modex_agent.hook.builtin.knowledge_hook import KnowledgeHook, _has_knowledge_config
@@ -45,23 +42,22 @@ from modex_agent.pipeline.turn_context_config import (
     TurnContextConfigPipeline,
     TurnContextDescriptor,
 )
-from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-from modex_agent.agents.react.state import ReActTurnState
 from modex_graph.context import GraphContext
-from modex_agent.runtime.enums import AgentKind, TurnPhase
+
 
 def _graph_ctx():
     return MagicMock(spec=GraphContext)
 
-from modex_agent.multi_agent.session_tree.session_binding import (
-    InMemorySessionBindingStore,
-    SessionBinding,
-)
-from modex_agent.multi_agent.communication.strategies.base import SendStrategy, SendDeps, SendRequest
-from modex_agent.multi_agent.communication.strategies.subagent_dispatch import (
-    SubagentDispatchStrategy,
+from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.tool_manager import Tool
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.comm_kind import AgentCommKind as CommKind
+from modex_agent.multi_agent.communication.strategies.base import (
+    SendDeps,
+    SendRequest,
 )
 from modex_agent.multi_agent.communication.strategies.parent_reply import (
     ParentReplyStrategy,
@@ -69,15 +65,15 @@ from modex_agent.multi_agent.communication.strategies.parent_reply import (
 from modex_agent.multi_agent.communication.strategies.peer_normal import (
     PeerNormalStrategy,
 )
+from modex_agent.multi_agent.communication.strategies.subagent_dispatch import (
+    SubagentDispatchStrategy,
+)
+from modex_agent.multi_agent.session_tree.session_binding import (
+    InMemorySessionBindingStore,
+    SessionBinding,
+)
 from modex_agent.multi_agent.tools import CommunicationTarget
-from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind as CommKind
-from modex_agent.core.emitter import AgentResult
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult
-from modex_agent.core.tool_manager import Tool, ToolConfig
 from modex_agent.tools.manager import InMemoryToolManager
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -377,7 +373,7 @@ class TestGraphAwareComponentsSubagentExclusion:
 
     async def test_deliver_retry_hook_active_for_main_graph(self) -> None:
         """DeliverRetryHook fires for main agent with deliver tool but no deliver call."""
-        from modex_agent.core.tool_manager import Tool, ToolConfig
+        from modex_agent.core.tool_manager import Tool
 
         class _StubDeliverTool(Tool):
             @property
@@ -695,7 +691,6 @@ class TestPeerCommunicationSessionCrossTree:
     """Session mode: peer send delivers to receiver's tree (cross-tree), no graph contamination."""
 
     async def test_peer_deliver_uses_target_tree_ref(self) -> None:
-        from modex_agent.core.agent import current_agent_context
 
         peer_tree = MagicMock()
         delivered_to: list[tuple[str, Any]] = []
@@ -739,4 +734,3 @@ class TestPeerCommunicationSessionCrossTree:
         await strategy.execute(req)
 
         assert len(delivered) == 1
-

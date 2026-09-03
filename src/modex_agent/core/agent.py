@@ -31,6 +31,34 @@ if TYPE_CHECKING:
     from modex_graph.context import GraphContext
 
 
+class ExecutionStrategyKind(StrEnum):
+    """Agent execution strategy selected by a compiled declaration."""
+
+    REACT = "react"
+    SINGLE_TURN = "single_turn"
+    PIPELINE = "pipeline"
+    EXTERNAL = "external"
+
+
+class ProviderKind(StrEnum):
+    """Coding-agent provider families supported by external agents."""
+
+    PI = "pi"
+    OPENCODE = "opencode"
+
+
+class AgentRole(StrEnum):
+    """Canonical preset agent roles; declarations may also use custom strings."""
+
+    PLANNER = "planner"
+    IMPLEMENTER = "implementer"
+    REVIEWER = "reviewer"
+    SCOUT = "scout"
+    ORACLE = "oracle"
+    COORDINATOR = "coordinator"
+    COMMUNICATOR = "communicator"
+
+
 class AgentCommKind(StrEnum):
     """Agent topology kind — internal routing classification.
 

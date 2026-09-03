@@ -47,8 +47,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.agent import AgentCommKind
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.agent import AgentCommKind, ExecutionStrategyKind
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication import AgentCommunicationService

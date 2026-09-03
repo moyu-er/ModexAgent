@@ -11,15 +11,6 @@ from collections.abc import Collection
 from pathlib import Path
 from typing import cast
 
-from modex_agent.core.scope import (
-    MemoryAgentRole,
-    MemoryContext,
-    MemoryLayerName,
-    Scope,
-    ScopeRecord,
-    infer_agent_role,
-    scope_path_key,
-)
 from modex_agent.memory.archive_models import (
     CONTEXT_ARCHIVE_FILE_KEY,
     CONTEXT_ARCHIVE_FILENAME,
@@ -35,6 +26,15 @@ from modex_agent.memory.core.split_stores import (
 )
 from modex_agent.memory.core.store_metadata import StoreMetadata
 from modex_agent.memory.registry.base import MemoryStoreRegistry
+from modex_agent.memory.scope import (
+    MemoryAgentRole,
+    MemoryContext,
+    MemoryLayerName,
+    Scope,
+    ScopeRecord,
+    infer_agent_role,
+    scope_path_key,
+)
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
 from modex_agent.memory.stores.utils import sanitize_scope_key
@@ -88,16 +88,17 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
             existing = self._read_scope_record(path.parent)
             if existing and existing.created_at is not None:
                 created_at = existing.created_at
-        data = {
-            "scope_key": scope_key,
-            "layer": str(layer),
-            "context": context.to_dict(),
-            "storage_path": str(storage_path),
-            "agent_role": str(infer_agent_role(context)),
-            "agent_id": context.agent_id,
-            "created_at": created_at,
-            "updated_at": now,
-        }
+        record = ScopeRecord(
+            scope_key=scope_key,
+            layer=layer,
+            context=context,
+            storage_path=str(storage_path),
+            agent_role=infer_agent_role(context),
+            agent_id=context.agent_id,
+            created_at=created_at,
+            updated_at=now,
+        )
+        data = record.model_dump(mode="json")
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -114,15 +115,8 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
         if not data:
             return None
         try:
-            return ScopeRecord(
-                scope_key=data["scope_key"],
-                layer=MemoryLayerName(data["layer"]),
-                context=MemoryContext.from_dict(data.get("context")),
-                storage_path=data.get("storage_path") or str(scope_dir),
-                agent_role=data.get("agent_role", MemoryAgentRole.MAIN),
-                agent_id=data.get("agent_id"),
-                created_at=data.get("created_at"),
-                updated_at=data.get("updated_at"),
+            return ScopeRecord.model_validate(
+                {**data, "storage_path": data.get("storage_path") or str(scope_dir)}
             )
         except Exception:
             return None

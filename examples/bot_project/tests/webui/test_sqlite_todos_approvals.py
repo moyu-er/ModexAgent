@@ -102,9 +102,8 @@ class TestSqliteApprovalsEndpoint:
         session_id = "abc456.default"
 
         from modex_agent.agents.react.state import ReActRuntimeStateCodec
-        from modex_agent.core.message import ChatMessage
+        from modex_agent.core.message import ChatMessage, MessageRole
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.core.types import MessageRole
         from modex_agent.persistence import ConnectionManager, DatabaseKind
         from modex_agent.persistence.adapters.turn_state_store import SqliteTurnStateStore
         from modex_agent.runtime.codec import RuntimeStateCodecRegistry

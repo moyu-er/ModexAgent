@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, assert_never
 
 from bot.graph.knowledge_config import KnowledgeNodeConfig
+from modex_agent.agents import GraphDeliverTargetStore, GraphDeliverTool
 from modex_agent.agents.agent_node import AgentNode, SessionStrategy
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.multi_agent.address import AgentAddress
@@ -24,15 +25,14 @@ from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.session_tree.session_binding import SessionBinding
 from modex_agent.pipeline.turn_context_config import GraphTurnArtifacts
-from modex_agent.tools.graph_deliver import GraphDeliverTargetStore, GraphDeliverTool
 from modex_graph.constants import FrameworkPayloadSource, GraphNode
 
 if TYPE_CHECKING:
     from bot.workspace.handle import WorkspaceResolverCell
-    from modex_agent.core.session_registry import SessionRegistry
     from modex_agent.multi_agent.descriptor import AgentInstance
     from modex_agent.multi_agent.pool_instance import PoolInstance
     from modex_agent.multi_agent.template import AgentTemplate
+    from modex_agent.persistence.session_registry import SessionRegistry
     from modex_graph.context import GraphContext
     from modex_graph.integration import IntegratedInput
 

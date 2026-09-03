@@ -8,7 +8,7 @@ Moved from ``pipeline/filters.py`` (B4).
 import re
 from abc import ABC, abstractmethod
 
-from modex_agent.core.types import OutputMessage
+from modex_agent.messaging.models import OutputMessage
 
 
 class ContentFilter(ABC):

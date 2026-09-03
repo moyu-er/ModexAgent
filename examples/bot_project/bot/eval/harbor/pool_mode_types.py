@@ -9,8 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from bot.eval.harbor.entry import EntryConfig, TaskResultArtifact, UsageArtifact
 from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
-from modex_agent.core.constants import InterfaceFormat
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.ioc.configs.llm import InterfaceFormat
 from modex_agent.plugins.abc import ComponentFactory
 from modex_agent.trace.pricing import PriceBook, load_pricebook
 from modex_agent.trace.store import SpanModel

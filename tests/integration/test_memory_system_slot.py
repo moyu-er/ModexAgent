@@ -19,10 +19,10 @@ from bot.service.pool import create_pool
 from plugins.bot_strategies import BotStrategiesPlugin
 
 from modex_agent.commands.processor import SlashCommandProcessor
-from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.hook import HookRunner
 from modex_agent.interceptor.chain import InterceptorChain
+from modex_agent.memory.context import ContextManager, ContextState
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.descriptor import AgentInstance

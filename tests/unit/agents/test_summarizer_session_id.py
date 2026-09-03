@@ -17,6 +17,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+
 from modex_agent.agents.summarizer.scoped_file_agent import ScopedFileAgent
 from modex_agent.core.provider import LLMProvider
 

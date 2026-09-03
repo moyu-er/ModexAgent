@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import logging
 
-import pytest
-
 from modex_agent.ioc.configs.memory import (
     ArchiveConfig,
     CoreMemoryConfig,

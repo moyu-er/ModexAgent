@@ -15,9 +15,9 @@ from __future__ import annotations
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from modex_agent.approval.response import parse_approval_action
-from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
+from modex_agent.messaging.models import ApprovalDecisionInput
 
 
 class ApprovalStage(InputStage):

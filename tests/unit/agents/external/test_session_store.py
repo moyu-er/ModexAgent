@@ -10,9 +10,9 @@ from modex_agent.agents.external import (
     ExternalPaths,
     ExternalSessionMapStore,
     LocalFileExternalSessionMapStore,
-    ProviderKind,
     SessionMapEntry,
 )
+from modex_agent.core import ProviderKind
 
 
 def _paths(tmp_path: Path) -> ExternalPaths:

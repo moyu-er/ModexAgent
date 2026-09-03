@@ -17,7 +17,6 @@ calling ``node.run(ctx)`` for each node in sequence, recording the
 
 from __future__ import annotations
 
-from modex_agent import ToolCall
 from modex_agent.agents.react.constants import ReActHookPoint, ReActNode
 from modex_agent.agents.react.injection_drainer import InjectionDrainer
 from modex_agent.agents.react.llm_client import ReactLlmClient
@@ -26,6 +25,7 @@ from modex_agent.agents.react.nodes.before_turn import BeforeTurnNode
 from modex_agent.agents.react.nodes.llm import LLMNode
 from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.tool_executor import ToolExecutor
+from modex_agent.core.message import ToolCall
 from modex_agent.core.tool_manager import ToolResult
 
 

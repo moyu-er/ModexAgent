@@ -59,15 +59,13 @@ from plugins.bot_strategies import BotStrategiesPlugin
 
 from modex_agent.agents.react import ReActAgent
 from modex_agent.commands.processor import SlashCommandProcessor
-from modex_agent.core.constants import FinishReason
-from modex_agent.core.context import ContextManager, ContextState
-from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.core.llm_struct import FinishReason, LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.types import LLMResponse
 from modex_agent.hook import HookRunner
 from modex_agent.interceptor.chain import InterceptorChain
+from modex_agent.memory.context import ContextManager, ContextState
 from modex_agent.memory.hooks import MemoryHook
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy

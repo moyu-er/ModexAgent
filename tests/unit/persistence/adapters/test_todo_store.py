@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from modex_agent.core.scope import RecordScope
-from modex_agent.core.types import TodoStatus
 from modex_agent.persistence import ConnectionManager
 from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
-from modex_agent.runtime.store import TodoItem
+from modex_agent.runtime.todo import TodoItem, TodoStatus
 
 
 def _items(*contents: str) -> list[TodoItem]:

@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import MessageRole
 from modex_agent.memory.context_governance import (
     CompositeGovernance,
     ContextBudgetGovernance,

@@ -17,19 +17,17 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.adapters.output import OutputAdapter
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.commands.constants import CommandAction, CommandDispatchPolicy, CommandParseStatus
 from modex_agent.commands.models import (
     CommandHandlingResult,
     CommandParseResult,
     SlashCommandInvocation,
 )
-from modex_agent.core.agent import AgentCommKind, AgentContext
-from modex_agent.core.constants import ExecutionStrategyKind
-from modex_agent.core.context import ContextState, InMemoryContextManager
+from modex_agent.core.agent import AgentCommKind, AgentContext, ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
 from modex_agent.media.store import LocalFileMediaStore
+from modex_agent.memory.context import ContextState, InMemoryContextManager
+from modex_agent.messaging.models import ApprovalAction, InputMessage
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder, TurnRequest
 from modex_agent.pipeline.turn_context_config import (
@@ -212,13 +210,15 @@ async def test_build_turn_request_approval_decision_carries_action() -> None:
 @pytest.mark.asyncio
 async def test_build_turn_request_short_circuits_on_approval_decision() -> None:
     """A webui approval_decision bypasses command processing -> resume branch."""
-    from modex_agent.approval.views import ApprovalDecisionInput
+    from modex_agent.messaging.models import ApprovalDecisionInput
 
     builder = _make_builder()  # command_processor=None; short-circuit fires first anyway
     msg = InputMessage(
         content="",
         session=SessionInfo.from_str("s.main"),
-        approval_decision=ApprovalDecisionInput("call_1", ApprovalAction.DENY),
+        approval_decision=ApprovalDecisionInput(
+            tool_call_id="call_1", action=ApprovalAction.DENY
+        ),
     )
 
     tr = await builder.build_turn_request(msg, "s.main", {}, None)

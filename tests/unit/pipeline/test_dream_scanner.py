@@ -1,6 +1,6 @@
 """DreamScanner — periodic background consolidation scan."""
 import asyncio
-import pytest
+
 from modex_agent.pipeline.dream_scanner import DreamScanner
 
 

@@ -13,9 +13,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Optional, Union, get_type_hints
 
-from ..core.constants import (
-    ToolSchemaConstants,
-)
+_TOOL_SCHEMA_TYPE_FUNCTION = "function"
+_TOOL_SCHEMA_PARAM_TYPE_OBJECT = "object"
 
 
 class ToolParameterType(StrEnum):
@@ -130,12 +129,12 @@ class ToolDefinition:
                 required.append(param.name)
 
         return {
-            "type": ToolSchemaConstants.TYPE_FUNCTION,
-            ToolSchemaConstants.TYPE_FUNCTION: {
+            "type": _TOOL_SCHEMA_TYPE_FUNCTION,
+            _TOOL_SCHEMA_TYPE_FUNCTION: {
                 "name": self.name,
                 "description": self.description,
                 "parameters": {
-                    "type": ToolSchemaConstants.PARAM_TYPE_OBJECT,
+                    "type": _TOOL_SCHEMA_PARAM_TYPE_OBJECT,
                     "properties": properties,
                     "required": required,
                 },

@@ -249,9 +249,9 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
     so ``./*`` follows the active workspace, not the static bot project_dir."""
     from modex_agent.approval.constants import ApprovalTier
     from modex_agent.core.agent import AgentContext
-    from modex_agent.tools.manager import InMemoryToolManager
-    from modex_agent.core.types import ToolCall
+    from modex_agent.core.message import ToolCall
     from modex_agent.memory.history import ListMessageHistory
+    from modex_agent.tools.manager import InMemoryToolManager
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
     workspace = Path("/some/workspace").resolve()

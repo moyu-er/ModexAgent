@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.scope import MemoryLayerName
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import MessageRole
+from modex_agent.memory.scope import MemoryLayerName
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
 from modex_agent.memory.stores.scoped_in_memory import InMemoryScopedStorage

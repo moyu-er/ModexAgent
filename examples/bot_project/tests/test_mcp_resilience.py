@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.tools.mcp_loader import load_per_agent_mcp
 from modex_agent.tools.manager import InMemoryToolManager
+from modex_agent.tools.mcp_loader import load_per_agent_mcp
 
 
 def _tool_manager_with_sentinel() -> InMemoryToolManager:

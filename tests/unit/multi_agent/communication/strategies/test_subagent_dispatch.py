@@ -24,8 +24,8 @@ from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import CommunicationTarget
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
-from modex_agent.workspace.scope_path import ScopePath
 from modex_agent.tools.manager import InMemoryToolManager
+from modex_agent.workspace.scope_path import ScopePath
 
 
 @dataclass(frozen=True)
@@ -246,7 +246,7 @@ class TestBuildResultExecutionStrategyBranch:
     """
 
     def test_external_subagent_result_has_no_trace_no_output(self) -> None:
-        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.core.agent import ExecutionStrategyKind
 
         strategy = SubagentDispatchStrategy(_make_deps())
         req = SendRequest(
@@ -296,7 +296,7 @@ class TestBuildResultExecutionStrategyBranch:
 
     def test_native_subagent_ack_omits_output_line(self, tmp_path: Path) -> None:
         """T4: native ack omits Trace and Output — unified subagent ack."""
-        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.core.agent import ExecutionStrategyKind
         from modex_agent.multi_agent.communication.result import format_send_ack
         manager = MagicMock()
         manager.resolve_workspace.return_value.pool_data.get.return_value = _FakePoolData(
@@ -332,7 +332,7 @@ class TestBuildResultExecutionStrategyBranch:
 
     def test_external_subagent_ack_matches_native(self) -> None:
         """T4: external and native subagent acks are identical — no implementation details leaked."""
-        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.core.agent import ExecutionStrategyKind
         from modex_agent.multi_agent.communication.result import format_send_ack
 
         strategy = SubagentDispatchStrategy(_make_deps())
@@ -362,7 +362,7 @@ class TestBuildResultExecutionStrategyBranch:
         """CommunicationTarget defaults to REACT — pool_builder must
         explicitly pass execution_strategy from SubagentSpec for the
         external branch to trigger."""
-        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.core.agent import ExecutionStrategyKind
 
         target = CommunicationTarget(name="worker", kind=AgentCommKind.SUBAGENT)
         assert target.execution_strategy == ExecutionStrategyKind.REACT
@@ -379,7 +379,7 @@ class TestBuildEnvelopeXmlBranch:
     """
 
     def test_external_target_envelope_xml_is_minimal_no_reply_contract(self) -> None:
-        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.core.agent import ExecutionStrategyKind
 
         strategy = SubagentDispatchStrategy(_make_deps())
         req = SendRequest(
@@ -403,7 +403,7 @@ class TestBuildEnvelopeXmlBranch:
         assert "WARNING" not in xml
 
     def test_native_target_envelope_xml_is_minimal_no_reply_contract(self) -> None:
-        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.core.agent import ExecutionStrategyKind
 
         strategy = SubagentDispatchStrategy(_make_deps())
         req = SendRequest(

@@ -10,7 +10,6 @@ from modex_agent.agents.summarizer.outcomes import (
     ConsolidationOutcome,
 )
 from modex_agent.agents.summarizer.session_compactor import SessionCompactorAgent
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.cleanup import cleanup_session
 from modex_agent.memory.consolidation.dream_engine import DreamEngine
 from modex_agent.memory.core.models import ArchiveEntry, CoreMemoryContents, UnprocessedResult
@@ -24,6 +23,7 @@ from modex_agent.memory.hooks import (
 )
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.token_estimator import TokenEstimator
 
 

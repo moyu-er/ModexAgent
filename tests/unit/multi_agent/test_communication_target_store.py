@@ -80,7 +80,6 @@ class TestStoreGet:
     def test_get_in_subagent_mode_resolves_parent(self) -> None:
         from modex_agent.core.agent import AgentContext, current_agent_context
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.tools.manager import InMemoryToolManager
         from modex_agent.memory.history import ListMessageHistory
 
         ctx = AgentContext(
@@ -237,7 +236,6 @@ class TestStoreSubagentDescription:
         contextvar (not a static add()), and never leaks kind/description."""
         from modex_agent.core.agent import AgentContext, current_agent_context
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.tools.manager import InMemoryToolManager
         from modex_agent.memory.history import ListMessageHistory
 
         ctx = AgentContext(
@@ -280,7 +278,6 @@ class TestStoreSubagentDynamicParent:
     def test_list_targets_returns_parent_only(self) -> None:
         from modex_agent.core.agent import AgentContext, current_agent_context
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.tools.manager import InMemoryToolManager
         from modex_agent.memory.history import ListMessageHistory
 
         ctx = AgentContext(
@@ -311,7 +308,6 @@ class TestStoreSubagentDynamicParent:
     def test_has_target_matches_parent_only(self) -> None:
         from modex_agent.core.agent import AgentContext, current_agent_context
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.tools.manager import InMemoryToolManager
         from modex_agent.memory.history import ListMessageHistory
 
         ctx = AgentContext(
@@ -341,7 +337,6 @@ class TestStoreSubagentDynamicParent:
     def test_no_parent_session_id_returns_empty(self) -> None:
         from modex_agent.core.agent import AgentContext, current_agent_context
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.tools.manager import InMemoryToolManager
         from modex_agent.memory.history import ListMessageHistory
 
         ctx = AgentContext(
@@ -377,7 +372,6 @@ class TestStoreGraphModeFiltersPeers:
     def _graph_ctx() -> AgentContext:
         from modex_agent.core.agent import AgentContext
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.tools.manager import InMemoryToolManager
         from modex_agent.memory.history import ListMessageHistory
 
         return AgentContext(
@@ -392,7 +386,6 @@ class TestStoreGraphModeFiltersPeers:
     def _non_graph_ctx() -> AgentContext:
         from modex_agent.core.agent import AgentContext
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.tools.manager import InMemoryToolManager
         from modex_agent.memory.history import ListMessageHistory
 
         return AgentContext(

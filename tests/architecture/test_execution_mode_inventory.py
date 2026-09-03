@@ -30,6 +30,7 @@ if str(_BOT_PROJECT) not in sys.path:
 from bot.tools.custom import SendFileToUserTool  # noqa: E402
 from bot.tools.kb import KbTool  # noqa: E402
 
+from modex_agent.agents import GraphDeliverTool  # noqa: E402
 from modex_agent.memory.tools.scoped_edit import ScopedEditFileTool  # noqa: E402
 from modex_agent.memory.tools.scoped_list import ScopedListTool  # noqa: E402
 from modex_agent.memory.tools.scoped_read import ScopedReadFileTool  # noqa: E402
@@ -51,7 +52,6 @@ from modex_agent.plugins.defaults.capabilities.experience.catalog import (  # no
 from modex_agent.tools.aci.edit_tool import AciEditTool  # noqa: E402
 from modex_agent.tools.ast.ast_replace import AstGrepReplaceTool  # noqa: E402
 from modex_agent.tools.ast.ast_search import AstGrepSearchTool  # noqa: E402
-from modex_agent.tools.graph_deliver import GraphDeliverTool  # noqa: E402
 from modex_agent.tools.graph_knowledge_tool import GraphKnowledgeBaseTool  # noqa: E402
 from modex_agent.tools.lsp.lsp_diagnostics import LspDiagnosticsTool  # noqa: E402
 from modex_agent.tools.lsp.lsp_navigation import LspNavigationTool  # noqa: E402

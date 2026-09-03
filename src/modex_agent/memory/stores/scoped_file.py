@@ -8,8 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from modex_agent.core.scope import MemoryLayerName
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import MessageRole
 from modex_agent.memory.archive_models import (
     CONTEXT_ARCHIVE_FILENAME,
     CORE_ARCHIVE_FILENAME,
@@ -24,6 +23,7 @@ from modex_agent.memory.core.split_stores import (
     MessageStore,
 )
 from modex_agent.memory.core.store_metadata import StoreMetadata
+from modex_agent.memory.scope import MemoryLayerName
 from modex_agent.utils.file_io import read_json_robust, read_jsonl_robust, safe_atomic_replace
 from modex_agent.utils.time import now_ms
 

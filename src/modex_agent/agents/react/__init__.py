@@ -6,6 +6,7 @@
 from .agent import ReActAgent, ReActEvent
 from .builder import ReActAgentBuilder
 from .constants import ToolCallEndPayload
+from .ids import next_call_id
 from .runtime import ReactGraphRuntime
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "ReActAgentBuilder",
     "ReactGraphRuntime",
     "ToolCallEndPayload",
+    "next_call_id",
 ]

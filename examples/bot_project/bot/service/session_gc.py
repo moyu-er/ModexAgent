@@ -29,13 +29,14 @@ from bot.scope import BotRecordScope
 from bot.service.liveness import LivenessProvider
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
-from modex_agent.core.session_store import LocalFileSessionStore, SessionStore
+from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
 from modex_agent.persistence.session_artifacts import (
     DefaultSessionArtifactCleaner,
     MissingSessionScopeError,
     SessionCleanupResult,
     discover_file_session_pool_map,
 )
+from modex_agent.persistence.session_store import SessionStore
 from modex_agent.workspace.paths import WorkspacePaths
 
 if TYPE_CHECKING:
@@ -722,4 +723,3 @@ class SessionGarbageCollector:
 
     def _inflight_count(self) -> int:
         return len(self._inflight)
-

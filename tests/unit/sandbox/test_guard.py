@@ -7,7 +7,6 @@ from modex_agent.sandbox.guard import (
     CommandPatternGuardConfig,
     CommandSeverity,
     GuardMatch,
-    GuardResult,
 )
 
 

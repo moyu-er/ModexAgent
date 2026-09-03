@@ -9,9 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from modex_agent.core.message import ChatMessage, ContentFormat, ContentPart
+from modex_agent.core.message import ChatMessage, ContentFormat, ContentPart, MessageRole, ToolCall
 from modex_agent.core.tool_manager import ToolResult
-from modex_agent.core.types import MessageRole, ToolCall
 from modex_agent.utils.xml import xml_attr, xml_text
 
 

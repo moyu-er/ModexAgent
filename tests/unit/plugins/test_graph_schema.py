@@ -17,6 +17,9 @@ from typing import Any, get_args
 import pytest
 from pydantic import BaseModel
 
+from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
+from modex_agent.plugins.assembly.graph_schema import build_state_schema_compiler
+from modex_agent.plugins.registry import ComponentRegistry
 from modex_graph import (
     EdgeSpec,
     FieldSpec,
@@ -27,9 +30,6 @@ from modex_graph import (
     NodeRegistry,
     NodeSpec,
 )
-from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
-from modex_agent.plugins.assembly.graph_schema import build_state_schema_compiler
-from modex_agent.plugins.registry import ComponentRegistry
 
 
 class _DummyConfig(BaseModel):
@@ -88,28 +88,28 @@ class TestBuildStateSchemaCompilerBuiltins:
         state_cls = compiler({"field": FieldSpec(type=type_name)})
         assert state_cls.model_fields["field"].annotation is py_type
         instance = state_cls()
-        assert getattr(instance, "field") == default
+        assert instance.field == default
 
     def test_list_no_item_type(self) -> None:
         compiler = build_state_schema_compiler(ComponentRegistry())
         state_cls = compiler({"items": FieldSpec(type="list")})
         assert state_cls.model_fields["items"].annotation is list
         instance = state_cls()
-        assert getattr(instance, "items") == []
+        assert instance.items == []
 
     def test_dict_type(self) -> None:
         compiler = build_state_schema_compiler(ComponentRegistry())
         state_cls = compiler({"meta": FieldSpec(type="dict")})
         assert state_cls.model_fields["meta"].annotation is dict
         instance = state_cls()
-        assert getattr(instance, "meta") == {}
+        assert instance.meta == {}
 
     def test_list_with_builtin_item_type(self) -> None:
         compiler = build_state_schema_compiler(ComponentRegistry())
         state_cls = compiler({"tags": FieldSpec(type="list", item_type="string")})
         assert state_cls.model_fields["tags"].annotation == list[str]
         instance = state_cls()
-        assert getattr(instance, "tags") == []
+        assert instance.tags == []
 
     def test_list_with_int_item_type(self) -> None:
         compiler = build_state_schema_compiler(ComponentRegistry())
@@ -126,7 +126,7 @@ class TestBuildStateSchemaCompilerCustomTypes:
         assert _ResearchNote in get_args(annotation)
         assert type(None) in get_args(annotation)
         instance = state_cls()
-        assert getattr(instance, "note") is None
+        assert instance.note is None
 
     def test_custom_type_with_initial(self) -> None:
         registry = _registry_with_custom("research_note")
@@ -137,7 +137,7 @@ class TestBuildStateSchemaCompilerCustomTypes:
         )
         assert state_cls.model_fields["note"].annotation is _ResearchNote
         instance = state_cls()
-        assert getattr(instance, "note") == initial
+        assert instance.note == initial
 
     def test_list_with_custom_item_type(self) -> None:
         registry = _registry_with_custom("research_note")
@@ -147,7 +147,7 @@ class TestBuildStateSchemaCompilerCustomTypes:
         )
         assert state_cls.model_fields["notes"].annotation == list[_ResearchNote]
         instance = state_cls()
-        assert getattr(instance, "notes") == []
+        assert instance.notes == []
 
 
 class TestBuildStateSchemaCompilerErrors:
@@ -177,13 +177,13 @@ class TestBuildStateSchemaCompilerInitialValues:
         compiler = build_state_schema_compiler(ComponentRegistry())
         state_cls = compiler({"title": FieldSpec(type="string", initial="hello")})
         instance = state_cls()
-        assert getattr(instance, "title") == "hello"
+        assert instance.title == "hello"
 
     def test_int_initial(self) -> None:
         compiler = build_state_schema_compiler(ComponentRegistry())
         state_cls = compiler({"count": FieldSpec(type="int", initial=42)})
         instance = state_cls()
-        assert getattr(instance, "count") == 42
+        assert instance.count == 42
 
     def test_list_initial(self) -> None:
         compiler = build_state_schema_compiler(ComponentRegistry())
@@ -191,7 +191,7 @@ class TestBuildStateSchemaCompilerInitialValues:
             {"items": FieldSpec(type="list", item_type="string", initial=["a", "b"])}
         )
         instance = state_cls()
-        assert getattr(instance, "items") == ["a", "b"]
+        assert instance.items == ["a", "b"]
 
 
 class TestBuildStateSchemaCompilerInstantiation:
@@ -204,15 +204,15 @@ class TestBuildStateSchemaCompilerInstantiation:
             }
         )
         instance = state_cls.model_validate({"title": "custom", "count": 10})
-        assert getattr(instance, "title") == "custom"
-        assert getattr(instance, "count") == 10
+        assert instance.title == "custom"
+        assert instance.count == 10
 
     def test_compiled_state_is_mutable(self) -> None:
         compiler = build_state_schema_compiler(ComponentRegistry())
         state_cls = compiler({"count": FieldSpec(type="int", initial=0)})
         instance = state_cls()
-        setattr(instance, "count", 99)
-        assert getattr(instance, "count") == 99
+        instance.count = 99
+        assert instance.count == 99
 
     def test_compiled_state_rejects_extra_fields(self) -> None:
         compiler = build_state_schema_compiler(ComponentRegistry())
@@ -234,12 +234,12 @@ class TestBuildStateSchemaCompilerInstantiation:
             }
         )
         instance = state_cls()
-        assert getattr(instance, "title") == ""
-        assert getattr(instance, "count") == 0
-        assert getattr(instance, "active") is False
-        assert getattr(instance, "tags") == []
-        assert getattr(instance, "meta") == {}
-        assert getattr(instance, "note") is None
+        assert instance.title == ""
+        assert instance.count == 0
+        assert instance.active is False
+        assert instance.tags == []
+        assert instance.meta == {}
+        assert instance.note is None
 
 
 class TestBuildStateSchemaCompilerIntegration:

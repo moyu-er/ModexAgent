@@ -21,7 +21,8 @@ from aiohttp import web
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.webui.events import ServerEvent
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.runtime.store import TodoStore, TurnStateStore
+from modex_agent.runtime.store import TurnStateStore
+from modex_agent.runtime.todo import TodoStore
 from modex_graph import GraphOutput
 
 logger = logging.getLogger(__name__)

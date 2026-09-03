@@ -8,8 +8,14 @@ from typing import Any
 import pytest
 
 from modex_agent.agents.react.message_builder import build_assistant_message
-from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, TextPart
-from modex_agent.core.types import MessageRole, ToolCall
+from modex_agent.core.message import (
+    ChatMessage,
+    ImageUrl,
+    ImageUrlPart,
+    MessageRole,
+    TextPart,
+    ToolCall,
+)
 from modex_agent.ioc.configs.observability import PromptCaptureMode
 from modex_agent.trace.prompt_capture import (
     FullPromptCapture,

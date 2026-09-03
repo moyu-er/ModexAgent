@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-09-01 | B4 Output/Emitter move -->
+<!-- Updated: 2026-09-02 | E1 transport ownership -->
 
 # adapters
 
@@ -18,11 +18,12 @@ Platform I/O contracts and the emitter bridge — decouple platform I/O from age
 ## Dependencies
 - `modex_agent.core.emitter` — `ContentEmitter`, `AgentResult` (emitter contract stays in core)
 - `modex_agent.core.events` — `EmitterConfig`
-- `modex_agent.core.types` — `OutputMessage`
+- `modex_agent.messaging.models` — `OutputMessage` transport model
 - No pipeline imports (B4 invariant: adapters never import pipeline; `InputAdapter` stays in `pipeline/adapters.py`)
 
 ## Notes
 - Concrete adapter implementations live in example projects (e.g., `examples/bot_project/bot/adapters/`).
 - `InputAdapter` stays in `pipeline/adapters.py` (it carries input-pipeline/control-channel coupling).
+- Input/output message DTOs and approval input transport live in `modex_agent.messaging`, not in this adapter package.
 
 <!-- MANUAL: -->

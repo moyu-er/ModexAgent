@@ -21,10 +21,10 @@ from bot.service.pool.declaration import boot_scope_spec
 from bot.workspace.handle import WorkspaceHandle, WorkspaceHandleRootProvider
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
-from modex_agent.core.scope import MemoryAgentRole, MemoryContext
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
 from modex_agent.memory.core.system import MemorySystem
+from modex_agent.memory.scope import MemoryAgentRole, MemoryContext
+from modex_agent.messaging.models import InputMessage
 from modex_agent.plugins.assembly import single_agent
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext

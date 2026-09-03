@@ -11,8 +11,7 @@ from datetime import datetime
 
 import pytest
 
-from modex_agent.core.constants import FinishReason
-from modex_agent.core.llm_struct import LLMErrorInfo, LLMErrorKind
+from modex_agent.core.llm_struct import FinishReason, LLMErrorInfo, LLMErrorKind, TokenUsage
 from modex_agent.core.stream_events import (
     EventAssembler,
     Finish,
@@ -24,7 +23,6 @@ from modex_agent.core.stream_events import (
     ToolCallComplete,
     UsageSnapshot,
 )
-from modex_agent.core.types import TokenUsage
 
 
 async def feed_all(assembler: EventAssembler, events: Sequence[LLMStreamEvent]) -> None:

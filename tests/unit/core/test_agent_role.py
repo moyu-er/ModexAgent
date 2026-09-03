@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from modex_agent.core.constants import AgentRole
+from modex_agent.core.agent import AgentRole
 
 
 class TestAgentRoleValues:

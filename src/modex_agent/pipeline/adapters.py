@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage, OutputMessage
+from modex_agent.messaging.models import InputMessage, OutputMessage
 
 if TYPE_CHECKING:
     from modex_agent.commands.models import CommandProcessor

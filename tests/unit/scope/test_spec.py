@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.core.constants import ExecutionStrategyKind, ProviderKind
+from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.scope import (
     AgentSpec,

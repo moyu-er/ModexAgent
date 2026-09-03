@@ -37,7 +37,6 @@ from modex_agent.plugins.loader import (
 )
 from modex_agent.plugins.registry import ComponentNotFoundError, ComponentRegistry
 
-
 # ---- Test helpers --------------------------------------------------------
 
 
@@ -222,9 +221,8 @@ class TestPluginRegistrationContext:
         """__exit__ must return None/False — must not suppress."""
         registry = ComponentRegistry()
         ctx = PluginRegistrationContext(registry)
-        with pytest.raises(ValueError, match="test"):
-            with ctx:
-                raise ValueError("test")
+        with pytest.raises(ValueError, match="test"), ctx:
+            raise ValueError("test")
 
 
 # ---- PluginDiscoveryConfig tests -----------------------------------------

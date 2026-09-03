@@ -49,7 +49,7 @@ from modex_agent.plugins.capability import (
     PromptSectionSpec,
     TreePositionView,
 )
-from modex_agent.runtime.store import JsonFileTodoStore, TodoStore
+from modex_agent.runtime.todo import JsonFileTodoStore, TodoStore
 from modex_agent.workspace.paths import SUBDIR_RUNTIME, SUBDIR_TODOS
 
 if TYPE_CHECKING:

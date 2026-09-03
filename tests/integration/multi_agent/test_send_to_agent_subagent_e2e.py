@@ -40,12 +40,10 @@ from typing import Any
 import pytest
 
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.context import InMemoryContextManager
-from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.core.llm_struct import LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.session_registry import InMemorySessionRegistry
-from modex_agent.core.types import LLMResponse
+from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.address import AgentAddress
@@ -59,6 +57,7 @@ from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import CommunicationTarget
+from modex_agent.persistence.session_registry import InMemorySessionRegistry
 
 pytestmark = pytest.mark.integration
 

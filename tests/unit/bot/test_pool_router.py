@@ -21,10 +21,10 @@ if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
 from modex_agent.core.session_id import SessionInfo  # noqa: E402
-from modex_agent.core.types import InputMessage  # noqa: E402
 from modex_agent.messaging.broker import AddressKind, BrokerMessage  # noqa: E402
 from modex_agent.messaging.broker_bridge import BrokerInputAdapter  # noqa: E402
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker  # noqa: E402
+from modex_agent.messaging.models import InputMessage  # noqa: E402
 from modex_agent.multi_agent.address import AgentAddress  # noqa: E402
 from modex_agent.multi_agent.pool_instance import PoolInstance  # noqa: E402
 

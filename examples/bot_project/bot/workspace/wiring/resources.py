@@ -271,7 +271,7 @@ async def _assemble_resources(
         ),
         data_dir_name=app_config.paths.data_dir_name,
     )
-    from modex_agent.core.session_registry import InMemorySessionRegistry
+    from modex_agent.persistence.session_registry import InMemorySessionRegistry
 
     _routing_store = service._pool_session_store
 

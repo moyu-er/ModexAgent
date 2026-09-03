@@ -16,10 +16,10 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from modex_agent.commands.skill import SkillResolver
     from modex_agent.control.channel import InMemoryControlChannel
-    from modex_agent.core.context import ContextManager
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.hook.runner import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
+    from modex_agent.memory.context import ContextManager
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
     from modex_agent.runtime.context import RuntimeContextManager
@@ -34,8 +34,8 @@ from modex_agent.control.exceptions import AgentControlError
 from modex_agent.core.agent import Agent
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.core.types import InputMessage, OutputMessage, OutputMessageType
 from modex_agent.memory.consolidation import DreamEngine
+from modex_agent.messaging.models import InputMessage, OutputMessage, OutputMessageType
 from modex_agent.multi_agent.router import AgentMessageRouter
 from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.pipeline.busy_input import BusyInputMode

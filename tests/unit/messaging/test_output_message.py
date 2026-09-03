@@ -5,10 +5,13 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.core.constants import DefaultValues
 from modex_agent.core.media import Attachment, AttachmentLocator, Kind
-from modex_agent.core.message import ContentFormat
-from modex_agent.core.types import MessageType, OutputMessage, OutputMessageType
+from modex_agent.messaging.models import (
+    DEFAULT_CHANNEL,
+    MessageType,
+    OutputMessage,
+    OutputMessageType,
+)
 
 
 def test_output_message_roundtrip():
@@ -26,7 +29,7 @@ def test_output_message_roundtrip():
     msg = OutputMessage(
         content="hello world",
         session_id="s.main",
-        channel=DefaultValues.CHANNEL,
+        channel=DEFAULT_CHANNEL,
         recipient_id="u1",
         chat_id="g1",
         message_type=OutputMessageType.IMAGE,

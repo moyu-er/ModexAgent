@@ -38,7 +38,7 @@ from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import MessageRole
 from modex_agent.hook.abc import AfterTurnHook
 from modex_agent.plugins.abc import ReactHookFactory
 from modex_agent.plugins.assembly.context import AssemblyContext

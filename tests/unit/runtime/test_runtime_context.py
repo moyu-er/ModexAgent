@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.core.scope import UserScope
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.runtime.context import (
     InMemoryRuntimeContext,
@@ -84,9 +83,9 @@ class TestInMemoryRuntimeContext:
 
 
 class TestRuntimeContextManager:
-    """Verify manager wires scope + owned contexts correctly."""
+    """Verify manager owns isolated per-session contexts."""
 
-    async def test_default_session_scope_isolation(self):
+    async def test_session_isolation(self):
         mgr = RuntimeContextManager()
         ctx_a = await mgr.get_context(_session("session_1"))
         ctx_b = await mgr.get_context(_session("session_2"))
@@ -95,15 +94,11 @@ class TestRuntimeContextManager:
         await ctx_a.set("k", "v")
         assert not await ctx_b.has("k")
 
-    async def test_user_scope_aggregates_sessions(self):
-        mgr = RuntimeContextManager(scope=UserScope())
-        # Same user_id → same scope key even with different session_id
-        ctx1 = await mgr.get_context(_session("s1"), {"user_id": "user_1"})
-        ctx2 = await mgr.get_context(_session("s2"), {"user_id": "user_1"})
+    async def test_same_session_reuses_context(self):
+        mgr = RuntimeContextManager()
+        ctx1 = await mgr.get_context(_session("s1"))
+        ctx2 = await mgr.get_context(_session("s1"))
         assert ctx1 is ctx2
-
-        ctx3 = await mgr.get_context(_session("s3"), {"user_id": "user_2"})
-        assert ctx3 is not ctx1
 
     async def test_clear_context(self):
         mgr = RuntimeContextManager()

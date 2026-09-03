@@ -22,8 +22,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from modex_agent.core.constants import RuntimeInfoKey
 from modex_agent.core.prompt import SystemPromptProvider
+from modex_agent.memory.context import RuntimeInfoKey
 from modex_agent.memory.hooks import MemoryHookRunner
 from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
 from modex_agent.memory.system import MemorySystemContextManager

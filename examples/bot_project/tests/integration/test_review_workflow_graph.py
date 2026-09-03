@@ -18,7 +18,6 @@ from typing import Any
 import pytest
 
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.session_registry import InMemorySessionRegistry
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.descriptor import AgentInstance
@@ -35,6 +34,7 @@ from modex_agent.multi_agent.session_tree.session_binding import (
 from modex_agent.multi_agent.session_tree.store_node import InMemoryTreeNodeStore
 from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrackStore
 from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
+from modex_agent.persistence.session_registry import InMemorySessionRegistry
 from modex_agent.pipeline.turn_context_config import (
     GraphApprovalConfigurator,
     GraphContextBindingConfigurator,
@@ -399,17 +399,17 @@ class TestE2EStepFun:
     ) -> None:
         from bot.graph.agent_node import BotAgentNode, SessionStrategy
 
+        from modex_agent.core.agent import ExecutionStrategyKind
         from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
-        from modex_agent.core.constants import ExecutionStrategyKind
         from modex_agent.core.llm_struct import (
             LLMTimeoutPolicy,
             RuntimeSafetyPolicy,
             TurnTimeoutPolicy,
         )
-        from modex_agent.core.scope import MemoryAgentRole
         from modex_agent.ioc.configs.llm import LLMConfig
         from modex_agent.ioc.factories.descriptors import build_session_only_memory
         from modex_agent.ioc.factories.llm import create_llm_provider
+        from modex_agent.memory.scope import MemoryAgentRole
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.comm_kind import AgentCommKind
         from modex_agent.multi_agent.descriptor import (
@@ -666,17 +666,17 @@ class TestE2EReviewLoopWithMemory:
     ) -> None:
         from bot.graph.agent_node import SessionStrategy
 
+        from modex_agent.core.agent import ExecutionStrategyKind
         from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
-        from modex_agent.core.constants import ExecutionStrategyKind
         from modex_agent.core.llm_struct import (
             LLMTimeoutPolicy,
             RuntimeSafetyPolicy,
             TurnTimeoutPolicy,
         )
-        from modex_agent.core.scope import MemoryAgentRole
         from modex_agent.ioc.configs.llm import LLMConfig
         from modex_agent.ioc.factories.descriptors import build_session_only_memory
         from modex_agent.ioc.factories.llm import create_llm_provider
+        from modex_agent.memory.scope import MemoryAgentRole
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.comm_kind import AgentCommKind
         from modex_agent.multi_agent.descriptor import (

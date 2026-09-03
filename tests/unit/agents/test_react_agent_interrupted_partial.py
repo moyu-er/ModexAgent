@@ -31,7 +31,6 @@ from modex_agent.tools.manager import InMemoryToolManager
 
 def _make_ctx():
     from modex_agent.core.agent import AgentContext
-    from modex_agent.tools.manager import InMemoryToolManager
 
     state = ReActTurnState(
         identity=TurnIdentity(

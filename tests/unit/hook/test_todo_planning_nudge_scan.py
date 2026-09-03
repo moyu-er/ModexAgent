@@ -1,10 +1,12 @@
-"""Tests for ``scan_tool_usage_in_turn`` — bounded backward in-turn scan."""
+"""Tests for the todo planning nudge's bounded backward in-turn scan."""
 
 from __future__ import annotations
 
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.message_utils import ToolNudgeVerdict, scan_tool_usage_in_turn
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import ChatMessage, MessageRole
+from modex_agent.hook.builtin.todo_planning_nudge import (
+    ToolNudgeVerdict,
+    scan_tool_usage_in_turn,
+)
 
 _TOOLS = frozenset({"task"})
 

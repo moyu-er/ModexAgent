@@ -31,9 +31,9 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from enum import StrEnum
 from typing import Any
 
-from modex_agent.core.types import InputMessage, OutputMessage
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
 from modex_agent.adapters.output import OutputAdapter
+from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.messaging.models import InputMessage, OutputMessage
 from modex_agent.pipeline.adapters import InputAdapter
 
 # --- module constants -------------------------------------------------------

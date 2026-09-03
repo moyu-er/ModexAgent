@@ -24,7 +24,7 @@ from modex_agent.agents.external.builder import ExternalAgentBuilder
 from modex_agent.agents.external.child_discovery import (
     ExternalChildSessionDiscoverySink,
 )
-from modex_agent.agents.external.paths import ExternalPaths, ProviderKind
+from modex_agent.agents.external.paths import ExternalPaths
 from modex_agent.agents.external.providers.opencode.v2_parser import OpenCodeV2EventParser
 from modex_agent.agents.external.scripted_backend import (
     ScriptedProgramme,
@@ -32,12 +32,13 @@ from modex_agent.agents.external.scripted_backend import (
 )
 from modex_agent.agents.external.session_store import LocalFileExternalSessionMapStore
 from modex_agent.agents.external.types import ExternalEnvSpec
+from modex_agent.core.agent import ProviderKind
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.messaging.broker import AddressKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentDescriptor
+from modex_agent.persistence.session_registry import SessionRegistry
 
 from .test_external_child_discovery_sink import _make_sink
 

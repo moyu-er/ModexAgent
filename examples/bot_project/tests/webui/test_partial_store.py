@@ -322,8 +322,8 @@ async def test_flush_active_segment_clears_partial_buffer() -> None:
     from modex_agent.agents.react.constants import ToolCallEndPayload
     from modex_agent.core.emitter import AgentResult
     from modex_agent.core.events import EmitterConfig
+    from modex_agent.core.message import ToolCall
     from modex_agent.core.tool_manager import ToolResult
-    from modex_agent.core.types import ToolCall
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     sessions_dir = Path(__file__).parent / "_tmp_flush_clear"

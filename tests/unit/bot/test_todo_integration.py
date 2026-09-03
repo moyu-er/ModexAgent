@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from modex_agent.core.agent import current_agent_context
-from modex_agent.runtime.store import JsonFileTodoStore
+from modex_agent.runtime.todo import JsonFileTodoStore
 
 
 def _set_ctx(session_id: str) -> object:

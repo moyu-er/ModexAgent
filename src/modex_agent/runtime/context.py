@@ -21,7 +21,6 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from modex_agent.core.scope import MemoryContext, Scope, SessionScope
 from modex_agent.core.session_id import SessionInfo
 
 from .models import JsonValue
@@ -154,52 +153,26 @@ class InMemoryRuntimeContext(RuntimeContext):
 
 
 class RuntimeContextManager:
-    """Central manager that owns per-scope RuntimeContext instances.
+    """Central manager that owns per-session RuntimeContext instances.
 
-    The *scope* (a :class:`Scope`) determines how sessions are grouped.
-    By default :class:`SessionScope` is used, so each ``session_id`` gets its
-    own isolated context.  The former separate store abstraction (exactly one
-    in-memory adapter, zero production ``store=`` callers) is folded into
-    this manager — it owns the ``dict[str, InMemoryRuntimeContext]``
+    Each ``session_id`` gets its own isolated context. The former separate
+    store abstraction (exactly one in-memory adapter, zero production
+    ``store=`` callers) is folded into this manager, which owns the mapping
     directly.
     """
 
-    def __init__(self, scope: Scope | None = None) -> None:
-        self._scope = scope or SessionScope()
+    def __init__(self) -> None:
         self._contexts: dict[str, InMemoryRuntimeContext] = {}
 
-    async def get_context(
-        self,
-        session: SessionInfo,
-        metadata: dict[str, Any] | None = None,
-    ) -> RuntimeContext:
+    async def get_context(self, session: SessionInfo) -> RuntimeContext:
         """Return the RuntimeContext for *session* (creating if needed)."""
-        scope_key = self._resolve_scope_key(session, metadata)
-        if scope_key not in self._contexts:
-            self._contexts[scope_key] = InMemoryRuntimeContext()
-        return self._contexts[scope_key]
+        session_id = session.session_id
+        if session_id not in self._contexts:
+            self._contexts[session_id] = InMemoryRuntimeContext()
+        return self._contexts[session_id]
 
-    async def clear_context(
-        self,
-        session: SessionInfo,
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
+    async def clear_context(self, session: SessionInfo) -> None:
         """Clear the RuntimeContext for *session*."""
-        scope_key = self._resolve_scope_key(session, metadata)
-        ctx = self._contexts.get(scope_key)
+        ctx = self._contexts.get(session.session_id)
         if ctx is not None:
             await ctx.clear()
-
-    def _resolve_scope_key(self, session: SessionInfo, metadata: dict[str, Any] | None) -> str:
-        meta = metadata or {}
-        mem_ctx = MemoryContext(
-            session_id=session.session_id,
-            user_id=meta.get("user_id"),
-            tenant_id=meta.get("tenant_id"),
-            agent_id=meta.get("agent_id"),
-            channel=meta.get("channel"),
-            chat_id=meta.get("chat_id"),
-            sender_agent=meta.get("sender_agent"),
-            receiver_agent=meta.get("receiver_agent"),
-        )
-        return self._scope.extract(mem_ctx).canonical()

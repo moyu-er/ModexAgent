@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.core.constants import InterfaceFormat, ReasoningEffort
-from modex_agent.ioc.configs.llm import LLMConfig, Modality
+from modex_agent.core.llm_request import ReasoningEffort
+from modex_agent.ioc.configs.llm import InterfaceFormat, LLMConfig, Modality
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 

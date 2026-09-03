@@ -21,7 +21,7 @@ from bot.adapters.channels import (
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.commands.handlers import build_default_builtin_handlers
 from modex_agent.commands.processor import SlashCommandProcessor
-from modex_agent.core.types import OutputMessage
+from modex_agent.messaging.models import OutputMessage
 from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
 
 

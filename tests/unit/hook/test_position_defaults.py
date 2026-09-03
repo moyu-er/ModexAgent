@@ -24,9 +24,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-from modex_agent.agents.external.paths import ProviderKind
 from modex_agent.agents.external.types import ExternalEnvSpec
-from modex_agent.core.agent import AgentCommKind
+from modex_agent.core.agent import AgentCommKind, ProviderKind
 from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
 from modex_agent.hook.builtin.length_guard import LengthGuardHook
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext

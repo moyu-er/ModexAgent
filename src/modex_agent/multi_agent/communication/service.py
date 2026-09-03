@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 
 from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.result import AgentSendResult, format_send_ack
 from modex_agent.multi_agent.communication.strategies.base import (
@@ -34,6 +33,7 @@ from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.registry import AgentRegistry
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
+from modex_agent.persistence.session_registry import SessionRegistry
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext

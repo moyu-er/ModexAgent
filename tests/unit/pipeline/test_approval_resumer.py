@@ -32,10 +32,10 @@ from modex_agent.approval.constants import (
     ApprovalStatus,
     ApprovalTier,
 )
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.messaging.models import ApprovalAction
 from modex_agent.persistence.adapters.approval_audit_store import ApprovalAuditEntry
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.runtime.enums import (

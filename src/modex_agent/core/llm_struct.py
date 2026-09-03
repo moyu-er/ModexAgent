@@ -6,16 +6,119 @@
 
 import logging
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
-from .constants import DefaultValues, FinishReason
-
-if TYPE_CHECKING:
-    from .types import LLMResponse
+from .message import ToolCall
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_TOOL_TIMEOUT_SECONDS: float = 540.0
+
+
+class FinishReason(StrEnum):
+    """Reason an LLM response completed."""
+
+    STOP = "stop"
+    TOOL_CALLS = "tool_calls"
+    LENGTH = "length"
+    CONTENT_FILTER = "content_filter"
+    ERROR = "error"
+    CANCELLED = "cancelled"
+
+
+class TokenUsage(BaseModel):
+    """Typed LLM token usage normalized across provider wire formats."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total_tokens(self) -> int:
+        return (
+            self.input_tokens
+            + self.cache_read_input_tokens
+            + self.cache_creation_input_tokens
+            + self.output_tokens
+        )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_wire_keys(cls, data: Any) -> Any:
+        if isinstance(data, TokenUsage) or not isinstance(data, dict):
+            return data
+        raw: dict[str, Any] = dict(data)
+
+        def read_int(key: str) -> int | None:
+            value = raw.get(key)
+            return None if value is None else int(value)
+
+        def read_nested_int(parent: str, child: str) -> int | None:
+            details = raw.get(parent)
+            if not isinstance(details, dict):
+                return None
+            value = details.get(child)
+            return None if value is None else int(value)
+
+        cache_read = read_int("cache_read_input_tokens")
+        if cache_read is None:
+            cache_read = read_nested_int("prompt_tokens_details", "cached_tokens")
+        if cache_read is None:
+            cache_read = read_nested_int("input_tokens_details", "cached_tokens")
+        if cache_read is None:
+            cache_read = read_int("prompt_cache_hit_tokens")
+
+        cache_creation = read_int("cache_creation_input_tokens")
+        if cache_creation is None:
+            ephemeral_5m = read_nested_int("cache_creation", "ephemeral_5m_input_tokens")
+            ephemeral_1h = read_nested_int("cache_creation", "ephemeral_1h_input_tokens")
+            if ephemeral_5m is not None or ephemeral_1h is not None:
+                cache_creation = (ephemeral_5m or 0) + (ephemeral_1h or 0)
+
+        reasoning = read_int("reasoning_tokens")
+        if reasoning is None:
+            reasoning = read_nested_int("completion_tokens_details", "reasoning_tokens")
+        if reasoning is None:
+            reasoning = read_nested_int("output_tokens_details", "reasoning_tokens")
+
+        output = read_int("output_tokens")
+        if output is None:
+            output = read_int("completion_tokens")
+
+        total_input = read_int("input_tokens")
+        input_includes_cache = (
+            total_input is not None
+            and read_nested_int("input_tokens_details", "cached_tokens") is not None
+        )
+        if total_input is None:
+            prompt_tokens = read_int("prompt_tokens")
+            total_input = prompt_tokens if prompt_tokens is not None else 0
+            input_includes_cache = prompt_tokens is not None
+
+        if cache_read and input_includes_cache:
+            total_input -= cache_read
+
+        normalized = {
+            "input_tokens": total_input or 0,
+            "cache_read_input_tokens": cache_read or 0,
+            "cache_creation_input_tokens": cache_creation or 0,
+            "output_tokens": output or 0,
+            "reasoning_tokens": reasoning or 0,
+        }
+        negative = {key: value for key, value in normalized.items() if value < 0}
+        if negative:
+            raise ValueError(
+                f"TokenUsage normalization produced negative token counts: {negative}; "
+                f"input data: {data!r}"
+            )
+        return normalized
 
 
 # ─── 错误分类 ──────────────────────────────────────────────────────────────────
@@ -46,6 +149,29 @@ class LLMErrorInfo(BaseModel):
     status_code: int | None = None
     retry_after_seconds: float | None = None
     should_retry: bool = False
+
+
+class LLMResponse(BaseModel):
+    """Provider-neutral response shared by streaming and non-streaming calls."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    content: str | None
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+    reasoning_content: str | None = None
+    reasoning_signature: str | None = None
+    reasoning_item_id: str | None = None
+    reasoning_encrypted_content: str | None = None
+    finish_reason: FinishReason = FinishReason.STOP
+    usage: TokenUsage = Field(default_factory=TokenUsage)
+    completion_start_time: str | None = None
+    response_id: str | None = None
+    error: str | None = None
+    error_info: LLMErrorInfo | None = None
+
+    @property
+    def has_tool_calls(self) -> bool:
+        return bool(self.tool_calls)
 
 
 _CONTENT_FILTER_MARKERS = (
@@ -141,7 +267,7 @@ class TurnTimeoutPolicy(BaseModel):
     output_send_timeout_seconds: float = 20.0
     memory_flush_timeout_seconds: float = 30.0
     hook_timeout_seconds: float = 10.0
-    tool_timeout_seconds: float = DefaultValues.TOOL_TIMEOUT_SECONDS
+    tool_timeout_seconds: float = DEFAULT_TOOL_TIMEOUT_SECONDS
 
 
 class DeadlinePolicy(BaseModel):
@@ -223,15 +349,12 @@ def build_timeout_response(
     provider: str,
     message: str,
     partial_content: str = "",
-) -> "LLMResponse":
+) -> LLMResponse:
     """构建 stream idle timeout 的统一 error response。
 
     content 可保留 partial content 供日志/调试；
     上层 ReActAgent 必须依赖 finish_reason==ERROR 判定失败。
     """
-    # 延迟导入避免循环
-    from .types import LLMResponse
-
     return LLMResponse(
         content=partial_content or message,
         finish_reason=FinishReason.ERROR,

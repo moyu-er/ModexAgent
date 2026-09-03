@@ -15,10 +15,10 @@ from typing import TYPE_CHECKING
 
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.approval.constants import ApprovalDecision
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import view_from_request
 from modex_agent.core.agent import AgentContext
 from modex_agent.hook.abc import HookPayload, HookPoint
+from modex_agent.messaging.models import ApprovalAction
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.runtime.approval_decision import (
     ApprovalAuditDecision,

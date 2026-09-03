@@ -21,7 +21,7 @@ from modex_agent.hook.abc import (
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
-    from modex_agent.core.types import ToolCall
+    from modex_agent.core.message import ToolCall
 
 
 class RuntimeContextHook(StartNodeTurnHook, BeforeToolExecutionHook, AfterToolExecutionHook):
@@ -39,7 +39,7 @@ class RuntimeContextHook(StartNodeTurnHook, BeforeToolExecutionHook, AfterToolEx
             return
         rt_mgr = rt.services.runtime_context_manager
         if rt_mgr is not None and rt.runtime_context is None:
-            rt._runtime_context = await rt_mgr.get_context(ctx.session, None)
+            rt._runtime_context = await rt_mgr.get_context(ctx.session)
         rc = rt.runtime_context
         if rc is not None:
             await rc.clear()

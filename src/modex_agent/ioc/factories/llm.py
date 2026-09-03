@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import logging
 
-from modex_agent.core.constants import InterfaceFormat
 from modex_agent.core.llm_struct import (
     DeadlinePolicy,
     LLMTimeoutPolicy,
@@ -31,7 +30,7 @@ from modex_agent.core.llm_struct import (
     TurnTimeoutPolicy,
 )
 from modex_agent.core.provider import LLMProvider
-from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.configs.llm import InterfaceFormat, LLMConfig
 from modex_agent.ioc.configs.safety import SafetyConfig
 from modex_agent.providers.http.formats.anthropic import AnthropicProtocol
 from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol

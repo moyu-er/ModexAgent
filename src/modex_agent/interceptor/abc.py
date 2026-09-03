@@ -18,9 +18,8 @@ from modex_agent.core.stream_events import LLMStreamEvent
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.emitter import AgentResult
-    from modex_agent.core.message import ChatMessage
+    from modex_agent.core.message import ChatMessage, ToolCall
     from modex_agent.core.tool_manager import ToolResult
-    from modex_agent.core.types import ToolCall
     from modex_agent.runtime.models import TurnStateBase
     from modex_agent.tools.overflow.store import ToolOverflowStore
 

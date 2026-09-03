@@ -24,8 +24,8 @@ from modex_agent.agents.summarizer.scoped_file_agent import (
     ScopedFileAgent,
     UsageCollectingProvider,
 )
+from modex_agent.core.message import MessageRole
 from modex_agent.core.provider import LLMProvider
-from modex_agent.core.types import MessageRole
 from modex_agent.tools.manager import InMemoryToolManager
 
 logger = logging.getLogger(__name__)

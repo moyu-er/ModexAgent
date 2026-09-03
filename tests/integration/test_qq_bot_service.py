@@ -21,8 +21,7 @@ from unittest.mock import AsyncMock, MagicMock
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
 from modex_agent.core.events import AgentEvent, EmitterConfig
 from modex_agent.core.session_id import SessionInfo
 
@@ -159,7 +158,7 @@ class TestQQBotServiceIntegration:
 
             from modex_agent.agents.react import ReActEvent
             from modex_agent.core.emitter import AgentResult
-            from modex_agent.core.types import ToolCall
+            from modex_agent.core.message import ToolCall
 
             # Create mock adapter
             mock_adapter = MagicMock()
@@ -213,8 +212,8 @@ class TestQQBotServiceIntegration:
         """
         from modex_agent.agents.react import ReActAgent, ReActEvent
         from modex_agent.core.agent import AgentContext
+        from modex_agent.core.llm_struct import LLMResponse
         from modex_agent.core.provider import CallbackStreamProvider
-        from modex_agent.core.types import LLMResponse
 
         # Create mock provider that tracks which API is called
         class MockProvider(CallbackStreamProvider):
@@ -350,8 +349,8 @@ class TestQQBotServiceIntegration:
         emitter = TestEmitter(adapter, "test_session")
 
         # Create mock provider
+        from modex_agent.core.llm_struct import LLMResponse
         from modex_agent.core.provider import CallbackStreamProvider
-        from modex_agent.core.types import LLMResponse
 
         class MockProvider(CallbackStreamProvider):
             async def chat_stream(

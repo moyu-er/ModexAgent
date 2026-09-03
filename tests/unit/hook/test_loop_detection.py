@@ -3,8 +3,7 @@
 import pytest
 
 from modex_agent.control.exceptions import LoopDetectedError
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.types import MessageRole, ToolCall
+from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.hook.builtin.loop_detection import (
     LoopDetectionHook,
     _identity_preview,

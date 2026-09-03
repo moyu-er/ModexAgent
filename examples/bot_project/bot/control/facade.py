@@ -39,11 +39,10 @@ from bot.scope import BotRecordScope
 from bot.webui.transcript_store import TranscriptStore, _materialize_events
 from bot.workspace.handle import PoolWorkspaceResources
 from bot.workspace.request_resolver import resolve_ws_request
-from modex_agent.core.agent import AgentCommKind, AgentContext
-from modex_agent.core.constants import ExecutionStrategyKind
-from modex_agent.core.history import ListMessageHistory
+from modex_agent.core.agent import AgentCommKind, AgentContext, ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.memory.core.split_stores import MessageStore
+from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.tools import CommunicationTarget

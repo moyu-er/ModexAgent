@@ -9,10 +9,9 @@ import pytest
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy, TurnTimeoutPolicy
-from modex_agent.core.message import ContentFormat
+from modex_agent.core.message import ContentFormat, ToolCall
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolResult
-from modex_agent.core.types import ToolCall
 from modex_agent.interceptor.abc import ToolCallContext
 from modex_agent.interceptor.builtin.tool_timeout import ToolTimeoutInterceptor
 from modex_agent.memory.history import ListMessageHistory

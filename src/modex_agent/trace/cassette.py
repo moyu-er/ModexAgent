@@ -31,7 +31,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from modex_agent.core.message import ChatMessage, ContentPart, TextPart
+from modex_agent.core.llm_struct import LLMResponse, TokenUsage
+from modex_agent.core.message import ChatMessage, ContentPart, TextPart, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.tool_manager import (
     Tool,
@@ -40,7 +41,6 @@ from modex_agent.core.tool_manager import (
     ToolManager,
     ToolResult,
 )
-from modex_agent.core.types import LLMResponse, TokenUsage, ToolCall
 from modex_agent.hook.abc import FinallyGraphHook
 from modex_agent.ioc.configs.observability import CassetteScope
 from modex_agent.runtime.enums import TurnCustomKey

@@ -19,7 +19,7 @@ from modex_agent.agents.summarizer.abc import (
     _get_registry,
 )
 from modex_agent.agents.summarizer.scoped_file_agent import ScopedFileAgent
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import MessageRole
 from modex_agent.memory.archive_models import (
     ArchiveDocuments,
     ArchiveGenerationResult,

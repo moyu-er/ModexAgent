@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from modex_agent.core.agent import AgentRole
 from modex_agent.memory.prompt_pipeline.providers import (
     BasePromptProvider,
     CoreMemoryProvider,
@@ -370,8 +371,6 @@ def _role_provider(roles: list[str]):
 
 @pytest.mark.asyncio
 async def test_role_contract_reviewer_injects_verification_tag():
-    from modex_agent.core.constants import AgentRole
-
     provider = _role_provider([AgentRole.REVIEWER.value])
     result = await provider.get_or_refresh()
     assert '<verification status="passed|failed' in result
@@ -380,8 +379,6 @@ async def test_role_contract_reviewer_injects_verification_tag():
 
 @pytest.mark.asyncio
 async def test_role_contract_implementer_requires_verification_after_changes():
-    from modex_agent.core.constants import AgentRole
-
     provider = _role_provider([AgentRole.IMPLEMENTER.value])
     result = await provider.get_or_refresh()
     low = result.lower()
@@ -392,8 +389,6 @@ async def test_role_contract_implementer_requires_verification_after_changes():
 
 @pytest.mark.asyncio
 async def test_role_contract_coordinator_describes_reviewer_format_and_dispatch():
-    from modex_agent.core.constants import AgentRole
-
     provider = _role_provider([AgentRole.COORDINATOR.value])
     result = await provider.get_or_refresh()
     assert '<verification status="passed|failed' in result
@@ -404,8 +399,6 @@ async def test_role_contract_coordinator_describes_reviewer_format_and_dispatch(
 
 @pytest.mark.asyncio
 async def test_role_contract_planner_injects_planning_contract():
-    from modex_agent.core.constants import AgentRole
-
     provider = _role_provider([AgentRole.PLANNER.value])
     result = await provider.get_or_refresh()
     low = result.lower()
@@ -414,8 +407,6 @@ async def test_role_contract_planner_injects_planning_contract():
 
 @pytest.mark.asyncio
 async def test_role_contract_scout_injects_exploration_contract():
-    from modex_agent.core.constants import AgentRole
-
     provider = _role_provider([AgentRole.SCOUT.value])
     result = await provider.get_or_refresh()
     low = result.lower()
@@ -424,8 +415,6 @@ async def test_role_contract_scout_injects_exploration_contract():
 
 @pytest.mark.asyncio
 async def test_role_contract_oracle_injects_consulting_contract():
-    from modex_agent.core.constants import AgentRole
-
     provider = _role_provider([AgentRole.ORACLE.value])
     result = await provider.get_or_refresh()
     low = result.lower()
@@ -434,8 +423,6 @@ async def test_role_contract_oracle_injects_consulting_contract():
 
 @pytest.mark.asyncio
 async def test_role_contract_communicator_injects_communication_contract():
-    from modex_agent.core.constants import AgentRole
-
     provider = _role_provider([AgentRole.COMMUNICATOR.value])
     result = await provider.get_or_refresh()
     low = result.lower()
@@ -451,8 +438,6 @@ async def test_role_contract_custom_role_injects_nothing_and_does_not_error():
 
 @pytest.mark.asyncio
 async def test_role_contract_multiple_roles_inject_all_matching_contracts():
-    from modex_agent.core.constants import AgentRole
-
     provider = _role_provider([AgentRole.REVIEWER.value, AgentRole.PLANNER.value])
     result = await provider.get_or_refresh()
     assert '<verification status="passed|failed' in result
@@ -470,8 +455,6 @@ async def test_role_contract_empty_roles_injects_nothing():
 
 @pytest.mark.asyncio
 async def test_role_contract_byte_stable_across_get_or_refresh_calls():
-    from modex_agent.core.constants import AgentRole
-
     provider = _role_provider(
         [AgentRole.REVIEWER.value, AgentRole.PLANNER.value, AgentRole.SCOUT.value]
     )
@@ -486,8 +469,6 @@ async def test_role_contract_byte_stable_across_get_or_refresh_calls():
 
 @pytest.mark.asyncio
 async def test_role_contract_version_changes_with_role_set():
-    from modex_agent.core.constants import AgentRole
-
     p_reviewer = _role_provider([AgentRole.REVIEWER.value])
     p_multi = _role_provider([AgentRole.REVIEWER.value, AgentRole.PLANNER.value])
     await p_reviewer.get_or_refresh()
@@ -497,8 +478,6 @@ async def test_role_contract_version_changes_with_role_set():
 
 @pytest.mark.asyncio
 async def test_role_contract_version_ignores_unrecognized_roles():
-    from modex_agent.core.constants import AgentRole
-
     p_pure = _role_provider([AgentRole.REVIEWER.value])
     p_mixed = _role_provider([AgentRole.REVIEWER.value, "office-expert"])
     await p_pure.get_or_refresh()
@@ -509,8 +488,6 @@ async def test_role_contract_version_ignores_unrecognized_roles():
 
 @pytest.mark.asyncio
 async def test_role_contract_version_independent_of_input_order():
-    from modex_agent.core.constants import AgentRole
-
     p_ab = _role_provider([AgentRole.REVIEWER.value, AgentRole.PLANNER.value])
     p_ba = _role_provider([AgentRole.PLANNER.value, AgentRole.REVIEWER.value])
     await p_ab.get_or_refresh()
@@ -522,8 +499,6 @@ async def test_role_contract_version_independent_of_input_order():
 async def test_role_contract_order_preserved_in_content():
     """Content order follows the input role list (so reviewer-before-planner
     yields reviewer contract before planner contract)."""
-    from modex_agent.core.constants import AgentRole
-
     p_rp = _role_provider([AgentRole.REVIEWER.value, AgentRole.PLANNER.value])
     p_pr = _role_provider([AgentRole.PLANNER.value, AgentRole.REVIEWER.value])
     rp = await p_rp.get_or_refresh()
@@ -544,8 +519,8 @@ async def test_graph_workflow_provider_emits_deliver_routing_guidance() -> None:
     RoutingError); instead describe single-edge auto-deliver / END fallback
     and require an explicit target."""
     from modex_agent.agents.react.state import ReActTurnState
+    from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
-    from modex_agent.core.history import MessageHistory
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
     from modex_agent.runtime.enums import TurnCustomKey
@@ -585,8 +560,8 @@ async def test_graph_workflow_provider_emits_deliver_routing_guidance() -> None:
 
 @pytest.mark.asyncio
 async def test_graph_workflow_provider_emits_topology_and_role_from_turn_state() -> None:
+    from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
-    from modex_agent.core.history import MessageHistory
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
     from modex_agent.runtime.enums import TurnCustomKey
@@ -622,8 +597,8 @@ async def test_graph_workflow_provider_emits_topology_and_role_from_turn_state()
 
 @pytest.mark.asyncio
 async def test_graph_workflow_provider_emits_knowledge_base_section_when_knowledge_dir_set() -> None:
+    from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
-    from modex_agent.core.history import MessageHistory
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
     from modex_agent.runtime.enums import TurnCustomKey
@@ -662,8 +637,8 @@ async def test_graph_workflow_provider_emits_knowledge_base_section_when_knowled
 
 @pytest.mark.asyncio
 async def test_graph_workflow_provider_omits_knowledge_base_section_when_knowledge_dir_not_set() -> None:
+    from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
-    from modex_agent.core.history import MessageHistory
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
     from modex_agent.runtime.enums import TurnCustomKey
@@ -698,8 +673,8 @@ async def test_graph_workflow_provider_omits_knowledge_base_section_when_knowled
 
 @pytest.mark.asyncio
 async def test_graph_workflow_provider_empty_when_no_graph_context() -> None:
+    from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
-    from modex_agent.core.history import MessageHistory
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
 
@@ -723,8 +698,8 @@ async def test_graph_workflow_provider_empty_when_no_graph_context() -> None:
 async def test_graph_workflow_provider_end_only_emits_final_reply_pattern() -> None:
     """When downstream has END only (no AgentNode), emit Final Reply pattern (numbered 1), not Producer/Relay."""
     from modex_agent.agents.react.state import ReActTurnState
+    from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
-    from modex_agent.core.history import MessageHistory
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
     from modex_agent.runtime.enums import TurnCustomKey
@@ -764,8 +739,8 @@ async def test_graph_workflow_provider_end_only_emits_final_reply_pattern() -> N
 async def test_graph_workflow_provider_both_downstream_emits_all_patterns() -> None:
     """When downstream has both AgentNode and END, emit all 3 patterns numbered 1, 2, 3."""
     from modex_agent.agents.react.state import ReActTurnState
+    from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
-    from modex_agent.core.history import MessageHistory
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
     from modex_agent.runtime.enums import TurnCustomKey
@@ -804,8 +779,8 @@ async def test_graph_workflow_provider_both_downstream_emits_all_patterns() -> N
 async def test_graph_workflow_provider_no_downstream_omits_deliver_guidelines() -> None:
     """When no downstream targets (both flags False), omit Deliver Content Guidelines entirely."""
     from modex_agent.agents.react.state import ReActTurnState
+    from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
-    from modex_agent.core.history import MessageHistory
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
     from modex_agent.runtime.enums import TurnCustomKey
@@ -839,8 +814,8 @@ async def test_graph_workflow_provider_no_downstream_omits_deliver_guidelines() 
 async def test_graph_workflow_provider_version_encodes_downstream_types() -> None:
     """Version encodes downstream types before the description hash."""
     from modex_agent.agents.react.state import ReActTurnState
+    from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
-    from modex_agent.core.history import MessageHistory
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
     from modex_agent.runtime.enums import TurnCustomKey
@@ -900,8 +875,8 @@ async def test_graph_workflow_provider_version_encodes_downstream_types() -> Non
 @pytest.mark.asyncio
 async def test_graph_workflow_provider_version_changes_with_node_description() -> None:
     from modex_agent.agents.react.state import ReActTurnState
+    from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
-    from modex_agent.core.history import MessageHistory
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
     from modex_agent.runtime.enums import TurnCustomKey
@@ -946,8 +921,8 @@ async def test_graph_workflow_provider_version_changes_with_node_description() -
 @pytest.mark.asyncio
 async def test_graph_workflow_provider_version_empty_description_is_stable() -> None:
     from modex_agent.agents.react.state import ReActTurnState
+    from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
-    from modex_agent.core.history import MessageHistory
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
     from modex_agent.runtime.enums import TurnCustomKey

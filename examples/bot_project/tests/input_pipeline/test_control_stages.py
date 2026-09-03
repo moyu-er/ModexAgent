@@ -10,8 +10,8 @@ from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.input_pipeline.stages.session_control import SessionControlStage
 
 from modex_agent.core.session_id import SessionIdFactory, encode_snowflake
-from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.messaging.models import InputMessage
 from modex_agent.workspace.control import WorkspaceController
 from modex_agent.workspace.models import CdResult
 

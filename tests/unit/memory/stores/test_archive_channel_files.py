@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from modex_agent.core.scope import MemoryContext, MemoryLayerName
 from modex_agent.memory.archive_models import ArchiveChannel, ArchiveWrite
 from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
 from modex_agent.memory.layers.config import ArchiveMemoryConfig
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
+from modex_agent.memory.scope import MemoryContext, MemoryLayerName
 
 
 async def test_file_registry_writes_context_and_core_archive_files(tmp_path) -> None:

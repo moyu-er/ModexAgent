@@ -6,14 +6,14 @@ import logging
 from typing import TYPE_CHECKING, Final
 
 from modex_agent.core import AgentCommKind
-from modex_agent.core.constants import StopReason
-from modex_agent.core.types import OutputMessageType
+from modex_agent.core.emitter import StopReason
 from modex_agent.hook.abc import OutcomeFinallyHook
+from modex_agent.messaging.models import OutputMessageType
 
 if TYPE_CHECKING:
+    from modex_agent.adapters.output import OutputAdapter
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.emitter import AgentResult
-    from modex_agent.adapters.output import OutputAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class AgentNotificationService:
         originating channel AND the WebUI observer; non-routing adapters simply
         render it as text. Notices are never written to session memory/history.
         """
-        from modex_agent.core.types import OutputMessage
+        from modex_agent.messaging.models import OutputMessage
 
         try:
             await self._output_adapter.send(

@@ -4,7 +4,6 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Collection, Sequence
 
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.commands.constants import (
     NOTICE_APPROVAL_BLOCKS_CONTINUE,
     NOTICE_INVALID_COMMAND,
@@ -19,7 +18,7 @@ from modex_agent.commands.models import (
     CommandHandlingResult,
     SlashCommandInvocation,
 )
-from modex_agent.core.message import ContentFormat
+from modex_agent.messaging.models import ApprovalAction
 
 logger = logging.getLogger(__name__)
 

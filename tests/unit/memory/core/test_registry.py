@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
-from modex_agent.core.scope import (
+from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+from modex_agent.memory.scope import (
     MemoryContext,
     MemoryLayerName,
+    ScopeRecord,
     SessionScope,
     UserScope,
     scope_path_key,
 )
-from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 from modex_agent.memory.stores import DefaultScopedStorage, InMemoryScopedStorage
 
 
@@ -75,6 +77,26 @@ async def test_file_registry_lists_records_by_layer_role_and_file(
     assert [record.scope_key for record in default_records] == [main_key]
     assert {record.scope_key for record in all_records} == {main_key, subagent_key}
     assert [record.scope_key for record in message_records] == [main_key]
+
+
+@pytest.mark.asyncio
+async def test_file_registry_scope_metadata_uses_model_json_shape(tmp_path: Path) -> None:
+    registry = DefaultMemoryStoreRegistry(tmp_path)
+    context = MemoryContext(session_id="s1", user_id="u1")
+
+    await registry.resolve(
+        layer=MemoryLayerName.SESSION,
+        scope=SessionScope(),
+        context=context,
+    )
+
+    metadata_path = tmp_path / "session" / "s1" / ".scope.json"
+    data = json.loads(metadata_path.read_text(encoding="utf-8"))
+    record = ScopeRecord.model_validate(data)
+    assert data["context"] == context.model_dump(mode="json")
+    assert data["layer"] == "session"
+    assert data["agent_role"] == "main"
+    assert record.context == context
 
 
 def test_public_storage_exports_only_scoped_storage() -> None:

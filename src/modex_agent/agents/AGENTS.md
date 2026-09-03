@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-22 -->
+<!-- Updated: 2026-09-02 -->
 
 # agents
 
@@ -7,21 +7,22 @@ Agent reasoning pattern implementations. Each sub-package implements a specific 
 
 ## Purpose
 
-The `agents/` module provides concrete agent implementations: the `ReActAgent` (Thought→Action→Observation loop with approval suspension/resume, built on the `modex_graph` engine), `ExternalAgent` (Pi/OpenCode CLI harness), `ExperienceReviewAgent` (ReAct-based conversation review for experience creation/update), and `SessionCompactorAgent` (tool-less single-LLM-call compact summary generation). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). New agent strategies go in new subdirectories.
+The `agents/` module provides concrete agent implementations: `ReActAgent`, the provider-neutral `ExternalAgent` harness, and summarizer agents including `SessionCompactorAgent`, `ArchiveSummarizer`, and `CoreMemoryConsolidator`. Capability-owned agents, such as `ExperienceReviewAgent`, live with their capability packages. New general agent strategies go in new subdirectories.
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
 | `__init__.py` | Exports `ReActAgent`, `ReActEvent` |
+| `graph_deliver.py` | Graph-aware delivery targets and the agent-facing `GraphDeliverTool`; owned here because it operates on `AgentNode` topology |
 
 ## Subdirectories
 
 | Directory | Files | Purpose |
 |-----------|-------|---------|
-| `react/` | 14 py (incl. `nodes/`) | `ReActAgent` — 6-node graph (START→BEFORE→LLM→TOOL→AFTER→END) built on `modex_graph`, `TieredToolApprovalClassifier`, `ReActTurnState` (GraphState), `ReactGraphRuntime` adapter, approval suspend/resume (see `react/AGENTS.md`) |
-| `external/` | 21 py (incl. `providers/`) | `ExternalAgent` — provider-neutral streaming harness, Pi/OpenCode adapters, session-map ABC, env/prompt/path/OS process seams (see `external/AGENTS.md`, ADR-0022) |
-| `summarizer/` | 7 py | `ArchiveSummarizer` (MD archive generation), `CoreMemoryConsolidator` (ReAct-based core memory consolidation; renamed from `KnowledgeConsolidator` per ADR-0035), `SessionCompactorAgent` (tool-less single-LLM-call compact summary), `ScopedFileAgent` base class (see `summarizer/AGENTS.md`). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). |
+| `react/` | `ReActAgent`, six-node graph, turn state/runtime bridge, approval flow, fallback tool-call IDs, and node implementations (see `react/AGENTS.md`). |
+| `external/` | Provider-neutral streaming harness, OpenCode adapter, scripted backend, session-map contract, and environment/process seams (see `external/AGENTS.md`, ADR-0022). |
+| `summarizer/` | `SessionCompactorAgent`, `ArchiveSummarizer`, `CoreMemoryConsolidator`, and `ScopedFileAgent` (see `summarizer/AGENTS.md`). |
 
 ### react/ Submodule Details
 
@@ -35,8 +36,8 @@ The ReAct module is the primary agent runtime. Key components:
 | `runtime.py` | `ReactGraphRuntime(GraphRuntime)` — AOP bridge: maps ReAct StrEnums to `HookPoint`/`InterceptorScope`/`ReActEvent`, bridges `GraphContext.user_data` → `AgentContext` for all AOP services |
 | `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy`, `ReActRuntimeStateCodec` |
 | `builder.py` | `ReActAgentBuilder` — `build_agent()` + `build_emitter_factory()` from `AgentDescriptor` |
-| `approval.py` | *(removed — migrated to `modex_agent.approval.runtime`)* |
 | `constants.py` | `ReActNode`, `ReActHookPoint`, `ReActScope`, `ReActEvent` StrEnums |
+| `ids.py` | `next_call_id()` — Snowflake-based fallback tool-call IDs, exported by `agents.react`. |
 | `nodes/start.py` | `StartNode` — routes to BEFORE (fresh) or TOOL (resume from approval). Dispatches `START_NODE_TURN` hook on fresh-turn path only. |
 | `nodes/before_turn.py` | `BeforeTurnNode` — increments `turn_attempt`, resets `iteration`, dispatches `BEFORE_TURN` hook, routes to LLM. |
 | `nodes/llm.py` | `LLMNode` — calls LLM, handles streaming, dispatches hooks/interceptors via `ctx.runtime.*`, emits iteration events |
@@ -63,9 +64,8 @@ The ReAct module is the primary agent runtime. Key components:
 | `session_store.py` | `ExternalSessionMapStore` ABC + local-file adapter; SQLite adapter lives under `persistence/adapters/` |
 | `env_builder.py` / `runtime_config.py` | Per-turn `MODEX_*` environment and provider-visible AGENTS.md runtime block |
 | `os_layer.py` | Cross-platform executable resolution/process-group spawn + stable re-export of `utils.process_tree.terminate_process_group` |
-| `providers/opencode_server_backend.py` | Warm `opencode serve` SSE backend; transactional readiness and close-time reap |
-| `providers/opencode_backend.py` | Per-turn `opencode run` fallback with active-child ownership |
-| `providers/pi_backend.py` | Per-turn Pi backend with active-child ownership |
+| `providers/opencode/server_backend.py` | Warm `opencode serve` SSE backend with session/state integration. |
+| `scripted_backend.py` | Deterministic provider backend for scripted runs. |
 
 Lifecycle rule: upper layers call only `StreamingProviderBackend.close()`.
 Persistent and per-turn differences stay inside adapters. Cleanup failure must
@@ -95,7 +95,7 @@ Agent[E]
 - Each agent must inherit `Agent[E]` and define `event_enum`
 - External coding teardown converges through `StreamingProviderBackend.close()`; do not add provider-kind branches to agent, pool, or workspace shutdown.
 - `ScopedFileAgent._run_agent()` is the shared entry point for all ReAct-based summarizers
-- Prompt templates come from `SummarizerPromptRegistry` loaded via `_get_registry()`
+- Summarizer prompt templates come from `memory.prompts.PromptRegistry`, loaded via `_get_registry()`.
 
 ### ReAct Graph Edges
 Edges are plain topology — nodes route at runtime via `deliver()`.
@@ -139,14 +139,13 @@ class MyAgent(Agent[MyEvent]):
 ### Internal
 - `modex_agent.core.agent` — `Agent[E]`, `AgentContext`
 - `modex_graph` — `Graph[S]`, `Node[S]`, `GraphEngine`, `GraphInterrupt`, `GraphContext`, `GraphRuntime` (ADR-0033)
-- `modex_agent.core.tool_manager` — `InMemoryToolManager`, `Tool`, `ToolResult`
+- `modex_agent.core.tool_manager` — `Tool`, `ToolManager`, `ToolResult`
 - `modex_agent.core.provider` — `LLMProvider`, `CallbackStreamProvider`
 - `modex_agent.core.emitter` — `ContentEmitter`, `AgentResult`
-- `modex_agent.core.types` — `MessageRole`, `MessageType`, `ToolCall`
+- `modex_agent.core.message` — `ChatMessage`, `MessageRole`, `ToolCall`
 - `modex_agent.core.session_id` — `SessionInfo`
-- `modex_agent.runtime` — `AgentRuntime`, `AgentRuntimeServices`, `ReActTurnState`
-- `modex_agent.memory.prompts` — `SummarizerPromptRegistry`
-- `modex_agent.plugins.defaults.capabilities.experience` — the Experience capability package (reviewer + tools)
+- `modex_agent.runtime` — `AgentRuntime`, `AgentRuntimeServices`, and shared turn-state contracts
+- `modex_agent.memory.prompts` — `PromptRegistry`
 - `modex_agent.utils.helpers` — `strip_think`
 - `modex_agent.hook` — `HookRunner`, `HookPoint`
 - `modex_agent.interceptor` — `InterceptorChain`
@@ -156,4 +155,3 @@ class MyAgent(Agent[MyEvent]):
 
 <!-- MANUAL -->
 <!-- Additional manual entries can be added below this line. -->
-

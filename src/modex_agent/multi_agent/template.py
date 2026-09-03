@@ -27,7 +27,7 @@ from dataclasses import replace as dataclass_replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.multi_agent.execution_strategy import strategy_name_of
 from modex_agent.plugins.abc import ComponentSlot
@@ -231,8 +231,8 @@ class AgentTemplate:
         # materialize is always subagent construction: session-scoped memory +
         # preset tools from the template. Normals are registered by business
         # wiring via factory defaults, never via materialize.
-        from modex_agent.core.scope import MemoryAgentRole
         from modex_agent.ioc.factories.descriptors import build_session_only_memory
+        from modex_agent.memory.scope import MemoryAgentRole
 
         memory_workspace = (pool_data.memory_dir if pool_data is not None else None) or (
             deps.project_dir / "data" / "memory" / _pool_name(deps)

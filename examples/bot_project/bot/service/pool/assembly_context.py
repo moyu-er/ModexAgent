@@ -14,17 +14,17 @@ from typing import TYPE_CHECKING, Any
 from bot.config.webui_config import build_control_origin
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.core.session_registry import SessionRegistry
-from modex_agent.core.session_store import SessionStore
 from modex_agent.hook import HookRunner
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.communication.peer_resolution import PeerLink
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
-from modex_agent.adapters.output import OutputAdapter
+from modex_agent.persistence.session_registry import SessionRegistry
+from modex_agent.persistence.session_store import SessionStore
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.scope.spec import AgentSpec, PoolSpec
 from modex_agent.workspace.scope_path import ScopePath

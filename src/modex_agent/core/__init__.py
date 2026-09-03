@@ -4,25 +4,16 @@ from .agent import (
     Agent,
     AgentCommKind,
     AgentContext,
+    AgentRole,
+    ExecutionStrategyKind,
+    ProviderKind,
     current_agent_context,
 )
 from .capabilities import Modality, ModelCapabilities, ModelInfo
-from .constants import (
-    DefaultValues,
-    ErrorMessages,
-    FinishReason,
-    RuntimeInfoKey,
-    ToolCallType,
-    ToolChoice,
-    ToolSchemaConstants,
-)
-from .context import (
-    ContextManager,
-    ContextState,
-)
 from .emitter import (
     AgentResult,
     ContentEmitter,
+    StopReason,
 )
 
 # V2 新架构 - 核心抽象层
@@ -30,8 +21,9 @@ from .events import (
     AgentEvent,
     EmitterConfig,
 )
-from .llm_request import LLMRequest
-from .llm_struct import RuntimeSafetyPolicy
+from .history import MessageHistory
+from .llm_request import LLMRequest, ReasoningEffort
+from .llm_struct import FinishReason, LLMResponse, RuntimeSafetyPolicy, TokenUsage
 from .media import (
     Attachment,
     AttachmentLocator,
@@ -44,6 +36,8 @@ from .media import (
 from .message import (
     ChatMessage,
     ContentFormat,
+    MessageRole,
+    ToolCall,
 )
 from .prompt import SystemPromptPipeline
 from .provider import CallbackStreamProvider, LLMProvider
@@ -52,17 +46,7 @@ from .session_id import (
     SessionInfo,
     agent_of,
     encode_snowflake,
-    now_ms,
     session_id_prefix_of,
-)
-from .session_registry import (
-    InMemorySessionRegistry,
-    SessionRegistry,
-)
-from .session_store import (
-    LocalFileSessionStore,
-    SessionStore,
-    safe_filename,
 )
 from .stream_events import (
     EventAssembler,
@@ -76,8 +60,8 @@ from .stream_events import (
     UsageSnapshot,
 )
 from .tool_manager import (
-    ExecutionMode,
     ExclusiveTool,
+    ExecutionMode,
     ParallelTool,
     Tool,
     ToolConfig,
@@ -93,30 +77,12 @@ from .turn_events import (
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
-from .types import (
-    InputMessage,
-    LLMResponse,
-    MessageRole,
-    MessageType,
-    OutputMessage,
-    TodoStatus,
-    ToolCall,
-)
 
 __all__ = [
-    # 常量
     "MessageRole",
-    "ToolCallType",
-    "ToolChoice",
     "FinishReason",
-    "ErrorMessages",
-    "DefaultValues",
-    "ToolSchemaConstants",
-    "RuntimeInfoKey",
+    "StopReason",
     # 类型
-    "MessageType",
-    "InputMessage",
-    "OutputMessage",
     "ToolCall",
     "ToolResult",
     "TurnEvent",
@@ -156,10 +122,11 @@ __all__ = [
     "Agent",
     "AgentCommKind",
     "AgentContext",
-    # V2 新架构 - 上下文管理
-    "ContextManager",
-    "ContextState",
+    "AgentRole",
+    "ExecutionStrategyKind",
+    "ProviderKind",
     # 抽象基类
+    "MessageHistory",
     "LLMProvider",
     "CallbackStreamProvider",
     # Agent - 当前上下文
@@ -167,24 +134,17 @@ __all__ = [
     # 会话 ID
     "SessionInfo",
     "SessionIdFactory",
-    "now_ms",
     "agent_of",
     "session_id_prefix_of",
     "encode_snowflake",
-    # 会话存储
-    "SessionStore",
-    "LocalFileSessionStore",
-    "safe_filename",
-    # 会话注册表
-    "SessionRegistry",
-    "InMemorySessionRegistry",
     # 消息
     "ChatMessage",
     "ContentFormat",
     # 类型扩展
     "LLMRequest",
     "LLMResponse",
-    "TodoStatus",
+    "ReasoningEffort",
+    "TokenUsage",
     # 运行时结构
     "RuntimeSafetyPolicy",
     "SystemPromptPipeline",

@@ -6,16 +6,16 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, assert_never
 
-from modex_agent.core.constants import RuntimeInfoKey, format_working_directory_line
-from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.emitter import AgentResult
-from modex_agent.core.governance import ContextGovernance
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.prompt import SystemPromptProvider
-from modex_agent.core.scope import MemoryAgentRole, MemoryContext
-from modex_agent.memory.core.system import (
-    MemorySystem,  # noqa: F401 — re-export
+from modex_agent.memory.context import (
+    ContextManager,
+    ContextState,
+    RuntimeInfoKey,
+    format_working_directory_line,
 )
+from modex_agent.memory.context_governance import ContextGovernance
 from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.memory.hooks import MemoryHookRunner
 from modex_agent.memory.injection.archive import ArchiveInjectionConfig
@@ -25,6 +25,7 @@ from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.registry.base import MemoryStoreRegistry
 from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
+from modex_agent.memory.scope import MemoryAgentRole, MemoryContext
 from modex_agent.memory.token_estimator import TokenEstimator
 
 if TYPE_CHECKING:

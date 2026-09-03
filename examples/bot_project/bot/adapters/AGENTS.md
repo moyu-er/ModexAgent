@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-07-08 -->
+<!-- Updated: 2026-09-02 -->
 
 # adapters
 
@@ -33,6 +33,7 @@ Multi-channel input/output adapters that bridge external platforms (QQ, Telegram
 
 ### Working In This Directory
 - All adapters implement `InputAdapter` (`modex_agent/pipeline/adapters.py`) or `OutputAdapter` (`modex_agent/adapters/output.py`).
+- `InputMessage`, `OutputMessage`, and approval-decision input transport are owned by `modex_agent.messaging`; import transport DTOs from that package rather than treating pipeline/adapters as their owner.
 - `InputAdapter.configure_input_pipeline()` is a typed ABC method (stores `_input_pipeline`, `_input_ctx`, `_output_adapter`). Override with no-op when the pipeline is held externally (see `web_socket.py`).
 - **Adding a new IM** (Discord, Feishu, DingTalk, …): create `<platform>.py` (Input/Output adapters) + `register_<platform>.py` decorated with `@register`, read credentials from `ctx.raw_config`, return `None` when unconfigured. Restart — `WebUIService` auto-discovers it. No other code changes.
 - Telegram keeps PTB isolated inside `register_telegram.py`; the adapter itself (`telegram.py`) is PTB-free via `set_lifecycle_hooks` so it stays unit-testable.
@@ -50,7 +51,7 @@ Multi-channel input/output adapters that bridge external platforms (QQ, Telegram
 - `modex_agent/adapters/output.py` — `OutputAdapter` ABC + bundled implementations
 - `modex_agent/adapters/emitter.py` — `StreamingAwareEmitter`
 - `modex_agent/adapters/filters.py` — content filters
-- `modex_agent/core/types.py` — `InputMessage`, `OutputMessage`
+- `modex_agent/messaging/models.py` — `InputMessage`, `OutputMessage`, and approval-decision input transport
 - `modex_agent/adapters/platform.py` — `StreamingMode`
 - `bot/webui/events.py` — WebUI event types
 

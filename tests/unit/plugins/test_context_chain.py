@@ -371,7 +371,7 @@ class TestResolverPassesFullChain:
         PoolContext) -> TodoWriteTool(require_todo_supply(pool_runtime)
         .store)`` — the pool's capability supply is the read surface."""
         from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
-        from modex_agent.runtime.store import TodoItem, TodoStore
+        from modex_agent.runtime.todo import TodoItem, TodoStore
         from modex_agent.tools.standard.todo_tool import TodoWriteTool
 
         class _Store(TodoStore):

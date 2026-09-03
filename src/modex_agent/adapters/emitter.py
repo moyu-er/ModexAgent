@@ -17,7 +17,7 @@ from modex_agent.adapters.platform import StreamingMode
 from modex_agent.core.emitter import AgentResult, ContentEmitter
 from modex_agent.core.events import AgentEvent, EmitterConfig
 from modex_agent.core.turn_events import TurnEvent, TurnTextEvent
-from modex_agent.core.types import OutputMessage
+from modex_agent.messaging.models import OutputMessage
 
 logger = logging.getLogger(__name__)
 

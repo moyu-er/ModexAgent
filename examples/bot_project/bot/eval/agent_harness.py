@@ -19,14 +19,13 @@ from bot.eval.task_spec import EvalToolset
 from bot.service.pool.declaration import boot_scope_spec
 from bot.workspace.handle import WorkspaceHandle, WorkspaceHandleRootProvider
 from modex_agent.core.capabilities import ModelCapabilities
-from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.core.llm_struct import LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage, ContentFormat, ContentPart, ImageUrlPart, TextPart
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.tool_manager import (
     Tool,
     ToolResult,
 )
-from modex_agent.core.types import LLMResponse
 from modex_agent.hook import HookRunner, HookSpec
 from modex_agent.hook.builtin import LoopDetectionHook
 from modex_agent.hook.builtin.checkpoint import CheckpointHook

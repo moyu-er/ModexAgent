@@ -28,7 +28,7 @@ from pydantic import ValidationError
 from bot.service.config_controller import FieldValidationError
 from bot.service.model_config import ProviderCfg
 from bot.webui.model_fetch import FetchModelsReq, ModelFetchError
-from modex_agent.core.constants import InterfaceFormat
+from modex_agent.ioc.configs.llm import InterfaceFormat
 
 if TYPE_CHECKING:
     from bot.webui.server import WebUIServer

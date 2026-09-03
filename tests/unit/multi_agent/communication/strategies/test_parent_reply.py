@@ -217,7 +217,7 @@ class TestParentReplyStrategy:
         auto-delivered, and the contract would cause a double reply. The
         session-answer block (--- + "To answer this subagent") IS expected:
         it tells the parent how to continue the consultation."""
-        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.core.agent import ExecutionStrategyKind
 
         strategy = ParentReplyStrategy(_make_deps())
         req = SendRequest(
@@ -245,7 +245,7 @@ class TestParentReplyStrategy:
         assert "To answer this subagent" in xml
 
     def test_build_envelope_native_target_uses_minimal_format(self) -> None:
-        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.core.agent import ExecutionStrategyKind
 
         strategy = ParentReplyStrategy(_make_deps())
         req = SendRequest(

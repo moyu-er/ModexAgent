@@ -17,9 +17,9 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from helpers import CounterState  # type: ignore[import-not-found]
 from pydantic import BaseModel, ValidationError
 
-from helpers import CounterState  # type: ignore[import-not-found]
 from modex_graph import (
     CompiledGraph,
     EdgeSpec,

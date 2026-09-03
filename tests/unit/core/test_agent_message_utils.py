@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from modex_agent.core.message import MessageRole
 from modex_agent.core.message_utils import (
     normalize_agent_messages_for_llm,
 )
-from modex_agent.core.types import MessageRole
 
 
 def test_normalize_agent_messages_converts_agent_role_to_user_pure() -> None:

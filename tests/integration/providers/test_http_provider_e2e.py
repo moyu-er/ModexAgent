@@ -50,8 +50,8 @@ from modex_agent.agents.react.message_builder import build_assistant_message
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
-from modex_agent.core.constants import FinishReason, InterfaceFormat
 from modex_agent.core.llm_request import LLMRequest
+from modex_agent.core.llm_struct import FinishReason, TokenUsage
 from modex_agent.core.media import StoredMediaKind
 from modex_agent.core.message import (
     ChatMessage,
@@ -59,11 +59,11 @@ from modex_agent.core.message import (
     ImageUrlPart,
     MessageRole,
     TextPart,
+    ToolCall,
     build_media_ref,
 )
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import TokenUsage, ToolCall
-from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.configs.llm import InterfaceFormat, LLMConfig
 from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.media.store import LocalFileMediaStore
 from modex_agent.memory.history import ListMessageHistory

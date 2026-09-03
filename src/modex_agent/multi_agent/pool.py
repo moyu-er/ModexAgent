@@ -19,11 +19,9 @@ if TYPE_CHECKING:
 
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo, session_id_prefix_of
-from modex_agent.core.session_registry import SessionRegistry
-from modex_agent.core.session_store import SessionStore
-from modex_agent.core.types import InputMessage
-from modex_agent.messaging.broker import AddressKind, MessageBroker
-from modex_agent.messaging.broker_bridge import BrokerInputPayload
+from modex_agent.messaging import AddressKind, BrokerInputPayload, InputMessage, MessageBroker
+from modex_agent.persistence.session_registry import SessionRegistry
+from modex_agent.persistence.session_store import SessionStore
 from modex_agent.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
 from modex_graph.exceptions import GraphInterrupt
 

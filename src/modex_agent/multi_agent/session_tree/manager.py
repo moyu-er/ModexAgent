@@ -19,7 +19,6 @@ from modex_agent.multi_agent.session_tree.session_binding import SessionBinding
 from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:
-    from modex_agent.core.session_registry import SessionRegistry
     from modex_agent.multi_agent.bus import LocalAgentMessageBus
     from modex_agent.multi_agent.envelope import AgentMessageEnvelope
     from modex_agent.multi_agent.inbox.types import InboxMessage
@@ -30,6 +29,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.session_tree.store_node import TreeNodeStore
     from modex_agent.multi_agent.session_tree.store_track import MessageTrackStore
     from modex_agent.multi_agent.session_tree.store_tree import SessionTreeStore
+    from modex_agent.persistence.session_registry import SessionRegistry
 
 logger = logging.getLogger(__name__)
 

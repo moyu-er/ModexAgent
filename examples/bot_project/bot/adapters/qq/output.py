@@ -15,10 +15,10 @@ from urllib.parse import urlparse
 
 from bot.adapters.qq._ws_state import QQ_FILE_TYPE_IMAGE, _qq_file_type
 from bot.adapters.qq.input import QQInputAdapter
-from modex_agent.adapters.platform import StreamingMode
 from modex_agent.adapters.filters import ChainedContentFilter, WhitespaceFilter
 from modex_agent.adapters.output import OutputAdapter
-from modex_agent.core.types import OutputMessage
+from modex_agent.adapters.platform import StreamingMode
+from modex_agent.messaging.models import OutputMessage
 
 
 class QQOutputAdapter(OutputAdapter):

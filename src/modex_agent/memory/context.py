@@ -8,22 +8,50 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.constants import RuntimeInfoKey, format_working_directory_line
-from modex_agent.core.history import ListMessageHistory, MessageHistory
+from modex_agent.core import MessageHistory
 from modex_agent.core.message import ChatMessage
+from modex_agent.memory.history import ListMessageHistory
 
 if TYPE_CHECKING:
-    from modex_agent.core.governance import ContextGovernance
     from modex_agent.core.prompt import SystemPromptPipeline
     from modex_agent.core.tool_manager import ToolManager
+    from modex_agent.memory.context_governance import ContextGovernance
     from modex_agent.memory.default_system import DefaultMemorySystem
 
-from .emitter import AgentResult
-from .message_utils import normalize_agent_messages_for_llm
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.message_utils import normalize_agent_messages_for_llm
 
 logger = logging.getLogger(__name__)
+
+_NO_DIR_SENTINEL: str = "no-dir"
+
+
+class RuntimeInfoKey(StrEnum):
+    """Canonical keys in runtime context metadata."""
+
+    CALLER_CONTEXT = "caller_context"
+    MESSAGE = "message"
+    PARENT_SESSION_ID = "parent_session_id"
+    MODEL_INFO = "model_info"
+    USER_ID = "user_id"
+    TENANT_ID = "tenant_id"
+    CHANNEL = "channel"
+    CHAT_ID = "chat_id"
+    WORKING_DIRECTORY = "working_directory"
+
+
+def format_working_directory_line(working_directory: str | Path | None) -> str | None:
+    """Render the system-prompt line for a bound working directory."""
+    if working_directory is None:
+        return None
+    return (
+        f"Working Directory: {working_directory}\n"
+        "Use this directory as the base for relative file paths and shell commands."
+    )
 
 
 @dataclass

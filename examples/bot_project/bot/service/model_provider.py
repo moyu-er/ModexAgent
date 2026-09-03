@@ -12,10 +12,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from modex_agent.core.constants import FinishReason
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
-from modex_agent.core.types import LLMResponse
 from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.providers.http.provider import HTTPStreamProvider
 

@@ -14,8 +14,8 @@ import pytest
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.agents.react import ReActEvent, ToolCallEndPayload
 from modex_agent.core.emitter import AgentResult
+from modex_agent.core.message import ToolCall
 from modex_agent.core.tool_manager import ToolResult
-from modex_agent.core.types import ToolCall
 
 
 class MockOutputAdapter:
@@ -34,7 +34,7 @@ class MockOutputAdapter:
 
     async def flush_deltas(self, session_id):
         if self.send_delta_calls:
-            from modex_agent.core.types import OutputMessage
+            from modex_agent.messaging.models import OutputMessage
             content = "".join([call[0] for call in self.send_delta_calls])
             await self.send(OutputMessage(content=content), session_id)
             self.send_delta_calls.clear()

@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 
 class AddressKind(StrEnum):
@@ -82,30 +82,23 @@ class BrokerMessage(BaseModel):
 
     timestamp: datetime = Field(default_factory=datetime.now)
 
+    @field_validator("sender", "recipient", mode="before")
+    @classmethod
+    def _parse_address(cls, value: Address | str | None) -> Address | None:
+        if isinstance(value, str):
+            return Address.parse(value)
+        return value
+
+    @field_serializer("sender", "recipient")
+    def _serialize_address(self, value: Address | None) -> str | None:
+        return str(value) if value is not None else None
+
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "payload": self.payload,
-            "sender": str(self.sender),
-            "recipient": str(self.recipient) if self.recipient else None,
-            "topic": self.topic,
-            "broadcast": self.broadcast,
-            "headers": dict(self.headers),
-            "correlation_id": self.correlation_id,
-            "timestamp": self.timestamp.isoformat(),
-        }
+        return self.model_dump(mode="json")
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> BrokerMessage:
-        return cls(
-            payload=data["payload"],
-            sender=Address.parse(data["sender"]),
-            recipient=Address.parse(data["recipient"]) if data.get("recipient") else None,
-            topic=data.get("topic"),
-            broadcast=data.get("broadcast", False),
-            headers=dict(data.get("headers", {})),
-            correlation_id=data.get("correlation_id"),
-            timestamp=datetime.fromisoformat(data["timestamp"]),
-        )
+        return cls.model_validate(data)
 
 
 class DeliveryError(Exception):

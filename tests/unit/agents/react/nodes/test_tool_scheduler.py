@@ -21,13 +21,12 @@ from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.control.exceptions import AgentCancelledError
 from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.message import ChatMessage, TextPart
+from modex_agent.core.message import ChatMessage, MessageRole, TextPart, ToolCall
 from modex_agent.core.tool_manager import (
     ExclusiveTool,
     ParallelTool,
     ToolResult,
 )
-from modex_agent.core.types import MessageRole, ToolCall
 from modex_agent.runtime.enums import (
     ToolBatchStatus,
     ToolCallStatus,

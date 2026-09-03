@@ -21,12 +21,11 @@ from bot.eval.probes.budget import (
 from plugins.bot_strategies import BotDefaultLLMConfig
 from pydantic import BaseModel
 
-from modex_agent.core.constants import FinishReason
 from modex_agent.core.llm_request import LLMRequest
+from modex_agent.core.llm_struct import FinishReason, LLMResponse, TokenUsage
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.stream_events import Finish, LLMStreamEvent, TextDelta, UsageSnapshot
-from modex_agent.core.types import LLMResponse, TokenUsage
 from modex_agent.plugins.abc import ComponentFactory, ComponentSlot
 from modex_agent.plugins.assembly.context import AssemblyContext
 from modex_agent.plugins.registry import ComponentRegistry

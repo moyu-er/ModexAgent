@@ -1192,10 +1192,6 @@ class TestReapOrphanedProcesses:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        from modex_agent.agents.external.providers.opencode.server_manager import (
-            _is_pid_alive,
-            _is_python_process,
-        )
 
         mgr = OpenCodeServerManager()
         registry = tmp_path / "pid_registry"

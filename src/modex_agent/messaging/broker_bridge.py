@@ -6,23 +6,22 @@ from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
-
-from modex_agent.core.media import Attachment
-from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 
 from ..adapters.output import OutputAdapter
 from ..adapters.platform import StreamingMode
-from ..core.constants import DefaultValues
-from ..core.types import InputMessage, OutputMessage
 from ..pipeline.adapters import InputAdapter
 from .broker import Address, AddressKind, BrokerMessage, MessageBroker
-
-if TYPE_CHECKING:
-    from modex_agent.approval.views import ApprovalDecisionInput
+from .models import (
+    DEFAULT_CHANNEL,
+    DEFAULT_CHAT_ID,
+    BrokerInputPayload,
+    BrokerOutputPayload,
+    InputMessage,
+    OutputMessage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,75 +131,15 @@ def _broker_msg_to_input_message(
         sender_id=sender.name
         if sender.kind == "user"
         else payload.sender_id,
-        channel=msg.headers.get("channel", DefaultValues.CHANNEL),
-        chat_id=msg.headers.get("chat_id", DefaultValues.CHAT_ID),
+        channel=msg.headers.get("channel", DEFAULT_CHANNEL),
+        chat_id=msg.headers.get("chat_id", DEFAULT_CHAT_ID),
         metadata=metadata,
         content_format=payload.content_format,
         truncatable_paths=payload.truncatable_paths,
         workspace=Path(payload.workspace) if payload.workspace is not None else None,
-        approval_decision=payload.to_approval_decision(),
+        approval_decision=payload.approval_decision,
         attachments_resolved=payload.attachments_resolved,
     )
-
-
-class BrokerInputPayload(BaseModel):
-    """Serialized ``InputMessage`` payload that crosses the message broker.
-
-    Built by both :func:`build_input_broker_message` and
-    ``AgentPool.submit_input`` through :meth:`from_input_message`. Consumers
-    validate this model before rebuilding ``InputMessage`` so transport fields
-    cannot silently drift between the bridge and pool dispatch paths.
-
-    Inter-agent envelopes also carry message-specific payload extensions, so
-    those remain open while the shared input fields stay typed and validated.
-    Serialize with ``model_dump(exclude_none=True)`` so absent optional input
-    fields remain absent on the wire.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="allow")
-
-    content: str = ""
-    session_id: str = ""
-    agent_session_id: str = ""
-    message_type: str = ""
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    sender_id: str = DefaultValues.SENDER_ID
-    chat_id: str = DefaultValues.CHAT_ID
-    content_format: ContentFormat | None = None
-    truncatable_paths: list[str] | None = None
-    approval_decision: dict[str, Any] | None = None
-    attachments_resolved: list[Attachment] = Field(default_factory=list)
-    workspace: str | None = None
-
-    @classmethod
-    def from_input_message(
-        cls,
-        message: InputMessage,
-        *,
-        agent_session_id: str,
-        message_type: str = "",
-    ) -> BrokerInputPayload:
-        return cls(
-            content=message.content,
-            session_id=message.session.session_id_prefix,
-            agent_session_id=agent_session_id,
-            message_type=message_type,
-            metadata=dict(message.metadata),
-            sender_id=message.sender_id,
-            chat_id=message.chat_id,
-            content_format=message.content_format,
-            truncatable_paths=message.truncatable_paths,
-            approval_decision=message.approval_decision.to_dict()
-            if message.approval_decision is not None
-            else None,
-            attachments_resolved=list(message.attachments_resolved),
-            workspace=str(message.workspace) if message.workspace is not None else None,
-        )
-
-    def to_approval_decision(self) -> ApprovalDecisionInput | None:
-        from modex_agent.approval.views import ApprovalDecisionInput
-
-        return ApprovalDecisionInput.from_dict(self.approval_decision)
 
 
 def build_input_broker_message(msg: InputMessage, recipient: Address) -> BrokerMessage:
@@ -259,15 +198,9 @@ class BrokerOutputAdapter(OutputAdapter):
 
     async def send(self, message: OutputMessage, session_id: str) -> None:
         metadata = dict(message.metadata) if message.metadata else {}
+        payload = BrokerOutputPayload.from_output_message(message, session_id=session_id)
         broker_msg = BrokerMessage(
-            payload={
-                "content": message.content,
-                "metadata": metadata,
-                "session_id": metadata.get("session_id", session_id),
-                "agent_session_id": metadata.get("agent_session_id", session_id),
-                "message_id": metadata.get("message_id", ""),
-                "in_reply_to": metadata.get("in_reply_to", ""),
-            },
+            payload=payload.model_dump(mode="json"),
             sender=self.sender,
             correlation_id=metadata.get("correlation_id", session_id),
             headers={
@@ -456,11 +389,12 @@ class BrokerBridgeService:
             return
         try:
             async for broker_msg in self.broker.subscribe([route.match_topic]):
+                payload = BrokerOutputPayload.model_validate(broker_msg.payload)
                 out_msg = OutputMessage(
-                    content=broker_msg.payload.get("content", ""),
-                    metadata=broker_msg.payload.get("metadata", {}),
+                    content=payload.content,
+                    metadata=payload.metadata,
                 )
-                session_id = broker_msg.payload.get("session_id", "default")
+                session_id = payload.session_id
                 if self._send_timeout is not None:
                     try:
                         await asyncio.wait_for(

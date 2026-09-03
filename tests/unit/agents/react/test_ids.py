@@ -1,8 +1,8 @@
-"""Tests for the Snowflake-based tool-call id minting (core.ids)."""
+"""Tests for the Snowflake-based tool-call id minting (agents.react.ids)."""
 
 from __future__ import annotations
 
-from modex_agent.core.ids import next_call_id
+from modex_agent.agents.react.ids import next_call_id
 
 
 def test_next_call_id_has_call_prefix() -> None:

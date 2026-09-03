@@ -3,9 +3,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import ExecutionStrategyKind, StopReason
-from modex_agent.core.emitter import AgentResult
+from modex_agent.core.agent import AgentContext, ExecutionStrategyKind
+from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.hook.builtin import SubagentAutoSendHook

@@ -2,30 +2,23 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core import MessageHistory
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.scope import (
-    MemoryContext,
-    MemoryLayerName,
-)
 from modex_agent.memory.archive_models import ArchiveChannel
-from modex_agent.memory.core.layers import (
-    ArchiveMemoryManager,
-    MemoryLayerSet,
-    SessionMemoryManager,
-)
+from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.memory.core.models import CoreMemoryContents
 from modex_agent.memory.core.system import (
     ContextManagedMemorySystem,
     MemorySystem,
 )
-from modex_agent.memory.history import MessageHistory
+from modex_agent.memory.history import ScopedMessageHistory as _ScopedMessageHistory
 from modex_agent.memory.hooks import MemoryHook, MemoryHookRunner
+from modex_agent.memory.scope import MemoryContext, MemoryLayerName
 from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 
 if TYPE_CHECKING:
@@ -36,199 +29,6 @@ from modex_agent.memory.recorder import MemoryAppendRecorder
 from modex_agent.memory.registry.base import MemoryStoreRegistry
 
 logger = logging.getLogger(__name__)
-
-
-class ScopedMessageHistory(MessageHistory):
-    """MessageHistory backed by a registry-scoped SessionMemoryManager.
-
-    Template method pattern: write-through persistence + read cache.
-    - append/extend: persist → trigger check(cache) → cache maintain
-    - to_list: cache hit / store read
-    - clear/replace_all: store write → invalidate cache
-
-    Protected hooks (subclasses may override for DIY):
-    - _run_cleanup_if_triggered: trigger check + cleanup dispatch
-    - _is_trigger_condition_met: pure in-memory trigger check
-    - _refresh_cache: full store read + cache populate
-    - _append_to_cache: in-memory append (no IO)
-    - _invalidate_cache: drop cache
-
-    Invariants:
-    - Every append/extend persists to store BEFORE cache update.
-    - Cache is only populated via _refresh_cache (full read) or
-      _append_to_cache (incremental, post-write).
-    - After compact/cleanup, _refresh_cache is the ONLY refresh path.
-    - Trigger check uses cached data (zero IO when not triggered).
-    """
-
-    def __init__(
-        self,
-        manager: SessionMemoryManager,
-        context: MemoryContext,
-        initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
-        recorder: MemoryAppendRecorder | None = None,
-        archive_manager: ArchiveMemoryManager | None = None,
-        cleanup_config: dict[str, int | float] | None = None,
-        pruned_manager: PrunedManager | None = None,
-        archive_agent: ArchiveGenerator | None = None,
-        archive_storage: DirArchiveStorage | None = None,
-        hook_runner: MemoryHookRunner | None = None,
-        token_estimator: TokenEstimator | None = None,
-        compactor: Any | None = None,
-    ) -> None:
-        self._manager = manager
-        self._context = context
-        self._recorder = recorder
-        self._archive_manager = archive_manager
-        self._cleanup_config: dict[str, int | float] = cleanup_config or {}
-        self._pruned_manager: PrunedManager | None = pruned_manager
-        self._archive_agent = archive_agent
-        self._archive_storage = archive_storage
-        self._hook_runner: MemoryHookRunner | None = hook_runner
-        self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
-        self._compactor = compactor
-        self._cache: list[ChatMessage] | None = (
-            [ChatMessage.coerce(m) for m in initial_messages]
-            if initial_messages is not None
-            else None
-        )
-        self._cache_lock = asyncio.Lock()
-
-    async def _run_cleanup_if_triggered(self) -> bool:
-        """Check trigger using cached messages (zero IO); run cleanup if triggered.
-
-        Returns True if compact happened (caller must _refresh_cache).
-        """
-        if not self._is_trigger_condition_met():
-            return False
-        from modex_agent.memory.cleanup import cleanup_session
-
-        max_context_tokens = self._cleanup_config.get("max_context_tokens")
-        result = await cleanup_session(
-            session=self._manager,
-            archive=self._archive_manager,
-            context=self._context,
-            compactor=self._compactor,
-            max_context_tokens=(
-                int(max_context_tokens) if max_context_tokens is not None else None
-            ),
-            max_token_ratio=float(self._cleanup_config.get("max_token_ratio", 0.85)),
-            max_output_tokens=int(self._cleanup_config.get("max_output_tokens", 0)),
-            keep_ratio=float(self._cleanup_config.get("keep_ratio", 0.3)),
-            max_backups=int(self._cleanup_config.get("max_backups", 10)),
-            pruned_manager=self._pruned_manager,
-            archive_agent=self._archive_agent,
-            archive_storage=self._archive_storage,
-            hook_runner=self._hook_runner,
-            token_estimator=self._token_estimator,
-        )
-        return result.triggered
-
-    def _is_trigger_condition_met(self) -> bool:
-        """Pure in-memory trigger check. Zero IO. Uses cached messages."""
-        if self._cache is None or not self._cache:
-            return True  # Conservative: cache unavailable → let cleanup_session decide
-        from modex_agent.memory.cleanup import check_cleanup_trigger
-
-        max_context_tokens = self._cleanup_config.get("max_context_tokens")
-        reason = check_cleanup_trigger(
-            self._cache,
-            self._token_estimator,
-            int(max_context_tokens) if max_context_tokens is not None else None,
-            float(self._cleanup_config.get("max_token_ratio", 0.85)),
-            int(self._cleanup_config.get("max_output_tokens", 0)),
-        )
-        return reason is not None
-
-    async def _refresh_cache(self) -> list[ChatMessage]:
-        """Full read from store + populate cache. The ONLY cache-fill path after compact."""
-        async with self._cache_lock:
-            if self._cache is not None:
-                return list(self._cache)
-        recent = await self._manager.get_recent_messages(self._context)
-        async with self._cache_lock:
-            self._cache = list(recent)
-        return list(recent)
-
-    def _append_to_cache(self, messages: Sequence[ChatMessage | dict[str, Any]]) -> None:
-        """Incremental cache update after a successful write. No IO.
-
-        Synchronous — safe in asyncio single-thread model (no await points).
-        Only called when no compact happened, so cache stays consistent.
-        """
-        if self._cache is None:
-            return  # Cache not populated yet; to_list() will read from store
-        for msg in messages:
-            self._cache.append(ChatMessage.coerce(msg))
-
-    async def _invalidate_cache(self) -> None:
-        """Drop cache. Used by clear/replace_all (full set replacement)."""
-        async with self._cache_lock:
-            self._cache = None
-
-    def _stamp_token_count(
-        self, messages: Sequence[ChatMessage | dict[str, Any]]
-    ) -> list[ChatMessage | dict[str, Any]]:
-        """Set token_count on each message via the estimator (append-time write point)."""
-        stamped: list[ChatMessage | dict[str, Any]] = []
-        for msg in messages:
-            chat = ChatMessage.coerce(msg)
-            if chat.token_count is None:
-                chat = chat.model_copy(
-                    update={"token_count": self._token_estimator.estimate_message(chat)}
-                )
-            stamped.append(chat)
-        return stamped
-
-    async def append(self, message: ChatMessage | dict[str, Any]) -> None:
-        [stamped] = self._stamp_token_count([message])
-        await self._manager.add_messages(self._context, [stamped])
-        if self._recorder is not None:
-            await self._recorder.record([stamped], self._context)
-        compacted = await self._run_cleanup_if_triggered()
-        if compacted:
-            await self._refresh_cache()
-        else:
-            self._append_to_cache([stamped])
-
-    async def extend(self, messages: Sequence[ChatMessage | dict[str, Any]]) -> None:
-        if not messages:
-            return
-        stamped = self._stamp_token_count(messages)
-        await self._manager.add_messages(self._context, stamped)
-        if self._recorder is not None:
-            await self._recorder.record(stamped, self._context)
-        compacted = await self._run_cleanup_if_triggered()
-        if compacted:
-            await self._refresh_cache()
-        else:
-            self._append_to_cache(stamped)
-
-    async def to_list(self) -> list[ChatMessage]:
-        async with self._cache_lock:
-            if self._cache is not None:
-                return list(self._cache)
-        return await self._refresh_cache()
-
-    async def clear(self) -> None:
-        await self._manager.clear(self._context)
-        await self._invalidate_cache()
-
-    async def replace_all(
-        self, messages: Sequence[ChatMessage | dict[str, Any]], *, skip_transform: bool = False
-    ) -> None:
-        _ = skip_transform
-        await self._manager.replace_messages(self._context, list(messages))
-        await self._invalidate_cache()
-
-    def __len__(self) -> int:
-        raise RuntimeError("Use 'await history.to_list()' for async access.")
-
-    def __iter__(self) -> Iterator[ChatMessage]:
-        raise RuntimeError("Use 'await history.to_list()' for async access.")
-
-    def __getitem__(self, index: int) -> ChatMessage:
-        raise RuntimeError("Use 'await history.to_list()' for async access.")
 
 
 class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
@@ -303,7 +103,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         context: MemoryContext,
         initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
     ) -> MessageHistory:
-        return ScopedMessageHistory(
+        return _ScopedMessageHistory(
             manager=self._layers.session,
             context=context,
             initial_messages=initial_messages,
@@ -513,7 +313,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
 
     async def _resolve_archive_storage(self, context: MemoryContext) -> Any:
         archive = self._layers.archive
-        from modex_agent.core.scope import UserScope
+        from modex_agent.memory.scope import UserScope
 
         scope = archive.get_scope() if archive is not None else UserScope()
         return await self._registry.resolve(

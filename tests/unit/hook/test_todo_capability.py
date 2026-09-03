@@ -398,15 +398,13 @@ class TestRuntimeGateDeath:
         registry."""
         from modex_agent.agents.react.state import ReActTurnState
         from modex_agent.core.agent import AgentContext
-        from modex_agent.core.constants import StopReason
-        from modex_agent.core.emitter import AgentResult
+        from modex_agent.core.emitter import AgentResult, StopReason
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.core.types import TodoStatus
         from modex_agent.memory.history import ListMessageHistory
         from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
         from modex_agent.runtime.models import TurnIdentity
         from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-        from modex_agent.runtime.store import JsonFileTodoStore, TodoItem
+        from modex_agent.runtime.todo import JsonFileTodoStore, TodoItem, TodoStatus
 
         identity = TurnIdentity(
             agent_id="test", session=SessionInfo.from_str("session.agent"), turn_id="turn-1"

@@ -8,7 +8,6 @@ from modex_agent.core.session_id import SessionInfo
 from modex_agent.plugins.defaults.capabilities.skills.catalog import SkillCatalog
 from modex_agent.plugins.defaults.capabilities.skills.models import Skill
 from modex_agent.plugins.defaults.capabilities.skills.source import InlineSkillSource
-
 from tests.unit.pipeline._helpers import _make_react_pipeline
 
 
@@ -28,7 +27,7 @@ class FakeContextManager:
         self.base_system_prompt = base_system_prompt
 
     async def load(self, session_id, **kwargs):
-        from modex_agent.core.context import ContextState
+        from modex_agent.memory.context import ContextState
 
         return ContextState(system_prompt=self.base_system_prompt, history=[])
 

@@ -13,11 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.core.scope import (
-    MemoryContext,
-    MemoryLayerName,
     RecordScope,
-    ScopeRecord,
-    UserScope,
 )
 from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
@@ -26,8 +22,8 @@ from modex_agent.memory.layers.config import (
     CoreMemoryConfig,
     SessionMemoryConfig,
 )
-from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.layers.core import ScopedCoreMemoryManager
+from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.layers.session import ScopedSessionMemoryManager
 from modex_agent.memory.lifecycle import (
     DefaultArchiveRetentionPolicy,
@@ -36,6 +32,12 @@ from modex_agent.memory.lifecycle import (
     MaintenanceResult,
 )
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry, MemoryStoreRegistry
+from modex_agent.memory.scope import (
+    MemoryContext,
+    MemoryLayerName,
+    ScopeRecord,
+    UserScope,
+)
 
 
 def _make_layer_set(tmp_path: Path) -> MemoryLayerSet:

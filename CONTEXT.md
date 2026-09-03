@@ -1,4 +1,4 @@
-<!-- Updated: 2026-09-01 -->
+<!-- Updated: 2026-09-02 -->
 
 # ModexAgent
 
@@ -23,7 +23,7 @@ The process of constructing runtime objects (pools, workspace stacks, communicat
 _Avoid_: initialization, bootstrapping, wiring (use "assembly" for the process, "wiring" for specific connections)
 
 **Input Pipeline**:
-The staged pre-processing chain a user input traverses before reaching an agent — resolving workspace, pool, channel, and session, then enqueuing an `InputMessage` for `AgentPipeline.receive()`. The bot layer composes it from framework stages (S1..S8); IM and webui use different stage subsets. It is the single entry path for everything a user sends, including (per ADR-0008) a webui approval decision, which rides as a structured `InputMessage.approval_decision` rather than a slash command.
+The staged pre-processing chain a user input traverses before reaching an agent — resolving workspace, pool, channel, and session, then enqueuing the messaging-owned `InputMessage` transport model for `AgentPipeline.receive()`. The bot layer composes it from framework stages (S1..S8); IM and webui use different stage subsets. It is the single entry path for everything a user sends, including (per ADR-0008) a webui approval decision, which rides as a structured `InputMessage.approval_decision` rather than a slash command.
 _Avoid_: message router, ingress (use "input pipeline" for the staged chain; "input adapter" for the physical queue endpoint)
 
 **Main Agent**:
@@ -87,7 +87,7 @@ The framework-level primitive for routing a delivered payload from one node to a
 _Avoid_: send (collides with multi-agent `send_to_agent`), route (that is the computation of dispatch targets from transition/edges), deliver (too generic)
 
 **Approval**:
-A human-in-the-loop gate that pauses a main agent's turn before a tool call takes effect, persisting the turn so it resumes after a human decision. One shared state machine owns suspend → prompt → decide → resume; delivery channels (IM, webui) differ only in how the prompt is rendered and the decision collected (the `ApprovalUserInterface` adapter). Off by default — opt-in per main agent via config; applies only to main agents, never subagents. Path-tiered: a listed tool's calls are auto-allowed inside the project dir, gated outside it.
+A human-in-the-loop gate that pauses a main agent's turn before a tool call takes effect, persisting the turn so it resumes after a human decision. One shared state machine owns suspend → prompt → decide → resume; delivery channels (IM, webui) differ only in how the prompt is rendered and the decision collected (the `ApprovalUserInterface` adapter). The cross-channel `ApprovalAction` and `ApprovalDecisionInput` transport values are messaging-owned; approval owns policy, state, and request views. Off by default — opt-in per main agent via config; applies only to main agents, never subagents. Path-tiered: a listed tool's calls are auto-allowed inside the project dir, gated outside it.
 _Avoid_: permission, auth, 鉴权-as-authentication (the human gate is "approval"; where 鉴权 is used in discussion it maps to approval)
 
 **ApprovalBatch**:
@@ -259,7 +259,7 @@ A retrievable collection of static, shared domain knowledge consulted by an agen
 _Avoid_: archival memory (Letta-specific synonym for a particular implementation), document store (an implementation detail, not the abstraction), corpus (too academic for English-as-Second-Language readers)
 
 **RecordScope**:
-A frozen Pydantic **base** model carrying framework-level dimensional fields (workspace_id, session_id, session_prefix, agent_id, agent_role, user_id, tenant_id, channel, chat_id, invocation_id, parent_session_id). Business layers subclass it to add business dimensions (e.g. the bot project's `BotRecordScope` adds `pool`). These field names are canonical across Python and SQL generated-column extraction (`agent_id`, never `agent` or `agent_name`). Its canonical JSON is the sole source for a DB store's generated dimensions; ordinary domain keys and payload columns remain explicit. `canonical()` produces a deterministic JSON string (recursive key sorting) for uniqueness and comparison — **a base `RecordScope` and a subclass instance with extra fields produce different canonical JSON, therefore different `scope_key` values; mixing them in the same table partitions records into separate storage buckets by construction** (this is intentional: framework-managed records vs business-scoped records are naturally isolated). `to_path_segment(*dimensions)` derives file-path segments for file-backed stores. Replaces `CompositeScope` string-join for DB-backed stores; `CompositeScope` remains for file-backed stores.
+A core-owned frozen Pydantic **base** model carrying framework-level dimensional fields (workspace_id, session_id, session_prefix, agent_id, agent_role, user_id, tenant_id, channel, chat_id, invocation_id, parent_session_id). Memory-owned context and scope extractors derive `RecordScope` values; business layers subclass it to add business dimensions (e.g. the bot project's `BotRecordScope` adds `pool`). These field names are canonical across Python and SQL generated-column extraction (`agent_id`, never `agent` or `agent_name`). Its canonical JSON is the sole source for a DB store's generated dimensions; ordinary domain keys and payload columns remain explicit. `canonical()` produces a deterministic JSON string (recursive key sorting) for uniqueness and comparison — **a base `RecordScope` and a subclass instance with extra fields produce different canonical JSON, therefore different `scope_key` values; mixing them in the same table partitions records into separate storage buckets by construction** (this is intentional: framework-managed records vs business-scoped records are naturally isolated). `to_path_segment(*dimensions)` derives file-path segments for file-backed stores. Replaces `CompositeScope` string-join for DB-backed stores; `CompositeScope` remains for file-backed stores.
 _Avoid_: scope key (that is the string output), scope object (too generic), business scope (use the specific subclass name, e.g. BotRecordScope)
 
 **Canonical JSON** (`modex_agent.utils.canonical_json`):
@@ -290,8 +290,8 @@ _Avoid_: message lifecycle (too generic)
 An append-only table recording every approval decision (approve/deny) with `turn_uuid`, `session_id`, `tool_name`, `tool_call_id`, `decision`, `deny_reason`, `decided_at`, `decided_by`. Immutable — no UPDATE or DELETE (except TTL cleanup). Closes the compliance gap where approval decisions were previously lost when `TurnSnapshot` was overwritten by the next turn.
 _Avoid_: approval history (use "audit log" to emphasize immutability)
 
-**Session Artifact Cleaner** (`SessionArtifactCleaner` ABC):
-The framework ABC coordinating DB + file cascade deletion when a session is deleted. DB operations delete rows from sessions, memory_session_messages, todos, turn_snapshots, inbox_messages, approval_audit_log. File operations delete pruned, media, trace, output directories. Called by the business-layer `SessionGarbageCollector`. Orphan scanning (artifacts without an index record) is also handled through this seam.
+**Session Artifact Cleaner** (`modex_agent.persistence.session_artifacts.SessionArtifactCleaner` ABC):
+The persistence-owned framework ABC coordinating DB + file cascade deletion when a session is deleted. DB operations delete rows from sessions, memory_session_messages, todos, turn_snapshots, inbox_messages, approval_audit_log. File operations delete pruned, media, trace, output directories. Called by the business-layer `SessionGarbageCollector`. Orphan scanning (artifacts without an index record) is also handled through this seam.
 _Avoid_: garbage collector (that is the business-layer orchestrator; the cleaner is the framework executor)
 
 **Column Projection** (`modex_agent.persistence.column_projection`):

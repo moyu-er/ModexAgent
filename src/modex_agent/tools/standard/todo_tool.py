@@ -17,8 +17,7 @@ from typing import Any
 
 from modex_agent.core.agent import current_agent_context
 from modex_agent.core.tool_manager import ExclusiveTool, ParallelTool
-from modex_agent.core.types import TodoStatus
-from modex_agent.runtime.store import TodoItem, TodoStore
+from modex_agent.runtime.todo import TodoItem, TodoStatus, TodoStore
 
 #: The statuses that count as "active" (still to be done). Shared single source
 #: of truth — used by ``todo_tool`` and ``TodoReorientationHook``.

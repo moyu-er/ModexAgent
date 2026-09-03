@@ -1,12 +1,17 @@
 """Tests for memory scope abstractions."""
 
-from modex_agent.core.scope import (
+import pytest
+from pydantic import ValidationError
+
+from modex_agent.memory.scope import (
     AgentScope,
     ChannelScope,
     ChatScope,
     CompositeScope,
     GlobalScope,
     MemoryContext,
+    MemoryLayerName,
+    ScopeRecord,
     SessionScope,
     TenantScope,
     UserScope,
@@ -31,13 +36,51 @@ class TestMemoryContext:
 
     def test_session_id_must_be_str_not_session_info(self):
         """session_id is a session-id string; a SessionInfo object is rejected."""
-        import pytest
-        from pydantic import ValidationError
-
         from modex_agent.core.session_id import SessionInfo
 
         with pytest.raises(ValidationError):
-            MemoryContext(session_id=SessionInfo(session_id="s1", agent_name="unknown"))
+            MemoryContext(
+                session_id=SessionInfo(  # type: ignore[arg-type]
+                    session_id="s1", agent_name="unknown"
+                )
+            )
+
+    def test_frozen_and_extra_forbidden(self):
+        ctx = MemoryContext(session_id="s1")
+        with pytest.raises(ValidationError):
+            ctx.user_id = "u1"  # type: ignore[misc]
+        with pytest.raises(ValidationError):
+            MemoryContext(session_id="s1", unknown="value")  # type: ignore[call-arg]
+
+
+class TestScopeRecord:
+    def test_model_round_trip(self):
+        record = ScopeRecord(
+            scope_key="s1",
+            layer=MemoryLayerName.SESSION,
+            context=MemoryContext(session_id="s1"),
+            storage_path="/tmp/memory/session/s1",
+        )
+
+        assert ScopeRecord.model_validate(record.model_dump()) == record
+
+    def test_frozen_and_extra_forbidden(self):
+        record = ScopeRecord(
+            scope_key="s1",
+            layer=MemoryLayerName.SESSION,
+            context=MemoryContext(session_id="s1"),
+            storage_path="/tmp/memory/session/s1",
+        )
+        with pytest.raises(ValidationError):
+            record.scope_key = "s2"  # type: ignore[misc]
+        with pytest.raises(ValidationError):
+            ScopeRecord(
+                scope_key="s1",
+                layer=MemoryLayerName.SESSION,
+                context=MemoryContext(session_id="s1"),
+                storage_path="/tmp/memory/session/s1",
+                unknown="value",  # type: ignore[call-arg]
+            )
 
 
 class TestSessionScope:

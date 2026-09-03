@@ -61,13 +61,11 @@ from bot.eval.task_spec import (
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import Agent, AgentContext
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolManager
-from modex_agent.core.types import MessageRole
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.plugins.assembly.single_agent import SingleAgentAssembled
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase

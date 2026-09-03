@@ -14,7 +14,7 @@ from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapte
 from bot.webui.events import WebUIEventType
 
 from modex_agent.core.media import Attachment, AttachmentLocator, Kind
-from modex_agent.core.types import OutputMessage
+from modex_agent.messaging.models import OutputMessage
 
 
 def _record(kind: Kind, *, name: str = "f.png", mime: str | None = "image/png",

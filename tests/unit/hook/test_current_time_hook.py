@@ -4,7 +4,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import MessageRole
 from modex_agent.hook.builtin import current_time as current_time_module
 from modex_agent.hook.builtin.current_time import CurrentTimeInjectionHook
 

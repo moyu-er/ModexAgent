@@ -51,17 +51,16 @@ nudge, not a continuation driver: it never reads or writes
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from enum import StrEnum
+
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.message_utils import (
-    ToolNudgeVerdict,
-    scan_tool_usage_in_turn,
-    wrap_system_reminder,
-)
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import ChatMessage, MessageRole
+from modex_agent.core.message_utils import wrap_system_reminder
 from modex_agent.hook.abc import BeforeIterationHook, StartNodeTurnHook
 from modex_agent.runtime.enums import TurnCustomKey
-from modex_agent.runtime.store import TodoStore
+from modex_agent.runtime.todo import TodoStore
 
 _TODO_NUDGE_REMINDER = (
     "You have completed several steps in this turn without using todo "
@@ -69,6 +68,33 @@ _TODO_NUDGE_REMINDER = (
     "planning them with `todo_write` to keep progress visible and "
     "recoverable. If the work is nearly done or simple, just continue."
 )
+
+
+class ToolNudgeVerdict(StrEnum):
+    """Terminal outcomes of the backward in-turn tool-usage scan."""
+
+    USED = "used"
+    DUE = "due"
+    SHORT_TURN = "short_turn"
+
+
+def scan_tool_usage_in_turn(
+    messages: Sequence[ChatMessage],
+    tool_names: frozenset[str],
+    min_assistant_steps: int = 3,
+) -> ToolNudgeVerdict:
+    """Classify recent in-turn tool usage for the todo planning nudge."""
+    seen_assistant = 0
+    for msg in reversed(messages):
+        if msg.role in (MessageRole.USER, MessageRole.AGENT):
+            return ToolNudgeVerdict.SHORT_TURN
+        if msg.role == MessageRole.TOOL and msg.name in tool_names:
+            return ToolNudgeVerdict.USED
+        if msg.role == MessageRole.ASSISTANT:
+            seen_assistant += 1
+            if seen_assistant >= min_assistant_steps:
+                return ToolNudgeVerdict.DUE
+    return ToolNudgeVerdict.SHORT_TURN
 
 
 class TodoPlanningNudgeHook(StartNodeTurnHook, BeforeIterationHook):
