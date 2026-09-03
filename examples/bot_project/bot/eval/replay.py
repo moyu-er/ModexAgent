@@ -218,8 +218,7 @@ class GoldenReplayRunner:
             system_prompt = static_system_prompt(self._config.system_prompt)
             constructed = _fingerprint(self._config, system_prompt, tool_manager)
             self.check_fingerprint(case, constructed)
-            await assembled.instance.stop()
-            await assembled.memory_system.close()
+            await assembled.close()
 
             engine = CassetteReplayEngine(cassette_dir)
             engine.load()

@@ -13,6 +13,9 @@ This file is the append-only infrastructure for that rule:
   candidate (1) deprecation window) — still present, so NOT assertable
   today. D2/E2 append ("modex_agent.multi_agent.comm_kind",
   "modex_agent.core.agent") after deleting the shim.
+- FORBIDDEN_IDENTIFIERS: retired API names AST-scanned across live framework,
+  Bot, and test Python. Comments, strings, and historical documents do not
+  count as executable surfaces.
 
 Never seed an entry that is not already true — the suite stays green with
 every entry verifiable today.
@@ -20,10 +23,16 @@ every entry verifiable today.
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "modex_agent"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PACKAGE_ROOT = REPO_ROOT / "src" / "modex_agent"
+LIVE_PYTHON_ROOTS: tuple[Path, ...] = (
+    PACKAGE_ROOT,
+    REPO_ROOT / "examples" / "bot_project" / "bot",
+    REPO_ROOT / "examples" / "bot_project" / "tests",
+    REPO_ROOT / "tests",
+)
 
 # Paths relative to src/modex_agent (posix). All verified gone today.
 FORBIDDEN_MODULE_PATHS: tuple[str, ...] = (
@@ -93,17 +102,25 @@ FORBIDDEN_MODULE_PATHS: tuple[str, ...] = (
     "memory/prompts/experience",
     "plugins/defaults/capabilities/experience.py",
     "multi_agent/pool_config/experience.py",
+    # D2 (plan §15): the Skills vertical slice moved into the ``skills``
+    # capability package (plugins/defaults/capabilities/skills/); the old
+    # core package is deleted with no shim.
+    "core/skills",
+    # D2 OLD-AUTHORITY: skill assignment is disk-owned; the generic IOC
+    # config module no longer supplies roots or allow-lists.
+    "ioc/configs/skills.py",
 )
 
 # (shim module, origin module) — the shim must not import anything from the
 # origin. Appended by the work package that deletes each shim; empty today.
 FORBIDDEN_COMPAT_REEXPORTS: set[tuple[str, str]] = set()
 
-# Symbols proven dead and deleted by work packages (plan §15 A2). Grepped in
-# src/ so re-introduction fails loudly. Lives here rather than in
+# Identifiers proven dead and deleted by work packages (plan §15 A2). Parsed
+# from live Python so re-introduction fails loudly without matching historical
+# prose. Lives here rather than in
 # test_dead_code_gone.py because that file's contract is scoped to the
 # ADR-0007 candidate-④ control-plane removals.
-FORBIDDEN_SYMBOLS: tuple[str, ...] = (
+FORBIDDEN_IDENTIFIERS: tuple[str, ...] = (
     # A2: deprecated sidecar tracker replaced by PerFileExperienceMetaStore.
     "ExperienceUsageTracker",
     # A2: dormant LLM factory config — zero production consumers; live LLM
@@ -120,6 +137,15 @@ FORBIDDEN_SYMBOLS: tuple[str, ...] = (
     # C2: DynamicSchemaProvider folded into Tool — Tool is its only
     # implementer; the separate ABC is deleted.
     "DynamicSchemaProvider",
+    # D2 OLD-AUTHORITY: disk paths are the sole skill-assignment source.
+    "SkillsConfig",
+    "allowed_skills",
+    "SkillProvider",
+    "SkillManager",
+    "SkillRegistry",
+    "ParsedSkill",
+    "_build_skill_manager",
+    "skill_manager",
 )
 
 
@@ -156,6 +182,25 @@ def _reexports_from(shim_path: Path, origin: str) -> bool:
     return False
 
 
+def _python_identifiers(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    identifiers: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            identifiers.add(node.name)
+        elif isinstance(node, ast.Name):
+            identifiers.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            identifiers.add(node.attr)
+        elif isinstance(node, (ast.arg, ast.keyword)) and node.arg is not None:
+            identifiers.add(node.arg)
+        elif isinstance(node, ast.alias):
+            identifiers.add(node.name.rsplit(".", maxsplit=1)[-1])
+            if node.asname is not None:
+                identifiers.add(node.asname)
+    return identifiers
+
+
 def test_old_module_paths_stay_gone() -> None:
     resurrected = _existing_forbidden_paths(PACKAGE_ROOT)
     assert not resurrected, (
@@ -181,16 +226,17 @@ def test_no_compat_reexport_shims() -> None:
 def test_forbidden_path_list_is_nonempty() -> None:
     """Sanity: the guard must actually watch something."""
     assert FORBIDDEN_MODULE_PATHS
+    assert FORBIDDEN_IDENTIFIERS
 
 
-def test_forbidden_symbols_absent_from_src() -> None:
-    _pattern = re.compile(r"\b(" + "|".join(re.escape(s) for s in FORBIDDEN_SYMBOLS) + r")\b")
+def test_forbidden_identifiers_absent_from_live_python() -> None:
     offenders: list[str] = []
-    for path in PACKAGE_ROOT.rglob("*.py"):
-        hits = set(_pattern.findall(path.read_text(encoding="utf-8")))
-        if hits:
-            offenders.append(f"{path.relative_to(PACKAGE_ROOT)}: {sorted(hits)}")
+    for root in LIVE_PYTHON_ROOTS:
+        for path in root.rglob("*.py"):
+            hits = set(FORBIDDEN_IDENTIFIERS) & _python_identifiers(path)
+            if hits:
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {sorted(hits)}")
     assert not offenders, (
-        "Symbols deleted as proven dead re-introduced under src/modex_agent "
-        f"(provenance in FORBIDDEN_SYMBOLS): {offenders}"
+        "Identifiers deleted as proven dead re-introduced in live Python "
+        f"(provenance in FORBIDDEN_IDENTIFIERS): {offenders}"
     )

@@ -17,11 +17,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bot.scope import BotRecordScope
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_store import SessionStore
-from modex_agent.core.skills import SkillManager
 from modex_agent.core.tool_manager import (
     Tool,
 )
@@ -34,14 +34,13 @@ from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import AgentMessageBus
 from modex_agent.multi_agent.pool_router import PoolRoutingStore
 from modex_agent.persistence.config import PersistenceBackend
-from modex_agent.adapters.output import OutputAdapter
 from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.assembly.context import AgentContext as ComponentAgentContext
 from modex_agent.scope.spec import AgentSpec
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.registry import ScopeRegistryStore
-from modex_agent.tools.manager import InMemoryToolManager
 
 if TYPE_CHECKING:
     from bot.service.pool.declaration import DeclaredPoolBuild
@@ -127,7 +126,6 @@ class AgentBuilderMixin:
     agent_bus: AgentMessageBus | None
 
     # Subagent caches
-    _subagent_skill_managers: dict[str, SkillManager]
     _subagent_memory_systems: dict[str, Any]
     _additional_subagent_memory_systems: dict[str, Any]
 
@@ -175,42 +173,12 @@ class _PoolAssemblyMixin:
         )
         return tm
 
-    # ── Skill manager ────────────────────────────────────────────────────
-
-    def _build_skill_manager(
-        self, root_agent_name: str, project_dir: Path, pool_name: str
-    ) -> Any | None:
-        """Convention: skills/{pool_name}/{agent_name}/."""
-        directories = [project_dir / "skills" / pool_name / root_agent_name]
-
-        logger.info(
-            "Pool '%s': scanning skills: %s (exists=%s)",
-            pool_name,
-            [str(d) for d in directories],
-            [d.exists() for d in directories],
-        )
-        found = [d for d in directories if d.resolve().exists()]
-        if not found:
-            logger.warning("Pool '%s': no skill directories found", pool_name)
-            return None
-
-        from modex_agent.core.skills import (
-            DefaultSkillBuilder,
-            DirectorySkillCache,
-            FileSkillSource,
-            SkillManager,
-        )
-
-        source = FileSkillSource(
-            directories=found,
-            cache=True,
-            layout="directory",
-            skill_filename="SKILL.md",
-        )
-        cache = DirectorySkillCache(directories=found, layout="directory")
-        builder = DefaultSkillBuilder(base_path=project_dir)
-        mgr = SkillManager(source=source, builder=builder, cache=cache)
-        return mgr
+    # ── Skill resolver ────────────────────────────────────────────────────
+    #
+    # The skills capability's pool supply owns catalog construction (plan
+    # §11.3): ``require_skills_supply(pool_capability_supply)
+    # -> resolver_for(root_agent_name)`` is the single lookup; this service
+    # layer performs no catalog construction.
 
     # ── Cassette config ──────────────────────────────────────────────────
 

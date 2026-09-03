@@ -25,7 +25,6 @@ class TestAgentTemplateDefaults:
         assert t.spec.max_steps == 100
         assert t.spec.context_mode == ContextMode.FRESH
         assert t.memory is None
-        assert t.skills is None
 
 
 class TestAgentTemplateDeadFieldsGone:

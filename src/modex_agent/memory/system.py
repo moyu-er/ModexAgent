@@ -30,7 +30,6 @@ from modex_agent.memory.token_estimator import TokenEstimator
 if TYPE_CHECKING:
     from modex_agent.agents.summarizer.abc import ArchiveGenerator, CoreMemoryConsolidatorBase
     from modex_agent.core.provider import LLMProvider
-    from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
     from modex_agent.memory.stores.dir_archive import DirArchiveStorage
@@ -190,7 +189,6 @@ class MemorySystemContextManager(ContextManager):
         runtime_info: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         tool_manager: ToolManager | None = None,
-        skill_manager: SkillManager | None = None,
     ) -> ContextState:
         self._last_session_id = session_id
         ctx: MemoryContext
@@ -331,11 +329,12 @@ class MemorySystemContextManager(ContextManager):
         # agents (content byte-equal; the anchor position is the
         # documented designed delta, SPEC §7.3 N4).
 
-        # 9. Skills (static)
-        if skill_manager is not None:
-            provider = await skill_manager.build_provider(tool_manager)
-            if provider is not None:
-                providers.append(provider)
+        # 9. Skills — RETIRED with the capability migration (plan §11.5):
+        # the ``skills.injection`` section now renders through the
+        # capability-section anchor above for skills-capability agents.
+        # Command resolution stays available independently of prompt
+        # assembly (a custom MEMORY_SYSTEM owns its whole prompt and simply
+        # gets no capability sections).
 
         # 10. Agent role contracts (after business providers; near end).
         if self._roles:

@@ -136,13 +136,19 @@ class AgentMessageEnvelope:
         ``submit_input`` (``BrokerInputPayload``) is merged back beneath the
         authoritative routing and envelope metadata.
         """
-        from modex_agent.messaging.broker_bridge import metadata_from_payload
+        from modex_agent.messaging.broker_bridge import BrokerInputPayload
+
+        payload = BrokerInputPayload.model_validate(self.payload)
+        return self._to_input_metadata(payload.metadata)
+
+    def _to_input_metadata(self, payload_metadata: dict[str, Any]) -> dict[str, Any]:
+        """Merge validated payload metadata with authoritative routing fields."""
 
         source_name = self.source.name if self.source else None
         target_name = self.target.name if self.target else None
         is_agent_source = bool(self.source and self.source.kind == AddressKind.AGENT)
         return {
-            **metadata_from_payload(self.payload),
+            **payload_metadata,
             "session_id": self.agent_session_id,
             "agent_session_id": self.agent_session_id,
             "message_type": self.message_type,
@@ -163,17 +169,16 @@ class AgentMessageEnvelope:
         ``dispatch_envelope`` before this call).
         """
         from modex_agent.core.types import InputMessage
-        from modex_agent.messaging.broker_bridge import (
-            approval_decision_from_payload,
-            attachments_resolved_from_payload,
-        )
+        from modex_agent.messaging.broker_bridge import BrokerInputPayload
 
-        workspace_raw = self.payload.get("workspace")
+        payload = BrokerInputPayload.model_validate(self.payload)
         return InputMessage(
-            content=self.payload.get("content", ""),
+            content=payload.content,
             session=session,
-            metadata=self.to_input_metadata(),
-            approval_decision=approval_decision_from_payload(self.payload),
-            attachments_resolved=attachments_resolved_from_payload(self.payload),
-            workspace=Path(workspace_raw) if workspace_raw is not None else None,
+            metadata=self._to_input_metadata(payload.metadata),
+            content_format=payload.content_format,
+            truncatable_paths=payload.truncatable_paths,
+            approval_decision=payload.to_approval_decision(),
+            attachments_resolved=payload.attachments_resolved,
+            workspace=Path(payload.workspace) if payload.workspace is not None else None,
         )

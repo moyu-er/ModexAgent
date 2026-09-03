@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-28 | capability-bundles doc sync (ADR-0047) -->
+<!-- Updated: 2026-09-02 | D2 Skills prompt ownership -->
 
 # memory
 
@@ -15,7 +15,7 @@ The `memory/` module provides a comprehensive memory system for agents. It manag
 
 | File | Description |
 |------|-------------|
-| `system.py` | `MemorySystemContextManager(ContextManager)` — high-level facade wrapping `MemorySystem` for pipeline integration; archive summaries use backend-neutral history retrieval and optional file-path metadata. `load()` renders the capability-section anchor block (ADR-0047): after fork context, before core memory, the providers set once via `set_capability_sections(...)` (setter-only seam, second call raises — the sections back the KV-cache prefix contract) render in ascending section order |
+| `system.py` | `MemorySystemContextManager(ContextManager)` — high-level facade wrapping `MemorySystem` for pipeline integration. `load()` renders the capability-section anchor block after fork context and before core memory. Skills prompt injection arrives through the `SkillsCapability` provider in that generic block; memory has no skill-specific load parameter. A custom `MEMORY_SYSTEM` owns its full prompt assembly, while command resolution remains independent through `SkillResolver`. |
 | `default_system.py` | `DefaultMemorySystem` — standard implementation wiring all layers |
 | `history.py` | `MessageHistory`, `ListMessageHistory`, `ScopedMessageHistory`, `inject_attachments_to_history()` |
 | `context_governance.py` | `ContextGovernance` ABC — `CompositeGovernance`, `TokenBudgetGovernance`, `MicrocompactGovernance`, `ToolChainRepairGovernance`. Mutates only LLM input copy, never persisted session data |
@@ -201,4 +201,3 @@ unconditional `factory.py` registration is gone.
 
 <!-- MANUAL -->
 <!-- Additional manual entries can be added below this line. -->
-

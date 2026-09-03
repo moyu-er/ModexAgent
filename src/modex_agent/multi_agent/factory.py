@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from modex_agent.commands.skill import SkillResolver
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.provider import LLMProvider
 
@@ -14,8 +15,6 @@ logger = logging.getLogger(__name__)
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.context import ContextManager, InMemoryContextManager
 from modex_agent.core.session_registry import SessionRegistry
-from modex_agent.core.skills.filter import AllowListFilter
-from modex_agent.core.skills.manager import SkillManager
 from modex_agent.hook import HookRunner
 from modex_agent.hook.builtin import InboxFlushHook
 from modex_agent.ioc.configs.llm import LLMConfig
@@ -49,7 +48,7 @@ class AgentFactory(ABC):
         context_manager: ContextManager | None = None,
         broker: Any | None = None,
         tool_manager: InMemoryToolManager | None = None,
-        skill_manager: SkillManager | None = None,
+        skill_resolver: SkillResolver | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
         subagent_service: Any | None = None,
@@ -75,7 +74,6 @@ class DefaultAgentFactory(AgentFactory):
         self,
         default_llm_provider: Any | None = None,
         default_tool_manager: InMemoryToolManager | None = None,
-        skill_manager: SkillManager | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
         subagent_service: Any | None = None,
@@ -90,7 +88,6 @@ class DefaultAgentFactory(AgentFactory):
     ) -> None:
         self._default_llm_provider = default_llm_provider
         self._default_tool_manager = default_tool_manager
-        self._skill_manager = skill_manager
         self._sanitizer = sanitizer
         self._command_interceptor = command_interceptor
         self._subagent_service = subagent_service
@@ -183,7 +180,7 @@ class DefaultAgentFactory(AgentFactory):
         descriptor: AgentDescriptor,
         ctx_mgr: ContextManager,
         filtered_tools: Any,
-        skill_mgr: SkillManager | None,
+        skill_resolver: SkillResolver | None,
         hook_runner: HookRunner,
         agent_interceptor_chain: Any,
         context_manager_factory: Callable[[str], ContextManager] | None,
@@ -216,7 +213,7 @@ class DefaultAgentFactory(AgentFactory):
             tool_manager=filtered_tools,
             sanitizer=sanitizer,
             command_processor=None,
-            skill_manager=skill_mgr,
+            skill_resolver=skill_resolver,
             context_builder=None,
             agent_descriptor=descriptor,
             max_iterations=descriptor.max_iterations,
@@ -266,7 +263,7 @@ class DefaultAgentFactory(AgentFactory):
         context_manager: ContextManager | None = None,
         broker: Any | None = None,
         tool_manager: InMemoryToolManager | None = None,
-        skill_manager: SkillManager | None = None,
+        skill_resolver: SkillResolver | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
         subagent_service: Any | None = None,
@@ -287,19 +284,10 @@ class DefaultAgentFactory(AgentFactory):
             denied_tools=descriptor.denied_tools,
         )
 
-        if skill_manager is not None:
-            skill_mgr = skill_manager
-        elif descriptor.comm_kind != AgentCommKind.SUBAGENT:
-            skill_mgr = self._skill_manager
-        else:
-            skill_mgr = None
-        if descriptor.allowed_skills is not None and skill_mgr is not None:
-            skill_mgr = SkillManager(
-                source=skill_mgr._source,
-                skill_filter=AllowListFilter(names=set(descriptor.allowed_skills)),
-                builder=skill_mgr._builder,
-                cache=skill_mgr._cache,
-            )
+        # Native assembly passes the resolver bound for this exact agent.
+        # ``None`` is an explicit absence (for example, a capability veto),
+        # never a request to inherit another agent's resolver.
+        resolver = skill_resolver
 
         auto_inbox_flush = (
             InboxFlushHook(
@@ -369,7 +357,7 @@ class DefaultAgentFactory(AgentFactory):
             descriptor=descriptor,
             ctx_mgr=ctx_mgr,
             filtered_tools=filtered_tools,
-            skill_mgr=skill_mgr,
+            skill_resolver=resolver,
             hook_runner=hook_runner,
             agent_interceptor_chain=agent_interceptor_chain,
             context_manager_factory=context_manager_factory,

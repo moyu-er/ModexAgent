@@ -38,10 +38,10 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from modex_agent.commands.skill import SkillResolver
     from modex_agent.core.context import ContextManager
     from modex_agent.core.emitter import AgentResult, ContentEmitter
     from modex_agent.core.session_id import SessionInfo
-    from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.core.types import InputMessage
     from modex_agent.hook.runner import HookRunner
@@ -192,8 +192,8 @@ class TurnRunner(ABC):
         return None
 
     @property
-    def skill_manager(self) -> SkillManager | None:
-        """The skill manager. Used by pipeline for CommandContext."""
+    def skill_resolver(self) -> SkillResolver | None:
+        """The bound skill resolver. Used by pipeline for CommandContext."""
         return None
 
     @property

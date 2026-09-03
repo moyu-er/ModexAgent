@@ -20,7 +20,6 @@ Pydantic configuration models for every framework component. Each file defines a
 | `mcp.py` | `MCPConfig` — MCP server connections (stdio/sse/streamableHttp transport, command, args, env) |
 | `observability.py` | `ObservabilityConfig` — logging and tracing enable/disable |
 | `plugins.py` | `PluginConfig` — plugin system enable/disable with per-plugin configurations |
-| `skills.py` | `SkillsConfig` — skill auto-discovery roots and optional whitelist |
 | `__init__.py` | Module docstring only: "Pydantic configuration models for each framework component" |
 
 ## For AI Agents

@@ -131,7 +131,7 @@ def _make_pipeline() -> AgentPipeline:
         tool_manager=InMemoryToolManager(),
         sanitizer=None,
         command_processor=None,
-        skill_manager=None,
+        skill_resolver=None,
         context_builder=None,
         agent_descriptor=None,
         max_iterations=10,

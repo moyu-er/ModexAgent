@@ -1,4 +1,4 @@
-<!-- Updated: 2026-08-28 | capability-bundles doc sync (ADR-0047) -->
+<!-- Updated: 2026-09-02 | D2 Skills vertical slice -->
 
 # bot_project
 
@@ -66,7 +66,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 - **IM pipeline** (S4→S2→S3→S5→S6→S7→S8): Full path with control commands
 - **WebUI pipeline** (S4→S5→S6→S7→S8): No S2/S3 (UI handles workspace/pool/session controls)
 - **Single persistence path**: `PersistUserMessageStage` (S7) is the only place user messages are written to transcript store
-- **Skill resolution**: `SkillParseStage` (S6) validates `/skillName` commands via pluggable `SkillRegistry` ABC
+- **Skill resolution**: `SkillParseStage` (S6) resolves `/skillName` commands through the shared `SkillResolver` contract
 
 ### WebUI vs IM Differences
 
@@ -86,7 +86,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/input_pipeline/context.py` | `BotInputContext` — concrete context with pool store, transcript store, enqueue callback |
 | `bot/input_pipeline/assembly.py` | `build_im_pipeline()` / `build_webui_pipeline()` — stage ordering per channel |
 | `bot/input_pipeline/stages/resolve_pool.py` | S5 — pool/agent resolution + `RoutingMeta` StrEnum for envelope metadata keys |
-| `bot/input_pipeline/stages/skill_parse.py` | S6 — skill validation via `SkillRegistry` ABC + `PoolSkillManagerRegistry` concrete impl |
+| `bot/input_pipeline/stages/skill_parse.py` | S6 — per-pool root `SkillResolver` lookup + canonical command resolution via `PoolSkillResolverRegistry` |
 | `bot/input_pipeline/stages/persist_user_message.py` | S7 — single persistence path for user messages |
 | `bot/input_pipeline/stages/enqueue.py` | S8 — builds `InputMessage` and enqueues |
 | `bot/input_pipeline/stages/environment_control.py` | S2 — IM-only `/cd`, `/pool`, `/exit`, `/pwd` interception |
@@ -427,6 +427,19 @@ These are **consumed at different points** than `build_session_only_memory`:
 
 ## Skills (global library + per-agent assignment)
 
+`SkillsCapability` auto-applies to every native agent; an explicit
+`capabilities: {skills: false}` veto removes that agent's prompt and command
+resolution, while external agents are structurally excluded from capabilities.
+One pool-level `SkillsSupply` owns the `agent_name -> SkillCatalog` mapping.
+Main and subagent assembly only call `resolver_for(agent_name)`; they do not
+construct catalogs.
+
+There are two inbound command onramps. Bot `SkillParseStage` obtains each pool's
+root resolver from `PoolInstance.skill_resolver`; framework
+`SkillCommandHandler` receives the bound resolver through `CommandContext`.
+Both call `SkillResolver.resolve_command()` and therefore use the same catalog
+and canonical XML renderer.
+
 The global skill **library** has two sources, REPO PRIORITY:
 
 - `local_skills/<name>/` — the repo library (CRUD target: `upload_skill` /
@@ -438,7 +451,7 @@ The global skill **library** has two sources, REPO PRIORITY:
 
 Per-agent skill dirs live at `skills/<pool>/<agent>/<name>/`. Disk is the single
 source of truth: neither the scope declaration nor the WebUI carries a `skills`
-field; the runtime `SkillManager` and the WebUI both read
+field; the runtime `SkillCatalog` and the WebUI `SkillsStore` both read
 `skills/<pool>/<agent>/` directly. A per-agent dir may be either:
 
 - a **real copy** — committed in the repo for portability, or manually placed;

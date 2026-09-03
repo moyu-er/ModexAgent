@@ -1,0 +1,105 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from modex_agent.plugins.capability import (
+    CapabilitySupply,
+    PoolSupplyAgentEntry,
+    PoolSupplyView,
+)
+from modex_agent.plugins.defaults.capabilities.skills.capability import (
+    SkillsCapability,
+    require_skills_supply,
+)
+from modex_agent.plugins.defaults.capabilities.skills.supply import SkillsSupply
+
+
+def _write_skill(root: Path, name: str, body: str) -> None:
+    directory = root / name
+    directory.mkdir(parents=True)
+    (directory / "SKILL.md").write_text(
+        f"---\nname: {name}\n---\n{body}", encoding="utf-8"
+    )
+
+
+async def test_supply_builds_one_isolated_catalog_per_effective_agent(
+    tmp_path: Path,
+) -> None:
+    alpha_root = tmp_path / "skills" / "pool-a" / "alpha"
+    beta_root = tmp_path / "skills" / "pool-a" / "beta"
+    _write_skill(alpha_root, "alpha-only", "alpha body")
+    _write_skill(beta_root, "beta-only", "beta body")
+    supply = SkillsCapability().supply(
+        PoolSupplyView(
+            pool_name="pool-a",
+            project_dir=tmp_path,
+            entries=(
+                PoolSupplyAgentEntry(agent_name="alpha", config={}),
+                PoolSupplyAgentEntry(agent_name="beta", config={}),
+            ),
+        )
+    )
+
+    assert isinstance(supply, SkillsSupply)
+    assert supply.known_agents() == ("alpha", "beta")
+    assert supply.catalog_for("alpha") is supply.resolver_for("alpha")
+    assert supply.catalog_for("beta") is supply.resolver_for("beta")
+    assert await supply.catalog_for("alpha").get_skill("alpha-only") is not None
+    assert await supply.catalog_for("alpha").get_skill("beta-only") is None
+    assert await supply.catalog_for("beta").get_skill("beta-only") is not None
+
+
+async def test_missing_directory_keeps_empty_catalog_wired(tmp_path: Path) -> None:
+    supply = SkillsCapability().supply(
+        PoolSupplyView(
+            pool_name="empty",
+            project_dir=tmp_path,
+            entries=(PoolSupplyAgentEntry(agent_name="main", config={}),),
+        )
+    )
+
+    catalog = supply.catalog_for("main")
+    assert catalog is supply.resolver_for("main")
+    assert await catalog.list_skills() == ()
+    assert await catalog.render_prompt() == ""
+
+
+def test_supply_does_not_construct_catalog_for_vetoed_agent(tmp_path: Path) -> None:
+    supply = SkillsCapability().supply(
+        PoolSupplyView(
+            pool_name="mixed",
+            project_dir=tmp_path,
+            entries=(PoolSupplyAgentEntry(agent_name="enabled", config={}),),
+        )
+    )
+
+    with pytest.raises(ValueError, match="not effective"):
+        supply.resolver_for("vetoed")
+
+
+def test_require_supply_reads_generic_capability_supply_mapping(tmp_path: Path) -> None:
+    supply = SkillsCapability().supply(
+        PoolSupplyView(
+            pool_name="main",
+            project_dir=tmp_path,
+            entries=(PoolSupplyAgentEntry(agent_name="main", config={}),),
+        )
+    )
+
+    assert require_skills_supply({"skills": supply}) is supply
+
+
+def test_require_supply_rejects_missing_supply() -> None:
+    with pytest.raises(ValueError, match="skills components require"):
+        require_skills_supply({})
+
+
+class _WrongSupply(CapabilitySupply):
+    pass
+
+
+def test_require_supply_rejects_wrong_supply_type() -> None:
+    with pytest.raises(ValueError, match="must be SkillsSupply"):
+        require_skills_supply({"skills": _WrongSupply()})

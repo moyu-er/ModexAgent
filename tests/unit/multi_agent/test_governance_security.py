@@ -2,21 +2,19 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.core.emitter import AgentResult
 from modex_agent.core.tool_manager import (
     Tool,
 )
 from modex_agent.messaging.broker import Address, BrokerMessage
-from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.core.skills.filter import AllowListFilter
-from modex_agent.utils.context_builder import MultiAgentContextBuilder
-from modex_agent.utils.deduplicator import MessageDeduplicator
 from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.plugins.defaults.capabilities.skills.filter import AllowListFilter
 from modex_agent.tools.filter import FilteredToolManager
-from modex_agent.utils.sanitizer import ContentSanitizer
 from modex_agent.tools.manager import InMemoryToolManager
+from modex_agent.utils.context_builder import MultiAgentContextBuilder
+from modex_agent.utils.deduplicator import MessageDeduplicator
+from modex_agent.utils.sanitizer import ContentSanitizer
 
 
 class _DummyTool(Tool):
@@ -128,17 +126,17 @@ class TestFilteredToolManager:
         assert "not allowed" in result.error.lower()
 
 
-class TestAgentSkillManager:
+class TestSkillCatalog:
     @pytest.mark.asyncio
     async def test_allow_list_filter(self) -> None:
-        from modex_agent.core.skills import InlineSkillSource
-        from modex_agent.core.skills.manager import SkillManager
-        from modex_agent.core.skills.models import Skill
+        from modex_agent.plugins.defaults.capabilities.skills.catalog import SkillCatalog
+        from modex_agent.plugins.defaults.capabilities.skills.models import Skill
+        from modex_agent.plugins.defaults.capabilities.skills.source import InlineSkillSource
 
         python_skill = Skill(name="python", content="python skill", description="")
         source = InlineSkillSource([python_skill])
-        mgr = SkillManager(source, skill_filter=AllowListFilter(names={"python"}))
-        skills = await mgr.list_skills()
+        catalog = SkillCatalog(source, skill_filter=AllowListFilter(names={"python"}))
+        skills = await catalog.list_skills()
         assert [s.name for s in skills] == ["python"]
 
 

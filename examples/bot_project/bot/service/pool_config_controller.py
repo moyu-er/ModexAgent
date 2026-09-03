@@ -15,13 +15,10 @@ frozen Pydantic payload or raises:
   subclasses) for not-found — the route maps these to HTTP 404.
 
 ``restart_required`` semantics: a per-process ``set`` of dirty artifact
-classes that becomes ``True`` after any write that touches an agent root
-(an agent prompt md, the MCP registry, or a per-agent skill
-assign/unassign) and stays ``True`` until the process restarts. Global skill
-upload/delete is hot-reload per spec, so those do NOT set the marker; only
-``assign_skill`` / ``unassign_skill`` (which write under
-``skills/<pool>/<agent>/``, an agent root) do. The route layer reads
-:meth PoolConfigController.restart_required to populate the
+classes that becomes ``True`` after a prompt or MCP registry write and stays
+``True`` until the process restarts. Global skill upload/delete and per-agent
+assignment changes are read live, so they do NOT set the marker. The route
+layer reads :meth PoolConfigController.restart_required to populate the
 ``restart_required`` hint on returned payloads.
 """
 
@@ -49,11 +46,6 @@ from bot.config.scope_pools import PoolSummary, list_pool_summaries, prompt_usag
 from bot.config.skills_store import SkillsStore
 from bot.service.config_controller import FieldValidationError
 from modex_agent.ioc.configs.mcp import MCPServerEntry
-
-# Artifact classes that, when written, set ``restart_required``. The marker is
-# coarse (a single bool) — once any of these fires, the next restart re-reads
-# everything. Kept as a set so the source of the dirty state is diagnosable.
-_RESTART_DIRTY_CLASSES: frozenset[str] = frozenset({"mcp", "prompt", "skill_assign"})
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +98,7 @@ class PoolConfigController:
 
     @property
     def restart_required(self) -> bool:
-        """True once any mcp/prompt/skill-assign write lands.
+        """True once any MCP or prompt write lands.
 
         Stays True until the process restarts (the dirty state is per-process;
         a restart re-reads everything fresh).
@@ -256,9 +248,8 @@ class PoolConfigController:
     def upload_skill(self, name: str, file_tree: dict[str, bytes | str]) -> SkillEntry:
         """Upload a global skill. Hot-reload per spec: does NOT set restart_required.
 
-        Global skills are scanned at agent load; adding/removing one is picked
-        up without a pool restart. Only ``assign_skill`` / ``unassign_skill``
-        (which touch per-agent roots) require a restart.
+        Skill catalogs read their source on access, so library and assignment
+        changes are picked up without a pool restart.
         """
         from bot.config.skills_store import SkillValidationError
 
@@ -290,7 +281,6 @@ class PoolConfigController:
             self._skills.assign_skill_to_agent(pool, agent, name)
         except SkillValidationError as exc:
             raise FieldValidationError({"agent": [str(exc)]}) from exc
-        self._mark("skill_assign")
 
     def unassign_skill(self, pool: str, agent: str, name: str) -> None:
         from bot.config.skills_store import SkillValidationError
@@ -299,7 +289,6 @@ class PoolConfigController:
             self._skills.unassign_skill_from_agent(pool, agent, name)
         except SkillValidationError as exc:
             raise FieldValidationError({"agent": [str(exc)]}) from exc
-        self._mark("skill_assign")
 
     # ------------------------------------------------------------------ #
     # restart

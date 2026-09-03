@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import (
     AgentDescriptor,
@@ -44,7 +47,6 @@ class TestAgentDescriptor:
             address=addr,
             allowed_tools=["read_file", "write_file"],
             denied_tools=["bash"],
-            allowed_skills=["refactor"],
             max_iterations=5,
             execution_strategy="single_turn",
             context_strategy="ephemeral",
@@ -53,11 +55,20 @@ class TestAgentDescriptor:
         assert desc.address == addr
         assert desc.allowed_tools == ["read_file", "write_file"]
         assert desc.denied_tools == ["bash"]
-        assert desc.allowed_skills == ["refactor"]
         assert desc.max_iterations == 5
         assert desc.execution_strategy == "single_turn"
         assert desc.context_strategy == "ephemeral"
         assert desc.allowed_callers == ["planner"]
+
+    def test_rejects_legacy_allowed_skills_authority(self) -> None:
+        assert "allowed_skills" not in AgentDescriptor.model_fields
+        with pytest.raises(ValidationError):
+            AgentDescriptor.model_validate(
+                {
+                    "address": AgentAddress(kind="agent", name="reviewer"),
+                    "allowed_skills": ["refactor"],
+                }
+            )
 
 
 class TestAgentDescriptorRolesField:

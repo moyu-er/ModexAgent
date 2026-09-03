@@ -18,7 +18,7 @@ Inversion of Control container — typed configuration (Pydantic) and factory fu
 | `factories/` | Assembly factory functions (7 files) |
 
 ### configs/
-`app.py` (root `AppConfig`), `llm.py` (`LLMConfig`), `memory.py` (`MemoryConfig`), `safety.py` (`SafetyConfig`), `mcp.py` (`MCPConfig`), `approval.py` (`ApprovalConfig`), `hooks.py` (`HooksConfig`), `observability.py` (`ObservabilityConfig`), `plugins.py` (`PluginsConfig`), `skills.py` (`SkillsConfig`) — all loaded from YAML via `AppConfig`
+`app.py` (root `AppConfig`), `llm.py` (`LLMConfig`), `memory.py` (`MemoryConfig`), `safety.py` (`SafetyConfig`), `mcp.py` (`MCPConfig`), `approval.py` (`ApprovalConfig`), `hooks.py` (`HooksConfig`), `observability.py` (`ObservabilityConfig`), `plugins.py` (`PluginsConfig`) — all loaded from YAML via `AppConfig`
 
 ### factories/
 `app.py` (app factory), `llm.py` (LLM factory), `memory.py` (memory factory), `tools.py` (tools factory), `governance.py` (governance factory), `descriptors.py` (descriptor factory), `__init__.py`

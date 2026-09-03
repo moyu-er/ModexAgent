@@ -2,7 +2,7 @@
 
 import pytest
 
-from modex_agent.core.skills.models import (
+from modex_agent.plugins.defaults.capabilities.skills.models import (
     ResolutionContext,
     Skill,
     SkillMetadata,
@@ -22,11 +22,11 @@ class TestSkillMetadataFromDict:
             "version": "1.0",
         }
         meta = SkillMetadata.from_dict(data)
-        assert meta.requires_tools == ["weather"]
-        assert meta.requires_bins == ["git"]
-        assert meta.requires_env == ["API_KEY"]
+        assert list(meta.requires_tools) == ["weather"]
+        assert list(meta.requires_bins) == ["git"]
+        assert list(meta.requires_env) == ["API_KEY"]
         assert meta.always is True
-        assert meta.tags == ["utils"]
+        assert list(meta.tags) == ["utils"]
         assert meta.author == "alice"
         assert meta.version == "1.0"
 
@@ -39,9 +39,9 @@ class TestSkillMetadataFromDict:
             },
         }
         meta = SkillMetadata.from_dict(data)
-        assert meta.requires_tools == ["calc"]
-        assert meta.requires_bins == ["node"]
-        assert meta.requires_env == ["NODE_ENV"]
+        assert list(meta.requires_tools) == ["calc"]
+        assert list(meta.requires_bins) == ["node"]
+        assert list(meta.requires_env) == ["NODE_ENV"]
 
     def test_nested_requires_does_not_override_explicit(self):
         data = {
@@ -51,14 +51,14 @@ class TestSkillMetadataFromDict:
             },
         }
         meta = SkillMetadata.from_dict(data)
-        assert meta.requires_tools == ["explicit_tool"]
+        assert list(meta.requires_tools) == ["explicit_tool"]
 
     def test_nanobot_json_in_yaml_string(self):
         data = {
             "metadata": '{"nanobot": {"requires_tools": ["t1"], "custom_key": "v1"}}',
         }
         meta = SkillMetadata.from_dict(data)
-        assert meta.requires_tools == ["t1"]
+        assert list(meta.requires_tools) == ["t1"]
         assert meta.extra.get("nanobot.custom_key") == "v1"
 
     def test_openclaw_json_in_yaml_string(self):
@@ -66,7 +66,7 @@ class TestSkillMetadataFromDict:
             "metadata": '{"openclaw": {"requires_bins": ["gh"], "flag": true}}',
         }
         meta = SkillMetadata.from_dict(data)
-        assert meta.requires_bins == ["gh"]
+        assert list(meta.requires_bins) == ["gh"]
         assert meta.extra.get("openclaw.flag") is True
 
     def test_invalid_json_string_treated_as_empty(self):
@@ -78,7 +78,7 @@ class TestSkillMetadataFromDict:
         data = {"always": True}
         meta = SkillMetadata.from_dict(data)
         assert meta.always is True
-        assert meta.requires_tools == []
+        assert meta.requires_tools == ()
         assert meta.extra == {}
 
     def test_unknown_keys_collected_to_extra(self):

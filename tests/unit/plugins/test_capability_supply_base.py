@@ -27,13 +27,12 @@ Covers:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy,
     PoolAssemblyContext,
@@ -42,8 +41,14 @@ from modex_agent.multi_agent.execution_strategy import (
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.plugins.abc import ComponentFactory, ComponentSlot, SimpleFactory
 from modex_agent.plugins.assembly.builder import AssemblyBuilder
-from modex_agent.plugins.assembly.context import SupplyInfra
+from modex_agent.plugins.assembly.capability_supply import (
+    assemble_capability_supplies,
+    stop_capability_supplies,
+)
+from modex_agent.plugins.assembly.context import AssemblyContext, SupplyInfra
+from modex_agent.plugins.assembly.pipeline import AssemblyPipeline, AssemblyStage
 from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
+from modex_agent.plugins.assembly.stages.infra_assemble import InfraAssembleStage
 from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
 from modex_agent.plugins.capability import (
     Capability,
@@ -167,9 +172,7 @@ def _make_supply(
 def _make_assembly_ctx(
     registry: ComponentRegistry,
     infra: SupplyInfra,
-) -> Any:
-    from modex_agent.plugins.assembly.context import AssemblyContext
-
+) -> AssemblyContext:
     return AssemblyContext(
         registry=registry,
         workspace_ctx=_make_workspace_ctx(),
@@ -222,6 +225,182 @@ class _ExplodingCapability(Capability):
 
     async def assemble(self, binding: CapabilityBinding, ctx: object) -> CapabilityWiring:
         return CapabilityWiring()
+
+
+class _LifecycleSupply(CapabilitySupply):
+    def __init__(
+        self,
+        name: str,
+        events: list[str],
+        *,
+        fail_start: bool = False,
+        fail_stop: bool = False,
+    ) -> None:
+        self.name = name
+        self.events = events
+        self.fail_start = fail_start
+        self.fail_stop = fail_stop
+
+    async def start(self) -> None:
+        self.events.append(f"start:{self.name}")
+        if self.fail_start:
+            raise RuntimeError(f"start failed: {self.name}")
+
+    async def stop(self) -> None:
+        self.events.append(f"stop:{self.name}")
+        if self.fail_stop:
+            raise RuntimeError(f"stop failed: {self.name}")
+
+
+class _LifecycleCapability(Capability):
+    def __init__(
+        self,
+        name: str,
+        events: list[str],
+        *,
+        fail_construction: bool = False,
+        fail_start: bool = False,
+        fail_stop: bool = False,
+    ) -> None:
+        self.name = name
+        self.events = events
+        self.fail_construction = fail_construction
+        self.product = _LifecycleSupply(
+            name,
+            events,
+            fail_start=fail_start,
+            fail_stop=fail_stop,
+        )
+
+    def supply(self, view: PoolSupplyView) -> CapabilitySupply | None:
+        self.events.append(f"construct:{self.name}")
+        if self.fail_construction:
+            raise RuntimeError(f"construction failed: {self.name}")
+        return self.product
+
+    async def assemble(self, binding: CapabilityBinding, ctx: object) -> CapabilityWiring:
+        return CapabilityWiring()
+
+
+class _NoopStage(AssemblyStage):
+    async def process(
+        self,
+        spec: AssemblySpec,
+        builder: AssemblyBuilder,
+        ctx: AssemblyContext,
+    ) -> None:
+        pass
+
+
+def _supply_view() -> PoolSupplyView:
+    return PoolSupplyView(pool_name="test_pool", entries=())
+
+
+class TestAtomicCapabilitySupplyLifecycle:
+    async def test_success_returns_immutable_mapping_and_ordered_handles(self) -> None:
+        events: list[str] = []
+        first = _LifecycleCapability("first", events)
+        second = _LifecycleCapability("second", events)
+        registry = _make_registry(_make_stub_strategy(), (first, second))
+        spec = _make_spec(
+            capabilities=(_compiled("first", {}), _compiled("second", {}))
+        )
+
+        mapping, handles = await assemble_capability_supplies(
+            (spec,), registry, _supply_view()
+        )
+
+        assert list(mapping) == ["first", "second"]
+        assert handles == (first.product, second.product)
+        assert events == [
+            "construct:first",
+            "construct:second",
+            "start:first",
+            "start:second",
+        ]
+        with pytest.raises(TypeError):
+            cast(dict[str, CapabilitySupply], mapping)["other"] = first.product
+        await stop_capability_supplies(handles)
+
+    async def test_later_construction_failure_stops_every_constructed_product(self) -> None:
+        events: list[str] = []
+        first = _LifecycleCapability("first", events)
+        second = _LifecycleCapability("second", events, fail_stop=True)
+        third = _LifecycleCapability("third", events, fail_construction=True)
+        registry = _make_registry(_make_stub_strategy(), (first, second, third))
+        spec = _make_spec(
+            capabilities=(
+                _compiled("first", {}),
+                _compiled("second", {}),
+                _compiled("third", {}),
+            )
+        )
+
+        with pytest.raises(RuntimeError, match="construction failed: third"):
+            await assemble_capability_supplies((spec,), registry, _supply_view())
+
+        assert events == [
+            "construct:first",
+            "construct:second",
+            "construct:third",
+            "stop:second",
+            "stop:first",
+        ]
+
+    async def test_later_start_failure_stops_all_products_in_reverse_with_isolation(
+        self,
+    ) -> None:
+        events: list[str] = []
+        first = _LifecycleCapability("first", events)
+        second = _LifecycleCapability("second", events, fail_stop=True)
+        third = _LifecycleCapability("third", events, fail_start=True)
+        registry = _make_registry(_make_stub_strategy(), (first, second, third))
+        spec = _make_spec(
+            capabilities=(
+                _compiled("first", {}),
+                _compiled("second", {}),
+                _compiled("third", {}),
+            )
+        )
+
+        with pytest.raises(RuntimeError, match="start failed: third"):
+            await assemble_capability_supplies((spec,), registry, _supply_view())
+
+        assert events == [
+            "construct:first",
+            "construct:second",
+            "construct:third",
+            "start:first",
+            "start:second",
+            "start:third",
+            "stop:third",
+            "stop:second",
+            "stop:first",
+        ]
+
+    async def test_pool_pipeline_failure_stops_started_supply(self) -> None:
+        events: list[str] = []
+        capability = _LifecycleCapability("lifecycle", events)
+        strategy = _make_stub_strategy()
+        strategy.assemble_main.side_effect = RuntimeError("strategy failed")  # type: ignore[attr-defined]
+        registry = _make_registry(strategy, (capability,))
+        spec = _make_spec(capabilities=(_compiled("lifecycle", {}),))
+        infra = _make_supply()
+        pipeline = AssemblyPipeline(
+            workspace_materialize=_NoopStage(),
+            infra_assemble=InfraAssembleStage(),
+            pool_assemble=PoolAssembleStage(),
+            agent_assemble=_NoopStage(),
+        )
+
+        with pytest.raises(RuntimeError, match="strategy failed"):
+            await pipeline.run(spec, _make_assembly_ctx(registry, infra))
+
+        assert events == [
+            "construct:lifecycle",
+            "start:lifecycle",
+            "stop:lifecycle",
+        ]
 
 
 # ─── (a) empty-capability pool ───────────────────────────────────────────────
@@ -400,15 +579,14 @@ class TestSubagentMaterializeThreading:
         from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
         from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
         from modex_agent.multi_agent.template import AgentTemplate
-        from modex_agent.scope.compiler import compile_scope
-        from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
-        from modex_agent.workspace.scope_path import ScopePath
-
         from modex_agent.plugins.defaults import DefaultPlugin
         from modex_agent.plugins.loader import (
             ComponentRegistryLoader,
             PluginDiscoveryConfig,
         )
+        from modex_agent.scope.compiler import compile_scope
+        from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
+        from modex_agent.workspace.scope_path import ScopePath
 
         registry = ComponentRegistry()
         await ComponentRegistryLoader.load(

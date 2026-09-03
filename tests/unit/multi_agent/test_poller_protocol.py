@@ -60,7 +60,7 @@ class _MockAgentFactory(DefaultAgentFactory):
         pipeline.workspace_manager = None
         pipeline.interceptor_chain = None
         pipeline.governance = None
-        pipeline.skill_manager = None
+        pipeline.skill_resolver = None
         pipeline.command_processor = None
         pipeline.runtime_services = None
         return AgentInstance(

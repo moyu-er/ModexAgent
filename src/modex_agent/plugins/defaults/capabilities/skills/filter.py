@@ -1,3 +1,5 @@
+"""Skill filters (plan §11) — strategy hierarchy over ``Skill`` values."""
+
 from __future__ import annotations
 
 import logging
@@ -9,12 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class SkillFilter(ABC):
-    """Abstract strategy for filtering a list of skills.
-
-    .. note::
-       The input ``skills`` are full ``Skill`` objects (including ``content``),
-       loaded by ``SkillManager.list_skills()`` before filtering.
-    """
+    """Abstract strategy for filtering a list of skills."""
 
     @abstractmethod
     async def filter(

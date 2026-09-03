@@ -254,7 +254,7 @@ def _pool_instance(name: str, root_agent_name: str) -> PoolInstance:
         pool=MagicMock(),
         broker_bridge=MagicMock(),
         tool_manager=MagicMock(),
-        skill_manager=None,
+        skill_resolver=None,
         mcp_manager=None,
         terminal_manager=None,
         root_agent_name=root_agent_name,

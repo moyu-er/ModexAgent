@@ -28,11 +28,16 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
+from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
 from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
+
+from examples.bot_project.tests.input_pipeline.assembly_support import (
+    TEST_ASSEMBLY_CTX,
+    TEST_COMPONENT_REGISTRY,
+)
 
 # Media-lifecycle layer (user-message parts carrier + LLM-boundary injection):
 # the carrier (context_assembler) persists media:// reference parts on the user
@@ -62,10 +67,6 @@ from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.workspace.runtime import bind_workspace_root
-from tests.input_pipeline.assembly_support import (
-    TEST_ASSEMBLY_CTX,
-    TEST_COMPONENT_REGISTRY,
-)
 
 # A REAL 1x1 PNG (decodable) so the media lifecycle can compress/resolve it.
 _PNG = (
@@ -77,11 +78,6 @@ _PNG = (
 # JPEG SOI + APP0/JFIF header
 _JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00" + b"\x00" * 40
 _TXT = b"hello world, this is a plain text attachment\n" * 3
-
-
-class _NoSkill(SkillRegistry):
-    async def resolve(self, pool: str, name: str, content: str) -> ParsedSkill | None:
-        return None
 
 
 def _bot_model_config() -> BotModelConfig:
@@ -107,7 +103,7 @@ def _make_builder(runtime_services: AgentRuntimeServices | None = None) -> TurnC
         tool_manager=MagicMock(name="tool_manager"),
         sanitizer=None,
         command_processor=None,
-        skill_manager=None,
+        skill_resolver=None,
         context_builder=None,
         agent_descriptor=None,
         max_iterations=5,
@@ -169,7 +165,8 @@ async def test_attachment_flow_to_llm_injection_and_asymmetry() -> None:
         pipeline = await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
             ctx=TEST_ASSEMBLY_CTX,
-            skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
+            skill_registry=PoolSkillResolverRegistry({}),
+            bot_model_config=_bot_model_config(),
         )
 
         user_text = "please look at these files"
@@ -411,7 +408,8 @@ async def test_media_carrier_persists_refs_and_injection_resolves() -> None:
         pipeline = await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
             ctx=TEST_ASSEMBLY_CTX,
-            skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
+            skill_registry=PoolSkillResolverRegistry({}),
+            bot_model_config=_bot_model_config(),
         )
         pipeline_ctx = BotInputContext(
             default_pool="main",

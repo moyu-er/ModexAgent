@@ -298,7 +298,7 @@ async def test_restart_required_false_after_global_skill_upload(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_restart_required_true_after_skill_assign(tmp_path: Path) -> None:
+async def test_restart_required_false_after_skill_assignment_changes(tmp_path: Path) -> None:
     _seed_declaration(tmp_path, {"main": {"agents": {"main": {"description": "root"}}}})
     controller = _make_controller(tmp_path)
     client = _make_client(controller, tmp_path)
@@ -309,7 +309,13 @@ async def test_restart_required_true_after_skill_assign(tmp_path: Path) -> None:
         assert controller.restart_required is False
         resp = await client.post("/api/pools/main/agents/main/skills/hot")
         assert resp.status == 200, await resp.text()
-        assert controller.restart_required is True
+        assert await resp.json() == {"assigned": "hot"}
+        assert controller.restart_required is False
+
+        resp = await client.delete("/api/pools/main/agents/main/skills/hot")
+        assert resp.status == 200, await resp.text()
+        assert await resp.json() == {"unassigned": "hot"}
+        assert controller.restart_required is False
     finally:
         await client.close()
 

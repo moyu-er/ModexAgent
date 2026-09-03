@@ -57,7 +57,6 @@ if TYPE_CHECKING:
     from modex_agent.core.prompt import SystemPromptProvider
     from modex_agent.core.session_registry import SessionRegistry
     from modex_agent.core.session_store import SessionStore
-    from modex_agent.core.skills.manager import SkillManager
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.hook.abc import HookSpec
     from modex_agent.hook.notification import AgentNotificationService
@@ -362,7 +361,6 @@ class StrategyAssembly:
 
     system_prompt_provider: SystemPromptProvider | None = None
     tool_manager: ToolManager | None = None
-    skill_manager: SkillManager | None = None
     mcp_manager: MCPClientManager | None = None
     terminal_manager: BaseTerminalManager | None = None
     # Pool-unique ProcessRegistry backing the terminal trio; harvested by

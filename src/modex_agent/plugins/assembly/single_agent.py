@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
@@ -20,6 +20,10 @@ from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
 from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.plugins.abc import ComponentSlot
+from modex_agent.plugins.assembly.capability_supply import (
+    assemble_capability_supplies,
+    stop_capability_supplies,
+)
 from modex_agent.plugins.assembly.context import (
     AssemblyContext,
     PoolRuntimeDeps,
@@ -32,6 +36,11 @@ from modex_agent.plugins.assembly.native_core import (
     _resolve_single,
     assemble_native_agent,
 )
+from modex_agent.plugins.capability import CapabilitySupply, PoolSupplyView
+from modex_agent.plugins.defaults.capabilities.skills import (
+    SKILLS_CAPABILITY_NAME,
+    require_skills_supply,
+)
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import CompiledAgent
 from modex_agent.scope.defaults import memory_config_for_position
@@ -40,6 +49,9 @@ from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
+
+if TYPE_CHECKING:
+    from modex_agent.trace.otel_store import OtelSpanTraceStore
 
 
 class SingleAgentInfra:
@@ -55,6 +67,7 @@ class SingleAgentInfra:
         extra_hooks: tuple[Hook, ...] = (),
         governance_enabled: bool = True,
         emitter_factory: Callable[[str], ContentEmitter[Any]] | None = None,
+        trace_store: OtelSpanTraceStore | None = None,
     ) -> None:
         self.llm_provider = llm_provider
         self.safety = safety
@@ -63,6 +76,7 @@ class SingleAgentInfra:
         self.extra_hooks = extra_hooks
         self.governance_enabled = governance_enabled
         self.emitter_factory = emitter_factory
+        self.trace_store = trace_store
 
 
 class SingleAgentAssembled:
@@ -76,12 +90,24 @@ class SingleAgentAssembled:
         context_manager: MemorySystemContextManager,
         tool_manager: InMemoryToolManager,
         descriptor: AgentDescriptor,
+        capability_supplies: tuple[CapabilitySupply, ...],
     ) -> None:
         self.instance = instance
         self.memory_system = memory_system
         self.context_manager = context_manager
         self.tool_manager = tool_manager
         self.descriptor = descriptor
+        self._capability_supplies = capability_supplies
+
+    async def close(self) -> None:
+        """Stop the agent, capability supplies, and memory in ownership order."""
+        try:
+            await self.instance.stop()
+        finally:
+            try:
+                await stop_capability_supplies(self._capability_supplies)
+            finally:
+                await self.memory_system.close()
 
 
 async def _resolve_provider(
@@ -150,60 +176,100 @@ async def assemble_declared_single_agent(
         ),
     )
     provider = await _resolve_provider(compiled, infra, component_registry, component_ctx)
-    memory_config = memory_config_for_position(
-        compiled.defaults,
-        session_max_context_tokens=spec.memory_overrides.max_context_tokens,
-    )
-    memory_dir = data_dir / "memory" / spec.pool_name
-    memory_dir.mkdir(parents=True, exist_ok=True)
-    memory_system = create_memory(memory_config, provider, memory_dir)
-    await memory_system.initialize()
-    context_manager = MemorySystemContextManager(
-        memory_system=memory_system,
-        default_agent_id=spec.agent_name,
-        default_agent_role=MemoryAgentRole.MAIN,
-        base_system_prompt=await _resolve_prompt(
-            compiled, component_registry, component_ctx, project_dir
-        ),
-        roles=list(spec.roles),
-    )
-    tool_manager = InMemoryToolManager()
-    result = await assemble_native_agent(
-        spec,
+    capability_supply, capability_supplies = await assemble_capability_supplies(
+        (spec,),
         component_registry,
-        NativeAssemblyInputs(
-            agent_factory=DefaultAgentFactory(default_llm_provider=provider),
-            broker=None,
-            llm_defaults=LlmDefaults(),
-            pool=None,
-            context_manager=context_manager,
-            memory_system=memory_system,
-            memory_config=memory_config,
-            llm_provider=provider,
-            tool_manager=tool_manager,
-            root_provider=infra.root_provider,
-            safety=infra.safety,
+        PoolSupplyView(
+            pool_name=spec.pool_name,
+            entries=(),
+            root_agent_name=spec.agent_name,
+            data_dir=data_dir,
+            default_llm_provider=provider,
             project_dir=project_dir,
-            extra_hooks=infra.extra_hooks,
-            # The shared native registration seam transforms roster, synthesized
-            # companion, and MCP tools before the factory receives the manager.
-            # A wrapping manager cannot do this honestly because companion
-            # detection must inspect the unwrapped PersistentBashTool.
-            tool_transform=infra.tool_wrapper,
+            trace_store=infra.trace_store,
         ),
-        ctx=component_ctx,
     )
-    governance = create_governance(memory_config) if infra.governance_enabled else None
-    if result.instance.pipeline is not None:
-        builder = result.instance.pipeline._turn_context_builder
-        if builder is not None:
-            builder.governance = governance
-        if infra.emitter_factory is not None:
-            result.instance.pipeline._turn_runner.set_emitter_factory(infra.emitter_factory)
-    return SingleAgentAssembled(
-        instance=result.instance,
-        memory_system=memory_system,
-        context_manager=context_manager,
-        tool_manager=result.tool_manager,
-        descriptor=result.descriptor,
-    )
+    memory_system: MemorySystem | None = None
+    try:
+        component_ctx = resolution_context(
+            component_registry,
+            workspace_ctx,
+            PoolRuntimeDeps(
+                root_provider=infra.root_provider,
+                emitter_factory=infra.emitter_factory,
+                capability_supply=capability_supply,
+            ),
+        )
+        skill_resolver = None
+        if any(
+            capability.name == SKILLS_CAPABILITY_NAME
+            for capability in spec.capabilities
+        ):
+            skill_resolver = require_skills_supply(capability_supply).resolver_for(
+                spec.agent_name
+            )
+        memory_config = memory_config_for_position(
+            compiled.defaults,
+            session_max_context_tokens=spec.memory_overrides.max_context_tokens,
+        )
+        memory_dir = data_dir / "memory" / spec.pool_name
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        memory_system = create_memory(memory_config, provider, memory_dir)
+        await memory_system.initialize()
+        context_manager = MemorySystemContextManager(
+            memory_system=memory_system,
+            default_agent_id=spec.agent_name,
+            default_agent_role=MemoryAgentRole.MAIN,
+            base_system_prompt=await _resolve_prompt(
+                compiled, component_registry, component_ctx, project_dir
+            ),
+            roles=list(spec.roles),
+        )
+        tool_manager = InMemoryToolManager()
+        result = await assemble_native_agent(
+            spec,
+            component_registry,
+            NativeAssemblyInputs(
+                agent_factory=DefaultAgentFactory(default_llm_provider=provider),
+                broker=None,
+                llm_defaults=LlmDefaults(),
+                pool=None,
+                context_manager=context_manager,
+                memory_system=memory_system,
+                memory_config=memory_config,
+                llm_provider=provider,
+                tool_manager=tool_manager,
+                skill_resolver=skill_resolver,
+                root_provider=infra.root_provider,
+                safety=infra.safety,
+                project_dir=project_dir,
+                extra_hooks=infra.extra_hooks,
+                # The shared native registration seam transforms roster,
+                # synthesized companion, and MCP tools before the factory
+                # receives the manager.
+                tool_transform=infra.tool_wrapper,
+            ),
+            ctx=component_ctx,
+        )
+        governance = create_governance(memory_config) if infra.governance_enabled else None
+        if result.instance.pipeline is not None:
+            builder = result.instance.pipeline._turn_context_builder
+            if builder is not None:
+                builder.governance = governance
+            if infra.emitter_factory is not None:
+                result.instance.pipeline._turn_runner.set_emitter_factory(
+                    infra.emitter_factory
+                )
+        return SingleAgentAssembled(
+            instance=result.instance,
+            memory_system=memory_system,
+            context_manager=context_manager,
+            tool_manager=result.tool_manager,
+            descriptor=result.descriptor,
+            capability_supplies=capability_supplies,
+        )
+    except BaseException:
+        await stop_capability_supplies(capability_supplies)
+        if memory_system is not None:
+            await memory_system.close()
+        raise

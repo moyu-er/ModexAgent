@@ -21,7 +21,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
+from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
 from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
@@ -63,14 +63,6 @@ def _bot_model_config() -> BotModelConfig:
     )
 
 
-class _NoSkill(SkillRegistry):
-    """Skill registry stub that resolves nothing (skill parsing is not under
-    test in the integration cases)."""
-
-    async def resolve(self, pool: str, name: str, content: str) -> ParsedSkill | None:
-        return None
-
-
 async def _full_pipeline_server(
     tmp_path: Path,
 ) -> tuple[WebUIServer, WorkspaceScopedMediaStore]:
@@ -94,7 +86,8 @@ async def _full_pipeline_server(
     pipe = await build_webui_pipeline(
         registry=TEST_COMPONENT_REGISTRY,
         ctx=TEST_ASSEMBLY_CTX,
-        skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
+        skill_registry=PoolSkillResolverRegistry({}),
+        bot_model_config=_bot_model_config(),
     )
     ctx = BotInputContext(
         default_pool="main",
@@ -750,7 +743,7 @@ def _make_turn_builder() -> TurnContextBuilder:
         tool_manager=MagicMock(name="tool_manager"),
         sanitizer=None,
         command_processor=None,
-        skill_manager=None,
+        skill_resolver=None,
         context_builder=None,
         agent_descriptor=None,
         max_iterations=5,

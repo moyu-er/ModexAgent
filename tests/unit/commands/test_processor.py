@@ -6,14 +6,17 @@ import pytest
 
 from modex_agent.commands.constants import CommandAction, CommandDispatchPolicy, CommandParseStatus
 from modex_agent.commands.models import CommandContext
+from modex_agent.commands.skill import ResolvedSkillCommand, SkillResolver
 from modex_agent.commands.processor import SlashCommandProcessor
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.skills.models import Skill
+from modex_agent.plugins.defaults.capabilities.skills.builder import build_skill_command_xml
+from modex_agent.plugins.defaults.capabilities.skills.models import Skill
 from modex_agent.core.types import InputMessage
 
 
-class FakeSkillManager:
+class FakeSkillResolver(SkillResolver):
     def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
         self._skills = {
             "weather": Skill(
                 name="weather",
@@ -28,8 +31,16 @@ class FakeSkillManager:
             ),
         }
 
-    async def get_skill(self, name: str) -> Skill | None:
-        return self._skills.get(name)
+    async def resolve_command(self, name: str, arguments: str) -> ResolvedSkillCommand | None:
+        self.calls.append((name, arguments))
+        skill = self._skills.get(name)
+        if skill is None:
+            return None
+        return ResolvedSkillCommand(
+            skill_name=skill.name,
+            xml=build_skill_command_xml(skill.name, skill.content, arguments, skill.location),
+            skill_location=skill.location,
+        )
 
 
 def _context(content: str) -> CommandContext:
@@ -37,7 +48,7 @@ def _context(content: str) -> CommandContext:
         session_id="s1",
         input_msg=InputMessage(content=content, session=SessionInfo.from_str("s1")),
         agent_name="main",
-        skill_manager=FakeSkillManager(),  # type: ignore[arg-type]
+        skill_resolver=FakeSkillResolver(),
     )
 
 
@@ -80,6 +91,27 @@ async def test_skill_command_allows_empty_user_input() -> None:
     assert result.action == CommandAction.TRANSFORM_TO_USER_INPUT
     assert result.user_content is not None
     assert "<user_input>\n\n</user_input>" in result.user_content
+
+
+@pytest.mark.asyncio
+async def test_skill_command_resolves_once_with_canonical_arguments() -> None:
+    resolver = FakeSkillResolver()
+    context = CommandContext(
+        session_id="s1",
+        input_msg=InputMessage(
+            content="/weather   tomorrow  ",
+            session=SessionInfo.from_str("s1"),
+        ),
+        agent_name="main",
+        skill_resolver=resolver,
+    )
+
+    result = await SlashCommandProcessor.default().handle(
+        "/weather   tomorrow  ", context
+    )
+
+    assert result.action == CommandAction.TRANSFORM_TO_USER_INPUT
+    assert resolver.calls == [("weather", "tomorrow")]
 
 
 @pytest.mark.asyncio

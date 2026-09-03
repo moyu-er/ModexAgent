@@ -22,7 +22,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.skill_parse import SkillRegistry
+from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
 from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
@@ -44,11 +44,6 @@ from tests.input_pipeline.assembly_support import (
     TEST_ASSEMBLY_CTX,
     TEST_COMPONENT_REGISTRY,
 )
-
-
-class _NoSkillRegistry(SkillRegistry):
-    async def resolve(self, pool: str, name: str, content: str) -> None:
-        return None
 
 
 def _bot_model_config() -> BotModelConfig:
@@ -197,7 +192,7 @@ async def test_non_home_workspace_routes_to_coding_with_shared_store() -> None:
         pipe = await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
             ctx=TEST_ASSEMBLY_CTX,
-            skill_registry=_NoSkillRegistry(),
+            skill_registry=PoolSkillResolverRegistry({}),
             bot_model_config=_bot_model_config(),
         )
         server.set_input_pipeline(pipe)
@@ -297,7 +292,7 @@ async def test_home_workspace_coding_conversation_routes_to_coding() -> None:
         pipe = await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
             ctx=TEST_ASSEMBLY_CTX,
-            skill_registry=_NoSkillRegistry(),
+            skill_registry=PoolSkillResolverRegistry({}),
             bot_model_config=_bot_model_config(),
         )
         server.set_input_pipeline(pipe)

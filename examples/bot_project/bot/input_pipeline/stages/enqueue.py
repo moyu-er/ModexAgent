@@ -51,6 +51,10 @@ class EnqueueStage(InputStage):
             chat_id=envelope.metadata.get("chat_id", ""),  # broker header; never drop to default
             metadata=envelope.metadata,
             attachments=attachments,
+            content_format=envelope.metadata.get(RoutingMeta.SKILL_CONTENT_FORMAT),
+            truncatable_paths=envelope.metadata.get(
+                RoutingMeta.SKILL_TRUNCATABLE_PATHS
+            ),
             workspace=Path(envelope.metadata[RoutingMeta.WORKSPACE])
             if RoutingMeta.WORKSPACE in envelope.metadata
             else None,

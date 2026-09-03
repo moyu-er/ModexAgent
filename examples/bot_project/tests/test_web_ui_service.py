@@ -223,7 +223,7 @@ class TestAttachmentWiring:
             pool=None,
             broker_bridge=None,
             tool_manager=None,
-            skill_manager=None,
+            skill_resolver=None,
             mcp_manager=None,
             terminal_manager=None,
             root_agent_name="main",

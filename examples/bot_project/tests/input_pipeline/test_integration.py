@@ -7,13 +7,24 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from bot.input_pipeline.assembly import build_im_pipeline, build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
+from bot.input_pipeline.stages.resolve_pool import RoutingMeta
+from bot.input_pipeline.stages.skill_parse import (
+    PoolSkillResolverRegistry,
+    SkillParseStage,
+)
 from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 
-from modex_agent.core.session_id import SessionIdFactory, encode_snowflake
+from modex_agent.commands.models import CommandContext
+from modex_agent.commands.processor import SlashCommandProcessor
+from modex_agent.commands.skill import ResolvedSkillCommand, SkillResolver
+from modex_agent.core.message import ContentFormat
+from modex_agent.core.session_id import SessionIdFactory, SessionInfo, encode_snowflake
 from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.plugins.defaults.capabilities.skills.catalog import SkillCatalog
+from modex_agent.plugins.defaults.capabilities.skills.models import Skill
+from modex_agent.plugins.defaults.capabilities.skills.source import InlineSkillSource
 from modex_agent.workspace.runtime import bind_workspace_root
 from tests.input_pipeline.assembly_support import (
     TEST_ASSEMBLY_CTX,
@@ -26,9 +37,9 @@ def _sid(agent: str, conv: str) -> str:
     return SessionIdFactory().create(agent_name=agent, external_id=conv).session_id
 
 
-class _NoSkill(SkillRegistry):
-    async def resolve(self, pool: str, name: str, content: str) -> ParsedSkill | None:
-        return None
+class _NoSkill(PoolSkillResolverRegistry):
+    def __init__(self) -> None:
+        super().__init__({})
 
 
 def _bot_model_config() -> BotModelConfig:
@@ -44,14 +55,28 @@ def _bot_model_config() -> BotModelConfig:
     )
 
 
-class _FakeSkill(SkillRegistry):
-    def __init__(self, skills: set[str]) -> None:
+class _StaticResolver(SkillResolver):
+    def __init__(self, skills: set[str], pool: str = "main") -> None:
         self._skills = skills
+        self._pool = pool
 
-    async def resolve(self, pool: str, name: str, content: str) -> ParsedSkill | None:
+    async def resolve_command(
+        self, name: str, arguments: str
+    ) -> ResolvedSkillCommand | None:
         if name not in self._skills:
             return None
-        return ParsedSkill(name=name, raw=content, xml_form=f"<skill name='{name}'>{content}</skill>")
+        return ResolvedSkillCommand(
+            skill_name=name,
+            xml=f"<skill name='{name}' pool='{self._pool}'>{arguments}</skill>",
+            skill_location=f"/skills/{self._pool}/{name}",
+            content_format=ContentFormat.XML,
+            truncatable_paths=("skill_arguments",),
+        )
+
+
+class _FakeSkill(PoolSkillResolverRegistry):
+    def __init__(self, skills: set[str]) -> None:
+        super().__init__({"main": _StaticResolver(skills)})
 
 
 def _make_ctx(
@@ -350,6 +375,12 @@ async def test_im_valid_skill_persisted_raw_llm_gets_xml() -> None:
             # LLM must receive XML form, not raw text
             assert len(enqueued) == 1
             assert enqueued[0].content.startswith("<skill")
+            assert enqueued[0].content_format is ContentFormat.XML
+            assert enqueued[0].truncatable_paths == ["skill_arguments"]
+            assert (
+                enqueued[0].metadata[RoutingMeta.SKILL_LOCATION]
+                == "/skills/main/office-expert"
+            )
 
 
 @pytest.mark.asyncio
@@ -555,19 +586,15 @@ async def test_im_pwd_command_terminates_in_s2() -> None:
 # ═══════════════════════════════════════════════════════════════════
 
 
-class _PoolSkillRegistry(SkillRegistry):
-    """Registry that maps pool→skills, simulating per-pool SkillManagers."""
+class _PoolSkillResolvers(PoolSkillResolverRegistry):
+    """Bound resolver map used to verify per-pool isolation."""
 
     def __init__(self, pool_skills: dict[str, set[str]]) -> None:
-        self._pool_skills = pool_skills
-
-    async def resolve(self, pool: str, name: str, content: str) -> ParsedSkill | None:
-        skills = self._pool_skills.get(pool, set())
-        if name not in skills:
-            return None
-        return ParsedSkill(
-            name=name, raw=content,
-            xml_form=f"<skill name='{name}' pool='{pool}'>{content}</skill>",
+        super().__init__(
+            {
+                pool: _StaticResolver(skills, pool)
+                for pool, skills in pool_skills.items()
+            }
         )
 
 
@@ -583,7 +610,7 @@ async def test_skill_resolved_from_correct_pool() -> None:
             ctx = _make_ctx(store, enqueued)
 
             # "coding" pool has office-expert, "main" pool has brainstorming
-            registry = _PoolSkillRegistry({
+            registry = _PoolSkillResolvers({
                 "main": {"brainstorming"},
                 "coding": {"office-expert"},
             })
@@ -636,7 +663,7 @@ async def test_skill_pool_isolation_webui() -> None:
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
 
-            registry = _PoolSkillRegistry({
+            registry = _PoolSkillResolvers({
                 "main": {"brainstorming"},
                 "coding": {"office-expert"},
             })
@@ -671,3 +698,44 @@ async def test_skill_pool_isolation_webui() -> None:
                 "/brainstorming must NOT be found in coding pool"
             )
             assert await store.load(_sid("coding", "uuid2")) == []
+
+
+@pytest.mark.asyncio
+async def test_bot_and_direct_onramps_render_identical_skill_xml() -> None:
+    catalog = SkillCatalog(
+        source=InlineSkillSource(
+            [Skill(name="weather", content="Use weather APIs.")]
+        )
+    )
+    stage = SkillParseStage(PoolSkillResolverRegistry({"main": catalog}))
+    raw = "/weather   tomorrow  "
+    envelope = UserInputEnvelope(external_id="u1", content=raw, channel="qq")
+
+    await stage.process(envelope, MagicMock(default_pool="main"))
+    direct = await SlashCommandProcessor.default().handle(
+        raw,
+        CommandContext(
+            session_id="s1",
+            input_msg=InputMessage(
+                content=raw,
+                session=SessionInfo.from_str("s1"),
+            ),
+            agent_name="main",
+            skill_resolver=catalog,
+        ),
+    )
+
+    assert envelope.content == raw
+    assert envelope.metadata[RoutingMeta.SKILL_XML] == direct.user_content
+    assert envelope.metadata[RoutingMeta.SKILL_NAME] == direct.metadata[RoutingMeta.SKILL_NAME]
+    assert (
+        envelope.metadata[RoutingMeta.SKILL_LOCATION]
+        == direct.metadata[RoutingMeta.SKILL_LOCATION]
+    )
+    assert envelope.metadata[RoutingMeta.SKILL_CONTENT_FORMAT] is direct.content_format
+    assert (
+        envelope.metadata[RoutingMeta.SKILL_TRUNCATABLE_PATHS]
+        == direct.truncatable_paths
+    )
+    assert direct.user_content is not None
+    assert "<user_input>\ntomorrow\n</user_input>" in direct.user_content

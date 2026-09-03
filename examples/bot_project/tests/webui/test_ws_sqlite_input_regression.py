@@ -34,7 +34,7 @@ from tests.input_pipeline.assembly_support import (
     TEST_COMPONENT_REGISTRY,
 )
 from tests.unit.workspace._stubs import StubFactory, StubResources
-from tests.webui._pipeline_fixture import _bot_model_config, _NoSkillRegistry
+from tests.webui._pipeline_fixture import _bot_model_config, _no_skill_resolvers
 
 
 @pytest.mark.asyncio
@@ -77,7 +77,7 @@ async def test_ws_sqlite_send_persists_user_before_enqueue(tmp_path: Path) -> No
         await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
             ctx=TEST_ASSEMBLY_CTX,
-            skill_registry=_NoSkillRegistry(),
+            skill_registry=_no_skill_resolvers(),
             bot_model_config=_bot_model_config(),
         )
     )
@@ -204,7 +204,7 @@ async def test_ws_sqlite_send_reaches_workspace_dispatcher(tmp_path: Path) -> No
         await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
             ctx=TEST_ASSEMBLY_CTX,
-            skill_registry=_NoSkillRegistry(),
+            skill_registry=_no_skill_resolvers(),
             bot_model_config=_bot_model_config(),
         )
     )

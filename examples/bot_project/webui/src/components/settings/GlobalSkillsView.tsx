@@ -1,4 +1,4 @@
-// Global skills manager. Loads listSkills() on mount → list of global skills.
+// Skills settings view. Loads the global library and scope topology on mount.
 //
 // Upload flow: the user drops a directory onto the drop zone (or clicks it to
 // open the native directory picker). Either path populates a `preview` block
@@ -15,12 +15,17 @@ import { useEffect, useRef, useState } from "react";
 import type { SkillEntry } from "../../types/pool";
 import { listSkills, uploadSkill, deleteSkill } from "../../lib/skillsApi";
 import type { SkillFile } from "../../lib/skillsApi";
+import { getScopeTopology } from "../../lib/scopeApi";
+import type { ScopePoolTopology, ScopeTopology } from "../../lib/scopeApi";
 import { ApiError } from "../../lib/api";
 import { useToast } from "../ToastContext";
+import { AgentSkillSelector } from "./AgentSkillSelector";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
+import { DropdownPanel } from "../ui/DropdownPanel";
 import { IconButton } from "../ui/IconButton";
+import { SectionLabel } from "../ui/SectionLabel";
 import { Trash2 } from "lucide-react";
 import { UploadIcon } from "../ui/icons";
 import { CATEGORY } from "./categoryMeta";
@@ -44,6 +49,10 @@ export function GlobalSkillsView() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [query, setQuery] = useState<string>("");
+  const [topology, setTopology] = useState<ScopeTopology | null>(null);
+  const [topologyError, setTopologyError] = useState<string>("");
+  const [selectedPool, setSelectedPool] = useState<string>("");
+  const [selectedAgent, setSelectedAgent] = useState<string>("");
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const load = async (): Promise<void> => {
@@ -57,6 +66,27 @@ export function GlobalSkillsView() {
 
   useEffect(() => {
     void load();
+  }, []);
+
+  const rootAgent = (pool: ScopePoolTopology | undefined): string =>
+    pool?.agents.find((agent) => agent.root)?.name ?? pool?.agents[0]?.name ?? "";
+
+  const loadTopology = async (): Promise<void> => {
+    setTopology(null);
+    setTopologyError("");
+    try {
+      const next = await getScopeTopology();
+      const firstPool = next.pools[0];
+      setTopology(next);
+      setSelectedPool(firstPool?.name ?? "");
+      setSelectedAgent(rootAgent(firstPool));
+    } catch (e) {
+      setTopologyError(String(e));
+    }
+  };
+
+  useEffect(() => {
+    void loadTopology();
   }, []);
 
   if (loadError) {
@@ -163,9 +193,89 @@ export function GlobalSkillsView() {
         </div>
       </div>
 
-      <p className="text-xs text-mute">
-        {t("settings.skills.availableToAll")}
-      </p>
+      <section
+        aria-label={t("settings.skills.agentAssignments")}
+        className="space-y-3"
+      >
+        <SectionLabel>{t("settings.skills.agentAssignments")}</SectionLabel>
+        {topologyError ? (
+          <Card className="space-y-3">
+            <p role="alert" className="text-base text-error">
+              {t("common.failedToLoad", { error: topologyError })}
+            </p>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void loadTopology()}
+            >
+              {t("common.retry")}
+            </Button>
+          </Card>
+        ) : topology === null ? (
+          <p className="text-base text-mute">{t("common.loading")}</p>
+        ) : topology.pools.length === 0 ? (
+          <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-base text-mute">
+            {t("settings.skills.noAgents")}
+          </p>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <DropdownPanel
+                label={t("settings.skills.pool")}
+                options={topology.pools.map((pool) => ({
+                  value: pool.name,
+                  label: pool.name,
+                }))}
+                value={selectedPool}
+                onChange={(poolName) => {
+                  const pool = topology.pools.find(
+                    (candidate) => candidate.name === poolName,
+                  );
+                  setSelectedPool(poolName);
+                  setSelectedAgent(rootAgent(pool));
+                }}
+              />
+              <DropdownPanel
+                label={t("settings.skills.agent")}
+                options={
+                  topology.pools
+                    .find((pool) => pool.name === selectedPool)
+                    ?.agents.map((agent) => ({
+                      value: agent.name,
+                      label: agent.name,
+                    })) ?? []
+                }
+                value={selectedAgent}
+                disabled={!selectedAgent}
+                onChange={setSelectedAgent}
+              />
+            </div>
+            {selectedPool && selectedAgent ? (
+              <AgentSkillSelector
+                key={`${selectedPool}:${selectedAgent}`}
+                pool={selectedPool}
+                agent={selectedAgent}
+                globalSkills={skills}
+              />
+            ) : (
+              <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-base text-mute">
+                {t("settings.skills.noAgents")}
+              </p>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section
+        aria-label={t("settings.skills.globalLibrary")}
+        className="space-y-4"
+      >
+        <div>
+          <SectionLabel>{t("settings.skills.globalLibrary")}</SectionLabel>
+          <p className="text-xs text-mute">
+            {t("settings.skills.availableToAll")}
+          </p>
+        </div>
 
       {/* Drop zone — wraps the hidden directory picker input so clicking
           the zone opens the native picker, and dropping files populates the
@@ -377,6 +487,7 @@ export function GlobalSkillsView() {
           {t("settings.skills.noMatch", { query })}
         </p>
       )}
+      </section>
 
       {pendingDelete ? (
         <ConfirmDialog

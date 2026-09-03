@@ -5,16 +5,16 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.skills.builder import DefaultSkillBuilder
-from modex_agent.core.skills.manager import SkillManager
-from modex_agent.core.skills.models import (
+from modex_agent.plugins.defaults.capabilities.skills.builder import DefaultSkillBuilder
+from modex_agent.plugins.defaults.capabilities.skills.catalog import SkillCatalog
+from modex_agent.plugins.defaults.capabilities.skills.models import (
     ResolutionContext,
     Skill,
     SkillMetadata,
     SkillResource,
     SkillSummary,
 )
-from modex_agent.core.skills.source import FileSkillSource, InlineSkillSource
+from modex_agent.plugins.defaults.capabilities.skills.source import FileSkillSource, InlineSkillSource
 
 
 class TestFileSkillSourceEdgeCases:
@@ -83,11 +83,8 @@ class TestFileSkillSourceEdgeCases:
         skill = await source.load_skill("mutant")
         assert skill is not None
         assert skill.content == "V1"
-        # Manually clear cache to simulate refresh
-        source._listing = None
-        source._summary_map.clear()
-        source._contents.clear()
         path.write_text("---\nname: mutant\n---\nV2", encoding="utf-8")
+        source.invalidate_cache()
         await source.list_skills()
         skill2 = await source.load_skill("mutant")
         assert skill2 is not None
@@ -122,38 +119,29 @@ class TestFileSkillSourceEdgeCases:
         assert res["scripts"].path == "/custom"
 
 
-class TestSkillManagerEdgeCases:
+class TestSkillCatalogEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_source_returns_empty_prompt(self):
-        sm = SkillManager(source=InlineSkillSource([]))
-        prompt = await sm.build_prompt()
+        sm = SkillCatalog(source=InlineSkillSource([]))
+        prompt = await sm.render_prompt()
         assert prompt == ""
 
     @pytest.mark.asyncio
     async def test_build_prompt_with_empty_source(self):
         # Empty source -> empty prompt
-        sm = SkillManager(source=InlineSkillSource([]))
-        prompt = await sm.build_prompt()
+        sm = SkillCatalog(source=InlineSkillSource([]))
+        prompt = await sm.render_prompt()
         assert prompt == ""
 
     @pytest.mark.asyncio
-    async def test_register_duplicate_overrides_previous(self):
-        sm = SkillManager(source=InlineSkillSource([]))
-        await sm.register_skill(Skill(name="x", content="first"))
-        await sm.register_skill(Skill(name="x", content="second"))
+    async def test_inline_duplicate_last_wins_get_skill(self):
+        src = InlineSkillSource(
+            [Skill(name="x", content="first"), Skill(name="x", content="second")]
+        )
+        sm = SkillCatalog(source=src)
         skill = await sm.get_skill("x")
         assert skill is not None
         assert skill.content == "second"
-
-    @pytest.mark.asyncio
-    async def test_override_then_clear_restores_source(self):
-        src = InlineSkillSource([Skill(name="x", content="orig")])
-        sm = SkillManager(source=src)
-        await sm.register_skill(Skill(name="x", content="ovr"))
-        sm.clear_overrides()
-        skill = await sm.get_skill("x")
-        assert skill is not None
-        assert skill.content == "orig"
 
     @pytest.mark.asyncio
     async def test_list_skills_deduplicates_by_name_last_wins(self):
@@ -163,24 +151,10 @@ class TestSkillManagerEdgeCases:
                 Skill(name="dup", content="second"),
             ]
         )
-        sm = SkillManager(source=src)
+        sm = SkillCatalog(source=src)
         skills = await sm.list_skills()
         assert len(skills) == 1
         assert skills[0].content == "second"
-
-    @pytest.mark.asyncio
-    async def test_override_takes_precedence_over_source_duplicate(self):
-        src = InlineSkillSource(
-            [
-                Skill(name="dup", content="first"),
-                Skill(name="dup", content="second"),
-            ]
-        )
-        sm = SkillManager(source=src)
-        await sm.register_skill(Skill(name="dup", content="override"))
-        skills = await sm.list_skills()
-        assert len(skills) == 1
-        assert skills[0].content == "override"
 
     @pytest.mark.asyncio
     async def test_list_skills_with_none_context(self):
@@ -191,7 +165,7 @@ class TestSkillManagerEdgeCases:
                 Skill(name="c", content="C"),
             ]
         )
-        sm = SkillManager(source=src)
+        sm = SkillCatalog(source=src)
         skills = await sm.list_skills(context=None)
         names = {s.name for s in skills}
         assert names == {"a", "b", "c"}
@@ -200,7 +174,7 @@ class TestSkillManagerEdgeCases:
 class TestSkillMetadataEdgeCases:
     def test_from_dict_with_none_input(self):
         meta = SkillMetadata.from_dict(None)  # type: ignore[arg-type]
-        assert meta.requires_tools == []
+        assert meta.requires_tools == ()
         assert meta.extra == {}
 
     def test_from_dict_with_empty_string_metadata(self):
@@ -212,8 +186,8 @@ class TestSkillMetadataEdgeCases:
             "metadata": '{"nanobot": {"requires": {"tools": ["t1"], "env": ["E1"]}}}',
         }
         meta = SkillMetadata.from_dict(data)
-        assert meta.requires_tools == ["t1"]
-        assert meta.requires_env == ["E1"]
+        assert list(meta.requires_tools) == ["t1"]
+        assert list(meta.requires_env) == ["E1"]
 
     def test_from_dict_prefers_explicit_over_nested(self):
         data = {
@@ -221,7 +195,7 @@ class TestSkillMetadataEdgeCases:
             "requires": {"tools": ["nested"]},
         }
         meta = SkillMetadata.from_dict(data)
-        assert meta.requires_tools == ["explicit"]
+        assert list(meta.requires_tools) == ["explicit"]
 
     def test_from_dict_collects_unknown_to_extra(self):
         data = {"custom_field": {"nested": 1}, "number": 42}
@@ -268,7 +242,7 @@ class TestSkillSummaryEdgeCases:
             metadata=SkillMetadata(always=True),
             source="src",
             location="loc",
-            resources=[SkillResource(name="r", type="t")],
+            resources=(SkillResource(name="r", type="t"),),
         )
         skill = summary.to_skill("content")
         assert skill.name == "s"
@@ -279,9 +253,11 @@ class TestSkillSummaryEdgeCases:
         assert len(skill.resources) == 1
         assert skill.content == "content"
 
-    def test_to_skill_creates_independent_resources_copy(self):
-        res = [SkillResource(name="r", type="t")]
-        summary = SkillSummary(name="s", resources=res)
+    def test_to_skill_resources_are_frozen(self):
+        summary = SkillSummary(name="s", resources=(SkillResource(name="r", type="t"),))
         skill = summary.to_skill("c")
-        skill.resources.append(SkillResource(name="x", type="y"))
+        # Pydantic frozen model: the resources tuple is immutable; a new
+        # skill cannot be mutated through the shared summary.
+        with pytest.raises(Exception):
+            skill.resources[0].name = "mutated"  # type: ignore[misc]
         assert len(summary.resources) == 1

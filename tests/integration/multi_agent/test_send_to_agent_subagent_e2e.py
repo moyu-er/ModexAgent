@@ -351,6 +351,7 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
     from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
     from modex_agent.plugins.capability import PoolSupplyAgentEntry, PoolSupplyView
+    from modex_agent.plugins.defaults.capabilities.skills.capability import SkillsCapability
     from modex_agent.plugins.defaults.capabilities.subagents import SubagentsCapability
 
     pool_assembly_ctx = PoolAssemblyContext(
@@ -377,6 +378,16 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
             project_dir=project,
         )
     )
+    skills_supply = SkillsCapability().supply(
+        PoolSupplyView(
+            pool_name="main",
+            entries=tuple(
+                PoolSupplyAgentEntry(agent_name=agent.spec.agent_name, config={})
+                for agent in compilation.agents
+            ),
+            project_dir=project,
+        )
+    )
     deps = AgentMaterializeDeps(
         agent_factory=factory,
         pool=pool,
@@ -393,7 +404,7 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         workspace_manager=workspace_manager,
         component_registry=component_registry,
         pool_assembly_ctx=pool_assembly_ctx,
-        capability_supply={"subagents": subagents_supply},
+        capability_supply={"skills": skills_supply, "subagents": subagents_supply},
     )
     pool.materialize_deps = deps
     pool.template_registry = template_registry

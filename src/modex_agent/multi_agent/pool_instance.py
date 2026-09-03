@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.commands.skill import SkillResolver
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.messaging.broker import AddressKind
 from modex_agent.multi_agent.address import AgentAddress
@@ -41,7 +42,10 @@ class PoolInstance:
     pool: Any  # AgentPool
     broker_bridge: Any  # BrokerBridgeService
     tool_manager: Any  # InMemoryToolManager
-    skill_manager: Any | None
+    skill_resolver: SkillResolver | None
+    """The ROOT agent's bound skill resolver (plan §11.3.1) — a deployment
+    resource for the Bot input pipeline's skill stage, NOT a second
+    catalog. Subagent resolvers stay bound to their own pipelines."""
     mcp_manager: Any | None
     terminal_manager: TerminalManagerBase | None
     root_agent_name: str

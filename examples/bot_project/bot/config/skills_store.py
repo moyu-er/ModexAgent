@@ -18,7 +18,7 @@ Layout::
 The library lives OUTSIDE ``skills/`` (a sibling ``local_skills/`` dir) so it
 can never collide with a per-pool skill directory. Disk is the single
 source of truth — no skill selection is persisted in pool.yml; the runtime
-SkillManager and the WebUI both read ``skills/<pool>/<agent>/`` directly.
+SkillCatalog and the WebUI both read ``skills/<pool>/<agent>/`` directly.
 
 Two global sources, REPO PRIORITY: a name present in both ``local_skills/``
 and ``~/.agents/skills/`` resolves to the repo copy (``_resolve_global_source``).

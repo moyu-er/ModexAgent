@@ -268,16 +268,7 @@ class PoolRouter:
         metadata.setdefault("channel", msg.channel)
         await pool.pool.submit_input(
             sid,
-            InputMessage(
-                content=msg.content,
-                session=msg.session,
-                metadata=metadata,
-                sender_id=msg.sender_id,
-                chat_id=msg.chat_id,
-                approval_decision=msg.approval_decision,
-                attachments_resolved=msg.attachments_resolved,
-                workspace=msg.workspace,
-            ),
+            msg.model_copy(update={"metadata": metadata}),
         )
 
 

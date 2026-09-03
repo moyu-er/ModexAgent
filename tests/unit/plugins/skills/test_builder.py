@@ -1,14 +1,21 @@
 """Unit tests for core/skills/builder.py."""
 
+import inspect
 from pathlib import Path
 
 import pytest
 
-from modex_agent.core.skills.builder import DefaultSkillBuilder, build_skill_command_xml
-from modex_agent.core.skills.models import Skill
+from modex_agent.plugins.defaults.capabilities.skills.builder import (
+    DefaultSkillBuilder,
+    build_skill_command_xml,
+)
+from modex_agent.plugins.defaults.capabilities.skills.models import Skill
 
 
 class TestDefaultSkillBuilder:
+    def test_constructor_has_no_legacy_base_path_parameter(self) -> None:
+        assert "base_path" not in inspect.signature(DefaultSkillBuilder).parameters
+
     @pytest.mark.asyncio
     async def test_empty_skills_returns_empty(self):
         b = DefaultSkillBuilder()

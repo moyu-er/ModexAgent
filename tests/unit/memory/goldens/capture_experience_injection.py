@@ -8,7 +8,7 @@ injection at load() position 8)::
 
 Writes ``experience_section_pre_migration.txt`` (utf-8, ``newline=""``) —
 the exact bytes the retired special case appended to the prompt pipeline
-(``ExperienceProvider(await manager.build_prompt(context=ctx))`` with the
+(``ExperienceProvider(await manager.render_prompt(context=ctx))`` with the
 BIZ manager construction: a scope-less ``FileExperienceSource``), with the
 fixture root normalized to ``<ROOT>`` (the rendered ``directory=""``
 attributes embed absolute paths — the normalization is mechanical and is

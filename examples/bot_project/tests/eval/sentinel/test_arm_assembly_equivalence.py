@@ -131,5 +131,4 @@ async def test_declared_sentinel_arm_assembly_matches_the_pin(
             assert memory_config.core is None
             assert memory_config.dream_engine is None
     finally:
-        await assembled.instance.stop()
-        await assembled.memory_system.close()
+        await assembled.close()

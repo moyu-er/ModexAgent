@@ -53,7 +53,9 @@ from modex_agent.plugins.assembly.spec import AssemblySpec
 from modex_agent.plugins.assembly.stages.agent_assemble import (
     AgentAssembleStage,
 )
+from modex_agent.plugins.capability import PoolSupplyAgentEntry, PoolSupplyView
 from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.defaults.capabilities.skills.capability import SkillsCapability
 from modex_agent.plugins.defaults.capabilities.subagents import SubagentsSupply
 from modex_agent.plugins.loader import (
     ComponentRegistryLoader,
@@ -64,9 +66,9 @@ from modex_agent.plugins.loader import (
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import compile_scope
 from modex_agent.scope.loader import load_scope_declaration
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
-from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _modexctl_resolvable() -> bool:
@@ -209,15 +211,21 @@ def _compiled_sub_spec(
 
 
 def _subagents_pool_runtime(declaration: str, tmp_path: Path) -> PoolRuntimeDeps:
-    """Pool runtime deps carrying the ``subagents`` capability faces the
-    derived communication TOOL factories resolve against: the supply's
-    service (mocked router) + the pool assembly context carrying the
-    DECLARED pool tree (the per-agent target store and the auto-send
-    hook's parent derive from it at assembly)."""
+    """Pool runtime deps carrying the effective capability supplies."""
     declaration_path = tmp_path / "declaration.yml"
     declaration_path.write_text(declaration, encoding="utf-8")
     pool_spec = load_scope_declaration(declaration_path).pool
     assert pool_spec is not None
+    skills_supply = SkillsCapability().supply(
+        PoolSupplyView(
+            pool_name=pool_spec.name,
+            entries=tuple(
+                PoolSupplyAgentEntry(agent_name=agent.name, config={})
+                for agent in pool_spec.agents
+            ),
+            project_dir=tmp_path,
+        )
+    )
     return PoolRuntimeDeps(
         pool_assembly_ctx=PoolAssemblyContext(
             pool_name=pool_spec.name,
@@ -232,7 +240,10 @@ def _subagents_pool_runtime(declaration: str, tmp_path: Path) -> PoolRuntimeDeps
             retention=MagicMock(),
             registry=MagicMock(),
         ),
-        capability_supply={"subagents": SubagentsSupply(service=MagicMock())},
+        capability_supply={
+            "skills": skills_supply,
+            "subagents": SubagentsSupply(service=MagicMock()),
+        },
     )
 
 

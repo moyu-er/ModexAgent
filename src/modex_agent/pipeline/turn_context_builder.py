@@ -29,12 +29,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from modex_agent.adapters.output import OutputAdapter
     from modex_agent.commands.models import CommandHandlingResult, CommandProcessor
+    from modex_agent.commands.skill import SkillResolver
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.agent import Agent, AgentContext
     from modex_agent.core.context import ContextManager, ContextState
     from modex_agent.core.emitter import ContentEmitter
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-    from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.core.types import InputMessage
     from modex_agent.hook.runner import HookRunner
@@ -139,7 +139,7 @@ class TurnContextBuilder:
         tool_manager: ToolManager,
         sanitizer: Callable[[str], str] | None,
         command_processor: CommandProcessor | None,
-        skill_manager: SkillManager | None,
+        skill_resolver: SkillResolver | None,
         context_builder: MultiAgentContextBuilder | None,
         agent_descriptor: AgentDescriptor | None,
         max_iterations: int,
@@ -159,7 +159,7 @@ class TurnContextBuilder:
         self._tool_manager = tool_manager
         self._sanitizer = sanitizer
         self._command_processor = command_processor
-        self._skill_manager = skill_manager
+        self._skill_resolver = skill_resolver
         self._context_builder = context_builder
         self._agent_descriptor = agent_descriptor
         self._max_iterations = max_iterations
@@ -310,7 +310,7 @@ class TurnContextBuilder:
             session_id=session_id,
             input_msg=input_msg,
             agent_name=self._agent.name,
-            skill_manager=self._skill_manager,
+            skill_resolver=self._skill_resolver,
             turn_store=pool_data.turn_store if pool_data is not None else self._turn_store,
             pending_approval=pending_snapshot,
         )
@@ -413,7 +413,6 @@ class TurnContextBuilder:
             _is_approval_cmd,
             agent_descriptor=self._agent_descriptor,
             tool_manager=self._tool_manager,
-            skill_manager=self._skill_manager,
             context_builder=self._context_builder,
             append_user_message=append_user_message,
             model_info=caps,

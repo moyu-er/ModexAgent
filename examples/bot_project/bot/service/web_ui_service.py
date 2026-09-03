@@ -628,14 +628,17 @@ class WebUIService(BotService):
 
         # ── Input pipeline convergence ─────────────────────────────
         from bot.input_pipeline.assembly import build_im_pipeline, build_webui_pipeline
-        from bot.input_pipeline.stages.skill_parse import PoolSkillManagerRegistry
+        from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
         from modex_agent.core.session_id import SessionIdFactory
 
-        # Per-pool skill registry backed by each pool's real SkillManager.
-        # Skills live under skills/{pool}/{agent}/.  One shared registry serves
-        # both pipelines; the XML form is produced by the framework helper.
+        # Per-pool skill-resolver lookup backed by each pool's root
+        # resolver (created by the pool's SkillsSupply). One shared
+        # registry serves both pipelines; the XML form is produced by the
+        # shared SkillResolver contract.
         known_pools = set(self._pools.keys())
-        skill_registry = PoolSkillManagerRegistry(self._pools)
+        skill_registry = PoolSkillResolverRegistry(
+            {name: pool.skill_resolver for name, pool in self._pools.items()}
+        )
         assert self._component_registry is not None
         assert self._service_assembly_ctx is not None
 

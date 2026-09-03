@@ -1,15 +1,21 @@
-"""Unit tests for core/skills/source.py."""
+"""Contract tests for the Skills capability source adapters."""
 
 import tempfile
+from enum import StrEnum
 from pathlib import Path
 
 import pytest
 
-from modex_agent.core.skills.models import Skill, SkillMetadata, SkillResource
-from modex_agent.core.skills.source import (
+from modex_agent.plugins.defaults.capabilities.skills.models import (
+    Skill,
+    SkillResource,
+)
+from modex_agent.plugins.defaults.capabilities.skills.source import (
     CompositeSkillSource,
     FileSkillSource,
     InlineSkillSource,
+    SkillLayout,
+    SkillMergeStrategy,
 )
 
 
@@ -28,8 +34,10 @@ class TestFileSkillSource:
         )
         source = FileSkillSource(directories=[tmp_dir])
         summaries = await source.list_skills()
+        assert isinstance(summaries, tuple)
         assert len(summaries) == 1
         assert summaries[0].name == "demo_skill"
+        assert summaries[0].location is not None
         assert Path(summaries[0].location).resolve() == (skill_dir / "SKILL.md").resolve()
 
     @pytest.mark.asyncio
@@ -87,10 +95,13 @@ class TestFileSkillSource:
         skill_dir = tmp_dir / "demo"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text("---\n---\nBody", encoding="utf-8")
-        source = FileSkillSource(directories=[tmp_dir], layout="directory")
+        source = FileSkillSource(
+            directories=[tmp_dir], layout=SkillLayout.DIRECTORY
+        )
         summaries = await source.list_skills()
         assert len(summaries) == 1
         assert summaries[0].name == "demo"
+        assert summaries[0].location is not None
         assert Path(summaries[0].location).resolve() == (skill_dir / "SKILL.md").resolve()
 
     @pytest.mark.asyncio
@@ -98,7 +109,9 @@ class TestFileSkillSource:
         skill_dir = tmp_dir / "my_skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text("---\nname: override_name\n---\nBody", encoding="utf-8")
-        source = FileSkillSource(directories=[tmp_dir], layout="directory")
+        source = FileSkillSource(
+            directories=[tmp_dir], layout=SkillLayout.DIRECTORY
+        )
         summaries = await source.list_skills()
         assert len(summaries) == 1
         assert summaries[0].name == "override_name"
@@ -108,7 +121,11 @@ class TestFileSkillSource:
         skill_dir = tmp_dir / "demo"
         skill_dir.mkdir()
         (skill_dir / "custom.md").write_text("---\n---\nBody", encoding="utf-8")
-        source = FileSkillSource(directories=[tmp_dir], layout="directory", skill_filename="custom.md")
+        source = FileSkillSource(
+            directories=[tmp_dir],
+            layout=SkillLayout.DIRECTORY,
+            skill_filename="custom.md",
+        )
         summaries = await source.list_skills()
         assert len(summaries) == 1
         assert summaries[0].name == "demo"
@@ -146,7 +163,9 @@ class TestFileSkillSource:
         (tmp_dir / "beta").mkdir()
         (tmp_dir / "beta" / "SKILL.md").write_text("content", encoding="utf-8")
         (tmp_dir / "no_skill").mkdir()  # no SKILL.md
-        source = FileSkillSource(directories=[tmp_dir], layout="directory")
+        source = FileSkillSource(
+            directories=[tmp_dir], layout=SkillLayout.DIRECTORY
+        )
         names = source.list_skill_names(tmp_dir)
         assert names == {"alpha", "beta"}
 
@@ -155,7 +174,7 @@ class TestFileSkillSource:
         (tmp_dir / "weather.md").write_text("content", encoding="utf-8")
         (tmp_dir / "cron.md").write_text("content", encoding="utf-8")
         (tmp_dir / "readme.md").write_text("content", encoding="utf-8")
-        source = FileSkillSource(directories=[tmp_dir], layout="flat")
+        source = FileSkillSource(directories=[tmp_dir], layout=SkillLayout.FLAT)
         names = source.list_skill_names(tmp_dir)
         assert names == {"weather", "cron"}
 
@@ -164,18 +183,6 @@ class TestFileSkillSource:
         source = FileSkillSource(directories=[tmp_dir])
         names = source.list_skill_names(tmp_dir / "nope")
         assert names == set()
-
-    @pytest.mark.asyncio
-    async def test_invalidate_cache_clears_listing(self, tmp_dir):
-        skill_dir = tmp_dir / "demo"
-        skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text("---\n---\nBody", encoding="utf-8")
-        source = FileSkillSource(directories=[tmp_dir], cache=True)
-        await source.list_skills()
-        assert source._listing is not None
-
-        source.invalidate_cache()
-        assert source._listing is None
 
     @pytest.mark.asyncio
     async def test_invalidate_cache_then_reload(self, tmp_dir):
@@ -200,11 +207,21 @@ class TestFileSkillSource:
         assert source.directories == [tmp_dir.resolve()]
 
     def test_layout_property(self, tmp_dir):
-        source = FileSkillSource(directories=[tmp_dir], layout="flat")
-        assert source.layout == "flat"
+        source = FileSkillSource(directories=[tmp_dir], layout=SkillLayout.FLAT)
+        assert source.layout is SkillLayout.FLAT
+
+    def test_layout_is_typed_and_rejects_unknown_values(self, tmp_dir: Path) -> None:
+        assert issubclass(SkillLayout, StrEnum)
+        with pytest.raises(ValueError, match="not a valid SkillLayout"):
+            FileSkillSource(directories=[tmp_dir], layout="nested")
 
 
 class TestCompositeSkillSource:
+    def test_merge_strategy_is_typed_and_rejects_unknown_values(self) -> None:
+        assert issubclass(SkillMergeStrategy, StrEnum)
+        with pytest.raises(ValueError, match="not a valid SkillMergeStrategy"):
+            CompositeSkillSource([], merge_strategy="overlay")
+
     @pytest.mark.asyncio
     async def test_last_wins_deduplication(self):
         s1 = InlineSkillSource(
@@ -213,8 +230,11 @@ class TestCompositeSkillSource:
         s2 = InlineSkillSource(
             [Skill(name="a", content="from_s2")], name="s2"
         )
-        composite = CompositeSkillSource([s1, s2], merge_strategy="last_wins")
+        composite = CompositeSkillSource(
+            [s1, s2], merge_strategy=SkillMergeStrategy.LAST_WINS
+        )
         summaries = await composite.list_skills()
+        assert isinstance(summaries, tuple)
         assert len(summaries) == 1
         skill = await composite.load_skill("a")
         assert skill is not None
@@ -228,7 +248,9 @@ class TestCompositeSkillSource:
         s2 = InlineSkillSource(
             [Skill(name="a", content="from_s2")], name="s2"
         )
-        composite = CompositeSkillSource([s1, s2], merge_strategy="first_wins")
+        composite = CompositeSkillSource(
+            [s1, s2], merge_strategy=SkillMergeStrategy.FIRST_WINS
+        )
         skill = await composite.load_skill("a")
         assert skill is not None
         assert skill.content == "from_s1"
@@ -241,7 +263,9 @@ class TestCompositeSkillSource:
         s2 = InlineSkillSource(
             [Skill(name="a", content="from_s2")], name="s2"
         )
-        composite = CompositeSkillSource([s1, s2], merge_strategy="error")
+        composite = CompositeSkillSource(
+            [s1, s2], merge_strategy=SkillMergeStrategy.ERROR
+        )
         with pytest.raises(ValueError, match="Duplicate skill 'a'"):
             await composite.list_skills()
 
@@ -253,7 +277,9 @@ class TestCompositeSkillSource:
         s2 = InlineSkillSource(
             [Skill(name="a", content="from_s2")], name="s2"
         )
-        composite = CompositeSkillSource([s1, s2], merge_strategy="error")
+        composite = CompositeSkillSource(
+            [s1, s2], merge_strategy=SkillMergeStrategy.ERROR
+        )
         with pytest.raises(ValueError, match="Duplicate skill 'a'"):
             await composite.load_skill("a")
 
@@ -263,6 +289,34 @@ class TestCompositeSkillSource:
         composite = CompositeSkillSource([s1])
         assert await composite.load_skill("missing") is None
 
+    @pytest.mark.asyncio
+    async def test_list_resources_follows_winning_source(self):
+        first = InlineSkillSource(
+            [
+                Skill(
+                    name="a",
+                    resources=(SkillResource(name="first", type="reference"),),
+                )
+            ],
+            name="first",
+        )
+        last = InlineSkillSource(
+            [
+                Skill(
+                    name="a",
+                    resources=(SkillResource(name="last", type="reference"),),
+                )
+            ],
+            name="last",
+        )
+        composite = CompositeSkillSource(
+            [first, last], merge_strategy=SkillMergeStrategy.LAST_WINS
+        )
+
+        resources = await composite.list_resources("a")
+
+        assert resources == (SkillResource(name="last", type="reference"),)
+
 
 class TestInlineSkillSource:
     @pytest.mark.asyncio
@@ -271,7 +325,19 @@ class TestInlineSkillSource:
             [Skill(name="x", content="c")], name="inline"
         )
         summaries = await source.list_skills()
+        assert isinstance(summaries, tuple)
         assert len(summaries) == 1
         skill = await source.load_skill("x")
         assert skill is not None
         assert skill.content == "c"
+
+    @pytest.mark.asyncio
+    async def test_list_resources_returns_skill_resources(self):
+        resource = SkillResource(name="guide", type="reference")
+        source = InlineSkillSource(
+            [Skill(name="x", content="c", resources=(resource,))],
+            name="inline",
+        )
+
+        assert await source.list_resources("x") == (resource,)
+        assert await source.list_resources("missing") == ()

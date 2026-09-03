@@ -38,7 +38,7 @@ def _make_react_pipeline(
     dream_engine: Any | None = None,
     dream_interval: float | None = None,
     max_iterations: int = 10,
-    skill_manager: Any | None = None,
+    skill_resolver: Any | None = None,
     hooks: list[Any] | None = None,
     router: Any | None = None,
     deduplicator: Any | None = None,
@@ -76,7 +76,7 @@ def _make_react_pipeline(
         tool_manager=tool_manager,  # type: ignore[arg-type]
         sanitizer=sanitizer if isinstance(sanitizer, Callable) else None,
         command_processor=command_processor,
-        skill_manager=skill_manager,
+        skill_resolver=skill_resolver,
         context_builder=context_builder,
         agent_descriptor=agent_descriptor,
         max_iterations=max_iterations,

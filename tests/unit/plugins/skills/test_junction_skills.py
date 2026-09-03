@@ -24,11 +24,12 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.skills import (
-    DefaultSkillBuilder,
-    DirectorySkillCache,
+from modex_agent.plugins.defaults.capabilities.skills.builder import DefaultSkillBuilder
+from modex_agent.plugins.defaults.capabilities.skills.cache import DirectorySkillCache
+from modex_agent.plugins.defaults.capabilities.skills.catalog import SkillCatalog
+from modex_agent.plugins.defaults.capabilities.skills.source import (
     FileSkillSource,
-    SkillManager,
+    SkillLayout,
 )
 
 
@@ -102,11 +103,16 @@ async def test_linked_skill_appears_in_get_skills(linked_skill_setup) -> None:
     _, monitored_dir = linked_skill_setup
 
     source = FileSkillSource(
-        directories=[monitored_dir], cache=True, layout="directory", skill_filename="SKILL.md"
+        directories=[monitored_dir],
+        cache=True,
+        layout=SkillLayout.DIRECTORY,
+        skill_filename="SKILL.md",
     )
-    cache = DirectorySkillCache(directories=[monitored_dir], layout="directory")
+    cache = DirectorySkillCache(
+        directories=[monitored_dir], layout=SkillLayout.DIRECTORY
+    )
     builder = DefaultSkillBuilder()
-    mgr = SkillManager(source=source, builder=builder, cache=cache)
+    mgr = SkillCatalog(source=source, builder=builder, cache=cache)
 
     skills = await mgr.list_skills()
     skill_names = [s.name for s in skills]
@@ -123,13 +129,18 @@ async def test_linked_skill_appears_in_build_prompt(linked_skill_setup) -> None:
     _, monitored_dir = linked_skill_setup
 
     source = FileSkillSource(
-        directories=[monitored_dir], cache=True, layout="directory", skill_filename="SKILL.md"
+        directories=[monitored_dir],
+        cache=True,
+        layout=SkillLayout.DIRECTORY,
+        skill_filename="SKILL.md",
     )
-    cache = DirectorySkillCache(directories=[monitored_dir], layout="directory")
+    cache = DirectorySkillCache(
+        directories=[monitored_dir], layout=SkillLayout.DIRECTORY
+    )
     builder = DefaultSkillBuilder()
-    mgr = SkillManager(source=source, builder=builder, cache=cache)
+    mgr = SkillCatalog(source=source, builder=builder, cache=cache)
 
-    prompt = await mgr.build_prompt()
+    prompt = await mgr.render_prompt()
 
     assert "linked-skill" in prompt
 
@@ -147,13 +158,18 @@ async def test_linked_skill_directory_path_is_link_path(linked_skill_setup) -> N
     tmp, monitored_dir = linked_skill_setup
 
     source = FileSkillSource(
-        directories=[monitored_dir], cache=True, layout="directory", skill_filename="SKILL.md"
+        directories=[monitored_dir],
+        cache=True,
+        layout=SkillLayout.DIRECTORY,
+        skill_filename="SKILL.md",
     )
-    cache = DirectorySkillCache(directories=[monitored_dir], layout="directory")
+    cache = DirectorySkillCache(
+        directories=[monitored_dir], layout=SkillLayout.DIRECTORY
+    )
     builder = DefaultSkillBuilder()
-    mgr = SkillManager(source=source, builder=builder, cache=cache)
+    mgr = SkillCatalog(source=source, builder=builder, cache=cache)
 
-    prompt = await mgr.build_prompt()
+    prompt = await mgr.render_prompt()
 
     # The link path (within monitored dir) should appear; the resolved
     # external target path should NOT.

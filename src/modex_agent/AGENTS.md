@@ -1,9 +1,9 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-26 -->
+<!-- Updated: 2026-09-02 -->
 
 # modex_agent
 
-Core multi-agent framework package (334+ Python files across 25 modules). All abstractions, implementations, and the three-layer runtime model (Hook / Interceptor / Control) plus Approval, Experience, and Media.
+Core multi-agent framework package: abstractions, implementations, the three-layer runtime model (Hook / Interceptor / Control), and bundled capabilities including Experience and Skills.
 
 > [!NOTE]
 > "Hook / Interceptor / Control" names three packages, but they are not peers
@@ -21,33 +21,33 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 
 ## Module Overview
 
-| Module | Files | Subdirectories | Purpose |
-|--------|-------|----------------|---------|
-| `core/` | 27 py | `skills/`, `experience/` | ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, types (see `core/AGENTS.md`). The graph engine was extracted to `modex_graph` (ADR-0033). |
-| `agents/` | 2 py | `react/`, `external/`, `experience/`, `summarizer/` | Agent implementations — `ReActAgent` (built on `modex_graph`), `ExternalAgent` (Pi/OpenCode CLI harness), `ExperienceReviewAgent`, `SessionCompactorAgent` (tool-less single-LLM-call compact summary). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). (see `agents/AGENTS.md`) |
-| `memory/` | 18 py | `consolidation/`, `core/`, `injection/`, `layers/`, `pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Three-layer memory — session/archive/core, compaction, consolidation, governance, injection. Split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) + `MemoryStoreBundle` (see `memory/AGENTS.md`) |
-| `persistence/` | 31 py | `adapters/`, `managers/`, `migrations/`, `session_artifacts/` | Hybrid persistence layer (ADR-0023, ADR-0028~0031). `ConnectionManager` + `MigrationRunner` (per-workspace SQLite), `PersistenceBackend`/`PersistenceConfig`, `ColumnProjection` (ADR-0030), session artifact cleanup (`SessionArtifactCleaner`/`DefaultSessionArtifactCleaner`, `SqliteSessionDatabaseCleaner`, ADR-0018), SQLite adapters for the split store + runtime-state ABCs. All timestamps are INTEGER ms (ADR-0029) |
-| `multi_agent/` | 20 py | `inbox/` | Star-topology orchestration — `AgentPool`, inbox (`InboxMQ`), `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
-| `tools/` | 9 py | `ast/`, `lsp/`, `mcp/`, `overflow/`, `standard/`, `terminal/`, `web/` | Tool subsystem — concrete `InMemoryToolManager` (manager.py, C2), filtering, MCP, terminal (pexpect/tmux/winpty), overflow, standard tools (see `tools/AGENTS.md`) |
-| `sandbox/` | 17 py | `adapters/` | Sandboxed execution — Subprocess, Docker, E2B, Landlock, guards, environment builder (see `sandbox/AGENTS.md`) |
-| `pipeline/` | 7 py | — | `AgentPipeline` orchestration, `InputAdapter` ABC (B4: output side moved to `adapters/`), approval renderer, snapshot handling (see `pipeline/AGENTS.md`) |
-| `runtime/` | 9 py | — | `AgentRuntime`, `AgentRuntimeServices`, `TurnStateStore`, codec, snapshot policy (see `runtime/AGENTS.md`) |
-| `commands/` | 7 py | — | Slash command processor — parse, two-stage dispatch, approval/continue/transform actions (see `commands/AGENTS.md`) |
-| `control/` | 6 py | — | Control transport — `InMemoryControlChannel` (the live `/stop` + pause mechanism), `ControlCommand`, `AgentControlError` exceptions (see `control/AGENTS.md`) |
-| `hook/` | 4 py | `builtin/` | Lifecycle hooks — `HookRunner`, `HookPoint`, 6 builtin hooks (see `hook/AGENTS.md`) |
-| `interceptor/` | 4 py | `builtin/` | AOP interceptor chain — `InterceptorChain`, 3 builtin interceptors (see `interceptor/AGENTS.md`) |
-| `ioc/` | 2 py | `configs/`, `factories/` | `AppConfig` (Pydantic), 13 typed configs, 8 factory modules (see `ioc/AGENTS.md`) |
-| `approval/` | 6 py | — | Tiered tool approval — tiers, decisions, response parsing (see `approval/AGENTS.md`) |
-| `messaging/` | 4 py | — | `MessageBroker`, `BrokerBridgeService` (see `messaging/AGENTS.md`) |
-| `plugins/` | 5 py | `assembly/`, `defaults/capabilities/` | Plugin-unified agent assembly — 11-slot `ComponentRegistry`, `ComponentFactory` ABC, `Plugin` ABC, `AssemblyPipeline` (4 stages), `DefaultPlugin`; the `CAPABILITY` slot hosts capability bundles (ADR-0047) with the five FW-bundled packages in `defaults/capabilities/` (see `plugins/AGENTS.md` and `docs/design/capability-bundles/AUTHOR-GUIDE.md`) |
-| `scope/` | 9 py | — | Scope declaration tree (ADR-0042) — `ScopeSpec`/`AgentSpec` frozen types + YAML loader (incl. the `capabilities:` override map, ADR-0047), position-derived defaults, two-phase `ScopeTreeValidator` (V1-V13), `ProfileStore` + `STANDARD_PROFILES`, pure `ScopeCompiler` (per-agent `AssemblySpec`s + effective toolsets + provenance bill + the C0/C1/C2 capability compile protocol), N2 spec-hash/generation seam (see `scope/AGENTS.md`) |
-| `providers/` | 1 py | `http/` | LLM providers — direct-HTTP event-stream subsystem (http/, ADR-0046: HTTPStreamProvider + protocol engines) (see `providers/AGENTS.md`) |
-| `workspace/` | 13 py | — | `WorkspaceContext` ABC, `DefaultWorkspaceContext` — cd/exit/restore workspace switching with callback notification and persistence (see `workspace/AGENTS.md`) |
-| `input_pipeline/` | 5 py | — | Extensible user-input stage pipeline — `UserInputEnvelope`, `InputStage` ABC, `Continue`/`Terminate`, `UserInputPipeline` (see `input_pipeline/AGENTS.md`) |
-| `trace/` | 4 py | — | Tracing and observability — `TraceStore`, `TraceHooks`, `TraceType` |
-| `utils/` | 12 py | — | tokenizer, context_builder, deduplicator, sanitizer, helpers, process-tree termination, `time` (`now_ms`/`now_s` — ADR-0029 single source of truth) |
-| `adapters/` | 6 py | — | Platform I/O contracts + emitter bridge — `PlatformAdapter` ABC, `AdapterRegistry`, `StreamingMode`, `OutputAdapter` family (output.py), `StreamingAwareEmitter` (emitter.py), `ContentFilter` family (filters.py); moved from pipeline/core in B4 (see `adapters/AGENTS.md`) |
-| `media/` | 6 py | — | Concrete media implementation (ADR-0013) — `LocalFileMediaStore` filesystem storage, MIME classification, security gate. Contracts (`Attachment`, `MediaStore` ABC, `StoredFile`) live in `core/media.py` (C1) (see `media/AGENTS.md`) |
+| Module | Subdirectories | Purpose |
+|--------|----------------|---------|
+| `core/` | — | Foundational ABCs and values — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, messages, sessions, and media contracts (see `core/AGENTS.md`). The graph engine lives in `modex_graph` (ADR-0033). |
+| `agents/` | `react/`, `external/`, `summarizer/` | Agent implementations — `ReActAgent`, `ExternalAgent`, and `SessionCompactorAgent` (see `agents/AGENTS.md`). |
+| `memory/` | `consolidation/`, `core/`, `injection/`, `layers/`, `pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Three-layer memory — session/archive/core, compaction, consolidation, governance, injection. Split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) + `MemoryStoreBundle` (see `memory/AGENTS.md`) |
+| `persistence/` | `adapters/`, `managers/`, `migrations/`, `session_artifacts/` | Hybrid persistence layer (ADR-0023, ADR-0028~0031). `ConnectionManager` + `MigrationRunner` (per-workspace SQLite), backend adapters, and session artifact cleanup. |
+| `multi_agent/` | `communication/`, `inbox/`, `session_tree/` | Star-topology orchestration — `AgentPool`, `AgentTemplate`, `PoolInstance`, inbox, and `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
+| `tools/` | `ast/`, `lsp/`, `mcp/`, `overflow/`, `standard/`, `terminal/`, `web/` | Tool subsystem — concrete `InMemoryToolManager`, filtering, MCP, terminal, overflow, and standard tools (see `tools/AGENTS.md`) |
+| `sandbox/` | `adapters/` | Sandboxed execution — Subprocess, Docker, E2B, Landlock, guards, environment builder (see `sandbox/AGENTS.md`) |
+| `pipeline/` | — | `AgentPipeline` orchestration, `InputAdapter` ABC, approval renderer, snapshot handling (see `pipeline/AGENTS.md`) |
+| `runtime/` | — | `AgentRuntime`, `AgentRuntimeServices`, `TurnStateStore`, codec, snapshot policy (see `runtime/AGENTS.md`) |
+| `commands/` | — | Slash command parsing and dispatch, including the consumer-owned `SkillResolver` command seam (see `commands/AGENTS.md`) |
+| `control/` | — | Control transport — `InMemoryControlChannel` (the live `/stop` + pause mechanism), `ControlCommand`, `AgentControlError` exceptions (see `control/AGENTS.md`) |
+| `hook/` | `builtin/` | Lifecycle hooks — `HookRunner`, `HookPoint`, builtin hooks (see `hook/AGENTS.md`) |
+| `interceptor/` | `builtin/` | AOP interceptor chain — `InterceptorChain` and builtin interceptors (see `interceptor/AGENTS.md`) |
+| `ioc/` | `configs/`, `factories/` | `AppConfig` and typed construction helpers (see `ioc/AGENTS.md`) |
+| `approval/` | — | Tiered tool approval — tiers, decisions, response parsing (see `approval/AGENTS.md`) |
+| `messaging/` | — | `MessageBroker`, `BrokerBridgeService` (see `messaging/AGENTS.md`) |
+| `plugins/` | `assembly/`, `defaults/capabilities/` | Plugin-unified agent assembly; the `CAPABILITY` slot hosts bundled capabilities, including the complete Experience and Skills vertical slices (see `plugins/AGENTS.md` and `docs/design/capability-bundles/AUTHOR-GUIDE.md`) |
+| `scope/` | — | Scope declarations, validation, compilation, effective toolsets, provenance, and the capability compile protocol (see `scope/AGENTS.md`) |
+| `providers/` | `http/` | Direct-HTTP event-stream LLM providers and protocol engines (ADR-0046; see `providers/AGENTS.md`) |
+| `workspace/` | — | Workspace identity, paths, resource lookup, and routing (see `workspace/AGENTS.md`) |
+| `input_pipeline/` | — | Extensible user-input stage pipeline — `UserInputEnvelope`, `InputStage`, `Continue`/`Terminate`, `UserInputPipeline` (see `input_pipeline/AGENTS.md`) |
+| `trace/` | — | Tracing and observability — `TraceStore`, `TraceHooks`, `TraceType` |
+| `utils/` | — | Shared tokenizer, frontmatter, XML, file, process, and time helpers |
+| `adapters/` | — | Platform I/O contracts, output adapters, content filters, and the emitter bridge (see `adapters/AGENTS.md`) |
+| `media/` | — | Concrete media storage, MIME classification, and security gates; contracts live in `core/media.py` (see `media/AGENTS.md`) |
 
 ## Key Files
 
@@ -132,4 +132,3 @@ See root `AGENTS.md` for a detailed breakdown of the approval architecture, cove
 
 <!-- MANUAL -->
 <!-- Additional manual entries can be added below this line. -->
-

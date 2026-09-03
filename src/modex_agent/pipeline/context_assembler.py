@@ -28,7 +28,6 @@ from modex_agent.multi_agent.message_type import AgentMessageType
 
 if TYPE_CHECKING:
     from modex_agent.core.capabilities import ModelInfo
-    from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.multi_agent.router import RouteResult
@@ -46,7 +45,6 @@ async def assemble_context(
     *,
     agent_descriptor: AgentDescriptor | None = None,
     tool_manager: ToolManager | None = None,
-    skill_manager: SkillManager | None = None,
     context_builder: MultiAgentContextBuilder | None = None,
     append_user_message: bool = True,
     model_info: ModelInfo | None = None,
@@ -126,7 +124,6 @@ async def assemble_context(
     context_state = await ctx_mgr.load(
         session_id,
         tool_manager=tool_manager,
-        skill_manager=skill_manager,
         runtime_info=runtime_info,
     )
 

@@ -380,7 +380,7 @@ class _PoolBuild:
             descriptor,
             broker=self.broker,
             tool_manager=None,
-            skill_manager=None,
+            skill_resolver=None,
             context_manager=InMemoryContextManager(
                 base_system_prompt="You are the reviewer."
             ),

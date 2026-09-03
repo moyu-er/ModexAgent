@@ -81,6 +81,9 @@ async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
     # carries the subagents capability (non-root ⇒ derived send_to_agent
     # + the auto-send hook + the consultation section), whose assemble
     # and TOOL factories read the supply off the threaded mapping.
+    # The skills supply joins it: skills auto-applies to every native
+    # agent (plan §11.3), so the sub's assemble reads it here too.
+    from modex_agent.plugins.defaults.capabilities.skills.supply import build_skills_supply
     from modex_agent.plugins.defaults.capabilities.subagents import SubagentsSupply
 
     deps = AgentMaterializeDeps(
@@ -96,7 +99,12 @@ async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
         root_provider=_StaticRootProvider(Path("/ws")),
         component_registry=registry,
         pool_assembly_ctx=pool_assembly,
-        capability_supply={"subagents": SubagentsSupply(service=MagicMock())},
+        capability_supply={
+            "subagents": SubagentsSupply(service=MagicMock()),
+            "skills": build_skills_supply(
+                pool_name="main", skill_root_for_agent={"scout": []}
+            ),
+        },
     )
     deps.context_fork_builder = ContextForkBuilder()
     deps.scope_path = ScopePath(workspace_root=Path("/ws"), pool_name="main")
@@ -282,6 +290,31 @@ async def test_materialize_parent_none_still_builds_subagent_tool_manager():
 
 
 @pytest.mark.asyncio
+async def test_materialize_skills_veto_omits_only_subagent_resolver() -> None:
+    from modex_agent.plugins.defaults.capabilities.skills.supply import (
+        build_skills_supply,
+    )
+
+    deps, factory = await _make_deps()
+    skills_supply = build_skills_supply(
+        pool_name="main",
+        skill_root_for_agent={"main": []},
+    )
+    deps.capability_supply = {
+        **deps.capability_supply,
+        "skills": skills_supply,
+    }
+    main_resolver = skills_supply.resolver_for("main")
+    template = _compiled_template("scout", capabilities={"skills": False})
+    parent = SessionIdFactory().create(agent_name="main")
+
+    await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
+
+    assert factory.create_agent.call_args.kwargs["skill_resolver"] is None
+    assert skills_supply.resolver_for("main") is main_resolver
+
+
+@pytest.mark.asyncio
 async def test_materialize_subagent_inherits_reasoning_effort() -> None:
     """AgentLLMConfig on the subagent descriptor receives llm_reasoning_effort from deps."""
     deps, factory = await _make_deps()
@@ -401,9 +434,11 @@ async def test_materialize_roster_todo_continuation_hook_receives_tree():
     fake_instance.stop = AsyncMock()
     deps, factory = await _make_deps()
     factory.create_agent = AsyncMock(return_value=fake_instance)
+    skills_supply = deps.capability_supply["skills"]
     deps.capability_supply = {
         "todo": TodoSupply(store=MagicMock(name="todo_store")),
         "subagents": SubagentsSupply(service=MagicMock()),
+        "skills": skills_supply,
     }
     template = _compiled_template("scout", hooks=["todo_continuation"])
     parent = SessionIdFactory().create(agent_name="main")
@@ -431,9 +466,11 @@ async def test_materialize_subagent_registers_cleanup_reorientation() -> None:
     from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
 
     deps, factory = await _make_deps()
+    skills_supply = deps.capability_supply["skills"]
     deps.capability_supply = {
         "todo": TodoSupply(store=MagicMock(name="todo_store")),
         "subagents": SubagentsSupply(service=MagicMock()),
+        "skills": skills_supply,
     }
     template = _compiled_template("scout", capabilities={"todo": {}})
 

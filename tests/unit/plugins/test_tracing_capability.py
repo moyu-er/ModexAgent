@@ -678,10 +678,19 @@ class TestRosterEndToEnd:
             kind=ScopeKind.POOL,
             pool=PoolSpec(
                 name="p",
-                agents=[AgentSpec(name="main", capabilities={"tracing": {}})],
+                agents=[
+                    # skills auto-applies to every native agent (plan
+                    # §11.3) — veto it so the tracing binding is the
+                    # only compiled capability here.
+                    AgentSpec(
+                        name="main",
+                        capabilities={"tracing": {}, "skills": False},
+                    )
+                ],
             ),
         )
         compilation = compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_registry())
+        assert len(compilation.agents[0].spec.capabilities) == 1
         binding = compilation.agents[0].spec.capabilities[0].binding
         assert binding.active_sections == ()
 

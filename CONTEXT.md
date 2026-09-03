@@ -103,8 +103,16 @@ The root Pydantic config object loaded from YAML, aggregating 13 typed config se
 _Avoid_: root config, top-level config, settings
 
 **PoolConfig**:
-The config for one agent pool (one deployment of one system). Holds `LLMConfig`, a list of `AgentConfig`, optional `MCPConfig` / `MemoryConfig` / `SkillsConfig`, and `TerminalConfig`. Pool identity = name of the agent with `role="main"`. Per ADR-0001, pool mode is the only assembly mode.
+The config for one agent pool (one deployment of one system). Holds `LLMConfig`, a list of `AgentConfig`, optional `MCPConfig` / `MemoryConfig`, and `TerminalConfig`. Pool identity = name of the agent with `role="main"`. Skills are capability-compiled and assigned by the per-agent disk tree, not by this config. Per ADR-0001, pool mode is the only assembly mode.
 _Avoid_: agent system config, fleet config, cluster config
+
+**Skills Supply** (`SkillsSupply`):
+The pool-level owner of Skills runtime state. The Skills capability supply phase builds one `SkillCatalog` for every effective native agent from `skills/<pool>/<agent>/`; `resolver_for(agent_name)` is the sole factory for the bound resolver references consumed by agent assembly. Main-agent and subagent paths look up those references and never construct a second catalog.
+_Avoid_: per-agent skills service, skills registry
+
+**Skill Resolver** (`SkillResolver`):
+The consumer-owned command-resolution ABC implemented by `SkillCatalog`. A bound resolver is a reference to the catalog owned by `SkillsSupply`; it is threaded to the agent pipeline, `CommandContext`, and the Bot input pipeline without exposing the concrete catalog. Prompt injection is a separate capability-section concern, so replacing `MEMORY_SYSTEM` removes the Skills prompt section but does not remove the bound resolver.
+_Avoid_: skill loader (loading belongs to the catalog's source), prompt provider (command resolution and prompt rendering are separate consumers)
 
 **Active-Workspace Resources Resolver**:
 The framework port the business layer implements to hand the framework the currently active workspace's per-pool resources (memory/runtime/trace stores). Canonical type: `WorkspaceManager` (a single method returning `WorkspaceResources`). Distinct from `WorkspaceResolver` (resolves a workspace by id) and `WorkspaceControlPort` (cd/switch/list control).
@@ -347,7 +355,7 @@ A placeholder hook class (ADR-0024 IN13, Phase 3, **not registered**) documentin
 _Avoid_: loop detector (too generic), trace hook (too generic — `TraceCollectorHook` is the trace-emitting hook; this is the trace-consuming hook)
 
 **Execution Strategy**:
-A pool-shape recipe — a frozen `ExecutionStrategy` ABC implementation that owns one full pool shape (ReAct graph loop, external CLI harness, future shapes). Declares capability flags (`supports_subagents`, `requires_main_agent_tools`) and exposes two methods: `assemble(ctx) -> StrategyAssembly` (construct all runtime components this strategy needs) and `validate_pool_spec(spec)` (fail-fast at startup). The strategy is stateless: it is called once during pool assembly, returns a fully-configured `StrategyAssembly`, and is then never touched again at runtime. Adding a new pool shape = implementing this ABC + registering it; `pool_builder.create_pool` and `AgentPipeline` do not branch on strategy identity. Replaces the `ExecutionStrategy` enum (now renamed `ExecutionStrategyKind`, a closed string set used only for pool.yml lookup and registry resolution). See ADR-0025.
+A stateless pool-shape recipe that owns one full pool shape (ReAct graph loop, external CLI harness, future shapes). Declares capability flags (`supports_subagents`, `requires_main_agent_tools`) and exposes `assemble_main(ctx) -> StrategyAssembly`, `assemble_sub(...) -> SubagentAssembly`, and `validate_pool_spec(spec)` (fail-fast at startup). Adding a new pool shape = implementing this ABC + registering it; `pool_builder.create_pool` and `AgentPipeline` do not branch on strategy identity. Replaces the `ExecutionStrategy` enum (now renamed `ExecutionStrategyKind`, a closed string set used only for pool.yml lookup and registry resolution). See ADR-0025.
 _Avoid_: agent type (too generic — that is the `Agent[E]` ABC), runtime mode (too vague), execution mode (too vague)
 
 **AgentImplementation**:
@@ -371,7 +379,7 @@ The discriminator for how a subagent's `<artifacts>` block in a `<subagent_notif
 _Avoid_: artifact type (too generic), notification kind (collides with message_type vocabulary)
 
 **Pool Assembly**:
-The two-layer construction process for a pool, extending the existing "Assembly" term. Layer 1 — **common assembly** (executed by `pool_builder.create_pool` for every pool): broker, `InboxMQ`, `AgentMessageBus`, `InboxPoller`, `SessionIdFactory`, `AgentPool`, `CommunicationTargetStore`, notification/communication services. Layer 2 — **strategy assembly** (delegated to the pool's `ExecutionStrategy.assemble()`): all strategy-specific components — `Agent`, `TurnRunner`, provider/tool/skill/MCP/terminal managers (react), or `StreamingProviderBackend` + `ExternalSessionMapStore` (external). The strategy returns a `StrategyAssembly` (frozen dataclass — a runtime-object container, NOT a Pydantic value object per rule 12's runtime-object exemption); the pool builder then performs common post-assembly (main-agent registration, communication tool registration, `AgentPipeline` construction) using only the assembly's common surface. No `if execution_strategy == ...` branches in either layer. See ADR-0025.
+The two-layer construction process for a pool, extending the existing "Assembly" term. Layer 1 — **common assembly** (executed by `pool_builder.create_pool` for every pool): broker, `InboxMQ`, `AgentMessageBus`, `InboxPoller`, `SessionIdFactory`, `AgentPool`, `CommunicationTargetStore`, notification/communication services, and pool-owned capability supplies. Layer 2 — **strategy assembly** (delegated to the pool's `ExecutionStrategy.assemble_main()`): all strategy-specific components — `Agent`, `TurnRunner`, provider/tool/MCP/terminal managers (react), or `StreamingProviderBackend` + `ExternalSessionMapStore` (external). `SkillsSupply`, not the strategy, constructs one catalog per effective native agent; native assembly receives only the bound resolver reference. The strategy returns a `StrategyAssembly` (a runtime-object container, NOT a Pydantic value object per rule 12's runtime-object exemption); the pool builder then performs common post-assembly (main-agent registration, communication tool registration, `AgentPipeline` construction) using only the assembly's common surface. No `if execution_strategy == ...` branches in either layer. See ADR-0025.
 _Avoid_: pool wiring (use "wiring" for specific connections, "assembly" for the process), pool construction (too generic)
 
 **Turn Runner**:
@@ -379,7 +387,7 @@ The locked-turn orchestrator sitting between `AgentPipeline` and `Agent.run()`. 
 _Avoid_: turn executor (too generic), turn handler (too generic)
 
 **Strategy Assembly** (`StrategyAssembly`):
-The frozen dataclass returned by `ExecutionStrategy.assemble()`. A runtime-object container carrying everything the pool builder and pipeline need: the `Agent`, the `TurnRunner`, react-only collaborators (`LLMProvider` / `ToolManager` / `SkillManager` / `MCPManager` / `TerminalManager` / `ContextManager` / `DreamEngine` / `CommandProcessor` / `InMemoryControlChannel` — all `None` for external), external-only collaborators (`StreamingProviderBackend` / `ExternalSessionMapStore` — all `None` for react), common services (`AgentNotificationService` / `AgentCommunicationService` / `CommunicationTargetStore`), and `extra_cleanup` hooks. Typed as a frozen `@dataclass` per rule 12's runtime-object exemption (NOT a Pydantic `BaseModel` — its fields are live objects with connections/state, not serializable values); cross-module but single-purpose (passed once from strategy to pool_builder, never serialized). See ADR-0025.
+The frozen dataclass returned by `ExecutionStrategy.assemble_main()`. A runtime-object container carrying the strategy products still needed by pool assembly: optional `Agent` / `TurnRunner` and common communication services; native side products such as the system-prompt provider, tool/MCP/terminal/context managers, dream engine, command processor, control channel, and hook specs; external backend/session-map products; and cleanup hooks. Skills catalogs and resolvers are intentionally absent: `SkillsSupply` owns each catalog, and native assembly receives only the bound resolver reference. The container uses the runtime-object exemption (NOT a Pydantic `BaseModel` — its fields are live objects with connections/state, not serializable values). See ADR-0025.
 _Avoid_: pool bundle (use "Pool Instance" for deployment-scoped runtime resources), strategy result (too generic)
 
 **Graph Spec**:

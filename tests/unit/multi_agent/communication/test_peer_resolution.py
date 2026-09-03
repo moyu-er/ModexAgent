@@ -79,7 +79,7 @@ def _instance(name: str) -> tuple[PoolInstance, MagicMock]:
         pool=MagicMock(),
         broker_bridge=MagicMock(),
         tool_manager=MagicMock(),
-        skill_manager=None,
+        skill_resolver=None,
         mcp_manager=None,
         terminal_manager=None,
         root_agent_name=name,

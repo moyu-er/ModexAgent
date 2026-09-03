@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-07-02 -->
+<!-- Updated: 2026-09-02 -->
 
 # multi_agent
 
@@ -66,6 +66,7 @@ InboxPoller (event-driven: Event.wait with ~interval tick fallback)
 |---|---|---|
 | built by | native Stage 4 / external strategy-aware registration | framework `AgentTemplate.materialize` (called by the poller) |
 | tools | compiled spec tools (preset expansion + derived `task`/`send_to_peer` + supplements) | compiled spec tools (preset + derived `send_to_agent` + supplements + per-agent MCP) |
+| skills | native root resolver looked up from the pool's `SkillsSupply` | native resolver looked up by compiled agent name from the same supply |
 | memory | workspace memory (pool default context manager) | session-only (`build_session_only_memory`) |
 | timing | eager at boot | lazy, on first turn |
 | `comm_kind` | `NORMAL` (set explicitly by business) | `SUBAGENT` (set inside `materialize`) |
@@ -77,6 +78,12 @@ invocations of that type. (Invocation-specific system-prompt parts — FORK
 context — are NOT baked into the instance; they are rebuilt per invocation
 by pipeline providers, so reuse is safe.)
 
+Skills construction is pool-owned: `SkillsSupply` builds the per-agent
+`SkillCatalog` mapping once, while main assembly and `AgentTemplate.materialize`
+only call `resolver_for(agent_name)`. An explicit `skills: false` compile veto
+removes that agent's resolver; external agents carry no capabilities and never
+enter native materialization.
+
 ## Key Files
 
 | File | Description |
@@ -87,15 +94,16 @@ by pipeline providers, so reuse is safe.)
 | `communication/` (package) | `AgentCommunicationService` — pure router. Strategy-dispatched (ADR-0019): `_send` resolves target → `TopologyPolicy.check` → one of three `SendStrategy` subclasses (`SubagentDispatchStrategy`, `ParentReplyStrategy`, `PeerNormalStrategy`) handles the full vertical slice (session construction, invocation_id semantics, envelope shape, delivery, result). See `communication/AGENTS.md` for the strategy contract. |
 | `comm_kind.py` | `AgentCommKind` — `NORMAL` / `SUBAGENT` topology kind. |
 | `tools.py` | `TaskDispatchTool` (main agent's subagent dispatch tool — strictly subagent-scoped: new task dispatch + session continuation) + `SendToPeerTool` (main agent's peer communication tool — cross-agent messaging, never task delegation; session-mode only, excluded from graph turns via `GraphToolPreset.excluded_base_tools`) + `SendToAgentTool` (subagent→parent consultation only) + `CommunicationTargetStore` (with `list_subagents()`/`list_peers()` views) + `CommunicationTarget` (carries `pool_name` + `tree_ref` for cross-pool routing per ADR-0019). All three tools converge on `AgentCommunicationService.send_async()`. |
-| `template.py` | `AgentTemplate` — subagent preset + the **only** construction path (`materialize`). Builds the tool manager, session-only memory, subagent hooks; wires per-invocation FORK prompt provider. |
+| `template.py` | `AgentTemplate` — subagent preset + the **only** construction path (`materialize`). Builds native tools/session memory, looks up the compiled agent's `SkillResolver` from `SkillsSupply`, and wires per-invocation FORK prompt context. |
 | `template_registry.py` | `AgentTemplateRegistry` — seeded per-pool subagent templates from the compiled scope declaration. |
-| `materialize_deps.py` | `AgentMaterializeDeps` — regular runtime object bundling construction connections (factory, broker, pool, path resolver, fork builder, …); replaces ~30 scattered ctor params. |
+| `materialize_deps.py` | `AgentMaterializeDeps` — regular runtime object bundling construction connections, including the pool-wide capability-supply mapping used for subagent resolver lookup. |
+| `pool_instance.py` | `PoolInstance` — deployment resources for one pool, including the typed root `skill_resolver` consumed by the Bot input pipeline; it is a reference to the supply-owned catalog, not a second construction path. |
 | `context_fork.py` | `ContextForkBuilder` — builds the FORK context XML from parent message history (pure computation, T18). `build()` queries the parent session's messages via `MemorySystem.get_full_history(limit=)`, returns the XML string. No fork files written to disk; no cleanup methods (file I/O removed in T17/T18). |
 | `pool_router.py` | `PoolRouter` — session→pool dispatch shell (framework-level). Routes every message to the pool recorded in a `PoolRoutingStore`; agent→pool ownership is a compile-time declaration lookup (`agent_pool_ownership(spec)` — agent name → declaring pools in declaration order; a miss is an error log + drop, never a silent fallback or an all-pools scan). The path resolution half of addressing lives in `modex_agent/workspace/scope_path.py`. |
 | `router.py` | `DefaultMeshRouter` — session identity resolved via `InputMessage.session` (no string parsing). |
 | `envelope.py` | `AgentMessageEnvelope` — source, target, session id, agent_session_id, invocation id, message_type, payload. |
 | `descriptor.py` | `AgentDescriptor`, `AgentInstance`, `AgentLLMConfig`, `ContextGovernanceConfig` — agent metadata + `comm_kind`. All are frozen Pydantic `BaseModel` (B5B). |
-| `factory.py` | Agent instance factory — assembles `AgentInstance` via `create_agent()`. `DefaultAgentFactory` builds react agents (provider + tools + skill + TurnContextBuilder + ApprovalResumer/ApprovalRenderer + ReActTurnRunner + hooks + pipeline). `ExternalAwareFactory` (in `examples/bot_project/bot/service/external_strategy.py`) overrides `create_agent` to build only 6 objects (ExternalAgent + broker I/O + emitter + ExternalTurnRunner + pipeline, no hooks/provider/tools) — external pools boot without `model.yml`. |
+| `factory.py` | Agent instance factory — assembles `AgentInstance` via `create_agent()`. `DefaultAgentFactory` builds React agents with their bound skill resolver; `ExternalAwareFactory` builds the minimal external runner/pipeline without native tools, memory, hooks, or skills. |
 | `execution_strategy.py` | Stateless pool-shape strategies. `ComponentRegistry`'s `EXECUTION_STRATEGY` slot is the sole registration source; service boot derives `ExecutionStrategyRegistry` from `SimpleFactory` instances. |
 | `subagent_validator.py` | Framework-layer star-topology enforcement at registration. |
 | `message_format.py` | Unified markdown message builder — `build_agent_comm_message` (single builder for all agent-facing message markdown, selected by `source_label` + optional `result` + optional `reply_contract`; renders the state-conditional result guidance paragraph (complete / deliverable-lost / judge / continue) after the result body), `build_dispatch_message` (convergence wrapper for subagent dispatch that never injects a reply contract — replies are auto-delivered by `SubagentAutoSendHook`; delegated to by `SubagentDispatchStrategy` only), `build_parent_reply_message` (appends the parent-reply `task` answer contract when the invocation_id is known; delegated to by `ParentReplyStrategy`), `ResultMeta` (frozen Pydantic model for hook-generated result metadata; carries `output_path` from the hook (the status enum was removed)), and `SourceLabel`/`ResultStatus` StrEnums. |

@@ -9,7 +9,6 @@ from modex_agent.commands.constants import (
     NOTICE_APPROVAL_BLOCKS_CONTINUE,
     NOTICE_INVALID_COMMAND,
     NOTICE_NO_PENDING_APPROVAL,
-    NOTICE_SKILL_NOT_FOUND,
     NOTICE_UNKNOWN_COMMAND,
     BuiltinCommand,
     CommandAction,
@@ -21,7 +20,6 @@ from modex_agent.commands.models import (
     SlashCommandInvocation,
 )
 from modex_agent.core.message import ContentFormat
-from modex_agent.core.skills.builder import build_skill_command_xml
 
 logger = logging.getLogger(__name__)
 
@@ -232,61 +230,37 @@ class SkillCommandHandler(CommandHandler):
     ) -> CommandDispatchPolicy:
         return CommandDispatchPolicy.NORMAL_QUEUE
 
-    async def can_handle(
-        self,
-        invocation: SlashCommandInvocation,
-        context: CommandContext,
-    ) -> bool:
-        if invocation.command in {c.value for c in BuiltinCommand}:
-            return False
-        if context.skill_manager is None:
-            logger.warning(
-                "SkillCommandHandler: skill_manager is None, cannot resolve /%s "
-                "(pipeline skill_manager not wired or _build_pool_skill_manager returned None)",
-                invocation.command,
-            )
-            return False
-        skill = await context.skill_manager.get_skill(invocation.command)
-        if skill is None:
-            logger.info(
-                "SkillCommandHandler: skill '/%s' not found by SkillManager.get_skill",
-                invocation.command,
-            )
-            return False
-        return True
-
     async def handle(
         self,
         invocation: SlashCommandInvocation,
         context: CommandContext,
     ) -> CommandHandlingResult:
-        if context.skill_manager is None:
+        if context.skill_resolver is None:
             return CommandHandlingResult(
                 action=CommandAction.NOTICE,
                 dispatch_policy=CommandDispatchPolicy.NORMAL_QUEUE,
                 notice=NOTICE_UNKNOWN_COMMAND.format(command=invocation.command),
                 invocation=invocation,
             )
-        skill = await context.skill_manager.get_skill(invocation.command)
-        if skill is None:
+        resolved = await context.skill_resolver.resolve_command(
+            invocation.command, invocation.args.strip()
+        )
+        if resolved is None:
             return CommandHandlingResult(
                 action=CommandAction.NOTICE,
                 dispatch_policy=CommandDispatchPolicy.NORMAL_QUEUE,
-                notice=NOTICE_SKILL_NOT_FOUND.format(command=invocation.command),
+                notice=NOTICE_UNKNOWN_COMMAND.format(command=invocation.command),
                 invocation=invocation,
             )
-        content = build_skill_command_xml(
-            skill.name, skill.content, invocation.args, skill.location
-        )
         logger.info("Resolved slash skill command: /%s", invocation.command)
         return CommandHandlingResult(
             action=CommandAction.TRANSFORM_TO_USER_INPUT,
             dispatch_policy=CommandDispatchPolicy.NORMAL_QUEUE,
-            user_content=content,
+            user_content=resolved.xml,
             append_user_message=True,
             trigger_agent=True,
             invocation=invocation,
-            metadata={"skill_name": skill.name, "skill_location": skill.location or ""},
-            content_format=ContentFormat.XML,
-            truncatable_paths=["user_input"],
+            metadata={"skill_name": resolved.skill_name, "skill_location": resolved.skill_location or ""},
+            content_format=resolved.content_format,
+            truncatable_paths=list(resolved.truncatable_paths),
         )

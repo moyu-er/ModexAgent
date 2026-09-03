@@ -1067,8 +1067,7 @@ async def _record_golden_case(case_dir: Path) -> None:
             recorded_at=datetime.now(UTC).isoformat(),
             baseline=case_dir.name == "chat-notools",
         )
-        await fingerprint_assembly.instance.stop()
-        await fingerprint_assembly.memory_system.close()
+        await fingerprint_assembly.close()
 
         target_root = case_dir / "cassette"
         if target_root.exists():

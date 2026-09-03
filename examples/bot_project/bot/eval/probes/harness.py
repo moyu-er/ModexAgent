@@ -67,7 +67,7 @@ async def run_probe_harness(
     bundle = await build_memory_runtime_services(config.workspace, provider)
     trace_store = bundle.runtime_services.trace_store
     if trace_store is None:
-        await bundle.memory_system.close()
+        await bundle.assembly.close()
         raise ProbeHarnessError("probe harness requires an enabled trace store")
 
     status = HarnessStatus.COMPLETE
@@ -140,7 +140,7 @@ async def run_probe_harness(
                 completed.add(probe.probe_id)
                 cost_cursor = provider.spent_cost_usd
     finally:
-        await bundle.memory_system.close()
+        await bundle.assembly.close()
         trace_store.close()
 
     spent = prior_cost + provider.spent_cost_usd

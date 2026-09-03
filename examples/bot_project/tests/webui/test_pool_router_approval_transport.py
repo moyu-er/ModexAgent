@@ -17,27 +17,30 @@ that hand-off and through the broker serialization round-trip.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from bot.input_pipeline.context import BotInputContext
+from bot.input_pipeline.stages.enqueue import EnqueueStage
+from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import ApprovalDecisionInput
+from modex_agent.core.media import Attachment, AttachmentLocator, Kind
+from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
+from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
+from modex_agent.messaging.broker import AddressKind, BrokerMessage
 from modex_agent.messaging.broker_bridge import BrokerInputPayload
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
-from modex_agent.multi_agent.pool import input_message_from_dispatch_envelope
+from modex_agent.multi_agent.pool import AgentPool, input_message_from_dispatch_envelope
+from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
-
-
-class _MockBroker:
-    """PoolRouter still takes a broker; route_message no longer sends through it
-    (it goes via pool.pool.submit_input), but the ctor arg remains."""
-
-    async def send_to(self, address: Any, msg: Any) -> None:  # noqa: ARG002
-        pass
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 
 
 class _MockPool:
@@ -57,14 +60,22 @@ class _MockPool:
         self.pool = _Inner()
 
 
-def _router(tmp_path: Path, pool: _MockPool) -> PoolRouter:
+class _TransportPool:
+    root_agent_name = "main"
+    main_address = "pool:main"
+
+    def __init__(self, pool: AgentPool) -> None:
+        self.pool = pool
+
+
+def _router(tmp_path: Path, pool: _MockPool | _TransportPool) -> PoolRouter:
     session_store = PoolSessionStore(tmp_path)
     # Seed the session->pool mapping so route_message resolves to our pool.
     session_store.set("sess", "main")
     return PoolRouter(
         input_adapter=None,  # type: ignore[arg-type]  # route_message doesn't read it
-        broker=_MockBroker(),
-        pools={"main": pool},
+        broker=InMemoryMessageBroker(),
+        pools=cast(dict[str, PoolInstance], {"main": pool}),
         session_store=session_store,
         default_pool="main",
         agent_pool_ownership={"main": ("main",)},
@@ -137,8 +148,8 @@ async def test_decision_survives_full_dispatch_reconstruction(tmp_path: Path) ->
     )
     envelope = AgentMessageEnvelope(
         payload=payload_model.model_dump(exclude_none=True),
-        source=AgentAddress(kind="channel", name="websocket"),
-        target=AgentAddress(kind="agent", name="main"),
+        source=AgentAddress(kind=AddressKind.CHANNEL, name="websocket"),
+        target=AgentAddress(kind=AddressKind.AGENT, name="main"),
         message_type="external_input",
         session_id=submitted.session.session_id_prefix,
         agent_session_id="sess.main",
@@ -154,6 +165,82 @@ async def test_decision_survives_full_dispatch_reconstruction(tmp_path: Path) ->
     )
     assert rebuilt.approval_decision.tool_call_id == "call_abc"
     assert rebuilt.approval_decision.action == ApprovalAction.ALLOW
+
+
+@pytest.mark.asyncio
+async def test_bot_skill_metadata_survives_public_transport_seam(tmp_path: Path) -> None:
+    decision = ApprovalDecisionInput(
+        tool_call_id="call_skill",
+        action=ApprovalAction.ALLOW,
+    )
+    attachment = Attachment(
+        id="attachment-1",
+        kind=Kind.IMAGE,
+        name="reference.png",
+        mime="image/png",
+        size=128,
+        path="media/sess/reference.png",
+        locator=AttachmentLocator.MEDIA,
+    )
+    session = SessionInfo(session_id="sess.main", agent_name="main")
+    envelope = UserInputEnvelope(
+        external_id="sess",
+        content="/review focus on transport",
+        channel="websocket",
+        pre_resolved_session=session,
+        command_status=CommandStatus.RESOLVED,
+        metadata={
+            RoutingMeta.RESOLVED_AGENT: "main",
+            RoutingMeta.SKILL_XML: "<user_input>focus on transport</user_input>",
+            RoutingMeta.SKILL_CONTENT_FORMAT: ContentFormat.XML,
+            RoutingMeta.SKILL_TRUNCATABLE_PATHS: ("user_input",),
+            RoutingMeta.APPROVAL_DECISION: decision,
+        },
+        resolved_attachments=[attachment],
+    )
+    enqueued: list[InputMessage] = []
+    context = BotInputContext(
+        default_pool="main",
+        available_pools=lambda: {"main"},
+        pool_session_store=MagicMock(),
+        agent_resolver=lambda pool: pool,
+        transcript_store=MagicMock(),
+        enqueue_message=enqueued.append,
+        command_adapter=MagicMock(),
+    )
+    await EnqueueStage().process(envelope, context)
+    bot_message = enqueued[0]
+    assert bot_message.content_format is ContentFormat.XML
+    assert tuple(bot_message.truncatable_paths or ()) == ("user_input",)
+
+    agent_pool = AgentPool(
+        broker=InMemoryMessageBroker(),
+        agent_factory=MagicMock(),
+    )
+    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+    tree.deliver = AsyncMock()
+    agent_pool.tree = tree
+    router = _router(tmp_path, _TransportPool(agent_pool))
+
+    try:
+        await router.route_message(bot_message)
+        tree.deliver.assert_awaited_once()
+        dispatch_envelope = tree.deliver.await_args.args[1]
+
+        broker_message = dispatch_envelope.to_broker_message()
+        restored_broker = BrokerMessage.model_validate_json(
+            broker_message.model_dump_json()
+        )
+        restored_envelope = AgentMessageEnvelope.from_broker_message(restored_broker)
+        assert restored_envelope is not None
+
+        rebuilt = restored_envelope.to_input_message(session=session)
+        assert rebuilt.content_format is ContentFormat.XML
+        assert tuple(rebuilt.truncatable_paths or ()) == ("user_input",)
+        assert rebuilt.approval_decision == decision
+        assert rebuilt.attachments_resolved == [attachment]
+    finally:
+        await agent_pool.shutdown_all(timeout=0.1)
 
 
 @pytest.mark.asyncio

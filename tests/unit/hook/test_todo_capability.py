@@ -121,7 +121,9 @@ class TestProtocolShape:
         assert isinstance(registry.resolve_capability("todo"), TodoCapability)
 
     def test_applies_default_false(self) -> None:
-        declaration = AgentSpec(name="main", capabilities={"todo": {}})
+        declaration = AgentSpec(
+            name="main", capabilities={"skills": False, "todo": {}}
+        )
         spec = ScopeSpec(kind=ScopeKind.POOL, pool=PoolSpec(name="p", agents=[declaration]))
         # No declared override → the pure opt-in predicate never auto-applies.
         assert TodoCapability().applies(MagicMock()) is False
@@ -149,7 +151,9 @@ class TestProtocolShape:
 
 class TestDualAnchor:
     def test_both_tools_and_hooks_reach_merged_rosters(self) -> None:
-        tools, hooks = _compile_hooks(AgentSpec(name="main", capabilities={"todo": {}}))
+        tools, hooks = _compile_hooks(
+            AgentSpec(name="main", capabilities={"skills": False, "todo": {}})
+        )
 
         assert "todo_write" in tools
         assert "todo_read" in tools
@@ -160,7 +164,7 @@ class TestDualAnchor:
     def test_veto_todo_write_fails_loud_naming_both_tools(self) -> None:
         agent = AgentSpec(
             name="main",
-            capabilities={"todo": {}},
+            capabilities={"skills": False, "todo": {}},
             tools=["-todo_write"],
         )
 
@@ -177,7 +181,7 @@ class TestDualAnchor:
     def test_veto_todo_read_fails_loud_naming_both_tools(self) -> None:
         agent = AgentSpec(
             name="main",
-            capabilities={"todo": {}},
+            capabilities={"skills": False, "todo": {}},
             tools=["-todo_read"],
         )
 
@@ -186,7 +190,11 @@ class TestDualAnchor:
 
     def test_capability_false_disables_whole_bundle(self) -> None:
         tools, hooks = _compile_hooks(
-            AgentSpec(name="main", capabilities={"todo": False}, tools=["-todo_write"])
+            AgentSpec(
+                name="main",
+                capabilities={"skills": False, "todo": False},
+                tools=["-todo_write"],
+            )
         )
 
         assert "todo_write" not in tools and "todo_read" not in tools
@@ -200,7 +208,7 @@ class TestDualAnchor:
         tools, hooks = _compile_hooks(
             AgentSpec(
                 name="main",
-                capabilities={"todo": {}},
+                capabilities={"skills": False, "todo": {}},
                 hooks=["-todo_continuation"],
             )
         )
@@ -221,7 +229,7 @@ class TestDualAnchor:
                 agents=[
                     AgentSpec(
                         name="main",
-                        capabilities={"todo": {}},
+                        capabilities={"skills": False, "todo": {}},
                         hooks=["-todo_planning_nudge"],
                     )
                 ],
@@ -235,7 +243,11 @@ class TestDualAnchor:
         assert "todo_planning_nudge" not in hooks
         assert "todo_continuation" in hooks
         assert "todo_reorientation" in hooks
-        binding = compiled.spec.capabilities[0].binding
+        binding = next(
+            capability.binding
+            for capability in compiled.spec.capabilities
+            if capability.name == "todo"
+        )
         assert binding.active_sections == (
             PromptSectionSpec(section_id="todo.discipline", order=30),
         )
@@ -243,10 +255,22 @@ class TestDualAnchor:
     def test_binding_carries_the_section_spec(self) -> None:
         spec = ScopeSpec(
             kind=ScopeKind.POOL,
-            pool=PoolSpec(name="p", agents=[AgentSpec(name="main", capabilities={"todo": {}})]),
+            pool=PoolSpec(
+                name="p",
+                agents=[
+                    AgentSpec(
+                        name="main",
+                        capabilities={"skills": False, "todo": {}},
+                    )
+                ],
+            ),
         )
         compilation = compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_registry())
-        binding = compilation.agents[0].spec.capabilities[0].binding
+        binding = next(
+            capability.binding
+            for capability in compilation.agents[0].spec.capabilities
+            if capability.name == "todo"
+        )
         assert binding.active_sections == (
             PromptSectionSpec(section_id="todo.discipline", order=30),
         )

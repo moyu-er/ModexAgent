@@ -85,7 +85,7 @@ async def test_build_memory_runtime_services_assembles_real_memory_stack(
     assert bundle.memory_trace_hook in bundle.memory_system.hook_runner._hooks
     assert bundle.memory_trace_hook._store is bundle.runtime_services.trace_store
 
-    await bundle.memory_system.close()
+    await bundle.assembly.close()
 
 
 async def test_memory_counter_score_hook_publishes_nonzero_session_counters() -> None:
@@ -181,7 +181,7 @@ async def test_build_memory_runtime_services_reuses_trace_score_injector(
     assert counter_hooks[0]._score_injector is score_injector
 
     await bundle.runtime_services.hooks.aclose()
-    await bundle.memory_system.close()
+    await bundle.assembly.close()
 
 
 async def test_run_dream_until_exhausted_reports_exhaustion(

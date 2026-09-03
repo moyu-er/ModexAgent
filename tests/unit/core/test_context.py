@@ -5,12 +5,16 @@ TDD: verify ContextState behaviors including system prompt building and history.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
-from modex_agent.core.context import (
-    ContextState,
-)
+from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.memory.history import ListMessageHistory
+
+
+def test_context_load_has_no_legacy_skill_manager_parameter() -> None:
+    assert "skill_manager" not in inspect.signature(ContextManager.load).parameters
 
 
 async def _history_to_list(history):

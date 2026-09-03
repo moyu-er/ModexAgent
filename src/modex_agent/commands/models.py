@@ -16,8 +16,8 @@ from modex_agent.runtime.models import JsonValue, TurnSnapshot
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from modex_agent.commands.skill import SkillResolver
     from modex_agent.control.types import ControlCommand
-    from modex_agent.core.skills import SkillManager
     from modex_agent.runtime.store import TurnStateStore
 
 
@@ -40,7 +40,7 @@ class CommandContext:
     session_id: str
     input_msg: InputMessage
     agent_name: str
-    skill_manager: SkillManager | None = None
+    skill_resolver: SkillResolver | None = None
     turn_store: TurnStateStore | None = None
     pending_approval: TurnSnapshot | None = None
     runtime_info: Mapping[str, JsonValue] = field(default_factory=dict)

@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-22 | Updated: 2026-08-28 (capability-bundles doc sync, ADR-0047) -->
+<!-- Generated: 2026-06-22 | Updated: 2026-09-02 (D2 Skills ownership) -->
 
 # prompt_pipeline
 
@@ -19,7 +19,6 @@ System prompt pipeline — an ordered, versioned collection of `SystemPromptProv
 | `BasePromptProvider` | `static` | Always | Static base prompt from `agents/<name>.md` (never refreshes) |
 | `RuntimeProvider` | hourly | Always | Current date/hour + platform info |
 | `ModelInfoProvider` | `model:{name}:{modalities}` / `model:none` | `runtime_info` present (main-agent turn) | Declares the agent's perceptual capabilities (e.g. image perception). `ModelInfo` supplied at construction from `runtime_info[RuntimeInfoKey.MODEL_INFO]` (threaded by `assemble_context` from `runtime_services.model_info`). Tools that behave differently per modality (e.g. `read`) are mentioned as examples, not bound. Emits nothing when `model_info` is `None`. |
-| `SkillProvider` | skill-set hash | Skills assigned | Active skill summaries |
 | `ExperienceProvider` | experience hash | Experience files exist | Relevant experience entries |
 | `CoreMemoryProvider` | core memory hash | Core Memory files exist | SOUL.md / USER.md / MEMORY.md content (provider renamed from `KnowledgeProvider` per ADR-0035) |
 | `ArchiveProvider` | retrieved content hash (TTL 5s) | Archive entries exist | Backend-neutral historical summaries; `context.md` paths only when file storage exposes one. Version check TTL-cached to avoid per-iteration I/O |
@@ -27,6 +26,11 @@ System prompt pipeline — an ordered, versioned collection of `SystemPromptProv
 | `RuntimeProvider` | hourly | Always | Runtime metadata |
 | `ProviderBlocksProvider` | blocks hash | Provider blocks configured | Custom prompt blocks |
 | `ProviderPrefetchProvider` | prefetch hash | Prefetch configured | Prefetched context |
+
+Skills prompt content is owned by the bundled Skills capability:
+`SkillSectionProvider` renders the supply-owned `SkillCatalog` through the
+capability-section anchor. It is tested with the capability package rather than
+as a memory prompt-pipeline provider.
 
 The retired composite communication provider (peer reply contract, subagent consultation contract, delegation guidance — runtime tool-registration gated) migrated to the `subagents` capability package (ADR-0047): the three briefs are now the capability sections `subagents.delegation` (order=40), `subagents.consultation` (order=41), and `subagents.peer` (order=42), rendered through the capability-section anchor of `MemorySystemContextManager.load()` and gated at compile time (declared children / non-root / root-with-peers). The peer section reads the live root store at render time, so its version follows the remote-name set.
 

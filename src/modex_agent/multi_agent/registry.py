@@ -21,7 +21,6 @@ class AgentProfile:
     specialties: list[str] | None = None
     status: AgentState | None = None
     allowed_tools: list[str] | None = None
-    allowed_skills: list[str] | None = None
     capabilities: list[str] | None = None
     exposed_to_agents: bool = True
     comm_kind: AgentCommKind = AgentCommKind.NORMAL
@@ -59,14 +58,13 @@ class AgentRegistry(ABC):
     def find_profiles(
         self,
         capability: str | None = None,
-        skill: str | None = None,
         tool: str | None = None,
         caller: str | None = None,
     ) -> list[AgentProfile]:
-        """按能力、技能或工具筛选可见的 Agent 画像。
+        """按能力或工具筛选可见的 Agent 画像。
 
         匹配规则：
-        - capability / skill / tool 为 None 表示不过滤（通配符）。
+        - capability / tool 为 None 表示不过滤（通配符）。
         - 空列表 [] 表示要求该字段为空，即 deny-all。
         - 否则要求精确匹配（值存在于对应列表中）。
         """

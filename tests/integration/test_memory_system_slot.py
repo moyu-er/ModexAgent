@@ -44,8 +44,8 @@ if TYPE_CHECKING:
 
     from modex_agent.core.emitter import AgentResult
     from modex_agent.core.message import ChatMessage
-    from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
+    from modex_agent.plugins.defaults.capabilities.skills.catalog import SkillCatalog
 
 def _modexctl_resolvable() -> bool:
     """Mirror the production resolution (env override > venv sibling > PATH).
@@ -84,7 +84,7 @@ class _ProbeContextManager(ContextManager):
         runtime_info: dict[str, object] | None = None,
         metadata: dict[str, object] | None = None,
         tool_manager: ToolManager | None = None,
-        skill_manager: SkillManager | None = None,
+        skill_resolver: SkillCatalog | None = None,
     ) -> ContextState:
         return ContextState(system_prompt=_PROBE_SYSTEM_PROMPT)
 

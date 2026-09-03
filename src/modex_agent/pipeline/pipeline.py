@@ -14,9 +14,9 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from modex_agent.commands.skill import SkillResolver
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.context import ContextManager
-    from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.hook.runner import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
@@ -60,7 +60,7 @@ class AgentPipeline:
     ``TurnRunner`` (constructed by the factory, not the pipeline).
 
     Backward-compat: read-only delegation properties (``hook_runner``,
-    ``hooks``, ``skill_manager``, ``context_manager``, ``tool_manager``,
+    ``hooks``, ``skill_resolver``, ``context_manager``, ``tool_manager``,
     ``sanitizer``, ``agent_descriptor``, ``turn_store``, ``interceptor_chain``,
     ``runtime_context_manager``, ``_turn_context_builder``) expose the
     turn_runner's internals for code that reads them. The 5 mirror SETTER
@@ -114,8 +114,8 @@ class AgentPipeline:
         return self._turn_runner.hooks
 
     @property
-    def skill_manager(self) -> SkillManager | None:
-        return self._turn_runner.skill_manager
+    def skill_resolver(self) -> SkillResolver | None:
+        return self._turn_runner.skill_resolver
 
     @property
     def context_manager(self) -> ContextManager | None:
@@ -264,7 +264,7 @@ class AgentPipeline:
                         session_id=session_id,
                         input_msg=input_msg,
                         agent_name=self.agent.name,
-                        skill_manager=self._turn_runner.skill_manager,
+                        skill_resolver=self._turn_runner.skill_resolver,
                         turn_store=self._turn_runner.turn_store,
                         pending_approval=prelock_pending,
                         runtime_info={"input_metadata": input_msg.metadata or {}},

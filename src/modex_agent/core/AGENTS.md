@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-31 -->
+<!-- Updated: 2026-09-02 -->
 
 # core
 
@@ -7,19 +7,18 @@ Abstract base classes and shared types forming the framework's type-safe foundat
 
 ## Purpose
 
-The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMProvider`, `ContextManager`, `ContentEmitter[E]`), type system (`MessageRole`, `MessageType`, `ToolCall`), runtime context (`AgentContext`), session identity (`SessionInfo`, `SessionRegistry`, `SessionStore`), and sub-systems (skills; the Experience vertical slice moved to the `experience` capability package, plan §10). Every other framework module imports from `core/`. The graph engine was extracted to the standalone `modex_graph` package (ADR-0033); the old `core/graph/` directory is deleted.
+The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMProvider`, `ContextManager`, `ContentEmitter[E]`), type system (`MessageRole`, `MessageType`, `ToolCall`), runtime context (`AgentContext`), and session identity (`SessionInfo`, `SessionRegistry`, `SessionStore`). Feature vertical slices live with their owning capability packages, not in `core/`. The graph engine is the standalone `modex_graph` package (ADR-0033).
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
-| `agent.py` | `Agent[E]` generic ABC — `run()` entry point, `event_enum`, tool/skill registration. `AgentContext` (dataclass, runtime state + services). `current_agent_context` ContextVar |
+| `agent.py` | `Agent[E]` generic ABC — `run()` entry point, `event_enum`, tool registration. `AgentContext` (dataclass, runtime state + services). `current_agent_context` ContextVar |
 | `capabilities.py` | `Modality` (StrEnum: TEXT/IMAGE/VIDEO/AUDIO), `ModelCapabilities` (frozen Pydantic BaseModel: modalities + `supports()`), `ModelInfo` (frozen Pydantic BaseModel: `model_name` + `capabilities`). Moved from `ioc/configs/llm.py` so `core/tool_manager` and `runtime/services` can reference them without upward ioc dependency; `ioc/configs/llm.py` re-exports for config-layer consumers |
 | `constants.py` | `DefaultValues`, `FinishReason` (`(str, Enum)` — pre-existing; new enums use `StrEnum`), `ToolCallType`, `ToolChoice`, `ErrorMessages`, `ToolSchemaConstants`, `StreamControlAction` (StrEnum, B1) |
 | `context.py` | `ContextState` (StrEnum: ACTIVE/PAUSED/STOPPED), `ContextManager` ABC, `InMemoryContextManager` |
 | `emitter.py` | `ContentEmitter[E]` ABC — event streaming contract. `AgentResult` (Pydantic `BaseModel`, ADR-0033 D14 Stage 2). `StreamingAwareEmitter` moved to `modex_agent/adapters/emitter.py` (B4) |
 | `events.py` | `AgentEvent` base class/Enum mixin, `EmitterConfig` (filters, truncation, max_events) |
-| `frontmatter.py` | Shared YAML frontmatter parsing (`parse_frontmatter()`) for markdown docs (skills, experiences) |
 | `governance.py` | `GovernanceResult` — context governance result type |
 | `history.py` | `MessageHistory` ABC — message append/filter/get |
 | `llm_request.py` | `LLMRequest` (frozen Pydantic `BaseModel`, ADR-0046) — canonical request envelope for LLM calls: `model`, `messages`, `tools`, `temperature`, `top_p`, `max_output_tokens`, `stop`, `reasoning_effort`, `prompt_cache_key`, `extra_body`. The ONLY carrier of sampling parameters — HTTP headers carry auth/passthrough, never sampling knobs |
@@ -37,12 +36,6 @@ The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMP
 | `tool_manager.py` | Tool contracts + shared execution behavior (C2: concrete `InMemoryToolManager` moved to `tools/manager.py`; `DynamicSchemaProvider` folded into `Tool` — `core/tool.py` deleted): `Tool` class (dual-mode: `__init__` args OR `@property` name/description/parameters; declarative modalities per ADR-0014; dynamic schema via `get_dynamic_schema()`/`get_dynamic_schema_for()`), `ExecutionMode`, `ParallelTool`, `ExclusiveTool`, `ToolManager` ABC (with shared `execute()` — timeout-free result normalization, ctx delivery via contextvar, `get_tool_descriptions` visibility filtering), `ToolResult`, `ToolExecutionContext`, `ToolConfig` (frozen Pydantic — toggle `enabled` by replacing the config object). `Tool.execution_mode` is a read-only property that resolves the instance `_execution_mode_override` before the fail-closed class `_default_execution_mode`; `Tool.on_cancel()` owns external-state recovery and `Tool.cancel_note` adds context to synthesized cancellation results. |
 | `types.py` | `InputMessage`, `OutputMessage` (frozen Pydantic `BaseModel`, B5), `LLMResponse`, `ToolCall` (Pydantic `BaseModel`, ADR-0033 D14 Stage 2), `MessageRole` (StrEnum: SYSTEM/USER/ASSISTANT/TOOL/AGENT/PENDING), `MessageType` (Enum), `OutputMessageType` (StrEnum, B1) |
 | `utils.py` | Core utility helpers |
-
-## Subdirectories
-
-| Directory | Files | Purpose |
-|-----------|-------|---------|
-| `skills/` | 7 py | Skill loading, filtering, caching, progressive prompt building — `SkillManager`, `SkillSource` ABCs, `SkillPromptBuilder`, `SkillFilter` hierarchy (see `skills/AGENTS.md`) |
 
 ## For AI Agents
 
@@ -77,9 +70,6 @@ The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMP
 
 ### External
 - `pydantic` — `SessionInfo`, `ChatMessage` models
-- `pyyaml` (optional) — frontmatter parsing in `frontmatter.py`
-- `pathvalidate` — filename sanitization (used by skills)
 
 <!-- MANUAL -->
 <!-- Additional manual entries can be added below this line. -->
-

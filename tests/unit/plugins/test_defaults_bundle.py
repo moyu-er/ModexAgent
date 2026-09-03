@@ -245,7 +245,7 @@ class TestPerSlotNameSets:
         ``tracing`` (ADR-0047; grows one package per migration wave)."""
         registry = await _load_default_plugin()
         actual = _slot_names(registry, ComponentSlot.CAPABILITY)
-        assert actual == {"aci", "ast_grep", "experience", "subagents", "todo", "tracing"}, (
+        assert actual == {"aci", "ast_grep", "experience", "skills", "subagents", "todo", "tracing"}, (
             f"CAPABILITY drift: {actual}"
         )
 
@@ -339,7 +339,7 @@ class TestAllSlotsAccounted:
             (ComponentSlot.COMMAND_HANDLER, _EXPECTED_COMMAND_NAMES),
             (
                 ComponentSlot.CAPABILITY,
-                frozenset({"aci", "ast_grep", "experience", "subagents", "todo", "tracing"}),
+                frozenset({"aci", "ast_grep", "experience", "skills", "subagents", "todo", "tracing"}),
             ),
         ]
         for slot, names in checks:

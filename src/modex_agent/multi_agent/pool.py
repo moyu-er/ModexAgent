@@ -280,21 +280,15 @@ class AgentPool(AgentRegistry):
         content + approval_decision + attachments_resolved + routing headers.
         Writers persist only — the poller starts the turn (P2).
         """
-        payload_model = BrokerInputPayload(
-            content=message.content,
-            session_id=message.session.session_id_prefix,
+        payload_model = BrokerInputPayload.from_input_message(
+            message,
             agent_session_id=session_id,
-            metadata=dict(message.metadata) if message.metadata else {},
-            sender_id=message.sender_id,
-            chat_id=message.chat_id,
-            approval_decision=message.approval_decision.to_dict()
-            if message.approval_decision is not None
-            else None,
-            attachments_resolved=[a.to_dict() for a in message.attachments_resolved],
-            workspace=str(message.workspace) if message.workspace is not None else None,
-            message_type=AgentMessageType.EXTERNAL_INPUT,  # extra field, allowed by extra="allow"
+            message_type=AgentMessageType.EXTERNAL_INPUT,
         )
-        payload: dict[str, Any] = payload_model.model_dump(exclude_none=True)
+        payload: dict[str, Any] = payload_model.model_dump(
+            mode="json",
+            exclude_none=True,
+        )
 
         # Stamp the parent link when the target is a subagent session, so the
         # poller's dispatch path can read it from the envelope. submit_input
@@ -767,7 +761,6 @@ class AgentPool(AgentRegistry):
             specialties=descriptor.specialties or None,
             status=status,
             allowed_tools=descriptor.allowed_tools,
-            allowed_skills=descriptor.allowed_skills,
             capabilities=descriptor.address.capabilities or None,
             exposed_to_agents=descriptor.exposed_to_agents,
             comm_kind=descriptor.comm_kind,
@@ -785,7 +778,6 @@ class AgentPool(AgentRegistry):
     def find_profiles(
         self,
         capability: str | None = None,
-        skill: str | None = None,
         tool: str | None = None,
         caller: str | None = None,
     ) -> list[AgentProfile]:
@@ -795,10 +787,6 @@ class AgentPool(AgentRegistry):
             if capability is not None:
                 caps = profile.capabilities or []
                 if capability not in caps:
-                    continue
-            if skill is not None:
-                skills = profile.allowed_skills
-                if skills is not None and skill not in skills:
                     continue
             if tool is not None:
                 tools = profile.allowed_tools

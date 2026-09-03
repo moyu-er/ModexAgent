@@ -5,21 +5,38 @@ from unittest.mock import MagicMock
 import pytest
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
-from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillParseStage
+from bot.input_pipeline.stages.skill_parse import (
+    PoolSkillResolverRegistry,
+    SkillParseStage,
+)
 
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import ApprovalDecisionInput
+from modex_agent.commands.skill import ResolvedSkillCommand, SkillResolver
+from modex_agent.core.message import ContentFormat
 from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 
 
-class _FakeRegistry:
+class _FakeResolver(SkillResolver):
     def __init__(self, skills: set[str]) -> None:
         self._skills = skills
 
-    async def resolve(self, pool: str, name: str, content: str) -> ParsedSkill | None:
+    async def resolve_command(
+        self, name: str, arguments: str
+    ) -> ResolvedSkillCommand | None:
         if name not in self._skills:
             return None
-        return ParsedSkill(name=name, raw=content, xml_form=f"<skill name='{name}'>x</skill>")
+        return ResolvedSkillCommand(
+            skill_name=name,
+            xml=f"<skill name='{name}'>{arguments}</skill>",
+            skill_location=f"/skills/{name}",
+        )
+
+
+def _stage(skills: set[str]) -> SkillParseStage:
+    return SkillParseStage(
+        PoolSkillResolverRegistry({"main": _FakeResolver(skills)})
+    )
 
 
 def _ctx() -> BotInputContext:
@@ -36,34 +53,37 @@ def _ctx() -> BotInputContext:
 
 @pytest.mark.asyncio
 async def test_non_command_passes_through() -> None:
-    stage = SkillParseStage(_FakeRegistry({"office-expert"}))
+    stage = _stage({"office-expert"})
     env = UserInputEnvelope(external_id="u1", content="hello", channel="qq")
     result = await stage.process(env, _ctx())
     assert result.should_continue()
-    assert "skill_xml" not in env.metadata
+    assert RoutingMeta.SKILL_XML not in env.metadata
 
 
 @pytest.mark.asyncio
 async def test_valid_skill_sets_xml_and_keeps_raw_content() -> None:
-    stage = SkillParseStage(_FakeRegistry({"office-expert"}))
+    stage = _stage({"office-expert"})
     env = UserInputEnvelope(
         external_id="u1", content="/office-expert make ppt", channel="qq"
     )
     result = await stage.process(env, _ctx())
     assert result.should_continue()
     assert env.content == "/office-expert make ppt"  # raw preserved for persistence
-    assert env.metadata["skill_xml"].startswith("<skill")
-    assert env.metadata["skill_name"] == "office-expert"
+    assert env.metadata[RoutingMeta.SKILL_XML].startswith("<skill")
+    assert env.metadata[RoutingMeta.SKILL_NAME] == "office-expert"
+    assert env.metadata[RoutingMeta.SKILL_LOCATION] == "/skills/office-expert"
+    assert env.metadata[RoutingMeta.SKILL_CONTENT_FORMAT] is ContentFormat.XML
+    assert env.metadata[RoutingMeta.SKILL_TRUNCATABLE_PATHS] == ["user_input"]
     assert env.command_status is CommandStatus.RESOLVED
 
 
 @pytest.mark.asyncio
 async def test_unknown_skill_passes_through_unresolved() -> None:
-    stage = SkillParseStage(_FakeRegistry({"office-expert"}))
+    stage = _stage({"office-expert"})
     env = UserInputEnvelope(external_id="u1", content="/nosuch thing", channel="qq")
     result = await stage.process(env, _ctx())
     assert result.should_continue()  # no longer terminates here
-    assert "skill_xml" not in env.metadata
+    assert RoutingMeta.SKILL_XML not in env.metadata
     assert env.command_status is CommandStatus.UNRESOLVED  # left for the terminal stage to reject
 
 
@@ -75,7 +95,7 @@ async def test_skill_parse_passes_through_approval_decision() -> None:
     (empty qualifies), so a decision envelope flows through untouched — no
     Terminate, no SKILL_XML added.
     """
-    stage = SkillParseStage(_FakeRegistry({"office-expert"}))
+    stage = _stage({"office-expert"})
     envelope = UserInputEnvelope(
         external_id="ext",
         content="",

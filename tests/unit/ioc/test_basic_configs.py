@@ -1,6 +1,5 @@
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
 from modex_agent.ioc.configs.hooks import HookConfig, HooksConfig
-from modex_agent.ioc.configs.skills import SkillsConfig
 
 
 class TestHooksConfig:
@@ -14,17 +13,6 @@ class TestHooksConfig:
         cfg = HooksConfig(items=[HookConfig(name="my_hook")])
         assert len(cfg.items) == 1
         assert cfg.items[0].name == "my_hook"
-
-
-class TestSkillsConfig:
-    def test_defaults(self) -> None:
-        cfg = SkillsConfig()
-        assert cfg.roots == []
-        assert cfg.allowed is None
-
-    def test_with_roots(self) -> None:
-        cfg = SkillsConfig(roots=["skills/main", "skills/subagents"])
-        assert len(cfg.roots) == 2
 
 
 class TestApprovalConfig:

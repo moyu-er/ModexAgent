@@ -20,7 +20,7 @@ import pytest
 from bot.adapters.fan_in import FanInInputAdapter
 from bot.input_pipeline.assembly import build_im_pipeline
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
+from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
 from bot.webui.transcript_store import JSONLTranscriptStore
 
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
@@ -71,9 +71,8 @@ class _StubIMAdapter(InputAdapter):
         self._queue.put_nowait(msg)
 
 
-class _NoSkillRegistry(SkillRegistry):
-    async def resolve(self, pool: str, name: str, content: str) -> ParsedSkill | None:
-        return None
+def _no_skill_resolvers() -> PoolSkillResolverRegistry:
+    return PoolSkillResolverRegistry({})
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -198,7 +197,7 @@ async def test_im_pipeline_persists_qq_message() -> None:
     pipe = await build_im_pipeline(
         registry=TEST_COMPONENT_REGISTRY,
         ctx=TEST_ASSEMBLY_CTX,
-        skill_registry=_NoSkillRegistry(),
+        skill_registry=_no_skill_resolvers(),
         known_pools={"main", "coding"},
     )
 
@@ -234,7 +233,7 @@ async def test_im_pipeline_persists_discord_message() -> None:
     pipe = await build_im_pipeline(
         registry=TEST_COMPONENT_REGISTRY,
         ctx=TEST_ASSEMBLY_CTX,
-        skill_registry=_NoSkillRegistry(),
+        skill_registry=_no_skill_resolvers(),
         known_pools={"main"},
     )
 
@@ -265,7 +264,7 @@ async def test_im_pipeline_persists_message_with_attachments() -> None:
     pipe = await build_im_pipeline(
         registry=TEST_COMPONENT_REGISTRY,
         ctx=TEST_ASSEMBLY_CTX,
-        skill_registry=_NoSkillRegistry(),
+        skill_registry=_no_skill_resolvers(),
         known_pools={"main"},
     )
 
@@ -294,7 +293,7 @@ async def test_im_pipeline_persists_multiple_sequential() -> None:
     pipe = await build_im_pipeline(
         registry=TEST_COMPONENT_REGISTRY,
         ctx=TEST_ASSEMBLY_CTX,
-        skill_registry=_NoSkillRegistry(),
+        skill_registry=_no_skill_resolvers(),
         known_pools={"main"},
     )
 
@@ -335,7 +334,7 @@ async def test_im_pipeline_skips_control_commands() -> None:
     pipe = await build_im_pipeline(
         registry=TEST_COMPONENT_REGISTRY,
         ctx=TEST_ASSEMBLY_CTX,
-        skill_registry=_NoSkillRegistry(),
+        skill_registry=_no_skill_resolvers(),
         known_pools={"main"},
     )
 

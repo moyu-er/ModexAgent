@@ -18,6 +18,7 @@ from modex_agent.memory.consolidation.dream_engine import DreamEngine
 from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.plugins.assembly.single_agent import (
+    SingleAgentAssembled,
     SingleAgentInfra,
     assemble_declared_single_agent,
 )
@@ -98,6 +99,7 @@ class _MemoryCounterScoreHook(OutcomeFinallyHook):
 class MemoryRuntimeServices:
     """Concrete services required by one memory-enabled eval workspace."""
 
+    assembly: SingleAgentAssembled
     runtime_services: AgentRuntimeServices
     memory_system: DefaultMemorySystem
     context_manager: MemorySystemContextManager
@@ -123,6 +125,9 @@ async def build_memory_runtime_services(
     """Build a real archive+core eval stack rooted in ``workspace``."""
     from bot.eval.agent_harness import build_runtime_services
 
+    component_registry = ComponentRegistry()
+    with PluginRegistrationContext(component_registry) as registration:
+        DefaultPlugin().register(registration)
     declaration = load_scope_declaration(_MEMORY_HARNESS_DECLARATION)
     scope_boot = boot_scope_spec(
         declaration,
@@ -130,10 +135,8 @@ async def build_memory_runtime_services(
         data_dir=workspace,
         graphs_dirs=(),
         default_llm_provider="default",
+        registry=component_registry,
     )
-    component_registry = ComponentRegistry()
-    with PluginRegistrationContext(component_registry) as registration:
-        DefaultPlugin().register(registration)
     assembled = await assemble_declared_single_agent(
         scope_boot.compilation.agents[0],
         SingleAgentInfra(
@@ -185,6 +188,7 @@ async def build_memory_runtime_services(
         raise RuntimeError("Memory eval preset did not create archive and core layers")
 
     return MemoryRuntimeServices(
+        assembly=assembled,
         runtime_services=runtime_services,
         memory_system=memory_system,
         context_manager=assembled.context_manager,

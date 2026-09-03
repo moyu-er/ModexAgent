@@ -482,7 +482,7 @@ class TestE2EStepFun:
                 descriptor,
                 broker=broker,
                 tool_manager=None,
-                skill_manager=None,
+                skill_resolver=None,
                 context_manager=memory_ctx,
                 hooks=[],
             )
@@ -750,7 +750,7 @@ class TestE2EReviewLoopWithMemory:
             descriptor,
             broker=broker,
             tool_manager=None,
-            skill_manager=None,
+            skill_resolver=None,
             context_manager=tracking_ctx,  # type: ignore[arg-type]
             hooks=[],
         )

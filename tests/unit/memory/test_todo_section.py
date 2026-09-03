@@ -36,7 +36,6 @@ from modex_agent.scope.compiler import compile_scope
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
-from modex_agent.tools.manager import InMemoryToolManager
 
 _DIR = Path(__file__).resolve().parent
 _ROOT = _DIR.parents[2]
@@ -99,11 +98,12 @@ def _registry() -> ComponentRegistry:
 
 def _compile_todo_agent(*, capabilities: dict[str, Any] | None = None) -> Any:
     """Compile a bare root agent through the REAL compiler + registry."""
+    isolated_capabilities = {"skills": False, **(capabilities or {})}
     spec = ScopeSpec(
         kind=ScopeKind.POOL,
         pool=PoolSpec(
             name="p",
-            agents=[AgentSpec(name="root", capabilities=capabilities or {})],
+            agents=[AgentSpec(name="root", capabilities=isolated_capabilities)],
         ),
     )
     return compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_registry()).agents[0]
@@ -118,7 +118,11 @@ async def _assembled_prompt(mgr: MemorySystemContextManager, **load_kwargs: Any)
 async def _section_provider_from_assemble() -> SystemPromptProvider:
     """The REAL production path: compile → bind → assemble → provider."""
     compiled = _compile_todo_agent(capabilities={"todo": {}})
-    binding = compiled.spec.capabilities[0].binding
+    binding = next(
+        capability.binding
+        for capability in compiled.spec.capabilities
+        if capability.name == "todo"
+    )
     wiring = await TodoCapability().assemble(binding, MagicMock())
     providers = wiring.prompt_providers
     assert len(providers) == 1
@@ -144,7 +148,11 @@ class TestAssembleWiring:
     async def test_production_binding_carries_the_section(self) -> None:
         compiled = _compile_todo_agent(capabilities={"todo": {}})
 
-        binding = compiled.spec.capabilities[0].binding
+        binding = next(
+            capability.binding
+            for capability in compiled.spec.capabilities
+            if capability.name == "todo"
+        )
 
         assert binding.active_sections == (_DISCIPLINE_SECTION,)
 

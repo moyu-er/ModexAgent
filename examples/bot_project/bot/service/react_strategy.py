@@ -79,8 +79,6 @@ class ReactExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategy):
         pool_name = ctx.pool_name
         pool_spec = ctx.pool_spec
         main_spec = pool_spec.root_agent
-        root_agent_name = main_spec.name
-        project_dir: Path = ctx.project_dir
         data_dir: Path = ctx.data_dir
         workspace_handle = ctx.workspace_handle
         app_config = ctx.app_config
@@ -132,14 +130,16 @@ class ReactExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategy):
             cassette_recorder = CassetteRecorder(cassette_base_dir, scope=cassette_scope)
             tool_manager = cassette_recorder.wrap_tool_executor(tool_manager)
 
-        skill_manager = self._build_skill_manager(root_agent_name, project_dir, pool_name)
+        # The pool's skill resolver is NOT built here: the skills
+        # capability's supply owns catalog construction (plan §11.3.1) and
+        # Stage 4's ``build_native_inputs`` looks the root resolver up from
+        # the aggregated ``capability_supply`` — after Stage 3 aggregates it.
 
         return StrategyAssembly(
             agent=None,
             turn_runner=None,
             system_prompt_provider=prompt_provider,
             tool_manager=tool_manager,
-            skill_manager=skill_manager,
             mcp_manager=None,
             terminal_manager=terminal_manager,
             persistent_bash=None,

@@ -23,6 +23,7 @@ from .models import (
 )
 from .parser import SlashCommandParser
 from .processor import SlashCommandProcessor
+from .skill import ResolvedSkillCommand, SkillResolver
 
 __all__ = [
     "ApprovalCommandHandler",
@@ -36,7 +37,9 @@ __all__ = [
     "CommandParseStatus",
     "ContinueCommandHandler",
     "InvalidCommandHandler",
+    "ResolvedSkillCommand",
     "SkillCommandHandler",
+    "SkillResolver",
     "SlashCommandInvocation",
     "SlashCommandParser",
     "SlashCommandProcessor",

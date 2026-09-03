@@ -404,7 +404,13 @@ class TestDeclarationMatrix:
         # the roster, but no hook/section/manager ride it. The retired
         # supplement face bound the whole package to the tool name; the
         # capability face is the package switch.
-        compiled = _compile_root(AgentSpec(name="root", tools=[f"+{EXPERIENCE_TOOL_NAME}"]))
+        compiled = _compile_root(
+            AgentSpec(
+                name="root",
+                capabilities={"skills": False},
+                tools=[f"+{EXPERIENCE_TOOL_NAME}"],
+            )
+        )
         assert EXPERIENCE_TOOL_NAME in compiled.spec.tools
         assert EXPERIENCE_REVIEW_HOOK_NAME not in compiled.spec.hooks
         assert compiled.spec.capabilities == ()
@@ -510,7 +516,7 @@ class TestDeclarationMatrix:
         compiled = _compile_root(
             AgentSpec(
                 name="root",
-                capabilities={"experience": False},
+                capabilities={"experience": False, "skills": False},
                 tools=[f"+{EXPERIENCE_TOOL_NAME}"],
             )
         )

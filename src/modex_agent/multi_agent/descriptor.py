@@ -81,7 +81,6 @@ class AgentDescriptor(BaseModel):
     system_prompt_template: str | None = None
     allowed_tools: list[str] | None = None
     denied_tools: list[str] | None = None
-    allowed_skills: list[str] | None = None
     max_iterations: int = 15
     execution_strategy: ExecutionStrategyKind = (
         ExecutionStrategyKind.REACT

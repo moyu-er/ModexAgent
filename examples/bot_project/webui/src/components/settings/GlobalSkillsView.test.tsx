@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { GlobalSkillsView, buildUpload } from "./GlobalSkillsView";
 import { ToastProvider } from "../ToastContext";
+import { WorkspaceTabBar } from "../WorkspaceTabBar";
 
 function makeResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -20,6 +27,28 @@ function renderView(): void {
   );
 }
 
+function renderViewWithRestartIndicator(): void {
+  const noop = (): void => {};
+  render(
+    <ToastProvider>
+      <GlobalSkillsView />
+      <WorkspaceTabBar
+        tabs={[{ id: "__home__", path: "/home" }]}
+        activeId="__home__"
+        statuses={{}}
+        home="/home"
+        recentWorkspaces={[]}
+        onOpenWorkspace={noop}
+        onOpenRecent={noop}
+        onActivate={noop}
+        onClose={noop}
+        onReorder={noop}
+        onOpenSettings={noop}
+      />
+    </ToastProvider>,
+  );
+}
+
 function makeSkillFile(
   contents: string,
   name: string,
@@ -34,6 +63,251 @@ function makeSkillFile(
 }
 
 describe("GlobalSkillsView", () => {
+  const topology = {
+    kind: "workspace",
+    workspace: "bot",
+    pools: [
+      {
+        name: "default",
+        peers: [],
+        agents: [
+          { name: "main", parent: null, root: true },
+          { name: "helper", parent: "main", root: false },
+        ],
+      },
+      {
+        name: "coder",
+        peers: [],
+        agents: [
+          { name: "orchestrator", parent: null, root: true },
+          { name: "explore", parent: "orchestrator", root: false },
+        ],
+      },
+    ],
+  };
+
+  it("selects pool and agent context and distinguishes global from assigned skills", async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url === "/api/skills") {
+        return Promise.resolve(
+          makeResponse(200, [
+            { name: "fmt", source: "global" },
+            { name: "lint", source: "global" },
+          ]),
+        );
+      }
+      if (url === "/api/scope/topology") {
+        return Promise.resolve(makeResponse(200, topology));
+      }
+      if (url === "/api/pools/default/agents/main/skills") {
+        return Promise.resolve(
+          makeResponse(200, [
+            { name: "fmt", source: "global" },
+            { name: "scratchpad", source: "local" },
+          ]),
+        );
+      }
+      if (url === "/api/pools/coder/agents/orchestrator/skills") {
+        return Promise.resolve(makeResponse(200, []));
+      }
+      if (url === "/api/pools/coder/agents/explore/skills") {
+        return Promise.resolve(
+          makeResponse(200, [{ name: "lint", source: "global" }]),
+        );
+      }
+      return Promise.resolve(makeResponse(404, {}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderView();
+
+    const assignments = await screen.findByRole("region", {
+      name: "Agent assignments",
+    });
+    const library = screen.getByRole("region", { name: "Global library" });
+    await waitFor(() =>
+      expect(
+        (within(assignments).getByLabelText("fmt") as HTMLInputElement).checked,
+      ).toBe(true),
+    );
+    expect(
+      (within(assignments).getByLabelText("lint") as HTMLInputElement).checked,
+    ).toBe(false);
+    expect(within(assignments).queryByLabelText("scratchpad")).toBeNull();
+    expect(within(assignments).getByText("scratchpad")).toBeTruthy();
+    expect(within(library).getByText("fmt")).toBeTruthy();
+    expect(within(library).getByText("lint")).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("Pool"));
+    fireEvent.click(screen.getByRole("option", { name: "coder" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/pools/coder/agents/orchestrator/skills",
+      ),
+    );
+
+    fireEvent.click(screen.getByLabelText("Agent"));
+    fireEvent.click(screen.getByRole("option", { name: "explore" }));
+    await waitFor(() =>
+      expect(
+        (within(assignments).getByLabelText("lint") as HTMLInputElement).checked,
+      ).toBe(true),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/pools/coder/agents/explore/skills",
+    );
+  });
+
+  it("assigns and unassigns immediately, then refreshes state from the agent listing", async () => {
+    const disk = new Set<string>(["fmt"]);
+    const collectionUrl = "/api/pools/default/agents/main/skills";
+    const skillUrl = `${collectionUrl}/fmt`;
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (url === "/api/skills") {
+        return Promise.resolve(
+          makeResponse(200, [{ name: "fmt", source: "global" }]),
+        );
+      }
+      if (url === "/api/scope/topology") {
+        return Promise.resolve(makeResponse(200, topology));
+      }
+      if (url === skillUrl && method === "DELETE") {
+        disk.delete("fmt");
+        return Promise.resolve(makeResponse(200, { unassigned: "fmt" }));
+      }
+      if (url === skillUrl && method === "POST") {
+        disk.add("fmt");
+        return Promise.resolve(makeResponse(200, { assigned: "fmt" }));
+      }
+      if (url === collectionUrl) {
+        return Promise.resolve(
+          makeResponse(
+            200,
+            [...disk].map((name) => ({ name, source: "global" })),
+          ),
+        );
+      }
+      return Promise.resolve(makeResponse(404, {}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderViewWithRestartIndicator();
+
+    const assignments = await screen.findByRole("region", {
+      name: "Agent assignments",
+    });
+    const checkbox = (await within(assignments).findByLabelText(
+      "fmt",
+    )) as HTMLInputElement;
+    await waitFor(() => expect(checkbox.checked).toBe(true));
+    expect(screen.queryByLabelText("Restart required")).toBeNull();
+
+    fireEvent.click(checkbox);
+    await waitFor(() => expect(checkbox.checked).toBe(false));
+    expect(await screen.findByText('Unassigned skill "fmt".')).toBeTruthy();
+    expect(screen.queryByLabelText("Restart required")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Restart now" })).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith(skillUrl, { method: "DELETE" });
+
+    fireEvent.click(checkbox);
+    await waitFor(() => expect(checkbox.checked).toBe(true));
+    expect(await screen.findByText('Assigned skill "fmt".')).toBeTruthy();
+    expect(screen.queryByLabelText("Restart required")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Restart now" })).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith(skillUrl, { method: "POST" });
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url, init]) => url === collectionUrl && !init?.method,
+      ),
+    ).toHaveLength(3);
+  });
+
+  it("shows assignment loading and errors, then retries with Refresh", async () => {
+    let resolveInitialAgentLoad!: (response: Response) => void;
+    const initialAgentLoad = new Promise<Response>((resolve) => {
+      resolveInitialAgentLoad = resolve;
+    });
+    let agentLoads = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url === "/api/skills") {
+        return Promise.resolve(
+          makeResponse(200, [{ name: "fmt", source: "global" }]),
+        );
+      }
+      if (url === "/api/scope/topology") {
+        return Promise.resolve(makeResponse(200, topology));
+      }
+      if (url === "/api/pools/default/agents/main/skills") {
+        agentLoads += 1;
+        if (agentLoads === 1) return initialAgentLoad;
+        return Promise.resolve(
+          makeResponse(200, [{ name: "fmt", source: "global" }]),
+        );
+      }
+      return Promise.resolve(makeResponse(404, {}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderView();
+
+    const assignments = await screen.findByRole("region", {
+      name: "Agent assignments",
+    });
+    expect(await within(assignments).findByText("Loading…")).toBeTruthy();
+
+    resolveInitialAgentLoad(makeResponse(503, { detail: "offline" }));
+    const alert = await within(assignments).findByRole("alert");
+    expect(alert.textContent).toContain("Failed to load");
+
+    fireEvent.click(
+      within(assignments).getByRole("button", {
+        name: "Refresh assignments",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        (within(assignments).getByLabelText("fmt") as HTMLInputElement).checked,
+      ).toBe(true),
+    );
+    expect(within(assignments).queryByRole("alert")).toBeNull();
+    expect(agentLoads).toBe(2);
+  });
+
+  it("keeps assignment state unchanged and surfaces API errors", async () => {
+    const collectionUrl = "/api/pools/default/agents/main/skills";
+    const skillUrl = `${collectionUrl}/fmt`;
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === "/api/skills") {
+        return Promise.resolve(
+          makeResponse(200, [{ name: "fmt", source: "global" }]),
+        );
+      }
+      if (url === "/api/scope/topology") {
+        return Promise.resolve(makeResponse(200, topology));
+      }
+      if (url === collectionUrl) {
+        return Promise.resolve(makeResponse(200, []));
+      }
+      if (url === skillUrl && init?.method === "POST") {
+        return Promise.resolve(makeResponse(500, { detail: "nope" }));
+      }
+      return Promise.resolve(makeResponse(404, {}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderView();
+
+    const assignments = await screen.findByRole("region", {
+      name: "Agent assignments",
+    });
+    const checkbox = (await within(assignments).findByLabelText(
+      "fmt",
+    )) as HTMLInputElement;
+    await waitFor(() => expect(checkbox.checked).toBe(false));
+    fireEvent.click(checkbox);
+
+    expect(await screen.findByText(/Skill assign failed: 500/)).toBeTruthy();
+    expect(checkbox.checked).toBe(false);
+    expect(fetchMock).toHaveBeenCalledWith(skillUrl, { method: "POST" });
+  });
+
   it("renders the skill list from listSkills", async () => {
     vi.stubGlobal(
       "fetch",

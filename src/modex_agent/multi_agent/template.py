@@ -29,7 +29,6 @@ from typing import TYPE_CHECKING
 
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.ioc.configs.memory import MemoryConfig
-from modex_agent.ioc.configs.skills import SkillsConfig
 from modex_agent.multi_agent.execution_strategy import strategy_name_of
 from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.scope.spec import AgentSpec
@@ -38,9 +37,9 @@ from modex_agent.tools.presets import ContextMode, ToolPreset
 from modex_agent.workspace.scope_path import resolve_scope_path
 
 if TYPE_CHECKING:
+    from modex_agent.commands.skill import SkillResolver
     from modex_agent.core.provider import LLMProvider
     from modex_agent.core.session_id import SessionInfo
-    from modex_agent.core.skills import SkillManager
     from modex_agent.multi_agent.descriptor import AgentInstance
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
     from modex_agent.plugins.assembly.context import AssemblyContext
@@ -118,7 +117,6 @@ class AgentTemplate:
     toolset_profile: ToolPreset = ToolPreset.READ_WRITE
     memory: MemoryConfig | None = None
     compiled_spec: AssemblySpec | None = None
-    skills: SkillsConfig | None = None
     children: tuple[AgentSpec, ...] = ()
     """Declared DIRECT children (SPEC §3.2) — non-empty only for mid-level
     agents of a nested declaration tree. The ``subagents`` capability's
@@ -142,7 +140,7 @@ class AgentTemplate:
 
         A materialize call with ``parent_session=None`` is a subagent with no
         parent context (e.g. a cold-started template): it still gets a built
-        tool_manager, skill_manager, and session-scoped memory; only the
+        tool manager, bound skill resolver, and session-scoped memory; only the
         parent-dependent feature above is skipped. The
         ``subagent_auto_send`` hook is roster-dispatched for every non-root
         agent regardless (its factory derives the parent from the declared
@@ -150,7 +148,7 @@ class AgentTemplate:
 
         ``EXTERNAL`` subagents dispatch early to
         :meth:`_materialize_external`, skipping react-specific assembly
-        (memory, tool_manager, skill_manager, hooks) — the external strategy
+        (memory, tool manager, skill resolver, hooks) — the external strategy
         owns that assembly. React/pipeline/single-turn subagents take the
         existing path below.
         """
@@ -285,7 +283,7 @@ class AgentTemplate:
             assembly_spec=assembly_spec,
             component_ctx=component_ctx,
         )
-        skill_manager = self._build_skill_manager(deps, name)
+        skill_resolver = self._resolve_skill_resolver(deps, assembly_spec)
         context_manager_for_create = subagent_ctx
 
         # ── Hooks ──
@@ -358,7 +356,7 @@ class AgentTemplate:
                 memory_config=self.memory,
                 llm_provider=llm_provider,
                 tool_manager=tool_manager,
-                skill_manager=skill_manager,
+                skill_resolver=skill_resolver,
                 root_provider=deps.root_provider,
                 safety=deps.safety,
                 project_dir=deps.project_dir,
@@ -527,54 +525,31 @@ class AgentTemplate:
 
         return tm
 
-    def _build_skill_manager(
+    def _resolve_skill_resolver(
         self,
         deps: AgentMaterializeDeps,
-        name: str,
-    ) -> SkillManager | None:
-        """Build a SkillManager so the skill-injection pipeline stage is always present.
+        assembly_spec: AssemblySpec,
+    ) -> SkillResolver | None:
+        """Look up this subagent's bound resolver from the pool's skills supply.
 
-        Baked default (ADR: skill injection default-on): every subagent gets
-        a SkillManager over its skill root, even when empty — the
-        skill-injection pipeline stage must always be present. Roots come
-        from ``self.skills.roots`` when set; otherwise the convention root
-        ``skills/<pool_name>/<agent_name>/``. Non-existent roots are still
-        included (an empty/non-existent root simply yields no skills but
-        keeps the pipeline stage wired). Returns ``None`` only when no
-        project_dir is set.
+        Construction lives in the ``skills`` capability (plan §11.3.1):
+        ``require_skills_supply`` -> ``resolver_for(name)``. A native compiled
+        spec without Skills is the explicit per-agent veto, so only that case
+        intentionally maps to no resolver. Active Skills wiring requires the
+        pool supply and fails loudly when it is missing or malformed.
         """
-        if deps.project_dir is None:
-            return None
-        explicit_roots: list[str] = []
-        if self.skills is not None and self.skills.roots:
-            explicit_roots = list(self.skills.roots)
-        if not explicit_roots:
-            # Convention root: skills/<pool_name>/<agent_name>/
-            pool_name = _pool_name(deps)
-            explicit_roots = [f"skills/{pool_name}/{name}"]
-            logger.debug(
-                "_build_skill_manager: agent %r has no explicit skill roots; "
-                "using convention root skills/%s/%s/ (scope path wired=%s).",
-                name,
-                pool_name,
-                name,
-                deps.scope_path is not None,
-            )
-        skill_roots = [deps.project_dir / r for r in explicit_roots]
-        from modex_agent.core.skills import (
-            DefaultSkillBuilder,
-            FileSkillSource,
-            SkillManager,
+        from modex_agent.plugins.defaults.capabilities.skills import (
+            SKILLS_CAPABILITY_NAME,
+            require_skills_supply,
         )
 
-        skill_source = FileSkillSource(
-            directories=skill_roots,
-            cache=True,
-            layout="directory",
-            skill_filename="SKILL.md",
-        )
-        builder = DefaultSkillBuilder(base_path=deps.project_dir)
-        return SkillManager(source=skill_source, builder=builder)
+        if not any(
+            capability.name == SKILLS_CAPABILITY_NAME
+            for capability in assembly_spec.capabilities
+        ):
+            return None
+        supply = require_skills_supply(deps.capability_supply)
+        return supply.resolver_for(assembly_spec.agent_name)
 
 
 def _inject_emitter_and_pool_context(

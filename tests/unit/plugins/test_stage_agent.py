@@ -157,7 +157,7 @@ def _harness(
         pool=pool,
         context_manager=context_manager,
         memory_system=memory_system or MagicMock(),
-        skill_manager=MagicMock(),
+        skill_resolver=MagicMock(),
         project_dir=_workspace().target,
     )
     ctx = AssemblyContext(
@@ -203,7 +203,7 @@ async def test_native_core_uses_configured_memory_system_context_manager() -> No
         pool=inputs.pool,
         context_manager=fallback_context_manager,
         memory_system=inputs.memory_system,
-        skill_manager=inputs.skill_manager,
+        skill_resolver=inputs.skill_resolver,
         project_dir=inputs.project_dir,
     )
     spec = _spec().model_copy(update={"memory_system": "probe"})
@@ -416,7 +416,7 @@ async def test_memory_hook_without_any_memory_system_raises() -> None:
         pool=inputs.pool,
         context_manager=inputs.context_manager,
         memory_system=None,
-        skill_manager=inputs.skill_manager,
+        skill_resolver=inputs.skill_resolver,
         project_dir=inputs.project_dir,
     )
 

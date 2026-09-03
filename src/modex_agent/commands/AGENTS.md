@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-15 -->
+<!-- Updated: 2026-09-02 -->
 
 # commands
 
@@ -15,7 +15,8 @@ integrates with the pipeline for pre-lock routing and in-lock execution.
 | `parser.py` | `SlashCommandParser` -- strict `/command` syntax validation. |
 | `handlers.py` | Built-in handlers: `ApprovalCommandHandler` (`/approve`, `/deny`), `ContinueCommandHandler` (`/continue`), `ControlCommandHandler` (`/stop`), `SkillCommandHandler`, `UnknownCommandHandler`, `InvalidCommandHandler`. `build_default_builtin_handlers()` returns `(Approval, Continue, Control)`. |
 | `processor.py` | `SlashCommandProcessor` -- orchestrates parse → dispatch_policy → handle. |
-| `models.py` | `CommandContext`, `CommandHandlingResult` (carries optional `control_command` / `approval_action`), `SlashCommandInvocation`, `CommandParseResult`. |
+| `models.py` | `CommandContext` (including the bound `SkillResolver`), `CommandHandlingResult` (carries optional `control_command` / `approval_action`), `SlashCommandInvocation`, `CommandParseResult`. |
+| `skill.py` | Consumer-owned `SkillResolver` ABC and frozen `ResolvedSkillCommand`; lower-level command and Bot input adapters depend on this seam, not the bundled implementation. |
 | `constants.py` | `BuiltinCommand` (`approve`/`deny`/`continue`/`cd`/`exit`/`pwd`), `CommandAction` (`noop`/`notice`/`transform_to_user_input`/`continue_agent`/`approval_decision`/`control_command`), `CommandDispatchPolicy` (`normal_queue`/`approval_response`/`bypass_queue`/`drop_if_busy`), `CommandParseStatus`, notice templates. |
 
 ## Command Syntax
@@ -49,7 +50,8 @@ and are rejected as `builtin_not_supported`.
 
 ## Skill Commands
 
-Any non-built-in command is looked up as a skill via `SkillManager`:
+`SkillCommandHandler` resolves non-built-in commands through
+`CommandContext.skill_resolver`:
 
 ```
 /weather tomorrow
@@ -71,6 +73,11 @@ tomorrow
 ```
 
 If not found, returns a notice: `"Unknown command: /{command}. No such command or skill is available."`
+
+The resolver is bound from `SkillsSupply.resolver_for(agent_name)` and is
+implemented by that agent's `SkillCatalog`. The Bot `SkillParseStage` is the
+other inbound onramp; both call `SkillResolver.resolve_command()` with canonical
+arguments and receive the same rendered command shape.
 
 ## Two-Stage Dispatch
 

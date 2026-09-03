@@ -1,6 +1,15 @@
+"""Skill prompt builders + the command-invocation XML authority (plan §11.5).
+
+``build_skill_command_xml`` is the single source of truth for the
+``/skillName args`` XML user-content shape — BOTH command onramps (the
+framework ``SkillCommandHandler`` and the business InputStage resolver
+adapter) produce byte-identical XML through it (plan §5.3 correction).
+"""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from pathlib import Path
 
 from modex_agent.utils.xml import xml_attr, xml_text
@@ -12,11 +21,13 @@ class SkillPromptBuilder(ABC):
     """Strategy for converting a list of skills into a prompt section."""
 
     @abstractmethod
-    async def build(self, skills: list[Skill], context: ResolutionContext | None = None) -> str:
+    async def build(
+        self, skills: Sequence[Skill], context: ResolutionContext | None = None
+    ) -> str:
         """Return the skills prompt section (may be empty)."""
 
 
-def _render_skill_xml(skills: list[Skill]) -> str:
+def _render_skill_xml(skills: Sequence[Skill]) -> str:
     """Render skills as compact XML — metadata only, no body content.
 
     Only name, directory path, and description are included.
@@ -68,8 +79,8 @@ def build_skill_command_xml(
     added pointing at the skill's parent directory — the same convention the
     system-prompt ``<available_skills>`` block uses, so the LLM can resolve
     relative file references (e.g. a sibling ``GLOSSARY.md``) inside the body.
-    Omitted when *skill_location* is ``None`` (in-memory / runtime-override
-    skills with no on-disk files to reference).
+    Omitted when *skill_location* is ``None`` (in-memory skills with no
+    on-disk files to reference).
     """
     dir_attr = ""
     if skill_location:
@@ -86,10 +97,9 @@ def build_skill_command_xml(
 class DefaultSkillBuilder(SkillPromptBuilder):
     """Emit skill metadata as compact XML — never inline full content."""
 
-    def __init__(self, base_path: Path | None = None) -> None:
-        _ = base_path
-
-    async def build(self, skills: list[Skill], context: ResolutionContext | None = None) -> str:
+    async def build(
+        self, skills: Sequence[Skill], context: ResolutionContext | None = None
+    ) -> str:
         if not skills:
             return ""
         return _render_skill_xml(skills)

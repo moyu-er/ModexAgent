@@ -3,7 +3,7 @@
 The former ``build_subagent_descriptor`` builder lived here but was fully
 superseded by :class:`modex_agent.multi_agent.template.AgentTemplate`, the
 production subagent materialization path: ``AgentTemplate`` builds the
-descriptor, tool_manager, and skill_manager itself and threads the shared MCP
+descriptor and tool manager, binds its skill resolver, and threads the shared MCP
 registry. This module now keeps only the two pieces ``AgentTemplate`` still
 imports — :func:`build_session_only_memory` and :data:`DEFAULT_SYSTEM_PROMPT`.
 """

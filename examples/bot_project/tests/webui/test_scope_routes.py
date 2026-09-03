@@ -316,10 +316,11 @@ async def test_bill_field_layers_and_values(tmp_path: Path) -> None:
         }
         # Declared override map → local layer; the value is the effective
         # capability set in registry-enumeration order (todo + experience
-        # declared, subagents auto-applied via children/peers).
+        # declared, skills auto-applied to native agents, and subagents
+        # auto-applied via children/peers).
         assert _field(main, "capabilities") == {
             "field": "capabilities",
-            "value": ["experience", "subagents", "todo"],
+            "value": ["experience", "skills", "subagents", "todo"],
             "layer": "local",
             "profile": None,
         }
@@ -374,11 +375,11 @@ async def test_bill_field_layers_and_values(tmp_path: Path) -> None:
         assert _field(worker, "toolset")["value"] == "read_write"
         assert _field(worker, "toolset")["layer"] == "framework"
         assert _field(worker, "eager")["value"] == "lazy"
-        # No override declared → framework layer; only the auto-applied
-        # subagents capability (non-root position).
+        # No override declared → framework layer; Skills auto-applies to every
+        # native agent and subagents auto-applies by non-root position.
         assert _field(worker, "capabilities") == {
             "field": "capabilities",
-            "value": ["subagents"],
+            "value": ["skills", "subagents"],
             "layer": "framework",
             "profile": None,
         }
@@ -458,6 +459,18 @@ async def test_bill_reports_third_party_auto_capability_provenance(tmp_path: Pat
         assert response.status == 200, await response.text()
         root = _agent(await response.json(), "capability", "root")
         assert root["capabilities"] == [
+            {
+                "capability": "skills",
+                "state": "auto",
+                "registration_source": None,
+                "contributions": [
+                    {
+                        "kind": "section",
+                        "name": "skills.injection",
+                        "gate": "vouched",
+                    }
+                ],
+            },
             {
                 "capability": "third_party_auto",
                 "state": "auto",
@@ -564,7 +577,7 @@ async def test_declaration_capabilities_round_trip(tmp_path: Path) -> None:
     """The capabilities face round-trips through the editor API: PUT a
     declaration carrying a ``capabilities: {todo: {}}`` block, GET it
     back byte-identically, and the recomputed bill reports the capability
-    effective (todo tools in the roster)."""
+    effective (todo tools in the roster, plus auto-applied Skills)."""
     _write_declaration(tmp_path, _POOL_ROOT_DECLARATION)
     client = _make_client(tmp_path)
     await client.start_server()
@@ -589,7 +602,7 @@ async def test_declaration_capabilities_round_trip(tmp_path: Path) -> None:
         root = _agent(await bill.json(), "capability", "root")
         assert _field(root, "capabilities") == {
             "field": "capabilities",
-            "value": ["todo"],
+            "value": ["skills", "todo"],
             "layer": "local",
             "profile": None,
         }

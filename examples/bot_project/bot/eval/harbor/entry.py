@@ -50,7 +50,6 @@ from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.scope.overlay import AgentOverlay, PoolOverlay, ScopeOverlay, apply_scope_overlay
 from modex_agent.tools.presets import ToolPreset
 from modex_agent.trace.experiment_attrs import ExperimentLinkage, attach_experiment_attrs
-from modex_agent.trace.factory import build_trace_hooks
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.semconv import GenAiAttr, SpanName
 from modex_agent.trace.store import SpanModel
@@ -221,7 +220,7 @@ class _UsageProvider(LLMProvider):
         async for event in self._delegate.stream(request):
             yield event
 
-    async def chat(self, messages: list[ChatMessage], model: str | None = None, temperature: float = 0.7,
+    async def chat(self, messages: list[ChatMessage], model: str | None = None, temperature: float | None = 0.7,
                    max_output_tokens: int | None = None, tools: list[dict[str, Any]] | None = None,
                    **kwargs: JsonValue) -> LLMResponse:
         return await self._delegate.chat(messages, model, temperature, max_output_tokens, tools, **kwargs)
@@ -319,14 +318,18 @@ async def execute_entry(config: EntryConfig, dependencies: EntryDependencies) ->
     import json
     (config.output_dir / "trace-ids.jsonl").write_text(json.dumps(trace_record) + "\n", encoding="utf-8")
     store = _TraceStore(config, dependencies.span_exporter)
-    hook_specs = build_trace_hooks(ObservabilityConfig(trace_backend=TraceBackend.OTEL_HTTP,
-                                    trace_spans=TraceSpanMode.STANDARD, prompt_capture=PromptCaptureMode.FULL),
-                                    model=config.model, provider_name=config.model.partition("/")[0],
-                                    request_params=None, score_injector=None, store=store)
+    observability = ObservabilityConfig(
+        trace_backend=TraceBackend.OTEL_HTTP,
+        trace_spans=TraceSpanMode.STANDARD,
+        prompt_capture=PromptCaptureMode.FULL,
+    )
     instruction, agent_result, failure = "", None, None
     assembled: SingleAgentAssembled | None = None
     try:
         instruction = config.instruction_path.read_text(encoding="utf-8")
+        component_registry = ComponentRegistry()
+        with PluginRegistrationContext(component_registry) as registration:
+            DefaultPlugin().register(registration)
         declaration = load_scope_declaration(_REACT_HARNESS_DECLARATION)
         overlay = ScopeOverlay(
             pools={
@@ -346,10 +349,9 @@ async def execute_entry(config: EntryConfig, dependencies: EntryDependencies) ->
             data_dir=config.output_dir / "assembly",
             graphs_dirs=(),
             default_llm_provider="default",
+            registry=component_registry,
+            observability=observability,
         )
-        component_registry = ComponentRegistry()
-        with PluginRegistrationContext(component_registry) as registration:
-            DefaultPlugin().register(registration)
         assembled = await assemble_declared_single_agent(
             scope_boot.compilation.agents[0],
             SingleAgentInfra(
@@ -361,8 +363,8 @@ async def execute_entry(config: EntryConfig, dependencies: EntryDependencies) ->
                         data_root=config.output_dir / "assembly",
                     )
                 ),
-                extra_hooks=tuple(spec.hook for spec in hook_specs),
                 governance_enabled=False,
+                trace_store=store,
             ),
             project_dir=_BOT_PROJECT,
             data_dir=config.output_dir / "assembly",
@@ -407,14 +409,13 @@ async def execute_entry(config: EntryConfig, dependencies: EntryDependencies) ->
         context.current_input = instruction
         executor = dependencies.turn_executor
         agent_result = await (executor(context, _Emitter()) if executor is not None
-                              else assembled.instance.pipeline.agent.run(context, _Emitter()))
+                              else pipeline.agent.run(context, _Emitter()))
     except Exception as exc:
         logger.exception("Harbor agent turn failed", extra={"trace_id": trace_id})
         failure = str(exc)
     finally:
         if assembled is not None:
-            await assembled.instance.stop()
-            await assembled.memory_system.close()
+            await assembled.close()
         store.close()
     if agent_result is not None and agent_result.error is not None:
         failure = agent_result.error

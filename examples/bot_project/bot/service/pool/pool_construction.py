@@ -174,7 +174,7 @@ async def _register_external_main_agent(
         descriptor,
         broker=broker,
         tool_manager=None,
-        skill_manager=None,
+        skill_resolver=None,
         context_manager=context_manager,
         hooks=[],
         output_adapter=output_adapter,

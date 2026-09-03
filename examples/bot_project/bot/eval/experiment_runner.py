@@ -362,8 +362,7 @@ class EvalRunner:
             }
         finally:
             if assembled is not None:
-                await assembled.instance.stop()
-                await assembled.memory_system.close()
+                await assembled.close()
             shutil.rmtree(trace_dir, ignore_errors=True)
 
     async def _v2_task(self, spec: EvalItemSpec) -> dict[str, Any]:
@@ -446,8 +445,7 @@ class EvalRunner:
             ).to_output_dict()
         finally:
             if assembled is not None:
-                await assembled.instance.stop()
-                await assembled.memory_system.close()
+                await assembled.close()
             shutil.rmtree(workspace, ignore_errors=True)
             shutil.rmtree(trace_dir, ignore_errors=True)
 

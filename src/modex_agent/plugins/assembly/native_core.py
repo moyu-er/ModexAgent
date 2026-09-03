@@ -14,7 +14,6 @@ from pydantic import BaseModel, ConfigDict
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.constants import ExecutionStrategyKind, ReasoningEffort
 from modex_agent.core.prompt import SystemPromptProvider
-from modex_agent.core.skills import SkillManager
 from modex_agent.core.tool_manager import Tool
 from modex_agent.hook import Hook, HookSpec
 from modex_agent.hook.runner import HookRunner
@@ -42,6 +41,7 @@ from modex_agent.tools.manager import InMemoryToolManager
 
 if TYPE_CHECKING:
     from modex_agent.adapters.output import OutputAdapter
+    from modex_agent.commands.skill import SkillResolver
     from modex_agent.core.context import ContextManager
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.provider import LLMProvider
@@ -90,7 +90,7 @@ class NativeAssemblyInputs:
         memory_config: MemoryConfig | None = None,
         llm_provider: LLMProvider | None = None,
         tool_manager: InMemoryToolManager | None = None,
-        skill_manager: SkillManager | None = None,
+        skill_resolver: SkillResolver | None = None,
         output_adapter: OutputAdapter | None = None,
         root_provider: WorkspaceRootProvider | None = None,
         safety: RuntimeSafetyPolicy | None = None,
@@ -109,7 +109,7 @@ class NativeAssemblyInputs:
         self.memory_config = memory_config
         self.llm_provider = llm_provider
         self.tool_manager = tool_manager
-        self.skill_manager = skill_manager
+        self.skill_resolver = skill_resolver
         self.output_adapter = output_adapter
         self.root_provider = root_provider
         self.safety = safety
@@ -373,7 +373,6 @@ async def assemble_native_agent(
             registry=chain.mcp_registry,
             tool_transform=inputs.tool_transform,
         )
-    skill_manager = inputs.skill_manager
     system_prompt = await prompt_provider.get_or_refresh()
     hook_runner = HookRunner()
     await _dispatch_hooks(spec, registry, chain, hook_runner, inputs.memory_system)
@@ -444,7 +443,7 @@ async def assemble_native_agent(
         descriptor,
         broker=inputs.broker,
         tool_manager=tool_manager,
-        skill_manager=skill_manager,
+        skill_resolver=inputs.skill_resolver,
         context_manager=context_manager,
         output_adapter=inputs.output_adapter,
         llm_provider=provider,

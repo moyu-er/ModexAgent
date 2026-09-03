@@ -92,7 +92,7 @@ def _make_react_pipeline(
         tool_manager=tool_manager,
         sanitizer=sanitizer,
         command_processor=command_processor,
-        skill_manager=None,
+        skill_resolver=None,
         context_builder=None,
         agent_descriptor=None,
         max_iterations=max_iterations,

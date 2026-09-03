@@ -145,7 +145,7 @@ async def test_memory_harness_ingests_dreams_injects_and_traces(
         assert "memory.context.assembled" in span_names
         assert "memory.consolidation.finished" in span_names
     finally:
-        await bundle.memory_system.close()
+        await bundle.assembly.close()
 
 
 def _write_tool_directory(tools: list[dict[str, Any]] | None) -> Path:

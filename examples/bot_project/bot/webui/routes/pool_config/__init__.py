@@ -30,8 +30,8 @@ Routes registered:
     POST   /api/skills                                         -- upload a global skill (multipart or JSON).
     DELETE /api/skills/{name}                                  -- remove a global skill.
     GET    /api/pools/{pool}/agents/{agent}/skills             -- list an agent's skills.
-    POST   /api/pools/{pool}/agents/{agent}/skills/{name}      -- assign a skill copy.
-    DELETE /api/pools/{pool}/agents/{agent}/skills/{name}      -- remove a skill copy.
+    POST   /api/pools/{pool}/agents/{agent}/skills/{name}      -- assign a skill live.
+    DELETE /api/pools/{pool}/agents/{agent}/skills/{name}      -- unassign a skill live.
     GET    /api/prompts                                        -- list agent prompt md files.
     POST   /api/prompts                                        -- create a new prompt md.
     GET    /api/prompts/{name}                                 -- read one prompt md WITHOUT seeding.

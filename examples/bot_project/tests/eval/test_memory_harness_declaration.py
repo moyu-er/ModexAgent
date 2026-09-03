@@ -111,4 +111,4 @@ async def test_memory_harness_stack_observables_are_pinned(
     finally:
         if bundle.runtime_services.hooks is not None:
             await bundle.runtime_services.hooks.aclose()
-        await bundle.memory_system.close()
+        await bundle.assembly.close()

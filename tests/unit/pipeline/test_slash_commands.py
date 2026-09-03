@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from modex_agent.adapters.output import NullOutputAdapter, OutputAdapter
 from modex_agent.commands.constants import CommandAction, CommandDispatchPolicy
 from modex_agent.commands.models import (
     CommandContext,
@@ -20,15 +21,11 @@ from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.emitter import AgentResult, ContentEmitter
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.skills import SkillManager
 from modex_agent.core.tool_manager import ToolManager
-from modex_agent.core.types import InputMessage, MessageRole
+from modex_agent.core.types import InputMessage, MessageRole, OutputMessage
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.adapters.output import NullOutputAdapter, OutputAdapter
-from modex_agent.core.types import OutputMessage
 from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.pipeline.context_assembler import assemble_context
-from modex_agent.tools.manager import InMemoryToolManager
 
 
 class FakeContextState(ContextState):
@@ -53,7 +50,6 @@ class FakeContextManager(ContextManager):
         runtime_info: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         tool_manager: ToolManager | None = None,
-        skill_manager: SkillManager | None = None,
     ) -> FakeContextState:
         self.state.system_prompt = await self.build_system_prompt(
             tool_manager=tool_manager,
@@ -333,8 +329,8 @@ async def test_pipeline_drops_slash_command_when_busy_in_queue_mode() -> None:
     """Slash commands must not be queued as raw text when agent is busy."""
 
     from modex_agent.core.context import InMemoryContextManager
-    from modex_agent.tools.manager import InMemoryToolManager
     from modex_agent.pipeline.busy_input import BusyInputMode
+    from modex_agent.tools.manager import InMemoryToolManager
     from tests.unit.pipeline._helpers import _make_react_pipeline
 
     agent = FakeAgent()

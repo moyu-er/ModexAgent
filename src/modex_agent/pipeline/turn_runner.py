@@ -170,8 +170,8 @@ class ReActTurnRunner(TurnRunner):
         return self._context_manager
 
     @property
-    def skill_manager(self) -> Any:
-        return self._builder._skill_manager
+    def skill_resolver(self) -> Any:
+        return self._builder._skill_resolver
 
     @property
     def turn_store(self) -> TurnStateStore | None:

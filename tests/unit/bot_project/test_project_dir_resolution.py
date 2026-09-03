@@ -9,8 +9,6 @@ import os
 import tempfile
 from pathlib import Path
 
-import pytest
-
 
 def resolve_project_dir(file_path: str) -> Path:
     """Replicate _project_dir logic from core.py line 222-224."""
@@ -22,8 +20,8 @@ def resolve_project_dir_fixed(file_path: str) -> Path:
     return Path(file_path).resolve().parent.parent.parent
 
 
-def assert_skill_dir_found(project_dir: Path, pool_name: str, agent_name: str) -> bool:
-    """Replicate the directory existence check from _build_pool_skill_manager."""
+def assert_agent_skill_dir_found(project_dir: Path, pool_name: str, agent_name: str) -> bool:
+    """Check the per-agent disk-assignment directory used by SkillsSupply."""
     directories = [project_dir / "skills" / pool_name / agent_name]
     return any(d.exists() for d in directories)
 
@@ -66,7 +64,7 @@ def test_resolve_diverges_with_symlink_style_path() -> None:
     assert original == Path("/app/bot_project")
 
 
-def test_build_pool_skill_manager_directory_check_with_relative_project_dir() -> None:
+def test_agent_skill_directory_check_with_relative_project_dir() -> None:
     """Simulate the case where _project_dir is relative — directory check fails.
 
     If _project_dir returns "." (relative to CWD), and CWD is NOT the
@@ -89,31 +87,27 @@ def test_build_pool_skill_manager_directory_check_with_relative_project_dir() ->
 
             # Simulate _project_dir returning "." (relative CWD)
             project_dir = Path(".")
-            assert assert_skill_dir_found(project_dir, "main", "main"), (
+            assert assert_agent_skill_dir_found(project_dir, "main", "main"), (
                 "With CWD == project_root, skills/main/main/ should be found"
             )
 
             # Now simulate CWD != project_root — skills not found
             os.chdir(tmp_path / "skills")  # CWD is now tmp/skills
             project_dir2 = Path(".")
-            assert not assert_skill_dir_found(project_dir2, "main", "main"), (
+            assert not assert_agent_skill_dir_found(project_dir2, "main", "main"), (
                 "With CWD != project_root, skills/main/main/ should NOT be found "
                 "when project_dir is '.' — this is the BUG"
             )
 
-            # Fixed version: use resolve() to get absolute path
+            # Resolving CWD only makes the wrong base absolute.
             project_dir3 = Path(".").resolve()
-            # After resolve, "." becomes tmp_path (absolute)
-            # But we changed CWD to tmp/skills, so resolve() gives tmp/skills
-            # Actually, resolve() gives the real path of CWD, which is tmp/skills
-            # Wait, we need the PROJECT root, not CWD
-            # This shows why _project_dir MUST use __file__ resolve(), not CWD resolve()
+            assert project_dir3 == (tmp_path / "skills").resolve()
         finally:
             os.chdir(original_cwd)
 
 
-def test_build_pool_skill_manager_with_resolved_path() -> None:
-    """The fix: using resolve() on the constructed path finds the directory."""
+def test_resolving_cwd_does_not_recover_the_project_directory() -> None:
+    """Resolving CWD cannot substitute for resolving the project file path."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         skills_dir = tmp_path / "skills" / "main" / "main"
@@ -134,8 +128,10 @@ def test_build_pool_skill_manager_with_resolved_path() -> None:
                 "Without resolve, directory check fails when CWD != project_root"
             )
 
-            # With resolve() — succeeds
+            # Resolving the current directory still points at the wrong base.
             project_dir_resolved = Path(".").resolve()  # resolves to tmp/skills
+            assert project_dir_resolved == (tmp_path / "skills").resolve()
+            assert project_dir_resolved != tmp_path.resolve()
             # But we need tmp_path, not tmp/skills
             # The FIX is: use resolve() on __file__ path, not on CWD
             # So the real fix is: Path(__file__).resolve().parent.parent.parent

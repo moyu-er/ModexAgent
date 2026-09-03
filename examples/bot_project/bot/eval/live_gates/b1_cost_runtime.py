@@ -173,6 +173,9 @@ async def dispatch_turn() -> TurnDispatch:
             runtime_dir,
             model=os.environ["TEST_LLM_MODEL"],
         )
+        component_registry = ComponentRegistry()
+        with PluginRegistrationContext(component_registry) as registration:
+            DefaultPlugin().register(registration)
         declaration = load_scope_declaration(_REACT_HARNESS_DECLARATION)
         overlay = ScopeOverlay(
             pools={
@@ -187,10 +190,8 @@ async def dispatch_turn() -> TurnDispatch:
             data_dir=runtime_dir,
             graphs_dirs=(),
             default_llm_provider="default",
+            registry=component_registry,
         )
-        component_registry = ComponentRegistry()
-        with PluginRegistrationContext(component_registry) as registration:
-            DefaultPlugin().register(registration)
         hooks = (
             tuple(spec.hook for spec in services.hooks.hook_specs)
             if services.hooks is not None
@@ -240,8 +241,7 @@ async def dispatch_turn() -> TurnDispatch:
             result = await pipeline.agent.run(context, _NoopEmitter())
         finally:
             if assembled is not None:
-                await assembled.instance.stop()
-                await assembled.memory_system.close()
+                await assembled.close()
             elif services.hooks is not None:
                 await services.hooks.aclose()
             if services.trace_store is not None:

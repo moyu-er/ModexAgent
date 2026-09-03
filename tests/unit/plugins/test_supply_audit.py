@@ -42,11 +42,11 @@ _BOT_PROJECT: Final = _ROOT / "examples" / "bot_project"
 _DECLARATION_PATH: Final = _BOT_PROJECT / "config" / "scopes" / "bot.yml"
 _AUDIT_STRATEGY_NAME: Final = "supply_audit"
 _DEAD_POOL_RUNTIME_FIELDS: Final = frozenset({"todo_store", "communication"})
-_SUPPLY_CAPABILITY_NAMES: Final = frozenset({"experience", "subagents", "todo"})
+_SUPPLY_CAPABILITY_NAMES: Final = frozenset({"experience", "skills", "subagents", "todo"})
 _EXPECTED_SUPPLY_KEYS: Final[dict[str, frozenset[str]]] = {
-    "default": frozenset({"experience", "subagents", "todo"}),
-    "coder": frozenset({"subagents", "todo"}),
-    "review": frozenset({"experience", "subagents", "todo"}),
+    "default": frozenset({"experience", "skills", "subagents", "todo"}),
+    "coder": frozenset({"skills", "subagents", "todo"}),
+    "review": frozenset({"experience", "skills", "subagents", "todo"}),
     "opencode": frozenset(),
 }
 

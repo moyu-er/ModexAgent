@@ -285,13 +285,6 @@ class CoreMemoryProvider(SystemPromptProvider):
     async def _fetch_content(self) -> str:
         return self._core_memory_xml
 
-
-# Moved to ``core.skills.provider`` to avoid a ``core → memory`` reverse
-# import when ``SkillManager.build_provider()`` constructs it. Re-exported
-# here for callers that import all providers from this module.
-from modex_agent.core.skills.provider import SkillProvider  # noqa: E402,F401
-
-
 class ExperienceProvider(SystemPromptProvider):
     """Experience metadata XML. Default: static (extensible for future refresh)."""
 

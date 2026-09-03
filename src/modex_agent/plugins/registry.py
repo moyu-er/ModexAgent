@@ -30,18 +30,17 @@ Design constraints (SPEC §4.2, §10.1, §11):
 from __future__ import annotations
 
 import logging
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel
 
 from modex_agent.core.scope import RecordScope
 from modex_agent.memory.core.split_stores import KVStore
-from modex_agent.multi_agent.execution_strategy import (
-    ExecutionStrategy,
-    ExecutionStrategyRegistry,
-)
 from modex_agent.plugins.abc import ComponentFactory, ComponentSlot, PluginSource, SimpleFactory
 from modex_agent.plugins.capability import Capability
+
+if TYPE_CHECKING:
+    from modex_agent.multi_agent.execution_strategy import ExecutionStrategyRegistry
 
 __all__ = [
     "ComponentNotFoundError",
@@ -245,6 +244,11 @@ def strategy_registry_from_components(
     registry: ComponentRegistry,
 ) -> ExecutionStrategyRegistry:
     """Derive the runtime strategy registry from stateless component factories."""
+    from modex_agent.multi_agent.execution_strategy import (
+        ExecutionStrategy,
+        ExecutionStrategyRegistry,
+    )
+
     strategy_registry = ExecutionStrategyRegistry()
     factories = registry._factories.get(ComponentSlot.EXECUTION_STRATEGY, {})
     for name, factory in factories.items():

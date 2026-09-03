@@ -17,7 +17,6 @@ from modex_agent.core.message import ChatMessage
 if TYPE_CHECKING:
     from modex_agent.core.governance import ContextGovernance
     from modex_agent.core.prompt import SystemPromptPipeline
-    from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.memory.default_system import DefaultMemorySystem
 
@@ -93,7 +92,6 @@ class ContextManager(ABC):
         runtime_info: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         tool_manager: ToolManager | None = None,
-        skill_manager: SkillManager | None = None,
     ) -> ContextState:
         """加载指定会话的上下文"""
         pass
@@ -122,12 +120,7 @@ class ContextManager(ABC):
         tool_manager: ToolManager | None,
         runtime_info: dict[str, Any] | None = None,
     ) -> str:
-        """构建系统提示词
-
-        Skill injection is NOT handled here — it flows exclusively through
-        :meth:`load` via ``skill_manager.build_provider()``. Subclasses must
-        NOT add skill logic to this method.
-        """
+        """构建系统提示词"""
         pass
 
     @abstractmethod
@@ -178,7 +171,6 @@ class InMemoryContextManager(ContextManager):
         runtime_info: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         tool_manager: ToolManager | None = None,
-        skill_manager: SkillManager | None = None,
     ) -> ContextState:
         if session_id not in self._sessions:
             self._sessions[session_id] = ContextState(
@@ -215,7 +207,7 @@ class InMemoryContextManager(ContextManager):
         runtime_info: dict[str, Any] | None = None,
     ) -> str:
         """Base-class fallback.  MemorySystemContextManager overrides this
-        and assembles skills + experiences + memory layers in load() instead.
+        and assembles capability sections plus memory layers in load() instead.
         This version exists for ContextManager subclasses that do NOT use a
         full MemorySystem.
         """

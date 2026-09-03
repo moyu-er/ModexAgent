@@ -1,4 +1,4 @@
-"""Test SkillCommandHandler with real SkillManager — reproduces pool-mode slash command bug.
+"""Test SkillCommandHandler with a real skill catalog — reproduces pool-mode slash command bug.
 
 Bug: slash commands like /huashu-design produce "Unknown command" in pool mode,
 even though the skill exists in skills/main/main/.
@@ -13,22 +13,13 @@ import pytest
 from modex_agent.commands.handlers import SkillCommandHandler
 from modex_agent.commands.models import CommandContext, SlashCommandInvocation
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.skills import DefaultSkillBuilder, FileSkillSource, SkillManager
-from modex_agent.core.skills.cache import DirectorySkillCache
 from modex_agent.core.types import InputMessage
+from modex_agent.plugins.defaults.capabilities.skills.supply import build_skill_catalog
 
 
-def _make_skill_manager(skill_dir: Path) -> SkillManager:
-    """Build a SkillManager from a directory, same as _build_pool_skill_manager."""
-    source = FileSkillSource(
-        directories=[skill_dir],
-        cache=True,
-        layout="directory",
-        skill_filename="SKILL.md",
-    )
-    cache = DirectorySkillCache(directories=[skill_dir], layout="directory")
-    builder = DefaultSkillBuilder(base_path=skill_dir.parent)
-    return SkillManager(source=source, builder=builder, cache=cache)
+def _make_catalog(skill_dir: Path):
+    """Build a catalog over a skill root, same as the capability supply."""
+    return build_skill_catalog([skill_dir])
 
 
 def _setup_skill_dir(tmp: Path) -> Path:
@@ -44,58 +35,43 @@ def _setup_skill_dir(tmp: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_can_handle_returns_true_for_existing_skill() -> None:
-    """SkillCommandHandler.can_handle should return True when skill exists."""
-    with tempfile.TemporaryDirectory() as tmp:
-        skills_root = _setup_skill_dir(Path(tmp))
-        mgr = _make_skill_manager(skills_root)
-
-        handler = SkillCommandHandler()
-        invocation = SlashCommandInvocation(command="test-skill", args="", raw="/test-skill")
-        context = CommandContext(
-            session_id="s1",
-            input_msg=InputMessage(content="/test-skill", session=SessionInfo.from_str("s1")),
-            agent_name="main",
-            skill_manager=mgr,
-        )
-
-        result = await handler.can_handle(invocation, context)
-        assert result is True, "can_handle should return True for an existing skill"
-
-
-@pytest.mark.asyncio
-async def test_can_handle_returns_false_when_skill_manager_is_none() -> None:
-    """SkillCommandHandler.can_handle returns False when skill_manager is None — the bug scenario."""
+async def test_handle_returns_unknown_when_resolver_is_none() -> None:
     handler = SkillCommandHandler()
     invocation = SlashCommandInvocation(command="test-skill", args="", raw="/test-skill")
     context = CommandContext(
         session_id="s1",
         input_msg=InputMessage(content="/test-skill", session=SessionInfo.from_str("s1")),
         agent_name="main",
-        skill_manager=None,  # This is the suspected runtime condition
+        skill_resolver=None,
     )
 
-    result = await handler.can_handle(invocation, context)
-    assert result is False, "can_handle must return False when skill_manager is None"
+    result = await handler.handle(invocation, context)
+    assert result.notice is not None
+    assert "Unknown command: /test-skill" in result.notice
 
 
 @pytest.mark.asyncio
 async def test_handle_returns_skill_content_when_found() -> None:
-    """SkillCommandHandler.handle should return TRANSFORM_TO_USER_INPUT with skill content."""
+    """handle returns TRANSFORM_TO_USER_INPUT with the canonical XML."""
     with tempfile.TemporaryDirectory() as tmp:
         skills_root = _setup_skill_dir(Path(tmp))
-        mgr = _make_skill_manager(skills_root)
+        catalog = _make_catalog(skills_root)
 
         handler = SkillCommandHandler()
-        invocation = SlashCommandInvocation(command="test-skill", args="do something", raw="/test-skill do something")
+        invocation = SlashCommandInvocation(
+            command="test-skill", args="do something", raw="/test-skill do something"
+        )
         context = CommandContext(
             session_id="s1",
-            input_msg=InputMessage(content="/test-skill do something", session=SessionInfo.from_str("s1")),
+            input_msg=InputMessage(
+                content="/test-skill do something", session=SessionInfo.from_str("s1")
+            ),
             agent_name="main",
-            skill_manager=mgr,
+            skill_resolver=catalog,
         )
 
         from modex_agent.commands.constants import CommandAction
+
         result = await handler.handle(invocation, context)
         assert result.action == CommandAction.TRANSFORM_TO_USER_INPUT
         assert "test-skill" in (result.user_content or "")
@@ -103,21 +79,13 @@ async def test_handle_returns_skill_content_when_found() -> None:
 
 
 @pytest.mark.asyncio
-async def test_build_pool_skill_manager_finds_skills() -> None:
-    """_build_pool_skill_manager should return a non-None SkillManager when directory exists."""
+async def test_supply_catalog_finds_skills() -> None:
+    """The capability supply's catalog builder resolves disk-assigned skills."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
-        skills_root = _setup_skill_dir(tmp_path)
+        _setup_skill_dir(tmp_path)
 
-        # Simulate _build_pool_skill_manager logic: agent name is now a string.
-        root_agent_name = "main"
-        pool_name = "main"
-        directories = [tmp_path / "skills" / pool_name / root_agent_name]
-        found = [d for d in directories if d.exists()]
-
-        assert len(found) > 0, "skills/main/main/ directory should exist"
-
-        mgr = _make_skill_manager(found[0])
-        skill = await mgr.get_skill("test-skill")
+        catalog = _make_catalog(tmp_path / "skills" / "main" / "main")
+        skill = await catalog.get_skill("test-skill")
         assert skill is not None, "get_skill('test-skill') should return the skill"
         assert skill.name == "test-skill"

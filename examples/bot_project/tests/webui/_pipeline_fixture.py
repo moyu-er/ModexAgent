@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
+from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
 from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 
 from tests.input_pipeline.assembly_support import (
@@ -15,9 +15,8 @@ from tests.input_pipeline.assembly_support import (
 )
 
 
-class _NoSkillRegistry(SkillRegistry):
-    async def resolve(self, pool: str, name: str, content: str) -> ParsedSkill | None:
-        return None
+def _no_skill_resolvers() -> PoolSkillResolverRegistry:
+    return PoolSkillResolverRegistry({})
 
 
 def _bot_model_config() -> BotModelConfig:
@@ -44,7 +43,7 @@ async def attach_default_pipeline(
     pipe = await build_webui_pipeline(
         registry=TEST_COMPONENT_REGISTRY,
         ctx=TEST_ASSEMBLY_CTX,
-        skill_registry=_NoSkillRegistry(), bot_model_config=_bot_model_config()
+        skill_registry=_no_skill_resolvers(), bot_model_config=_bot_model_config()
     )
     if pool_session_store is None:
         pool_session_store = MagicMock()

@@ -259,6 +259,9 @@ async def assemble_harness_agent(
     runtime_services: AgentRuntimeServices,
     governance_enabled: bool,
 ) -> SingleAgentAssembled:
+    component_registry = ComponentRegistry()
+    with PluginRegistrationContext(component_registry) as registration:
+        DefaultPlugin().register(registration)
     declaration = load_scope_declaration(_REACT_HARNESS_DECLARATION)
     overlay = ScopeOverlay(
         pools={
@@ -282,10 +285,8 @@ async def assemble_harness_agent(
         data_dir=data_dir,
         graphs_dirs=(),
         default_llm_provider="default",
+        registry=component_registry,
     )
-    component_registry = ComponentRegistry()
-    with PluginRegistrationContext(component_registry) as registration:
-        DefaultPlugin().register(registration)
     hooks = (
         tuple(spec.hook for spec in runtime_services.hooks.hook_specs)
         if runtime_services.hooks is not None

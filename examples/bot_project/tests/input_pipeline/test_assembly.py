@@ -11,7 +11,10 @@ from bot.input_pipeline.stages.attachment_ingest import AttachmentIngestStage
 from bot.input_pipeline.stages.command import CommandDispatchStage
 from bot.input_pipeline.stages.model_choice import ModelChoiceStage
 from bot.input_pipeline.stages.resolve_workspace import ResolveWorkspaceStage
-from bot.input_pipeline.stages.skill_parse import SkillParseStage, SkillRegistry
+from bot.input_pipeline.stages.skill_parse import (
+    PoolSkillResolverRegistry,
+    SkillParseStage,
+)
 from bot.input_pipeline.stages.unsupported_command import UnsupportedCommandStage
 from bot.service.model_config import BotModelConfig
 from plugins.im_input_stages import IMInputStagesPlugin
@@ -88,7 +91,7 @@ async def test_im_pipeline_consumes_custom_input_stage_plugin(tmp_path: Path) ->
     pipe = await build_im_pipeline(
         registry=registry,
         ctx=assembly_ctx,
-        skill_registry=MagicMock(spec=SkillRegistry),
+        skill_registry=MagicMock(spec=PoolSkillResolverRegistry),
         known_pools={"main"},
     )
 
@@ -99,7 +102,7 @@ async def test_im_pipeline_order_and_count() -> None:
     pipe = await build_im_pipeline(
         registry=TEST_COMPONENT_REGISTRY,
         ctx=TEST_ASSEMBLY_CTX,
-        skill_registry=MagicMock(spec=SkillRegistry),
+        skill_registry=MagicMock(spec=PoolSkillResolverRegistry),
         known_pools={"main", "coding"},
     )
     assert isinstance(pipe, UserInputPipeline)
@@ -120,7 +123,7 @@ async def test_webui_pipeline_order_and_count(tmp_path: Path) -> None:
     pipe = await build_webui_pipeline(
         registry=TEST_COMPONENT_REGISTRY,
         ctx=TEST_ASSEMBLY_CTX,
-        skill_registry=MagicMock(spec=SkillRegistry),
+        skill_registry=MagicMock(spec=PoolSkillResolverRegistry),
         bot_model_config=cfg,
     )
     assert isinstance(pipe, UserInputPipeline)
@@ -141,7 +144,7 @@ async def test_webui_pipeline_has_model_choice_stage(tmp_path: Path) -> None:
     pipe = await build_webui_pipeline(
         registry=TEST_COMPONENT_REGISTRY,
         ctx=TEST_ASSEMBLY_CTX,
-        skill_registry=MagicMock(spec=SkillRegistry),
+        skill_registry=MagicMock(spec=PoolSkillResolverRegistry),
         bot_model_config=cfg,
     )
     assert any(isinstance(s, ModelChoiceStage) for s in pipe._stages)
@@ -151,7 +154,7 @@ async def test_im_pipeline_has_no_model_choice_stage() -> None:
     pipe = await build_im_pipeline(
         registry=TEST_COMPONENT_REGISTRY,
         ctx=TEST_ASSEMBLY_CTX,
-        skill_registry=MagicMock(spec=SkillRegistry),
+        skill_registry=MagicMock(spec=PoolSkillResolverRegistry),
         known_pools={"main"},
     )
     assert not any(isinstance(s, ModelChoiceStage) for s in pipe._stages)
@@ -177,7 +180,7 @@ async def test_empty_input_stage_registry_raises_loudly(tmp_path: Path) -> None:
         await build_im_pipeline(
             registry=empty_registry,
             ctx=assembly_ctx,
-            skill_registry=MagicMock(spec=SkillRegistry),
+            skill_registry=MagicMock(spec=PoolSkillResolverRegistry),
             known_pools={"main"},
         )
 
@@ -222,7 +225,7 @@ async def test_pipelines_build_with_directory_discovered_registry(tmp_path: Path
     webui_pipe = await build_webui_pipeline(
         registry=registry,
         ctx=assembly_ctx,
-        skill_registry=MagicMock(spec=SkillRegistry),
+        skill_registry=MagicMock(spec=PoolSkillResolverRegistry),
         bot_model_config=None,
     )
     assert any(isinstance(s, ModelChoiceStage) for s in webui_pipe._stages)
@@ -230,7 +233,7 @@ async def test_pipelines_build_with_directory_discovered_registry(tmp_path: Path
     im_pipe = await build_im_pipeline(
         registry=registry,
         ctx=assembly_ctx,
-        skill_registry=MagicMock(spec=SkillRegistry),
+        skill_registry=MagicMock(spec=PoolSkillResolverRegistry),
         known_pools={"main"},
     )
     assert isinstance(im_pipe, UserInputPipeline)

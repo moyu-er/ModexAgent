@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import inspect
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from modex_agent.multi_agent.pool import AgentPool
+from modex_agent.multi_agent.registry import AgentProfile, AgentRegistry
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.state import AgentState
 from modex_graph.exceptions import GraphInterrupt
+
+
+def test_profile_discovery_has_no_skill_assignment_authority() -> None:
+    assert "allowed_skills" not in {field.name for field in dataclasses.fields(AgentProfile)}
+    assert "skill" not in inspect.signature(AgentRegistry.find_profiles).parameters
+    assert "skill" not in inspect.signature(AgentPool.find_profiles).parameters
 
 
 class _FakeBroker:

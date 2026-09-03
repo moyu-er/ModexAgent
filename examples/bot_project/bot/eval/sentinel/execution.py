@@ -136,8 +136,7 @@ class HostSentinelExecutionPlane(sentinel_orchestrator.SentinelExecutionPlane):
             )
             return observation
         finally:
-            await assembled.instance.stop()
-            await assembled.memory_system.close()
+            await assembled.close()
 
     async def _assemble_arm(
         self,
@@ -162,6 +161,9 @@ class HostSentinelExecutionPlane(sentinel_orchestrator.SentinelExecutionPlane):
                 )
             case unreachable:
                 assert_never(unreachable)
+        component_registry = ComponentRegistry()
+        with PluginRegistrationContext(component_registry) as registration:
+            DefaultPlugin().register(registration)
         declaration = load_scope_declaration(declaration_path)
         scope_boot = boot_scope_spec(
             declaration,
@@ -169,10 +171,8 @@ class HostSentinelExecutionPlane(sentinel_orchestrator.SentinelExecutionPlane):
             data_dir=workspace,
             graphs_dirs=(),
             default_llm_provider="default",
+            registry=component_registry,
         )
-        component_registry = ComponentRegistry()
-        with PluginRegistrationContext(component_registry) as registration:
-            DefaultPlugin().register(registration)
         hooks = ()
         if runtime_services.hooks is not None:
             hooks = tuple(spec.hook for spec in runtime_services.hooks.hook_specs)
@@ -196,7 +196,7 @@ class HostSentinelExecutionPlane(sentinel_orchestrator.SentinelExecutionPlane):
         if memory_bundle is not None:
             assert assembled.descriptor.memory_config == memory_bundle.memory_config
             assembled.memory_system.add_cleanup_hook(memory_bundle.memory_trace_hook)
-            await memory_bundle.memory_system.close()
+            await memory_bundle.assembly.close()
         return assembled, runtime_services
 
     async def _persist_facts(

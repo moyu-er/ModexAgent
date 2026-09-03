@@ -420,12 +420,12 @@ class TestQQBotServiceIntegration:
 
         sys.path.insert(0, str(Path(__file__).parent.parent.parent / "examples" / "bot_project"))
 
-        from modex_agent.core.skills import (
+        from modex_agent.plugins.defaults.capabilities.skills.builder import (
             DefaultSkillBuilder,
-            FileSkillSource,
-            ResolutionContext,
-            SkillManager,
         )
+        from modex_agent.plugins.defaults.capabilities.skills.catalog import SkillCatalog
+        from modex_agent.plugins.defaults.capabilities.skills.models import ResolutionContext
+        from modex_agent.plugins.defaults.capabilities.skills.source import FileSkillSource
 
         skills_dir = (
             Path(__file__).parent.parent.parent
@@ -444,14 +444,14 @@ class TestQQBotServiceIntegration:
             layout="directory",
             skill_filename="SKILL.md",
         )
-        sm = SkillManager(source=source, builder=DefaultSkillBuilder())
+        sm = SkillCatalog(source=source, builder=DefaultSkillBuilder())
 
         class FakeTM:
             def has_tool(self, name: str) -> bool:
                 return name == "read_file"
 
         ctx = ResolutionContext(tool_manager=FakeTM())
-        prompt = await sm.build_prompt(ctx)
+        prompt = await sm.render_prompt(ctx)
 
         # Should be a compact table, not inlined content
         assert "<available_skills>" in prompt

@@ -167,8 +167,8 @@ def _wire_main_pipeline(
         pipeline.command_processor = SlashCommandProcessor.default()
 
     logger.info(
-        "Pool '%s': pipeline wired - cmd_processor=%s, skill_manager=%s",
+        "Pool '%s': pipeline wired - cmd_processor=%s, skill_resolver=%s",
         pool_name,
         type(pipeline.command_processor).__name__,
-        type(pipeline.skill_manager).__name__ if pipeline.skill_manager else None,
+        type(pipeline.skill_resolver).__name__ if pipeline.skill_resolver else None,
     )
