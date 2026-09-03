@@ -27,8 +27,9 @@ from bot.service.session_gc import (
     _Job,
 )
 
-from modex_agent.core.cleanup import SessionCleanupResult, session_artifact_paths
 from modex_agent.core.scope import RecordScope
+from modex_agent.persistence.session_artifacts import SessionCleanupResult
+from modex_agent.persistence.session_artifacts.cleaner import _session_artifact_paths
 from modex_agent.workspace.paths import WorkspacePaths
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -54,7 +55,7 @@ def _write_index(paths: WorkspacePaths, pool: str, session_id: str, parent: str 
 
 def _seed_full_session(paths: WorkspacePaths, pool: str, sid: str, parent: str | None = None) -> None:
     _write_index(paths, pool, sid, parent)
-    for unit in session_artifact_paths(sid, pool, paths):
+    for unit in _session_artifact_paths(sid, pool, paths):
         if unit.suffix == ".json" and "session_index" in str(unit):
             continue
         if unit.suffix in (".json", ".jsonl"):

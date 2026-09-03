@@ -238,7 +238,7 @@ class ExternalAwareFactory(DefaultAgentFactory):
         """
         from modex_agent.core.llm_struct import RuntimeSafetyPolicy
         from modex_agent.core.session_id import SessionIdFactory
-        from modex_agent.pipeline.adapters import OutputAdapter
+        from modex_agent.adapters.output import OutputAdapter
 
         # 1. Agent — provider=None (ExternalAgentBuilder ignores it;
         #    the external CLI owns its own model configuration). ADR-0027:

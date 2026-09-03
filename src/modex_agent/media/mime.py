@@ -10,7 +10,7 @@ from __future__ import annotations
 import mimetypes
 from collections.abc import Sequence
 
-from modex_agent.media.models import Kind
+from modex_agent.core.media import Kind
 
 # ---------------------------------------------------------------------------
 # Magic-byte signatures. Ordered; first match wins. Each entry is a

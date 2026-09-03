@@ -23,9 +23,10 @@ import pytest
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.core import BotService
 
+from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import StreamingAwareEmitter
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
@@ -33,7 +34,6 @@ from modex_agent.core.types import LLMResponse, OutputMessage
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.comm_kind import AgentCommKind
-from modex_agent.pipeline.adapters import OutputAdapter
 
 pytestmark = pytest.mark.integration
 

@@ -22,8 +22,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig
-from modex_agent.core.events import AgentEvent
+from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.events import AgentEvent, EmitterConfig
 from modex_agent.core.session_id import SessionInfo
 
 E = TypeVar("E", bound=AgentEvent)
@@ -295,7 +295,7 @@ class TestQQBotServiceIntegration:
 
     def test_output_adapter_send_delta_interface(self):
         """Test that OutputAdapter has the send_delta interface."""
-        from modex_agent.pipeline.adapters import OutputAdapter
+        from modex_agent.adapters.output import OutputAdapter
 
         # Check that send_delta method exists
         assert hasattr(OutputAdapter, "send_delta")
@@ -305,16 +305,25 @@ class TestQQBotServiceIntegration:
     @pytest.mark.asyncio
     async def test_end_to_end_event_flow(self):
         """Test complete event flow from Agent to QQ Output."""
+        from modex_agent.adapters.emitter import StreamingAwareEmitter
+        from modex_agent.adapters.output import OutputAdapter
         from modex_agent.agents.react import ReActAgent, ReActEvent
         from modex_agent.core.agent import AgentContext
-        from modex_agent.core.emitter import StreamingAwareEmitter
 
         # Track events
         events_received = []
 
-        class MockAdapter:
+        class MockAdapter(OutputAdapter):
             def __init__(self):
-                self.streaming_mode = StreamingMode.NONE
+                self._streaming_mode = StreamingMode.NONE
+
+            @property
+            def name(self) -> str:
+                return "mock"
+
+            @property
+            def streaming_mode(self):
+                return self._streaming_mode
 
             async def send_delta(self, delta, session_id, metadata=None):
                 events_received.append(("send_delta", delta))
@@ -412,8 +421,8 @@ class TestQQBotServiceIntegration:
         sys.path.insert(0, str(Path(__file__).parent.parent.parent / "examples" / "bot_project"))
 
         from modex_agent.core.skills import (
-            FileSkillSource,
             DefaultSkillBuilder,
+            FileSkillSource,
             ResolutionContext,
             SkillManager,
         )

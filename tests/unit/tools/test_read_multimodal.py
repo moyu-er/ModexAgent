@@ -14,9 +14,10 @@ from pathlib import Path
 import pytest
 
 from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
+from modex_agent.core.media import StoredMediaKind
 from modex_agent.core.message import ChatMessage, ImageUrlPart, TextPart
 from modex_agent.core.tool_manager import ToolExecutionContext, ToolResult
-from modex_agent.media.store import LocalFileMediaStore, StoredMediaKind
+from modex_agent.media.store import LocalFileMediaStore
 from modex_agent.memory.tools.scoped_read import ScopedReadFileTool
 from modex_agent.tools.standard.file_tool import ReadFileTool
 

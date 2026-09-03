@@ -52,7 +52,7 @@ from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.descriptor import AgentInstance
-from modex_agent.pipeline.adapters import OutputAdapter
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.plugins.assembly.spec import AssemblySpec
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig

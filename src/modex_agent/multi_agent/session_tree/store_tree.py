@@ -9,11 +9,12 @@ from sqlite3 import Row
 from typing import TYPE_CHECKING, Final, assert_never
 
 from modex_agent.core.scope import RecordScope
-from modex_agent.core.session_store import atomic_write_text, safe_filename
+from modex_agent.core.session_store import safe_filename
 from modex_agent.multi_agent.session_tree.models import (
     SessionTreeRecord,
     SessionTreeStatus,
 )
+from modex_agent.utils.file_io import atomic_write_text
 from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:

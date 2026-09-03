@@ -20,6 +20,7 @@ from modex_agent.core.llm_struct import LLMErrorInfo, LLMErrorKind
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.stream_events import (
+    EventAssembler,
     Finish,
     LLMStreamEvent,
     ReasoningDelta,
@@ -29,7 +30,6 @@ from modex_agent.core.stream_events import (
     UsageSnapshot,
 )
 from modex_agent.core.types import LLMResponse, MessageRole, TokenUsage, ToolCall
-from modex_agent.providers.http.assembler import EventAssembler
 
 
 def _messages() -> list[ChatMessage]:

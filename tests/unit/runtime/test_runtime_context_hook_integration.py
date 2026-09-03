@@ -9,20 +9,19 @@ Verifies:
 
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import StopReason
-from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.hook import Hook, HookErrorPolicy, HookRunner, HookSpec
+from modex_agent.hook.abc import AfterToolExecutionHook, AfterTurnHook, BeforeTurnHook
+from modex_agent.hook.builtin import SubagentAutoSendHook
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+from modex_agent.runtime.context import RuntimeContextManager
+from modex_agent.runtime.enums import AgentKind, TurnPhase
+from modex_agent.runtime.hooks import RuntimeContextHook
 from modex_agent.runtime.models import TurnIdentity, TurnStateBase
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.hook import Hook, HookErrorPolicy, HookSpec, HookRunner
-from modex_agent.hook.abc import AfterToolExecutionHook, AfterTurnHook, BeforeTurnHook
-from modex_agent.hook.builtin import RuntimeContextHook
-from modex_agent.core.runtime_context import RuntimeContextManager
-from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 
 
 def _mock_tree(bus: object) -> SessionTreeManager:
@@ -53,8 +52,6 @@ def _make_runtime(hook_runner=None, runtime_mgr=None):
 
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.hook.builtin import SubagentAutoSendHook, RuntimeContextHook
-
 from tests.unit.pipeline._helpers import _make_react_pipeline
 
 
@@ -76,7 +73,7 @@ class FakeAgent:
             if hook_runner is None:
                 return
 
-            from modex_agent.hook import HookPoint, HookPayload
+            from modex_agent.hook import HookPayload, HookPoint
 
             payload_data = {}
             if method_name in ("after_turn", "finally_graph") and args:
@@ -190,7 +187,6 @@ class TestHookCollaboration:
         hook_runner.add(HookSpec(hook=RuntimeContextHook(), on_error=HookErrorPolicy.LOG))
         hook_runner.add(HookSpec(hook=subagent_hook, on_error=HookErrorPolicy.LOG))
 
-        from modex_agent.memory.history import ListMessageHistory
 
         runtime, identity = _make_runtime(
             hook_runner=hook_runner, runtime_mgr=RuntimeContextManager()
@@ -227,7 +223,6 @@ class TestHookCollaboration:
         hook_runner.add(HookSpec(hook=RuntimeContextHook(), on_error=HookErrorPolicy.LOG))
         hook_runner.add(HookSpec(hook=subagent_hook, on_error=HookErrorPolicy.LOG))
 
-        from modex_agent.memory.history import ListMessageHistory
 
         runtime, identity = _make_runtime(
             hook_runner=hook_runner, runtime_mgr=RuntimeContextManager()
@@ -259,7 +254,6 @@ class TestHookCollaboration:
         runtime_mgr = RuntimeContextManager()
         rch = RuntimeContextHook()
 
-        from modex_agent.memory.history import ListMessageHistory
 
         hook_runner = HookRunner()
         hook_runner.add(HookSpec(hook=rch, on_error=HookErrorPolicy.LOG))
@@ -275,7 +269,7 @@ class TestHookCollaboration:
 
         # Resolve context
         await rch.start_node_turn(ctx)
-        runtime_ctx = ctx.runtime._runtime_context
+        runtime_ctx = ctx.runtime.runtime_context
         assert runtime_ctx is not None
 
         # Simulate tool execution
@@ -326,7 +320,6 @@ class TestHookCollaboration:
         hook_runner.add(HookSpec(hook=custom_hook, on_error=HookErrorPolicy.LOG))
         hook_runner.add(HookSpec(hook=subagent_hook, on_error=HookErrorPolicy.LOG))
 
-        from modex_agent.memory.history import ListMessageHistory
 
         runtime, identity = _make_runtime(hook_runner=hook_runner, runtime_mgr=runtime_mgr)
         ctx = AgentContext(

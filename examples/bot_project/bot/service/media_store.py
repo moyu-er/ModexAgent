@@ -28,7 +28,8 @@ import functools
 import logging
 from pathlib import Path
 
-from modex_agent.media.store import LocalFileMediaStore, MediaStore
+from modex_agent.core.media import MediaStore
+from modex_agent.media.store import LocalFileMediaStore
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import is_workspace_root_bound, resolve_workspace_root
 

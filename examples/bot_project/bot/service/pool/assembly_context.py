@@ -24,7 +24,7 @@ from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.communication.peer_resolution import PeerLink
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
-from modex_agent.pipeline.adapters import OutputAdapter
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.scope.spec import AgentSpec, PoolSpec
 from modex_agent.workspace.scope_path import ScopePath

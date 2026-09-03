@@ -166,14 +166,12 @@ class DefaultValues:
     """默认值常量"""
 
     SYSTEM_PROMPT = "You are a helpful AI assistant. You have access to the conversation history and can remember previous messages in the current session."
-    TEMPERATURE = 0.7
     TOP_P = 0.95
     MAX_ITERATIONS = 10
     MAX_TOOL_CALLS = 10
     # Parallel-scheduler rolling-pool ceiling (ADR-0048 D2). Setting a turn's
     # max_parallel_tool_calls to 1 is the exact-serial escape hatch.
     MAX_PARALLEL_TOOL_CALLS = 5
-    TIMEOUT_SECONDS = 60.0
     TOOL_TIMEOUT_SECONDS = 540.0
     TOOL_VERSION = "1.0"
     TOOL_CATEGORY = "general"

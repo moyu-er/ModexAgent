@@ -16,7 +16,8 @@ from bot.webui.transcript_store import JSONLTranscriptStore
 
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.constants import ToolCallEndPayload
-from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig
+from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.events import EmitterConfig
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.types import ToolCall
 

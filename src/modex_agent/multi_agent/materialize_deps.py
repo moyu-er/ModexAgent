@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.inbox.consumer import InboxConsumer
     from modex_agent.multi_agent.pool import AgentPool
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
-    from modex_agent.pipeline.adapters import OutputAdapter
+    from modex_agent.adapters.output import OutputAdapter
     from modex_agent.plugins.capability import CapabilitySupply
     from modex_agent.plugins.registry import ComponentRegistry
     from modex_agent.tools.mcp.registry import McpConnectionRegistry

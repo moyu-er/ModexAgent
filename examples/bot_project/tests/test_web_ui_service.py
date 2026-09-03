@@ -168,7 +168,7 @@ async def test_production_style_resolver_does_not_crash_emitter() -> None:
     from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
     from bot.webui.emitter import WebBotEmitter
 
-    from modex_agent.core.emitter import EmitterConfig
+    from modex_agent.core.events import EmitterConfig
 
     input_adapter = WebSocketInputAdapter()
     output_adapter = WebSocketOutputAdapter(input_adapter)
@@ -399,7 +399,7 @@ async def test_cross_pool_same_name_subagent_emitter_partitioning() -> None:
     from bot.webui.emitter import WebBotEmitter
     from bot.webui.events import SessionMeta
 
-    from modex_agent.core.emitter import EmitterConfig
+    from modex_agent.core.events import EmitterConfig
 
     data_dir = Path(tempfile.mkdtemp())
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")

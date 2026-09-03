@@ -25,7 +25,9 @@ from typing import Any
 
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.constants import ToolCallEndPayload
-from modex_agent.core.emitter import AgentResult, EmitterConfig, StreamingAwareEmitter
+from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.events import EmitterConfig
 from modex_agent.core.session_id import agent_of
 from modex_agent.core.turn_events import (
     TurnEvent,

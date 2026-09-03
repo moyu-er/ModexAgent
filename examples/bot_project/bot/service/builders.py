@@ -36,7 +36,7 @@ from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import AgentMessageBus
 from modex_agent.multi_agent.pool_router import PoolRoutingStore
 from modex_agent.persistence.config import PersistenceBackend
-from modex_agent.pipeline.adapters import OutputAdapter
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.assembly.context import AgentContext as ComponentAgentContext
 from modex_agent.scope.spec import AgentSpec

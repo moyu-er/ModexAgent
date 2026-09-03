@@ -2,7 +2,7 @@
 
 Moved from framework.memory.core.scope to core to break the core <-> memory
 import cycle. These types (MemoryContext, Scope, concrete scopes) are shared
-identity models used by both core.runtime_context and memory layers.
+identity models used by both runtime.context and memory layers.
 
 ``RecordScope`` (frozen Pydantic model) carries every configurable isolation
 dimension and produces a deterministic key (``canonical()``) or a filesystem

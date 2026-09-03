@@ -17,7 +17,9 @@ from modex_agent.adapters.platform import StreamingMode
 from modex_agent.agents.react import ReActAgent, ReActEvent
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig, StreamingAwareEmitter
+from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.events import EmitterConfig
 from modex_agent.core.events import AgentEvent
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.tool_manager import ToolResult

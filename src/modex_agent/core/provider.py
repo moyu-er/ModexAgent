@@ -12,6 +12,7 @@ from .llm_request import LLMRequest
 from .llm_struct import LLMErrorInfo, LLMErrorKind
 from .message import ChatMessage
 from .stream_events import (
+    EventAssembler,
     Finish,
     LLMStreamEvent,
     ReasoningDelta,
@@ -127,10 +128,6 @@ class LLMProvider(ABC):
         Returns:
             LLM统一响应结构 LLMResponse（由事件序列组装）
         """
-        # 延迟导入：providers.http.assembler 依赖 core（模块级会循环）；
-        # core→providers 边界登记见 tests/architecture/test_dependency_tree.py。
-        from modex_agent.providers.http.assembler import EventAssembler
-
         prompt_cache_key = kwargs.pop("prompt_cache_key", None)
         for key in kwargs:
             logger.error("dropping unknown chat_stream kwarg: %s", key)

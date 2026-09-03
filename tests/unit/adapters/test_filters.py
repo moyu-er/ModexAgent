@@ -1,22 +1,20 @@
-"""Tests for ContentFilter pipeline.
+"""Tests for ContentFilter pipeline (modex_agent.adapters.filters).
 
-TDD: verify ReasoningContentFilter, WhitespaceFilter,
+Verifies ReasoningContentFilter, WhitespaceFilter,
 and ChainedContentFilter behaviors.
 """
 
-import pytest
 
-from modex_agent.core.types import OutputMessage
-from modex_agent.pipeline.filters import (
+from modex_agent.adapters.filters import (
     ChainedContentFilter,
     ContentFilter,
     ReasoningContentFilter,
     WhitespaceFilter,
 )
+from modex_agent.core.types import OutputMessage
 
 
 class TestReasoningContentFilter:
-    @pytest.mark.asyncio
     async def test_strip_mode_removes_reasoning(self):
         msg = OutputMessage(content="hello", reasoning="secret")
         f = ReasoningContentFilter(mode="strip")
@@ -24,7 +22,6 @@ class TestReasoningContentFilter:
         assert result.content == "hello"
         assert result.reasoning is None
 
-    @pytest.mark.asyncio
     async def test_keep_mode_noop(self):
         msg = OutputMessage(content="hello", reasoning="secret")
         f = ReasoningContentFilter(mode="keep")
@@ -34,21 +31,18 @@ class TestReasoningContentFilter:
 
 
 class TestWhitespaceFilter:
-    @pytest.mark.asyncio
     async def test_collapses_excessive_newlines(self):
         msg = OutputMessage(content="a\n\n\n\nb")
         f = WhitespaceFilter()
         result = await f.apply(msg)
         assert result.content == "a\n\nb"
 
-    @pytest.mark.asyncio
     async def test_strips_edges(self):
         msg = OutputMessage(content="  hello  ")
         f = WhitespaceFilter()
         result = await f.apply(msg)
         assert result.content == "hello"
 
-    @pytest.mark.asyncio
     async def test_no_strip_when_disabled(self):
         msg = OutputMessage(content="  hello  ")
         f = WhitespaceFilter(strip_edges=False, collapse_lines=False)
@@ -57,7 +51,6 @@ class TestWhitespaceFilter:
 
 
 class TestChainedContentFilter:
-    @pytest.mark.asyncio
     async def test_runs_filters_in_order(self):
         msg = OutputMessage(content="  hello  ", reasoning="secret")
         chain = ChainedContentFilter([ReasoningContentFilter(), WhitespaceFilter()])
@@ -65,9 +58,18 @@ class TestChainedContentFilter:
         assert result.content == "hello"
         assert result.reasoning is None
 
-    @pytest.mark.asyncio
     async def test_empty_chain_passthrough(self):
         msg = OutputMessage(content="hello")
         chain = ChainedContentFilter([])
         result = await chain.apply(msg)
         assert result.content == "hello"
+
+
+class TestContentFilterAbc:
+    async def test_custom_filter_subclass(self):
+        class UpperFilter(ContentFilter):
+            async def apply(self, message: OutputMessage) -> OutputMessage:
+                return message.model_copy(update={"content": message.content.upper()})
+
+        msg = OutputMessage(content="hello")
+        assert (await UpperFilter().apply(msg)).content == "HELLO"

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
-from modex_agent.memory.utils import safe_atomic_replace
+from modex_agent.utils.file_io import safe_atomic_replace
 
 
 class MarkdownCoreMemoryStorage(DefaultScopedStorage):

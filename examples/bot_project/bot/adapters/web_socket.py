@@ -8,11 +8,12 @@ from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 from bot.webui.events import DeltaEnvelope, WebUIEventType
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.adapters.platform import StreamingMode
+from modex_agent.core.media import Attachment, Kind
 from modex_agent.core.session_id import SessionIdFactory, agent_of
 from modex_agent.core.types import InputMessage, OutputMessage
-from modex_agent.media.models import Attachment, Kind
-from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.pipeline.adapters import InputAdapter
 
 # ── Constants ──────────────────────────────────────────────────────────────
 

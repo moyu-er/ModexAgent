@@ -6,9 +6,9 @@ import pytest
 from pydantic import ValidationError
 
 from modex_agent.core.constants import DefaultValues
+from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.types import MessageType, OutputMessage, OutputMessageType
-from modex_agent.media.models import Attachment, AttachmentLocator, Kind
 
 
 def test_output_message_roundtrip():

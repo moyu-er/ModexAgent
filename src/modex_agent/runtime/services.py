@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.media.store import MediaStore
+from modex_agent.core.media import MediaStore
 
 from .enums import TurnCustomKey
 from .models import TurnSnapshot, TurnStateBase
@@ -23,11 +23,11 @@ if TYPE_CHECKING:
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.governance import ContextGovernance
-    from modex_agent.core.runtime_context import RuntimeContext, RuntimeContextManager
     from modex_agent.hook import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
     from modex_agent.trace.otel_store import OtelSpanTraceStore
 
+    from .context import RuntimeContext, RuntimeContextManager
     from .store import TurnStateStore
 
 logger = logging.getLogger(__name__)

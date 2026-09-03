@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.context import ContextManager, InMemoryContextManager
-from modex_agent.core.runtime_context import RuntimeContextManager
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.skills.filter import AllowListFilter
 from modex_agent.core.skills.manager import SkillManager
@@ -22,6 +21,7 @@ from modex_agent.hook import HookRunner
 from modex_agent.hook.builtin import InboxFlushHook
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.factories.llm import create_llm_provider
+from modex_agent.runtime.context import RuntimeContextManager
 from modex_agent.tools.filter import FilteredToolManager
 
 from .comm_kind import AgentCommKind
@@ -333,7 +333,7 @@ class DefaultAgentFactory(AgentFactory):
             await broker.start()
         address = descriptor.address
         input_adapter = BrokerInputAdapter(broker=broker, address=address)
-        from modex_agent.pipeline.adapters import OutputAdapter
+        from modex_agent.adapters.output import OutputAdapter
 
         if output_adapter is not None and isinstance(output_adapter, OutputAdapter):
             pipe_output_adapter = output_adapter

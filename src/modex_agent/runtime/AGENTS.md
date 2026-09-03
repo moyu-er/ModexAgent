@@ -5,19 +5,21 @@
 
 ## Purpose
 
-Runtime state governance — typed state models, enums, persistence, codecs, and services. Unifies formerly scattered runtime data (approval, resume, checkpoint, metadata) into `TurnSnapshot` + `TurnStateStore`. Provides `AgentRuntimeServices` (process-scope services) and `AgentRuntime` (services + per-turn state composition).
+Runtime state governance — typed state models, enums, persistence, codecs, and services. Unifies formerly scattered runtime data (approval, resume, checkpoint, metadata) into `TurnSnapshot` + `TurnStateStore`. Provides `AgentRuntimeServices` (process-scope services) and `AgentRuntime` (services + per-turn state composition). Also owns the per-turn `RuntimeContext` container subsystem (moved from `core/`, plan §15 B2).
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
 | `services.py` | `AgentRuntimeServices` — process-scope services container (hooks, interceptors, control, approval, governance, stores); `AgentRuntime` — composes services + per-turn state |
+| `context.py` | Per-turn runtime context (moved from `core/runtime_context.py`, plan §15 B2): `ToolCallRecord` (frozen Pydantic value), `RuntimeContext` ABC, `InMemoryRuntimeContext`, `RuntimeContextManager` (owns the per-scope `dict[str, InMemoryRuntimeContext]` directly — the former separate `RuntimeContextStore` hierarchy is folded in; `scope` ctor param kept for UserScope aggregation) |
+| `hooks.py` | `RuntimeContextHook` (moved from `hook/builtin/runtime_context.py`, plan §15 B2) — manages the per-turn RuntimeContext lifecycle: resolves/caches the session context at `start_node_turn`, records `ToolCallRecord`s around tool execution. Production-dormant: registered explicitly by business code, never auto-injected |
 | `process_identity.py` | `ProcessIdentity` — lazily generates and logs the process-level snowflake used for graph instance ownership |
 | `process_registry.py` | `ProcessRegistry` ABC + `SingletonProcessRegistry` zero-infrastructure liveness implementation; replace the implementation for multi-instance discovery |
 | `constants.py` | `EXECUTOR_PROCESS_ID_KEY` — typed `GraphMetadata.attrs` key for executor ownership |
 | `store.py` | `TurnStateStore` ABC; `NoOpTurnStateStore` / `InMemoryTurnStateStore` / `JsonFileTurnStateStore` implementations; `ActiveTurnConflictError`. Also `TodoStore` ABC + `JsonFileTodoStore` + `TodoItem` (per-session task-list store, a separate concern from turn snapshots — injected into the todo tools, not part of turn-state governance) |
 | `dispatch.py` | `DispatchDeadline` — the unified watchdog deadline (module docstring carries the phase-budget protocol table). The pool watchdog is the sole termination mechanism (provider-level timeouts default to `None`). Phases owning an inner deadline declare their full budget at entry (tool: `tool_timeout + margin`; hooks: `hook_timeout×n + margin`; turn tail: flush+hook+margin); LLM calls re-assert `dispatch_timeout` at call entry; activity signals (react stream chunks, external provider events) renew by `chunk_renew_seconds`. `DeadlinePolicy` (`core/llm_struct.py`) holds the knobs (`chunk_renew_seconds` / `max_ahead_seconds` / `watchdog_poll_seconds`; phase margin = 2×poll). The sliding ceiling (`max_ahead_seconds`, default 1200s) is a panic fuse validated at startup against every phase budget. `current_dispatch_deadline` ContextVar + `renew_dispatch_deadline()` helper |
-| `models.py` | Core data models — `TurnIdentity`, `ToolArguments`, `ApprovalRequest`, `ApprovalTransaction`, `ToolCallRecord`, `ToolBatchState`, `TurnStateBase`, `TurnSnapshot`, `TurnSummary`, `StateQueryScope`, `MessageDelta` |
+| `models.py` | Core data models — `TurnIdentity`, `ToolArguments`, `ApprovalRequest`, `ApprovalTransaction`, `ToolBatchState`, `TurnStateBase`, `TurnSnapshot`, `TurnSummary`, `StateQueryScope`, `MessageDelta` |
 | `enums.py` | Enumerations — `StateScope`, `AgentKind`, `TurnPhase`, `OperationKind`, `ToolBatchStatus`, `ToolCallStatus`, `ApprovalDenyPolicy`, `ApprovalSubjectType`, `OperationStatus`, `CancellationSource`, `SnapshotReason`, `MessageDeltaSource`, `TurnCustomKey` |
 | `policy.py` | `SnapshotPolicy` ABC — defines when/how snapshots are taken during agent execution |
 | `codec.py` | `RuntimeStateCodec` ABC + `RuntimeStateCodecRegistry` — serialization extensibility for runtime state |

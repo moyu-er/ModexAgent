@@ -26,6 +26,7 @@ from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
 from modex_agent.core.history import ListMessageHistory
+from modex_agent.core.media import StoredMediaKind
 from modex_agent.core.message import (
     ChatMessage,
     ImageUrl,
@@ -35,7 +36,7 @@ from modex_agent.core.message import (
 )
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import MessageRole
-from modex_agent.media.store import LocalFileMediaStore, StoredMediaKind
+from modex_agent.media.store import LocalFileMediaStore
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices

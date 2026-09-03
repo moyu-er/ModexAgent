@@ -1,10 +1,13 @@
-"""MediaStore — framework byte store for inbound attachments (ADR-0013 §6).
+"""LocalFileMediaStore — concrete local-filesystem media storage (ADR-0013 §6).
 
-A reusable, backend-swappable byte store. ``LocalFileMediaStore`` operates
-purely on the directory it is given (the already-resolved pool media root);
-it has NO workspace/pool/ws knowledge — that routing is the business
-resolver's job (``bot.service.media_store``), mirroring
-``WorkspaceScopedTranscriptStore``.
+The contracts (``MediaStore`` ABC, ``StoredFile``, ``StoredMediaKind``,
+``MediaRefCollisionError``) live in :mod:`modex_agent.core.media` (plan §14.1,
+C1); this module owns only the concrete filesystem behavior.
+
+``LocalFileMediaStore`` operates purely on the directory it is given (the
+already-resolved pool media root); it has NO workspace/pool/ws knowledge —
+that routing is the business resolver's job (``bot.service.media_store``),
+mirroring ``WorkspaceScopedTranscriptStore``.
 
 The upload API remains stream/path-oriented: ``save`` accepts a binary stream
 (or bytes) and copies it in fixed-size chunks; ``read`` returns the ``Path`` so
@@ -24,12 +27,15 @@ from __future__ import annotations
 
 import contextlib
 import shutil
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 from typing import BinaryIO
 
+from modex_agent.core.media import (
+    MediaRefCollisionError,
+    MediaStore,
+    StoredFile,
+    StoredMediaKind,
+)
 from modex_agent.workspace.paths import safe_segment
 
 # Chunk size for streamed copies. Small enough to keep memory flat for the
@@ -38,119 +44,7 @@ from modex_agent.workspace.paths import safe_segment
 # streaming operation rather than a whole-file buffer.
 _CHUNK_BYTES: int = 64 * 1024
 
-
-class StoredMediaKind(StrEnum):
-    """Closed set of persisted media subtrees."""
-
-    UPLOADS = "uploads"
-    READS = "reads"
-
-
-class MediaRefCollisionError(Exception):
-    """The same media reference exists in both persisted subtrees."""
-
-    session_id: str
-    attachment_id: str
-
-    def __init__(self, session_id: str, attachment_id: str) -> None:
-        self.session_id = session_id
-        self.attachment_id = attachment_id
-        super().__init__(
-            f"media reference {attachment_id!r} for session {session_id!r} "
-            "exists in both uploads and reads"
-        )
-
-
-@dataclass(frozen=True)
-class StoredFile:
-    """One persisted attachment file under a session's uploads directory.
-
-    Frozen value object — a snapshot of the on-disk entry at listing time.
-    """
-
-    attachment_id: str
-    path: Path
-    size: int
-    mtime: float
-
-
-class MediaStore(ABC):
-    """Framework ABC for a backend-swappable inbound byte store.
-
-    Implementations receive an already-resolved media directory (the business
-    resolver maps ``ws``+``pool`` to a directory and hands each (ws,pool) a
-    cached store). The ABC therefore deals only in ``session_id`` /
-    ``attachment_id`` keys.
-    """
-
-    @abstractmethod
-    def save(
-        self,
-        session_id: str,
-        attachment_id: str,
-        stream: BinaryIO | bytes,
-        *,
-        kind: StoredMediaKind = StoredMediaKind.UPLOADS,
-    ) -> Path:
-        """Persist ``stream`` under ``<kind>/<session_id>/<attachment_id>``.
-
-        ``stream`` is a readable binary file-like object or a ``bytes``
-        blob; both are written without buffering the whole payload in memory.
-        Returns the absolute path of the stored file.
-        """
-
-    @abstractmethod
-    def read(
-        self,
-        session_id: str,
-        attachment_id: str,
-        *,
-        kind: StoredMediaKind = StoredMediaKind.UPLOADS,
-    ) -> Path | None:
-        """Return the stored path, or ``None`` if no such file exists.
-
-        Does NOT read bytes into memory — the caller streams the path.
-        """
-
-    @abstractmethod
-    def read_bytes(
-        self,
-        session_id: str,
-        attachment_id: str,
-        *,
-        kind: StoredMediaKind = StoredMediaKind.UPLOADS,
-    ) -> bytes | None:
-        """Return bytes from one explicit subtree, or ``None`` when absent."""
-
-    @abstractmethod
-    def resolve_bytes(self, session_id: str, attachment_id: str) -> bytes | None:
-        """Resolve bytes across uploads then reads, rejecting collisions."""
-
-    @abstractmethod
-    def delete(
-        self,
-        session_id: str,
-        attachment_id: str,
-        *,
-        kind: StoredMediaKind = StoredMediaKind.UPLOADS,
-    ) -> bool:
-        """Delete the stored file. Returns ``True`` if a file was removed."""
-
-    @abstractmethod
-    def list_session(self, session_id: str) -> list[StoredFile]:
-        """List stored files for a session, ordered by attachment_id."""
-
-    @abstractmethod
-    def enforce_budget(self, session_id: str, budget_bytes: int) -> list[Path]:
-        """Evict oldest-by-mtime files until the session total ≤ ``budget_bytes``.
-
-        Returns the paths of evicted files (empty when already within budget).
-        See ADR-0013 §7 Layer 2.
-
-        Tie-break: when two files share an mtime, the one whose
-        ``attachment_id`` sorts earlier is evicted first — ``list_session``
-        orders by ``attachment_id`` and the mtime sort is stable.
-        """
+__all__ = ["LocalFileMediaStore"]
 
 
 class LocalFileMediaStore(MediaStore):

@@ -23,11 +23,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
-from modex_agent.core.session_store import (
-    LocalFileSessionStore,
-    atomic_write_text,
-    safe_filename,
-)
+from modex_agent.core.session_store import LocalFileSessionStore, safe_filename
+from modex_agent.utils.file_io import atomic_write_text
 
 
 class WorkspacePoolSessionStore(LocalFileSessionStore):

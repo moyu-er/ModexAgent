@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modex_agent.core.frontmatter import parse_frontmatter
+from modex_agent.utils.frontmatter import parse_frontmatter
 
 _EXPERIENCE_FILENAME = "EXPERIENCE.md"
 

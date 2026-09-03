@@ -65,7 +65,7 @@ async def test_enqueue_carries_attachments() -> None:
 async def test_enqueue_carries_resolved_attachments() -> None:
     """The gate-accepted Attachment records are copied onto the InputMessage so
     ``preprocess`` can inject the transient path reference (ADR-0013 §1/G5)."""
-    from modex_agent.media.models import Attachment, AttachmentLocator, Kind
+    from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 
     record = Attachment(
         id="abc123",

@@ -21,8 +21,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from modex_agent.core.media import Kind
 from modex_agent.media.mime import classify_kind, sniff_mime
-from modex_agent.media.models import Kind
 from modex_agent.media.security import DANGEROUS_MAGIC
 from modex_agent.multi_agent.pool_config.media import MediaConfig
 

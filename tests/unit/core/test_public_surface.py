@@ -11,8 +11,11 @@ CORE_PUBLIC = [
     "SessionRegistry", "InMemorySessionRegistry",
     "ChatMessage", "ContentFormat",
     "InputMessage", "OutputMessage", "MessageRole", "ToolCall", "LLMResponse", "TodoStatus",
-    "RuntimeSafetyPolicy", "RuntimeContextManager", "SystemPromptPipeline",
-    "parse_frontmatter", "current_agent_context", "safe_atomic_replace",
+    "EventAssembler",
+    "RuntimeSafetyPolicy", "SystemPromptPipeline",
+    "current_agent_context",
+    "Attachment", "AttachmentLocator", "Kind",
+    "MediaStore", "StoredFile", "StoredMediaKind", "MediaRefCollisionError",
 ]
 
 EXPERIENCE_PUBLIC = [

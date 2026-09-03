@@ -20,9 +20,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
-from modex_agent.media.models import Attachment, AttachmentLocator, Kind
 from modex_agent.messaging.broker import Address
 from modex_agent.messaging.broker_bridge import build_input_broker_message
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope

@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from modex_agent.messaging import MessageBroker
     from modex_agent.multi_agent.factory import AgentFactory
     from modex_agent.multi_agent.pool import AgentPool
-    from modex_agent.pipeline.adapters import OutputAdapter
+    from modex_agent.adapters.output import OutputAdapter
     from modex_agent.plugins.registry import ComponentRegistry
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 

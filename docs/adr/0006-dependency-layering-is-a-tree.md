@@ -1,36 +1,53 @@
 # Module dependencies form a strict tree (DAG); no import cycles
 
-The framework grew import edges that point the wrong way, masked by
-`TYPE_CHECKING` and re-export shims. Today's violations:
+The framework grows import edges that point the wrong way unless a rule holds
+them back, masked by `TYPE_CHECKING` guards, re-export shims, relative
+imports, and lazy function-body imports. The settled rule:
 
-- `core/graph/engine.py` imports `modex_agent.runtime.enums` (core → runtime,
-  upward) to read the graph result out of per-turn state.
-- `core/tool_manager.py` imports `modex_agent.tools.terminal.types`
-  (core → tools, upward).
-- `core/agent.py` imports `modex_agent.multi_agent.comm_kind`
-  (core → multi_agent, upward).
-- `core/agent.py` imports `modex_agent.pipeline.snapshot` under TYPE_CHECKING
-  (core → pipeline, upward).
-- `modex_agent.memory.core.{scope,message}` re-exports `modex_agent.core.*`
-  — a bidirectional shim left from an earlier cycle break.
-- `modex_agent/multi_agent/communication.py` defines `WorkspaceManager`, a
-  workspace concept, forcing multi_agent to own a workspace type it also
-  depends on (conceptual cycle).
+**`core` is a strict root.** A `core/*` module may import only the standard
+library, third-party packages, sibling `core` modules, and pure `utils` (the
+one deliberate exception, "utils — root-adjacent pure leaf" below). Every
+other internal dependency points down at `core`; `core` never imports up. No
+import cycles are permitted anywhere in the tree. The
+architecture-convergence migration (`ARCHITECTURE-MIGRATION-PLAN.md`, repo
+root) is the enforcement and extension of this decision: it relocates the
+remaining upward edges to their semantic owners and strengthens the guard.
+It refines this ADR; it does not replace it.
 
-`core` is documented as the foundation that "all other modules depend on" and
-that depends on nothing internal. The runtime edges above break that invariant
-and make the dependency graph not a tree. (One later, deliberate exception:
-`core` may import `utils` — see "utils — root-adjacent pure leaf".)
+## Current dependency leakage and disposition
+
+The pre-refactor violations (graph engine reading `runtime` state,
+`tool_manager` importing terminal internals, `memory.core` re-export shims,
+`WorkspaceManager` owned by `multi_agent`) are fixed; see the refactor track
+below. The confirmed remaining runtime upward imports and hidden cycles:
+
+| Edge | Cause | Disposition |
+|---|---|---|
+| `core.cleanup -> memory/runtime/workspace` | Session artifact paths and cleanup implementation live in core | Move to `persistence/session_artifacts/` (B1) |
+| `core.session_scope_discovery -> workspace` | Filesystem Session scope discovery lives in core | Move to `persistence/session_artifacts/discovery.py` (B1) |
+| `core.provider -> providers.http.EventAssembler` | Provider-neutral stream folding lives under the HTTP adapter | Resolved in B3: `EventAssembler` folded into `core/stream_events.py`, module deleted |
+| `core.emitter -> adapters.StreamingMode` | Concrete output transport behavior lives with the emitter contract | Resolved in B4: contract stays in core; concrete emitter, filters, and output adapters moved to `adapters/` (`emitter.py` / `output.py` / `filters.py`) |
+| `core.tool_manager -> media.MediaStore` | Media contracts are above core instead of at the shared seam | Resolved in C1: `Attachment` and the `MediaStore` contract promoted to `core/media.py`; concrete store stays in `media/store.py` |
+| `core.types -> media.Attachment` | Foundational messages carry an upward media value | Resolved in C1: `Attachment` values moved to `core/media.py` |
+| `core.types <-> approval` | `InputMessage` lazily reconstructs an approval DTO owned by the approval package | `ApprovalDecisionInput` moves to `messaging/models.py`, deleting the manual reconstruction (E1) |
+
+Work-package letters refer to `ARCHITECTURE-MIGRATION-PLAN.md` §15. The
+architecture guard (`tests/architecture/test_dependency_tree.py`) resolves
+every import form a real edge can hide behind (absolute, relative,
+function-body, try/except) and auto-discovers top-level packages — work
+package A1 of the migration extended it from its earlier name-based,
+module-level-only form; its expected-offender ledger now shrinks entry by
+entry as the dispositions above land.
 
 ## Refactor track status (updated 2026-06-27)
 
-The violation list above describes the **pre-refactor** state. The decision
-(the tree rule, the tiers) is unchanged; this section records progress so a
-fresh reader does not mistake resolved items for live violations, and maps
-the remaining deepening work to candidates. Each candidate applies this ADR's
-tier tree plus ADR-0005 (facade-only) and ADR-0007 (retain real seams).
-Recommended order: ③ → ④ → ⑤ → ⑥. (Living status also in project memory
-`project_refactor_candidate_track.md`; this ADR is the architectural anchor.)
+The decision (the tree rule, the tiers) is unchanged; this section records
+progress so a fresh reader does not mistake resolved items for live
+violations, and maps the remaining deepening work to candidates. Each
+candidate applies this ADR's tier tree plus ADR-0005 (facade-only) and
+ADR-0007 (retain real seams). Recommended order: ③ → ④ → ⑤ → ⑥. (Living
+status also in project memory `project_refactor_candidate_track.md`; this
+ADR is the architectural anchor.)
 
 - ① **core** (tier 0) — ✅ done. Cut `core/graph/engine → runtime` (the engine
   now *returns* its result instead of reading `runtime.enums`); cut
@@ -176,12 +193,14 @@ Two constraints keep this from being a loophole:
    `AgentContext` legitimately *carries* per-turn state without *using* those
    types at runtime in `core`.
 
-This ADR's violation list above mixes the two; the two **runtime** violations
+The original violations mixed the two; the two **runtime** violations
 (`core/graph/engine → runtime.enums`, `core/tool_manager → tools.terminal.types`)
-are the ones that must be cut. The TYPE_CHECKING edges (`core/agent →
-pipeline.snapshot`, etc.) are resolved by **relocation** when a type clearly
-belongs at a lower tier (`PoolDataSnapshot → runtime`), and otherwise left as
-permitted annotation references.
+were the ones cut. The TYPE_CHECKING edges (`core/agent → pipeline.snapshot`,
+etc.) were resolved by **relocation** when a type clearly belongs at a lower
+tier (`PoolDataSnapshot → runtime`), and otherwise left as permitted
+annotation references. The current leakage table above (and the migration
+that resolves it) is the continuation of that same scope rule: every edge
+listed there is a runtime edge, whatever import form hides it.
 
 ## utils — root-adjacent pure leaf (policy update 2026-06-26)
 
@@ -237,20 +256,24 @@ file runtime-imports another `modex_agent` top-level package.
 
 ## Consequences
 
-- `core` becomes a true root: no `core.*` file imports another top-level
+- `core` is a strict root: no `core.*` file imports another top-level
   module **except `utils`** (the root-adjacent pure-leaf primitive layer; see
-  the "utils — root-adjacent pure leaf" section). Concretely this requires
-  (a) `core/graph/engine.py` to stop reading `runtime` state and instead return
-  its result; (b) `core/tool_manager.py` to stop importing terminal internals;
+  the "utils — root-adjacent pure leaf" section). The items below are the
+  historical cut list from the original refactor — all landed except (d),
+  which was declined (see the declined note in the refactor track); the
+  current debt and its dispositions are the leakage table above:
+  (a) `core/graph/engine.py` returns its result instead of reading `runtime`
+  state; (b) `core/tool_manager.py` no longer imports terminal internals;
   (c) `AgentCommKind`/`AgentState` promoted into `core`; (d) `PoolDataSnapshot`
-  relocated out of `pipeline` into `runtime` or `workspace`; (e) the four
-  `memory.core` shims deleted so `memory` imports `core` in one direction only;
+  relocated out of `pipeline`; (e) the four `memory.core` shims deleted;
   (f) `WorkspaceManager` moved into `workspace`.
 - Proposed tiers (depends-on points down):
-  - **Tier 0** `core` (ABCs, types, graph engine, constants, session types,
-    skills/experience ABCs) and `utils` (root-adjacent pure-leaf primitives —
-    `core` may import `utils`; `utils` imports no other internal package; see
-    the "utils — root-adjacent pure leaf" section).
+  - **Tier 0** `core` (stable contracts and values only — the final retained
+    boundary is the table in `ARCHITECTURE-MIGRATION-PLAN.md` §9.1; complete
+    feature implementations such as skills/experience belong to their
+    Capability packages, not core) and `utils` (root-adjacent pure-leaf
+    primitives — `core` may import `utils`; `utils` imports no other internal
+    package; see the "utils — root-adjacent pure leaf" section).
   - **Tier 1** leaves depending only on core: `providers`, `commands`,
     `approval`, `control` (transport), `hook`, `interceptor`, `messaging`,
     `input_pipeline`, `adapters`, `trace`.

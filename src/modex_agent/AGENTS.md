@@ -23,14 +23,14 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 
 | Module | Files | Subdirectories | Purpose |
 |--------|-------|----------------|---------|
-| `core/` | 25 py | `skills/`, `experience/` | ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, `SessionArtifactCleaner`/`SessionDatabaseCleaner`, types (see `core/AGENTS.md`). The graph engine was extracted to `modex_graph` (ADR-0033). |
+| `core/` | 27 py | `skills/`, `experience/` | ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, types (see `core/AGENTS.md`). The graph engine was extracted to `modex_graph` (ADR-0033). |
 | `agents/` | 2 py | `react/`, `external/`, `experience/`, `summarizer/` | Agent implementations — `ReActAgent` (built on `modex_graph`), `ExternalAgent` (Pi/OpenCode CLI harness), `ExperienceReviewAgent`, `SessionCompactorAgent` (tool-less single-LLM-call compact summary). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). (see `agents/AGENTS.md`) |
 | `memory/` | 18 py | `consolidation/`, `core/`, `injection/`, `layers/`, `pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Three-layer memory — session/archive/core, compaction, consolidation, governance, injection. Split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) + `MemoryStoreBundle` (see `memory/AGENTS.md`) |
-| `persistence/` | 26 py | `adapters/`, `managers/`, `migrations/` | Hybrid persistence layer (ADR-0023, ADR-0028~0031). `ConnectionManager` + `MigrationRunner` (per-workspace SQLite), `PersistenceBackend`/`PersistenceConfig`, `ColumnProjection` (ADR-0030), `SqliteSessionDatabaseCleaner`, SQLite adapters for the split store + runtime-state ABCs. All timestamps are INTEGER ms (ADR-0029) |
+| `persistence/` | 31 py | `adapters/`, `managers/`, `migrations/`, `session_artifacts/` | Hybrid persistence layer (ADR-0023, ADR-0028~0031). `ConnectionManager` + `MigrationRunner` (per-workspace SQLite), `PersistenceBackend`/`PersistenceConfig`, `ColumnProjection` (ADR-0030), session artifact cleanup (`SessionArtifactCleaner`/`DefaultSessionArtifactCleaner`, `SqliteSessionDatabaseCleaner`, ADR-0018), SQLite adapters for the split store + runtime-state ABCs. All timestamps are INTEGER ms (ADR-0029) |
 | `multi_agent/` | 20 py | `inbox/` | Star-topology orchestration — `AgentPool`, inbox (`InboxMQ`), `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
 | `tools/` | 8 py | `ast/`, `lsp/`, `mcp/`, `overflow/`, `standard/`, `terminal/`, `web/` | Tool subsystem — registry, executor, MCP, terminal (pexpect/tmux/winpty), overflow, standard tools (see `tools/AGENTS.md`) |
 | `sandbox/` | 17 py | `adapters/` | Sandboxed execution — Subprocess, Docker, E2B, Landlock, guards, environment builder (see `sandbox/AGENTS.md`) |
-| `pipeline/` | 7 py | — | `AgentPipeline` orchestration, I/O adapters, approval renderer, snapshot handling (see `pipeline/AGENTS.md`) |
+| `pipeline/` | 7 py | — | `AgentPipeline` orchestration, `InputAdapter` ABC (B4: output side moved to `adapters/`), approval renderer, snapshot handling (see `pipeline/AGENTS.md`) |
 | `runtime/` | 9 py | — | `AgentRuntime`, `AgentRuntimeServices`, `TurnStateStore`, codec, snapshot policy (see `runtime/AGENTS.md`) |
 | `commands/` | 7 py | — | Slash command processor — parse, two-stage dispatch, approval/continue/transform actions (see `commands/AGENTS.md`) |
 | `control/` | 6 py | — | Control transport — `InMemoryControlChannel` (the live `/stop` + pause mechanism), `ControlCommand`, `AgentControlError` exceptions (see `control/AGENTS.md`) |
@@ -46,8 +46,8 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `input_pipeline/` | 5 py | — | Extensible user-input stage pipeline — `UserInputEnvelope`, `InputStage` ABC, `Continue`/`Terminate`, `UserInputPipeline` (see `input_pipeline/AGENTS.md`) |
 | `trace/` | 4 py | — | Tracing and observability — `TraceStore`, `TraceHooks`, `TraceType` |
 | `utils/` | 12 py | — | tokenizer, context_builder, deduplicator, sanitizer, helpers, process-tree termination, `time` (`now_ms`/`now_s` — ADR-0029 single source of truth) |
-| `adapters/` | 2 py | — | `PlatformAdapter` ABC, `AdapterRegistry`, `StreamingMode` |
-| `media/` | 6 py | — | Attachment/media handling (ADR-0013) — `MediaStore` ABC, MIME classification, security gate, storage routing (`LocalFileMediaStore`) |
+| `adapters/` | 6 py | — | Platform I/O contracts + emitter bridge — `PlatformAdapter` ABC, `AdapterRegistry`, `StreamingMode`, `OutputAdapter` family (output.py), `StreamingAwareEmitter` (emitter.py), `ContentFilter` family (filters.py); moved from pipeline/core in B4 (see `adapters/AGENTS.md`) |
+| `media/` | 6 py | — | Concrete media implementation (ADR-0013) — `LocalFileMediaStore` filesystem storage, MIME classification, security gate. Contracts (`Attachment`, `MediaStore` ABC, `StoredFile`) live in `core/media.py` (C1) (see `media/AGENTS.md`) |
 | `registry/` | 1 py | — | Shared registry utilities |
 
 ## Key Files
@@ -113,7 +113,7 @@ From `modex_agent`'s perspective:
 - All modules depend on `core/` for ABCs and types.
 - `agents/` depends on `core/` (agent ABC, graph engine, tool manager).
 - `memory/` depends on `core/` (types, context, events, scope).
-- `persistence/` depends on `core/` (scope, cleanup) and `memory/` (split store ABCs); implements the SQLite adapters.
+- `persistence/` depends on `core/` (scope) and `memory/` (split store ABCs); implements the SQLite adapters.
 - `multi_agent/` depends on `core/` (agent ABC), `memory/` (isolated memory), `messaging/` (bus), `persistence/` (InboxMQ, routing stores).
 - `pipeline/` depends on `core/`, `agents/`, `runtime/`, `commands/`.
 - `tools/` depends on `core/` (Tool ABC, ToolManager).

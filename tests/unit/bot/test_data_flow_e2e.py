@@ -32,7 +32,8 @@ from modex_agent.messaging.broker import BrokerMessage
 from modex_agent.messaging.broker_bridge import BrokerBridgeService, OutputRoute
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.adapters.output import OutputAdapter
+from modex_agent.pipeline.adapters import InputAdapter
 
 # ── Stubs ──
 

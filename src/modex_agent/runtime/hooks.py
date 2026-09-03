@@ -3,6 +3,8 @@
 - start_node_turn：解析并缓存 session 的 RuntimeContext，为新 turn 清空
 - before_tool_execution：缓存待执行的工具调用列表
 - after_tool_execution：将工具调用结果录入 ToolCallRecord
+
+Moved from hook/builtin/runtime_context.py (plan §15 B2).
 """
 
 from __future__ import annotations

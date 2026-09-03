@@ -10,7 +10,7 @@ from bot.service.session_pool_index import SessionPoolIndex
 from bot.webui.emitter import WebBotEmitter
 from bot.webui.events import _unwrap_envelope
 
-from modex_agent.core.emitter import EmitterConfig
+from modex_agent.core.events import EmitterConfig
 from modex_agent.multi_agent.session_tree.models import (
     NodeVersionStatus,
     SessionTreeRecord,

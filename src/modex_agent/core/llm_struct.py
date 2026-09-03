@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .constants import DefaultValues, FinishReason, ReasoningEffort
+from .constants import DefaultValues, FinishReason
 
 if TYPE_CHECKING:
     from .types import LLMResponse
@@ -103,19 +103,6 @@ def is_content_filter_text(text: str) -> bool:
 
 
 # ─── Provider 标识 ─────────────────────────────────────────────────────────────
-
-
-class LLMProviderKind(StrEnum):
-    """LLM Provider 种类。
-
-    Renamed from ``ProviderKind`` to disambiguate from the coding-agent
-    ``ProviderKind`` in ``modex_agent.core.constants`` (PI / OPENCODE).
-    This enum is LLM-provider-only (OpenAI / Anthropic) and is used solely
-    by ``LLMProviderConfig`` below.
-    """
-
-    OPENAI = "openai"
-    ANTHROPIC = "anthropic"
 
 
 # ─── 安全策略配置 ──────────────────────────────────────────────────────────────
@@ -226,29 +213,6 @@ class RuntimeSafetyPolicy(BaseModel):
                     f"watchdog ceiling would clip phase declarations."
                 )
         return self
-
-
-class LLMProviderConfig(BaseModel):
-    """LLM Provider 最小配置结构，用于工厂创建。
-
-    休眠（dormant）配置：新代码勿用，LLM 接入走 ``ioc/configs/llm.py`` 的
-    ``LLMConfig``。本结构不删不改字段保留——其 ``extra_headers`` 即 headers
-    透传的前身证据。
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    provider: LLMProviderKind = LLMProviderKind.OPENAI
-    model: str = ""
-    api_key: str | None = None
-    base_url: str | None = None
-    temperature: float = DefaultValues.TEMPERATURE
-    max_output_tokens: int | None = None
-    timeout: float = DefaultValues.TIMEOUT_SECONDS
-    stream_idle_timeout: float = 90.0
-    parse_think_tags: bool = True
-    reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
-    extra_headers: dict[str, str] | None = None
 
 
 # ─── 辅助构造 ──────────────────────────────────────────────────────────────────

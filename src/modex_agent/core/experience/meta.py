@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from modex_agent.core.utils import safe_atomic_replace
+from modex_agent.utils.file_io import safe_atomic_replace
 
 logger = logging.getLogger(__name__)
 

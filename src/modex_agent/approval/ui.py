@@ -12,7 +12,7 @@ from modex_agent.core.types import OutputMessage
 
 if TYPE_CHECKING:
     from modex_agent.approval.views import ApprovalRequestView
-    from modex_agent.pipeline.adapters import OutputAdapter
+    from modex_agent.adapters.output import OutputAdapter
 
 logger = logging.getLogger(__name__)
 

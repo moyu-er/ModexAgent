@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from modex_agent.core.frontmatter import parse_frontmatter
+from modex_agent.utils.frontmatter import parse_frontmatter
 
 _NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*$")
 

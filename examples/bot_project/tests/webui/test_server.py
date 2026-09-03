@@ -21,7 +21,8 @@ from bot.webui.server import (
     _safe_send_json,
 )
 
-from modex_agent.core.emitter import AgentResult, EmitterConfig
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.events import EmitterConfig
 from modex_agent.multi_agent.pool_router import PoolSessionStore
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
@@ -270,7 +271,7 @@ async def test_ws_send_message_echo_carries_resolved_attachments() -> None:
     rendering), not only after a transcript reload. Mirrors
     persist_user_message.py:43. Regression for the G8 echo fix.
     """
-    from modex_agent.media.models import Attachment, AttachmentLocator, Kind
+    from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 
     record = Attachment(
         id="att-1",

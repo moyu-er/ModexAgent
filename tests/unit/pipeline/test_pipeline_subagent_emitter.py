@@ -10,7 +10,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from modex_agent.core.context import ContextState
-from modex_agent.core.emitter import AgentResult, StreamingAwareEmitter
+from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
 

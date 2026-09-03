@@ -52,6 +52,7 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
 from modex_agent.core.constants import FinishReason, InterfaceFormat
 from modex_agent.core.llm_request import LLMRequest
+from modex_agent.core.media import StoredMediaKind
 from modex_agent.core.message import (
     ChatMessage,
     ImageUrl,
@@ -65,7 +66,7 @@ from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import TokenUsage, ToolCall
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.factories.llm import create_llm_provider
-from modex_agent.media.store import LocalFileMediaStore, StoredMediaKind
+from modex_agent.media.store import LocalFileMediaStore
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.providers.http.formats.anthropic import AnthropicProtocol
 from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol

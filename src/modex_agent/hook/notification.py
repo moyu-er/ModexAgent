@@ -13,7 +13,7 @@ from modex_agent.hook.abc import OutcomeFinallyHook
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.emitter import AgentResult
-    from modex_agent.pipeline.adapters import OutputAdapter
+    from modex_agent.adapters.output import OutputAdapter
 
 logger = logging.getLogger(__name__)
 

@@ -30,16 +30,23 @@ from .events import (
     AgentEvent,
     EmitterConfig,
 )
-from .frontmatter import parse_frontmatter
 from .llm_request import LLMRequest
 from .llm_struct import RuntimeSafetyPolicy
+from .media import (
+    Attachment,
+    AttachmentLocator,
+    Kind,
+    MediaRefCollisionError,
+    MediaStore,
+    StoredFile,
+    StoredMediaKind,
+)
 from .message import (
     ChatMessage,
     ContentFormat,
 )
 from .prompt import SystemPromptPipeline
 from .provider import CallbackStreamProvider, LLMProvider
-from .runtime_context import RuntimeContextManager
 from .session_id import (
     SessionIdFactory,
     SessionInfo,
@@ -58,6 +65,7 @@ from .session_store import (
     safe_filename,
 )
 from .stream_events import (
+    EventAssembler,
     Finish,
     LLMStreamEvent,
     ReasoningDelta,
@@ -93,7 +101,6 @@ from .types import (
     TodoStatus,
     ToolCall,
 )
-from .utils import safe_atomic_replace
 
 __all__ = [
     # 常量
@@ -117,6 +124,7 @@ __all__ = [
     "TurnToolCallEvent",
     "TurnToolResultEvent",
     # LLM 流式事件 (LLMStreamEvent 封闭联合)
+    "EventAssembler",
     "ReplayFields",
     "TextDelta",
     "ReasoningDelta",
@@ -177,8 +185,13 @@ __all__ = [
     "TodoStatus",
     # 运行时结构
     "RuntimeSafetyPolicy",
-    "RuntimeContextManager",
     "SystemPromptPipeline",
-    "parse_frontmatter",
-    "safe_atomic_replace",
+    # 媒体契约 (C1, ADR-0013)
+    "Attachment",
+    "AttachmentLocator",
+    "Kind",
+    "MediaRefCollisionError",
+    "MediaStore",
+    "StoredFile",
+    "StoredMediaKind",
 ]

@@ -5,36 +5,40 @@ single agent turn.  Hooks and tools can read/write arbitrary state through a
 session-scoped RuntimeContext, managed by RuntimeContextManager.
 
 Layering:
-- core/runtime_context.py  → generic ABCs + in-memory defaults
-- agents/react/agent.py    → ReActAgent clears/records tool calls each turn
-- multi_agent/hooks.py     → SubagentAutoSendHook reads communication-tool calls
+- runtime/context.py     → generic ABCs + in-memory defaults
+- agents/react/agent.py  → ReActAgent clears/records tool calls each turn
+- runtime/hooks.py       → RuntimeContextHook records communication-tool calls
+
+Moved from core/runtime_context.py (plan §15 B2); the single-production-adapter
+RuntimeContextStore hierarchy was folded into RuntimeContextManager.
 """
 
 from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.core.scope import MemoryContext, Scope, SessionScope
 from modex_agent.core.session_id import SessionInfo
 
-if TYPE_CHECKING:
-    from modex_agent.runtime.models import JsonValue
+from .models import JsonValue
 
 #: Internal key used by :meth:`InMemoryRuntimeContext.record_tool_call`.
 _TOOL_CALLS_KEY = "_tool_calls"
 
 
-@dataclass(frozen=True)
-class ToolCallRecord:
+class ToolCallRecord(BaseModel):
     """Immutable record of a single tool invocation."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     tool_name: str
     arguments: dict[str, JsonValue]
     result: JsonValue
-    timestamp: float = field(default_factory=time.time)
+    timestamp: float = Field(default_factory=time.time)
 
 
 class RuntimeContext(ABC):
@@ -149,51 +153,20 @@ class InMemoryRuntimeContext(RuntimeContext):
         return any(c.tool_name == tool_name for c in calls)
 
 
-class RuntimeContextStore(ABC):
-    """Abstract storage backend for per-scope RuntimeContext instances."""
-
-    @abstractmethod
-    async def get_or_create(self, scope_key: str) -> RuntimeContext:
-        """Return the RuntimeContext for *scope_key*, creating one if absent."""
-
-    @abstractmethod
-    async def clear(self, scope_key: str) -> None:
-        """Clear the RuntimeContext for *scope_key* if it exists."""
-
-
-class InMemoryRuntimeContextStore(RuntimeContextStore):
-    """In-memory store backed by a plain dict."""
-
-    def __init__(self) -> None:
-        self._contexts: dict[str, InMemoryRuntimeContext] = {}
-
-    async def get_or_create(self, scope_key: str) -> RuntimeContext:
-        if scope_key not in self._contexts:
-            self._contexts[scope_key] = InMemoryRuntimeContext()
-        return self._contexts[scope_key]
-
-    async def clear(self, scope_key: str) -> None:
-        ctx = self._contexts.get(scope_key)
-        if ctx is not None:
-            await ctx.clear()
-
-
 class RuntimeContextManager:
-    """Central manager that owns a store + scope and hands out isolated
-    :class:`RuntimeContext` instances per session.
+    """Central manager that owns per-scope RuntimeContext instances.
 
     The *scope* (a :class:`Scope`) determines how sessions are grouped.
     By default :class:`SessionScope` is used, so each ``session_id`` gets its
-    own isolated context.
+    own isolated context.  The former separate store abstraction (exactly one
+    in-memory adapter, zero production ``store=`` callers) is folded into
+    this manager — it owns the ``dict[str, InMemoryRuntimeContext]``
+    directly.
     """
 
-    def __init__(
-        self,
-        store: RuntimeContextStore | None = None,
-        scope: Scope | None = None,
-    ) -> None:
-        self._store = store or InMemoryRuntimeContextStore()
+    def __init__(self, scope: Scope | None = None) -> None:
         self._scope = scope or SessionScope()
+        self._contexts: dict[str, InMemoryRuntimeContext] = {}
 
     async def get_context(
         self,
@@ -202,7 +175,9 @@ class RuntimeContextManager:
     ) -> RuntimeContext:
         """Return the RuntimeContext for *session* (creating if needed)."""
         scope_key = self._resolve_scope_key(session, metadata)
-        return await self._store.get_or_create(scope_key)
+        if scope_key not in self._contexts:
+            self._contexts[scope_key] = InMemoryRuntimeContext()
+        return self._contexts[scope_key]
 
     async def clear_context(
         self,
@@ -211,7 +186,9 @@ class RuntimeContextManager:
     ) -> None:
         """Clear the RuntimeContext for *session*."""
         scope_key = self._resolve_scope_key(session, metadata)
-        await self._store.clear(scope_key)
+        ctx = self._contexts.get(scope_key)
+        if ctx is not None:
+            await ctx.clear()
 
     def _resolve_scope_key(self, session: SessionInfo, metadata: dict[str, Any] | None) -> str:
         meta = metadata or {}

@@ -97,7 +97,7 @@ Detailed rules in `rules/type-safety.md` and `rules/architecture.md`. Read befor
 
 ## Documentation
 
-ADRs in `docs/adr/` (ADR-0001~0048), design docs in `docs/design/`. See `docs/AGENTS.md` for the index. Read relevant ADRs before significant architectural changes.
+ADRs in `docs/adr/` (ADR-0001~0048), design docs in `docs/design/`. See `docs/AGENTS.md` for the index. Read relevant ADRs before significant architectural changes. `ARCHITECTURE-MIGRATION-PLAN.md` (repo root) is the execution baseline for core ownership convergence and the Experience/Skills capability migration — any work touching core ownership, those capabilities, or the A0–E2 checklist must follow it.
 
 **ADR governance:** living documents, not append-only logs. Merge refinements in place. No parallel versions. Consolidate, don't proliferate. New ADRs only for genuinely new decisions.
 

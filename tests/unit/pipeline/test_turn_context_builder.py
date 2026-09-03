@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.commands.constants import CommandAction, CommandDispatchPolicy, CommandParseStatus
 from modex_agent.commands.models import (
@@ -30,7 +31,6 @@ from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage
 from modex_agent.media.store import LocalFileMediaStore
-from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder, TurnRequest
 from modex_agent.pipeline.turn_context_config import (

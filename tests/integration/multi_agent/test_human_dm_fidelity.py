@@ -21,19 +21,19 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.approval.types import ApprovalAction
+from modex_agent.approval.views import ApprovalDecisionInput
+from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.core.types import InputMessage
-from modex_agent.media.models import Attachment, AttachmentLocator, Kind
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
-from modex_agent.multi_agent.inbox_poller import InboxPoller
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
+from modex_agent.multi_agent.inbox_poller import InboxPoller
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.state import AgentState
 

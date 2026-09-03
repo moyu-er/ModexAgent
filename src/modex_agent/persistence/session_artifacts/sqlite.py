@@ -9,9 +9,9 @@ import aiosqlite
 from pydantic import ValidationError
 
 from modex_agent.core.scope import RecordScope
-from modex_agent.core.session_cleanup import (
+from modex_agent.persistence.session_artifacts.cleaner import SessionDatabaseCleaner
+from modex_agent.persistence.session_artifacts.models import (
     MissingSessionScopeError,
-    SessionDatabaseCleaner,
     SessionDatabaseCleanupError,
 )
 

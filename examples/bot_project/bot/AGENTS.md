@@ -35,7 +35,7 @@ Core business logic for the ModexAgent bot — service lifecycle, I/O adapters, 
 - `web/dist/` is rebuilt by `cd webui && npm run build` — never edit files there directly.
 
 ### Common Patterns
-- Adapters follow `InputAdapter`/`OutputAdapter` ABC from `modex_agent/pipeline/adapters.py`.
+- Adapters follow the `InputAdapter` ABC (`modex_agent/pipeline/adapters.py`) and `OutputAdapter` ABC (`modex_agent/adapters/output.py`).
 - Pool creation goes through `create_pool()` in `pool/`, not `AgentPool` directly.
 - Workspace switching mutates only a per-session pointer (`SessionWorkspaceMap`); resources are lazy + cached + evictable via `ScopeRegistry` — no `on_activate`/`on_deactivate` callbacks.
 - Per-pool data (memory, runtime stores, experience) lives on the workspace's `R.pool_data[pool]`; `PoolInstance` holds only deployment-level resources.

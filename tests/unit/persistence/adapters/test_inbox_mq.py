@@ -33,7 +33,7 @@ from modex_agent.multi_agent.inbox.server import InboxMQ
 from modex_agent.multi_agent.inbox.types import InboxMessage
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.inbox_mq import SqliteInboxMQ
-from modex_agent.persistence.session_cleanup import SqliteSessionDatabaseCleaner
+from modex_agent.persistence.session_artifacts import SqliteSessionDatabaseCleaner
 
 _MSG_TYPE = "agent_message"
 

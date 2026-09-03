@@ -41,7 +41,8 @@ from modex_agent.core.session_store import SessionStore
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.persistence.config import PersistenceBackend
-from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.adapters.output import OutputAdapter
+from modex_agent.pipeline.adapters import InputAdapter
 
 if TYPE_CHECKING:
     from bot.input_pipeline.context import BotInputContext

@@ -1,4 +1,4 @@
-"""Tests for EventAssembler (providers/http).
+"""Tests for EventAssembler (core/stream_events).
 
 Locks the terminal-event invariant (EOF without a terminal event, feed
 after terminal, result() idempotence), the replay-priority rules, the
@@ -14,6 +14,7 @@ import pytest
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.llm_struct import LLMErrorInfo, LLMErrorKind
 from modex_agent.core.stream_events import (
+    EventAssembler,
     Finish,
     LLMStreamEvent,
     ReasoningDelta,
@@ -24,7 +25,6 @@ from modex_agent.core.stream_events import (
     UsageSnapshot,
 )
 from modex_agent.core.types import TokenUsage
-from modex_agent.providers.http.assembler import EventAssembler
 
 
 async def feed_all(assembler: EventAssembler, events: Sequence[LLMStreamEvent]) -> None:

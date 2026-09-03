@@ -20,8 +20,8 @@ from plugins.bot_hooks import (  # noqa: E402
 )
 from plugins.bot_strategies import BotStrategiesPlugin  # noqa: E402
 
+from modex_agent.adapters.output import NullOutputAdapter  # noqa: E402
 from modex_agent.multi_agent.pool_config import PoolAssemblyDeps  # noqa: E402
-from modex_agent.pipeline.adapters import NullOutputAdapter  # noqa: E402
 from modex_agent.plugins.abc import ComponentSlot  # noqa: E402
 from modex_agent.plugins.assembly.context import (  # noqa: E402
     AssemblyContext,

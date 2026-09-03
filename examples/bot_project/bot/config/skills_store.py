@@ -60,7 +60,7 @@ import subprocess
 from pathlib import Path
 
 from bot.config import SkillEntry, SkillOrigin, SkillSource
-from modex_agent.core.frontmatter import parse_frontmatter
+from modex_agent.utils.frontmatter import parse_frontmatter
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ def _read_skill_description(skill_dir: Path) -> str:
 
     Priority:
     1. YAML frontmatter ``description`` field (parsed with PyYAML via
-       ``modex_agent.core.frontmatter``).
+       ``modex_agent.utils.frontmatter``).
     2. First non-empty paragraph of the Markdown body, with Markdown markup
        removed so headings/link targets don't leak into the description.
 

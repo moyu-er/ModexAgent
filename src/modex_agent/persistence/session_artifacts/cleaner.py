@@ -1,3 +1,6 @@
+# allow: SIZE_OK — plan §12.1/§12.2 pins this file's contents (both ABCs +
+# default cleaner + private path derivation) and gotcha 3 requires the moved
+# cleanup ordering preserved byte-for-byte.
 """Session artifact cleaner ABC and default file implementation.
 
 Defines the :class:`SessionArtifactCleaner` ABC — the single seam for
@@ -37,30 +40,19 @@ import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from modex_agent.core.scope import RecordScope
-from modex_agent.core.session_cleanup import (
+from modex_agent.core.session_id import agent_of
+from modex_agent.core.session_store import safe_filename
+from modex_agent.memory.stores.utils import sanitize_scope_key
+from modex_agent.persistence.session_artifacts.discovery import (
+    discover_file_session_scopes,
+)
+from modex_agent.persistence.session_artifacts.models import (
     MissingSessionScopeError,
-    SessionDatabaseCleaner,
+    SessionCleanupResult,
     SessionDatabaseCleanupError,
     SessionScopeMismatchError,
 )
-from modex_agent.core.session_id import agent_of
-from modex_agent.core.session_scope_discovery import discover_file_session_scopes
-from modex_agent.core.session_store import safe_filename
-
-# TODO(adr-0006): these three imports violate ADR-0006 — core runtime-imports
-# memory/runtime/workspace (tier-2+). `tests/architecture/test_dependency_tree.py
-# ::test_core_no_unexpected_runtime_upward_imports` fails on this file because
-# of them. The violation predates the prompt-configuration feature branch
-# (introduced by the SQLite persistence refactor, commit 5ef3ee7a) and is
-# tracked as a known pre-existing issue. The fix is a dependency inversion:
-# move the consumed surfaces (sanitize_scope_key, JsonFileTodoStore/
-# JsonFileTurnStateStore, WorkspacePaths/safe_segment) down into core, or
-# relocate this file out of core. Do NOT silence by adding to
-# EXPECTED_OFFENDERS without a follow-up ticket.
-from modex_agent.memory.stores.utils import sanitize_scope_key
 from modex_agent.runtime.store import JsonFileTodoStore, JsonFileTurnStateStore
 from modex_agent.workspace.paths import WorkspacePaths, safe_segment
 
@@ -69,17 +61,105 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "DefaultSessionArtifactCleaner",
     "SessionArtifactCleaner",
-    "SessionCleanupResult",
     "SessionDatabaseCleaner",
-    "session_artifact_paths",
 ]
 
 _UPLOADS_SUBDIR = "uploads"
 _READS_SUBDIR = "reads"
 
 
-def session_artifact_paths(session_id: str, pool: str, paths: WorkspacePaths) -> list[Path]:
-    """The ten per-session artifact units for *session_id* under *pool*.
+class SessionDatabaseCleaner(ABC):
+    """Deletes structured records owned by one exact canonical session scope."""
+
+    @abstractmethod
+    async def delete_session_rows(self, scope: RecordScope) -> int:
+        """Delete rows whose stored scope equals ``scope.canonical()``.
+
+        ``scope.session_id`` is required; ``scope.pool`` is optional. The
+        implementation owns canonicalization so callers pass the typed identity
+        without constructing or serializing database keys.
+        """
+        ...
+
+    @abstractmethod
+    async def list_session_scopes(
+        self,
+        session_ids: frozenset[str] | None = None,
+    ) -> list[RecordScope]:
+        """List complete persisted scopes containing a session identity.
+
+        ``None`` lists every session scope. A supplied set filters by exact
+        ``RecordScope.session_id`` equality after persisted identities have
+        been parsed.
+        """
+        ...
+
+
+class SessionArtifactCleaner(ABC):
+    """Cleans one session's full artifact cascade (DB rows + file directories).
+
+    The idempotent unit :meth:`clean_session_artifacts` removes every
+    per-session artifact (file + DB) for *session_id* under *scope*.  Missing
+    targets are no-ops; non-fatal failures are collected in the result's
+    ``errors`` list rather than aborting the whole cleanup.
+
+    The business-layer :class:`SessionGarbageCollector` delegates to this ABC
+    instead of doing cleanup directly, so file-only and file-plus-database
+    backends are interchangeable at the seam.
+    """
+
+    @abstractmethod
+    async def clean_session_artifacts(
+        self, session_id: str, scope: RecordScope
+    ) -> SessionCleanupResult:
+        """Idempotently remove all per-session artifacts for *session_id*.
+
+        Args:
+            session_id: The session whose artifacts should be removed.
+            scope: Carries the exact session identity and optional pool,
+                workspace, agent, or other isolation dimensions.
+
+        Returns:
+            A :class:`SessionCleanupResult` summarising what was removed.
+        """
+        ...
+
+    @abstractmethod
+    async def clean_record_and_transcript(
+        self,
+        session_id: str,
+        pool: str,
+    ) -> SessionCleanupResult:
+        """Idempotently remove the index record and transcript units only.
+
+        The foreground-delete fast path (ADR-0018 Path B): the existence
+        marker and transcript vanish first so the session leaves every list
+        immediately while the remaining artifacts drain asynchronously.
+
+        Args:
+            session_id: The session whose record/transcript should be removed.
+            pool: The pool directory name for pool-partitioned units.
+
+        Returns:
+            A :class:`SessionCleanupResult` summarising what was removed.
+        """
+        ...
+
+    @abstractmethod
+    async def discover_orphan_scopes(
+        self,
+        *,
+        live_session_ids: frozenset[str],
+        workspace_id: str,
+    ) -> list[RecordScope]:
+        """Discover persisted scopes whose session IDs are not live."""
+        ...
+
+
+def _session_artifact_paths(
+    session_id: str, pool: str, paths: WorkspacePaths
+) -> list[Path]:
+    """The eleven per-session artifact units for *session_id* under *pool*.
 
     Each entry is a whole per-session directory or file (never a sub-file
     inside a dir), derived with the same on-disk transform its store uses.
@@ -110,62 +190,6 @@ def session_artifact_paths(session_id: str, pool: str, paths: WorkspacePaths) ->
         / JsonFileTurnStateStore._safe_segment(session_id),  # turn state
         paths.overflow_dir / "tool_overflow" / safe,  # tool result overflow
     ]
-
-
-class SessionCleanupResult(BaseModel):
-    """Outcome of cleaning one session's artifacts.
-
-    Frozen Pydantic model: the result is a value object summarising what was
-    removed.  ``errors`` collects non-fatal failures (a missing target is NOT
-    an error — only unexpected ``OSError`` / DB failures).
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    db_rows_deleted: int = 0
-    files_deleted: int = 0
-    dirs_deleted: int = 0
-    errors: list[str] = Field(default_factory=list)
-
-
-class SessionArtifactCleaner(ABC):
-    """Cleans one session's full artifact cascade (DB rows + file directories).
-
-    The single method :meth:`clean_session_artifacts` is the idempotent unit:
-    it removes every per-session artifact (file + DB) for *session_id* under
-    *scope*.  Missing targets are no-ops; non-fatal failures are collected in
-    the result's ``errors`` list rather than aborting the whole cleanup.
-
-    The business-layer :class:`SessionGarbageCollector` delegates to this ABC
-    instead of doing cleanup directly, so file-only and file-plus-database
-    backends are interchangeable at the seam.
-    """
-
-    @abstractmethod
-    async def clean_session_artifacts(
-        self, session_id: str, scope: RecordScope
-    ) -> SessionCleanupResult:
-        """Idempotently remove all per-session artifacts for *session_id*.
-
-        Args:
-            session_id: The session whose artifacts should be removed.
-            scope: Carries the exact session identity and optional pool,
-                workspace, agent, or other isolation dimensions.
-
-        Returns:
-            A :class:`SessionCleanupResult` summarising what was removed.
-        """
-        ...
-
-    @abstractmethod
-    async def discover_orphan_scopes(
-        self,
-        *,
-        live_session_ids: frozenset[str],
-        workspace_id: str,
-    ) -> list[RecordScope]:
-        """Discover persisted scopes whose session IDs are not live."""
-        ...
 
 
 class DefaultSessionArtifactCleaner(SessionArtifactCleaner):
@@ -249,6 +273,20 @@ class DefaultSessionArtifactCleaner(SessionArtifactCleaner):
             errors=errors,
         )
 
+    async def clean_record_and_transcript(
+        self,
+        session_id: str,
+        pool: str,
+    ) -> SessionCleanupResult:
+        files, dirs, errors = await asyncio.to_thread(
+            self._clean_record_and_transcript_units, session_id, pool
+        )
+        return SessionCleanupResult(
+            files_deleted=files,
+            dirs_deleted=dirs,
+            errors=errors,
+        )
+
     # ------------------------------------------------------------------
     # File cleanup
     # ------------------------------------------------------------------
@@ -263,7 +301,7 @@ class DefaultSessionArtifactCleaner(SessionArtifactCleaner):
         Returns:
             ``(files_deleted, dirs_deleted, errors)``
         """
-        units = session_artifact_paths(session_id, pool, self._paths)
+        units = _session_artifact_paths(session_id, pool, self._paths)
         errors: list[str] = []
         files = 0
         dirs = 0
@@ -295,6 +333,30 @@ class DefaultSessionArtifactCleaner(SessionArtifactCleaner):
 
         if not errors:
             f, d, error = self._remove_unit(memory_unit)
+            files += f
+            dirs += d
+            if error is not None:
+                errors.append(error)
+
+        return (files, dirs, errors)
+
+    def _clean_record_and_transcript_units(
+        self, session_id: str, pool: str
+    ) -> tuple[int, int, list[str]]:
+        """Remove only the index record and transcript units (idempotent).
+
+        Returns:
+            ``(files_deleted, dirs_deleted, errors)``
+        """
+        units = _session_artifact_paths(session_id, pool, self._paths)
+        errors: list[str] = []
+        files = 0
+        dirs = 0
+
+        index_unit = next(u for u in units if "session_index" in u.parts)
+        transcript_unit = next(u for u in units if u.suffix == ".jsonl")
+        for unit in (index_unit, transcript_unit):
+            f, d, error = self._remove_unit(unit)
             files += f
             dirs += d
             if error is not None:

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 from modex_agent.agents.external.builder import ExternalAgentBuilder
 from modex_agent.agents.external.types import ExternalEnvSpec
-from modex_agent.core.emitter import StreamingAwareEmitter
+from modex_agent.adapters.emitter import StreamingAwareEmitter
 
 
 def _make_spec(workdir: Path, session_id: str = "pool1.agent1") -> ExternalEnvSpec:

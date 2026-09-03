@@ -67,7 +67,8 @@ from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.pool_router import PoolRoutingStore
 from modex_agent.persistence.config import PersistenceBackend
-from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.adapters.output import OutputAdapter
+from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.workspace.paths import RESERVED_GLOBAL_DIR, WORKSPACE_STATE_DB
 
 from .builders import (

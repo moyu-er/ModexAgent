@@ -19,7 +19,8 @@ import pytest
 from modex_agent.agents.external.turn_runner import ExternalTurnRunner
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult, StreamingAwareEmitter
+from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.core.emitter import AgentResult
 from modex_agent.core.history import ListMessageHistory
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
@@ -236,7 +237,7 @@ async def test_emitter_factory_override_takes_effect() -> None:
     pipeline.emitter_factory (and thus ExternalTurnRunner._emitter_factory)
     with the WebBotEmitter factory. The runner must use the overridden factory.
     """
-    from modex_agent.core.emitter import StreamingAwareEmitter
+    from modex_agent.adapters.emitter import StreamingAwareEmitter
 
     initial_factory = lambda sid: StreamingAwareEmitter(  # noqa: E731
         output_adapter=MagicMock(), session_id=sid

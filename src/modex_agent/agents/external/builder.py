@@ -234,7 +234,7 @@ class ExternalAgentBuilder:
     def build_emitter_factory(
         emitter_output_adapter: OutputAdapter,
     ) -> Callable[[str], ContentEmitter[ExternalEvent]]:
-        from ...core.emitter import StreamingAwareEmitter
+        from ...adapters.emitter import StreamingAwareEmitter
         from .events import ExternalEvent
 
         def _factory(session_id: str) -> ContentEmitter[ExternalEvent]:

@@ -8,9 +8,9 @@ in-memory closure collected up front. See ADR-0018 and the session-lifecycle
 glossary in CONTEXT.md.
 
 T17: The per-session artifact cleanup is delegated to
-:class:`modex_agent.core.cleanup.SessionArtifactCleaner`.  The artifact list
-dropped from ten to nine (``fork_contexts`` removed, aligning with T18 which
-removes fork XML file writing).
+:class:`modex_agent.persistence.session_artifacts.SessionArtifactCleaner`.
+The artifact list dropped from ten to nine (``fork_contexts`` removed,
+aligning with T18 which removes fork XML file writing).
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import shutil
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
@@ -28,16 +27,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from bot.scope import BotRecordScope
 from bot.service.liveness import LivenessProvider
-from modex_agent.core.cleanup import (
-    DefaultSessionArtifactCleaner,
-    SessionCleanupResult,
-    session_artifact_paths,
-)
 from modex_agent.core.scope import RecordScope
-from modex_agent.core.session_cleanup import MissingSessionScopeError
 from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
-from modex_agent.core.session_scope_discovery import discover_file_session_pool_map
 from modex_agent.core.session_store import LocalFileSessionStore, SessionStore
+from modex_agent.persistence.session_artifacts import (
+    DefaultSessionArtifactCleaner,
+    MissingSessionScopeError,
+    SessionCleanupResult,
+    discover_file_session_pool_map,
+)
 from modex_agent.workspace.paths import WorkspacePaths
 
 if TYPE_CHECKING:
@@ -256,8 +254,8 @@ class SessionGarbageCollector:
     permanently blocked.
 
     T17: per-session artifact cleanup is delegated to
-    :class:`modex_agent.core.cleanup.SessionArtifactCleaner` (default:
-    :class:`~modex_agent.core.cleanup.DefaultSessionArtifactCleaner`).
+    :class:`modex_agent.persistence.session_artifacts.SessionArtifactCleaner` (default:
+    :class:`~modex_agent.persistence.session_artifacts.DefaultSessionArtifactCleaner`).
     """
 
     def __init__(
@@ -707,7 +705,9 @@ class SessionGarbageCollector:
         pool: str,
         paths: WorkspacePaths,
     ) -> None:
-        await asyncio.to_thread(_clean_record_and_transcript, session_id, pool, paths)
+        await DefaultSessionArtifactCleaner(paths=paths).clean_record_and_transcript(
+            session_id, pool
+        )
         # Synchronously remove the session record from the session store (FILE
         # or SQLite) so the session leaves the list immediately. The file-based
         # cleanup above is a no-op in SQLite mode; this call is what actually
@@ -723,18 +723,3 @@ class SessionGarbageCollector:
     def _inflight_count(self) -> int:
         return len(self._inflight)
 
-
-def _remove_unit(unit: Path) -> None:
-    try:
-        if unit.is_dir():
-            shutil.rmtree(unit)
-        elif unit.exists():
-            unit.unlink()
-    except FileNotFoundError:
-        pass
-
-
-def _clean_record_and_transcript(session_id: str, pool: str, paths: WorkspacePaths) -> None:
-    units = session_artifact_paths(session_id, pool, paths)
-    _remove_unit(next(u for u in units if "session_index" in u.parts))
-    _remove_unit(next(u for u in units if u.suffix == ".jsonl"))

@@ -1,9 +1,8 @@
 """BusyInputMode — how an agent handles a new message while busy.
 
-This module previously held a runtime-control configuration aggregate that was
-dead (zero readers; production wiring goes through ``AgentPipeline`` /
-``PoolData`` directly) and was removed in candidate ④b.
-``BusyInputMode`` is the one live export and stays.
+Moved from core/agent_runtime_config.py (plan §15 B2); the former
+runtime-control configuration aggregate in that module was dead (zero
+readers) and had been removed earlier (ADR-0006 candidate ④b).
 """
 
 from __future__ import annotations

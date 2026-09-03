@@ -20,6 +20,7 @@ from bot.service.pool import create_pool
 from bot.service.session_pool_index import SessionPoolIndex
 from bot.workspace.handle import WorkspaceResolverCell
 
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.scope import RecordScope
 from modex_agent.hook import HookRunner
@@ -46,7 +47,6 @@ from modex_agent.multi_agent.session_tree.store_tree import (
     SqliteSessionTreeStore,
 )
 from modex_agent.persistence import ConnectionManager, DatabaseKind
-from modex_agent.pipeline.adapters import OutputAdapter
 
 from ...declaration_driver import build_declared
 

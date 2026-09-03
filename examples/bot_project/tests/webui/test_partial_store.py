@@ -227,7 +227,8 @@ async def test_emit_complete_clears_partial_buffer() -> None:
     from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
     from bot.webui.emitter import WebBotEmitter
 
-    from modex_agent.core.emitter import AgentResult, EmitterConfig
+    from modex_agent.core.emitter import AgentResult
+    from modex_agent.core.events import EmitterConfig
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     sessions_dir = Path(__file__).parent / "_tmp_e2e_clear"
@@ -267,7 +268,8 @@ async def test_emit_complete_clears_partial_even_on_error() -> None:
     from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
     from bot.webui.emitter import WebBotEmitter
 
-    from modex_agent.core.emitter import AgentResult, EmitterConfig
+    from modex_agent.core.emitter import AgentResult
+    from modex_agent.core.events import EmitterConfig
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     sessions_dir = Path(__file__).parent / "_tmp_e2e_error"
@@ -318,7 +320,8 @@ async def test_flush_active_segment_clears_partial_buffer() -> None:
 
     from modex_agent.agents.react.agent import ReActEvent
     from modex_agent.agents.react.constants import ToolCallEndPayload
-    from modex_agent.core.emitter import AgentResult, EmitterConfig
+    from modex_agent.core.emitter import AgentResult
+    from modex_agent.core.events import EmitterConfig
     from modex_agent.core.tool_manager import ToolResult
     from modex_agent.core.types import ToolCall
 
@@ -371,7 +374,8 @@ async def test_flush_clears_partial_with_reasoning_then_text() -> None:
     from bot.webui.emitter import WebBotEmitter
 
     from modex_agent.agents.react.agent import ReActEvent
-    from modex_agent.core.emitter import AgentResult, EmitterConfig
+    from modex_agent.core.emitter import AgentResult
+    from modex_agent.core.events import EmitterConfig
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     sessions_dir = Path(__file__).parent / "_tmp_flush_reasoning"

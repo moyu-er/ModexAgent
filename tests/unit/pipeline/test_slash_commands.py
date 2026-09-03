@@ -24,12 +24,9 @@ from modex_agent.core.skills import SkillManager
 from modex_agent.core.tool_manager import ToolManager
 from modex_agent.core.types import InputMessage, MessageRole
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.pipeline.adapters import (
-    InputAdapter,
-    NullOutputAdapter,
-    OutputAdapter,
-    OutputMessage,
-)
+from modex_agent.adapters.output import NullOutputAdapter, OutputAdapter
+from modex_agent.core.types import OutputMessage
+from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.pipeline.context_assembler import assemble_context
 
 
@@ -334,9 +331,9 @@ async def test_pipeline_continue_during_pending_approval_returns_notice() -> Non
 async def test_pipeline_drops_slash_command_when_busy_in_queue_mode() -> None:
     """Slash commands must not be queued as raw text when agent is busy."""
 
-    from modex_agent.core.agent_runtime_config import BusyInputMode
     from modex_agent.core.context import InMemoryContextManager
     from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.pipeline.busy_input import BusyInputMode
     from tests.unit.pipeline._helpers import _make_react_pipeline
 
     agent = FakeAgent()

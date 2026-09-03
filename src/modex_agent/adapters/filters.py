@@ -2,6 +2,7 @@
 
 Provides pluggable content filtering before messages are sent
 to the target platform (QQ, CLI, HTTP, etc.).
+Moved from ``pipeline/filters.py`` (B4).
 """
 
 import re

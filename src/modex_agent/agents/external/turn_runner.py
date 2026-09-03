@@ -46,7 +46,8 @@ from uuid import uuid4
 
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult, StreamingAwareEmitter
+from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.core.emitter import AgentResult
 from modex_agent.core.history import ListMessageHistory
 from modex_agent.core.message_utils import sanitize_reminder_content, wrap_system_reminder
 from modex_agent.core.tool_manager import InMemoryToolManager
@@ -68,7 +69,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.session_tree.session_binding import (
         SessionBindingStore,
     )
-    from modex_agent.pipeline.adapters import OutputAdapter
+    from modex_agent.adapters.output import OutputAdapter
     from modex_agent.workspace.resources import WorkspaceManager
 
 logger = logging.getLogger(__name__)

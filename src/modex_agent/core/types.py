@@ -9,10 +9,9 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
-from modex_agent.media.models import Attachment
-
 from .constants import DefaultValues, FinishReason
 from .llm_struct import LLMErrorInfo
+from .media import Attachment
 from .session_id import SessionInfo
 
 if TYPE_CHECKING:

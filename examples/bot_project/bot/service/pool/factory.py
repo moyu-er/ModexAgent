@@ -33,6 +33,7 @@ from bot.scope import BotRecordScope
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from bot.service.session_pool_index import SessionPoolIndex
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.commands.processor import SlashCommandProcessor
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.capabilities import ModelInfo
@@ -58,7 +59,6 @@ from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import CommunicationTargetStore
-from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.assembly.context import (
@@ -122,8 +122,8 @@ if TYPE_CHECKING:
         WorkspaceHandle,
         WorkspaceResolverCell,
     )
+    from modex_agent.core.media import MediaStore
     from modex_agent.core.provider import LLMProvider
-    from modex_agent.media.store import MediaStore
     from modex_agent.multi_agent.execution_strategy import (
         ExecutionStrategyRegistry,
         PoolAssemblyContext,

@@ -20,7 +20,7 @@ from modex_agent.multi_agent import DefaultAgentFactory
 
 if TYPE_CHECKING:
     from bot.workspace.handle import WorkspaceResolverCell
-    from modex_agent.media.store import MediaStore
+    from modex_agent.core.media import MediaStore
     from modex_agent.multi_agent.session_tree.session_binding import (
         SessionBindingStore,
     )

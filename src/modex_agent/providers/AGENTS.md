@@ -18,7 +18,6 @@ LLM provider subsystem — a single system: the direct-HTTP event-stream subsyst
 | `http/sse.py` | SSE frame parsing (`SseFrame`) — data-only (OpenAI chat) and event+data (Responses, Anthropic) frame shapes; `[DONE]` sentinel passed through for the engine to own |
 | `http/errors.py` | Default HTTP error classification (`classify_http_error`) — raw status + body → `LLMErrorInfo`, no SDK dependency |
 | `http/tool_stream.py` | Generic streamed tool-call accumulator — keys accumulation on the stream key (block `index` / `item_id`), never on `call_id` |
-| `http/assembler.py` | `EventAssembler` — folds an `LLMStreamEvent` sequence into one `LLMResponse`; enforces the terminal-event invariant (exactly one `Finish`/`StreamFailure`) |
 | `http/protocol.py` | `LLMProtocol` ABC + `WireRequest`/`ProtocolConfig` envelopes — the contract between provider (transport) and engines (translation) |
 | `http/provider.py` | `HTTPStreamProvider` — the one concrete direct-HTTP provider: owns the `httpx` client, request/response lifecycle, stream idle watchdog; takes the factory-resolved `url` and requests it verbatim; zero wire-format knowledge |
 | `http/formats/` | Protocol engines — one module per wire format (ADR-0046) |

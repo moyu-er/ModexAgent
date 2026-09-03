@@ -1,4 +1,12 @@
-"""Encoding-resilient JSON / JSONL file readers.
+"""Atomic file writes and encoding-resilient JSON / JSONL readers.
+
+Atomic replace (plan §15 A2): ``safe_atomic_replace`` is the single canonical
+crash-safe rename helper for every file-based writer in the framework (memory
+stores, experience/skills metadata, session indexes). It moved here from
+``core/utils.py``, which moved it from ``memory/utils.py`` to break the old
+core↔memory cycle — the cycle is gone, so both duplicates converged here.
+``atomic_write_text`` (write-tmp + ``os.replace``, from
+``core/session_store.py``) rides the same consolidation.
 
 All consumers that read JSON or JSONL files from disk should use
 ``read_json_robust`` and ``read_jsonl_robust`` instead of calling
@@ -19,6 +27,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -31,7 +40,48 @@ logger = logging.getLogger(__name__)
 _FALLBACK_ENCODINGS: tuple[str, ...] = ("gb18030", "gbk", "gb2312", "latin-1")
 
 
-# ── Public API ────────────────────────────────────────────────────────────
+# ── Atomic writes ─────────────────────────────────────────────────────────
+
+
+def safe_atomic_replace(tmp_path: Path, target_path: Path) -> None:
+    """Replace target with tmp file, with fallback for Windows file-locking.
+
+    On Unix, ``os.replace`` is atomic and reliable. On Windows, it can fail
+    with ``PermissionError`` when the target is held open by another process
+    (antivirus, file indexer, concurrent writer). Falls back to a direct write
+    in that case.
+
+    Args:
+        tmp_path: Temporary file with the new content.
+        target_path: Destination file to replace.
+    """
+    try:
+        os.replace(str(tmp_path), str(target_path))
+    except OSError:
+        content = tmp_path.read_text(encoding="utf-8")
+        target_path.write_text(content, encoding="utf-8")
+        with contextlib.suppress(OSError):
+            tmp_path.unlink()
+
+
+def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
+    """Write *text* to *path* atomically via a temp file + ``os.replace``.
+
+    The target is never observed in a partially-written state: either the
+    previous content remains (if the final replace fails) or the new content
+    is fully in place.  The temp file is cleaned up on failure.
+    """
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(text, encoding=encoding)
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+
+
+# ── Robust readers ────────────────────────────────────────────────────────
 
 
 def read_json_robust(path: Path) -> dict[str, Any] | None:

@@ -8,7 +8,7 @@ import pytest
 
 from modex_agent.approval.ui import IMUserInterface
 from modex_agent.core.types import OutputMessage
-from modex_agent.pipeline.adapters import OutputAdapter
+from modex_agent.adapters.output import OutputAdapter
 
 
 class _FakeOutputAdapter(OutputAdapter):

@@ -32,6 +32,7 @@ from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.stream_events import (
+    EventAssembler,
     Finish,
     ReasoningDelta,
     TextDelta,
@@ -140,11 +141,6 @@ class ReactLlmClient:
                 session_id=str(ctx.session),
             )
             events = interceptor_chain.around_llm_stream(ctx, stream_ctx, events)
-
-        # 延迟导入：providers.http.assembler 依赖 core（模块级会触发
-        # providers/__init__ -> http provider -> core.provider 循环）；与
-        # LLMProvider.chat_stream 同款惯例（ADR-0046）。
-        from modex_agent.providers.http.assembler import EventAssembler
 
         assembler = EventAssembler()
         # Live partials for the INTERRUPTED_PARTIAL stash. Content arrives

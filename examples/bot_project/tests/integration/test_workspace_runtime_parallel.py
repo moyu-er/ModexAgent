@@ -54,13 +54,13 @@ from bot.workspace.dynamic_workspaces import (
     create_workspace,
 )
 
+from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.core.emitter import StreamingAwareEmitter
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.types import InputMessage, LLMResponse, OutputMessage, ToolCall
 from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.workspace.runtime import resolve_workspace_root
 

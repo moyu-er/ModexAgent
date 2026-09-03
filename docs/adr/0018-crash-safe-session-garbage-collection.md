@@ -83,7 +83,13 @@ A rare collision surfaces as an `OSError` handled by the failure path above.
   "sweep targets only orphans" makes a dedicated guard redundant.
 - **GC core in framework.** Deferred: the collector is bot orchestration for now.
   It uses framework path primitives (`WorkspacePaths`, the session store, the
-  per-artifact sanitizers) but lives in `bot/service/`.
+  per-artifact sanitizers) but lives in `bot/service/`. Artifact enumeration
+  and idempotent deletion, however, ARE framework-owned: they live in
+  `modex_agent/persistence/session_artifacts/` (`SessionArtifactCleaner` ABC +
+  `DefaultSessionArtifactCleaner`, `SqliteSessionDatabaseCleaner`, file
+  scope/pool discovery). The bot retains cascade traversal, foreground delete
+  entry, periodic backstop, retry authority, pool-route reclamation, and
+  active-session liveness policy.
 
 ## Consequences
 
@@ -95,10 +101,13 @@ A rare collision surfaces as an `OSError` handled by the failure path above.
   must derive each leaf's name with the same transform that leaf's store uses,
   and delete the whole per-session unit (dir or file), never reaching inside to
   cherry-pick files.
-- **GC in bot, not co-located with the layout definition.** If the framework
-  later introduces a new per-session artifact type, this collector will not know
-  to clean it and such orphans will accumulate until the collector is updated.
-  Accepted for now; revisit if the artifact set churns.
+- **GC orchestration in bot, artifact enumeration in framework.** The bot's
+  collector delegates per-session artifact enumeration and idempotent deletion
+  to the framework cleaner (`persistence/session_artifacts`). If the framework
+  later introduces a new per-session artifact type, the framework cleaner
+  picks it up in the same unit list, but any bot-side sweep rule beyond the
+  cleaner (pool-route reclamation, cascade traversal) must still be updated
+  by hand. Revisit if the artifact set churns.
 - **`delete_sessions_by_prefix` is misleading.** Its docstring claims to sweep a
   conversation's subagent sessions; it does not (subagents have distinct
   prefixes). It is superseded for cascade deletion by the parent-link traversal.

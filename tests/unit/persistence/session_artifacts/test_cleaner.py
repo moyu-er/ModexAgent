@@ -22,17 +22,17 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.core.cleanup import (
+from modex_agent.core.scope import RecordScope
+from modex_agent.persistence.session_artifacts import (
     DefaultSessionArtifactCleaner,
     SessionArtifactCleaner,
     SessionCleanupResult,
-    session_artifact_paths,
-)
-from modex_agent.core.scope import RecordScope
-from modex_agent.core.session_cleanup import (
-    MissingSessionScopeError,
     SessionDatabaseCleaner,
     SessionDatabaseCleanupError,
+)
+from modex_agent.persistence.session_artifacts.cleaner import _session_artifact_paths
+from modex_agent.persistence.session_artifacts.models import (
+    MissingSessionScopeError,
     SessionScopeMismatchError,
 )
 from modex_agent.workspace.paths import WorkspacePaths
@@ -102,7 +102,50 @@ def test_cleaner_abc_subclass_must_implement_method() -> None:
 
 
 # ---------------------------------------------------------------------------
-# session_artifact_paths — eleven units, fork_contexts removed, overflow added
+# clean_record_and_transcript — foreground-delete fast path
+# ---------------------------------------------------------------------------
+
+
+def test_clean_record_and_transcript_removes_only_record_and_transcript(
+    tmp_path: Path,
+) -> None:
+    paths = _paths_for(tmp_path)
+    pool = "coding"
+    sid = "aaa.coding"
+    _seed_full_session(paths, pool, sid)
+
+    result = asyncio.run(
+        DefaultSessionArtifactCleaner(paths=paths).clean_record_and_transcript(sid, pool)
+    )
+
+    index = paths.session_index_dir / pool / f"{sid}.json"
+    transcript = paths.sessions_dir / pool / f"{sid}.jsonl"
+    assert not index.exists()
+    assert not transcript.exists()
+    assert result.files_deleted == 2
+    assert result.dirs_deleted == 0
+    assert result.errors == []
+    # every other unit survives for the async cascade
+    assert all(
+        unit.exists()
+        for unit in _session_artifact_paths(sid, pool, paths)
+        if unit not in (index, transcript)
+    )
+
+
+def test_clean_record_and_transcript_is_idempotent(tmp_path: Path) -> None:
+    paths = _paths_for(tmp_path)
+    cleaner = DefaultSessionArtifactCleaner(paths=paths)
+
+    first = asyncio.run(cleaner.clean_record_and_transcript("ghost.coding", "coding"))
+    second = asyncio.run(cleaner.clean_record_and_transcript("ghost.coding", "coding"))
+
+    assert first.files_deleted == 0 and first.errors == []
+    assert second.files_deleted == 0 and second.errors == []
+
+
+# ---------------------------------------------------------------------------
+# _session_artifact_paths — eleven units, fork_contexts removed, overflow added
 # ---------------------------------------------------------------------------
 
 
@@ -112,7 +155,7 @@ def _paths_for(tmp_path: Path) -> WorkspacePaths:
 
 def test_artifact_paths_returns_exactly_eleven(tmp_path: Path) -> None:
     paths = _paths_for(tmp_path)
-    ap = session_artifact_paths("009fc886ecba.coding", "coding", paths)
+    ap = _session_artifact_paths("009fc886ecba.coding", "coding", paths)
     assert len(ap) == 11
 
 
@@ -120,7 +163,7 @@ def test_artifact_paths_includes_tool_overflow(tmp_path: Path) -> None:
     """The overflow store writes {overflow_dir}/tool_overflow/{safe_sid};
     session deletion must remove that directory too."""
     paths = _paths_for(tmp_path)
-    ap = session_artifact_paths("009fc886ecba.coding", "coding", paths)
+    ap = _session_artifact_paths("009fc886ecba.coding", "coding", paths)
     assert (paths.overflow_dir / "tool_overflow" / "009fc886ecba.coding") in ap
 
 
@@ -130,7 +173,7 @@ def test_artifact_paths_excludes_fork_contexts(tmp_path: Path) -> None:
     Aligns with T18 which removes fork XML file writing.
     """
     paths = _paths_for(tmp_path)
-    ap = session_artifact_paths("009fc886ecba.coding", "coding", paths)
+    ap = _session_artifact_paths("009fc886ecba.coding", "coding", paths)
     assert not any("fork_contexts" in str(p) for p in ap)
 
 
@@ -138,7 +181,7 @@ def test_artifact_paths_correct_naming(tmp_path: Path) -> None:
     paths = _paths_for(tmp_path)
     sid = "009fc886ecba.coding"
     pool = "coding"
-    ap = session_artifact_paths(sid, pool, paths)
+    ap = _session_artifact_paths(sid, pool, paths)
 
     # transcript + index: safe_filename (dot kept), pool-partitioned
     assert (paths.sessions_dir / pool / "009fc886ecba.coding.jsonl") in ap
@@ -164,7 +207,7 @@ def test_artifact_paths_correct_naming(tmp_path: Path) -> None:
 
 def test_artifact_paths_excludes_pool_shared(tmp_path: Path) -> None:
     paths = _paths_for(tmp_path)
-    ap = session_artifact_paths("x.main", "main", paths)
+    ap = _session_artifact_paths("x.main", "main", paths)
     # archive + core are pool-shared, must NOT appear
     assert not any("archive" in str(p) for p in ap)
     assert not any("core" in str(p) for p in ap)
@@ -197,7 +240,7 @@ def _seed_full_session(
     paths: WorkspacePaths, pool: str, sid: str, parent: str | None = None
 ) -> None:
     _write_index(paths, pool, sid, parent)
-    for unit in session_artifact_paths(sid, pool, paths):
+    for unit in _session_artifact_paths(sid, pool, paths):
         if unit.suffix == ".json" and "session_index" in str(unit):
             continue
         if unit.suffix in (".json", ".jsonl"):
@@ -218,7 +261,7 @@ def test_cleaner_removes_all_ten_units(tmp_path: Path) -> None:
     scope = _PoolScopedRecordScope(session_id=sid, pool=pool)
     result = asyncio.run(cleaner.clean_session_artifacts(sid, scope))
 
-    for unit in session_artifact_paths(sid, pool, paths):
+    for unit in _session_artifact_paths(sid, pool, paths):
         assert not unit.exists(), f"still present: {unit}"
     assert result.db_rows_deleted == 0  # file-only mode
     assert result.files_deleted + result.dirs_deleted == 11
@@ -274,7 +317,7 @@ def test_cleaner_uses_default_pool_path_when_scope_has_no_pool(
     assert result.files_deleted + result.dirs_deleted == 11
     assert result.errors == []
     assert all(
-        not unit.exists() for unit in session_artifact_paths(session_id, default_pool, paths)
+        not unit.exists() for unit in _session_artifact_paths(session_id, default_pool, paths)
     )
 
 
@@ -318,7 +361,7 @@ def test_cleaner_rejects_session_scope_mismatch_before_database_or_files(
     assert all(
         unit.exists()
         for session_id in (argument_session, scoped_session)
-        for unit in session_artifact_paths(session_id, pool, paths)
+        for unit in _session_artifact_paths(session_id, pool, paths)
     )
 
 
@@ -357,7 +400,7 @@ def test_cleaner_rejects_missing_scope_session_before_database_or_files(
         )
 
     assert database_cleaner.called is False
-    assert all(unit.exists() for unit in session_artifact_paths(session_id, pool, paths))
+    assert all(unit.exists() for unit in _session_artifact_paths(session_id, pool, paths))
 
 
 def test_cleaner_accepts_optional_database_cleaner(tmp_path: Path) -> None:
@@ -429,7 +472,7 @@ def test_cleaner_records_database_failure_and_still_cleans_files(tmp_path: Path)
     assert result.db_rows_deleted == 0
     assert result.errors == ["session database cleanup failed"]
     assert result.files_deleted + result.dirs_deleted == 11
-    assert all(not unit.exists() for unit in session_artifact_paths(session_id, pool, paths))
+    assert all(not unit.exists() for unit in _session_artifact_paths(session_id, pool, paths))
 
 
 def test_cleaner_does_not_swallow_unrelated_database_failure(tmp_path: Path) -> None:
@@ -460,7 +503,7 @@ def test_cleaner_does_not_swallow_unrelated_database_failure(tmp_path: Path) -> 
             )
         )
 
-    assert all(unit.exists() for unit in session_artifact_paths(session_id, pool, paths))
+    assert all(unit.exists() for unit in _session_artifact_paths(session_id, pool, paths))
 
 
 def test_cleaner_retains_memory_marker_when_file_cleanup_fails(

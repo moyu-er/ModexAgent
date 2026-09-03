@@ -19,7 +19,7 @@ from bot.webui.events import SessionMeta, WebUIEventType, _unwrap_envelope
 from bot.webui.server import WebUIServer
 from bot.workspace.handle import PoolWorkspaceResources
 
-from modex_agent.core.emitter import EmitterConfig
+from modex_agent.core.events import EmitterConfig
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.multi_agent.pool_router import PoolSessionStore
 from modex_agent.multi_agent.session_tree.models import (

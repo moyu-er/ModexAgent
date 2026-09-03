@@ -44,12 +44,12 @@ from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.context import ContextManager, InMemoryContextManager
+from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 from modex_agent.core.message import ChatMessage, ImageUrlPart, TextPart
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
 from modex_agent.ioc.configs.llm import Modality, ModelCapabilities
-from modex_agent.media.models import Attachment, AttachmentLocator, Kind
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.memory.system import MemorySystemContextManager, create_memory_system
 from modex_agent.messaging.broker import Address

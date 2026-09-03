@@ -22,7 +22,7 @@ from pathlib import Path
 
 from bot.webui.events import ServerEvent
 from bot.webui.transcript_store import TranscriptStore
-from modex_agent.media.models import Attachment
+from modex_agent.core.media import Attachment
 
 logger = logging.getLogger(__name__)
 

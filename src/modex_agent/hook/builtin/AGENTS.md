@@ -7,6 +7,7 @@
 Framework-provided hooks covering logging, context tracking, multi-agent communication, environment injection, loop detection, deliver retry, todo continuation, length guard, and current-time injection.
 Session-cleanup re-orientation now lives in `memory/cleanup_hooks.py`
 (`TodoReorientationHook`, a `MemoryHook` — not a ReAct `HookRunner` hook).
+`RuntimeContextHook` moved to `runtime/hooks.py` (plan §15 B2).
 Also hosts `control_drain.py`, which despite living under
 `hook/builtin/` actually defines *interceptors* (not hooks) that consume the control
 channel — see the separate table below.
@@ -15,7 +16,7 @@ channel — see the separate table below.
 | File | Class | ABC(s) | HookPoint(s) | Description |
 |------|-------|--------|--------------|-------------|
 | `logging.py` | `RunLoggingHook` | `AfterLLMResponseHook`, `BeforeToolExecutionHook`, `AfterToolExecutionHook` | after_llm_response, before/after_tool_execution | Basic execution logging |
-| `runtime_context.py` | `RuntimeContextHook` | `StartNodeTurnHook`, `BeforeToolExecutionHook`, `AfterToolExecutionHook` | start_node_turn, before/after_tool_execution | Tracks tool calls per session via RuntimeContextManager |
+| `runtime/hooks.py` (see `modex_agent/runtime/`) | `RuntimeContextHook` | `StartNodeTurnHook`, `BeforeToolExecutionHook`, `AfterToolExecutionHook` | start_node_turn, before/after_tool_execution | Tracks tool calls per session via RuntimeContextManager |
 | `inbox_flush.py` | `InboxFlushHook` | `StartNodeTurnHook`, `BeforeIterationHook` | start_node_turn, before_iteration | Flushes inbox messages at fresh-turn start |
 | `subagent_auto_send.py` | `SubagentAutoSendHook` | `OutcomeFinallyHook` | finally_graph | On subagent turn completion, writes the numbered OUTPUT_<n>.md deliverable (hook-owned, not subagent-written) and notifies the parent via the bus (notification truncated ≤300 chars; result metadata carries only the output path). The notification ends with a state-conditional guidance paragraph (complete / deliverable-lost / judge / continue) rendered via `build_agent_comm_message`; `Issue:` no longer embeds resume hints (continuation teaching lives in the guidance). The suspend leg (`result=None`) is skipped by `OutcomeFinallyHook` — one notification per logical turn |
 | `env_injection.py` | `NativeEnvInjectionHook` | `BeforeGraphHook` | before_graph | Populates `MODEX_*` env contextvars for native agent subprocess tools. A compiler position-default roster entry (SPEC §3.2 hook rows): the factory derives the `ExternalEnvSpec` template from the assembly context chain (pool declaration facts for pooled agents, workspace facts for poolless assembly) |

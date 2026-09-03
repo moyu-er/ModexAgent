@@ -44,7 +44,7 @@ from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.ui import IMUserInterface
 from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.core.context import InMemoryContextManager
-from modex_agent.core.emitter import EmitterConfig
+from modex_agent.core.events import EmitterConfig
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager, Tool

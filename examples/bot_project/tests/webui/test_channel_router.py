@@ -18,11 +18,11 @@ from bot.adapters.channels import (
     set_conv_channel,
 )
 
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.commands.handlers import build_default_builtin_handlers
 from modex_agent.commands.processor import SlashCommandProcessor
 from modex_agent.core.types import OutputMessage
 from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
-from modex_agent.pipeline.adapters import OutputAdapter
 
 
 class _RecordingOutputAdapter(OutputAdapter):

@@ -17,9 +17,9 @@ from typing import Any, ClassVar
 from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
+from modex_agent.core.media import MediaStore
 from modex_agent.core.message import ContentFormat, ContentPart, TextPart
 from modex_agent.core.tool import DynamicSchemaProvider
-from modex_agent.media.store import MediaStore
 
 logger = logging.getLogger(__name__)
 

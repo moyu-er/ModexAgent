@@ -9,7 +9,8 @@ from collections.abc import AsyncIterator, Callable
 from modex_agent.commands.processor import CommandProcessor
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.types import InputMessage
-from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.adapters.output import OutputAdapter
+from modex_agent.pipeline.adapters import InputAdapter
 
 logger = logging.getLogger(__name__)
 

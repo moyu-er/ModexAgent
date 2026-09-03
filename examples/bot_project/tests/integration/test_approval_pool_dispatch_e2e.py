@@ -31,6 +31,7 @@ from typing import Any
 
 import pytest
 
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.ui import IMUserInterface
@@ -48,7 +49,6 @@ from modex_agent.multi_agent import AgentDescriptor, AgentFactory, AgentPool
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentInstance
 from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
-from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.runtime.enums import SnapshotReason, TurnPhase
 from modex_agent.runtime.models import StateQueryScope

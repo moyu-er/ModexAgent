@@ -24,8 +24,7 @@ from modex_agent.memory.core.split_stores import (
     MessageStore,
 )
 from modex_agent.memory.core.store_metadata import StoreMetadata
-from modex_agent.memory.utils import safe_atomic_replace
-from modex_agent.utils.file_io import read_json_robust, read_jsonl_robust
+from modex_agent.utils.file_io import read_json_robust, read_jsonl_robust, safe_atomic_replace
 from modex_agent.utils.time import now_ms
 
 logger = logging.getLogger(__name__)

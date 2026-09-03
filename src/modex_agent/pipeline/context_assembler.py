@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from modex_agent.core.constants import RuntimeInfoKey
 from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.emitter import AgentResult
+from modex_agent.core.media import Kind
 from modex_agent.core.message import (
     ContentPart,
     ImageUrl,
@@ -18,7 +19,6 @@ from modex_agent.core.message import (
     build_media_ref,
 )
 from modex_agent.core.types import InputMessage, MessageRole, ReminderKind
-from modex_agent.media.models import Kind
 from modex_agent.memory.history import (
     ListMessageHistory,
     history_to_list,

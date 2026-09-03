@@ -8,10 +8,10 @@ from pydantic import ValidationError
 
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import ApprovalDecisionInput
+from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage, MessageType
-from modex_agent.media.models import Attachment, AttachmentLocator, Kind
 
 
 def test_input_message_defaults_no_approval_decision():

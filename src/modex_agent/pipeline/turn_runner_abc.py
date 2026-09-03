@@ -40,7 +40,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from modex_agent.core.context import ContextManager
     from modex_agent.core.emitter import AgentResult, ContentEmitter
-    from modex_agent.core.runtime_context import RuntimeContextManager
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
@@ -52,6 +51,7 @@ if TYPE_CHECKING:
     from modex_agent.pipeline.approval_renderer import ApprovalRenderer
     from modex_agent.pipeline.snapshot import PoolDataSnapshot
     from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
+    from modex_agent.runtime.context import RuntimeContextManager
     from modex_agent.runtime.models import TurnSnapshot
     from modex_agent.runtime.store import TurnStateStore
     from modex_agent.workspace import WorkspaceManager

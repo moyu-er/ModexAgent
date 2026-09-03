@@ -31,6 +31,7 @@ from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
 from bot.workspace.pool_data import build_pool_data
 from bot.workspace.wiring.stack import declared_assembly_deps
 
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
 from modex_agent.hook import HookRunner
@@ -46,7 +47,6 @@ from modex_agent.multi_agent.tools import (
     SendToPeerTool,
     TaskDispatchTool,
 )
-from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import (
     ComponentRegistryLoader,

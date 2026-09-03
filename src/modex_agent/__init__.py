@@ -12,12 +12,13 @@ Agent Framework Core - 多Agent服务框架核心
 
 from ._version import __version__
 from .agents import ReActAgent, ReActEvent
+from .adapters.emitter import StreamingAwareEmitter
+from .adapters.output import OutputAdapter
 from .core.agent import Agent, AgentContext
 from .core.context import ContextManager, ContextState
 from .core.emitter import (
     AgentResult,
     ContentEmitter,
-    StreamingAwareEmitter,
 )
 from .core.events import AgentEvent, EmitterConfig
 from .core.provider import CallbackStreamProvider, LLMProvider
@@ -38,14 +39,13 @@ from .core.turn_events import (
 )
 from .core.types import (
     MessageType,
+    OutputMessage,
     ToolCall,
 )
 from .pipeline import (
     AgentPipeline,
     InputAdapter,
     InputMessage,
-    OutputAdapter,
-    OutputMessage,
 )
 
 __all__ = [

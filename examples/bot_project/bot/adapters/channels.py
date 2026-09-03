@@ -26,7 +26,8 @@ from modex_agent.adapters.platform import StreamingMode
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import OutputMessage
-from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.adapters.output import OutputAdapter
+from modex_agent.pipeline.adapters import InputAdapter
 
 EmitterFactory = Callable[[str, str], ContentEmitter[Any]]
 AdapterBuildResult = tuple[InputAdapter, OutputAdapter, EmitterFactory] | None

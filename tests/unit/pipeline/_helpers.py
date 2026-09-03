@@ -11,14 +11,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from modex_agent.core.agent_runtime_config import BusyInputMode
-from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.context import ContextManager, InMemoryContextManager
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.tool_manager import ToolManager
-from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.adapters.output import OutputAdapter
+from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
+from modex_agent.pipeline.busy_input import BusyInputMode
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner import ReActTurnRunner

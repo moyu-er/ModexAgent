@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.utils.file_io import atomic_write_text
 
 
 def safe_filename(name: str) -> str:
@@ -27,23 +27,6 @@ def safe_filename(name: str) -> str:
     for ch in '<>:"/\\|?*':
         name = name.replace(ch, "_")
     return name
-
-
-def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
-    """Write *text* to *path* atomically via a temp file + ``os.replace``.
-
-    The target is never observed in a partially-written state: either the
-    previous content remains (if the final replace fails) or the new content
-    is fully in place.  The temp file is cleaned up on failure.
-    """
-    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(text, encoding=encoding)
-        os.replace(tmp, path)
-    finally:
-        if tmp.exists():
-            tmp.unlink(missing_ok=True)
 
 
 class SessionStore(ABC):

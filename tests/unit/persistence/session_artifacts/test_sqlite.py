@@ -6,14 +6,14 @@ from sqlite3 import IntegrityError
 import pytest
 
 from modex_agent.core.scope import RecordScope
-from modex_agent.core.session_cleanup import (
-    MissingSessionScopeError,
-    SessionDatabaseCleanupError,
-)
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.persistence.adapters import SqliteSessionStore
 from modex_agent.persistence.managers import WorkspacePersistenceManager
-from modex_agent.persistence.session_cleanup import SqliteSessionDatabaseCleaner
+from modex_agent.persistence.session_artifacts import (
+    MissingSessionScopeError,
+    SessionDatabaseCleanupError,
+    SqliteSessionDatabaseCleaner,
+)
 
 
 class _PoolScopedRecordScope(RecordScope):

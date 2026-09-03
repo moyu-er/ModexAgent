@@ -4,14 +4,11 @@ import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from modex_agent.core.frontmatter import parse_frontmatter as _parse_frontmatter
+from modex_agent.utils.frontmatter import parse_frontmatter as _parse_frontmatter
 
 from .models import Skill, SkillMetadata, SkillResource, SkillSummary
 
 logger = logging.getLogger(__name__)
-
-# Re-export for backward compatibility
-parse_frontmatter = _parse_frontmatter
 
 
 class SkillSource(ABC):

@@ -23,10 +23,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from modex_agent.adapters.output import OutputAdapter
+from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
-from modex_agent.media.models import Attachment, AttachmentLocator, Kind
-from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.context_assembler import assemble_context
 from modex_agent.pipeline.turn_context_builder import (
     TurnContextBuilder,
@@ -295,7 +295,7 @@ async def test_carrier_emits_parts_without_model_info() -> None:
 async def test_carrier_skipped_without_image_attachments() -> None:
     """Document-kind attachments never produce parts (image-only carrier)."""
     from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
-    from modex_agent.media.models import Kind
+    from modex_agent.core.media import Kind
 
     builder = _make_builder()
     doc = Attachment(

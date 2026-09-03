@@ -1,11 +1,12 @@
-"""Tests for media.models — Attachment value object + enums."""
+"""Tests for core.media — Attachment value object + enums (moved from
+tests/unit/media/test_models.py in C1; the contracts live in core now)."""
 
 from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.media.models import Attachment, AttachmentLocator, Kind
+from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 
 
 class TestKindEnum:

@@ -15,7 +15,8 @@ if str(_BOT_PROJECT) not in sys.path:
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage, OutputMessage
 from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.adapters.output import OutputAdapter
+from modex_agent.pipeline.adapters import InputAdapter
 
 
 class _StubInput(InputAdapter):

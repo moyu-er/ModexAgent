@@ -11,7 +11,8 @@ from enum import Enum
 from typing import Any
 
 from modex_agent.agents.react import ReActEvent
-from modex_agent.core.emitter import EmitterConfig, StreamingAwareEmitter
+from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.core.events import EmitterConfig
 
 
 class QQEmitterConfig:

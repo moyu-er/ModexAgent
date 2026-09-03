@@ -21,8 +21,8 @@ from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 
+from modex_agent.core.media import AttachmentLocator, Kind
 from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
-from modex_agent.media.models import AttachmentLocator, Kind
 from modex_agent.workspace.runtime import bind_workspace_root
 from tests.input_pipeline.assembly_support import (
     TEST_ASSEMBLY_CTX,

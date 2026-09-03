@@ -44,6 +44,7 @@ from bot.workspace.pool_data import build_pool_data
 from bot.workspace.wiring.stack import declared_assembly_deps
 from pydantic import BaseModel
 
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage
@@ -58,7 +59,6 @@ from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.tools import CommunicationTarget
-from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import (

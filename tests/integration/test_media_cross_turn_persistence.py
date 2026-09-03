@@ -30,6 +30,7 @@ from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
 from modex_agent.core.constants import InterfaceFormat
 from modex_agent.core.history import ListMessageHistory
 from modex_agent.core.llm_request import LLMRequest
+from modex_agent.core.media import StoredMediaKind
 from modex_agent.core.message import (
     ChatMessage,
     ImageUrl,
@@ -45,7 +46,7 @@ from modex_agent.core.tool_manager import InMemoryToolManager, ToolExecutionCont
 from modex_agent.core.types import ToolCall
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.factories.llm import create_llm_provider
-from modex_agent.media.store import LocalFileMediaStore, StoredMediaKind
+from modex_agent.media.store import LocalFileMediaStore
 from modex_agent.memory.core.split_stores import MemoryStoreBundle
 from modex_agent.memory.default_system import ScopedMessageHistory
 from modex_agent.memory.layers.session import ScopedSessionMemoryManager

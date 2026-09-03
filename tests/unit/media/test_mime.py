@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from modex_agent.core.media import Kind
 from modex_agent.media.mime import classify_kind, sniff_mime
-from modex_agent.media.models import Kind
 
 
 class TestSniffMimeMagicBytes:

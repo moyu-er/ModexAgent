@@ -9,13 +9,14 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from modex_agent.core.media import Attachment
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
-from modex_agent.media.models import Attachment
 
+from ..adapters.output import OutputAdapter
 from ..adapters.platform import StreamingMode
 from ..core.constants import DefaultValues
 from ..core.types import InputMessage, OutputMessage
-from ..pipeline.adapters import InputAdapter, OutputAdapter
+from ..pipeline.adapters import InputAdapter
 from .broker import Address, AddressKind, BrokerMessage, MessageBroker
 
 logger = logging.getLogger(__name__)
