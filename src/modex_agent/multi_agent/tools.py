@@ -7,10 +7,10 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ParallelTool, ToolConfig
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext

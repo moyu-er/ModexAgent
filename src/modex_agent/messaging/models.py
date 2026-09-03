@@ -9,9 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from modex_agent.core.media import Attachment
-from modex_agent.core.message import ContentFormat
-from modex_agent.core.session_id import SessionInfo
+from modex_agent.core import Attachment, ContentFormat, SessionInfo
 
 DEFAULT_CHANNEL = "default"
 DEFAULT_SENDER_ID = "anonymous"

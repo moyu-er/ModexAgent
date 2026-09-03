@@ -237,6 +237,40 @@ class TestCooldownBehavior:
         await _drain(supply)
         assert not review_agent.review.called
 
+    async def test_cooldown_is_isolated_by_session(
+        self,
+        tmp_path: Path,
+        supply: ExperienceSupply,
+        review_agent: MagicMock,
+    ) -> None:
+        supply.register_review_agent("main", review_agent)
+        hook = _hook(tmp_path, supply, review_agent, _memory_system())
+        write_result = _result(
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {"function": {"name": "experience_write", "arguments": ""}}
+                    ],
+                }
+            ]
+        )
+        await supply.start()
+
+        await hook.after_graph(
+            _ctx([{"role": "user", "content": "hi"}] * 12, session="a.main"),
+            write_result,
+        )
+        await hook.after_graph(
+            _ctx([{"role": "user", "content": "hi"}] * 6, session="b.main"),
+            _result(),
+        )
+        await _drain(supply)
+        await supply.stop()
+
+        assert review_agent.review.call_count == 1
+
 
 class TestMutexGate:
     async def test_skips_when_review_in_flight(

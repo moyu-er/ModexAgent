@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from modex_agent.core import AgentCommKind
 from modex_agent.core.llm_request import ReasoningEffort
 from modex_agent.core.llm_struct import FinishReason, LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.memory.cleanup_hooks import TodoReorientationHook
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager

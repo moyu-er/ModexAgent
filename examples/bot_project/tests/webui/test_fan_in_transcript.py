@@ -72,7 +72,7 @@ class _StubIMAdapter(InputAdapter):
 
 
 def _no_skill_resolvers() -> PoolSkillResolverRegistry:
-    return PoolSkillResolverRegistry({})
+    return PoolSkillResolverRegistry(lambda _workspace, _pool: None)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

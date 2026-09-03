@@ -7,12 +7,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.messaging.broker import Address, AddressKind, BrokerMessage, MessageBroker
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.multi_agent.registry import AgentProfile
@@ -156,7 +156,6 @@ class TestCommunicationService:
         source_name: str = "main",
     ) -> AgentCommunicationService:
         registry = _FakeRegistry(profiles=profiles, descriptors=descriptors)
-        broker = _FakeBroker()
         return AgentCommunicationService(
             source=AgentAddress(name=source_name),
             registry=registry,

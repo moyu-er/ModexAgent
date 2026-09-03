@@ -38,6 +38,7 @@ class ScopeAgentNode(BaseModel):
     name: str
     parent: str | None
     root: bool
+    skills_eligible: bool
 
 
 class ScopePoolTopology(BaseModel):

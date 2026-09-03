@@ -18,7 +18,7 @@ Platform I/O contracts and the emitter bridge — decouple platform I/O from age
 ## Dependencies
 - `modex_agent.core.emitter` — `ContentEmitter`, `AgentResult` (emitter contract stays in core)
 - `modex_agent.core.events` — `EmitterConfig`
-- `modex_agent.messaging.models` — `OutputMessage` transport model
+- `modex_agent.messaging` — `OutputMessage` transport model
 - No pipeline imports (B4 invariant: adapters never import pipeline; `InputAdapter` stays in `pipeline/adapters.py`)
 
 ## Notes

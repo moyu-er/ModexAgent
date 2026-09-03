@@ -112,7 +112,7 @@ async def test_injection_is_transient_transcript_excludes_it() -> None:
         pipeline = await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
             ctx=TEST_ASSEMBLY_CTX,
-            skill_registry=PoolSkillResolverRegistry({}),
+            skill_registry=PoolSkillResolverRegistry(lambda _workspace, _pool: None),
             bot_model_config=_bot_model_config(),
         )
 

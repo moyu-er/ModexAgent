@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.hook import HookRunner
 from modex_agent.hook.builtin import InboxFlushHook
@@ -23,7 +24,6 @@ from modex_agent.runtime.context import RuntimeContextManager
 from modex_agent.tools.filter import FilteredToolManager
 from modex_agent.tools.manager import InMemoryToolManager
 
-from .comm_kind import AgentCommKind
 from .descriptor import AgentDescriptor, AgentInstance
 from .inbox.consumer import InboxConsumer
 from .inbox.producer import InboxProducer

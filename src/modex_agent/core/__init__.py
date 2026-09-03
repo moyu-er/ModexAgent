@@ -39,8 +39,9 @@ from .message import (
     MessageRole,
     ToolCall,
 )
-from .prompt import SystemPromptPipeline
+from .prompt import SystemPromptPipeline, SystemPromptProvider
 from .provider import CallbackStreamProvider, LLMProvider
+from .scope import RecordScope
 from .session_id import (
     SessionIdFactory,
     SessionInfo,
@@ -147,7 +148,9 @@ __all__ = [
     "TokenUsage",
     # 运行时结构
     "RuntimeSafetyPolicy",
+    "SystemPromptProvider",
     "SystemPromptPipeline",
+    "RecordScope",
     # 媒体契约 (C1, ADR-0013)
     "Attachment",
     "AttachmentLocator",

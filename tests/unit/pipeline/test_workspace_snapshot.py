@@ -161,7 +161,7 @@ def test_resolve_pool_data_returns_snapshot_for_subagent() -> None:
     isolation is enforced one level up: ``_process_message_locked`` does
     not let the snapshot override a subagent's own context_manager.
     """
-    from modex_agent.multi_agent.comm_kind import AgentCommKind
+    from modex_agent.core import AgentCommKind
 
     snapshot = _FakePoolData(
         context_manager=MagicMock(name="main_context_manager"),
@@ -187,7 +187,7 @@ def test_subagent_context_manager_not_overridden_by_pool_data() -> None:
     guard predicate directly. A subagent keeps its own context_manager even
     when pool_data is present, while a main agent adopts the pool's.
     """
-    from modex_agent.multi_agent.comm_kind import AgentCommKind
+    from modex_agent.core import AgentCommKind
 
     sub_desc = MagicMock()
     sub_desc.comm_kind = AgentCommKind.SUBAGENT
@@ -206,7 +206,7 @@ def test_resolve_pool_data_returns_snapshot_for_main_agent() -> None:
     """Positive control: a non-subagent (main) pipeline still resolves the
     pool's PoolData so its turns follow workspace switches.
     """
-    from modex_agent.multi_agent.comm_kind import AgentCommKind
+    from modex_agent.core import AgentCommKind
 
     snapshot = _FakePoolData(
         context_manager=MagicMock(name="main_context_manager"),

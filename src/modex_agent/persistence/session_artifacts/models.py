@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.core.scope import RecordScope
@@ -21,16 +19,16 @@ class SessionScopeIdentityError(ValueError):
     pass
 
 
-@dataclass(frozen=True, slots=True)
 class MissingSessionScopeError(SessionScopeIdentityError):
     def __str__(self) -> str:
         return "session cleanup requires session_id in scope"
 
 
-@dataclass(frozen=True, slots=True)
 class SessionScopeMismatchError(SessionScopeIdentityError):
-    session_id: str
-    scope_session_id: str
+    def __init__(self, session_id: str, scope_session_id: str) -> None:
+        self.session_id = session_id
+        self.scope_session_id = scope_session_id
+        super().__init__(session_id, scope_session_id)
 
     def __str__(self) -> str:
         return (
@@ -39,11 +37,12 @@ class SessionScopeMismatchError(SessionScopeIdentityError):
         )
 
 
-@dataclass(frozen=True, slots=True)
 class SessionDatabaseCleanupError(Exception):
     """Storage-neutral failure to clean or discover session records."""
 
-    scope: RecordScope | None = None
+    def __init__(self, scope: RecordScope | None = None) -> None:
+        self.scope = scope
+        super().__init__(scope)
 
     def __str__(self) -> str:
         return "session database cleanup failed"
@@ -57,7 +56,7 @@ class SessionCleanupResult(BaseModel):
     an error — only unexpected ``OSError`` / DB failures).
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     db_rows_deleted: int = 0
     files_deleted: int = 0

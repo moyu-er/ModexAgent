@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.message import ContentFormat
+from modex_agent.core import ContentFormat
 
 
 class ResolvedSkillCommand(BaseModel):

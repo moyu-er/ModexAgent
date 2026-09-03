@@ -39,7 +39,7 @@ def _sid(agent: str, conv: str) -> str:
 
 class _NoSkill(PoolSkillResolverRegistry):
     def __init__(self) -> None:
-        super().__init__({})
+        super().__init__(lambda _workspace, _pool: None)
 
 
 def _bot_model_config() -> BotModelConfig:
@@ -76,7 +76,8 @@ class _StaticResolver(SkillResolver):
 
 class _FakeSkill(PoolSkillResolverRegistry):
     def __init__(self, skills: set[str]) -> None:
-        super().__init__({"main": _StaticResolver(skills)})
+        resolver = _StaticResolver(skills)
+        super().__init__(lambda _workspace, pool: resolver if pool == "main" else None)
 
 
 def _make_ctx(
@@ -590,12 +591,11 @@ class _PoolSkillResolvers(PoolSkillResolverRegistry):
     """Bound resolver map used to verify per-pool isolation."""
 
     def __init__(self, pool_skills: dict[str, set[str]]) -> None:
-        super().__init__(
-            {
-                pool: _StaticResolver(skills, pool)
-                for pool, skills in pool_skills.items()
-            }
-        )
+        resolvers = {
+            pool: _StaticResolver(skills, pool)
+            for pool, skills in pool_skills.items()
+        }
+        super().__init__(lambda _workspace, pool: resolvers.get(pool))
 
 
 @pytest.mark.asyncio
@@ -707,7 +707,11 @@ async def test_bot_and_direct_onramps_render_identical_skill_xml() -> None:
             [Skill(name="weather", content="Use weather APIs.")]
         )
     )
-    stage = SkillParseStage(PoolSkillResolverRegistry({"main": catalog}))
+    stage = SkillParseStage(
+        PoolSkillResolverRegistry(
+            lambda _workspace, pool: catalog if pool == "main" else None
+        )
+    )
     raw = "/weather   tomorrow  "
     envelope = UserInputEnvelope(external_id="u1", content=raw, channel="qq")
 

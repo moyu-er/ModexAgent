@@ -79,7 +79,7 @@ async def test_pipeline_turns_attachment_ref_into_persisted_attachment() -> None
         pipeline = await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
             ctx=TEST_ASSEMBLY_CTX,
-            skill_registry=PoolSkillResolverRegistry({}),
+            skill_registry=PoolSkillResolverRegistry(lambda _workspace, _pool: None),
             bot_model_config=_bot_model_config(),
         )
 
@@ -136,7 +136,7 @@ async def test_pipeline_noop_when_no_attachments() -> None:
         pipeline = await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
             ctx=TEST_ASSEMBLY_CTX,
-            skill_registry=PoolSkillResolverRegistry({}),
+            skill_registry=PoolSkillResolverRegistry(lambda _workspace, _pool: None),
             bot_model_config=_bot_model_config(),
         )
 

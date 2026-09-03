@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.core import AgentCommKind
 
 from .state import AgentState
 

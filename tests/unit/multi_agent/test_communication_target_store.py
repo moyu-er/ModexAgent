@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.core import AgentCommKind, AgentContext
 from modex_agent.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
@@ -179,6 +179,7 @@ class TestStoreDescription:
         first = store.description
         store.pop_by_name("scout")
         second = store.description
+        assert first is not second
         assert "scout" not in second
 
 
@@ -370,7 +371,6 @@ class TestStoreGraphModeFiltersPeers:
 
     @staticmethod
     def _graph_ctx() -> AgentContext:
-        from modex_agent.core.agent import AgentContext
         from modex_agent.core.session_id import SessionInfo
         from modex_agent.memory.history import ListMessageHistory
 
@@ -384,7 +384,6 @@ class TestStoreGraphModeFiltersPeers:
 
     @staticmethod
     def _non_graph_ctx() -> AgentContext:
-        from modex_agent.core.agent import AgentContext
         from modex_agent.core.session_id import SessionInfo
         from modex_agent.memory.history import ListMessageHistory
 
@@ -464,7 +463,7 @@ class TestStoreGraphModeFiltersPeers:
         store.add(_subagent("scout"))
 
         token = current_agent_context.set(self._graph_ctx())
-        store.description  # populate cache in graph mode
+        _ = store.description  # populate cache in graph mode
         current_agent_context.reset(token)
 
         # Non-graph context — peers visible again

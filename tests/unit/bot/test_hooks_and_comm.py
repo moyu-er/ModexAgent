@@ -43,7 +43,7 @@ class TestCommunicationToolScoping:
 
     def test_send_tool_dynamic_description_includes_targets(self) -> None:
         """SendToAgentTool builds dynamic description from CommunicationTargetStore."""
-        from modex_agent.multi_agent.comm_kind import AgentCommKind
+        from modex_agent.core import AgentCommKind
         from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
 
         store = CommunicationTargetStore()

@@ -15,7 +15,8 @@ interface lives in ``modex_agent.commands.skill``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable
+from pathlib import Path
 
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
@@ -25,19 +26,22 @@ from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
 
 
 class PoolSkillResolverRegistry:
-    """Per-pool bound-resolver lookup backed by each pool's root resolver.
+    """Workspace-aware lookup for each pool's bound root resolver.
 
-    The resolvers are created by the pool's ``SkillsSupply``
+    Resolvers are created by each workspace pool's ``SkillsSupply``
     (``resolver_for(root_agent_name)`` — plan §11.3.1); this registry only
-    LOOKS THEM UP by pool name. A pool without one (vetoed capability,
-    external pool) simply resolves no skill commands.
+    looks them up by ``(workspace, pool)`` at message time. A pool without one
+    (vetoed capability, external pool) resolves no skill commands.
     """
 
-    def __init__(self, resolvers: Mapping[str, SkillResolver | None]) -> None:
-        self._resolvers = dict(resolvers)
+    def __init__(
+        self,
+        resolver: Callable[[Path, str], SkillResolver | None],
+    ) -> None:
+        self._resolver = resolver
 
-    def resolver_for_pool(self, pool: str) -> SkillResolver | None:
-        return self._resolvers.get(pool)
+    def resolve(self, workspace: Path, pool: str) -> SkillResolver | None:
+        return self._resolver(workspace, pool)
 
 
 class SkillParseStage(InputStage):
@@ -55,7 +59,9 @@ class SkillParseStage(InputStage):
 
         # Skills are per-pool: S5 resolved the pool onto the envelope.
         resolved_pool = str(envelope.metadata.get(RoutingMeta.RESOLVED_POOL, ctx.default_pool))
-        resolver = self._registry.resolver_for_pool(resolved_pool)
+        workspace_raw = envelope.metadata.get(RoutingMeta.WORKSPACE)
+        workspace = Path(str(workspace_raw)) if workspace_raw is not None else ctx.current_ws()
+        resolver = self._registry.resolve(workspace, resolved_pool)
         resolved = None
         if resolver is not None:
             resolved = await resolver.resolve_command(command_name, canonical_args)

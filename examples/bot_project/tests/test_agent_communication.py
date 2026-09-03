@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.core import AgentCommKind
 from modex_agent.multi_agent.tools import SendToAgentTool, TaskDispatchTool
 
 

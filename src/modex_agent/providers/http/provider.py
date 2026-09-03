@@ -182,8 +182,9 @@ class HTTPStreamProvider(LLMProvider):
         consumer-visible has escaped the current attempt: once a delta or
         tool call was yielded, a retry would duplicate it downstream, so
         the failure passes through instead. A stream that ends without a
-        terminal event (EOF truncation) is retryable the same way; the
-        final EOF still lands on the assembler's terminal-event invariant.
+        terminal event (EOF truncation) is retryable the same way; the final
+        attempt emits a ``StreamFailure`` so direct stream consumers observe
+        the same terminal-event invariant as folding consumers.
         """
         request = self._with_sampling_defaults(request)
         body = self._protocol.build_body(request, self._cfg)
@@ -221,28 +222,27 @@ class HTTPStreamProvider(LLMProvider):
             if finished:
                 return
             final_attempt = attempt >= self._stream_max_retries
-            retryable = failure is None or failure.error_info.should_retry
+            if failure is None:
+                failure = StreamFailure(
+                    error_info=LLMErrorInfo(
+                        kind=LLMErrorKind.TIMEOUT,
+                        message="LLM stream ended without terminal event",
+                        provider=self._provider_name,
+                        should_retry=True,
+                    )
+                )
+            retryable = failure.error_info.should_retry
             if escaped or final_attempt or not retryable:
-                if failure is not None:
-                    logger.warning(
-                        "HTTPStreamProvider stream failed (no retry): model=%s "
-                        "attempt=%d/%d escaped=%s error=%s",
-                        self._model,
-                        attempt + 1,
-                        self._stream_max_retries + 1,
-                        escaped,
-                        failure.error_info.message[:200],
-                    )
-                    yield failure
-                else:
-                    logger.warning(
-                        "HTTPStreamProvider stream ended without terminal event "
-                        "(no retry): model=%s attempt=%d/%d escaped=%s",
-                        self._model,
-                        attempt + 1,
-                        self._stream_max_retries + 1,
-                        escaped,
-                    )
+                logger.warning(
+                    "HTTPStreamProvider stream failed (no retry): model=%s "
+                    "attempt=%d/%d escaped=%s error=%s",
+                    self._model,
+                    attempt + 1,
+                    self._stream_max_retries + 1,
+                    escaped,
+                    failure.error_info.message[:200],
+                )
+                yield failure
                 return
             delay = self._retry_backoff_seconds[
                 min(attempt, len(self._retry_backoff_seconds) - 1)
@@ -254,9 +254,7 @@ class HTTPStreamProvider(LLMProvider):
                 self._stream_max_retries + 1,
                 delay,
                 self._model,
-                failure.error_info.message[:200]
-                if failure is not None
-                else "stream ended without terminal event",
+                failure.error_info.message[:200],
             )
             await asyncio.sleep(delay)
 

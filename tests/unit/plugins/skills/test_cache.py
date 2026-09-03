@@ -88,10 +88,10 @@ class TestDirectorySkillCache:
         skills = await cache.get_skills(source, builder, None, None)
         assert {s.name for s in skills} == {"beta"}
 
-    # -- unchanged directory uses cache --------------------------------------
+    # -- same-name content changes refresh -----------------------------------
 
     @pytest.mark.asyncio
-    async def test_unchanged_directory_uses_cache(self, tmp_dir):
+    async def test_same_name_content_change_refreshes_cache(self, tmp_dir):
         skill_dir = self._add_skill(tmp_dir, "alpha", "v1")
         source = self._make_source([tmp_dir])
         cache = DirectorySkillCache(
@@ -101,17 +101,17 @@ class TestDirectorySkillCache:
 
         first = await cache.get_skills(source, builder, None, None)
         (skill_dir / "SKILL.md").write_text(
-            "---\nname: alpha\n---\nv2", encoding="utf-8"
+            "---\nname: alpha\n---\nv2 changed", encoding="utf-8"
         )
         second = await cache.get_skills(source, builder, None, None)
 
         assert first[0].content == "v1"
-        assert second[0].content == "v1"
+        assert second[0].content == "v2 changed"
 
-    # -- content change does NOT trigger rebuild -----------------------------
+    # -- metadata change rebuilds the prompt ---------------------------------
 
     @pytest.mark.asyncio
-    async def test_content_change_does_not_trigger_rebuild(self, tmp_dir):
+    async def test_metadata_change_rebuilds_prompt(self, tmp_dir):
         d = self._add_skill(tmp_dir, "alpha", "v1")
         source = self._make_source([tmp_dir])
         cache = DirectorySkillCache(
@@ -123,10 +123,12 @@ class TestDirectorySkillCache:
         assert 'name="alpha"' in prompt1
 
         (d / "SKILL.md").write_text(
-            "---\nname: alpha\n---\nv2", encoding="utf-8",
+            "---\nname: alpha\ndescription: refreshed\n---\nv2",
+            encoding="utf-8",
         )
         prompt2 = await cache.build_prompt(source, builder, None, None)
-        assert prompt2 == prompt1  # cached, skill name set unchanged
+        assert prompt2 != prompt1
+        assert "refreshed" in prompt2
 
     # -- last-wins dedup -----------------------------------------------------
 

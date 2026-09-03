@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -33,8 +34,11 @@ class _FakeResolver(SkillResolver):
 
 
 def _stage(skills: set[str]) -> SkillParseStage:
+    resolver = _FakeResolver(skills)
     return SkillParseStage(
-        PoolSkillResolverRegistry({"main": _FakeResolver(skills)})
+        PoolSkillResolverRegistry(
+            lambda _workspace, pool: resolver if pool == "main" else None
+        )
     )
 
 
@@ -74,6 +78,27 @@ async def test_valid_skill_sets_xml_and_keeps_raw_content() -> None:
     assert env.metadata[RoutingMeta.SKILL_CONTENT_FORMAT] is ContentFormat.XML
     assert env.metadata[RoutingMeta.SKILL_TRUNCATABLE_PATHS] == ["user_input"]
     assert env.command_status is CommandStatus.RESOLVED
+
+
+@pytest.mark.asyncio
+async def test_resolver_lookup_uses_message_workspace() -> None:
+    seen: list[tuple[Path, str]] = []
+    resolver = _FakeResolver({"office-expert"})
+    stage = SkillParseStage(
+        PoolSkillResolverRegistry(
+            lambda workspace, pool: seen.append((workspace, pool)) or resolver
+        )
+    )
+    env = UserInputEnvelope(
+        external_id="u1",
+        content="/office-expert make ppt",
+        channel="qq",
+        metadata={RoutingMeta.WORKSPACE: "/workspace-b"},
+    )
+
+    await stage.process(env, _ctx())
+
+    assert seen == [(Path("/workspace-b"), "main")]
 
 
 @pytest.mark.asyncio

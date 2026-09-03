@@ -62,8 +62,8 @@ ADR is the architectural anchor.)
 - ① **core** (tier 0) — ✅ done. Cut `core/graph/engine → runtime` (the engine
   now *returns* its result instead of reading `runtime.enums`); cut
   `core/tool_manager → tools.terminal` (via a `Tool.result_metadata` hook);
-  promoted `AgentCommKind` into `core` (re-export shim retained at
-  `multi_agent/comm_kind.py` during deprecation). Guard:
+  promoted `AgentCommKind` into `core` and deleted the former
+  `multi_agent/comm_kind.py` compatibility shim. Guards:
   `tests/architecture/test_dependency_tree.py` (`EXPECTED_OFFENDERS` empty).
 - ② **memory** (tier 2) — ✅ done. Deleted the `memory.core.{scope,message}`
   re-export shims; `memory → core` is one-directional. Guard:

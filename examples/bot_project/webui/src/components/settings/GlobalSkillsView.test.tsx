@@ -71,16 +71,16 @@ describe("GlobalSkillsView", () => {
         name: "default",
         peers: [],
         agents: [
-          { name: "main", parent: null, root: true },
-          { name: "helper", parent: "main", root: false },
+          { name: "main", parent: null, root: true, skills_eligible: true },
+          { name: "helper", parent: "main", root: false, skills_eligible: true },
         ],
       },
       {
         name: "coder",
         peers: [],
         agents: [
-          { name: "orchestrator", parent: null, root: true },
-          { name: "explore", parent: "orchestrator", root: false },
+          { name: "orchestrator", parent: null, root: true, skills_eligible: true },
+          { name: "explore", parent: "orchestrator", root: false, skills_eligible: true },
         ],
       },
     ],

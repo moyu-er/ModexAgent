@@ -43,6 +43,7 @@ import pytest
 from bot.graph.agent_node import BotAgentNode
 from bot.workspace.handle import PoolWorkspaceResources, WorkspaceResolverCell
 
+from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.core.llm_struct import FinishReason, LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage, ToolCall
@@ -54,7 +55,6 @@ from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
 from modex_agent.multi_agent.descriptor import (
     AgentDescriptor,

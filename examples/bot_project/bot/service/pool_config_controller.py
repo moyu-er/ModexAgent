@@ -42,7 +42,12 @@ from bot.config.prompt_store import (
     PromptStore,
     PromptValidationError,
 )
-from bot.config.scope_pools import PoolSummary, list_pool_summaries, prompt_usages_of
+from bot.config.scope_pools import (
+    PoolSummary,
+    list_pool_summaries,
+    prompt_usages_of,
+    validate_skill_assignment_target,
+)
 from bot.config.skills_store import SkillsStore
 from bot.service.config_controller import FieldValidationError
 from modex_agent.ioc.configs.mcp import MCPServerEntry
@@ -270,24 +275,27 @@ class PoolConfigController:
         from bot.config.skills_store import SkillValidationError
 
         try:
+            validate_skill_assignment_target(pool, agent, self._declaration_path)
             return self._skills.list_agent_skills(pool, agent)
-        except SkillValidationError as exc:
+        except (SkillValidationError, ValueError, FileNotFoundError) as exc:
             raise FieldValidationError({"agent": [str(exc)]}) from exc
 
     def assign_skill(self, pool: str, agent: str, name: str) -> None:
         from bot.config.skills_store import SkillValidationError
 
         try:
+            validate_skill_assignment_target(pool, agent, self._declaration_path)
             self._skills.assign_skill_to_agent(pool, agent, name)
-        except SkillValidationError as exc:
+        except (SkillValidationError, ValueError, FileNotFoundError) as exc:
             raise FieldValidationError({"agent": [str(exc)]}) from exc
 
     def unassign_skill(self, pool: str, agent: str, name: str) -> None:
         from bot.config.skills_store import SkillValidationError
 
         try:
+            validate_skill_assignment_target(pool, agent, self._declaration_path)
             self._skills.unassign_skill_from_agent(pool, agent, name)
-        except SkillValidationError as exc:
+        except (SkillValidationError, ValueError, FileNotFoundError) as exc:
             raise FieldValidationError({"agent": [str(exc)]}) from exc
 
     # ------------------------------------------------------------------ #

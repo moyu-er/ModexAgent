@@ -8,8 +8,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core import AgentCommKind
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.runtime.enums import TurnCustomKey

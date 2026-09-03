@@ -22,9 +22,7 @@ Message transport models, broker, and bridge service for agent communication. Ow
 - Runtime control messages should pass through the control plane (`modex_agent.control`), not embedded here
 
 ## Dependencies
-- `modex_agent.core.media` — `Attachment` carried by input/output transport models
-- `modex_agent.core.message` — `ContentFormat` used by `InputMessage`
-- `modex_agent.core.session_id` — `SessionInfo` and `SessionIdFactory`
+- `modex_agent.core` — `Attachment`, `ContentFormat`, and `SessionInfo`
 - `asyncio.Queue` — backing transport for `InMemoryMessageBroker`
 
 <!-- MANUAL: -->

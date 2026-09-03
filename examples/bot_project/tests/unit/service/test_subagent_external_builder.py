@@ -43,10 +43,10 @@ from modex_agent.agents.external.providers.opencode.v2_parser import (
     OpenCodeV2EventParser,
 )
 from modex_agent.agents.external.types import ExternalEnvSpec
+from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.multi_agent.execution_strategy import strategy_name_of
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
+from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.llm_request import ReasoningEffort
@@ -23,7 +24,6 @@ from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.presets import subagent_memory
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.descriptor import (
     AgentDescriptor,
     AgentInstance,

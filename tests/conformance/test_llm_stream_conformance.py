@@ -26,7 +26,7 @@ import httpx
 import pytest
 
 from modex_agent.core.llm_request import LLMRequest
-from modex_agent.core.llm_struct import FinishReason, LLMErrorKind, LLMResponse, TokenUsage
+from modex_agent.core.llm_struct import FinishReason, LLMResponse, TokenUsage
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.stream_events import (
@@ -165,10 +165,6 @@ def _truncated_sse_handler() -> Handler:
 class _HttpLane:
     def __init__(self, register: Callable[[Handler], HTTPStreamProvider]) -> None:
         self._register = register
-        # A clean EOF mid-generation reaches the consumer as a stream with
-        # no terminal event; EventAssembler synthesizes the failure (the
-        # callback bridge instead always emits a terminal itself).
-        self.has_terminal_on_truncation = False
 
     def happy(self) -> HTTPStreamProvider:
         return self._register(_happy_sse_handler())
@@ -178,8 +174,6 @@ class _HttpLane:
 
 
 class _CallbackLane:
-    has_terminal_on_truncation = True
-
     def happy(self) -> _ScriptedCallbackProvider:
         return _ScriptedCallbackProvider(_happy_script)
 
@@ -259,13 +253,9 @@ async def test_truncated_stream_folds_to_failure_keeping_partial(lane: Any) -> N
     assert response.finish_reason == FinishReason.ERROR
     assert response.content == "partial"
 
-    if lane.has_terminal_on_truncation:
-        terminals = _terminal_indices(events)
-        assert len(terminals) == 1
-        assert isinstance(events[terminals[0]], StreamFailure)
-        assert "wire cut mid-stream" in (response.error or "")
-    else:
-        assert not _terminal_indices(events)
-        assert response.error_info is not None
-        assert response.error_info.kind == LLMErrorKind.TIMEOUT
-        assert response.error_info.should_retry is True
+    terminals = _terminal_indices(events)
+    assert len(terminals) == 1
+    assert terminals[0] == len(events) - 1
+    assert isinstance(events[terminals[0]], StreamFailure)
+    assert response.error_info is not None
+    assert response.error

@@ -57,6 +57,7 @@ from modex_agent.agents.external.session_store import ExternalSessionMapStore
 from modex_agent.agents.external.types import (
     ExternalEnvSpec,
 )
+from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
@@ -64,7 +65,6 @@ from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication.peer_resolution import (
     PeerLink,
     build_agent_pool_map,

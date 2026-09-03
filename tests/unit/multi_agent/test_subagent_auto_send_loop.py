@@ -2,13 +2,13 @@
 
 from unittest.mock import MagicMock
 
+from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer

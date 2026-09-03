@@ -464,7 +464,7 @@ class TestReviewTaskOwnership:
             await asyncio.sleep(0.2)
 
         task = supply.submit_review(
-            agent_name="main", review=review(), invocation_id="iv-1"
+            agent_name="main", review_factory=review, invocation_id="iv-1"
         )
         assert task is not None
         await asyncio.wait_for(started.wait(), timeout=1)
@@ -480,7 +480,20 @@ class TestReviewTaskOwnership:
         async def review() -> None:  # pragma: no cover — must never run
             raise AssertionError("rejected submission ran")
 
-        assert supply.submit_review(agent_name="main", review=review(), invocation_id="x") is None
+        built = False
+
+        def review_factory():
+            nonlocal built
+            built = True
+            return review()
+
+        assert (
+            supply.submit_review(
+                agent_name="main", review_factory=review_factory, invocation_id="x"
+            )
+            is None
+        )
+        assert not built
 
     async def test_stop_cancels_and_awaits_pending_review(self, tmp_path: Path) -> None:
         supply = ExperienceCapability().supply(_view(tmp_path))
@@ -494,7 +507,9 @@ class TestReviewTaskOwnership:
                 cancelled.set()
                 raise
 
-        task = supply.submit_review(agent_name="main", review=review(), invocation_id="iv-2")
+        task = supply.submit_review(
+            agent_name="main", review_factory=review, invocation_id="iv-2"
+        )
         assert task is not None
         await asyncio.sleep(0)
 
@@ -512,10 +527,49 @@ class TestReviewTaskOwnership:
         async def review() -> None:
             raise RuntimeError("review exploded")
 
-        task = supply.submit_review(agent_name="main", review=review(), invocation_id="iv-3")
+        task = supply.submit_review(
+            agent_name="main", review_factory=review, invocation_id="iv-3"
+        )
         assert task is not None
         await asyncio.wait_for(task, timeout=1)
         await supply.stop()  # still stoppable
+
+    async def test_second_submission_for_agent_is_rejected_atomically(
+        self, tmp_path: Path
+    ) -> None:
+        supply = ExperienceCapability().supply(_view(tmp_path))
+        await supply.start()
+        release = asyncio.Event()
+        second_built = False
+
+        async def first_review() -> None:
+            await release.wait()
+
+        async def second_review() -> None:
+            raise AssertionError("duplicate review ran")
+
+        def second_factory():
+            nonlocal second_built
+            second_built = True
+            return second_review()
+
+        first = supply.submit_review(
+            agent_name="main", review_factory=first_review, invocation_id="first"
+        )
+        assert first is not None
+        assert (
+            supply.submit_review(
+                agent_name="main",
+                review_factory=second_factory,
+                invocation_id="second",
+            )
+            is None
+        )
+        assert not second_built
+
+        release.set()
+        await first
+        await supply.stop()
 
 
 # ─── Dark-supply pin ─────────────────────────────────────────────────────────

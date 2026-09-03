@@ -39,6 +39,7 @@ from typing import Any
 
 import pytest
 
+from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.llm_struct import LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.provider import CallbackStreamProvider
@@ -48,7 +49,6 @@ from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer

@@ -7,12 +7,7 @@ This file is the append-only infrastructure for that rule:
 - FORBIDDEN_MODULE_PATHS: relocated/deleted paths verified gone TODAY; work
   packages B1-E2 append the paths they delete.
 - FORBIDDEN_COMPAT_REEXPORTS: (shim module, origin module) pairs meaning the
-  shim module must not import names from the origin module. Empty today by
-  design: the one known live shim is modex_agent.multi_agent.comm_kind
-  re-exporting AgentCommKind from modex_agent.core.agent (ADR-0006
-  candidate (1) deprecation window) — still present, so NOT assertable
-  today. D2/E2 append ("modex_agent.multi_agent.comm_kind",
-  "modex_agent.core.agent") after deleting the shim.
+  shim module must not import names from the origin module.
 - FORBIDDEN_IDENTIFIERS: retired API names AST-scanned across live framework,
   Bot, and test Python. Comments, strings, and historical documents do not
   count as executable surfaces.
@@ -118,11 +113,16 @@ FORBIDDEN_MODULE_PATHS: tuple[str, ...] = (
     "core/session_registry.py",
     "core/session_store.py",
     "core/types.py",
+    # Review closure: the final ADR-0006 AgentCommKind compatibility shim is
+    # deleted; all callers import the core facade directly.
+    "multi_agent/comm_kind.py",
 )
 
 # (shim module, origin module) — the shim must not import anything from the
-# origin. Appended by the work package that deletes each shim; empty today.
-FORBIDDEN_COMPAT_REEXPORTS: set[tuple[str, str]] = set()
+# origin. Appended by the work package that deletes each shim.
+FORBIDDEN_COMPAT_REEXPORTS: set[tuple[str, str]] = {
+    ("modex_agent.multi_agent.comm_kind", "modex_agent.core.agent"),
+}
 
 # Identifiers proven dead and deleted by work packages (plan §15 A2). Parsed
 # from live Python so re-introduction fails loudly without matching historical

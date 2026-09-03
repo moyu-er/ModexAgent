@@ -260,10 +260,27 @@ async def test_topology_workspace_form(tmp_path: Path) -> None:
         assert set(pools) == {"main", "helper"}
         assert pools["main"]["peers"] == ["helper"]
         agents = {a["name"]: a for a in pools["main"]["agents"]}
-        assert agents["main"] == {"name": "main", "parent": None, "root": True}
-        assert agents["worker"] == {"name": "worker", "parent": "main", "root": False}
+        assert agents["main"] == {
+            "name": "main",
+            "parent": None,
+            "root": True,
+            "skills_eligible": True,
+        }
+        assert agents["worker"] == {
+            "name": "worker",
+            "parent": "main",
+            "root": False,
+            "skills_eligible": True,
+        }
         helper_agents = pools["helper"]["agents"]
-        assert helper_agents == [{"name": "helper", "parent": None, "root": True}]
+        assert helper_agents == [
+            {
+                "name": "helper",
+                "parent": None,
+                "root": True,
+                "skills_eligible": True,
+            }
+        ]
     finally:
         await client.close()
 
@@ -283,7 +300,14 @@ async def test_topology_pool_as_root_no_special_casing(tmp_path: Path) -> None:
             {
                 "name": "solo",
                 "peers": [],
-                "agents": [{"name": "solo", "parent": None, "root": True}],
+                "agents": [
+                    {
+                        "name": "solo",
+                        "parent": None,
+                        "root": True,
+                        "skills_eligible": True,
+                    }
+                ],
             }
         ]
         # The bill path works for pool-as-root too (no workspace layer).

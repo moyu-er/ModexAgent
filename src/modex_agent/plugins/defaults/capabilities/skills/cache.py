@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -59,19 +60,19 @@ class _DirState:
     def __init__(
         self,
         *,
-        names: set[str] | None = None,
+        snapshot: dict[str, tuple[str, str]] | None = None,
         skills: list[Skill] | None = None,
     ) -> None:
-        self.names = set(names or ())
+        self.snapshot = dict(snapshot or {})
         self.skills = list(skills or ())
 
 
 class DirectorySkillCache(SkillCache):
-    """Per-directory skill cache that detects skill additions/removals via name-set comparison.
+    """Per-directory cache keyed by each assigned ``SKILL.md`` snapshot.
 
     On every ``get_skills()`` / ``build_prompt()`` call each watched directory is
-    scanned without reading file content. When the set of skill names in a
-    directory differs from the cached snapshot, the source is reloaded.
+    fingerprinted by resolved target and content digest. Additions, removals,
+    content edits, and assignment-link target changes reload the source.
 
     Directory ordering matters: skills from directories later in the list take
     precedence when names collide (last-wins dedup).
@@ -130,43 +131,50 @@ class DirectorySkillCache(SkillCache):
     # -- internal ------------------------------------------------------------
 
     @staticmethod
-    def _list_skill_names(
+    def _skill_snapshot(
         directory: Path,
         layout: SkillLayout = SkillLayout.DIRECTORY,
         skill_filename: str = "SKILL.md",
         exclude_names: set[str] | None = None,
-    ) -> set[str]:
-        """Scan *directory* for skill names without parsing file contents."""
+    ) -> dict[str, tuple[str, str]]:
+        """Return ``name -> (resolved path, content digest)`` for a directory."""
         resolved = Path(directory).expanduser().resolve()
         if not resolved.exists() or not resolved.is_dir():
-            return set()
-        names: set[str] = set()
+            return {}
+        snapshot: dict[str, tuple[str, str]] = {}
         if layout is SkillLayout.DIRECTORY:
             for subdir in sorted(resolved.iterdir()):
-                if subdir.is_dir() and (subdir / skill_filename).exists():
-                    names.add(subdir.name)
+                candidate = subdir / skill_filename
+                if subdir.is_dir() and candidate.exists():
+                    snapshot[subdir.name] = (
+                        str(candidate.resolve()),
+                        hashlib.sha256(candidate.read_bytes()).hexdigest(),
+                    )
         else:
             exclude = exclude_names or set()
             for path in sorted(resolved.glob("*.md")):
                 if path.name.lower() not in exclude:
-                    names.add(path.stem)
-        return names
+                    snapshot[path.stem] = (
+                        str(path.resolve()),
+                        hashlib.sha256(path.read_bytes()).hexdigest(),
+                    )
+        return snapshot
 
     async def _refresh_if_stale(
         self,
         source: SkillSource,
     ) -> None:
-        """Reload source state when any watched directory's name set changes."""
+        """Reload source state when any watched directory snapshot changes."""
         changed = False
         for directory in self._directories:
-            current_names = self._list_skill_names(
+            current_snapshot = self._skill_snapshot(
                 directory,
                 self._layout,
                 self._skill_filename,
                 self._exclude_names,
             )
             prev = self._dir_states.get(directory)
-            if prev is None or current_names != prev.names:
+            if prev is None or current_snapshot != prev.snapshot:
                 changed = True
                 break
 
@@ -200,16 +208,16 @@ class DirectorySkillCache(SkillCache):
                     continue
 
         for directory in self._directories:
-            current_names = self._list_skill_names(
+            current_snapshot = self._skill_snapshot(
                 directory,
                 self._layout,
                 self._skill_filename,
                 self._exclude_names,
             )
             prev = self._dir_states.get(directory)
-            if prev is None or current_names != prev.names:
+            if prev is None or current_snapshot != prev.snapshot:
                 dir_skills = skills_by_dir.get(directory, [])
                 self._dir_states[directory] = _DirState(
-                    names=current_names,
+                    snapshot=current_snapshot,
                     skills=dir_skills,
                 )

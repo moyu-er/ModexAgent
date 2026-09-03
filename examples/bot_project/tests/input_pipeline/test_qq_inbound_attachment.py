@@ -156,7 +156,7 @@ async def test_qq_attachment_ref_flows_through_im_pipeline_to_persisted_record()
         pipeline = await build_im_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
             ctx=TEST_ASSEMBLY_CTX,
-            skill_registry=PoolSkillResolverRegistry({}),
+            skill_registry=PoolSkillResolverRegistry(lambda _workspace, _pool: None),
             known_pools={"main"},
         )
 

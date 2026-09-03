@@ -12,7 +12,7 @@ from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
 from modex_agent.hook.builtin import SubagentAutoSendHook
 from modex_agent.hook.builtin.loop_detection import LoopDetectionHook
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.core import AgentCommKind
 from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity

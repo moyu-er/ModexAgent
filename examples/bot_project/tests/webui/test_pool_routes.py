@@ -249,6 +249,42 @@ async def test_upload_skill_json_then_list_and_assign(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "agent_spec,target_agent",
+    [
+        ({"description": "root", "capabilities": {"skills": False}}, "main"),
+        (
+            {
+                "description": "root",
+                "execution_strategy": "external",
+                "provider_kind": "opencode",
+            },
+            "main",
+        ),
+        ({"description": "root"}, "ghost"),
+    ],
+)
+async def test_skill_assignment_rejects_agent_without_runtime_resolver(
+    tmp_path: Path,
+    agent_spec: dict[str, object],
+    target_agent: str,
+) -> None:
+    _seed_declaration(tmp_path, {"main": {"agents": {"main": agent_spec}}})
+    controller = _make_controller(tmp_path)
+    controller.upload_skill("hello", {"SKILL.md": "# hello\n"})
+    client = _make_client(controller, tmp_path)
+    await client.start_server()
+    try:
+        response = await client.post(
+            f"/api/pools/main/agents/{target_agent}/skills/hello"
+        )
+        assert response.status == 400
+        assert not (tmp_path / "skills" / "main" / target_agent / "hello").exists()
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_upload_skill_multipart(tmp_path: Path) -> None:
     client = _make_client(_make_controller(tmp_path), tmp_path)
     await client.start_server()

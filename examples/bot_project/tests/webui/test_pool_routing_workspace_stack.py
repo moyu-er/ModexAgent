@@ -192,7 +192,7 @@ async def test_non_home_workspace_routes_to_coding_with_shared_store() -> None:
         pipe = await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
             ctx=TEST_ASSEMBLY_CTX,
-            skill_registry=PoolSkillResolverRegistry({}),
+            skill_registry=PoolSkillResolverRegistry(lambda _workspace, _pool: None),
             bot_model_config=_bot_model_config(),
         )
         server.set_input_pipeline(pipe)
@@ -292,7 +292,7 @@ async def test_home_workspace_coding_conversation_routes_to_coding() -> None:
         pipe = await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
             ctx=TEST_ASSEMBLY_CTX,
-            skill_registry=PoolSkillResolverRegistry({}),
+            skill_registry=PoolSkillResolverRegistry(lambda _workspace, _pool: None),
             bot_model_config=_bot_model_config(),
         )
         server.set_input_pipeline(pipe)

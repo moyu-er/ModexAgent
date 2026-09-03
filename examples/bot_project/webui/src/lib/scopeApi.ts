@@ -12,6 +12,7 @@ export interface ScopeAgentNode {
   name: string;
   parent: string | null;
   root: boolean;
+  skills_eligible: boolean;
 }
 
 export interface ScopePoolTopology {

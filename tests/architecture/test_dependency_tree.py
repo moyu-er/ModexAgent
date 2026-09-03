@@ -68,14 +68,16 @@ def _type_checking_nodes(tree: ast.Module) -> set[int]:
     Node-level exclusion (A1): only the concrete nodes under the TYPE_CHECKING
     guard are permitted; a runtime import of the same module elsewhere in the
     file is NOT excluded. ast.walk covers every statement nested in the If,
-    and TYPE_CHECKING blocks at any depth (not just module body).
+    and TYPE_CHECKING blocks at any depth (not just module body). Imports in
+    the guard's ``else`` branch remain runtime imports.
     """
     tc_nodes: set[int] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.If) and ast.unparse(node.test) == "TYPE_CHECKING":
-            for child in ast.walk(node):
-                if isinstance(child, ast.Import | ast.ImportFrom):
-                    tc_nodes.add(id(child))
+            for statement in node.body:
+                for child in ast.walk(statement):
+                    if isinstance(child, ast.Import | ast.ImportFrom):
+                        tc_nodes.add(id(child))
     return tc_nodes
 
 
@@ -99,7 +101,10 @@ def _package_of(path: Path, root: Path) -> str:
 
 def _is_module_on_disk(module: str) -> bool:
     """True if `module` names a real module/package file under src/."""
-    rel = Path(*module.split("."))
+    parts = module.split(".")
+    if not parts or parts[0] != "modex_agent":
+        return False
+    rel = Path(*parts[1:])
     return (
         (PACKAGE_ROOT / rel.with_suffix(".py")).is_file()
         or (PACKAGE_ROOT / rel / "__init__.py").is_file()
@@ -136,12 +141,11 @@ def _iter_import_targets(
         if not base:
             return []
         mods.append(base)
-        if node.level == 0:
-            for alias in node.names:
-                if alias.name != "*":
-                    candidate = f"{base}.{alias.name}"
-                    if _is_module_on_disk(candidate):
-                        mods.append(candidate)
+        for alias in node.names:
+            if alias.name != "*":
+                candidate = f"{base}.{alias.name}"
+                if _is_module_on_disk(candidate):
+                    mods.append(candidate)
     else:
         for alias in node.names:
             mods.append(alias.name)
@@ -196,6 +200,38 @@ def test_core_no_unexpected_runtime_upward_imports() -> None:
         f"  stale entries (delete, the fix landed): "
         f"{sorted(EXPECTED_OFFENDERS - offenders)}"
     )
+
+
+def test_import_scanner_resolves_absolute_alias_submodule(tmp_path: Path) -> None:
+    probe = tmp_path / "probe.py"
+    probe.write_text("from modex_agent import memory\n", encoding="utf-8")
+
+    assert "modex_agent.memory" in _runtime_upward_modules(probe, tmp_path)
+
+
+def test_import_scanner_resolves_relative_alias_submodule(tmp_path: Path) -> None:
+    package = tmp_path / "core"
+    package.mkdir()
+    probe = package / "probe.py"
+    probe.write_text("from .. import memory\n", encoding="utf-8")
+
+    assert "modex_agent.memory" in _runtime_upward_modules(probe, tmp_path)
+
+
+def test_import_scanner_keeps_type_checking_else_runtime_import(tmp_path: Path) -> None:
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    from modex_agent import commands\n"
+        "else:\n"
+        "    from modex_agent import memory\n",
+        encoding="utf-8",
+    )
+
+    imports = _runtime_upward_modules(probe, tmp_path)
+    assert "modex_agent.commands" not in imports
+    assert "modex_agent.memory" in imports
 
 
 EXPECTED_TOOLS_AGENT_OFFENDERS: set[tuple[str, str]] = set()

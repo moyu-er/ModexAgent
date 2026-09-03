@@ -54,7 +54,7 @@ def _graph_ctx():
 from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.tool_manager import Tool
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind as CommKind
+from modex_agent.core import AgentCommKind as CommKind
 from modex_agent.multi_agent.communication.strategies.base import (
     SendDeps,
     SendRequest,

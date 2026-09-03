@@ -85,28 +85,12 @@ class Attachment(BaseModel):
         ``Kind``/``AttachmentLocator`` are ``StrEnum``, so their ``str`` value
         is the wire form.
         """
-        return {
-            "id": self.id,
-            "kind": self.kind.value,
-            "name": self.name,
-            "mime": self.mime,
-            "size": self.size,
-            "path": self.path,
-            "locator": self.locator.value,
-        }
+        return self.model_dump(mode="json")
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Attachment:
         """Inverse of :meth:`to_dict` — rebuild the VO from a serialized dict."""
-        return cls(
-            id=str(data["id"]),
-            kind=Kind(str(data["kind"])),
-            name=str(data["name"]),
-            mime=(str(data["mime"]) if data.get("mime") is not None else None),
-            size=int(str(data["size"])),
-            path=str(data["path"]),
-            locator=AttachmentLocator(str(data["locator"])),
-        )
+        return cls.model_validate(data)
 
 
 class StoredMediaKind(StrEnum):

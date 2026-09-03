@@ -205,6 +205,7 @@ class TestDeletePrompt:
 
 class TestSkillAssignmentRestart:
     def test_assign_does_not_set_restart_required(self, tmp_path: Path) -> None:
+        _seed_pool_yml(tmp_path, "main", main_agent_name="main")
         controller = _make_controller(tmp_path)
         controller.upload_skill("hot", {"SKILL.md": "# hot\n"})
 
@@ -213,6 +214,7 @@ class TestSkillAssignmentRestart:
         assert controller.restart_required is False
 
     def test_unassign_does_not_set_restart_required(self, tmp_path: Path) -> None:
+        _seed_pool_yml(tmp_path, "main", main_agent_name="main")
         controller = _make_controller(tmp_path)
         controller.upload_skill("hot", {"SKILL.md": "# hot\n"})
         controller.assign_skill("main", "main", "hot")

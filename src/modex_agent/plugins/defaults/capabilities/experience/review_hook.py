@@ -29,6 +29,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel, ConfigDict
+
 from modex_agent.core.emitter import StopReason
 from modex_agent.hook.abc import AfterGraphHook
 from modex_agent.memory.scope import MemoryContext
@@ -60,13 +62,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class _ReviewCursor(BaseModel):
+    """Per-session cross-turn cooldown cursor."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    turn_count: int = 0
+    last_exp_tool_turn: int = 0
+
+
 class ExperienceReviewHook(AfterGraphHook):
     """AfterGraph hook that submits reviews to the pool's supply.
 
     Triggers only when the agent finishes a conversational exchange with a
-    plain text response (``stop_reason == "completed"``).  The hook keeps
-    an internal turn counter because ``AgentContext`` does not track turn
-    count.
+    plain text response (``stop_reason == "completed"``). The hook keeps an
+    independent cooldown cursor for each session because ``AgentContext`` does
+    not track a cross-turn count.
     """
 
     # Tool names that indicate the agent is already managing experiences
@@ -97,10 +108,7 @@ class ExperienceReviewHook(AfterGraphHook):
         self._exp_cooldown_turns = exp_cooldown_turns
         self._snapshot_max_messages = snapshot_max_messages
         self._snapshot_max_content_len = snapshot_max_content_len
-        # Internal turn counter (AgentContext has no turn_count field)
-        self._turn_counter: int = 0
-        # Turn number when experience tool was last used (0 = never)
-        self._last_exp_tool_turn: int = 0
+        self._review_cursors: dict[str, _ReviewCursor] = {}
 
     @property
     def name(self) -> str:
@@ -121,7 +129,11 @@ class ExperienceReviewHook(AfterGraphHook):
         ctx: AgentContext,
         result: AgentResult,
     ) -> None:
-        self._turn_counter += 1
+        session_id = ctx.session.session_id
+        previous = self._review_cursors.get(session_id, _ReviewCursor())
+        cursor = previous.model_copy(update={"turn_count": previous.turn_count + 1})
+        self._review_cursors[session_id] = cursor
+        turn_count = cursor.turn_count
 
         # Get history via async to_list() — MessageHistory has no __len__ / __iter__
         try:
@@ -129,7 +141,7 @@ class ExperienceReviewHook(AfterGraphHook):
         except Exception:
             logger.info(
                 "ExperienceReviewHook: skipped (history_to_list_error) turn=%s",
-                self._turn_counter,
+                turn_count,
             )
             return
         history_len = len(history_list)
@@ -138,17 +150,23 @@ class ExperienceReviewHook(AfterGraphHook):
         if self._supply.review_in_flight(self._agent_name):
             logger.info(
                 "ExperienceReviewHook: skipped (mutex) — review already in progress turn=%s",
-                self._turn_counter,
+                turn_count,
             )
             return
 
         tool_names = self._extract_tool_names(result)
-        skip_reason = self._should_review(result, tool_names, history_len)
+        skip_reason = self._should_review(
+            result,
+            tool_names,
+            history_len,
+            session_id=session_id,
+            cursor=cursor,
+        )
         if skip_reason:
             logger.info(
                 "ExperienceReviewHook: skipped (%s) turn=%s",
                 skip_reason,
-                self._turn_counter,
+                turn_count,
             )
             return
 
@@ -156,7 +174,7 @@ class ExperienceReviewHook(AfterGraphHook):
         if not snapshot:
             logger.info(
                 "ExperienceReviewHook: skipped (empty snapshot) turn=%s",
-                self._turn_counter,
+                turn_count,
             )
             return
 
@@ -175,7 +193,7 @@ class ExperienceReviewHook(AfterGraphHook):
         if not fork_messages:
             logger.info(
                 "ExperienceReviewHook: no messages to review, skipping turn=%s",
-                self._turn_counter,
+                turn_count,
             )
             return
 
@@ -183,7 +201,7 @@ class ExperienceReviewHook(AfterGraphHook):
         logger.info(
             "ExperienceReviewHook: triggering review invocation=%s turn=%s dir=%s fork=%s",
             invocation_id,
-            self._turn_counter,
+            turn_count,
             exp_dir,
             bool(fork_messages),
         )
@@ -192,7 +210,13 @@ class ExperienceReviewHook(AfterGraphHook):
         # while running, and rejects during stop (no orphanable hook task).
         self._supply.submit_review(
             agent_name=self._agent_name,
-            review=self._do_review(snapshot, existing_xml, invocation_id, exp_dir, fork_messages),
+            review_factory=lambda: self._do_review(
+                snapshot,
+                existing_xml,
+                invocation_id,
+                exp_dir,
+                fork_messages,
+            ),
             invocation_id=invocation_id,
         )
 
@@ -355,6 +379,9 @@ class ExperienceReviewHook(AfterGraphHook):
         result: AgentResult,
         tool_names: set[str],
         msg_count: int,
+        *,
+        session_id: str,
+        cursor: _ReviewCursor,
     ) -> str:
         """Gate check before triggering review.
 
@@ -375,17 +402,20 @@ class ExperienceReviewHook(AfterGraphHook):
 
         # Gate 2: Experience tool usage this turn → cooldown
         if self._detect_exp_edit(tool_names, result):
-            self._last_exp_tool_turn = self._turn_counter
+            cursor = cursor.model_copy(
+                update={"last_exp_tool_turn": cursor.turn_count}
+            )
+            self._review_cursors[session_id] = cursor
             logger.info(
                 "ExperienceReviewHook: exp write/edit detected, cooldown started turn=%s",
-                self._turn_counter,
+                cursor.turn_count,
             )
-            return f"exp_edit_detected cooldown_start_turn={self._turn_counter}"
+            return f"exp_edit_detected cooldown_start_turn={cursor.turn_count}"
 
         # Gate 3: Sufficient conversation length
         effective_threshold = self._min_messages
-        if self._last_exp_tool_turn > 0:
-            turns_since = self._turn_counter - self._last_exp_tool_turn
+        if cursor.last_exp_tool_turn > 0:
+            turns_since = cursor.turn_count - cursor.last_exp_tool_turn
             if turns_since <= self._exp_cooldown_turns:
                 effective_threshold = self._min_messages * 2
                 if msg_count < effective_threshold:

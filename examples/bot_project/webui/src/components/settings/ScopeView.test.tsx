@@ -40,14 +40,14 @@ const TOPOLOGY = {
       name: "main",
       peers: ["helper"],
       agents: [
-        { name: "main", parent: null, root: true },
-        { name: "worker", parent: "main", root: false },
+        { name: "main", parent: null, root: true, skills_eligible: true },
+        { name: "worker", parent: "main", root: false, skills_eligible: true },
       ],
     },
     {
       name: "helper",
       peers: ["main"],
-      agents: [{ name: "helper", parent: null, root: true }],
+      agents: [{ name: "helper", parent: null, root: true, skills_eligible: true }],
     },
   ],
 };

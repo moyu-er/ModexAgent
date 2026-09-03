@@ -8,7 +8,7 @@ same object the prompt section renders from.
 
 from __future__ import annotations
 
-from modex_agent.commands.skill import ResolvedSkillCommand, SkillResolver
+from modex_agent.commands import ResolvedSkillCommand, SkillResolver
 
 from .builder import DefaultSkillBuilder, SkillPromptBuilder, build_skill_command_xml
 from .cache import SkillCache

@@ -16,7 +16,7 @@ from tests.input_pipeline.assembly_support import (
 
 
 def _no_skill_resolvers() -> PoolSkillResolverRegistry:
-    return PoolSkillResolverRegistry({})
+    return PoolSkillResolverRegistry(lambda _workspace, _pool: None)
 
 
 def _bot_model_config() -> BotModelConfig:

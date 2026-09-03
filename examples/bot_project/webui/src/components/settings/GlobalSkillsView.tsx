@@ -68,15 +68,22 @@ export function GlobalSkillsView() {
     void load();
   }, []);
 
-  const rootAgent = (pool: ScopePoolTopology | undefined): string =>
-    pool?.agents.find((agent) => agent.root)?.name ?? pool?.agents[0]?.name ?? "";
+  const eligibleAgents = (pool: ScopePoolTopology | undefined) =>
+    pool?.agents.filter((agent) => agent.skills_eligible) ?? [];
+
+  const rootAgent = (pool: ScopePoolTopology | undefined): string => {
+    const agents = eligibleAgents(pool);
+    return agents.find((agent) => agent.root)?.name ?? agents[0]?.name ?? "";
+  };
 
   const loadTopology = async (): Promise<void> => {
     setTopology(null);
     setTopologyError("");
     try {
       const next = await getScopeTopology();
-      const firstPool = next.pools[0];
+      const firstPool = next.pools.find(
+        (pool) => eligibleAgents(pool).length > 0,
+      );
       setTopology(next);
       setSelectedPool(firstPool?.name ?? "");
       setSelectedAgent(rootAgent(firstPool));
@@ -222,10 +229,12 @@ export function GlobalSkillsView() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <DropdownPanel
                 label={t("settings.skills.pool")}
-                options={topology.pools.map((pool) => ({
-                  value: pool.name,
-                  label: pool.name,
-                }))}
+                options={topology.pools
+                  .filter((pool) => eligibleAgents(pool).length > 0)
+                  .map((pool) => ({
+                    value: pool.name,
+                    label: pool.name,
+                  }))}
                 value={selectedPool}
                 onChange={(poolName) => {
                   const pool = topology.pools.find(
@@ -237,14 +246,14 @@ export function GlobalSkillsView() {
               />
               <DropdownPanel
                 label={t("settings.skills.agent")}
-                options={
-                  topology.pools
-                    .find((pool) => pool.name === selectedPool)
-                    ?.agents.map((agent) => ({
-                      value: agent.name,
-                      label: agent.name,
-                    })) ?? []
-                }
+                options={eligibleAgents(
+                  topology.pools.find(
+                    (pool) => pool.name === selectedPool,
+                  ),
+                ).map((agent) => ({
+                  value: agent.name,
+                  label: agent.name,
+                }))}
                 value={selectedAgent}
                 disabled={!selectedAgent}
                 onChange={setSelectedAgent}

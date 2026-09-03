@@ -17,8 +17,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import ExecutionStrategyKind
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.multi_agent.tools import TaskDispatchTool

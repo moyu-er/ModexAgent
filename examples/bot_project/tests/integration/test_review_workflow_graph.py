@@ -399,6 +399,7 @@ class TestE2EStepFun:
     ) -> None:
         from bot.graph.agent_node import BotAgentNode, SessionStrategy
 
+        from modex_agent.core import AgentCommKind
         from modex_agent.core.agent import ExecutionStrategyKind
         from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
         from modex_agent.core.llm_struct import (
@@ -411,7 +412,6 @@ class TestE2EStepFun:
         from modex_agent.ioc.factories.llm import create_llm_provider
         from modex_agent.memory.scope import MemoryAgentRole
         from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.comm_kind import AgentCommKind
         from modex_agent.multi_agent.descriptor import (
             AgentDescriptor,
             AgentLLMConfig,
@@ -666,6 +666,7 @@ class TestE2EReviewLoopWithMemory:
     ) -> None:
         from bot.graph.agent_node import SessionStrategy
 
+        from modex_agent.core import AgentCommKind
         from modex_agent.core.agent import ExecutionStrategyKind
         from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
         from modex_agent.core.llm_struct import (
@@ -678,7 +679,6 @@ class TestE2EReviewLoopWithMemory:
         from modex_agent.ioc.factories.llm import create_llm_provider
         from modex_agent.memory.scope import MemoryAgentRole
         from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.comm_kind import AgentCommKind
         from modex_agent.multi_agent.descriptor import (
             AgentDescriptor,
             AgentLLMConfig,

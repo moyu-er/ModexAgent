@@ -165,7 +165,7 @@ async def test_attachment_flow_to_llm_injection_and_asymmetry() -> None:
         pipeline = await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
             ctx=TEST_ASSEMBLY_CTX,
-            skill_registry=PoolSkillResolverRegistry({}),
+            skill_registry=PoolSkillResolverRegistry(lambda _workspace, _pool: None),
             bot_model_config=_bot_model_config(),
         )
 
@@ -408,7 +408,7 @@ async def test_media_carrier_persists_refs_and_injection_resolves() -> None:
         pipeline = await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
             ctx=TEST_ASSEMBLY_CTX,
-            skill_registry=PoolSkillResolverRegistry({}),
+            skill_registry=PoolSkillResolverRegistry(lambda _workspace, _pool: None),
             bot_model_config=_bot_model_config(),
         )
         pipeline_ctx = BotInputContext(

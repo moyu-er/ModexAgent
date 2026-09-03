@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any
 
@@ -96,31 +96,47 @@ class ExperienceSupply(CapabilitySupply):
         self,
         *,
         agent_name: str,
-        review: Coroutine[Any, Any, None],
+        review_factory: Callable[[], Coroutine[Any, Any, None]],
         invocation_id: str,
     ) -> asyncio.Task[None] | None:
-        """Submit one review coroutine for owned background execution.
+        """Build and submit one review coroutine for owned execution.
 
-        Returns the task while running, or ``None`` when the supply is
-        stopping (the submission is rejected — the hook logs and moves on;
-        a stopping pool must not start new background work).
+        Admission is synchronous and authoritative: a stopping supply or an
+        agent with a live review rejects the factory before a coroutine exists.
+        Returns the task while running, otherwise ``None``.
         """
-        if self._stopping:
+        existing = self._review_tasks.get(agent_name)
+        if self._stopping or (existing is not None and not existing.done()):
             logger.info(
-                "ExperienceSupply: review submission rejected (stopping) "
-                "agent=%s invocation=%s",
+                "ExperienceSupply: review submission rejected agent=%s "
+                "invocation=%s stopping=%s in_flight=%s",
                 agent_name,
                 invocation_id,
+                self._stopping,
+                existing is not None and not existing.done(),
             )
             return None
 
-        task = asyncio.create_task(
-            self._run_review(agent_name, review, invocation_id),
-            name=f"exp-review-{agent_name}-{invocation_id[:8]}",
-        )
+        review = review_factory()
+        try:
+            task = asyncio.create_task(
+                self._run_review(agent_name, review, invocation_id),
+                name=f"exp-review-{agent_name}-{invocation_id[:8]}",
+            )
+        except BaseException:
+            review.close()
+            raise
         self._review_tasks[agent_name] = task
-        task.add_done_callback(lambda _t: self._review_tasks.pop(agent_name, None))
+        task.add_done_callback(
+            lambda completed: self._remove_review_task(agent_name, completed)
+        )
         return task
+
+    def _remove_review_task(
+        self, agent_name: str, completed: asyncio.Task[None]
+    ) -> None:
+        if self._review_tasks.get(agent_name) is completed:
+            self._review_tasks.pop(agent_name)
 
     async def _run_review(
         self,

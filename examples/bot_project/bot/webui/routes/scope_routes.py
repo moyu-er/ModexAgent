@@ -36,6 +36,7 @@ import yaml
 from aiohttp import web
 from pydantic import ValidationError
 
+from bot.config.scope_pools import skill_assignment_eligible
 from bot.webui.routes.scope_models import (
     ScopeAgentBill,
     ScopeAgentNode,
@@ -373,6 +374,7 @@ async def handle_get_topology(request: web.Request) -> web.Response:
                             name=agent.name,
                             parent=agent.parent,
                             root=agent.parent is None,
+                            skills_eligible=skill_assignment_eligible(agent),
                         )
                         for agent in pool.agents
                     ],

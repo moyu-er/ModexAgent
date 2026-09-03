@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.llm_request import ReasoningEffort
@@ -13,7 +14,6 @@ from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.memory.context import ContextManager
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
     from modex_agent.pipeline.pipeline import AgentPipeline

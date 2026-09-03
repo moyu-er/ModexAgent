@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from bot.scope import BotRecordScope
     from bot.webui.transcript_store import TranscriptStore
     from bot.workspace.handle import PoolWorkspaceResources
+    from modex_agent.commands import SkillResolver
     from modex_agent.memory.core.split_stores import MessageStore
 
 logger = logging.getLogger(__name__)
@@ -631,14 +632,27 @@ class WebUIService(BotService):
         from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
         from modex_agent.core.session_id import SessionIdFactory
 
-        # Per-pool skill-resolver lookup backed by each pool's root
-        # resolver (created by the pool's SkillsSupply). One shared
-        # registry serves both pipelines; the XML form is produced by the
-        # shared SkillResolver contract.
+        # Resolve against the message's workspace at runtime. A static home
+        # snapshot would leak Skills capability vetoes/assignments across the
+        # multi-live workspace seam.
+        def _resolve_skill_resolver(
+            workspace: Path, pool_name: str
+        ) -> SkillResolver | None:
+            resolved = workspace.resolve()
+            resources_by_workspace = (
+                self.workspace_stack.registry.iter_materialized_resources()
+                if self.workspace_stack is not None
+                else (self._home_resources,)
+            )
+            for resources in resources_by_workspace:
+                if Path(resources.target).resolve() != resolved:
+                    continue
+                pool = resources.pools.get(pool_name)
+                return pool.skill_resolver if pool is not None else None
+            return None
+
         known_pools = set(self._pools.keys())
-        skill_registry = PoolSkillResolverRegistry(
-            {name: pool.skill_resolver for name, pool in self._pools.items()}
-        )
+        skill_registry = PoolSkillResolverRegistry(_resolve_skill_resolver)
         assert self._component_registry is not None
         assert self._service_assembly_ctx is not None
 
